@@ -3081,6 +3081,134 @@ class HFBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return model
 
 
+class HFLinearPEFTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    def __init__(
+        self,
+        device: str = "cuda",
+        dtype: dtypes.dtype = thunder.float32,
+        requires_grad: bool = False,
+    ) -> None:
+        super().__init__()
+
+        from transformers.configuration_utils import PretrainedConfig
+
+        self.device: str = device
+        self.tdtype: torch.dtype = ltorch.to_torch_dtype(dtype)
+        self.requires_grad: bool = requires_grad
+        self.config = PretrainedConfig(model_type="llm")
+        # > 2 dimensions to test the reshape
+        self.shape = (1, 4096, 32)
+
+        from peft import LoraConfig, TaskType
+
+        self.peft_config = LoraConfig(
+            task_type=TaskType.CAUSAL_LM,
+            inference_mode=False,
+            r=16,
+            lora_alpha=32,
+            lora_dropout=0.0,
+            bias="none",
+            use_rslora=False,
+            target_modules=["linear_proj", "linear_fc1", "linear_fc2"],
+        )
+
+    def make_batch(self) -> tuple[list, dict]:
+        make = partial(
+            make_tensor,
+            device=self.device,
+            dtype=self.tdtype,
+            requires_grad=False,
+        )
+        a = make(self.shape)
+        return (), {"input_ids": a}
+
+    def fn(self) -> Callable:
+        class HFLinear(nn.Module):
+            def __init__(self, config):
+                super().__init__()
+
+                self.config = config
+
+                self.linear_proj = nn.Linear(32, 256)
+                self.linear_fc1 = nn.Linear(256, 256)
+                self.linear_fc2 = nn.Linear(256, 32)
+
+            def forward(self, input_ids, **kwargs):
+                y = self.linear_proj(input_ids)
+                y = self.linear_fc1(y)
+                return self.linear_fc2(y)
+
+            def prepare_inputs_for_generation(self, *args, **kwargs):
+                pass
+
+        with torch.device(self.device):
+            model = HFLinear(self.config).to(self.tdtype)
+
+            from peft import get_peft_model
+
+            # autocast_adapter_dtype set to False is needed to actually execute the ops in bf16
+            # otherwise they'll be casted to f32
+            model = get_peft_model(model, self.peft_config, autocast_adapter_dtype=False)
+
+        return model
+
+
+class NeMoLinearPEFTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    def __init__(
+        self,
+        device: str = "cuda",
+        dtype: dtypes.dtype = thunder.float32,
+        requires_grad: bool = False,
+    ) -> None:
+        super().__init__()
+
+        from nemo.collections.llm.peft import LoRA
+
+        self.device: str = device
+        self.tdtype: torch.dtype = ltorch.to_torch_dtype(dtype)
+        self.requires_grad: bool = requires_grad
+        self.lora_cls = LoRA()
+        self.lora_cls._is_fsdp_v1 = False
+
+        # > 2 dimensions to test the reshape
+        self.shape = (1, 4096, 32)
+
+    def make_batch(self) -> tuple[list, dict]:
+        make = partial(
+            make_tensor,
+            device=self.device,
+            dtype=self.tdtype,
+            requires_grad=False,
+        )
+        a = make(self.shape)
+        return (a,), {}
+
+    def fn(self) -> Callable:
+        from nemo.collections.llm.fn import FNMixin
+
+        class NeMoLinear(nn.Module, FNMixin):
+            def __init__(
+                self,
+            ):
+                super().__init__()
+
+                # Names are intentional, they match internal NeMo LoRA targets
+                self.linear_proj = nn.Linear(32, 256)
+                self.linear_fc1 = nn.Linear(256, 256)
+                self.linear_fc2 = nn.Linear(256, 32)
+
+            def forward(self, x):
+                y = self.linear_proj(x)
+                y = self.linear_fc1(y)
+                return self.linear_fc2(y)
+
+        with torch.device(self.device):
+            model = NeMoLinear().to(self.tdtype)
+            model = self.lora_cls(model)
+
+        return model
+
+
 # TODO Add descriptions to the executors when listed, and list them alphabetically
 # TODO Allow querying benchmark for details
 # TODO Allow specifying benchmark arguments

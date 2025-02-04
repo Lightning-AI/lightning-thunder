@@ -29,6 +29,8 @@ from thunder.benchmarks import (
     ResNet50Benchmark,
     TorchbenchBenchmark,
     HFBenchmark,
+    HFLinearPEFTBenchmark,
+    NeMoLinearPEFTBenchmark,
     thunder_apex_executor,
     thunder_apex_nvfuser_executor,
     thunder_cudnn_executor,
@@ -896,3 +898,57 @@ def test_hf_transformers(
         return_fn = fn
 
     benchmark_for_compute_type(compute_type, benchmark, return_fn, args, kwargs)
+
+
+@pytest.mark.parametrize(
+    "executor,",
+    [
+        thunderfx_executor,
+        torch_compile_executor,
+        torch_executor,
+    ],
+    ids=["thunderfx", "inductor", "eager"],
+)
+@parametrize_compute_type
+def test_hf_lora_linear(benchmark, executor, compute_type):
+    if not importlib.util.find_spec("transformers"):
+            pytest.skip("HF transformers not available.")
+    if not importlib.util.find_spec("peft"):
+            pytest.skip("HF peft not available.")
+
+    b = HFLinearPEFTBenchmark(
+        device="cuda",
+        dtype=torch.bfloat16,
+        requires_grad=is_requires_grad(compute_type),
+    )
+
+    args, kwargs = b.make_batch()
+    fn = executor(b.fn())
+
+    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
+
+
+@pytest.mark.parametrize(
+    "executor,",
+    [
+        thunderfx_executor,
+        torch_compile_executor,
+        torch_executor,
+    ],
+    ids=["thunderfx", "inductor", "eager"],
+)
+@parametrize_compute_type
+def test_nemo_lora_linear(benchmark, executor, compute_type):
+    if not importlib.util.find_spec("nemo.collections.llm"):
+            pytest.skip("NeMo not available.")
+
+    b = NeMoLinearPEFTBenchmark(
+        device="cuda",
+        dtype=torch.bfloat16,
+        requires_grad=is_requires_grad(compute_type),
+    )
+
+    args, kwargs = b.make_batch()
+    fn = executor(b.fn())
+
+    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
