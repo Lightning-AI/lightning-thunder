@@ -1452,6 +1452,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
             distparallel_type,
             thunder_fsdp_padding_size,
         )
+        self._stride = None
 
     # NOTE The following properties DO NOT depend on the language context or record
     #   themselves into the trace, so they can be used when working with tensor proxies
@@ -1464,6 +1465,11 @@ class TensorProxy(Proxy, TensorProxyInterface):
             from thunder.core.prims import shape
 
             return shape(self)
+
+    def stride(self) -> list[int]:
+        if self._stride is None:
+            return []
+        return self._stride
 
     @property
     def ndim(self):
