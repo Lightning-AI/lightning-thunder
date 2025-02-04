@@ -5,6 +5,7 @@ import thunder.core.trace
 import thunder.executors.torch_compile
 import torch
 from thunder.dev_utils.utils import _benchmark_fusion_region_with_nvfuser_and_torch_compile
+from typing import Any, Iterable, Sequence
 
 def arg_like_tensor_integer(arg: torch.Tensor, f: typing.TextIO):
   """Creates a new argument like the given tensor, which must be an integer
@@ -170,6 +171,80 @@ def _standalone(f: typing.TextIO, fusion: typing.Any):
     print("from nvfuser import DataType, FusionDefinition\n", file=f)
     print(fusion.last_used, file=f)
 
+def _simplify_stride_order(sym: thunder.core.baseutils.BoundSymbolInterface) -> None:
+  """
+  The thunder stride_order primitive is not directly translatable to torch. This tries to rewrite
+  the primitive when it appears as a subsymbol to something that *is* representable as torch
+  functions.
+  """
+  def _compute_strides(shp: Sequence[int], order: Sequence[int]) -> list[int]:
+    ordered_dims = sorted(zip(shp, order), key=lambda x: x[1])
+    ordered_strides = [1]
+    accum = ordered_dims[0][0]
+    for dim_length, _ in ordered_dims[1:]:
+        ordered_strides.append(accum)
+        accum *= dim_length
+
+    strides = tuple(ordered_strides[x] for x in order)
+    return strides
+
+  def _stride_order_printer(
+    bsym: thunder.core.baseutils.BoundSymbolInterface,
+    out_printables: Any,
+    arg_printables: Sequence[Any],
+    kwarg_printables: dict[str, Any]
+  ) -> str | Iterable[str]:
+    if arg_printables:
+      arg_printables = list(arg_printables)
+      assert isinstance(bsym.args[1], (list, tuple, Sequence))
+      strides = _compute_strides(bsym.args[0].shape, bsym.args[1])
+      arg_printables = (
+        bsym.args[0],
+        bsym.args[0].shape,
+        strides
+      )
+    arg_str = (
+        ""
+        if (arg_printables is None or len(arg_printables) == 0)
+        else ", ".join(thunder.core.codeutils.prettyprint(x) for x in arg_printables)
+    )
+    kwarg_str: str
+
+    if len(kwarg_printables) == 0:
+        kwarg_str = ""
+    else:
+        kwarg_str = ", ".join(f"{k}={thunder.core.codeutils.prettyprint(v)}" for k, v in kwarg_printables.items())
+
+    result_str: str
+    if bsym.output is None or (thunder.core.baseutils.is_collection(bsym.output) and len(bsym.output) == 0):
+        result_str = ""
+    else:
+        result_str = f"{thunder.core.codeutils.prettyprint(out_printables, literals_as_underscores=True)} = "
+
+    # Creates a comment describing the output
+    comment_str = ""
+    if isinstance(bsym.output, thunder.core.proxies.Proxy):
+        comment_str = f"  # {thunder.core.codeutils.prettyprint(out_printables, with_type=True)}"
+
+    s = f"{result_str}{torch.as_strided}({arg_str}{', ' if (len(arg_str) > 0 and len(kwarg_str) > 0) else ''}{kwarg_str}){comment_str}"
+
+    if bsym.header:
+        header_lines = (
+            bsym.header
+            if isinstance(bsym.header, Sequence) and not isinstance(bsym.header, str)
+            else bsym.header.splitlines()
+        )
+        header_lines = (f"# {line}" for line in header_lines)
+        return chain(header_lines, [s])
+
+    return s
+
+  for s in sym.subsymbols:
+    print(f"{s.sym.name=}", flush=True)
+    if s.sym.name == "torch_stride_order_prim_impl" or s.sym == thunder.core.prims.stride_order:
+      import dataclasses
+      s.sym = dataclasses.replace(s.sym, python_printer=_stride_order_printer)
+
 def _tc_standalone(f: typing.TextIO, sym: thunder.core.baseutils.BoundSymbolInterface) -> None:
   """
   Generates a torch.compile program for the given symbol.
@@ -201,6 +276,12 @@ def _tc_standalone(f: typing.TextIO, sym: thunder.core.baseutils.BoundSymbolInte
 #arg: <class 'thunder.core.proxies.TensorProxy'>, a=<TensorProxy(name="t_transformer_h_2_ln_1_weight", dtype=thunder.dtypes.float32, shape=(768,))>
 #arg: <class 'thunder.core.proxies.TensorProxy'>, a=<TensorProxy(name="t_transformer_h_2_ln_1_bias", dtype=thunder.dtypes.float32, shape=(768,))>
 
+def _release_nvfuser_memory(bsym: thunder.core.symbol.BoundSymbol) -> None:
+  nvfusion = bsym._call_ctx[bsym.sym.name]
+  del nvfusion.last_inputs
+  nvfusion.last_inputs = None
+  del nvfusion.last_used
+
 
 def _worse_than_tc(directory: str, prefix: str, trace: thunder.core.trace.TraceCtx) -> None:
   """
@@ -213,6 +294,7 @@ def _worse_than_tc(directory: str, prefix: str, trace: thunder.core.trace.TraceC
       except torch._dynamo.exc.Unsupported:
         # i.e. dynamo failed, in which case we cannot compare.
         continue
+      _simplify_stride_order(bsym)
       filename: str | None = None
       if data.torch_compile_kernel_time <= data.nvfuser_kernel_time and \
          data.torch_compile_walltime.median <= data.nvfuser_walltime.median:
@@ -230,6 +312,8 @@ def _worse_than_tc(directory: str, prefix: str, trace: thunder.core.trace.TraceC
         print(f"writing {filename}")
         _standalone(f, nvf_callable)
         _tc_standalone(f, bsym)
+      # To save memory, let the inputs die.
+      _release_nvfuser_memory(bsym)
 
 
 def _fusions_from(DIR_NAME: str, prefix: str, ctx: dict) -> None:
