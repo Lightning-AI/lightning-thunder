@@ -362,6 +362,56 @@ class DesugarTensorSubclass:
                 bsyms.extend(self.computation_trace.pop_scope())
         return bsyms, fxnode_output_name_to_tensor_proxy
 
+    def _postprocess_subclass_from_torch_op(
+        self,
+        orig_output: SubclassTensorProxy,
+        node_of_output: Node,
+        arg_name_to_index: dict[str, int],
+        unwrapped_bsym_args: dict[int, ProxyInterface],
+        fxnode_output_name_to_tensor_proxy: dict[str, OpOverload],
+    ) -> tuple[BoundSymbol, SubclassTensorProxy]:
+        # note(crcrpar): args[0] would be list of tensors, and args[1] could be list of non-tensors.
+        args: list[Node] = node_of_output.args[0]
+        new_tensor_proxies = []
+        new_non_tensor_values = []
+        for a in args:
+            value = a
+            if isinstance(a, Node):
+                if isinstance(a.target, str):
+                    value = unwrapped_bsym_args[arg_name_to_index[a.target]]
+                else:
+                    value = fxnode_output_name_to_tensor_proxy[str(a)]
+            if isinstance(value, TensorProxy):
+                new_tensor_proxies.append(value)
+            elif isinstance(value, (immutable_dict, immutable_list)):
+                if isinstance(value, immutable_dict):
+                    new_non_tensor_values.append(dict(value))
+                else:
+                    new_non_tensor_values.append(list(value))
+            else:
+                new_non_tensor_values.append(value)
+        utils.check(
+            len(orig_output._tensors) == len(new_tensor_proxies),
+            lambda: (
+                f"The number of new tensor proxies for {orig_output=} does not match: "
+                f"{len(new_tensor_proxies)=} != {len(orig_output._tensors)=}"
+            ),
+        )
+        with tracectx(self.computation_trace):
+            new_subclass = orig_output.replace()
+        new_subclass._tensors = new_tensor_proxies
+        for name, value in zip(new_subclass._tensor_attr_names, new_tensor_proxies):
+            setattr(new_subclass, name, value)
+        return (
+            prims.unflatten_tensor_subclass.bind(
+                new_subclass._subclass_type,
+                dict(zip(new_subclass._tensor_attr_names, new_tensor_proxies)),
+                dict(zip(new_subclass._non_tensor_attr_names, new_subclass._non_tensors)),
+                output=new_subclass,
+            ),
+            new_subclass,
+        )
+
     def translate_fx_graph_into_bsym(
         self,
         bsym: BoundSymbol,
@@ -415,56 +465,22 @@ class DesugarTensorSubclass:
         if is_subclass_ctor_bsym := bsym.sym.id == prims.PrimIDs.TENSOR_SUBCLASS_CTOR:
             utils.check_type(orig_output, SubclassTensorProxy)
         if isinstance(orig_output, SubclassTensorProxy):
-            # note(crcrpar): args[0] would be list of tensors, and args[1] could be list of non-tensors.
-            args: list[Node] = node_of_output.args[0]
-            new_tensor_proxies = []
-            new_non_tensor_values = []
-            for a in args:
-                value = a
-                if isinstance(a, Node):
-                    if isinstance(a.target, str):
-                        value = unwrapped_bsym_args[arg_name_to_index[a.target]]
-                    else:
-                        value = fxnode_output_name_to_tensor_proxy[str(a)]
-                if isinstance(value, TensorProxy):
-                    new_tensor_proxies.append(value)
-                elif isinstance(value, (immutable_dict, immutable_list)):
-                    if isinstance(value, immutable_dict):
-                        new_non_tensor_values.append(dict(value))
-                    else:
-                        new_non_tensor_values.append(list(value))
-                else:
-                    new_non_tensor_values.append(value)
-            utils.check(
-                len(orig_output._tensors) == len(new_tensor_proxies),
-                lambda: (
-                    f"The number of new tensor proxies for {orig_output=} does not match: "
-                    f"{len(new_tensor_proxies)=} != {len(orig_output._tensors)=}"
-                ),
+            unflatten_bsym, new_subclass_proxy = self._postprocess_subclass_from_torch_op(
+                orig_output,
+                node_of_output,
+                arg_name_to_index,
+                unwrapped_bsym_args,
+                fxnode_output_name_to_tensor_proxy,
             )
-            with tracectx(self.computation_trace):
-                new_subclass = orig_output.replace()
-            new_subclass._tensors = new_tensor_proxies
-            for name, value in zip(new_subclass._tensor_attr_names, new_tensor_proxies):
-                setattr(new_subclass, name, value)
-            bsyms.append(
-                prims.unflatten_tensor_subclass.bind(
-                    new_subclass._subclass_type,
-                    dict(zip(new_subclass._tensor_attr_names, new_tensor_proxies)),
-                    dict(zip(new_subclass._non_tensor_attr_names, new_subclass._non_tensors)),
-                    output=new_subclass,
-                )
-            )
-
-            self.swap_map[variableify(orig_output)] = new_subclass
-            self.subclass_proxy_to_flatten.add(variableify(new_subclass))
+            bsyms.append(unflatten_bsym)
+            self.swap_map[variableify(orig_output)] = new_subclass_proxy
+            self.subclass_proxy_to_flatten.add(variableify(new_subclass_proxy))
 
         else:
             non_none_args = [n for n in node_of_output.args[0] if n is not None]
             utils.check(len(non_none_args) == 1, lambda: f"{node_of_output.args = }")
             new_out_node = non_none_args[0]
             self.swap_map[variableify(orig_output)] = fxnode_output_name_to_tensor_proxy[str(new_out_node)]
-
         args = ", ".join([t.name if isinstance(t, ProxyInterface) else f"{t}" for t in bsym.flat_args])
         header = f"{bsym.sym.id}({args})"
         for i, sbsym in enumerate(bsyms, 1):
