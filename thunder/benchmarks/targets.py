@@ -4,6 +4,7 @@ import os
 from collections.abc import Callable
 from enum import auto, Enum
 from collections.abc import Sequence
+from contextlib import nullcontext
 
 import pytest
 import torch
@@ -84,8 +85,9 @@ parametrize_compute_type_only_training = pytest.mark.parametrize(
 )
 
 
-def benchmark_for_compute_type(compute_type: ComputeType, benchmark, fn: Callable, args, kwargs):
-    with record_peak_allocated_memory(benchmark):
+def benchmark_for_compute_type(compute_type: ComputeType, benchmark, fn: Callable, args, kwargs, has_cuda: bool = True):
+    context = record_peak_allocated_memory(benchmark) if has_cuda else nullcontext()
+    with context:
         match compute_type:
             case ComputeType.INFERENCE | ComputeType.TRAINING_FORWARD:
                 benchmark(fn, *args, **kwargs)

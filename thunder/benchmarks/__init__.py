@@ -318,7 +318,7 @@ def wait_for_cuda_computation() -> None:
 
 # Prints nanoseconds as microseconds, rounded
 def ns_to_us(ns: Number) -> str:
-    us = "\u03BCs"
+    us = "\u03bcs"
     return f"{round(ns / 1000):.2e}{us}"
 
 
