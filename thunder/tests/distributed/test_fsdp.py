@@ -41,8 +41,8 @@ if TE_AVAILABLE:
         check_fp8_support,
         FP8GlobalStateManager,
         get_default_fp8_recipe,
-        BlockScaling,
     )
+    from transformer_engine.common.recipe import MXFP8BlockScaling
     import transformer_engine
 
     is_fp8_supported, fp8_support_reason = check_fp8_support()
@@ -791,7 +791,7 @@ def _test_fsdp_transformer_engine(input_data):
         # Compare the state of the two models.
         comparison_exceptions = []
         if not isinstance(
-            get_default_fp8_recipe(), BlockScaling
+            get_default_fp8_recipe(), MXFP8BlockScaling
         ):  # BlockScaling recipe doesn't have state like scale, amax_history.
             for bound_symbol in fwd_traces[-1].bound_symbols:
                 if "te_linear" in bound_symbol.sym.name:
