@@ -83,7 +83,10 @@ def arg_like_tensor_proxy_fp(f: typing.TextIO, arg: thunder.core.proxies.TensorP
   meta = f"{meta} layout=torch.strided,"
   meta = f"{meta} device=\"{_torch_device(arg.device)}\","
   meta = f"{meta} requires_grad={arg.requires_grad}"
-  print(f"  torch.randn({meta}),", file=f)
+  sz = arg.shape
+  strd = arg.stride()
+  print(f"  torch.randn({meta}).as_strided({sz}, {strd}),", file=f)
+
 
 def arg_like_tensor_proxy_integer(f: typing.TextIO, arg: thunder.core.proxies.TensorProxy) -> None:
   itypes = (
