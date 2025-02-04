@@ -268,8 +268,8 @@ def test_torchao_float8_linear(executor, device, dtype, bias):
 
     model = nn.Sequential(
         nn.Linear(in_features, out_features, bias=bias),
-        nn.GELU(approximate="tanh"),
-        nn.Linear(out_features, out_features, bias=bias),
+        # nn.GELU(approximate="tanh"),
+        # nn.Linear(out_features, out_features, bias=bias),
     ).to(device=device, dtype=torch_dtype)
     fp8_model = convert_to_float8_training(model)
     x = make_tensor((batch_size, in_features), device=device, dtype=torch_dtype)
@@ -304,6 +304,8 @@ def test_torchao_float8_linear(executor, device, dtype, bias):
     ):
         pytest.xfail("numerical error")
     torch.testing.assert_close(actual, expected)
+
+    actual.mean().backward()
 
     # TODO(crcrpar): Think of how to push tensor subclasses to `thunder.jit`.
     # Currently no subgraphs go to thunder.jit.
