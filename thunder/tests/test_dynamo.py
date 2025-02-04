@@ -1151,3 +1151,34 @@ def test_leak_on_unsupported_thunder_operator():
 
     t_weak_ref = call_thunderfx_on_leaking_fn()
     assert t_weak_ref() is None
+
+
+@requiresCUDA
+@pytest.mark.parametrize("use_benchmark", (True, False), ids=("benchmark", "repro"))
+def test_thunderreports(use_benchmark, tmp_path):
+    from thunder.dynamo.report import fx_report, analyze_with_thunder
+
+    x = torch.ones(2, 2, device="cuda", requires_grad=True)
+
+    def foo(x):
+        # torch.sinc has automatic fallback registered,
+        # so that operation will be given to inductor.
+        x = x.exp()
+        y = torch.sinc(x) + torch.cos(x)
+        y = y + torch.sinc(x)
+        return y + 1
+
+    results = fx_report(foo, x, compile_options={"dynamic": True})
+    for idx, r in enumerate(results.fx_graph_reports):
+        res = analyze_with_thunder(r)
+        res.write_eager_repro(tmp_path, use_benchmark=use_benchmark)
+        res.write_thunder_repro(tmp_path, use_benchmark=use_benchmark)
+        res.write_inductor_repro(tmp_path, use_benchmark=use_benchmark)
+        for seg in res.subgraph_reports:
+            seg.write_eager_repro(tmp_path / str(idx), use_benchmark=use_benchmark)
+            seg.write_thunder_repro(tmp_path / str(idx), use_benchmark=use_benchmark)
+            seg.write_inductor_repro(tmp_path / str(idx), use_benchmark=use_benchmark)
+        for nvf in res.fusion_reports:
+            nvf.write_nvfuser_repro(
+                tmp_path / "nvfusion",
+            )
