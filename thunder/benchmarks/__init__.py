@@ -3097,7 +3097,7 @@ class HFLinearPEFTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         self.requires_grad: bool = requires_grad
         self.config = PretrainedConfig(model_type="llm")
         # > 2 dimensions to test the reshape
-        self.shape = (1, 4096, 32)
+        self.shape = (1, 4096, 3584)
 
         from peft import LoraConfig, TaskType
 
@@ -3129,9 +3129,9 @@ class HFLinearPEFTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
                 self.config = config
 
-                self.linear_proj = nn.Linear(32, 256)
+                self.linear_proj = nn.Linear(3584, 256)
                 self.linear_fc1 = nn.Linear(256, 256)
-                self.linear_fc2 = nn.Linear(256, 32)
+                self.linear_fc2 = nn.Linear(256, 3584)
 
             def forward(self, input_ids, **kwargs):
                 y = self.linear_proj(input_ids)
@@ -3171,7 +3171,7 @@ class NeMoLinearPEFTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         self.lora_cls._is_fsdp_v1 = False
 
         # > 2 dimensions to test the reshape
-        self.shape = (1, 4096, 32)
+        self.shape = (1, 4096, 3584)
 
     def make_batch(self) -> tuple[list, dict]:
         make = partial(
@@ -3193,9 +3193,9 @@ class NeMoLinearPEFTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
                 super().__init__()
 
                 # Names are intentional, they match internal NeMo LoRA targets
-                self.linear_proj = nn.Linear(32, 256)
+                self.linear_proj = nn.Linear(3584, 256)
                 self.linear_fc1 = nn.Linear(256, 256)
-                self.linear_fc2 = nn.Linear(256, 32)
+                self.linear_fc2 = nn.Linear(256, 3584)
 
             def forward(self, x):
                 y = self.linear_proj(x)
