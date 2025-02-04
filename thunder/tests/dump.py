@@ -260,6 +260,7 @@ def _tc_standalone(f: typing.TextIO, sym: thunder.core.baseutils.BoundSymbolInte
   # We use some torch_reshaps_prims_impl indirection that is no longer valid PyTorch code. Rewrite
   # it to fix things.
   pgm = pgm.replace("torch_prims_reshape_impl", "torch.reshape")
+  pgm = pgm.replace(" = Tensor.to", " = torch.Tensor.to")
   print(pgm, file=f, end="\n\n")
 
   print("inputs = [", file=f)
