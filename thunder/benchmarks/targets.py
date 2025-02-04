@@ -914,9 +914,9 @@ def test_hf_transformers(
 @parametrize_compute_type
 def test_hf_lora_linear(benchmark, executor, compute_type):
     if not importlib.util.find_spec("transformers"):
-            pytest.skip("HF transformers not available.")
+        pytest.skip("HF transformers not available.")
     if not importlib.util.find_spec("peft"):
-            pytest.skip("HF peft not available.")
+        pytest.skip("HF peft not available.")
 
     b = HFLinearPEFTBenchmark(
         device="cuda",
@@ -942,7 +942,7 @@ def test_hf_lora_linear(benchmark, executor, compute_type):
 @parametrize_compute_type
 def test_nemo_lora_linear(benchmark, executor, compute_type):
     if not importlib.util.find_spec("nemo.collections.llm"):
-            pytest.skip("NeMo not available.")
+        pytest.skip("NeMo not available.")
 
     b = NeMoLinearPEFTBenchmark(
         device="cuda",
