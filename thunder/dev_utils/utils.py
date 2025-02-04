@@ -80,7 +80,21 @@ def _benchmark_fusion_region_with_nvfuser_and_torch_compile(bsym: BoundSymbol) -
     import triton  # Import triton here as it may not be available in CPU only setting.
 
     nvfuser_callable = bsym._call_ctx[bsym.sym.name]
-    inputs = nvfuser_callable.last_inputs
+    # Parameters and tensors somehow can end up on the CPU, which nvFuser does
+    # not support. So force-move everything to GPU to get things working.
+    inputs: list = list(nvfuser_callable.last_inputs)
+    for idx, _ in enumerate(inputs):
+        import torch
+        if isinstance(inputs[idx], (torch.Tensor, torch.nn.parameter.Parameter)):
+            inputs[idx] = inputs[idx].to("cuda")
+    nvfuser_callable.last_inputs = inputs
+    for inp in inputs: # debugging prints
+        import torch
+        print(f"input type: {type(inp)}", end="")
+        if isinstance(inp, (torch.Tensor, torch.nn.parameter.Parameter)):
+          print(f"\t{inp.shape} {inp.dtype} {inp.device}", end="")
+        print("") # nl
+
     if nvfuser_callable.last_used is None:
         raise RuntimeError(
             "Fusion definition needs to be executed to record the inputs. You must execute the fusion first before you can query the repro."
