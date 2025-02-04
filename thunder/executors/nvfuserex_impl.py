@@ -458,6 +458,7 @@ class FusionDefinitionWrapper:
     store_inputs: bool = False
     enable_options: None | list[str] = None
     disable_options: None | list[str] = None
+    inputs: list[Proxy] = None
 
     def __call__(self, *args):
         fd = self.get_fd(self.to_descriptors(args))
@@ -465,6 +466,9 @@ class FusionDefinitionWrapper:
 
         if self.store_inputs:
             self.last_inputs = args
+            for i in range(len(args)):
+                if isinstance(args[i], torch.Tensor):
+                    self.inputs[i]._stride = args[i].stride()
 
         kwargs = {}
         # Set device if set in one of the "factory" methods like full, iota, or uniform
@@ -602,6 +606,7 @@ def create_fusion_definition_wrapper(
         store_inputs=store_inputs,
         enable_options=enable_options,
         disable_options=disable_options,
+        inputs=sorted_unique_inputs,
     )
     return fdw
 
