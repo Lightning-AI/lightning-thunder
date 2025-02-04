@@ -1256,3 +1256,30 @@ def test_embedding(
 
         assert len(fwd_fusion) == 1
         torch.testing.assert_close(out, expected_out)
+
+
+@instantiate(
+    executors=(nvFuserExecutor,),
+    dtypes=NOTHING,
+)
+def test_slice_dynamic_extent(executor, device: str, dtype: dtypes.dtype):
+    def foo(b):
+        # TODO: 'device=device' doesn't work for "symbolic values" cache policy
+        # See issue: https://github.com/Lightning-AI/lightning-thunder/issues/1710
+        a = torch.arange(24, device="cuda").reshape(3, 8)
+        return a[..., :b]
+
+    jfoo = thunder.jit(foo, cache="symbolic values")
+
+    actual = jfoo(5)
+    expected = foo(5)
+    torch.testing.assert_close(actual, expected)
+
+    fw_trace = thunder.last_traces(jfoo)[-1]
+    fusion_bsyms = tuple(filter(lambda a: a.sym.is_fusion, fw_trace.bound_symbols))
+
+    # There are two nvfuser fusion groups separated by the matmul operation.
+    assert len(fusion_bsyms) == 1
+
+    outside_fusion_syms = ["unpack_trivial", "python_return"]
+    assert {el.sym.name for el in fw_trace.bound_symbols if not el.sym.is_fusion} == set(outside_fusion_syms)
