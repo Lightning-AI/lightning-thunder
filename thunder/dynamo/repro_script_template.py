@@ -39,8 +39,8 @@ def test_{graph_name}():
     model = DynamoModule()
     from thunder.dynamo.report import run_repro
 
-    executor={executor_str}
-    if executor == None:
+    executor = {executor_str}
+    if executor is None:
         compiled_model = model
     else:
         compiled_model = executor(model)
@@ -105,7 +105,7 @@ def test_{graph_name}(benchmark, executor, compute_type):
 {inputs}
 
     model = DynamoModule()
-    if executor == None:
+    if executor is None:
         compiled_model = model
     elif executor == torch_inductor:
         compiled_model = executor(model, inputs)
