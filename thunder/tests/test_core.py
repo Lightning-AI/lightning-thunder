@@ -3217,6 +3217,6 @@ def test_tensor_proxy_init_requires_grad():
         at_tensor = torch.tensor([1, 2, 3], dtype=torch.float32, requires_grad=requires_grad)
         trace = TraceCtx()
         with tracectx(trace):
-            t = tensorproxy(at_tensor, name='t')
+            t = tensorproxy(at_tensor, name="t")
             p = TensorProxy(like=t)
             assert p.requires_grad == t.requires_grad
