@@ -6,6 +6,7 @@ import warnings
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
+from looseversion import LooseVersion
 
 import torch
 import functools
@@ -32,6 +33,13 @@ torchao_available = package_available("torchao")
 
 if transformer_engine_available:
     import transformer_engine.pytorch as te
+
+try:
+    from torch.nn.attention import SDPBackend, sdpa_kernel
+
+    sdpa_available = True
+except ImportError:
+    sdpa_available = False
 
 if torchao_available:
     from torchao.float8.config import CastConfig, Float8LinearConfig, ScalingType
@@ -243,6 +251,7 @@ class Benchmark_litGPT:
         use_torchao_fp8_allgather: bool = False,
         use_torchao_fp8_precompute_scale_for_fsdp: bool = False,
         fp8_shard_intermediate_activation: bool = False,
+        use_sdpa: bool = False,
     ):
         seed = 1337
         torch.manual_seed(seed)
@@ -277,6 +286,14 @@ class Benchmark_litGPT:
         self.dump_thunder_traces = dump_thunder_traces
         self.dump_memory_snapshot = dump_memory_snapshot
         self.fp8_shard_intermediate_activation = fp8_shard_intermediate_activation
+
+        self.use_sdpa = use_sdpa
+
+        if self.use_sdpa and sdpa_available and self.compile not in ["eager", "inductor"]:
+            warnings.warn(
+                "SDPA is enabled but the model is not compiled with eager or inductor. SDPA priority setting will be skipped."
+            )
+            self.use_sdpa = False
 
         if use_torchao_fp8_linear:
 
@@ -803,9 +820,24 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
     Runs a training benchmark for lit-GPT models and
     prints out the performance metrics.
     """
-
     benchmark = Benchmark_litGPT(**kwargs)
-    benchmark.train()
+
+    attention_ctx = nullcontext()
+    if sdpa_available and benchmark.use_sdpa:
+        backends = [
+            SDPBackend.CUDNN_ATTENTION,
+            SDPBackend.FLASH_ATTENTION,
+            SDPBackend.EFFICIENT_ATTENTION,
+            SDPBackend.MATH,
+        ]
+        kwargs = {}
+        if LooseVersion(torch.__version__) >= LooseVersion("2.6.0"):
+            kwargs["set_priority"] = True
+
+        attention_ctx = sdpa_kernel(backends, **kwargs)
+
+    with attention_ctx:
+        benchmark.train()
 
     if global_rank in [0, None]:
         benchmark.add_perf_metrics()
