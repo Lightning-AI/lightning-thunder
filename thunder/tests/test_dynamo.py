@@ -1171,13 +1171,15 @@ def test_thunderreports(tmp_path):
         thunder_fx_graph_report = analyze_with_thunder(fx_graph_report)
         thunder_fx_graph_report.write_thunder_repro(tmp_path)
         for thunder_segment_report in thunder_fx_graph_report.subgraph_reports:
-            thunder_segment_report.write_eager_repro(tmp_path / str(idx))
-            thunder_segment_report.write_thunder_repro(tmp_path / str(idx))
-            thunder_segment_report.write_inductor_repro(tmp_path / str(idx))
-        for nvf in thunder_fx_graph_report.fusion_reports:
-            nvf.write_nvfuser_repro(tmp_path / "nvfusion")
-            nvf.run_inductor_repro()
-            nvf.run_benchmark()
+            seg_folder = tmp_path / str(idx)
+            thunder_segment_report.write_eager_repro(seg_folder)
+            thunder_segment_report.write_thunder_repro(seg_folder)
+            thunder_segment_report.write_inductor_repro(seg_folder)
+            thunder_segment_report.create_fusion_reports()
+            for nvf in thunder_segment_report.fusion_reports:
+                nvf.write_nvfuser_repro(seg_folder / "nvfusion")
+                nvf.run_inductor_repro()
+                nvf.run_benchmark()
 
     def check(file_name, cmd):
         cmd = cmd + [file_name]
@@ -1186,7 +1188,7 @@ def test_thunderreports(tmp_path):
 
     cmd = [sys.executable]
     py_files = list(tmp_path.rglob("*.py"))
-    assert len(py_files) == 10
+    assert len(py_files) == 12
 
     for file in py_files:
         check(file, cmd)
