@@ -2914,7 +2914,7 @@ class DeepSeekSGLangMoEBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     ) -> torch.Tensor:
         assert not use_fp8_w8a8, "Not supported"
 
-        topk_weights, topk_ids = MoEBenchmark.fused_topk_native(
+        topk_weights, topk_ids = DeepSeekSGLangMoEBenchmark.fused_topk_native(
             hidden_states=x,
             gating_output=input_gating,
             topk=topk,
@@ -2975,7 +2975,7 @@ class DeepSeekSGLangMoEBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return (x, w1, w2, input_gating, self.topk, self.use_fp8, w1_scale, w2_scale, a1_scale, a2_scale), {}
 
     def fn(self) -> Callable:
-        return MoEBenchmark.fused_moe_def
+        return DeepSeekSGLangMoEBenchmark.fused_moe_def
 
 
 class BatchNormBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):

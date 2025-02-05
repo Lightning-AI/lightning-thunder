@@ -749,7 +749,9 @@ moe_executors_ids = (
     ids=("inference",),
 )
 def test_deepseek_sglang_moe(benchmark, executor: Callable, compute_type: ComputeType):
-    bench: Benchmark = DeepSeekSGLangMoEBenchmark(model="deepseek-ai/DeepSeek-R1", tp_size=8, batch_size=55)
+    bench: Benchmark = DeepSeekSGLangMoEBenchmark(
+        model="deepseek-ai/DeepSeek-R1", tp_size=8, batch_size=55, use_fp8=False
+    )
 
     args, kwargs = bench.make_batch()
     fn = executor(bench.fn())
