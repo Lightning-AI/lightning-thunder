@@ -177,7 +177,7 @@ def device_supports_fp8() -> bool:
     else:
         cuda_version = LooseVersion(cuda_version)
     cuda_major, cuda_minor = torch.cuda.get_device_capability()
-    return (cuda_version >= LooseVersion("12.01") and (cuda_major, cuda_minor) >= (8, 9)) or (cuda_version >= LooseVersion("11.8") and cuda_major >= 9)
+    return (cuda_version >= LooseVersion("12.1") and (cuda_major, cuda_minor) >= (8, 9)) or (cuda_version >= LooseVersion("11.8") and cuda_major >= 9)
 
 
 def is_supported_dtype(dtype: type | dtypes.dtype, *, allow_low_precision_floats: bool = True) -> bool:
