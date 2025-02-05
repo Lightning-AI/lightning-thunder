@@ -768,7 +768,7 @@ def test_convert_element_type_with_float(executor, device, _):
     # object has no attribute 'dtype'"
     from thunder.core.transforms import value_and_grad
 
-    a = make_tensor([5], dtype=torch.float32, device=device, requires_grad=True)
+    a = make_tensor([5], dtype=torch.float32, device=device)
 
     @value_and_grad
     def fn(t0):
@@ -935,8 +935,8 @@ def test_make_aug_forward_and_backward(executor, device, _):
     def fun_bw(a, b, g):
         return {"a": g * b, "b": g * a}
 
-    x = torch.tensor(2.0, device=device, requires_grad=True)
-    y = torch.tensor(3.0, device=device, requires_grad=True)
+    x = torch.tensor(2.0, device=device)
+    y = torch.tensor(3.0, device=device)
     v = torch.tensor(1.5, device=device)
 
     trace = thunder.trace()(fun, x, y)
