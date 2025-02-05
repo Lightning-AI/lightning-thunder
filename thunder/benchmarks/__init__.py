@@ -11,7 +11,6 @@ from functools import partial
 from numbers import Number
 from typing import Any
 from contextlib import contextmanager
-from transformers import AutoConfig
 
 import torch
 import torch.multiprocessing as mp
@@ -2878,7 +2877,9 @@ class GPTBlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return model
 
 
-class MoEBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+class DeepSeekSGLangMoEBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    # Taken from
+    # https://github.com/sgl-project/sglang/blob/de5533341ee3c1b7667b1eb1f209b6825335d136/python/sglang/srt/layers/moe/topk.py#L23
     @staticmethod
     def fused_topk_native(
         hidden_states: torch.Tensor,
@@ -2896,6 +2897,8 @@ class MoEBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
             topk_weights = topk_weights / topk_weights.sum(dim=-1, keepdim=True)
         return topk_weights, topk_ids
 
+    # Adapted from
+    # https://github.com/sgl-project/sglang/blob/04d8cd20883937a2b9cb1e23b192b534a64170cc/python/sglang/srt/layers/moe/fused_moe_native.py#L15
     @staticmethod
     def fused_moe_def(
         x,
@@ -2928,13 +2931,17 @@ class MoEBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     def __init__(
         self,
+        *,
+        model: str,
         tp_size: int,
-        batch_size: int = 128,
-        use_fp8: bool = False,
+        batch_size: int,
+        use_fp8: bool,
     ) -> None:
         super().__init__()
 
-        config = AutoConfig.from_pretrained("deepseek-ai/DeepSeek-R1", trust_remote_code=True)
+        from transformers import AutoConfig
+
+        config = AutoConfig.from_pretrained(model, trust_remote_code=True)
         self.num_experts = config.n_routed_experts
         self.topk = config.num_experts_per_tok
         self.hidden_size = config.hidden_size
