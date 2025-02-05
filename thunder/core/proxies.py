@@ -1212,7 +1212,7 @@ def _infer_tensor_properties(
     _shape = None
     _device = None
     _dtype = None
-    _requires_grad: None | bool = None
+    _requires_grad: bool = False
     _grad = None
     _dist_parallel_type = DistParallelType.NONE
     _thunder_fsdp_padding_size = None
