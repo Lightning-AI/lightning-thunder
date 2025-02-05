@@ -1153,8 +1153,7 @@ def test_leak_on_unsupported_thunder_operator():
 
 
 @requiresCUDA
-@pytest.mark.parametrize("use_benchmark", (True, False), ids=("benchmark", "repro"))
-def test_thunderreports(use_benchmark, tmp_path):
+def test_thunderreports(tmp_path):
     from thunder.dynamo.report import fx_report, analyze_with_thunder
 
     x = torch.ones(2, 2, device="cuda", requires_grad=True)
@@ -1170,19 +1169,17 @@ def test_thunderreports(use_benchmark, tmp_path):
     results = fx_report(foo, x)
     for idx, fx_graph_report in enumerate(results.fx_graph_reports):
         thunder_fx_graph_report = analyze_with_thunder(fx_graph_report)
-        thunder_fx_graph_report.write_thunder_repro(tmp_path, use_benchmark=use_benchmark)
+        thunder_fx_graph_report.write_thunder_repro(tmp_path)
         for thunder_segment_report in thunder_fx_graph_report.subgraph_reports:
-            thunder_segment_report.write_eager_repro(tmp_path / str(idx), use_benchmark=use_benchmark)
-            thunder_segment_report.write_thunder_repro(tmp_path / str(idx), use_benchmark=use_benchmark)
-            thunder_segment_report.write_inductor_repro(tmp_path / str(idx), use_benchmark=use_benchmark)
+            thunder_segment_report.write_eager_repro(tmp_path / str(idx))
+            thunder_segment_report.write_thunder_repro(tmp_path / str(idx))
+            thunder_segment_report.write_inductor_repro(tmp_path / str(idx))
         for nvf in thunder_fx_graph_report.fusion_reports:
             nvf.write_nvfuser_repro(tmp_path / "nvfusion")
             nvf.run_inductor_repro()
             nvf.run_benchmark()
 
     def check(file_name, cmd):
-        if use_benchmark and "nvfusion" not in str(file_name):
-            cmd = cmd + ["-m", "pytest"]
         cmd = cmd + [file_name]
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         assert result.returncode == 0, f"Script {file_name} failed: {result}"
