@@ -1072,7 +1072,6 @@ def test_report(tmp_path, capsys):
         assert "Failed to save reproducer" in captured.out
 
 
-@pytest.mark.parametrize("use_benchmark", (True, False), ids=("benchmark", "repro"))
 @instantiate(
     dtypes=NOTHING,
     executors=[DynamoThunderExecutor],
@@ -1123,7 +1122,7 @@ def test_fxreport(executor, device: str, dtype: dtypes.dtype, use_benchmark, tmp
     assert len(py_files) == 4
 
     for file in py_files:
-        check(tmp_path / file, cmd)
+        check(file, cmd)
 
 
 def test_leak_on_unsupported_thunder_operator():
@@ -1164,21 +1163,33 @@ def test_thunderreports(use_benchmark, tmp_path):
         # torch.sinc has automatic fallback registered,
         # so that operation will be given to inductor.
         x = x.exp()
+        torch._dynamo.graph_break()
         y = torch.sinc(x) + torch.cos(x)
-        y = y + torch.sinc(x)
         return y + 1
 
-    results = fx_report(foo, x, compile_options={"dynamic": True})
-    for idx, r in enumerate(results.fx_graph_reports):
-        res = analyze_with_thunder(r)
-        res.write_eager_repro(tmp_path, use_benchmark=use_benchmark)
-        res.write_thunder_repro(tmp_path, use_benchmark=use_benchmark)
-        res.write_inductor_repro(tmp_path, use_benchmark=use_benchmark)
-        for seg in res.subgraph_reports:
-            seg.write_eager_repro(tmp_path / str(idx), use_benchmark=use_benchmark)
-            seg.write_thunder_repro(tmp_path / str(idx), use_benchmark=use_benchmark)
-            seg.write_inductor_repro(tmp_path / str(idx), use_benchmark=use_benchmark)
-        for nvf in res.fusion_reports:
-            nvf.write_nvfuser_repro(
-                tmp_path / "nvfusion",
-            )
+    results = fx_report(foo, x)
+    for idx, fx_graph_report in enumerate(results.fx_graph_reports):
+        thunder_fx_graph_report = analyze_with_thunder(fx_graph_report)
+        thunder_fx_graph_report.write_thunder_repro(tmp_path, use_benchmark=use_benchmark)
+        for thunder_segment_report in thunder_fx_graph_report.subgraph_reports:
+            thunder_segment_report.write_eager_repro(tmp_path / str(idx), use_benchmark=use_benchmark)
+            thunder_segment_report.write_thunder_repro(tmp_path / str(idx), use_benchmark=use_benchmark)
+            thunder_segment_report.write_inductor_repro(tmp_path / str(idx), use_benchmark=use_benchmark)
+        for nvf in thunder_fx_graph_report.fusion_reports:
+            nvf.write_nvfuser_repro(tmp_path / "nvfusion")
+            nvf.run_inductor_repro()
+            nvf.run_benchmark()
+
+    def check(file_name, cmd):
+        if use_benchmark and "nvfusion" not in str(file_name):
+            cmd = cmd + ["-m", "pytest"]
+        cmd = cmd + [file_name]
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        assert result.returncode == 0, f"Script {file_name} failed: {result}"
+
+    cmd = [sys.executable]
+    py_files = list(tmp_path.rglob("*.py"))
+    assert len(py_files) == 10
+
+    for file in py_files:
+        check(file, cmd)

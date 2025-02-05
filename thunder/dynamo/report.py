@@ -481,7 +481,6 @@ class ThunderSegmentGraphReport(FXGraphReport):
         self.split_reason = split_reason
 
     def write_thunder_repro(self, folder, use_benchmark=False, serialize_inputs=False):
-        # return super().write_thunder_repro(folder, use_benchmark, serialize_inputs)
         thunder_ex_str = (
             f"partial(thunder.jit, {self.thunder_options})" if self.thunder_options is None else "thunder.jit"
         )
@@ -499,7 +498,7 @@ class ThunderSegmentGraphReport(FXGraphReport):
         if not use_benchmark:
             super().write_repro(
                 folder,
-                f"{self.graph_name}_repro.py",
+                f"{self.graph_name}_repro_thunder.py",
                 executor_str=thunder_ex_str,
                 import_str=import_str,
                 serialize_inputs=serialize_inputs,
@@ -552,16 +551,39 @@ class ThunderFusionReport:
             print(comment_str, file=f)
             print(repro_code, file=f)
 
+    def run_inductor_repro(self):
+        from thunder.executors.torch_compile import make_compiled
+
+        callable_for_torchcompile = make_compiled(
+            self.nvfusion_bsym.subsymbols, self.nvfusion_bsym.flat_args, self.nvfusion_bsym.flat_outs
+        )
+        nvfuser_callable = self.nvfusion_bsym._call_ctx[self.nvfusion_bsym.sym.name]
+        inputs = nvfuser_callable.last_inputs
+        # run each nvfusion region using torch compile
+        callable_for_torchcompile(*inputs)
+
+    def run_benchmark(self):
+        from thunder.dev_utils.utils import _benchmark_fusion_region_with_nvfuser_and_torch_compile
+
+        benchmark_comparison_data = _benchmark_fusion_region_with_nvfuser_and_torch_compile(self.nvfusion_bsym)
+        print(self.nvfusion_bsym)
+        print(benchmark_comparison_data)
+
 
 class ThunderFXGraphReport(FXGraphReport):
     def __init__(self, gm, gm_name, subgraph_info, thunder_options):
         super().__init__(gm, gm_name)
         self.subgraph_info = subgraph_info
         self.thunder_options = thunder_options
+
         self.subgraph_reports: list[ThunderSegmentGraphReport] = []
         self.fusion_reports: list[ThunderFusionReport] = []
+        self.fwd_trcs = []
+        self.bwd_trcs = []
+        self._create_subgraph_reports()
+        self._create_fusion_reports()
 
-    def get_thunder_module_name(self, graph_name):
+    def get_thunder_module_name(self):
         thunder_module_names = []
         for node in self.subgraph_info.split_graph_module.graph.nodes:
             target = node.target
@@ -570,14 +592,8 @@ class ThunderFXGraphReport(FXGraphReport):
         return thunder_module_names
 
     def _create_subgraph_reports(self):
-        thunder_ex_str = f"partial(thunder.jit, {self.thunder_options})" if self.thunder_options else "thunder.jit"
-
-        thunder_module_names = []
-        for node in self.subgraph_info.split_graph_module.graph.nodes:
-            target = node.target
-            if isinstance(target, str) and target.startswith("thunder_"):
-                thunder_module_names.append(f"{self.graph_name}_{target}")
-        original_thunder_modules = (
+        thunder_module_names = self.get_thunder_module_name()
+        original_modules_to_thunder_modules = (
             m
             for m, compiled_m in self.subgraph_info.submodule_to_compiled_functions.items()
             if compiled_m.compiler == CompilerType.THUNDER
@@ -585,50 +601,59 @@ class ThunderFXGraphReport(FXGraphReport):
         example_inputs = self.subgraph_info.thunder_compiled_fns_example_inputs
         self.split_reason = get_split_reasons_string(self.subgraph_info)
 
-        for name, sub_gm, example_input in zip(thunder_module_names, original_thunder_modules, example_inputs):
+        for name, sub_gm, example_input in zip(
+            thunder_module_names, original_modules_to_thunder_modules, example_inputs
+        ):
             self.subgraph_reports.append(
                 ThunderSegmentGraphReport(sub_gm, name, example_input, self.thunder_options, self.split_reason)
             )
 
-    def _create_fusion_report(self):
+    def _create_thunder_traces(self):
         from thunder import last_traces, last_backward_traces
 
-        for fn in self.subgraph_info.thunder_compiled_fns:
-            fwd_trc = last_traces(fn)[-1]
-            bwd_trc = last_backward_traces(fn)[-1]
-            for bsym in fwd_trc.bound_symbols:
-                if bsym.sym.is_fusion and "nvFusion" in bsym.sym.name:
-                    self.fusion_reports.append(ThunderFusionReport(bsym, f"forward_{bsym.sym.name}"))
-            for bsym in bwd_trc.bound_symbols:
-                if bsym.sym.is_fusion and "nvFusion" in bsym.sym.name:
-                    self.fusion_reports.append(ThunderFusionReport(bsym, f"backward_{bsym.sym.name}"))
+        for fn, example_input_meta in zip(
+            self.subgraph_info.thunder_compiled_fns, self.subgraph_info.thunder_compiled_fns_example_inputs
+        ):
+            example_inputs = eval(f"[\n{chr(10).join(arg_like(a) for a in example_input_meta)}]")
+            # executes to get the trace
+            run_backward(fn, *example_inputs)
+            self.fwd_trcs.append(last_traces(fn)[-1])
+            self.bwd_trcs.append(last_backward_traces(fn)[-1])
+
+    def _create_fusion_reports(self):
+        self._create_thunder_traces()
+        for traces, prefix in [(self.fwd_trcs, "forward"), (self.bwd_trcs, "backward")]:
+            for trace in traces:
+                for bsym in trace.bound_symbols:
+                    if bsym.sym.is_fusion and "nvFusion" in bsym.sym.name:
+                        self.fusion_reports.append(ThunderFusionReport(bsym, f"{prefix}_{bsym.sym.name}"))
 
 
 def analyze_with_thunder(
     report: FXGraphReport,
     **thunder_options,
-):
+) -> ThunderFXGraphReport:
+    """
+    Generates a ThunderFXGraphReport based on an FXGraphReport.
+
+    The ThunderFXGraphReport provides additional details about Thunder-specific segmentations
+    and nvFusion regions.
+
+    For more details, see :class:`ThunderFXGraphReport`.
+    """
     from thunder.dynamo.utils import remove_empty_autocast, recompile_graph
     from thunder.dynamo.splitter import _splitter
     from thunder import jit
 
     gm = report.graph
-    gm = remove_empty_autocast(gm)
 
+    # Splits the FX graph module using Thunder splitter
+    gm = remove_empty_autocast(gm)
     # Dynamo uses lazy generation of the underlying Python code, so we need to
     # force recompilation of the GraphModule before passing it to Thunder.
     recompile_graph(gm)
     _thunder_jit = partial(jit, **thunder_options, nv_store_fusion_inputs=True)
+    _, subgraph_info = _splitter(gm, _thunder_jit, torch.compile, _unused_sample_args=None)
 
-    # The whole graph may not be supported by `thunder`, so we split it in `thunder` supported sections
-    # and unsupported sections which are passed to `torch.compile(backend='inductor')`
-    split_module, subgraph_info = _splitter(gm, _thunder_jit, torch.compile, _unused_sample_args=None)
-    input_metadata = report.get_input_metadata()
-    example_inputs = eval(f"[\n{chr(10).join(arg_like(a) for a in input_metadata)}]")
-    # runs to get the traces
-    run_backward(split_module, *example_inputs)
-    # split_module(*example_inputs)
     report = ThunderFXGraphReport(report.graph, report.graph_name, subgraph_info, thunder_options)
-    report._create_subgraph_reports()
-    report._create_fusion_report()
     return report
