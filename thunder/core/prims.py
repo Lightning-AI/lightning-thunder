@@ -1812,10 +1812,13 @@ def _put_grad_meta(grad_for: Number | NumberProxy | TensorProxy, grad: Number | 
     return None
 
 
+# PUT_GRAD is a sink node with side effects that updates Tensor.grad. It needs
+# DONT_DCE tag to avoid removal in DCE pass.
 put_grad = make_prim(
     PrimIDs.PUT_GRAD,
     "put_grad",
     meta=_put_grad_meta,
+    tags=(OpTags.DONT_DCE,),
 )
 
 #

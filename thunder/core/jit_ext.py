@@ -8,6 +8,8 @@ from functools import wraps
 import contextvars
 from contextlib import contextmanager
 import dis
+import sys
+import time
 import warnings
 from types import (
     BuiltinMethodType,
@@ -160,6 +162,7 @@ class JitCtx:
         sharp_edges: SHARP_EDGES_OPTIONS,
         executor_lookasides,
         ad_hoc_executor,
+        show_interpreter_progress: bool = False,
     ):
         self._sharp_edges: SHARP_EDGES_OPTIONS = sharp_edges
         self._prologue_trace = prologue_trace
@@ -169,6 +172,26 @@ class JitCtx:
         self._proxy_swapmap: dict[Variable, Proxy] = {}
         self._executor_lookasides: dict[Callable, Callable] = executor_lookasides
         self._ad_hoc_executor = ad_hoc_executor
+        self._show_interpreter_progress = show_interpreter_progress
+        self._last_printed_progress = -1
+        self._progress_interval = 10
+
+    def show_progress_if_verbose(self):
+        if not self._show_interpreter_progress:
+            return
+        t = time.perf_counter()
+        if t > self._last_printed_progress + self._progress_interval:
+            if self._last_printed_progress == -1:
+                print("Begin interpretation", file=sys.stderr)
+            num_bsyms = len(self._computation_trace.bound_symbols)
+            print(f"\rcaptured {num_bsyms} operations", end="", file=sys.stderr)
+            self._last_printed_progress = t
+
+    def end_progress(self):
+        if not self._show_interpreter_progress or self._last_printed_progress == -1:
+            return
+        self.show_progress_if_verbose()
+        print("\nFinished interpretation", file=sys.stderr)
 
     @property
     def ad_hoc_executor(self):
@@ -468,6 +491,35 @@ def _general_jit_ordered_dict_setitem(d, key, value):
         ctx._additional_outputs[d].append((PseudoInst.STORE_SUBSCR, d, key, value))
 
     return dict_setitem_lookaside(d, key, value)
+
+
+@register_general_jit_lookaside(torch.nn.ModuleList.__getitem__)
+def torch_nn_ModuleList_getitem_lookaside(self, idx):
+    uself = unwrap(self)
+    uidx = unwrap(idx)
+    if isinstance(uidx, slice):
+
+        def impl(self, idx):
+            return list(self._modules.values())[idx]
+
+        modules = _interpret_call(impl, self, idx)
+        if modules is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+            return module_list
+        res = _interpret_call(lambda self: self.__class__(), self)
+        if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+            return res
+        res.provenance = ProvenanceRecord(PseudoInst.NEW, inputs=[wrap_const(uself.__class__).provenance])
+
+        def impl(res, modules):
+            res.extend(modules)
+            return res
+
+        return _interpret_call(impl, res, modules)
+
+    def impl(self, idx):
+        return self._modules[self._get_abs_string_index(idx)]
+
+    return _interpret_call(impl, self, idx)
 
 
 _TORCH_DYNAMIC_TYPES = {
@@ -1296,6 +1348,7 @@ def should_register_for_prologue(pr, _toplevel=True):
 def _general_jit_wrap_callback(value):
     ctx: JitCtx = get_jit_ctx()
 
+    ctx.show_progress_if_verbose()
     uvalue = value.value
     # for modules, rewrite m.__dict__["key"] to m.key
     if (
@@ -1796,14 +1849,26 @@ def process_recorded_modifications(ctx, epilogue_trace):
 
                     if (
                         modified_object.provenance.inst is PseudoInst.LOAD_ATTR
+                        and modified_object.provenance.inputs[0].inst is PseudoInst.NEW
+                        and modified_object.provenance.inputs[1].inst is PseudoInst.CONSTANT
+                        and modified_object.provenance.inputs[1].value == "_modules"
+                    ):
+                        # This is for slices of ModuleList. We might have to revisit if we want to return those
+                        pass
+                    elif (
+                        modified_object.provenance.inst is PseudoInst.LOAD_ATTR
                         and modified_object.provenance.inputs[1].inst is PseudoInst.CONSTANT
                         and modified_object.provenance.inputs[1].value == "_buffers"
                     ):
                         assert isinstance(value.value, (Proxy, int, tuple, NoneType))  # todo: better criterion
-                        typ, name, root_module_provenance = get_parameter_or_buffer_or_submodule_name_and_root(
-                            modified_object.provenance.inputs[0]
-                        )
-                        assert typ == "_modules"
+                        if modified_object.provenance.inputs[0].inst is PseudoInst.INPUT_FN:
+                            name = [""]
+                            root_module_provenance = modified_object.provenance.inputs[0]
+                        else:
+                            typ, name, root_module_provenance = get_parameter_or_buffer_or_submodule_name_and_root(
+                                modified_object.provenance.inputs[0]
+                            )
+                            assert typ == "_modules"
                         root_module_proxy = root_for_provenances.get(root_module_provenance)
                         if root_module_proxy is None:
                             # we want this to created in the compute trace context for namespace...
@@ -1864,6 +1929,7 @@ def update_tags(proxy_swapmap: dict[Variable, Proxy]) -> None:
 DebugOptions.register_option(
     "record_interpreter_history", bool, False, "record interpreter history (use thunder.last_interpreter_log to access)"
 )
+DebugOptions.register_option("show_interpreter_progress", bool, False, "show progress while running the interpreter")
 
 
 def build_value_from_wrapped(wrapped_v):
@@ -1900,7 +1966,6 @@ def build_value_from_wrapped(wrapped_v):
         #
         # NOTE: The `class` packagename1_MyContainer will present in `import_ctx` and passed to the compiled function.
         # This is taken care of by function `to_printable`.
-
         kwargs = {}
         for k, uattr in v.__dict__.items():
             if k in wrapped_v.attribute_wrappers:
@@ -1973,6 +2038,7 @@ def thunder_general_jit(
         sharp_edges=sharp_edges,
         executor_lookasides=executor_lookasides,
         ad_hoc_executor=ad_hoc_executor,
+        show_interpreter_progress=compile_data.debug_options.show_interpreter_progress,
     )
     jfn = interpret(
         fn,
@@ -1997,6 +2063,7 @@ def thunder_general_jit(
             res = build_value_from_wrapped(result)
             prims.python_return(res)
 
+    ctx.end_progress()
     pro_to_comp, pro_to_comp_set, computation_intermediates = get_computation_inputs_and_intermediates(
         computation_trace
     )
