@@ -3213,6 +3213,7 @@ def test_apply_autograd_memory():
 
 def test_tensor_proxy_init_requires_grad():
     from thunder.core.proxies import TensorProxy, tensorproxy
+
     for requires_grad in (True, False):
         at_tensor = torch.tensor([1, 2, 3], dtype=torch.float32, requires_grad=requires_grad)
         trace = TraceCtx()
