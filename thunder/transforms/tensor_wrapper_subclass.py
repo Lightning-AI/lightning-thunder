@@ -322,6 +322,7 @@ class DesugarTensorSubclass:
         arg_name_to_index: dict[str, int],
         *,
         _cur_bsym_for_error_msg: BoundSymbol,
+        _cur_fxgraph_for_error_msg: GraphModule,
     ) -> list[BoundSymbol]:
         bsyms: list[BoundSymbol] = []
         fxnode_output_name_to_tensor_proxy: dict[str, OpOverload] = {}
@@ -353,7 +354,7 @@ class DesugarTensorSubclass:
                     f"Failing to map `torch.{node}` to `thunder.torch` op of "
                     f"{ltorch_op} with args of {arg_proxies}\n"
                     f"BoundSymbol in question is\n```python\n{_cur_bsym_for_error_msg}\n```\n"
-                    f"Corresponding torch.fx Graph is\n```python\n{fx_graph.print_readable(print_output=False)}\n```\n"
+                    f"Corresponding torch.fx Graph is\n```python\n{_cur_fxgraph_for_error_msg.print_readable(print_output=False)}\n```\n"
                     f"Original error is {e}"
                 )
                 raise type(e)(msg)
@@ -456,6 +457,7 @@ class DesugarTensorSubclass:
             unwrapped_bsym_args,
             arg_name_to_index,
             _cur_bsym_for_error_msg=bsym,
+            _cur_fxgraph_for_error_msg=fx_graph,
         )
         bsyms.extend(bsyms_of_torch_ops)
         if not bsyms:
