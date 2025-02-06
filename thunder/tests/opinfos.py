@@ -2537,18 +2537,19 @@ div_opinfo = OpInfo(
     torch_reference=torch.div,
     test_directives=(
         # NOTE: PyTorch doesn't support boolean division
-        # TODO: fix dtype mismatch when using nvfuser executors
         DecorateInfo(
             pytest.mark.xfail,
             "test_core_vs_torch_consistency",
             dtypes=(datatypes.bool8,),
             devicetypes=(devices.DeviceType.CPU, devices.DeviceType.CUDA),
         ),
+        # NOTE: bfloat16 and float16 is skipped
+        # See: https://github.com/Lightning-AI/lightning-thunder/issues/1724
         DecorateInfo(
             pytest.mark.xfail,
             "test_core_vs_torch_consistency",
             executors=("nvfuser",),
-            dtypes=(datatypes.bool8, datatypes.bfloat16, datatypes.float16, datatypes.float32),
+            dtypes=(datatypes.bool8, datatypes.bfloat16, datatypes.float16),
         ),
         DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
     ),
@@ -2717,6 +2718,17 @@ def where_sample_generator(op, device, dtype, requires_grad, **kwargs):
     for pred_shape, a_shape, b_shape in cases:
         pred, a, b = make(pred_shape, dtype=torch.bool, requires_grad=False), make(a_shape), make(b_shape)
         yield SampleInput(pred, a, b)
+
+    # NOTE: requires_grad needs tensor inputs on non-pred.
+    if not requires_grad:
+        # generate scalar inputs
+        dtypes = [float, int, bool, complex]
+
+        for dtype in dtypes:
+            pred = make([2, 3], dtype=torch.bool, requires_grad=False)
+            a = dtype(1.0)
+            b = dtype(0.0)
+            yield SampleInput(pred, a, b)
 
 
 def where_error_generator(op, device, dtype=torch.float32, **kwargs):
@@ -4906,7 +4918,7 @@ def index_put_sample_generator(op, device, dtype, requires_grad, **kwargs):
         ((4, 2, 3), [(4,), (1,), ()], (1,), True),
         ((4, 2, 3), [(), (2,), ()], (1,), False),
         ((4, 2, 3), [(2,), (2,)], (1,), True),
-        ((4, 2, 3), [(3)], (1,), False),
+        ((4, 2, 3), [3], (1,), False),
         ((4, 2, 3), [(0,)], (2, 3), False),
         ((4, 2, 3), [(0,), (0,)], (1,), False),
         ((4,), [(2,)], (1,), True),

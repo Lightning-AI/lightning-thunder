@@ -124,6 +124,7 @@ class FSDPTransform(Transform):
         cd = get_compile_data(thunder_model)
         # TODO: promote use_fsdp and use_ddp to public members of CompileData
         cd.use_fsdp = True
+        cd.process_group_for_ddp = self.process_group
         orig_module: torch.nn.Module = cd.fn
         utils.check(
             isinstance(orig_module, torch.nn.Module) and not isinstance(orig_module, ThunderModule),

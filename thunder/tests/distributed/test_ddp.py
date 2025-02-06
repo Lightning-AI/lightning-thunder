@@ -399,15 +399,17 @@ def _test_ddp_transformer_engine(input_data):
     thunder_model.fc1.weight.data = fc1_weight.clone()
     thunder_model.fc2.weight.data = fc2_weight.clone()
 
-    jit_model = thunder.jit(
-        thunder.distributed.ddp(thunder_model),
-        executors=[
-            transformer_engine_ex,
-        ]
-        + executor.executors_list(),
+    jit_model = thunder.distributed.ddp(
+        thunder.jit(
+            thunder_model,
+            executors=[
+                transformer_engine_ex,
+            ]
+            + executor.executors_list(),
+        )
     )
 
-    optim = torch.optim.SGD(thunder_model.parameters())
+    optim = torch.optim.SGD(jit_model.parameters())
 
     for _ in range(n_iter):
         o = jit_model(x).sum()
