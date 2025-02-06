@@ -7883,9 +7883,9 @@ if LooseVersion(torch.__version__) >= "2.4":
                 devicetypes=(devices.DeviceType.CUDA,),
             ),
             DecorateInfo(
-                pytest.mark.skip(reason="Flaky. See https://github.com/Lightning-AI/lightning-thunder/issues/1678"),
-                "test_core_vs_torch_consistency",
-                dtypes=(datatypes.bfloat16,),
+                custom_comparator(partial(assert_close, atol=0.0, rtol=0.0)),
+               "test_core_vs_torch_consistency",
+               dtypes=(datatypes.bfloat16,),
             ),
         ),
     )
