@@ -38,7 +38,6 @@ TE_AVAILABLE: bool = package_available("transformer_engine")
 # Ex. addition of a positional argument for cpu_offloading (not as the last argument)
 # between version 1.2 and 1.3.
 # Hence, we have these guards based on version.
-TE_VERSION_1_11_PLUS: bool = False
 
 te: None | Any = None
 if TE_AVAILABLE:
@@ -55,12 +54,10 @@ if TE_AVAILABLE:
         warnings.warn(f"transformer_engine failed to import with exception {ex}")
         TE_AVAILABLE = False
 
-    TE_VERSION_1_9_PLUS = LooseVersion(version("transformer_engine")) > LooseVersion("1.9")
-    TE_VERSION_1_11_PLUS = LooseVersion(version("transformer_engine")) > LooseVersion("1.11")
-    if not TE_VERSION_1_9_PLUS:
-        warnings.warn(
-            f"Installed version of transformer_engine {version('transformer_engine')} is not supported, please upgrade. `transformer_engine_ex` will not be used."
-        )
+    TE_VERSION_2_0_PLUS = LooseVersion(version("transformer_engine")) > LooseVersion("2.0")
+    if not TE_VERSION_2_0_PLUS:
+        msg = f"Installed version of transformer_engine {version('transformer_engine')} is not supported, please upgrade to version 2.0 from https://github.com/NVIDIA/TransformerEngine/tree/release_v2.0. `transformer_engine_ex` will not be used."
+        warnings.warn(msg)
         TE_AVAILABLE = False
 
 
@@ -295,31 +292,6 @@ class TELinear(TransformerEngineBaseModule):
             grad_input_quantizer,
         )
 
-    # This method is used for supporting TE v1.6 and v1.7.
-    # v1.8 onwards the implementation of this has moved to `TransformerEngineBaseModule`
-    # See `get_fp8_workspace`: https://github.com/NVIDIA/TransformerEngine/blob/8b210490b3f46cd409df0ba6a8f4b14273f2975c/transformer_engine/pytorch/module/base.py#L753-L754
-    def get_fp8_weights_scratchpad(
-        self,
-        is_first_microbatch: bool | None,
-    ) -> list["Float8Tensor"]:
-        """
-        Fetch the fp8 weight tensor placeholders if they exist (when
-        `is_first_microbatch` is not `None`) or return empty fp8 weight
-        tensors (if `is_first_microbatch is None`)
-        """
-        if not self.fp8 or self.primary_weights_in_fp8:
-            return [None, None]
-
-        if is_first_microbatch is None:
-            # Return empty weight placeholders for each fwd/bwd pass
-            fp8_weight_tensors = self.get_fp8_weights_empty_tensors(is_first_microbatch)
-        else:
-            # These persistent weight placeholders should've been created in
-            # `set_fp8_weights` method
-            fp8_weight_tensors = [self.weight1_fp8, self.weight1_t_fp8]
-
-        return fp8_weight_tensors
-
 
 # # # # # # # # #
 # Make Executor for TE
@@ -344,31 +316,18 @@ def make_te_linear_meta(is_grad_enabled: bool = False):
 
             # It's not critical to model the exact shape and dtype of
             # saved_tensors since they are not used in Thunder's meta functions.
-            if TE_VERSION_1_11_PLUS:
-                # NOTE - Position of scaling tensor denoted by `scaling_fwd` is different (compared to `else`).
-                # https://github.com/NVIDIA/TransformerEngine/blob/7fc50f489b8184fbd93efd4e48140ad0264e362b/transformer_engine/pytorch/module/linear.py#L330C13-L337C14
-                saved_tensors = (
-                    TensorProxy(like=a, shape=a.shape),  # saved_inputmat
-                    TensorProxy(like=a, shape=(a.shape[:-2] + (a.shape[-1], a.shape[-2]))),  # saved_inputmat_t
-                    TensorProxy(like=a, shape=(1,)),  # scaling_fwd
-                    TensorProxy(like=w, shape=w.shape),  # weight
-                    TensorProxy(like=w, shape=(w.shape[1], w.shape[0]), dtype=float8_e4m3fn),  # weight_fp8
-                    # fuse_wgrad_accumulation is False
-                    # https://github.com/Lightning-AI/lightning-thunder/blob/40da5bd5fabc30e99883d74b70c6a7d7fd61a828/thunder/executors/transformer_engineex.py#L224
-                    None,  # weight.main_grad if cpu_offloading and fuse_wgrad_accumulation else None,
-                )
-            else:
-                # https://github.com/NVIDIA/TransformerEngine/blob/37280ecd5e9c6087d18fbe2e668f2ec7761ada3d/transformer_engine/pytorch/module/linear.py#L323-L330
-                saved_tensors = (
-                    TensorProxy(like=a, shape=a.shape),  # saved_inputmat
-                    TensorProxy(like=a, shape=(a.shape[:-2] + (a.shape[-1], a.shape[-2]))),  # saved_inputmat_t
-                    TensorProxy(like=w, shape=w.shape),  # weight
-                    TensorProxy(like=w, shape=(w.shape[1], w.shape[0]), dtype=float8_e4m3fn),  # weight_fp8
-                    # fuse_wgrad_accumulation is False
-                    # https://github.com/Lightning-AI/lightning-thunder/blob/40da5bd5fabc30e99883d74b70c6a7d7fd61a828/thunder/executors/transformer_engineex.py#L224
-                    None,  # weight.main_grad if cpu_offloading and fuse_wgrad_accumulation else None,
-                    TensorProxy(like=a, shape=(1,)),  # scaling_fwd
-                )
+
+            # https://github.com/NVIDIA/TransformerEngine/blob/7fc50f489b8184fbd93efd4e48140ad0264e362b/transformer_engine/pytorch/module/linear.py#L330C13-L337C14
+            saved_tensors = (
+                TensorProxy(like=a, shape=a.shape),  # saved_inputmat
+                TensorProxy(like=a, shape=(a.shape[:-2] + (a.shape[-1], a.shape[-2]))),  # saved_inputmat_t
+                TensorProxy(like=a, shape=(1,)),  # scaling_fwd
+                TensorProxy(like=w, shape=w.shape),  # weight
+                TensorProxy(like=w, shape=(w.shape[1], w.shape[0]), dtype=float8_e4m3fn),  # weight_fp8
+                # fuse_wgrad_accumulation is False
+                # https://github.com/Lightning-AI/lightning-thunder/blob/40da5bd5fabc30e99883d74b70c6a7d7fd61a828/thunder/executors/transformer_engineex.py#L224
+                None,  # weight.main_grad if cpu_offloading and fuse_wgrad_accumulation else None,
+            )
 
             return TensorProxy(like=a, shape=output_shape), saved_tensors, ctx_dict
         return TensorProxy(like=a, shape=output_shape), None, None
@@ -387,17 +346,9 @@ def _te_functional_linear_backward_impl(
     saved_tensors: Sequence[torch.Tensor],
     g: torch.Tensor,
 ) -> [torch.Tensor, torch.Tensor, None | torch.Tensor]:
-    # See [NOTE] Enable grad within context
-    # _Linear.backward depends on requires grad of `weight/ctx.saved_tensors[2]`.
-    # NOTE - weight is ctx.saved_tensors[3] from TE v1.11 onwards
-    # Hence we enable requires_grad for computation.
-    # https://github.com/NVIDIA/TransformerEngine/blob/b957aa475bcbcf22405381d18bd7fefe4fb6b171/transformer_engine/pytorch/module/linear.py#L434
-    # weight_t = saved_tensors[3] if TE_VERSION_1_11_PLUS else saved_tensors[2]
-    with set_saved_tensors(ctx, saved_tensors):  # , enable_grad(weight_t):
+    with set_saved_tensors(ctx, saved_tensors):
         grads = _Linear.backward(ctx, g)
 
-    # Due to different in `_Linear.forward` API, position of
-    # returned grad has changed.
     grad_inputs = (grads[1], grads[0], grads[2])
     return grad_inputs
 
