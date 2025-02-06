@@ -51,7 +51,7 @@ def trace_with_replaced_proxy_metadata(trace: TraceCtx, proxy_replacement_metada
     def create_proxy(p):
         if isinstance(p, thunder.Proxy):
             if p.name in proxymap:  # happens with subsymbols
-                return p
+                return proxymap[p.name]
             with thunder.core.trace.tracectx(t):
                 np = p.replace(**proxy_replacement_metadata.get(p.name, {}))
                 proxymap[p.name] = np

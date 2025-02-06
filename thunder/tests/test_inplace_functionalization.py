@@ -478,11 +478,11 @@ def test_multiple_inplace_to_multiple_args(executor, device, _):
 def test_inplace_to_tensors_with_grad(executor, device, _):
     @torch.no_grad
     def add_y(x, y):
-        x.add_(y, alpha=0.1)
+        return x.add_(y, alpha=0.1)
 
     @torch.no_grad
     def add_grad(x, y):
-        x.add_(x.grad, alpha=0.1)
+        return x.add_(x.grad, alpha=0.1)
 
     for f in (add_y, add_grad):
         jitted_f = executor.make_callable(f)
@@ -721,6 +721,17 @@ def test_inplace_to_alias_func_args(executor, device, dtype):
     out, out_ref = jitted_f(a, b, a), f(a_ref, b_ref, a_ref)
     torch.testing.assert_close(out, out_ref)
     torch.testing.assert_close((a, b), (a_ref, b_ref))
+
+    def f(a):
+        return a.zero_()
+
+    a = make_tensor(shape, device=device, dtype=torch_dtype)
+    out_expected = torch.zeros_like(a)
+
+    jitted_f = executor.make_callable(f)
+    out = jitted_f(a)
+
+    torch.testing.assert_close(out, out_expected)
 
 
 @instantiate(dtypes=NOTHING)

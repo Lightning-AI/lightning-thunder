@@ -128,7 +128,9 @@ class PrimIDs(Enum):
     UNPACK_THUNDER_MODULE = auto()
     CONSTRUCT_TUPLE = auto()
     PACK_BUFFER = auto()
+    PACK_ATTR = auto()
     PACK_SETITEM = auto()
+    DATACLASS_NEW = auto()
     SHAPE = auto()
     # TODO: UNPACK_SET
     # Utility prims
@@ -291,6 +293,10 @@ class OpTags(Enum):
     AUTO_REGISTERED = auto()
     # Label for operations representing enter/exit of context managers.
     CTX_MANAGER_ENTER_EXIT_OP = auto()
+    # Label to explicitly disable an operation from recomputing in backward - see function `recompute_saved_for_backward`.
+    DONT_RECOMPUTE_IN_BACKWARD = auto()
+    # Don't automatically tag operation to be recomputed in backward
+    DONT_AUTO_RECOMPUTE_IN_BACKWARD = auto()
 
 
 # TODO RC1 Document this function and describe the parts of a primitive
@@ -872,6 +878,10 @@ def unpack_sequence_printer(
     parts.append(f"= {call_str}")
 
     lines = _make_parts_into_line_or_lines(parts)
+    # Add info about the unpacked elements as comments
+    for out in out_printables:
+        details = _make_parts_into_line_or_lines([f"# {codeutils.prettyprint(out, with_type=True)}"])
+        lines.extend(details)
     return lines
 
 
@@ -1204,6 +1214,48 @@ pack_buffer = make_prim(
 )
 
 
+# NOTE PACK_ATTR is intended only to be bound to directly, and not called
+def pack_attr_meta(o: Any, key: Any, value: Any) -> Any:
+    raise NotImplementedError
+
+
+def pack_attr_printer(
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
+):
+    utils.check(
+        len(arg_printables) == 3,
+        lambda: f"Expected three arguments for pack_attr but got {arg_printables}",
+        exception_type=AssertionError,
+    )
+    utils.check(
+        len(kwarg_printables) == 0,
+        lambda: f"Expected no kwargs for pack_attr but got {kwarg_printables}",
+        exception_type=AssertionError,
+    )
+
+    # Converts printables to strings
+    obj, key, value = arg_printables
+    obj_str = codeutils.prettyprint(obj)
+    key_str = key
+    value_str = codeutils.prettyprint(value)
+    return f"{obj_str}.{key_str} = {value_str}"
+
+
+def pack_attr_impl(o: Any, key: Any, v: Any) -> None:
+    o[key] = v
+    return None
+
+
+pack_attr = make_prim(
+    PrimIDs.PACK_ATTR,
+    "pack_attr",
+    meta=pack_attr_meta,
+    python_printer=pack_attr_printer,
+    python_impl=pack_attr_impl,
+    tags=(OpTags.DONT_DCE,),
+)
+
+
 # NOTE PACK_SETITEM is intended only to be bound to directly, and not called
 def pack_setitem_meta(o: Any, key: Any, value: Any) -> Any:
     raise NotImplementedError
@@ -1243,6 +1295,34 @@ pack_setitem = make_prim(
     python_printer=pack_setitem_printer,
     python_impl=pack_setitem_impl,
     tags=(OpTags.DONT_DCE,),
+)
+
+
+def python_dataclass_new_meta(typ, **kwargs):
+    # we are cheating here, but instantiating a dataclass can be wild. typ(**kwargs)
+    return AnyProxy(None)
+
+
+def python_dataclass_new_printer(
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
+):
+    (typ,) = arg_printables
+    outstr = codeutils.prettyprint(out_printables, literals_as_underscores=True)
+    typ_str = codeutils._generate_dataclass_class_name(typ)
+    kwarg_str = ", ".join(f"{k}={codeutils.prettyprint(v)}" for k, v in kwarg_printables.items())
+    return f"{outstr} = {typ_str}({kwarg_str})"
+
+
+def python_dataclass_new_impl(typ, **kwargs):
+    return typ(**kwargs)
+
+
+python_dataclass_new = make_prim(
+    PrimIDs.DATACLASS_NEW,
+    "python_dataclass_new",
+    meta=python_dataclass_new_meta,
+    python_printer=python_dataclass_new_printer,
+    python_impl=python_dataclass_new_impl,
 )
 
 
@@ -1734,10 +1814,13 @@ def _put_grad_meta(grad_for: Number | NumberProxy | TensorProxy, grad: Number | 
     return None
 
 
+# PUT_GRAD is a sink node with side effects that updates Tensor.grad. It needs
+# DONT_DCE tag to avoid removal in DCE pass.
 put_grad = make_prim(
     PrimIDs.PUT_GRAD,
     "put_grad",
     meta=_put_grad_meta,
+    tags=(OpTags.DONT_DCE,),
 )
 
 #
@@ -2795,6 +2878,7 @@ get_and_update_rng_state = make_prim(
     PrimIDs.GET_AND_UPDATE_RNG_STATE,
     "get_and_update_rng_state",
     meta=_get_and_update_rng_state_meta,
+    tags=(OpTags.RANDOM_OP,),  # RANDOM_OP here is a short hand for "uses / modifies the random state"
 )
 
 
@@ -3777,7 +3861,9 @@ def linear_meta(a: TensorProxy, w: TensorProxy, bias: None | TensorProxy) -> Ten
     return TensorProxy(shape=out_shape, device=a.device, dtype=dtype, requires_grad=requires_grad)
 
 
-linear = make_prim(PrimIDs.LINEAR, "linear", meta=linear_meta, tags=(OpTags.MATMUL_OP,))
+linear = make_prim(
+    PrimIDs.LINEAR, "linear", meta=linear_meta, tags=(OpTags.MATMUL_OP, OpTags.DONT_AUTO_RECOMPUTE_IN_BACKWARD)
+)
 
 
 def matmul_meta(a: TensorProxy, b: TensorProxy, /) -> TensorProxy:
@@ -3836,7 +3922,9 @@ def matmul_meta(a: TensorProxy, b: TensorProxy, /) -> TensorProxy:
     return TensorProxy(like=a, shape=shape)
 
 
-matmul = make_prim(PrimIDs.MATMUL, "matmul", meta=matmul_meta, tags=(OpTags.MATMUL_OP,))
+matmul = make_prim(
+    PrimIDs.MATMUL, "matmul", meta=matmul_meta, tags=(OpTags.MATMUL_OP, OpTags.DONT_AUTO_RECOMPUTE_IN_BACKWARD)
+)
 
 #
 # NN prims
@@ -4030,6 +4118,8 @@ embedding_backward = make_prim(PrimIDs.EMBEDDING_BACKWARD, "embedding_backward",
 def copy__meta(
     copy_from: TensorProxy,
     copy_to: TensorProxy,
+    *,
+    grad_enabled: bool,
 ):
     utils.check_type(copy_from, TensorProxy)
     utils.check_type(copy_to, TensorProxy)

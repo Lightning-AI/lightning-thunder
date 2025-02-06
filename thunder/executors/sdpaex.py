@@ -7,6 +7,7 @@ import thunder.core.dtypes as dtypes
 from thunder.core.proxies import Proxy, TensorProxy
 import thunder.core.utils as utils
 import thunder.core.devices as devices
+from thunder.core.prims import OpTags
 
 import thunder.torch as ltorch
 from thunder.torch import TensorLike
@@ -171,6 +172,7 @@ sdpea_gradfwd = sdpa_ex.register_operator(
     "sdpaex_grad_forward_scaled_dot_product_efficient_attention",
     meta=_grad_forward_scaled_dot_product_efficient_attention_meta,
     fn=_grad_forward_scaled_dot_product_efficient_attention_impl,
+    tags=(OpTags.DONT_AUTO_RECOMPUTE_IN_BACKWARD,),
 )
 
 
@@ -244,6 +246,7 @@ sdpfa_gradfwd = sdpa_ex.register_operator(
     "sdpafx_grad_forward_scaled_dot_product_efficient_attention",
     meta=_grad_forward_scaled_dot_product_flash_attention_meta,
     fn=_grad_forward_scaled_dot_product_flash_attention_impl,
+    tags=(OpTags.DONT_AUTO_RECOMPUTE_IN_BACKWARD,),
 )
 
 

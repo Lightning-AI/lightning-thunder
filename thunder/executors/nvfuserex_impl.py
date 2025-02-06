@@ -57,7 +57,7 @@ from thunder.executors.utils import (
 )
 
 from thunder.executors.passes import update_fusion_call_ctx
-from thunder.extend import FUEL_LEVEL, FusionExecutor, register_executor, add_default_executor
+from thunder.extend import FUEL_LEVEL, FusionExecutor, register_executor, add_default_executor, fuse_bound_symbols
 from thunder.executors.nvfuserex import nvfuser_version
 
 # NOTE This impl file is here because nvFuser may not be available, so it's imported conditionally
@@ -133,13 +133,16 @@ def _define_constant(fd: FusionDefinition, constant: Any) -> Any:
     utils.check(False, lambda: f"Cannot translate {constant} of type {type(constant)} into an nvFuser constant")
 
 
-def getnv(x: Any, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
-    if isinstance(x, Proxy):
+# inline_number allows returning Number as-is, instead of wrap it as an nvfuser constant.
+def getnv(x: Any, fd: FusionDefinition, lc_to_nv_map: dict, inline_number: bool = False) -> Any:
+    if inline_number and isinstance(x, Number):
+        return x
+    elif isinstance(x, Proxy):
         return lc_to_nv_map[x]
-    if isinstance(x, (Number, dtypes.dtype, type, Device)):
+    elif isinstance(x, (Number, dtypes.dtype, type, Device)):
         return _define_constant(fd, x)
-    if isinstance(x, Sequence):
-        return tuple(getnv(i, fd, lc_to_nv_map) for i in x)
+    elif isinstance(x, Sequence):
+        return tuple(getnv(i, fd, lc_to_nv_map, inline_number) for i in x)
 
     utils.check(False, lambda: f"Cannot translate {x} of type {type(x)} to an nvFuser object")
 
@@ -846,26 +849,12 @@ class nvFuserExecutor(FusionExecutor):
         fusedtrace: TraceCtx = from_trace(trace)
 
         producers, consumers = utils.producers_and_consumers(trace)
-        from thunder.executors.data_dependent_partition import Node, fuse_bound_symbols
 
         fused_bsyms = []
 
-        # TODO has_cuda_input_or_output is too restrictive a check on what should be fused
-        # TODO check whether a function would output a CPU tensor? -- can nvFuser fuse such operations?
-        #   ex. device_put to a CPU device from a CUDA device
-        def _should_fuse(a: Node, b: Node):
-            def _can_fuse_node(n: Node):
-                # if already merged, then node can be fused
-                if len(n.group_bsyms) > 1:
-                    return True
-                bsym: BoundSymbol = n.group_bsyms[0]
-                can_fuse: bool = self.can_fuse(bsym)
-                cuda_in_or_out: bool = self.has_cuda_input_or_output(bsym)
-                return can_fuse and cuda_in_or_out
-
-            return _can_fuse_node(a) and _can_fuse_node(b)
-
-        bound_symbol_groups = fuse_bound_symbols(trace, _should_fuse)
+        bound_symbol_groups = fuse_bound_symbols(
+            trace, lambda bsym: self.can_fuse(bsym) and self.has_cuda_input_or_output(bsym)
+        )  # _should_fuse)
 
         # Counts how many fusions (per executor) have been constructed
         #   (Used to name fusions like nvFusion0, nvFusion1, ...)
@@ -900,11 +889,17 @@ instantiated) this heuristic actually leads to worse code.
             else:
                 bookend_result = {"front_bsyms": [], "fusion": region, "rear_bsyms": []}
 
-            # Don't fuse a region which has only Shape Operations.
-            all_shape_ops = all(map(lambda bsym: all_tagged(bsym, prims.OpTags.SHAPE_OP), bsyms))
-            if all_shape_ops:
-                fused_bsyms.extend(bsyms)
-                continue
+            nv_enable_shape_only_fusion: None | bool = get_compile_option(
+                "nv_enable_shape_only_fusion",
+                "Allow nvFuser to create Fusion with shape only operations. Defaults to False.",
+            )
+
+            if not nv_enable_shape_only_fusion:
+                # Don't fuse a region which has only Shape Operations.
+                all_shape_ops = all(map(lambda bsym: all_tagged(bsym, prims.OpTags.SHAPE_OP), bsyms))
+                if all_shape_ops:
+                    fused_bsyms.extend(bsyms)
+                    continue
 
             if len(bsyms) == 1:
                 bsym: BoundSymbol = bsyms[0]
@@ -960,8 +955,9 @@ ex = nvFuserExecutor()
 register_executor(ex)
 
 
-def register_supported(id: Hashable, translator: Callable, checker: Callable):
-    ex.register_supported(id, checker)
+def register_supported(sym_or_id: Hashable, translator: Callable, checker: Callable):
+    ex.register_supported(sym_or_id, checker)
+    id = sym_or_id.id if isinstance(sym_or_id, Symbol) else sym_or_id
     _translation_map[id] = translator
 
 
@@ -1307,7 +1303,16 @@ def nv_slice(
 ) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
-    return fd.ops.slice(nva, start_indices, end_indices, strides)
+    # fd.ops.slice prefers python Number as slice indices, which allows the FusionDefinition print out to inline its
+    # indices. fd.ops.slice requires all input sequence to have identical element type, so we can only inline_number
+    # when all slice indices are python numbers.
+    inline_number = all(map(lambda x: not isinstance(x, Proxy), start_indices + end_indices + strides))
+
+    nv_start_indices = getnv(start_indices, fd, lc_to_nv_map, inline_number=inline_number)
+    nv_end_indices = getnv(end_indices, fd, lc_to_nv_map, inline_number=inline_number)
+    nv_strides = getnv(strides, fd, lc_to_nv_map, inline_number=inline_number)
+
+    return fd.ops.slice(nva, nv_start_indices, nv_end_indices, nv_strides)
 
 
 register_supported(PrimIDs.SLICE, nv_slice, _slice_check)
@@ -1722,6 +1727,14 @@ def trunc(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) 
 register_supported(PrimIDs.TRUNC, trunc, _elementwise_unary_check)
 
 
+def clone(a: TensorProxy, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+    nva = getnv(a, fd, lc_to_nv_map)
+
+    return fd.ops.set(nva)
+
+
+register_supported(PrimIDs.CLONE, clone, _elementwise_unary_check)
+
 #
 # Elementwise binary operations
 #
@@ -1952,7 +1965,18 @@ def where(
     nva = getnv(a, fd, lc_to_nv_map)
     nvb = getnv(b, fd, lc_to_nv_map)
 
-    return fd.ops.where(nvpred, nva, nvb)
+    # explicit type promotion is necessary, since nvfuser can't do this properly with scalar inputs. See
+    # issue: https://github.com/NVIDIA/Fuser/issues/3816
+    # Determines result dtype
+    numbertype, tensordtype = utils.check_same_dtype(a, b)
+    dtype = tensordtype if tensordtype is not None else numbertype
+
+    # NOTE: for scalar inputs, dtype mapping is different. e.g. float -> double. We convert dtypes to strong
+    # type if the output is supposed to be a tensor proxy
+    if any(map(lambda x: isinstance(x, TensorProxy), (pred, a, b))):
+        dtype = dtypes.to_strong_dtype(dtype)
+
+    return fd.ops.cast(fd.ops.where(nvpred, nva, nvb), lcdtype_to_nvdtype(dtype))
 
 
 register_supported(PrimIDs.WHERE, where, _elementwise_ternary_check)
@@ -2101,6 +2125,8 @@ register_supported(PrimIDs.VAR_MEAN, var_mean, _var_mean_check)
 def _copy__check(
     copy_from: TensorProxy,
     copy_to: TensorProxy,
+    *,
+    grad_enabled: bool,
 ) -> bool:
     return are_supported_tensors(copy_from, copy_to)
 
@@ -2109,6 +2135,7 @@ def copy_(
     copy_from: TensorProxy,
     copy_to: TensorProxy,
     *,
+    grad_enabled: bool,
     fd: FusionDefinition,
     lc_to_nv_map: dict,
 ) -> Any:
@@ -2593,3 +2620,47 @@ ex.register_supported(
     execution_transform=scaled_dot_product_flash_attention,
     grad_transform=scaled_dot_product_flash_attention_grad,
 )
+
+
+def _embedding_check(
+    input: TensorProxy,
+    weight: TensorProxy,
+    padding_idx: None | int,
+    max_norm: None | float,
+    norm_type: None | float,
+    scale_grad_by_freq: None | bool,
+    sparse: None | bool,
+) -> bool:
+    if nvfuser_version() < LooseVersion("0.2.25"):
+        return False
+    enable_embedding: None | bool = get_compile_option("nv_enable_embedding", "Enable nvFuser embedding.")
+    if not enable_embedding:
+        return False
+    # Verify input and weight are supported tensors.
+    if not are_supported_tensors(input, weight) or (weight.ndim != 2):
+        return False
+    return True
+
+
+def embedding(
+    input: TensorProxy,
+    weight: TensorProxy,
+    padding_idx: None | int = None,
+    max_norm: None | float = None,
+    norm_type: None | float = 2.0,
+    scale_grad_by_freq: None | bool = False,
+    sparse: None | bool = False,
+    *,
+    fd: FusionDefinition,
+    lc_to_nv_map: dict,
+) -> Any:
+    inputs = [input, weight, padding_idx, max_norm, norm_type, scale_grad_by_freq, sparse]
+    nv_inputs = []
+    for inp in inputs:
+        nv_inp = getnv(inp, fd, lc_to_nv_map) if inp is not None else None
+        nv_inputs.append(nv_inp)
+    return fd.ops.embedding_fwd(*nv_inputs)
+
+
+register_supported(PrimIDs.EMBEDDING, embedding, _embedding_check)
+register_supported(ltorch.embedding, embedding, _embedding_check)

@@ -9,6 +9,7 @@ import torch.fx
 import torch.nn as nn
 import torch.nn.functional as F
 from looseversion import LooseVersion
+from unittest.mock import patch
 
 from thunder import dtypes
 from thunder.dynamo import thunderfx
@@ -26,6 +27,7 @@ from thunder.tests.framework import (
     version_between,
 )
 from thunder.tests.make_tensor import make_tensor
+from thunder.dynamo.report import thunderfx_report
 
 
 # This will be applied to all tests in this file.
@@ -65,7 +67,7 @@ def test_basic(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None)
 
     # out should have grad_fn and its name should be ThunderFunctionBackward
     assert out.grad_fn is not None
-    assert out.grad_fn.name() == "ThunderFunctionBackward"
+    assert out.grad_fn.name() == "ThunderOutputFunctionBackward"
 
     # We record the GraphModules that was compiled by ThunderCompiler
     backend = compiled._backend
@@ -263,7 +265,10 @@ def test_splitter_autocast_ctx_with_split(executor, device: str, dtype: dtypes.d
     ),
 )
 def test_splitter_autograd_function(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None):
-    x = torch.ones(2, device=device, dtype=dtype, requires_grad=True)
+    # Workaround for "RuntimeError: Triton Error [CUDA]: an illegal memory access was encountered"
+    # https://github.com/pytorch/pytorch/issues/124565
+    if device != "cpu":
+        torch.empty(1, device="cuda", requires_grad=True).backward()
 
     class Sin(torch.autograd.Function):
         @staticmethod
@@ -274,21 +279,29 @@ def test_splitter_autograd_function(executor, device: str, dtype: dtypes.dtype, 
         @staticmethod
         def backward(ctx, g):
             (x,) = ctx.saved_tensors
-            return g * torch.cos(x)
+            return g * torch.cos(x) * 100
 
     def func(x):
         y = torch.cos(x) + Sin.apply(x)
         return torch.matmul(x, y)
 
+    x = torch.ones(2, device=device, dtype=dtype, requires_grad=True)
     expected = torch.compile(func, dynamic=dynamic)(x)
 
     cfunc = thunderfx(func, dynamic=dynamic)
     actual = cfunc(x)
 
     backend = cfunc._backend
-    targets = (node.target for node in backend.subgraph_infos[0].split_graph_module.graph.nodes)
-    assert any(target.startswith("thunder_") for target in targets)
-    assert any(target.startswith("inductor_") for target in targets)
+    assert len(backend.subgraph_infos) == 1  # no graph break in dynamo
+    subgraph_info = backend.subgraph_infos[0]
+    assert len(subgraph_info.split_reasons) == 0  # no split
+    assert len(subgraph_info.thunder_compiled_fns) == 1
+    jfunc = subgraph_info.thunder_compiled_fns[0]
+    trc = last_traces(jfunc)[0]
+    assert any(
+        isinstance(bsym.sym.id, str) and bsym.sym.id.startswith("higher_order_autograd_function_apply")
+        for bsym in trc.bound_symbols
+    )
 
     # Verify forward pass
     torch.testing.assert_close(actual, expected)
@@ -317,7 +330,7 @@ def test_force_skip_lazy_graph_module(executor, device: str, dtype: dtypes.dtype
 
         # out should have grad_fn and its name should be ThunderFunctionBackward
         assert out.grad_fn is not None
-        assert out.grad_fn.name() == "ThunderFunctionBackward"
+        assert out.grad_fn.name() == "ThunderOutputFunctionBackward"
 
         backend = cfunc._backend
         # We record the GraphModules that was compiled by ThunderCompiler
@@ -445,10 +458,6 @@ def test_where_nonzero_overload(executor, device: str, dtype: dtypes.dtype):
             IS_WINDOWS,
             reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
         ),
-        pytest.mark.skipif(
-            version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
-            reason="https://github.com/Lightning-AI/lightning-thunder/issues/1471",
-        ),
     ),
 )
 @requiresCUDA
@@ -509,9 +518,41 @@ def test_no_grad_ctx_manager(executor, device: str, dtype: dtypes.dtype):
     assert len(backend.subgraph_infos) == 1
 
     for subgraph_info in backend.subgraph_infos:
-        assert len(subgraph_info.split_reasons) > 1  # Verify there were splits in the subgraph.
+        assert len(subgraph_info.split_reasons) == 0  # Verify there were splits in the subgraph.
         assert isinstance(subgraph_info.original_graph_module, torch.fx.GraphModule)
-        assert any("has been manually disabled" in split_reason.info for split_reason in subgraph_info.split_reasons)
+
+    torch.testing.assert_close(actual, expected)
+
+    g = torch.randn_like(actual)
+    actual_grad = torch.autograd.grad(actual, x, g)
+    expected_grad = torch.autograd.grad(expected, x, g)
+    torch.testing.assert_close(actual_grad, expected_grad)
+
+
+@instantiate(dtypes=NOTHING, executors=[DynamoThunderExecutor])
+def test_no_grad_enabled_grad_nested_ctx_manager(executor, device: str, dtype: dtypes.dtype):
+
+    def func(x):
+        with torch.no_grad():
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                y = x @ x
+
+            with torch.enable_grad():
+                z = x.sin()
+        return y + x + z
+
+    x = torch.randn(3, 3, device=device, dtype=dtype, requires_grad=True)
+    cfunc = thunderfx(func)
+    actual = cfunc(x)
+    expected = torch.compile(func, backend="eager")(x)
+
+    backend = cfunc._backend
+    # We record the GraphModules that was compiled by ThunderCompiler
+    assert len(backend.subgraph_infos) == 1
+
+    for subgraph_info in backend.subgraph_infos:
+        assert len(subgraph_info.split_reasons) == 0  # Verify there were splits in the subgraph.
+        assert isinstance(subgraph_info.original_graph_module, torch.fx.GraphModule)
 
     torch.testing.assert_close(actual, expected)
 
@@ -800,7 +841,6 @@ def test_dynamo_reproducer_2graph(executor, device: str, dtype: dtypes.dtype, us
         cfunc = thunderfx(
             func,
             transforms=[
-                NvtxProfileTransform(),
                 CUDAGraphTransform(),
             ],
             executors=[nvfuser_executor],
@@ -816,8 +856,9 @@ def test_dynamo_reproducer_2graph(executor, device: str, dtype: dtypes.dtype, us
     out = cfunc(x)
     cfunc._backend.save_reproducer_to_folder(tmp_path, use_pytest_benchmark=use_pytest_benchmark)
 
-    s1 = f"{tmp_path}/graph0_thunder_0.py"
-    s2 = f"{tmp_path}/graph1_thunder_0.py"
+    suffix = "_benchmark" if use_pytest_benchmark else "_repro"
+    s1 = f"{tmp_path}/graph0_thunder_0{suffix}.py"
+    s2 = f"{tmp_path}/graph1_thunder_0{suffix}.py"
     assert os.path.exists(s1)
     assert os.path.exists(s2)
     cmd = [sys.executable]
@@ -825,8 +866,8 @@ def test_dynamo_reproducer_2graph(executor, device: str, dtype: dtypes.dtype, us
         cmd = cmd + ["-m", "pytest"]
     cmd1 = cmd + [s1]
     cmd2 = cmd + [s2]
-    result1 = subprocess.run(cmd1, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    result2 = subprocess.run(cmd2, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    result1 = subprocess.run(cmd1, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    result2 = subprocess.run(cmd2, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 
     assert result1.returncode == 0, f"Reproducer {s1} failed: {result1}"
     assert result2.returncode == 0, f"Reproducer {s2} failed: {result2}"
@@ -855,7 +896,8 @@ def test_dynamo_reproducer_submodules(use_pytest_benchmark, tmp_path):
     out = jf(x)
     jf._backend.save_reproducer_to_folder(tmp_path, use_pytest_benchmark=use_pytest_benchmark)
 
-    s1 = f"{tmp_path}/graph0_thunder_0.py"
+    suffix = "_benchmark" if use_pytest_benchmark else "_repro"
+    s1 = f"{tmp_path}/graph0_thunder_0{suffix}.py"
     assert os.path.exists(s1)
     cmd = [sys.executable]
     if use_pytest_benchmark:
@@ -921,9 +963,10 @@ def test_dynamo_reproducer_split(executor, device: str, dtype: dtypes.dtype, use
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         assert result.returncode == 0, f"Reproducer {file_name} failed: {result}"
 
-    s1 = f"{tmp_path}/graph0_thunder_0.py"
-    s2 = f"{tmp_path}/graph0_thunder_2.py"
-    s3 = f"{tmp_path}/graph0_thunder_4.py"
+    suffix = "_benchmark" if use_pytest_benchmark else "_repro"
+    s1 = f"{tmp_path}/graph0_thunder_0{suffix}.py"
+    s2 = f"{tmp_path}/graph0_thunder_2{suffix}.py"
+    s3 = f"{tmp_path}/graph0_thunder_4{suffix}.py"
     cmd = [sys.executable]
     if use_pytest_benchmark:
         cmd = cmd + ["-m", "pytest"]
@@ -951,3 +994,132 @@ def test_thunderfx():
     assert len(thunder_compiled_fns) == 1
     trc = last_traces(thunder_compiled_fns[-1])[-1]
     assert any(bsym.sym.id == "nvtx_range_push" for bsym in trc.bound_symbols)
+
+
+def test_thunderfx_last_traces():
+    def foo(x):
+        return torch.sin(x) + torch.cos(x)
+
+    x = torch.randn((4, 4), requires_grad=True)
+    cfoo = thunderfx(foo)
+    cfoo(x)
+    assert cfoo.last_traces != []
+    assert cfoo.last_backward_traces != []
+
+    # Call it w/o invoking the function first.
+    dfoo = thunderfx(foo)
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        assert dfoo.last_traces == []
+        assert "Must invoke" in str(w[0].message)
+        assert dfoo.last_backward_traces == []
+        assert "before function invoked" in str(w[1].message)
+
+
+def test_get_example_input_tensor_metadata():
+    from thunder.dynamo.utils import _get_example_input_tensor_metadata
+    from torch._subclasses.fake_tensor import FakeTensorMode
+
+    int_tensor = torch.arange(1, 11, dtype=torch.int)
+    meta_int_tensor = _get_example_input_tensor_metadata(int_tensor)
+    assert meta_int_tensor.dtype == torch.int and meta_int_tensor.min_val >= 1 and meta_int_tensor.max_val < 11
+
+    fake_mode = FakeTensorMode()
+    fake_tensor = fake_mode.from_tensor(torch.empty(4, 4, dtype=torch.float32))
+    meta_fake_tensor = _get_example_input_tensor_metadata(fake_tensor)
+    assert meta_fake_tensor.shape == (4, 4) and meta_fake_tensor.dtype == torch.float32
+
+    t0 = torch.randn((5, 10), device="meta")
+    meta_t0 = _get_example_input_tensor_metadata(t0)
+    assert meta_t0.min_val == None and meta_t0.max_val == None and meta_t0.device.type == "meta"
+
+
+def test_thunderfx_meta_tensor():
+    def foo(x):
+        y = torch.sin(x)
+        return y
+
+    t0 = torch.randn((5, 10), device="meta")
+
+    thfoo = thunderfx(foo)
+    out = thfoo(t0)
+    assert out.device.type == "meta"
+
+
+@requiresCUDA
+def test_report(tmp_path, capsys):
+    def foo(x):
+        y = x.sin()
+        torch._dynamo.graph_break()
+        return y + x.cos()
+
+    x = torch.randn(4, 4, device="cuda", requires_grad=True)
+    thunderfx_report(foo, x, folder_path=tmp_path)
+    captured = capsys.readouterr()
+    msg = captured.out
+    assert not captured.err
+    assert "Verifying consistency" in msg
+    assert "Analyzing performance through benchmarking" in msg
+    assert "The input callable can be successfully executed by ThunderFX." in msg
+    assert "Max allocated CUDA memory usage:" in msg
+
+    with patch("torch.compile", side_effect=Exception("compilation raises exception")):
+        thunderfx_report(foo, x, folder_path=tmp_path, check_consistency=False)
+        captured = capsys.readouterr()
+        assert not captured.err
+        assert "Failed to run the function using ThunderFX" in captured.out
+        assert "Failed to save reproducer" in captured.out
+
+
+@pytest.mark.parametrize("use_benchmark", (True, False), ids=("benchmark", "repro"))
+@instantiate(
+    dtypes=NOTHING,
+    executors=[DynamoThunderExecutor],
+    decorators=(
+        pytest.mark.parametrize("use_benchmark", (True, False), ids=("benchmark", "repro")),
+        pytest.mark.xfail(
+            condition=IS_WINDOWS,
+            strict=True,
+            reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
+        ),
+    ),
+)
+def test_fxreport(executor, device: str, dtype: dtypes.dtype, use_benchmark, tmp_path):
+    from thunder.dynamo.report import fx_report
+
+    def foo(x, y):
+        return x + y
+
+    x = torch.randn(4, 4, device=device, requires_grad=True)
+    y = torch.randn(4, 4, device=device, requires_grad=True)
+    results = fx_report(foo, x, y, compile_options={"dynamic": True})
+    for r in results.fx_graph_reports:
+        r.write_eager_repro(tmp_path, use_benchmark=use_benchmark)
+        r.write_thunder_repro(tmp_path, use_benchmark=use_benchmark)
+        r.write_inductor_repro(tmp_path, use_benchmark=use_benchmark)
+        my_exe = "partial(thunder.jit, executors=[pytorch_executor])"
+        my_imports = [
+            "import thunder",
+            "from thunder import pytorch_executor",
+            "from functools import partial",
+        ]
+        if not use_benchmark:
+            r.write_repro(tmp_path, f"{r.graph_name}_mythunder_repro.py", executor_str=my_exe, import_str=my_imports)
+        else:
+            r.write_benchmark_repro(
+                tmp_path, f"{r.graph_name}_mythunder_benchmark.py", ["mythunder"], [my_exe], my_imports
+            )
+
+    def check(file_name, cmd):
+        cmd = cmd + [file_name]
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        assert result.returncode == 0, f"Script {file_name} failed: {result}"
+
+    cmd = [sys.executable]
+    if use_benchmark:
+        cmd = cmd + ["-m", "pytest"]
+    py_files = list(tmp_path.glob("*.py"))
+    assert len(py_files) == 4
+
+    for file in py_files:
+        check(tmp_path / file, cmd)

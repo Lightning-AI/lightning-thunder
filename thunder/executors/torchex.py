@@ -1,32 +1,24 @@
 from __future__ import annotations
 import operator
 import importlib
-from dataclasses import replace
-from contextlib import ContextDecorator
-from functools import wraps, partial
-from inspect import signature
-from itertools import groupby
+from functools import partial, wraps
 from numbers import Number
 from typing import TYPE_CHECKING
 from collections.abc import Callable
 from collections.abc import Hashable, Sequence
 from collections.abc import Sequence
 from types import ModuleType
-from enum import Enum, auto
 
 import torch
-import math
-from looseversion import LooseVersion
 
+from thunder.core.compile_data import get_compile_data
 import thunder.core.dtypes as dtypes
 from thunder.core.dtypes import to_torch_dtype, to_dtype
 import thunder.core.devices as devices
 from thunder.core.devices import to_torch_device, to_device
 import thunder.core.prims as prims
-from thunder.core.trace import TraceCtx, set_tracectx, reset_tracectx, from_trace
-from thunder.core.proxies import NumberProxy, TensorProxy, FutureTensorProxy, variableify, pytype
-from thunder.core.pytree import tree_flatten, tree_unflatten
-from thunder.core.symbol import Symbol, BoundSymbol
+from thunder.core.proxies import NumberProxy, TensorProxy, FutureTensorProxy, pytype
+from thunder.core.symbol import Symbol
 from thunder.distributed.prims import DistributedReduceOps
 import thunder.distributed.prims as dist_prims
 import thunder.core.utils as utils
@@ -936,7 +928,15 @@ def _add_transform(
 
 # Maps exact inputs to truncation division
 def _div_prim_impl(a: Number | torch.Tensor, b: Number | torch.Tensor) -> torch.Tensor:
-    if dtypes.is_exact_dtype(to_dtype(a.dtype)) and dtypes.is_exact_dtype(to_dtype(a.dtype)):
+    def is_exact_number_or_exact_tensor(x):
+        if isinstance(x, (int, bool)):
+            return True
+        # We use PyTorch's dtype attribute (instead of `dtypes.is_exact_dtype`) so that torch.compile on prims.div works.
+        elif isinstance(x, torch.Tensor) and (not x.dtype.is_complex and not x.dtype.is_floating_point):
+            return True
+        return False
+
+    if is_exact_number_or_exact_tensor(a) and is_exact_number_or_exact_tensor(b):
         return torch.div(a, b, rounding_mode="trunc")
 
     return torch.true_divide(a, b)
@@ -1099,6 +1099,7 @@ clamp = _register_torch_operation("clamp")
 where = _register_torch_operation("where")
 masked_fill = _register_torch_operation("masked_fill", module=torch.Tensor)
 tril = _register_torch_operation("tril")
+triu = _register_torch_operation("triu")
 
 
 def _where_prim_checker(pred: Number | TensorProxy, a: Number | TensorProxy, b: Number | TensorProxy) -> bool:
@@ -1133,11 +1134,21 @@ def _tril_transform(a: TensorLike, /, diagonal: int = 0, *, fill_value: None | N
     return tril(a, diagonal)
 
 
+# NOTE PyTorch's triu like tril does not have a fill_value parameter
+def _triu_checker(a: TensorLike, /, diagonal: int = 0, *, fill_value: None | Number = None) -> bool:
+    return fill_value is None
+
+
+def _triu_transform(a: TensorLike, /, diagonal: int = 0, *, fill_value: None | Number = None) -> TensorLike:
+    return triu(a, diagonal)
+
+
 _register_implementation(prims.where, where, checker=_where_prim_checker)
 
 _register_implementation(ltorch.clamp, clamp, checker=_always_executable)
 _register_implementation(ltorch.masked_fill, masked_fill, checker=_masked_fill_checker)
 _register_implementation(ltorch.tril, checker=_tril_checker, execution_transform=_tril_transform)
+_register_implementation(ltorch.triu, checker=_triu_checker, execution_transform=_triu_transform)
 _register_implementation(ltorch.where, where, checker=_always_executable)
 
 
@@ -2202,12 +2213,16 @@ if has_einops:
     einops._backends._type2backend[TensorProxy] = EinopsThunderBackend()
 
 
-def _copy__impl(copy_from, copy_to):
+def _copy__impl(copy_from, copy_to, grad_enabled):
+    if grad_enabled and copy_to.is_leaf and copy_to.requires_grad:
+        raise RuntimeError("a leaf Variable that requires grad is being used in an in-place operation.")
     copy_to.copy_(copy_from)
     return copy_to
 
 
-copy_ = ex.register_operator("copy_", meta=prims.copy_, tags=(prims.OpTags.DONT_DCE,), fn=_copy__impl)
+copy_ = ex.register_operator(
+    "copy_", meta=prims.copy_, tags=(prims.OpTags.DONT_DCE,), fn=_copy__impl, module=torch.Tensor
+)
 _register_implementation(prims.copy_, copy_, checker=_always_executable)
 
 

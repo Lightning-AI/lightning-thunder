@@ -134,6 +134,14 @@ def _splitter(
             supported_partitions.add(partition_cnt)
         return partition_cnt
 
+    # Removes the unused torch.autograd.function.FunctionCtx
+    functionctx_nodes_to_del = (
+        n for n in gm.graph.find_nodes(op="call_function", target=torch.autograd.function.FunctionCtx) if not n.users
+    )
+    for n in functionctx_nodes_to_del:
+        gm.graph.erase_node(n)
+    gm.recompile()
+
     # `split_module` iterates over nodes and determines the partition to place them based on the callback.
     original_split_gm: torch.fx.GraphModule = split_module(
         gm, root_m=None, split_callback=callback, keep_original_order=True, keep_original_node_name=True

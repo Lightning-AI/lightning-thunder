@@ -79,8 +79,13 @@ def _generate_dataclass_class_name(x: object):
     # x is an instance of a Dataclass.
     # We generate a name for the Dataclass based on the package name and class name so that trace won't have problem
     # if there are conflicting names.
+
     assert dataclasses.is_dataclass(x)
-    name = (x.__class__.__module__ + "_" + x.__class__.__qualname__).replace(".", "_")
+    if isinstance(x, type):
+        cls = x
+    else:
+        cls = x.__class__
+    name = (cls.__module__ + "_" + cls.__qualname__).replace(".", "_")
     # Class could be a local class in which case it will have `<locals>` in it's module name.
     name = name.replace(">", "_").replace("<", "_")
     return name
@@ -149,7 +154,11 @@ def to_printable(
 
     if dataclasses.is_dataclass(x):
         # Add `class` to the object_ctx so that we can reuse it during the trace execution.
-        object_ctx[_generate_dataclass_class_name(x)] = x.__class__
+        if isinstance(x, type):  # dataclass type
+            cls = x
+        else:  # dataclass type instance
+            cls = x.__class__
+        object_ctx[_generate_dataclass_class_name(x)] = cls
         # Return the instance as printable object (as function `prettyprint` knows how to deal with it).
         return x
 

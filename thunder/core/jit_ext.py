@@ -1,116 +1,79 @@
-import thunder
+from __future__ import annotations
 import math
-from typing import Any, Optional, Dict, Tuple, Literal
-import builtins
+from typing import Any
 import collections
-from collections.abc import ValuesView, Iterable, Iterator
 from collections.abc import Callable, Sequence
-import weakref
-import random
-from functools import partial, wraps, reduce
-import linecache
-import operator
-import copy
+import dataclasses
+from functools import wraps
 import contextvars
 from contextlib import contextmanager
 import dis
-import warnings
-from enum import Enum, auto
-from io import StringIO
-import inspect
+import sys
 import time
-
-from thunder.core.compile_data import compile_data_and_stats, get_cache_option, get_compile_data
-import thunder.clang as clang
-import thunder.core.transforms
-from thunder.core.baseutils import run_once
-
+import warnings
 from types import (
+    BuiltinMethodType,
     CellType,
-    ClassMethodDescriptorType,
-    CodeType,
-    CoroutineType,
-    FrameType,
     FunctionType,
-    MethodType,
+    GetSetDescriptorType,
     MethodDescriptorType,
+    MethodType,
     ModuleType,
     NoneType,
-    BuiltinFunctionType,
-    BuiltinMethodType,
-    MethodWrapperType,
-    WrapperDescriptorType,
-    TracebackType,
-    CellType,
-    ModuleType,
-    CodeType,
-    BuiltinFunctionType,
-    FunctionType,
-    MethodType,
-    GetSetDescriptorType,
     UnionType,
+    WrapperDescriptorType,
 )
 
 import torch
 import torch.utils.checkpoint
+
+import thunder
+from thunder.core.compile_data import get_cache_option, get_compile_data
+import thunder.clang as clang
+import thunder.core.transforms
+import thunder.core.baseutils as baseutils
+import thunder.core.codeutils as codeutils
 from thunder.core.proxies import (
-    DistParallelType,
-    proxy,
-    Proxy,
-    ProxyTag,
     AnyProxy,
     NumberProxy,
-    StringProxy,
+    Proxy,
+    ProxyInterface,
+    ProxyTag,
     TensorProxy,
-    FutureTensorProxy,
-    make_proxy_name,
     Variable,
-    variableify,
-    unvariableify,
     is_proxy_name_available,
+    proxy,
+    unvariableify,
+    variableify,
 )
-from thunder.core.trace import set_tracectx, reset_tracectx, tracectx, from_trace
+from thunder.core.trace import tracectx, from_trace
 from thunder.core.interpreter import (
-    InterpreterLogItem,
-    InterpreterFrame,
-    interpret,
-    _interpret_call,
-    CapsuleType,
-    default_callbacks,
     INTERPRETER_CALLBACKS,
     INTERPRETER_SIGNALS,
-    default_opcode_interpreter,
-    _default_lookaside_map,
+    InterpreterRuntimeCtx,
+    ProvenanceRecord,
+    PseudoInst,
+    WrappedValue,
+    _interpret_call,
+    default_callbacks,
     default_lookaside,
     do_raise,
     get_interpreterruntimectx,
-    InterpreterRuntimeCtx,
+    interpret,
+    interpreter_needs_wrap,
     is_opaque,
-    Py_NULL,
-    member_descriptor,
-    WrappedValue,
     unwrap,
     wrap,
     wrap_const,
-    PseudoInst,
-    ProvenanceRecord,
-    interpreter_needs_wrap,
 )
-from thunder.core.langctxs import set_langctx, reset_langctx, Languages, resolve_language
-from thunder.core.baseutils import extract_callable_name
-from thunder.core.codeutils import get_siginfo, SigInfo
+from thunder.core.codeutils import SigInfo
 import thunder.core.prims as prims
-from thunder.common import transform_for_execution
 from thunder.core.options import CACHE_OPTIONS, SHARP_EDGES_OPTIONS, DebugOptions
-from thunder.core.symbol import Symbol, BoundSymbol, is_traceable
-
-from thunder.extend import Executor
-from thunder.common import CompileData, CompileStats
+from thunder.core.symbol import Symbol
 from thunder.core.trace import TraceCtx, TraceResults
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.clang import _clang_fn_set
 from thunder.core.pytree import tree_map, tree_iter
-from thunder.core.compile_data import compile_data_and_stats
 
 #
 # jit_ext.py implements extensions of thunder's interpreter
@@ -197,19 +160,38 @@ class JitCtx:
         computation_trace,
         *,
         sharp_edges: SHARP_EDGES_OPTIONS,
-        process_group_for_ddp=None,
         executor_lookasides,
         ad_hoc_executor,
+        show_interpreter_progress: bool = False,
     ):
         self._sharp_edges: SHARP_EDGES_OPTIONS = sharp_edges
         self._prologue_trace = prologue_trace
         self._computation_trace: TraceCtx = computation_trace
         self._constraints = []
-        self._process_group_for_ddp = process_group_for_ddp
         self._additional_outputs = collections.defaultdict(list)
         self._proxy_swapmap: dict[Variable, Proxy] = {}
         self._executor_lookasides: dict[Callable, Callable] = executor_lookasides
         self._ad_hoc_executor = ad_hoc_executor
+        self._show_interpreter_progress = show_interpreter_progress
+        self._last_printed_progress = -1
+        self._progress_interval = 10
+
+    def show_progress_if_verbose(self):
+        if not self._show_interpreter_progress:
+            return
+        t = time.perf_counter()
+        if t > self._last_printed_progress + self._progress_interval:
+            if self._last_printed_progress == -1:
+                print("Begin interpretation", file=sys.stderr)
+            num_bsyms = len(self._computation_trace.bound_symbols)
+            print(f"\rcaptured {num_bsyms} operations", end="", file=sys.stderr)
+            self._last_printed_progress = t
+
+    def end_progress(self):
+        if not self._show_interpreter_progress or self._last_printed_progress == -1:
+            return
+        self.show_progress_if_verbose()
+        print("\nFinished interpretation", file=sys.stderr)
 
     @property
     def ad_hoc_executor(self):
@@ -254,6 +236,7 @@ class JitCtx:
             name_postfix = _infer_name_postfix_from_provenance(value.provenance)
             if name_postfix:
                 name = f"t{name_postfix}"
+                self.computation_trace.names.discard(name)
             else:
                 name = None
 
@@ -262,29 +245,27 @@ class JitCtx:
             # TensorProxy attributes should be considered derived quantities, so we flag TensorProxies here
             value.provenance.ext_flag |= EXT_FLAG_IS_TENSOR_PROXY
 
-            if isinstance(p, TensorProxy) and p.distparallel_type in (
-                DistParallelType.REPLICATED,
-                DistParallelType.FULLY_SHARDED,
-            ):
-                p_new = thunder.distributed.prims.synchronize(
-                    p,
-                    self._process_group_for_ddp,
-                )
-                if isinstance(p.thunder_fsdp_padding_size, int):
-                    p_new = p_new[: (p_new.shape[0] - p.thunder_fsdp_padding_size)]
-                p_orig = p
-                p = p_new
-            else:
-                p_orig = p
+            # We assume that a Parameter's underlying storage won't be changed.
+            # We tag Parameter's proxy with `STATIC_MEMORY_LOCATION` tag so that
+            # other transforms (eg. CUDAGraph) can use this information.
+            # We tag this here (rather than below in unpack_parameter_or_buffer_or_submodule below) because
+            # thunderfx does not properly see the module, but does see that we are dealing with a parameter.
+            if isinstance(uvalue, torch.nn.Parameter):
+                # NOTE - Update `p_orig` as in Distributed scenario
+                #        it is the proxy for the Parameter on device.
+                #        In `jit(ddp(model))` or `jit(fsdp(model))` scenario,
+                #        proxy `p` will be the proxy for synced parameter.
+                p.tags.add(ProxyTag.STATIC_MEMORY_LOCATION)
+
             if p is not uvalue:
                 value.register_proxy(p)
             # TODO: other caching modes
             co: CACHE_OPTIONS = get_cache_option()
             if co is CACHE_OPTIONS.CONSTANT_VALUES:
-                self.add_constraint((clang.check_tensor_shape_and_metadata, p_orig))
+                self.add_constraint((clang.check_tensor_shape_and_metadata, p))
             elif co is CACHE_OPTIONS.SYMBOLIC_VALUES:
                 # TODO: establish guarding logic to allow non-broadcast shape change
-                self.add_constraint((clang.check_tensor_shape_and_metadata, p_orig))
+                self.add_constraint((clang.check_tensor_shape_and_metadata, p))
             elif co not in (CACHE_OPTIONS.SAME_INPUT, CACHE_OPTIONS.NO_CACHING):
                 raise NotImplementedError(f"Unsupported cache option {co}")
             return p
@@ -337,7 +318,7 @@ class JitCtx:
                     )
             return proxy_s
         else:
-            raise ValueError("cannot proxify value of {type(uvalue).__type} objects")
+            raise ValueError(f"cannot proxify value of {type(uvalue).__type__} objects")
 
 
 _jit_ctx = contextvars.ContextVar("jitctx")
@@ -432,6 +413,21 @@ def _general_jit_getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
     getattr_lookaside = default_lookaside(getattr)
     assert getattr_lookaside is not None
 
+    uobj = unwrap(obj)
+    uname = unwrap(name)
+    if isinstance(uobj, AnyProxy):
+        if uname == "__dict__":
+            return wrap(
+                obj.original_value.__dict__,
+                provenance=ProvenanceRecord(
+                    PseudoInst.LOAD_ATTR,
+                    inputs=[
+                        obj.provenance,
+                        name.provenance,
+                    ],
+                ),
+            )
+
     value = getattr_lookaside(obj, name, *maybe_default)
     if value is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return value
@@ -497,16 +493,93 @@ def _general_jit_ordered_dict_setitem(d, key, value):
     return dict_setitem_lookaside(d, key, value)
 
 
+@register_general_jit_lookaside(torch.nn.ModuleList.__getitem__)
+def torch_nn_ModuleList_getitem_lookaside(self, idx):
+    uself = unwrap(self)
+    uidx = unwrap(idx)
+    if isinstance(uidx, slice):
+
+        def impl(self, idx):
+            return list(self._modules.values())[idx]
+
+        modules = _interpret_call(impl, self, idx)
+        if modules is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+            return module_list
+        res = _interpret_call(lambda self: self.__class__(), self)
+        if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+            return res
+        res.provenance = ProvenanceRecord(PseudoInst.NEW, inputs=[wrap_const(uself.__class__).provenance])
+
+        def impl(res, modules):
+            res.extend(modules)
+            return res
+
+        return _interpret_call(impl, res, modules)
+
+    def impl(self, idx):
+        return self._modules[self._get_abs_string_index(idx)]
+
+    return _interpret_call(impl, self, idx)
+
+
+_TORCH_DYNAMIC_TYPES = {
+    torch.amp.autocast_mode.autocast,
+    torch.autograd.grad_mode.set_grad_enabled,
+    torch.autograd.grad_mode.no_grad,
+}
+
+
+def is_created_during_tracing(provenance):
+    if (
+        provenance.inst is PseudoInst.OPAQUE
+        and provenance.inputs[0].inst is PseudoInst.CONSTANT
+        and provenance.inputs[0].value == object.__new__
+    ):
+        return True
+    if provenance.inst is PseudoInst.NEW:
+        return True
+    return False
+
+
+@interpreter_needs_wrap
+def _raw_object_setattr(obj: Any, name: str, value: Any):
+    return object.__setattr__(obj, name, value)
+
+
+@register_general_jit_lookaside(object.__setattr__)
+def _general_jit_object_setattr_lookaside(obj: Any, name: str, value: Any):
+    uobj = unwrap(obj)
+    if is_created_during_tracing(obj.provenance) or type(uobj) in _TORCH_DYNAMIC_TYPES or not hasattr(uobj, "__dict__"):
+        return _raw_object_setattr(obj, name, value)
+
+    if should_register_for_prologue(obj.provenance) and (obj.original_value is obj.nothing):
+        if getattr(obj.provenance, "proxy", None) is None:
+            p: AnyProxy = AnyProxy(uobj, history=obj.provenance)
+            obj.provenance.proxy = p
+            obj.anyproxy = p
+
+    d = _interpret_call(getattr, obj, wrap_const("__dict__"))
+    if d is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+        return d
+    d.provenance.ext_flag |= EXT_FLAG_IS_MODULE_MEMBER_DICT
+    ud = unwrap(d)
+    assert type(ud) is dict
+    res = _interpret_call(ud.__setitem__, name, value)
+    return res
+
+
 @register_general_jit_lookaside(setattr)
 def _general_jit_setattr_lookaside(obj: Any, name: str, value: Any):
     setattr_lookaside = default_lookaside(setattr)
     assert setattr_lookaside is not None
 
     uobj = unwrap(obj)
-    uname = unwrap(name)
+
     if isinstance(uobj, torch.nn.Module):
-        # 1) modify the inner thing
-        # 2) divert the actual setattr...
+        # 1) populate the wrappeers for the member dicts
+        # 2) let the original setattr do it's thing by modifying the
+        #    the member dict
+        # This might generalize to other things, too...
         for n in MODULE_MEMBER_DICT_ATTRS:
             member_dict = _interpret_call(getattr, obj, wrap_const(n))
             member_dict.provenance.ext_flag |= EXT_FLAG_IS_MODULE_MEMBER_DICT
@@ -640,8 +713,6 @@ def _convert_pytorchfunc_to_thundertrace(
     trace.bound_symbols.extend(bsyms)
     func_result = unwrap(wrapped_func_result)
     if shallow_copy_output and not bsyms:
-        from thunder.core.baseutils import sequencify
-
         out_to_shallow_copy: dict[Variable, TensorProxy] = {}
         for a in sequencify(func_result):
             shallow_copy_of_a = prims.shallow_copy.meta(a)
@@ -669,9 +740,12 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
 
     custom_autograd_function_cls = unwrap(obj)
     custom_forward = custom_autograd_function_cls.forward
-    ctx = torch.autograd.function.FunctionCtx()
+    typ = torch.autograd.function.FunctionCtx
+    ctx = typ()
     ctx_proxy = proxy(ctx, name=None, history=None)
-    wrapped_ctx = wrap_const(ctx_proxy)
+    wrapped_ctx = wrap_const(
+        ctx_proxy, provenance=ProvenanceRecord(PseudoInst.NEW, inputs=[wrap_const(typ).provenance])
+    )
     trace_of_fwd, fwd_output_provenance = _convert_pytorchfunc_to_thundertrace(
         custom_forward, True, wrapped_ctx, *args, **kwargs
     )
@@ -791,7 +865,22 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
     # note that this key is quite new: https://github.com/pytorch/pytorch/pull/134087
     # non_differentiable_idx = fwd_kwargs.get("non_differentiable_idx")
     length_of_tensor_args = sum(args_tensor_mask)
-    new_fwd_args = (wrap_const(None),) + fwd_args[:length_of_tensor_args]
+
+    # N.B.(crcrpar) When `torch.compile(..., dynamic=True)`,
+    # GraphModules' forward seem to take `SymInt` and other values
+    # as its argument with some probability. Though that piece of information unfortunately
+    # does not seem to be indicated in ``args_tensor_mask`` nor ``non_differentiable_idx``.
+    # Thus we optimistically iterate over ``fwd_args`` and gather non-tensor values whose index is >= `length_of_tensor_args` to ``fwd_args``.
+    new_fwd_args = []
+    for i, v in enumerate(fwd_args):
+        if i < length_of_tensor_args:
+            new_fwd_args.append(v)
+        else:
+            # note(crcrpar): we might want to include `FutureTensorProxy` and
+            # a proxy of tensor subclass in the near future.
+            if not isinstance(unwrap(v), TensorProxy):
+                new_fwd_args.append(v)
+    new_fwd_args = (wrap_const(None),) + tuple(new_fwd_args)
 
     aug_fwd_trace, aug_fwd_provenance = _convert_pytorchfunc_to_thundertrace(fwd, False, *new_fwd_args)
     if aug_fwd_trace is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
@@ -815,7 +904,10 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
     with tracectx(trace_of_forward):
         prims.python_return(*(sequencify(output)))
 
+    # See NOTE: `autograd_function_apply` and `no_grad` interaction for details about
+    # `thunder.torch.call_higher_order_function_and_consider_outer_autograd_setting`
     @wraps(aug_fwd_trace.python_callable())
+    @thunder.torch.call_higher_order_function_and_consider_outer_autograd_setting
     def forward(*args, **kwargs):
         return interpret_trace(trace_of_forward, *args, **kwargs)
 
@@ -899,7 +991,11 @@ def _general_jit_torch_finfo_lookaside(dtype: thunder.dtypes.dtype):
 def _general_jit_torch_checkpoint_lookaside(
     function: Callable,
     *args,
-    **kwargs: Any,
+    context_fn: None | Callable[..., Any] = None,
+    debug: None | bool = None,
+    determinism_check: None | str = None,
+    preserve_rng_state: None | bool = None,
+    use_reentrant: bool = False,
 ):
     """
     This function does preprocessing of the `function` argument before
@@ -917,17 +1013,48 @@ def _general_jit_torch_checkpoint_lookaside(
         The result of calling `thunder.torch.checkpoint` with the preprocessed
         `function` and its arguments.
     """
-    from thunder.torch import checkpoint
 
-    # It should be possible to call the general_thunder_jit here to handle the
-    # conversion from torch to thunder but it doesn't work now
-    # See https://github.com/Lightning-AI/lightning-thunder/issues/1126
-    # TODO: Convert the function to a Thunder function
-    def thunder_function(*args, **kwargs):
-        return unwrap(function)(*args, **kwargs)
+    if unwrap(use_reentrant):
+        return do_raise(
+            "torch.checkpoint: use_reentrant=True is not supported in Thunder",
+        )
+    # NOTE: Thunder currently ignores the context_fn, debug, determinism_check, preserve_rng_state arguments
+    # Let's raise a warning if any of these arguments are passed
+    if unwrap(context_fn) is not None:
+        warnings.warn("torch.checkpoint: context_fn is not supported in Thunder and will be ignored")
+    if unwrap(debug) is not None:
+        warnings.warn("torch.checkpoint: debug is not supported in Thunder and will be ignored")
+    if unwrap(determinism_check) is not None:
+        warnings.warn("torch.checkpoint: determinism_check is not supported in Thunder and will be ignored")
+    if unwrap(preserve_rng_state) is not None:
+        warnings.warn("torch.checkpoint: preserve_rng_state is not supported in Thunder and will be ignored")
 
-    wrapped_thunder_function = wrap_const(thunder_function)
-    return interpreter_needs_wrap(checkpoint)(wrapped_thunder_function, *args, **kwargs)
+    jit_ctx: JitCtx = get_jit_ctx()
+    jit_ctx.computation_trace.push_scope([])
+
+    input_output_proxy_names = set()
+
+    def add_input_output_proxy_name(p):
+        if isinstance(p, Proxy):
+            input_output_proxy_names.add(p.name)
+
+    tree_map(add_input_output_proxy_name, [unwrap(a) for a in args])
+
+    res = _interpret_call(function, *args)
+    if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+        return res
+
+    tree_map(add_input_output_proxy_name, unwrap(res))
+
+    new_bsyms = jit_ctx.computation_trace.pop_scope()
+    jit_ctx.computation_trace.bound_symbols.extend(new_bsyms)
+
+    for bsym in new_bsyms:
+        for o in bsym.flat_proxy_outs:
+            if o.name not in input_output_proxy_names:
+                o.tags.add(ProxyTag.RECOMPUTE_IN_BACKWARD)
+
+    return res
 
 
 # Adds proxy methods
@@ -1190,17 +1317,17 @@ def _general_jit_global_callback(orig_value: Any, name: str) -> Any:
     return orig_value
 
 
-_safe_provenance_inst = {
+_input_provenance_inst = {
     "INPUT_ARGS",
     "INPUT_KWARGS",
-    "INPUT_FN",
+    "INPUT_FN",  # or self
     "LOAD_ATTR",
     "CONSTANT",
     "BINARY_SUBSCR",
 }
 
 
-def should_register_for_prologue(pr):
+def should_register_for_prologue(pr, _toplevel=True):
     inst = pr.inst
     if pr.ext_flag & EXT_FLAG_IS_TENSOR_PROXY:
         return False
@@ -1208,17 +1335,20 @@ def should_register_for_prologue(pr):
         inst = inst.opname
     else:
         inst = inst.value
-    if inst not in _safe_provenance_inst:
+    if inst not in _input_provenance_inst:
         return False
     if inst == "CONSTANT" and callable(pr.value):
         if pr.value.__name__ != "__getitem__" and pr.value != GetSetDescriptorType.__get__:
             return False
-    return all(should_register_for_prologue(i) for i in pr.inputs)
+    if not pr.inputs and _toplevel:
+        return False
+    return all(should_register_for_prologue(i, _toplevel=False) for i in pr.inputs)
 
 
 def _general_jit_wrap_callback(value):
     ctx: JitCtx = get_jit_ctx()
 
+    ctx.show_progress_if_verbose()
     uvalue = value.value
     # for modules, rewrite m.__dict__["key"] to m.key
     if (
@@ -1237,7 +1367,7 @@ def _general_jit_wrap_callback(value):
         value.provenance.ext_flag |= EXT_FLAG_IS_MODULE
     elif isinstance(uvalue, torch.Tensor):
         # we always want to proxy torch.Tensor, even const
-        p = ctx.proxify(value)
+        ctx.proxify(value)
     elif value.provenance.inst is PseudoInst.CONSTANT:
         value.provenance.ext_flag |= EXT_FLAG_IS_PROXY_DERIVED
     elif callable(uvalue):
@@ -1253,7 +1383,7 @@ def _general_jit_wrap_callback(value):
             value.provenance.ext_flag |= EXT_FLAG_IS_PROXY_DERIVED
             value.provenance.ext_flag |= EXT_FLAG_IS_CONSTRAINABLE_INPUT
             # we follow the caching mechanisms of the eager_unpack_interpreter
-            p = ctx.proxify(value)
+            ctx.proxify(value)
         else:
             return _general_jit_sharp_edge(
                 f"We are using a (non-const) value of type {type(uvalue).__name__}, which is not identified as an input.",
@@ -1455,9 +1585,10 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
                 obj = orig_modules.get(id(obj), obj)
 
             if new_output:
-                output = Proxy("obj")
+                output = Proxy(prefix="obj")
             else:
                 output = p
+
             param_ordering[id(output)] = (output, param_ordering[id(orig_obj)][1] + [math.inf, "." + str(name)])
             bsym = prims.unpack_attr.bind(obj, name, output=output)
             prologue_trace.bound_symbols.append(bsym)
@@ -1473,7 +1604,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             typ, name, root_module_provenance = get_parameter_or_buffer_or_submodule_name_and_root(provenance)
             root_module = from_provenance(root_module_provenance, new_output=True)
             if new_output:
-                output = Proxy("m")  # name? collectify?
+                output = Proxy(prefix="m")  # name? collectify?
             else:
                 output = p
 
@@ -1492,7 +1623,9 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             name = ".".join(name)
             if typ == "_parameters":
                 bsym = prims.unpack_parameter.bind(root_module, name, output=output)
-                output.tags.add(ProxyTag.STATIC_MEMORY_LOCATION)
+                assert (
+                    ProxyTag.STATIC_MEMORY_LOCATION in output.tags
+                ), "Parameter was not tagged with STATIC_MEMORY_LOCATION"
             elif typ == "_buffers":
                 bsym = prims.unpack_buffer.bind(root_module, name, output=output)
                 output.tags.add(ProxyTag.STATIC_MEMORY_LOCATION)
@@ -1517,7 +1650,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             inputs = [from_provenance(i, new_output=True) for i in provenance.inputs]
             obj, idx = inputs
             if new_output:
-                output = Proxy("subscr")  # name? collectify?
+                output = Proxy(prefix="subscr")  # name? collectify?
             else:
                 output = p
             if isinstance(idx, (int, str, Proxy)):
@@ -1589,7 +1722,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             if provenance.ext_flag & EXT_FLAG_IS_MODULE:
                 assert prologue_trace.bound_symbols[-1].output is res
                 if prologue_trace.bound_symbols[-1].sym != prims.unpack_submodule:
-                    orig_module = Proxy("module")
+                    orig_module = Proxy(prefix="module")
                     prologue_trace.bound_symbols[-1].output = orig_module
                     bsym = prims.unpack_thunder_module.bind(orig_module, output=res)
                     orig_modules[id(res)] = orig_module
@@ -1713,31 +1846,59 @@ def process_recorded_modifications(ctx, epilogue_trace):
             for k, (inst, *args) in last_modification.items():
                 if inst == PseudoInst.STORE_SUBSCR:
                     (value,) = args
-                    assert isinstance(value.value, Proxy)
 
-                    assert modified_object.provenance.inst is PseudoInst.LOAD_ATTR
-                    assert modified_object.provenance.inputs[1].inst is PseudoInst.CONSTANT
-                    assert modified_object.provenance.inputs[1].value == "_buffers"
+                    if (
+                        modified_object.provenance.inst is PseudoInst.LOAD_ATTR
+                        and modified_object.provenance.inputs[0].inst is PseudoInst.NEW
+                        and modified_object.provenance.inputs[1].inst is PseudoInst.CONSTANT
+                        and modified_object.provenance.inputs[1].value == "_modules"
+                    ):
+                        # This is for slices of ModuleList. We might have to revisit if we want to return those
+                        pass
+                    elif (
+                        modified_object.provenance.inst is PseudoInst.LOAD_ATTR
+                        and modified_object.provenance.inputs[1].inst is PseudoInst.CONSTANT
+                        and modified_object.provenance.inputs[1].value == "_buffers"
+                    ):
+                        assert isinstance(value.value, (Proxy, int, tuple, NoneType))  # todo: better criterion
+                        if modified_object.provenance.inputs[0].inst is PseudoInst.INPUT_FN:
+                            name = [""]
+                            root_module_provenance = modified_object.provenance.inputs[0]
+                        else:
+                            typ, name, root_module_provenance = get_parameter_or_buffer_or_submodule_name_and_root(
+                                modified_object.provenance.inputs[0]
+                            )
+                            assert typ == "_modules"
+                        root_module_proxy = root_for_provenances.get(root_module_provenance)
+                        if root_module_proxy is None:
+                            # we want this to created in the compute trace context for namespace...
+                            root_module_proxy = Proxy(history=root_module_provenance)
+                            epilogue_trace.add_name(root_module_proxy.name)
+                            root_for_provenances[root_module_provenance] = root_module_proxy
 
-                    typ, name, root_module_provenance = get_parameter_or_buffer_or_submodule_name_and_root(
-                        modified_object.provenance.inputs[0]
-                    )
-                    assert typ == "_modules"
-                    root_module_proxy = root_for_provenances.get(root_module_provenance)
-                    if root_module_proxy is None:
-                        ## we want this to created in the compute trace context for namespace...
-                        root_module_proxy = Proxy(history=root_module_provenance)
-                        epilogue_trace.add_name(root_module_proxy.name)
-                        root_for_provenances[root_module_provenance] = root_module_proxy
-
-                    name = ".".join(name + [k])
-                    with tracectx(epilogue_trace):
-                        bsym = prims.pack_buffer.bind(root_module_proxy, name, value.value, output=None)
-                        epilogue_trace.bound_symbols.append(bsym)
+                        name = ".".join(name + [k])
+                        with tracectx(epilogue_trace):
+                            bsym = prims.pack_buffer.bind(root_module_proxy, name, value.value, output=None)
+                            epilogue_trace.bound_symbols.append(bsym)
+                    elif (
+                        modified_object.provenance.inst is PseudoInst.LOAD_ATTR
+                        and modified_object.provenance.inputs[1].inst is PseudoInst.CONSTANT
+                        and modified_object.provenance.inputs[1].value == "__dict__"
+                    ):
+                        name = k
+                        setattr_obj_provenance = modified_object.provenance.inputs[0]
+                        if hasattr(setattr_obj_provenance, "proxy"):
+                            assert isinstance(value.value, (Proxy, int, tuple, NoneType))  # todo: better criterion
+                            setattr_obj_proxy = setattr_obj_provenance.proxy
+                            with tracectx(epilogue_trace):
+                                bsym = prims.pack_attr.bind(setattr_obj_proxy, name, value.value, output=None)
+                                epilogue_trace.bound_symbols.append(bsym)
+                    else:
+                        raise NotImplementedError(f"Modifications of {modified_object.provenance} are not supported")
                 else:
                     raise NotImplementedError(f"Modifications {inst} on dicts are not supported")
         else:
-            raise NotImplementedError(f"Modifications of {type(uvalue).__name__} objects are not supported")
+            raise NotImplementedError(f"Modifications of {type(umodified_object).__name__} objects are not supported")
 
 
 def bind_inputs(name, trace, input_vars, input_proxies):
@@ -1760,20 +1921,6 @@ def bind_inputs(name, trace, input_vars, input_proxies):
     trace.args = input_proxies
 
 
-def _get_process_group_from(*fn_and_args) -> Optional["ProcessGroup"]:
-    # `ddp` and `fsdp` transforms add attribute `procses_group_for_ddp`
-    # on the Module that they wrap. This module could be passed to `thunder.jit`
-    # as the function to be jitted or as an argument of the function to be jitted.
-    found_pg = None
-    for fn_or_arg in fn_and_args:
-        pg = getattr(fn_or_arg, "process_group_for_ddp", None)
-        if pg is not None and found_pg is None:
-            found_pg = pg
-        elif pg is not None and pg != found_pg:
-            raise NotImplementedError("jitting modules with different ProcessGroup is not supported currently.")
-    return found_pg
-
-
 def update_tags(proxy_swapmap: dict[Variable, Proxy]) -> None:
     for old, new in proxy_swapmap.items():
         new.tags.update(unvariableify(old).tags)
@@ -1782,6 +1929,76 @@ def update_tags(proxy_swapmap: dict[Variable, Proxy]) -> None:
 DebugOptions.register_option(
     "record_interpreter_history", bool, False, "record interpreter history (use thunder.last_interpreter_log to access)"
 )
+DebugOptions.register_option("show_interpreter_progress", bool, False, "show progress while running the interpreter")
+
+
+def build_value_from_wrapped(wrapped_v):
+    v = unwrap(wrapped_v)
+
+    if hasattr(wrapped_v, "anyproxy"):
+        return wrapped_v.anyproxy
+
+    # TODO: this bakes in the dtype/device
+    if isinstance(v, thunder.dtypes.dtype):
+        return thunder.dtypes.to_torch_dtype(v)
+
+    if isinstance(v, thunder.devices.Device):
+        return thunder.devices.to_torch_device(v)
+
+    # inputs
+    if should_register_for_prologue(wrapped_v.provenance):
+        return AnyProxy(v, history=wrapped_v.provenance)
+
+    if (
+        type(v) in (str, type, object)
+        or isinstance(v, (ProxyInterface, codeutils.ContextObject, torch.finfo))
+        or baseutils.is_base_printable(v)
+    ):
+        return v
+
+    if dataclasses.is_dataclass(v):
+        # For a dataclass instance of class
+        # class MyContainer:
+        #    int i
+        #    float f
+        # This will be represented in the trace as `packagename1_MyContainer(i=x, f=y)` where `x` and `y` could be concrete number
+        # or proxies.
+        #
+        # NOTE: The `class` packagename1_MyContainer will present in `import_ctx` and passed to the compiled function.
+        # This is taken care of by function `to_printable`.
+        kwargs = {}
+        for k, uattr in v.__dict__.items():
+            if k in wrapped_v.attribute_wrappers:
+                uattr = build_value_from_wrapped(wrapped_v.attribute_wrappers[k])
+            kwargs[k] = uattr
+        return prims.python_dataclass_new(type(v), **kwargs)
+
+    if isinstance(v, (tuple, list)):
+        res_list = []
+        for witem, item in zip(wrapped_v.item_wrappers, v, strict=True):
+            if witem is not None:
+                item = build_value_from_wrapped(witem)
+            res_list.append(item)
+        return type(v)(res_list)
+
+    if isinstance(v, dict):
+        res_list = []
+        for k, item in v.items():
+            wkey = wrapped_v.key_wrappers.get(k)
+            if wkey is not None:
+                key = build_value_from_wrapped(wkey)
+            else:
+                key = k
+            witem = wrapped_v.item_wrappers.get(k)
+            if witem is not None:
+                item = build_value_from_wrapped(witem)
+            res_list.append((key, item))
+        return type(v)(res_list)
+
+    if baseutils.is_collection(v):
+        raise NotImplementedError(f"unhandled collection of type {type(v)}")
+
+    raise NotImplementedError(f"unhandled value of type {type(v)}")
 
 
 def thunder_general_jit(
@@ -1815,20 +2032,20 @@ def thunder_general_jit(
     compile_data = get_compile_data()
     executor_lookasides = {k: interpreter_needs_wrap(v) for k, v in compile_data.executor_lookasides.items()}
 
-    process_group_for_ddp: Optional["ProcessGroup"] = _get_process_group_from(fn, *args, *kwargs.values())
     ctx: JitCtx = JitCtx(
         prologue_trace,
         computation_trace,
         sharp_edges=sharp_edges,
-        process_group_for_ddp=process_group_for_ddp,
         executor_lookasides=executor_lookasides,
         ad_hoc_executor=ad_hoc_executor,
+        show_interpreter_progress=compile_data.debug_options.show_interpreter_progress,
     )
     jfn = interpret(
         fn,
         fn_lookaside=general_jit_lookaside,
         callbacks=general_jit_callbacks,
         with_provenance_tracking=True,
+        unwrap_result=False,
         uncacheable_classes=(torch.Tensor, int, float, str, NoneType),
         record_history=compile_data.debug_options.record_interpreter_history,
     )
@@ -1838,12 +2055,15 @@ def thunder_general_jit(
             result = jfn(*args, **kwargs)
             computation_trace.set_current_source_location(None, None)
             process_recorded_modifications(ctx, epilogue_trace)
+            uresult = unwrap(result)
             last_interpreter_log = jfn._last_interpreter_log
-            result_proxies = tuple(p for p in tree_iter(result) if isinstance(p, (TensorProxy, NumberProxy)))
+            result_proxies = tuple(p for p in tree_iter(uresult) if isinstance(p, (TensorProxy, NumberProxy)))
             prims.python_return(result_proxies)
         with tracectx(epilogue_trace):
-            prims.python_return(result)
+            res = build_value_from_wrapped(result)
+            prims.python_return(res)
 
+    ctx.end_progress()
     pro_to_comp, pro_to_comp_set, computation_intermediates = get_computation_inputs_and_intermediates(
         computation_trace
     )
@@ -1905,5 +2125,4 @@ def thunder_general_jit(
     epilogue_trace = _apply_trace_proxy_rename(
         epilogue_trace, restrict_proxy_swapmap(pro_to_epi_proxies + comp_to_epi_proxies), "epilogue"
     )
-
     return TraceResults(prologue_trace, computation_trace, epilogue_trace, last_interpreter_log)

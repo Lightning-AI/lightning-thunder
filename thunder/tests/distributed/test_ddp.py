@@ -113,9 +113,10 @@ class DDPTest(DistributedParallelTestCase):
         device = torch.device("cuda", self.rank)
         m = ToyModel().to(device)
         cm = thunder.jit(
-            ddp(m, bucket_size_in_mb=bucket_size_in_mb),
+            m,
             executors=executors_map[executor].executors_list(),
         )
+        cm = ddp(cm, bucket_size_in_mb=bucket_size_in_mb)
         x = torch.ones((2, 12)).to(device)
         cm(x).mean().backward()
 
@@ -156,12 +157,12 @@ class DDPTest(DistributedParallelTestCase):
 
         def get_model_and_optimizer(device):
             m = ToyModel().to(device)
-            ddp_m = ddp(m, bucket_size_in_mb=bucket_size_in_mb)
-            jitted_ddp_m = thunder.jit(
-                ddp_m,
+            jitted_m = thunder.jit(
+                m,
                 cache_mode=CACHE_OPTIONS.CONSTANT_VALUES,
                 executors=executors_map[executor].executors_list(),
             )
+            jitted_ddp_m = ddp(jitted_m, bucket_size_in_mb=bucket_size_in_mb)
             optimizer = torch.optim.SGD(jitted_ddp_m.parameters(), lr=1e-3)
             return jitted_ddp_m, optimizer
 
@@ -181,9 +182,10 @@ class DDPTest(DistributedParallelTestCase):
             m = ToyModel().to(device)
             m.load_state_dict(initial_model_state)
             cm = thunder.jit(
-                ddp(m, bucket_size_in_mb=bucket_size_in_mb),
+                m,
                 executors=executors_map[executor].executors_list(),
             )
+            cm = ddp(cm, bucket_size_in_mb=bucket_size_in_mb)
             x = torch.ones((2, 12)).to(device)
             cm(x).mean().backward()
 
@@ -191,24 +193,6 @@ class DDPTest(DistributedParallelTestCase):
                 gradients = tuple(p.grad for p in cm.parameters() if p.grad is not None)
             else:
                 self.assertEqual(tuple(p.grad for p in cm.parameters() if p.grad is not None), gradients)
-
-    def test_ddp_model_as_argument(self):
-        # Sanity test to make sure passing model as argument to
-        # thunder.jit with `ddp` compiles.
-        device = torch.device("cuda", self.rank)
-        model = torch.nn.Linear(5, 10, bias=False, device=device)
-        x = torch.randn(2, 5, device=device)
-
-        def fwd_loss(m, x):
-            return m(x).sum()
-
-        model = thunder.distributed.ddp(model)
-        fwd_loss = thunder.jit(fwd_loss)
-        fwd_loss(model, x)
-
-        # notice how we cannot do `model.no_sync()` because it's not a ThunderModule
-        with thunder.ThunderModule.no_sync(model):
-            fwd_loss(model, x)
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
     def test_ddp_weight_sharing(self):
@@ -264,16 +248,8 @@ class DDPTest(DistributedParallelTestCase):
             assert allreduced_grads == 1
 
         with device:
-            jit_ddp_model = Model()
             ddp_jit_model = Model()
             x = torch.ones(4, 16)
-
-        # Check `jit(ddp(model))` works
-        jit_ddp_model.fc1.weight = jit_ddp_model.fc2.weight
-
-        jit_ddp_model = thunder.jit(thunder.distributed.ddp(jit_ddp_model), executors=["torch"])
-
-        _test_model_output_and_gradients(jit_ddp_model, x)
 
         # Check `ddp(jit(model))` works
         ddp_jit_model.fc1.weight = ddp_jit_model.fc2.weight
@@ -291,7 +267,6 @@ common_utils.instantiate_parametrized_tests(DDPTest)
 def _test_native_ddp_helper(input_data):
     init_method, world_size, rank, executor, device, dtype, kwargs = input_data
     bucket_size_in_mb = kwargs.get("bucket_size_in_mb", 0)
-    jit_first = kwargs.get("jit_first", False)
     num_samples = 2
     tensor_shape = (2, 2)
     sample_seed = 3456
@@ -314,13 +289,7 @@ def _test_native_ddp_helper(input_data):
 
     # Creates, compiles, and DDPs the model
     model = SmallModel(device, torch_dtype)
-    if jit_first:
-        cmodel = ddp(thunder.jit(model, executors=executor.executors_list()))
-    else:
-        cmodel = thunder.jit(
-            ddp(model),
-            executors=executor.executors_list(),
-        )
+    cmodel = ddp(thunder.jit(model, executors=executor.executors_list()))
 
     comparison_exceptions = []
     for _ in range(num_epochs):
@@ -422,15 +391,17 @@ def _test_ddp_transformer_engine(input_data):
     thunder_model.fc1.weight.data = fc1_weight.clone()
     thunder_model.fc2.weight.data = fc2_weight.clone()
 
-    jit_model = thunder.jit(
-        thunder.distributed.ddp(thunder_model),
-        executors=[
-            transformer_engine_ex,
-        ]
-        + executor.executors_list(),
+    jit_model = thunder.distributed.ddp(
+        thunder.jit(
+            thunder_model,
+            executors=[
+                transformer_engine_ex,
+            ]
+            + executor.executors_list(),
+        )
     )
 
-    optim = torch.optim.SGD(thunder_model.parameters())
+    optim = torch.optim.SGD(jit_model.parameters())
 
     for _ in range(n_iter):
         o = jit_model(x).sum()
@@ -560,8 +531,8 @@ def _test_ddp_transformer_engine_llama_sanity(input_data):
     model.to(device)
     x = torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int64, device=device)
     y = torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int64, device=device)
-    jit_model = thunder.jit(
-        thunder.distributed.ddp(model), executors=(transformer_engine_ex,) + thunder.get_default_executors()
+    jit_model = thunder.distributed.ddp(
+        thunder.jit(model, executors=(transformer_engine_ex,) + thunder.get_default_executors())
     )
 
     sanity_exceptions = []
@@ -600,13 +571,10 @@ def _test_ddp_transformer_engine_llama_sanity(input_data):
     num_devices=2,
     # CPU broke around PyTorch 2.3.1, see PR #545
     devicetypes=(devices.DeviceType.CUDA,),
-    decorators=(
-        pytest.mark.parametrize("bucket_size_in_mb", (0, 25)),
-        pytest.mark.parametrize("jit_first", (True, False)),
-    ),
+    decorators=(pytest.mark.parametrize("bucket_size_in_mb", (0, 25)),),
 )
 @distributed_wrapper("test_native_ddp", _test_native_ddp_helper)
-def test_native_ddp(executor, devices, dtype, bucket_size_in_mb, jit_first):
+def test_native_ddp(executor, devices, dtype, bucket_size_in_mb):
     pass
 
 

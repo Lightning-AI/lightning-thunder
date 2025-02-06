@@ -2,6 +2,7 @@ from __future__ import annotations
 import os
 from contextvars import ContextVar
 from contextlib import contextmanager
+import pathlib
 from typing import Optional, Any, Tuple, Type, Dict, List, Union
 from collections.abc import Callable
 from collections.abc import Sequence, Hashable
@@ -84,8 +85,8 @@ class TraceCtx:
         self.args = None
         self.kwargs = {}
 
-        self.bound_symbols: list[BoundSymbolInterface] = []
-        self.scopes = [self.bound_symbols]
+        self._bound_symbols: list[BoundSymbolInterface] = []
+        self.scopes = [self._bound_symbols]
 
         self.name_ctr = 0
         self.obj_name_ctr = 0
@@ -129,6 +130,16 @@ class TraceCtx:
         # This is a detail for enabling transformer_engine's autocast manager.
         # We only want the forward function to be called with ctx manager.
         self._include_te_fp8_autocast = False
+
+    @property
+    def bound_symbols(self) -> list[BoundSymbolInterface]:
+        return self._bound_symbols
+
+    @bound_symbols.setter
+    def bound_symbols(self, bsyms: list[BoundSymbolInterface]):
+        assert self.scopes[0] is self._bound_symbols
+        self._bound_symbols = bsyms
+        self.scopes[0] = bsyms
 
     @property
     def tags(self):
@@ -210,7 +221,7 @@ class TraceCtx:
     #   just records the given name
     def make_name(self, name: str | None = None, *, prefix: str | None = None) -> str:
         if name is not None:
-            self.names.add(name)
+            self.add_name(name)
             return name
 
         return self._make_name(prefix=prefix)
@@ -247,8 +258,10 @@ class TraceCtx:
 
     def push_scope(self, scope: list) -> None:
         self.scopes.append(scope)
+        assert self.scopes[0] is self.bound_symbols
 
     def pop_scope(self) -> list:
+        assert self.scopes[0] is self.bound_symbols
         return self.scopes.pop()
 
     def peek_scope(self) -> list | None:
@@ -508,6 +521,11 @@ class TraceCtx:
 
     def __repr__(self) -> str:
         return self.python(print_depth=-1)
+
+    def save_trace(self, filename: str | os.PathLike) -> None:
+        filename = pathlib.Path(filename)
+        with open(filename, "w") as f:
+            f.write(str(self))
 
 
 # Constructs a new trace by shallow copying parts of an existing trace
