@@ -417,6 +417,7 @@ class DesugarTensorSubclass:
         self,
         bsym: BoundSymbol,
         fx_graph: GraphModule,
+        header: str,
     ) -> BoundSymbol | tuple[BoundSymbol, ...]:
         from thunder.torch import _torch_to_thunder_function_map
 
@@ -483,8 +484,6 @@ class DesugarTensorSubclass:
             utils.check(len(non_none_args) == 1, lambda: f"{node_of_output.args = }")
             new_out_node = non_none_args[0]
             self.swap_map[variableify(orig_output)] = fxnode_output_name_to_tensor_proxy[str(new_out_node)]
-        args = ", ".join([t.name if isinstance(t, ProxyInterface) else f"{t}" for t in bsym.flat_args])
-        header = f"{bsym.sym.id}({args})"
         for i, sbsym in enumerate(bsyms, 1):
             sbsym.header = f"[{i}/{len(bsyms)}] unrolled `__torch_dispatch__` of `{header}`"
         return bsyms
@@ -666,7 +665,9 @@ class DesugarTensorSubclass:
 
         bsym_with_modified_output = updated_bsym.from_bsym_swap_proxies(self.swap_map)
         self.bsym_to_new_outputs[bsym_with_modified_output] = bsym_with_modified_output
-        return self.translate_fx_graph_into_bsym(bsym_with_modified_output, fx)
+        args = ", ".join([t.name if isinstance(t, ProxyInterface) else f"{t}" for t in bsym.flat_args])
+        header = f"{bsym.sym.id}({args})"
+        return self.translate_fx_graph_into_bsym(bsym_with_modified_output, fx, header=header)
 
 
 def tensor_subclass_dce(trace: TraceCtx) -> TraceCtx:
