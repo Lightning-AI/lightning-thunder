@@ -375,6 +375,9 @@ te_functional_linear_backward = transformer_engine_ex.register_operator(
 LINEAR_CALLS_COUNTER = 0
 
 if TE_AVAILABLE:
+    # Recipe is chosen based on hardware platform
+    # For H100 or lower, it returns DelayedScaling recipe.
+    # For B200, it returns MXFP8BlockScaling recipe.
     _DEFAULT_RECIPE = get_default_fp8_recipe()
 
 IMPORT_CTX_TE_KEY = "transformer_engine"
