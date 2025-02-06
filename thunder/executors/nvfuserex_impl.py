@@ -2605,7 +2605,8 @@ def _decomposed_scaled_mm_meta(
     out_dtype: dtypes.dtype | None = None,
     use_fast_accum: bool = False,
 ) -> TensorLike:
-    return TensorProxy(shape=(a.shape[0], b.shape[1]), device=a.device, dtype=out_dtype or a.dtype)
+    dtype = dtypes.to_dtype(out_dtype) if out_dtype is not None else a.dtype
+    return TensorProxy(like=a, shape=(a.shape[0], b.shape[1]), device=a.device, dtype=dtype)
 
 
 def _decomposed_scaled_mm_impl(
@@ -2634,9 +2635,9 @@ def _decomposed_scaled_mm_impl(
     if bias is not None:
         out = fd.ops.add(out, getnv(bias, fd, lc_to_nv_map))
 
-    if out_dtype is not None:
-        nv_out_dtype = lcdtype_to_nvdtype(out_dtype)
-        out = fd.ops.cast(out, nv_out_dtype)
+    dtype = dtypes.to_dtype(out_dtype) if out_dtype is not None else a.dtype
+    nv_out_dtype = lcdtype_to_nvdtype(dtype)
+    out = fd.ops.cast(out, nv_out_dtype)
 
     return out
 
@@ -2677,5 +2678,9 @@ def _scaled_mm_impl(
     return nv_decomposed_scaled_mm(a, b, scale_a, scale_b, bias, scale_result, out_dtype, use_fast_accum)
 
 
-register_supported(ltorch._scaled_mm, _scaled_mm_impl, _scaled_mm_check)
-register_supported(ltorch.core_aten_scaled_mm, _scaled_mm_impl, _scaled_mm_check)
+for sym_of_scaled_mm in (ltorch._scaled_mm, ltorch.core_aten_scaled_mm):
+    ex.register_supported(
+        sym_of_scaled_mm,
+        checker=_scaled_mm_check,
+        execution_transform=_scaled_mm_impl,
+    )
