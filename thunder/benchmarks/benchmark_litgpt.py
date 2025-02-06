@@ -27,6 +27,7 @@ from thunder.tests.litgpt_model import Config, GPT, Block
 from lightning.fabric.utilities.throughput import measure_flops
 from lightning.fabric.utilities import Throughput
 from lightning_utilities.core.imports import package_available
+from torchtitan.models.llama import Transformer, llama3_configs, ModelArgs
 
 transformer_engine_available = package_available("transformer_engine")
 torchao_available = package_available("torchao")
@@ -427,7 +428,9 @@ class Benchmark_litGPT:
     def init_model(self):
         init_device = torch.device("meta") if self.distributed_mode in FSDP_MODES else self.device
         with init_device:
-            model = GPT(self.config)
+            # model = GPT(self.config)
+            _config = ModelArgs(dim=4096, n_layers=32, n_heads=32, n_kv_heads=8, vocab_size=128256, multiple_of=1024, ffn_dim_multiplier=1.3, norm_eps=1e-05, rope_theta=500000, max_seq_len=8192, depth_init=True, norm_type='rmsnorm')
+            model = Transformer(_config)
 
         # Handle fp8 related Linear layer swapping (for torchao or TransformerEngine)
         model = self._torchao_fp8_handler.convert_model_to_fp8(model)
@@ -513,12 +516,23 @@ class Benchmark_litGPT:
                     if isinstance(transformer_block, Block):
                         _apply_fully_shard(transformer_block)
 
-                _apply_fully_shard(model.lm_head)
-                _apply_fully_shard(model.transformer["wte"])
-                _apply_fully_shard(model.transformer["ln_f"])
+                for layer_id, transformer_block in model.layers.items():
+                    fully_shard(
+                        transformer_block,
+                        mesh=mesh,
+                        reshard_after_forward=self.shard_mode == "zero3" and int(layer_id) < len(model.layers) - 1,
+                        mp_policy=MixedPrecisionPolicy(
+                            param_dtype=torch.bfloat16,
+                            reduce_dtype=torch.bfloat16,
+                        ),
+                    )
+                # _apply_fully_shard(model.lm_head)
+                # _apply_fully_shard(model.transformer["wte"])
+                # _apply_fully_shard(model.transformer["ln_f"])
                 _apply_fully_shard(model)
                 model.to_empty(device=self.device)
-                model.apply(model._init_weights)
+                # model.apply(model._init_weights)
+                model.init_weights(self.device)
 
             elif self.distributed_mode == "fsdp":
                 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, ShardingStrategy
