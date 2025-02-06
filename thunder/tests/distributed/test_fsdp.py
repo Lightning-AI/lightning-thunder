@@ -725,16 +725,19 @@ def _test_fsdp_transformer_engine(input_data):
         thunder_model.fc1.weight.data = fc1_weight.clone()
         thunder_model.fc2.weight.data = fc2_weight.clone()
 
-        jit_model = thunder.jit(
-            thunder.distributed.fsdp(thunder_model, sharding_strategy=thunder_fsdp_strategy),
-            executors=[
-                transformer_engine_ex,
-            ]
-            + executor.executors_list(),
-            fp8_shard_intermediate_activation=intermediate_activation_sharding,
+        jit_model = thunder.distributed.fsdp(
+            thunder.jit(
+                thunder_model,
+                executors=[
+                    transformer_engine_ex,
+                ]
+                + executor.executors_list(),
+                fp8_shard_intermediate_activation=intermediate_activation_sharding,
+            ),
+            sharding_strategy=thunder_fsdp_strategy,
         )
 
-        optim = torch.optim.SGD(thunder_model.parameters())
+        optim = torch.optim.SGD(jit_model.parameters())
 
         for _ in range(n_iter):
             o = jit_model(x).sum()
@@ -814,8 +817,8 @@ def _test_fsdp_transformer_engine(input_data):
         shard_size = int(dim / world_size)
         fsdp_te_params = tuple(te_model.parameters())
         try:
-            assert_close(thunder_model.fc1.weight, fsdp_te_params[0].view(shard_size, dim))
-            assert_close(thunder_model.fc2.weight, fsdp_te_params[1].view(shard_size, dim))
+            assert_close(jit_model.get_parameter("fc1.weight"), fsdp_te_params[0].view(shard_size, dim))
+            assert_close(jit_model.get_parameter("fc2.weight"), fsdp_te_params[1].view(shard_size, dim))
         except Exception as e:
             # Return exceptions only for rank==0
             if rank == 0:
@@ -857,9 +860,10 @@ def _test_fsdp_transformer_engine_bucketing(input_data):
         model.to(device)
         x = torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int64, device=device)
         y = torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int64, device=device)
-        jit_model = thunder.jit(
-            thunder.distributed.fsdp(model, sharding_strategy=thunder_fsdp_strategy, bucketing_strategy=bucketing),
-            executors=(transformer_engine_ex,) + thunder.get_default_executors(),
+        jit_model = thunder.distributed.fsdp(
+            thunder.jit(model, executors=(transformer_engine_ex,) + thunder.get_default_executors()),
+            sharding_strategy=thunder_fsdp_strategy,
+            bucketing_strategy=bucketing,
         )
 
         sanity_exceptions = []
