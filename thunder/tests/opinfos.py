@@ -7884,8 +7884,8 @@ if LooseVersion(torch.__version__) >= "2.4":
             ),
             DecorateInfo(
                 custom_comparator(partial(assert_close, atol=0.0, rtol=0.0)),
-               "test_core_vs_torch_consistency",
-               dtypes=(datatypes.bfloat16,),
+                "test_core_vs_torch_consistency",
+                dtypes=(datatypes.bfloat16,),
             ),
         ),
     )
