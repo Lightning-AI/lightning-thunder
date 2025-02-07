@@ -1154,7 +1154,7 @@ def test_leak_on_unsupported_thunder_operator():
 
 @requiresCUDA
 def test_thunder_specific_reports(tmp_path):
-    from thunder.dynamo.report import fx_report, analyze_with_thunder
+    from thunder.dynamo.report import fx_report, analyze_thunder_splits
 
     x = torch.ones(2, 2, device="cuda", requires_grad=True)
 
@@ -1168,7 +1168,7 @@ def test_thunder_specific_reports(tmp_path):
 
     results = fx_report(foo, x)
     for idx, fx_graph_report in enumerate(results.fx_graph_reports):
-        thunder_fx_graph_report = analyze_with_thunder(fx_graph_report)
+        thunder_fx_graph_report = analyze_thunder_splits(fx_graph_report)
         thunder_fx_graph_report.write_thunder_repro(tmp_path)
         for thunder_split_report in thunder_fx_graph_report.subgraph_reports:
             split_folder = tmp_path / str(idx)

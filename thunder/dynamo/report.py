@@ -501,7 +501,7 @@ class ThunderSplitGraphReport(FXGraphReport):
         fwd_trc: The forward trace, available only after calling :meth:`_create_thunder_traces`.
         bwd_trc: The backward trace, available only after calling :meth:`_create_thunder_traces`.
 
-    For an example, see the documentation of :func:`analyze_with_thunder`.
+    For an example, see the documentation of :func:`analyze_thunder_splits`.
     """
 
     def __init__(
@@ -534,6 +534,10 @@ class ThunderSplitGraphReport(FXGraphReport):
         self.bwd_trc = last_backward_traces(self.compiled_fn)[-1]
 
     def create_fusion_reports(self):
+        """
+        Runs the Thunder-compiled function to obtain the nvFusion definition
+        and generate the :class:`ThunderFusionReport` instance based on it.
+        """
         self._create_thunder_traces()
         for trace, prefix in [(self.fwd_trc, "forward"), (self.bwd_trc, "backward")]:
             for bsym in trace.bound_symbols:
@@ -593,7 +597,7 @@ class ThunderFusionReport:
         nvfusion_bsym (BoundSymbol): The symbolic representation of the nvFusion region.
         name (str): The name of the fusion region.
 
-    For an example, see the documentation of :func:`analyze_with_thunder`.
+    For an example, see the documentation of :func:`analyze_thunder_splits`.
     """
 
     def __init__(self, bsym: BoundSymbol, name: str):
@@ -665,7 +669,7 @@ class ThunderFXGraphReport(FXGraphReport):
         subgraph_reports (list[ThunderSplitGraphReport]): A list of reports for each
             Thunder-split FX graph. For more details, see :class:`ThunderSplitGraphReport`.
 
-    For an example, see the documentation of :func:`analyze_with_thunder`.
+    For an example, see the documentation of :func:`analyze_thunder_splits`.
     """
 
     def __init__(self, gm: torch.fx.GraphModule, gm_name: str, thunder_options: dict):
@@ -715,7 +719,7 @@ class ThunderFXGraphReport(FXGraphReport):
             )
 
 
-def analyze_with_thunder(
+def analyze_thunder_splits(
     report: FXGraphReport,
     **thunder_options,
 ) -> ThunderFXGraphReport:
@@ -733,7 +737,7 @@ def analyze_with_thunder(
         import torch
         from thunder.dynamo.report import (
             fx_report, FXReport, ThunderFXGraphReport, FXGraphReport,
-            ThunderSplitGraphReport, ThunderFusionReport, analyze_with_thunder
+            ThunderSplitGraphReport, ThunderFusionReport, analyze_thunder_splits
         )
         from pathlib import Path
 
@@ -758,7 +762,7 @@ def analyze_with_thunder(
                 # `ThunderFXGraphReport` extends `FXGraphReport`, providing the ability to save
                 # reproduction/benchmark scripts for the original FX graph. Additionally, it
                 # includes information about Thunder-split subgraphs in `subgraph_reports`.
-                thunder_fx_graph_report: ThunderFXGraphReport = analyze_with_thunder(fx_graph_report)
+                thunder_fx_graph_report: ThunderFXGraphReport = analyze_thunder_splits(fx_graph_report)
                 # Saves a reproduction script for the original FX graph
                 thunder_fx_graph_report.write_thunder_repro(tmp_path)
 

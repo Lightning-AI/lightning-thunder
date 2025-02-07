@@ -1253,8 +1253,6 @@ def create_python_callable_from_bsym(bsym: BoundSymbolInterface) -> str:
     si = SigInfo(bsym.sym.name)
     si.args = [(v.name, None) for v in bsym.flat_args]
     trace._siginfo = si
-    # trace.siginfo()
-    # trace.args = bsym.flat_args
     trace.bound_symbols = list(bsym.subsymbols)
 
     with tracectx(trace):
