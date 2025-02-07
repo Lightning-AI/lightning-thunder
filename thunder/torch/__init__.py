@@ -5104,17 +5104,18 @@ def _nll_loss_helper(
     # What are the alternative options?
     #   We can add a `mode` parameter to take_along_axis that controls how to handle out-of-bounds indices.
     # The jax.numpy.take_along_axis has this feature.
+    not_pad_for_ignore_index = isinstance(ignore_index, Number) and ignore_index >= 0 and ignore_index < num_class
 
     out = -a
 
     if weight is not None:
-        bcast_weight = reshape(weight, [num_class] + [1 for _ in range(2, a.ndim)])
+        bcast_weight = reshape(weight, [weight.size(0)] + [1 for _ in range(2, a.ndim)])
         out = out * bcast_weight
 
     # Make target broadcastable with output, which has same shape as input tensor.
     bcast_target = unsqueeze(target, class_dim)
 
-    if isinstance(ignore_index, Number) and ignore_index >= 0 and ignore_index < num_class:
+    if not_pad_for_ignore_index:
         out = take_along_dim(out, bcast_target, class_dim)
         selected_target_mask = bcast_target != ignore_index
         out = where(selected_target_mask, out, 0)
@@ -5138,9 +5139,15 @@ def _nll_loss_helper(
             # Gather the weights for each target class.
             # Mask the ignored target classes.
             # Sum together all target weights.
-            expanded_weight = expand(bcast_weight, a.shape)
-            selected_weight = take_along_dim(expanded_weight, bcast_target, class_dim)
-            selected_weight = where(selected_target_mask, selected_weight, 0)
+            if not_pad_for_ignore_index:
+                expanded_weight = expand(bcast_weight, a.shape)
+                selected_weight = take_along_dim(expanded_weight, bcast_target, class_dim)
+                selected_weight = where(selected_target_mask, selected_weight, 0)
+            else:
+                weight = clang.pad(weight, utils.const_as(0, weight.dtype), [(0, 1, 0)])
+                bcast_weight = reshape(weight, [weight.shape[0]] + [1 for _ in range(2, a.ndim)])
+                expanded_weight = expand(bcast_weight, padded_out.shape)
+                selected_weight = take_along_dim(expanded_weight, bcast_target, class_dim)
             bcast_weight_sum = sum(selected_weight)
             return (reduced_sum / bcast_weight_sum), bcast_weight_sum
         else:
