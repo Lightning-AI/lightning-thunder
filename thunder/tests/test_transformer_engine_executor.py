@@ -196,7 +196,8 @@ def test_te_with_autocast():
     assert any(bsym.sym.name.startswith("te_linear") for bsym in fwd_traces[-1].bound_symbols)
 
 
-@pytest.mark.xfail(strict=True, raises=RuntimeError, reason="Retain graph is not supported by TE")
+# NOTE: strict=False as it passes on Blackwell.
+@pytest.mark.xfail(strict=False, raises=RuntimeError, reason="Retain graph is not supported by TE")
 @requiresCUDA
 def test_te_with_retain_graph():
     def foo(x, w):
