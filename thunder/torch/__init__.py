@@ -5122,7 +5122,7 @@ def _nll_loss_helper(
     else:
         selected_target_mask = bcast_target != ignore_index
         index = where(selected_target_mask, bcast_target, num_class)
-        padded_out = clang.pad(out, 0, [1] * (class_dim-1) * 2 + [0, 1] + [1] * (out.ndim - class_dim) * 2)
+        padded_out = clang.pad(out, 0, [1] * (class_dim - 1) * 2 + [0, 1] + [1] * (out.ndim - class_dim) * 2)
 
     # This section handles applying the reduction parameter to the output.
     # We return None for the total_weight when reduction is "none" or "sum" since it is unused in the backwards pass.
