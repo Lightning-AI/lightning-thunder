@@ -10,7 +10,7 @@ from thunder.core.pytree import tree_flatten
 from thunder.core.symbol import BoundSymbol
 from thunder.core.trace import TraceCtx, from_trace, set_tracectx, reset_tracectx
 from thunder.core.transform_common import replace_redundant_inputs
-from thunder.core.vjp_utils import get_saved_for_backward_tensors, set_saved_for_backward_tensors
+from thunder.core.vjp_utils import get_saved_for_backward_tensors
 from .utils import is_cudagraph_capturing
 
 if TYPE_CHECKING:
@@ -329,23 +329,6 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
         skip_output=False,
         skip_subsymbols=False,
     )
-
-    # remove duplicates
-    # The NVFuser (and possibly others) fusion pass applied on the forward during has a
-    # CSE pass that may lead to duplicate symbols saved for backward. This causes trouble
-    # because we see duplicates in the unpacking. But the passes are unaware of the backward,
-    # so they cannot handle it themselves, so we clean this up here.
-    seen = set()
-    new_fw_out = []
-    new_bw_inp = []
-    for p_fw, p_bw in zip(get_saved_for_backward_tensors(fw_extrace), new_bsyms[4].output, strict=True):
-        if p_fw.name not in seen:
-            seen.add(p_fw.name)
-            new_fw_out.append(p_fw)
-            new_bw_inp.append(p_bw)
-    new_bsyms[4] = new_bsyms[4].from_bsym(output=tuple(new_bw_inp))
-    set_saved_for_backward_tensors(fw_extrace, new_fw_out)
-
     bw_trace.bound_symbols = new_bsyms
 
     if getattr(compile_data.fn, "use_fsdp", False):

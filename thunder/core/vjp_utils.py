@@ -1,5 +1,5 @@
 import inspect
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from functools import wraps
 from inspect import Parameter, Signature
 from itertools import chain
@@ -231,22 +231,3 @@ def get_saved_for_backward_tensors(trace: TraceCtx) -> tuple[TensorProxy]:
         lambda: "All saved tensors must be TensorProxy or None",
     )
     return tuple(saved_tensors)
-
-
-def set_saved_for_backward_tensors(trace: TraceCtx, saved_tensors: Sequence[TensorProxy]):
-    """
-    Given a trace, return the tensors that are saved for backward in the trace.
-
-    Args:
-        trace: The trace to set saved tensors for.
-        saved_tensors: proxies for the tensors to save.
-    """
-    utils.check(
-        all(isinstance(t, TensorProxy) or t is None for t in saved_tensors),
-        lambda: "All saved tensors must be TensorProxy or None",
-    )
-    ret_node = trace.bound_symbols.pop(-1)
-    assert ret_node.sym == prims.python_return
-    output = ret_node.args
-    output = (output[0], (tuple(saved_tensors), *output[1][1:]), *output[2:])
-    trace.bound_symbols.append(ret_node.from_bsym(args=output))
