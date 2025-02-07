@@ -121,10 +121,7 @@ bsym_torch_compile_repro_template = """
 from thunder.executors.torch_compile import make_compiled as make_torch_compile_callable
 import thunder.examine
 
-# inputs
-x = torch.randn(16, 16, device="cuda")
 inputs = {inputs}
-
 
 jfn = thunder.jit({func_name})
 jfn(*inputs)
