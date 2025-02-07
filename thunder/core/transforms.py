@@ -56,6 +56,7 @@ from thunder.core.utils import (
     OrderedSet,
     ProxyDict,
 )
+from thunder.core.codeutils import is_literal
 import thunder.clang as clang
 from thunder.clang import (
     empty,
@@ -2292,6 +2293,8 @@ def iter_bound_symbols(bound_symbols):
     """
     for symbol in bound_symbols:
         if symbol.sym.id in trace_interpreter_skip_list:
+            continue
+        elif all(is_literal(sym_out) for sym_out in symbol.flat_outs):
             continue
         elif symbol.output is None:
             continue
