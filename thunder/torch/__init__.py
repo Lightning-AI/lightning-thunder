@@ -5111,17 +5111,16 @@ def _nll_loss_helper(
         bcast_weight = reshape(weight, [num_class] + [1 for _ in range(2, a.ndim)])
         out = out * bcast_weight
 
-    assert isinstance(ignore_index, Number)
-
     # Make target broadcastable with output, which has same shape as input tensor.
     bcast_target = unsqueeze(target, class_dim)
-    if ignore_index >= 0 and ignore_index < num_class:
+
+    if isinstance(ignore_index, Number) and ignore_index >= 0 and ignore_index < num_class:
         out = take_along_dim(out, bcast_target, class_dim)
         selected_target_mask = bcast_target != ignore_index
         out = where(selected_target_mask, out, 0)
     else:
         selected_target_mask = bcast_target != ignore_index
-        index = where(selected_target_mask, bcast_target, num_class)
+        bcast_target = where(selected_target_mask, bcast_target, num_class)
         padding = [(0, 0, 0)] * out.ndim
         padding[class_dim] = (0, 1, 0)
         padded_out = clang.pad(out, utils.const_as(0, out.dtype), padding)
