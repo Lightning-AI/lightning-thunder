@@ -10,6 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from looseversion import LooseVersion
 from unittest.mock import patch
+import weakref
 
 from thunder import dtypes
 from thunder.dynamo import thunderfx
@@ -1071,7 +1072,6 @@ def test_report(tmp_path, capsys):
         assert "Failed to save reproducer" in captured.out
 
 
-@pytest.mark.parametrize("use_benchmark", (True, False), ids=("benchmark", "repro"))
 @instantiate(
     dtypes=NOTHING,
     executors=[DynamoThunderExecutor],
@@ -1122,4 +1122,73 @@ def test_fxreport(executor, device: str, dtype: dtypes.dtype, use_benchmark, tmp
     assert len(py_files) == 4
 
     for file in py_files:
-        check(tmp_path / file, cmd)
+        check(file, cmd)
+
+
+def test_leak_on_unsupported_thunder_operator():
+    # This test is to check the fix for a previous leak
+    # which was caused by holding onto the
+    # exception object in split_reason.
+
+    def unsupported_op_fn(w1) -> torch.Tensor:
+        topk_ids = torch.tensor([[0, 1]])
+        # This indexing is not supported by thunder and get's passed to inductor.
+        w13_weights = w1[topk_ids]
+        return w13_weights + 1
+
+    def call_thunderfx_on_leaking_fn():
+        w1 = torch.randn(16, 16, 32, dtype=torch.bfloat16)
+        fn = thunderfx(unsupported_op_fn)
+        fn(w1)
+
+        # There should be two thunder traces because of the split caused by indexing.
+        # In future when thunder supports this indexing, the test will fail here
+        # as we won't be checking for the leak in case of unsupported operation.
+        assert len(fn.last_traces) == 2
+
+        return weakref.ref(w1)
+
+    t_weak_ref = call_thunderfx_on_leaking_fn()
+    assert t_weak_ref() is None
+
+
+@requiresCUDA
+def test_thunder_specific_reports(tmp_path):
+    from thunder.dynamo.report import fx_report, analyze_thunder_splits
+
+    x = torch.ones(2, 2, device="cuda", requires_grad=True)
+
+    def foo(x):
+        # torch.sinc has automatic fallback registered,
+        # so that operation will be given to inductor.
+        x = x.exp()
+        torch._dynamo.graph_break()
+        y = torch.sinc(x) + torch.cos(x)
+        return y + 1
+
+    results = fx_report(foo, x)
+    for idx, fx_graph_report in enumerate(results.fx_graph_reports):
+        thunder_fx_graph_report = analyze_thunder_splits(fx_graph_report)
+        thunder_fx_graph_report.write_thunder_repro(tmp_path)
+        for thunder_split_report in thunder_fx_graph_report.subgraph_reports:
+            split_folder = tmp_path / str(idx)
+            thunder_split_report.write_eager_repro(split_folder)
+            thunder_split_report.write_thunder_repro(split_folder)
+            thunder_split_report.write_inductor_repro(split_folder)
+            thunder_split_report.create_fusion_reports()
+            for nvf in thunder_split_report.fusion_reports:
+                nvf.write_nvfuser_repro(split_folder / "nvfusion")
+                nvf.write_inductor_repro(split_folder / "nvfusion")
+                bench_data = nvf.run_benchmark()
+
+    def check(file_name, cmd):
+        cmd = cmd + [file_name]
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        assert result.returncode == 0, f"Script {file_name} failed: {result}"
+
+    cmd = [sys.executable]
+    py_files = list(tmp_path.rglob("*.py"))
+    assert len(py_files) == 16
+
+    for file in py_files:
+        check(file, cmd)
