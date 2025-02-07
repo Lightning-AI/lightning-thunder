@@ -10,6 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from looseversion import LooseVersion
 from unittest.mock import patch
+import weakref
 
 from thunder import dtypes
 from thunder.dynamo import thunderfx
@@ -1123,3 +1124,30 @@ def test_fxreport(executor, device: str, dtype: dtypes.dtype, use_benchmark, tmp
 
     for file in py_files:
         check(tmp_path / file, cmd)
+
+
+def test_leak_on_unsupported_thunder_operator():
+    # This test is to check the fix for a previous leak
+    # which was caused by holding onto the
+    # exception object in split_reason.
+
+    def unsupported_op_fn(w1) -> torch.Tensor:
+        topk_ids = torch.tensor([[0, 1]])
+        # This indexing is not supported by thunder and get's passed to inductor.
+        w13_weights = w1[topk_ids]
+        return w13_weights + 1
+
+    def call_thunderfx_on_leaking_fn():
+        w1 = torch.randn(16, 16, 32, dtype=torch.bfloat16)
+        fn = thunderfx(unsupported_op_fn)
+        fn(w1)
+
+        # There should be two thunder traces because of the split caused by indexing.
+        # In future when thunder supports this indexing, the test will fail here
+        # as we won't be checking for the leak in case of unsupported operation.
+        assert len(fn.last_traces) == 2
+
+        return weakref.ref(w1)
+
+    t_weak_ref = call_thunderfx_on_leaking_fn()
+    assert t_weak_ref() is None
