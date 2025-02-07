@@ -739,6 +739,11 @@ moe_executors_ids = (
 
 
 @pytest.mark.parametrize(
+    "bs,",
+    (2**i for i in range(0, 6)),
+    ids=(f"bs{2**i}" for i in range(0, 6)),
+)
+@pytest.mark.parametrize(
     "executor,",
     moe_executors,
     ids=moe_executors_ids,
@@ -748,9 +753,9 @@ moe_executors_ids = (
     (ComputeType.INFERENCE,),
     ids=("inference",),
 )
-def test_deepseek_sglang_moe(benchmark, executor: Callable, compute_type: ComputeType):
+def test_deepseek_sglang_moe(benchmark, bs, executor: Callable, compute_type: ComputeType):
     bench: Benchmark = DeepSeekSGLangMoEBenchmark(
-        model="deepseek-ai/DeepSeek-R1", tp_size=8, batch_size=55, use_fp8=False
+        model="deepseek-ai/DeepSeek-R1", tp_size=8, batch_size=bs, use_fp8=False
     )
 
     args, kwargs = bench.make_batch()
