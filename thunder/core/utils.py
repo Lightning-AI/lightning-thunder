@@ -17,7 +17,7 @@ from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
 from thunder.core.proxies import Proxy, NumberProxy, TensorProxy, variableify, CONSTRAINT, Variable
 from thunder.core.baseutils import *
 from thunder.core.codeutils import *
-from thunder.core.trace import TraceCtx
+from thunder.core.trace import TraceCtx, tracectx
 import thunder.core.prims as prims
 
 if TYPE_CHECKING:
@@ -1246,3 +1246,18 @@ class AutocastStack:
 
         # Not found on the stack.
         return None
+
+
+def create_python_callable_from_bsym(bsym: BoundSymbolInterface) -> str:
+    trace = TraceCtx()
+    si = SigInfo(bsym.sym.name)
+    si.args = [(v.name, None) for v in bsym.flat_args]
+    trace._siginfo = si
+    # trace.siginfo()
+    # trace.args = bsym.flat_args
+    trace.bound_symbols = list(bsym.subsymbols)
+
+    with tracectx(trace):
+        prims.python_return(bsym.output)
+
+    return trace.python(include_decorators=False)

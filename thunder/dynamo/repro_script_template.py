@@ -113,3 +113,31 @@ def test_{graph_name}(benchmark, executor, compute_type):
         compiled_model = executor(model)
     {call_benchmark}
 '''
+
+
+template_bsym_torch_compile = """
+{python_func}
+
+from thunder.executors.torch_compile import make_compiled as make_torch_compile_callable
+import thunder.examine
+
+# inputs
+x = torch.randn(16, 16, device="cuda")
+inputs = {inputs}
+
+
+jfn = thunder.jit({func_name})
+jfn(*inputs)
+
+trc = thunder.last_traces(jfn)[-1]
+fusion_symbols = thunder.examine.get_fusion_symbols(trc)
+assert len(fusion_symbols) == 1
+bsym = fusion_symbols[0]
+
+# NOTE: The nvFusion function cannot be compiled directly using `torch.compile`.
+# It must first be processed by Thunder into BoundSymbols and compiled with `make_torch_compile_callable`.
+# Additionally, it's recommended to visually verify that `bsym` matches the
+# `nvFusion` function above by printing it using `print(bsym)`.
+torch_compiled_callable = make_torch_compile_callable(bsym.subsymbols, bsym.flat_args, bsym.flat_outs)
+out = torch_compiled_callable(*inputs)
+"""

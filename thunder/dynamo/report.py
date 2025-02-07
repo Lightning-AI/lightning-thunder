@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from thunder.dynamo.utils import ExampleInputMetaData
+    from thunder.dev_utils.utils import BenchmarkComparisonData
 
 
 def run_backward(fn, *args, **kwargs):
@@ -473,7 +474,7 @@ def fx_report(fn: Callable, *args, compile_options: dict = None, **kwargs) -> FX
     return FXReport(graphs)
 
 
-class ThunderSegmentGraphReport(FXGraphReport):
+class ThunderSplitGraphReport(FXGraphReport):
     def __init__(self, graph, graph_name, compiled_fn, example_input, thunder_options: dict, split_reason: str):
         super().__init__(graph, graph_name)
         self.compiled_fn = compiled_fn
@@ -567,7 +568,7 @@ class ThunderFusionReport:
         comment_str = f'"""\n{self.nvfusion_bsym}\n"""'
 
         if file_name == None:
-            file_name = f"{self.name}_repro.py"
+            file_name = f"{self.name}_repro_nvfuser.py"
         with open(folder / file_name, "w") as f:
             print(comment_str, file=f)
             print(repro_code, file=f)
@@ -575,21 +576,28 @@ class ThunderFusionReport:
     def get_inputs(self):
         return self.nvfusion_bsym._call_ctx[self.nvfusion_bsym.sym.name].last_inputs
 
-    def run_inductor_repro(self):
+    def write_inductor_repro(self, folder, file_name=None):
         from thunder.executors.torch_compile import make_compiled
+        from thunder.dynamo.repro_script_template import template_bsym_torch_compile
+        from thunder.core.utils import create_python_callable_from_bsym
 
-        callable_for_torchcompile = make_compiled(
-            self.nvfusion_bsym.subsymbols, self.nvfusion_bsym.flat_args, self.nvfusion_bsym.flat_outs
-        )
+        folder = Path(folder)
+        folder.mkdir(exist_ok=True, parents=True)
+        python_func = create_python_callable_from_bsym(self.nvfusion_bsym)
+        nvfusion_name = self.nvfusion_bsym.sym.name
+
         inputs = self.get_inputs()
-        callable_for_torchcompile(*inputs)
+        inputs = "[" + "".join(arg_like(inp) for inp in inputs) + "]"
+        program = template_bsym_torch_compile.format(python_func=python_func, func_name=nvfusion_name, inputs=inputs)
+        if file_name == None:
+            file_name = f"{self.name}_repro_inductor.py"
+        with open(folder / file_name, "w") as f:
+            f.write(program)
 
-    def run_benchmark(self):
+    def run_benchmark(self) -> BenchmarkComparisonData:
         from thunder.dev_utils.utils import _benchmark_fusion_region_with_nvfuser_and_torch_compile
 
-        benchmark_comparison_data = _benchmark_fusion_region_with_nvfuser_and_torch_compile(self.nvfusion_bsym)
-        print(self.nvfusion_bsym)
-        print(benchmark_comparison_data)
+        return _benchmark_fusion_region_with_nvfuser_and_torch_compile(self.nvfusion_bsym)
 
 
 class ThunderFXGraphReport(FXGraphReport):
@@ -598,10 +606,10 @@ class ThunderFXGraphReport(FXGraphReport):
         self.subgraph_info = subgraph_info
         self.thunder_options = thunder_options
 
-        self.subgraph_reports: list[ThunderSegmentGraphReport] = []
+        self.subgraph_reports: list[ThunderSplitGraphReport] = []
         self._create_subgraph_reports()
 
-    def get_thunder_module_name(self):
+    def _get_thunder_module_name(self):
         thunder_module_names = []
         for node in self.subgraph_info.split_graph_module.graph.nodes:
             target = node.target
@@ -610,7 +618,7 @@ class ThunderFXGraphReport(FXGraphReport):
         return thunder_module_names
 
     def _create_subgraph_reports(self):
-        thunder_module_names = self.get_thunder_module_name()
+        thunder_module_names = self._get_thunder_module_name()
         original_modules_to_thunder_modules = (
             [m, compiled_m]
             for m, compiled_m in self.subgraph_info.submodule_to_compiled_functions.items()
@@ -623,7 +631,7 @@ class ThunderFXGraphReport(FXGraphReport):
             thunder_module_names, original_modules_to_thunder_modules, example_inputs
         ):
             self.subgraph_reports.append(
-                ThunderSegmentGraphReport(
+                ThunderSplitGraphReport(
                     sub_gm_pair[0],
                     name,
                     sub_gm_pair[1].compiled_fn,
