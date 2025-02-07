@@ -411,7 +411,7 @@ class FXReport:
             graph_names = [f"graph{idx}" for idx in range(len(graphs))]
         self.fx_graph_reports: list[FXGraphReport] = [FXGraphReport(g, name) for name, g in zip(graph_names, graphs)]
 
-    def __str__(self):
+    def __repr__(self):
         return f"<FXReport with {len(self.fx_graph_reports)} FXGraphReports accessible via .fx_graph_reports>"
 
 
@@ -523,6 +523,9 @@ class ThunderSplitGraphReport(FXGraphReport):
         self.fwd_trc: TraceCtx = None
         self.bwd_trc: TraceCtx = None
 
+    def __repr__(self):
+        return f"<ThunderSplitGraphReport with {len(self.fusion_reports)} ThunderFusionReport accessible via .fusion_reports>"
+
     def _create_thunder_traces(self):
         example_inputs = eval(f"[\n{chr(10).join(arg_like(a) for a in self.example_input)}]")
         # Executes to get the trace
@@ -597,6 +600,9 @@ class ThunderFusionReport:
         self.nvfusion_bsym = bsym
         self.name = name
 
+    def __repr__(self):
+        return f"<ThunderFusionReport of bound symbol\n{self.nvfusion_bsym}>"
+
     def write_nvfuser_repro(self, folder, file_name=None):
         folder = Path(folder)
         folder.mkdir(exist_ok=True, parents=True)
@@ -668,6 +674,9 @@ class ThunderFXGraphReport(FXGraphReport):
 
         self.subgraph_reports: list[ThunderSplitGraphReport] = []
         self._create_subgraph_reports()
+
+    def __repr__(self):
+        return f"<ThunderFXGraphReport with {len(self.subgraph_reports)} ThunderSplitGraphReport accessible via .subgraph_reports>"
 
     def _create_subgraph_reports(self):
         from thunder.dynamo.utils import remove_empty_autocast, recompile_graph, get_thunder_module_names
