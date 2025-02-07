@@ -44,6 +44,8 @@ if TE_AVAILABLE:
     try:
         import transformer_engine.pytorch as te
         from transformer_engine.common import recipe
+        from transformer_engine.common.recipe import MXFP8BlockScaling, DelayedScaling
+        from transformer_engine.pytorch.constants import MXFP8_BLOCK_SCALING_SIZE
         from transformer_engine.pytorch.module.linear import _Linear
         from transformer_engine.pytorch.module.base import TransformerEngineBaseModule
         from transformer_engine.pytorch.fp8 import FP8GlobalStateManager, get_default_fp8_recipe
@@ -178,7 +180,7 @@ class TELinear(TransformerEngineBaseModule):
         else:
             self.pg = None
 
-    def forward(self, inp, weight, bias, is_first_microbatch: bool | None = None, is_grad_enabled: bool = False):
+    def forward(self, inp, weight, bias, is_grad_enabled: bool = False):
         # NOTE: Backward FP8 metadata sync
         # TransformerEngine v1.6 onwards, we control the sync and update of FP8 metadata for FP8 tensors
         # tied to backward pass (i.e. the gradient tensors)
@@ -205,7 +207,7 @@ class TELinear(TransformerEngineBaseModule):
                 output_quantizer,
                 grad_output_quantizer,
                 grad_input_quantizer,
-            ) = self._get_quantizers(False, False, is_grad_enabled)
+            ) = self._get_quantizers(is_grad_enabled)
 
             ctx = Context() if is_grad_enabled else None
 
@@ -267,7 +269,11 @@ class TELinear(TransformerEngineBaseModule):
             saved_tensors = ctx.pop_saved_tensors() if is_grad_enabled else None
             return out, saved_tensors, ctx
 
-    def _get_quantizers(self, fp8_output, fp8_grad, is_grad_enabled):
+    def _get_quantizers(self, is_grad_enabled):
+        # NOTE: Currently, we disallow changing these settings.
+        fp8_output = False
+        fp8_grad = False
+
         if not self.fp8:
             return [None] * 5
         grad_input_quantizer = None
@@ -384,6 +390,14 @@ IMPORT_CTX_TE_KEY = "transformer_engine"
 FP8_RECIPE_KEY = "te_fp8_recipe"
 
 
+def get_recipe_from_options_or_default_recipe():
+    desc = "transformer_engine_ex: Optional fp8_recipe for `fp8_autocast` context manager."
+    if (fp8_recipe := get_compile_option(FP8_RECIPE_KEY, desc)) is None:
+        fp8_recipe = _DEFAULT_RECIPE
+
+    return fp8_recipe
+
+
 # Creates a new stateful operator for each invocation of `linear`.
 def _create_fp8_linear_bound_symbol(
     a: TensorProxy, w: TensorProxy, b: TensorProxy, is_grad_enabled=False
@@ -392,9 +406,7 @@ def _create_fp8_linear_bound_symbol(
     global LINEAR_CALLS_COUNTER
     name = f"te_linear_{LINEAR_CALLS_COUNTER}"
 
-    desc = "transformer_engine_ex: Optional fp8_recipe for `fp8_autocast` context manager."
-    if (fp8_recipe := get_compile_option(FP8_RECIPE_KEY, desc)) is None:
-        fp8_recipe = _DEFAULT_RECIPE
+    fp8_recipe = get_recipe_from_options_or_default_recipe()
 
     def bind_postprocess(bsym: BoundSymbol) -> None:
         # This dict is then used by trace.python_ctx() to resolve the
@@ -458,9 +470,19 @@ def _linear_checker(
         shape = x.shape
         return x.view((-1, shape[-1]))
 
+    fp8_recipe = get_recipe_from_options_or_default_recipe()
+
+    def check_valid_fp8_shapes(a):
+        # DelayedScaling and MXFP8BlockScaling have different shape requirements.
+        if isinstance(fp8_recipe, DelayedScaling):
+            return check_dim_for_fp8_exec(a)
+
+        assert isinstance(fp8_recipe, MXFP8BlockScaling)
+        return a[0] % MXFP8_BLOCK_SCALING_SIZE == 0 and a[1] % MXFP8_BLOCK_SCALING_SIZE == 0
+
     # Inputs must be on CUDA and
     # input sizes must satisfy -> dim0 is divisible by 8 and dim1 is divisible by 16.
-    return all(map(is_cuda, inputs)) and check_dim_for_fp8_exec(_view_input_as_2d(a)) and check_dim_for_fp8_exec(w)
+    return all(map(is_cuda, inputs)) and check_valid_fp8_shapes(_view_input_as_2d(a)) and check_valid_fp8_shapes(w)
 
 
 def linear_forwad_rule(a, w, bias):
