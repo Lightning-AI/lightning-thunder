@@ -665,58 +665,22 @@ class ThunderFXGraphReport(FXGraphReport):
     Attributes:
         graph (torch.fx.GraphModule): The original Dynamo FX graph before being split by Thunder.
         graph_name (str): The name of the original Dynamo FX graph.
-        thunder_options (dict): Configuration options specific to :func:`thunder.jit`.
+        split_reason (str): Reasons explaining why the subgraph was split.
         subgraph_reports (list[ThunderSplitGraphReport]): A list of reports for each
             Thunder-split FX graph. For more details, see :class:`ThunderSplitGraphReport`.
 
     For an example, see the documentation of :func:`analyze_thunder_splits`.
     """
 
-    def __init__(self, gm: torch.fx.GraphModule, gm_name: str, thunder_options: dict):
+    def __init__(
+        self, gm: torch.fx.GraphModule, gm_name: str, split_reason: str, subgraph_reports: list[ThunderSplitGraphReport]
+    ):
         super().__init__(gm, gm_name)
-        self.thunder_options = thunder_options
-
-        self.subgraph_reports: list[ThunderSplitGraphReport] = []
-        self._create_subgraph_reports()
+        self.split_reason = split_reason
+        self.subgraph_reports: list[ThunderSplitGraphReport] = subgraph_reports
 
     def __repr__(self):
         return f"<ThunderFXGraphReport with {len(self.subgraph_reports)} ThunderSplitGraphReport accessible via .subgraph_reports>"
-
-    def _create_subgraph_reports(self):
-        from thunder.dynamo.utils import remove_empty_autocast, recompile_graph, get_thunder_module_names
-        from thunder.dynamo.splitter import _splitter
-        from thunder import jit
-
-        # Splits the FX graph module using Thunder splitter
-        gm = remove_empty_autocast(self.graph)
-        # Dynamo uses lazy generation of the underlying Python code, so we need to
-        # force recompilation of the GraphModule before passing it to Thunder.
-        recompile_graph(gm)
-        _thunder_jit = partial(jit, **self.thunder_options, nv_store_fusion_inputs=True)
-        _, subgraph_info = _splitter(gm, _thunder_jit, torch.compile, _unused_sample_args=None)
-
-        thunder_module_names = [f"{self.graph_name}_{name}" for name in get_thunder_module_names(subgraph_info)]
-        original_modules_to_thunder_modules = (
-            [m, compiled_m]
-            for m, compiled_m in subgraph_info.submodule_to_compiled_functions.items()
-            if compiled_m.compiler == CompilerType.THUNDER
-        )
-        example_inputs = subgraph_info.thunder_compiled_fns_example_inputs
-        split_reason = get_split_reasons_string(subgraph_info)
-
-        for name, sub_gm_pair, example_input in zip(
-            thunder_module_names, original_modules_to_thunder_modules, example_inputs
-        ):
-            self.subgraph_reports.append(
-                ThunderSplitGraphReport(
-                    sub_gm_pair[0],
-                    name,
-                    sub_gm_pair[1].compiled_fn,
-                    example_input,
-                    self.thunder_options,
-                    split_reason,
-                )
-            )
 
 
 def analyze_thunder_splits(
@@ -788,5 +752,40 @@ def analyze_thunder_splits(
                         print("---"*10)
 
     """
-    report = ThunderFXGraphReport(report.graph, report.graph_name, thunder_options)
+    from thunder.dynamo.utils import remove_empty_autocast, recompile_graph, get_thunder_module_names
+    from thunder.dynamo.splitter import _splitter
+    from thunder import jit
+
+    # Splits the FX graph module using Thunder splitter
+    gm = remove_empty_autocast(report.graph)
+    # Dynamo uses lazy generation of the underlying Python code, so we need to
+    # force recompilation of the GraphModule before passing it to Thunder.
+    recompile_graph(gm)
+    _thunder_jit = partial(jit, **thunder_options, nv_store_fusion_inputs=True)
+    _, subgraph_info = _splitter(gm, _thunder_jit, torch.compile, _unused_sample_args=None)
+
+    thunder_module_names = [f"{report.graph_name}_{name}" for name in get_thunder_module_names(subgraph_info)]
+    original_modules_to_thunder_modules = (
+        [m, compiled_m]
+        for m, compiled_m in subgraph_info.submodule_to_compiled_functions.items()
+        if compiled_m.compiler == CompilerType.THUNDER
+    )
+    example_inputs = subgraph_info.thunder_compiled_fns_example_inputs
+    split_reason = get_split_reasons_string(subgraph_info)
+
+    subgraph_reports = []
+    for name, sub_gm_pair, example_input in zip(
+        thunder_module_names, original_modules_to_thunder_modules, example_inputs
+    ):
+        subgraph_reports.append(
+            ThunderSplitGraphReport(
+                sub_gm_pair[0],
+                name,
+                sub_gm_pair[1].compiled_fn,
+                example_input,
+                thunder_options,
+                split_reason,
+            )
+        )
+    report = ThunderFXGraphReport(report.graph, report.graph_name, split_reason, subgraph_reports)
     return report
