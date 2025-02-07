@@ -5111,12 +5111,18 @@ def _nll_loss_helper(
         bcast_weight = reshape(weight, [num_class] + [1 for _ in range(2, a.ndim)])
         out = out * bcast_weight
 
+    assert isinstance(ignore_index, Number)
+
     # Make target broadcastable with output, which has same shape as input tensor.
     bcast_target = unsqueeze(target, class_dim)
-
-    out = take_along_dim(out, bcast_target, class_dim)
-    selected_target_mask = bcast_target != ignore_index
-    out = where(selected_target_mask, out, 0)
+    if ignore_index >= 0 and ignore_index < num_class:
+        out = take_along_dim(out, bcast_target, class_dim)
+        selected_target_mask = bcast_target != ignore_index
+        out = where(selected_target_mask, out, 0)
+    else:
+        selected_target_mask = bcast_target != ignore_index
+        index = where(selected_target_mask, bcast_target, num_class)
+        padded_out = clang.pad(out, 0, [1] * (class_dim-1) * 2 + [0, 1] + [1] * (out.ndim - class_dim) * 2)
 
     # This section handles applying the reduction parameter to the output.
     # We return None for the total_weight when reduction is "none" or "sum" since it is unused in the backwards pass.
