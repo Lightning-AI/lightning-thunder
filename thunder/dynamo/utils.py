@@ -729,3 +729,12 @@ def get_split_reasons_string(subgraph_info: SubgraphInfo) -> str:
     else:
         split_reason_str += "The original graph is not split, and is entirely run by Thunder.\n"
     return split_reason_str
+
+
+def get_thunder_module_names(subgraph_info: SubgraphInfo) -> list[str]:
+    thunder_module_names = []
+    for node in subgraph_info.split_graph_module.graph.nodes:
+        target = node.target
+        if isinstance(target, str) and target.startswith("thunder_"):
+            thunder_module_names.append(target)
+    return thunder_module_names

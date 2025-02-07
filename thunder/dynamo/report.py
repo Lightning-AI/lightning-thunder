@@ -10,7 +10,7 @@ import textwrap
 
 import torch
 from thunder.core.pytree import tree_flatten
-from thunder.core.utils import sequencify
+from thunder.core.utils import sequencify, create_python_callable_from_bsym
 from thunder.dynamo.compiler import thunderfx
 from thunder.dynamo.utils import (
     _get_example_inputs_from_placeholder,
@@ -20,7 +20,12 @@ from thunder.dynamo.utils import (
     get_split_reasons_string,
     CompilerType,
 )
-from thunder.dynamo.repro_script_template import benchmark_multi_exe_code_template, repro_code_template
+from thunder.dynamo.repro_script_template import (
+    benchmark_multi_exe_code_template,
+    repro_code_template,
+    bsym_torch_compile_repro_template,
+)
+from thunder import last_traces, last_backward_traces
 
 
 if TYPE_CHECKING:
@@ -30,6 +35,8 @@ if TYPE_CHECKING:
 
     from thunder.dynamo.utils import ExampleInputMetaData
     from thunder.dev_utils.utils import BenchmarkComparisonData
+    from thunder.core.trace import TraceCtx
+    from thunder.core.symbol import BoundSymbol
 
 
 def run_backward(fn, *args, **kwargs):
@@ -475,7 +482,37 @@ def fx_report(fn: Callable, *args, compile_options: dict = None, **kwargs) -> FX
 
 
 class ThunderSplitGraphReport(FXGraphReport):
-    def __init__(self, graph, graph_name, compiled_fn, example_input, thunder_options: dict, split_reason: str):
+    """
+    A report class representing a Thunder-split FX subgraph, extending :class:FXGraphReport.
+
+    This class encapsulates details about a subgraph that was split from the original
+    Dynamo FX graph due to Thunder-specific transformations.
+
+    Attributes:
+        graph: The Thunder-split FX graph.
+        graph_name: The name of the Thunder-split FX graph.
+        compiled_fn: The Thunder-compiled function corresponding to :attr:`graph`.
+        example_input: An example input used for execution.
+        thunder_options: Configuration options specific to :func:`thunder.jit`.
+        split_reason: The reason why :func:`thunder.dynamo.splitter._splitter` split the original graph.
+        fusion_reports (list[ThunderFusionReport]): A list of fusion reports for the
+            nvFusion regions generated when using the nvFuser executor.
+            See :class:`ThunderFusionReport` for more details.
+        fwd_trc: The forward trace, available only after calling :meth:`_create_thunder_traces`.
+        bwd_trc: The backward trace, available only after calling :meth:`_create_thunder_traces`.
+
+    For an example, see the documentation of :func:`analyze_with_thunder`.
+    """
+
+    def __init__(
+        self,
+        graph: torch.fx.GraphModule,
+        graph_name: str,
+        compiled_fn: Callable,
+        example_input,
+        thunder_options: dict,
+        split_reason: str,
+    ):
         super().__init__(graph, graph_name)
         self.compiled_fn = compiled_fn
         self.example_input = example_input
@@ -483,24 +520,22 @@ class ThunderSplitGraphReport(FXGraphReport):
         self.split_reason = split_reason
 
         self.fusion_reports: list[ThunderFusionReport] = []
-        self.fwd_trc = None
-        self.bwd_trc = None
+        self.fwd_trc: TraceCtx = None
+        self.bwd_trc: TraceCtx = None
 
-    def create_thunder_traces(self):
-        from thunder import last_traces, last_backward_traces
-
+    def _create_thunder_traces(self):
         example_inputs = eval(f"[\n{chr(10).join(arg_like(a) for a in self.example_input)}]")
-        # executes to get the trace
+        # Executes to get the trace
         run_backward(self.compiled_fn, *example_inputs)
         self.fwd_trc = last_traces(self.compiled_fn)[-1]
         self.bwd_trc = last_backward_traces(self.compiled_fn)[-1]
 
     def create_fusion_reports(self):
-        self.create_thunder_traces()
+        self._create_thunder_traces()
         for trace, prefix in [(self.fwd_trc, "forward"), (self.bwd_trc, "backward")]:
             for bsym in trace.bound_symbols:
                 if bsym.sym.is_fusion and "nvFusion" in bsym.sym.name:
-                    self.fusion_reports.append(ThunderFusionReport(bsym, f"{prefix}_{bsym.sym.name}"))
+                    self.fusion_reports.append(ThunderFusionReport(bsym, f"{self.graph_name}_{bsym.sym.name}_{prefix}"))
 
     def write_thunder_repro(self, folder, use_benchmark=False, serialize_inputs=False):
         thunder_ex_str = (
@@ -545,7 +580,20 @@ class ThunderSplitGraphReport(FXGraphReport):
 
 
 class ThunderFusionReport:
-    def __init__(self, bsym, name):
+    """
+    A report class representing a Thunder nvFusion region.
+
+    This class encapsulates information about a nvFusion region created during
+    Thunder execution, including the symbolic representation and its name.
+
+    Attributes:
+        nvfusion_bsym (BoundSymbol): The symbolic representation of the nvFusion region.
+        name (str): The name of the fusion region.
+
+    For an example, see the documentation of :func:`analyze_with_thunder`.
+    """
+
+    def __init__(self, bsym: BoundSymbol, name: str):
         self.nvfusion_bsym = bsym
         self.name = name
 
@@ -576,11 +624,7 @@ class ThunderFusionReport:
     def get_inputs(self):
         return self.nvfusion_bsym._call_ctx[self.nvfusion_bsym.sym.name].last_inputs
 
-    def write_inductor_repro(self, folder, file_name=None):
-        from thunder.executors.torch_compile import make_compiled
-        from thunder.dynamo.repro_script_template import template_bsym_torch_compile
-        from thunder.core.utils import create_python_callable_from_bsym
-
+    def write_inductor_repro(self, folder: PathLike, file_name=None):
         folder = Path(folder)
         folder.mkdir(exist_ok=True, parents=True)
         python_func = create_python_callable_from_bsym(self.nvfusion_bsym)
@@ -588,7 +632,9 @@ class ThunderFusionReport:
 
         inputs = self.get_inputs()
         inputs = "[" + "".join(arg_like(inp) for inp in inputs) + "]"
-        program = template_bsym_torch_compile.format(python_func=python_func, func_name=nvfusion_name, inputs=inputs)
+        program = bsym_torch_compile_repro_template.format(
+            python_func=python_func, func_name=nvfusion_name, inputs=inputs
+        )
         if file_name == None:
             file_name = f"{self.name}_repro_inductor.py"
         with open(folder / file_name, "w") as f:
@@ -601,31 +647,49 @@ class ThunderFusionReport:
 
 
 class ThunderFXGraphReport(FXGraphReport):
-    def __init__(self, gm, gm_name, subgraph_info, thunder_options):
+    """
+    A Thunder-specific report class for a Dynamo FX Graph, extending FXGraphReport,
+    providing the ability to save reproduction/benchmark scripts for the original FX graph.
+    Additionally, it includes information about Thunder-split subgraphs in `subgraph_reports`.
+
+    Attributes:
+        graph (torch.fx.GraphModule): The original Dynamo FX graph before being split by Thunder.
+        graph_name (str): The name of the original Dynamo FX graph.
+        thunder_options (dict): Configuration options specific to :func:`thunder.jit`.
+        subgraph_reports (list[ThunderSplitGraphReport]): A list of reports for each
+            Thunder-split FX graph. For more details, see :class:`ThunderSplitGraphReport`.
+
+    For an example, see the documentation of :func:`analyze_with_thunder`.
+    """
+
+    def __init__(self, gm: torch.fx.GraphModule, gm_name: str, thunder_options: dict):
         super().__init__(gm, gm_name)
-        self.subgraph_info = subgraph_info
         self.thunder_options = thunder_options
 
         self.subgraph_reports: list[ThunderSplitGraphReport] = []
         self._create_subgraph_reports()
 
-    def _get_thunder_module_name(self):
-        thunder_module_names = []
-        for node in self.subgraph_info.split_graph_module.graph.nodes:
-            target = node.target
-            if isinstance(target, str) and target.startswith("thunder_"):
-                thunder_module_names.append(f"{self.graph_name}_{target}")
-        return thunder_module_names
-
     def _create_subgraph_reports(self):
-        thunder_module_names = self._get_thunder_module_name()
+        from thunder.dynamo.utils import remove_empty_autocast, recompile_graph, get_thunder_module_names
+        from thunder.dynamo.splitter import _splitter
+        from thunder import jit
+
+        # Splits the FX graph module using Thunder splitter
+        gm = remove_empty_autocast(self.graph)
+        # Dynamo uses lazy generation of the underlying Python code, so we need to
+        # force recompilation of the GraphModule before passing it to Thunder.
+        recompile_graph(gm)
+        _thunder_jit = partial(jit, **self.thunder_options, nv_store_fusion_inputs=True)
+        _, subgraph_info = _splitter(gm, _thunder_jit, torch.compile, _unused_sample_args=None)
+
+        thunder_module_names = [f"{self.graph_name}_{name}" for name in get_thunder_module_names(subgraph_info)]
         original_modules_to_thunder_modules = (
             [m, compiled_m]
-            for m, compiled_m in self.subgraph_info.submodule_to_compiled_functions.items()
+            for m, compiled_m in subgraph_info.submodule_to_compiled_functions.items()
             if compiled_m.compiler == CompilerType.THUNDER
         )
-        example_inputs = self.subgraph_info.thunder_compiled_fns_example_inputs
-        self.split_reason = get_split_reasons_string(self.subgraph_info)
+        example_inputs = subgraph_info.thunder_compiled_fns_example_inputs
+        split_reason = get_split_reasons_string(subgraph_info)
 
         for name, sub_gm_pair, example_input in zip(
             thunder_module_names, original_modules_to_thunder_modules, example_inputs
@@ -637,7 +701,7 @@ class ThunderFXGraphReport(FXGraphReport):
                     sub_gm_pair[1].compiled_fn,
                     example_input,
                     self.thunder_options,
-                    self.split_reason,
+                    split_reason,
                 )
             )
 
@@ -647,26 +711,69 @@ def analyze_with_thunder(
     **thunder_options,
 ) -> ThunderFXGraphReport:
     """
-    Generates a ThunderFXGraphReport based on an FXGraphReport.
+    Generates a :class:`ThunderFXGraphReport` based on an :class:`FXGraphReport`.
 
-    The ThunderFXGraphReport provides additional details about Thunder-specific segmentations
-    and nvFusion regions.
+    The :class:`ThunderFXGraphReport` provides additional details about Thunder-specific splits
+    and nvFusion regions. For more details, see :class:`ThunderFXGraphReport`.
 
-    For more details, see :class:`ThunderFXGraphReport`.
+    Example:
+        .. code-block:: python
+
+        import tempfile
+        from pathlib import Path
+        import torch
+        from thunder.dynamo.report import (
+            fx_report, FXReport, ThunderFXGraphReport, FXGraphReport,
+            ThunderSplitGraphReport, ThunderFusionReport, analyze_with_thunder
+        )
+        from pathlib import Path
+
+        x = torch.ones(2, 2, device="cuda", requires_grad=True)
+
+        # Dynamo segments `foo` into two graphs. Each graph contains one Thunder-split graph,
+        # and each Thunder-split graph has one nvFusion region.
+        def foo(x):
+            x = x.exp()
+            torch._dynamo.graph_break()
+            y = torch.sinc(x) + torch.cos(x)
+            return y + 1
+
+        # If using `torch.compile` alone, you can stop here and query the reports in `FXReport`.
+        # For more details, see the example in :func:`fx_report`.
+        results: FXReport = fx_report(foo, x)
+
+        fx_graph_report: FXGraphReport
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            for idx, fx_graph_report in enumerate(results.fx_graph_reports):
+                # `ThunderFXGraphReport` extends `FXGraphReport`, providing the ability to save
+                # reproduction/benchmark scripts for the original FX graph. Additionally, it
+                # includes information about Thunder-split subgraphs in `subgraph_reports`.
+                thunder_fx_graph_report: ThunderFXGraphReport = analyze_with_thunder(fx_graph_report)
+                # Saves a reproduction script for the original FX graph
+                thunder_fx_graph_report.write_thunder_repro(tmp_path)
+
+                thunder_split_report: ThunderSplitGraphReport
+                for thunder_split_report in thunder_fx_graph_report.subgraph_reports:
+                    split_folder = tmp_path / str(idx)
+                    thunder_split_report.write_eager_repro(split_folder)
+                    thunder_split_report.write_thunder_repro(split_folder)
+                    thunder_split_report.write_inductor_repro(split_folder)
+
+                    # If you are only interested in the Thunder-split FX graph, you can stop here.
+                    # If you want to inspect Thunder traces and nvFusion regions further, explicitly call
+                    # `ThunderSplitGraphReport.create_fusion_reports()` and analyze as shown below.
+                    thunder_split_report.create_fusion_reports()
+                    print(f"fwd_trace:\n{thunder_split_report.fwd_trc}\n")
+                    print(f"bwd_trace:\n{thunder_split_report.bwd_trc}\n")
+                    nvfusion_report: ThunderFusionReport
+                    for nvfusion_report in thunder_split_report.fusion_reports:
+                        nvfusion_report.write_nvfuser_repro(split_folder / "nvfusion")
+                        nvfusion_report.write_inductor_repro(split_folder / "nvfusion")
+                        bench_data = nvfusion_report.run_benchmark()
+                        print(bench_data)
+                        print("---"*10)
+
     """
-    from thunder.dynamo.utils import remove_empty_autocast, recompile_graph
-    from thunder.dynamo.splitter import _splitter
-    from thunder import jit
-
-    gm = report.graph
-
-    # Splits the FX graph module using Thunder splitter
-    gm = remove_empty_autocast(gm)
-    # Dynamo uses lazy generation of the underlying Python code, so we need to
-    # force recompilation of the GraphModule before passing it to Thunder.
-    recompile_graph(gm)
-    _thunder_jit = partial(jit, **thunder_options, nv_store_fusion_inputs=True)
-    _, subgraph_info = _splitter(gm, _thunder_jit, torch.compile, _unused_sample_args=None)
-
-    report = ThunderFXGraphReport(report.graph, report.graph_name, subgraph_info, thunder_options)
+    report = ThunderFXGraphReport(report.graph, report.graph_name, thunder_options)
     return report

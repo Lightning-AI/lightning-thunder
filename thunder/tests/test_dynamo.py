@@ -1153,7 +1153,7 @@ def test_leak_on_unsupported_thunder_operator():
 
 
 @requiresCUDA
-def test_thunderreports(tmp_path):
+def test_thunder_specific_reports(tmp_path):
     from thunder.dynamo.report import fx_report, analyze_with_thunder
 
     x = torch.ones(2, 2, device="cuda", requires_grad=True)
@@ -1171,14 +1171,14 @@ def test_thunderreports(tmp_path):
         thunder_fx_graph_report = analyze_with_thunder(fx_graph_report)
         thunder_fx_graph_report.write_thunder_repro(tmp_path)
         for thunder_split_report in thunder_fx_graph_report.subgraph_reports:
-            seg_folder = tmp_path / str(idx)
-            thunder_split_report.write_eager_repro(seg_folder)
-            thunder_split_report.write_thunder_repro(seg_folder)
-            thunder_split_report.write_inductor_repro(seg_folder)
+            split_folder = tmp_path / str(idx)
+            thunder_split_report.write_eager_repro(split_folder)
+            thunder_split_report.write_thunder_repro(split_folder)
+            thunder_split_report.write_inductor_repro(split_folder)
             thunder_split_report.create_fusion_reports()
             for nvf in thunder_split_report.fusion_reports:
-                nvf.write_nvfuser_repro(seg_folder / "nvfusion")
-                nvf.write_inductor_repro(seg_folder / "nvfusion")
+                nvf.write_nvfuser_repro(split_folder / "nvfusion")
+                nvf.write_inductor_repro(split_folder / "nvfusion")
                 bench_data = nvf.run_benchmark()
 
     def check(file_name, cmd):

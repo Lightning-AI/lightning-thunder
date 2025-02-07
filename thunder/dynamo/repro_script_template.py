@@ -115,7 +115,7 @@ def test_{graph_name}(benchmark, executor, compute_type):
 '''
 
 
-template_bsym_torch_compile = """
+bsym_torch_compile_repro_template = """
 {python_func}
 
 from thunder.executors.torch_compile import make_compiled as make_torch_compile_callable
