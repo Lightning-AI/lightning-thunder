@@ -8737,8 +8737,18 @@ def nll_loss_sample_generator(op, device, dtype, requires_grad, **kwargs):
         a.requires_grad_(requires_grad)
 
         target = make(target_shape, low=0, high=C, dtype=torch.long, requires_grad=False)
-        # sprinkle ignore_index in the target, see issue 1744.
-        target = torch.where(make(target_shape, low=0.0, high=1.0, requires_grad=False) > 0.5, target, ignore_index)
+        # NOTE pytorch `cuda` behavior for scalar target == ignore_index diverges from the cpu behavior.
+        # def foo(device):
+        #     ignore_index = -100
+        #     logits = torch.randn(5, device=device, dtype=torch.float32, requires_grad=False)
+        #     weight = torch.randn(5, device=device, dtype=torch.float32, requires_grad=False)
+        #     labels = torch.tensor(ignore_index, device=device)
+        #     print(torch.nn.functional.cross_entropy(logits, labels, weight, ignore_index=ignore_index))
+        # foo("cpu")  # tensor(nan)
+        # foo("cuda") # tensor(0., device='cuda:0')
+        if target.ndim != 0:
+            # sprinkle ignore_index in the target, verify correctness, see issue 1744.
+            target = torch.where(make(target_shape, low=0.0, high=1.0, requires_grad=False) > 0.3, target, ignore_index)
 
         yield SampleInput(
             a,
