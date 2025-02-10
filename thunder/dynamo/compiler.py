@@ -203,7 +203,7 @@ def thunderfx(fn: Callable, /, **kwargs) -> Callable:
             return self._func(*args, **kwargs)
 
         @property
-        def last_traces(self) -> [Trace]:
+        def last_traces(self) -> list[Trace]:
             """
             Get the Thunder traces for all the forward subgraphs of a ThunderFX
             callable.
@@ -211,7 +211,7 @@ def thunderfx(fn: Callable, /, **kwargs) -> Callable:
             .. note:: The object must have been invoked before calling this
                       function.
             """
-            rv: [Trace] = []
+            rv: list[Trace] = []
             if not self._backend.subgraph_infos:
                 warnings.warn("Must invoke the function before using last_traces")
             for sinfo in self._backend.subgraph_infos:
@@ -223,7 +223,7 @@ def thunderfx(fn: Callable, /, **kwargs) -> Callable:
             return rv
 
         @property
-        def last_backward_traces(self) -> [Trace]:
+        def last_backward_traces(self) -> list[Trace]:
             """
             Get the Thunder traces for all the backward subgraphs of a
             ThunderFX callable.
@@ -231,7 +231,7 @@ def thunderfx(fn: Callable, /, **kwargs) -> Callable:
             .. note:: The object must have been invoked before calling this
                       function.
             """
-            rv: [Trace] = []
+            rv: list[Trace] = []
             if not self._backend.subgraph_infos:
                 warnings.warn("last_backward_traces used before function invoked")
             for sinfo in self._backend.subgraph_infos:
