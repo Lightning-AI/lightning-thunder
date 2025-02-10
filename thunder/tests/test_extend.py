@@ -132,6 +132,7 @@ def test_get_all_executors_includes_all_native_executors():
         "sdpa",
         "torchcompile",
         "torchcompile_cat",
+        "torchcompile_xentropy",
         "python",
         "transformer_engine",
     }

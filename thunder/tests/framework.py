@@ -208,6 +208,23 @@ class TorchTestExecutor(TestExecutor):
         return torch.__version__
 
 
+class TorchCompileXentropyTestExecutor(TestExecutor):
+    name = "torchcompile_xentropy"
+    supported_devicetypes = (devices.DeviceType.CPU, devices.DeviceType.CUDA)
+    supported_dtypes = (datatypes.dtype,)
+
+    def is_available(self) -> bool:
+        return not IS_WINDOWS
+
+    def executors_list(self) -> list[extend.Executor]:
+        from thunder.executors.torch_compile import torch_compile_cat_ex
+
+        return [torch_compile_cat_ex]
+
+    def version(self):
+        return torch.__version__
+
+
 class TorchCompileCatTestExecutor(TestExecutor):
     name = "torchcompile_cat"
     supported_devicetypes = (devices.DeviceType.CPU, devices.DeviceType.CUDA)
@@ -261,6 +278,7 @@ class DynamoThunderTestExecutor(TestExecutor):
 # TODO Refactor these executors into the actual executor (sub)modules
 TorchExecutor: TorchTestExecutor = TorchTestExecutor()
 TorchCompileCatExecutor: TorchCompileCatTestExecutor = TorchCompileCatTestExecutor()
+TorchCompileXentropyExecutor: TorchCompileXentropyTestExecutor = TorchCompileXentropyTestExecutor()
 TorchCompileExecutor: TorchCompileTestExecutor = TorchCompileTestExecutor()
 DynamoThunderExecutor: DynamoThunderTestExecutor = DynamoThunderTestExecutor()
 nvFuserExecutor: None | nvFuserTestExecutor = None
@@ -368,7 +386,7 @@ class ops:
         self.supported_executors = (
             set(supported_executors)
             if supported_executors is not None
-            else set(_all_test_executors() + [TorchCompileCatExecutor])
+            else set(_all_test_executors() + [TorchCompileCatExecutor, TorchCompileXentropyExecutor])
         )
         for ex in self.supported_executors:
             assert isinstance(ex, TestExecutor)

@@ -73,12 +73,12 @@ class SplitReason:
     Attributes:
         reason_type: Reason for the split.
         info: String with details of what caused the split.
-        exception: Exception if there was any.
+        exception: String with details of exception if there was any.
     """
 
     reason_type: SplitReasonType
     info: str | None
-    exception: Exception | None = None
+    exception: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -248,7 +248,7 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
             return False, SplitReason(
                 SplitReasonType.EXCEPTION_PROXY_THUNDER_OP,
                 f"Failed while creating proxy for node with name: {node.name} and target: {node.target}, see exception field",
-                exception=e,
+                exception=str(e),
             )
 
         # We need to be under trace context to generate proxies.
@@ -259,7 +259,7 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
                 return False, SplitReason(
                     SplitReasonType.EXCEPTION_META_THUNDER_OP,
                     f"Failed while running meta for node with name: {node.name} and target: {node.target}, see exception field",
-                    exception=e,
+                    exception=str(e),
                 )
 
         # Execution with proxies was successful.
@@ -393,7 +393,7 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
             return False, SplitReason(
                 SplitReasonType.EXCEPTION_PROXY_THUNDER_OP,
                 f"Failed while creating proxy for node with name: {node.name} and target: {node.target}, see exception field",
-                exception=e,
+                exception=str(e),
             )
         # NOTE: `get_method` may throw if relevant method is not found, so we have guarded it with `has_method`.
         method = torchctx.get_method(node.target, args, kwargs)
@@ -729,3 +729,12 @@ def get_split_reasons_string(subgraph_info: SubgraphInfo) -> str:
     else:
         split_reason_str += "The original graph is not split, and is entirely run by Thunder.\n"
     return split_reason_str
+
+
+def get_thunder_module_names(subgraph_info: SubgraphInfo) -> list[str]:
+    thunder_module_names = []
+    for node in subgraph_info.split_graph_module.graph.nodes:
+        target = node.target
+        if isinstance(target, str) and target.startswith("thunder_"):
+            thunder_module_names.append(target)
+    return thunder_module_names

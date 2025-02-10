@@ -3013,6 +3013,163 @@ class TorchbenchBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return self.model
 
 
+class HFBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    def __init__(
+        self,
+        model_id: str,
+        seq_length: int,
+        batch_size: int,
+        device: str = "cuda",
+        dtype: dtypes.dtype = thunder.float32,
+        requires_grad: bool = False,
+        enable_peft: bool = False,
+    ) -> None:
+        super().__init__()
+
+        from transformers import AutoConfig
+
+        config = AutoConfig.from_pretrained(model_id)
+
+        self.device: str = device
+        self.tdtype: torch.dtype = ltorch.to_torch_dtype(dtype)
+        self.requires_grad: bool = requires_grad
+
+        self.shape = (batch_size, seq_length)
+        self.config = config
+        if enable_peft:
+            from peft import LoraConfig, TaskType
+
+            target_modules = "all-linear"
+            self.peft_config = LoraConfig(
+                task_type=TaskType.CAUSAL_LM,
+                inference_mode=not self.requires_grad,
+                r=16,
+                lora_alpha=32,
+                lora_dropout=0.0,
+                bias="none",
+                use_rslora=False,
+                target_modules=target_modules,
+            )
+
+    def make_batch(self) -> tuple[list, dict]:
+        make = partial(
+            make_tensor,
+            low=0,
+            high=self.config.vocab_size,
+            device=self.device,
+            dtype=ltorch.to_torch_dtype(torch.int64),
+            requires_grad=False,
+        )
+        a = make(self.shape)
+        return (), {"input_ids": a, "labels": a}
+
+    def fn(self) -> Callable:
+        from transformers import AutoModelForCausalLM
+
+        with torch.device(self.device):
+            model = AutoModelForCausalLM.from_config(self.config, torch_dtype=self.tdtype)
+
+            if getattr(self, "peft_config", None):
+                from peft import get_peft_model
+
+                # autocast_adapter_dtype set to False is needed to actually execute the ops in bf16
+                # otherwise they'll be casted to f32
+                model = get_peft_model(model, self.peft_config, autocast_adapter_dtype=False)
+            else:
+                model.requires_grad_(self.requires_grad)
+
+        return model
+
+
+class LinearLoRABenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    def __init__(
+        self,
+        implementation: str,
+        device: str = "cuda",
+        dtype: dtypes.dtype = thunder.float32,
+        requires_grad: bool = False,
+    ) -> None:
+        super().__init__()
+        self.implementation = implementation
+
+        self.device: str = device
+        self.tdtype: torch.dtype = ltorch.to_torch_dtype(dtype)
+        self.requires_grad: bool = requires_grad
+        # > 2 dimensions to test the reshape
+        self.shape = (1, 4096, 3584)
+
+        base_cls = [nn.Module]
+
+        match implementation:
+            case "HF":
+                from peft import LoraConfig, TaskType
+                from transformers.configuration_utils import PretrainedConfig
+
+                model_config = PretrainedConfig(model_type="llm")
+
+                peft_config = LoraConfig(
+                    task_type=TaskType.CAUSAL_LM,
+                    inference_mode=False,
+                    r=16,
+                    lora_alpha=32,
+                    lora_dropout=0.0,
+                    bias="none",
+                    use_rslora=False,
+                    target_modules=["linear_proj", "linear_fc1", "linear_fc2"],
+                )
+                from peft import get_peft_model
+
+                # autocast_adapter_dtype set to False is needed to actually execute the ops in bf16
+                # otherwise they'll be casted to f32
+                self.lora_cls = partial(get_peft_model, peft_config=peft_config, autocast_adapter_dtype=False)
+
+            case "NeMo":
+                from nemo.collections.llm.peft import LoRA
+                from nemo.collections.llm.fn import FNMixin
+
+                base_cls += [FNMixin]
+
+                model_config = None
+                self.lora_cls = LoRA()
+                self.lora_cls._is_fsdp_v1 = False
+
+        class LinearLoRA(*base_cls):
+            def __init__(self, config=None):
+                super().__init__()
+
+                self.config = config
+
+                # Names are intentional, they match internal NeMo LoRA targets.
+                self.linear_proj = nn.Linear(3584, 256)
+                self.linear_fc1 = nn.Linear(256, 256)
+                self.linear_fc2 = nn.Linear(256, 3584)
+
+            def forward(self, input_ids, **kwargs):
+                y = self.linear_proj(input_ids)
+                y = self.linear_fc1(y)
+                return self.linear_fc2(y)
+
+            # Extra method needed to pass HF peft implementation checks
+            def prepare_inputs_for_generation(self, *args, **kwargs):
+                pass
+
+        with torch.device(self.device):
+            self.model = LinearLoRA(model_config).to(self.tdtype)
+
+    def make_batch(self) -> tuple[list, dict]:
+        make = partial(
+            make_tensor,
+            device=self.device,
+            dtype=self.tdtype,
+            requires_grad=False,
+        )
+        a = make(self.shape)
+        return (), {"input_ids": a}
+
+    def fn(self) -> Callable:
+        return self.lora_cls(self.model)
+
+
 # TODO Add descriptions to the executors when listed, and list them alphabetically
 # TODO Allow querying benchmark for details
 # TODO Allow specifying benchmark arguments
