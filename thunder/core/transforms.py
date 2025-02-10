@@ -56,6 +56,7 @@ from thunder.core.utils import (
     OrderedSet,
     ProxyDict,
 )
+from thunder.core.codeutils import is_literal
 import thunder.clang as clang
 from thunder.clang import (
     empty,
@@ -2293,10 +2294,25 @@ def iter_bound_symbols(bound_symbols):
     for symbol in bound_symbols:
         if symbol.sym.id in trace_interpreter_skip_list:
             continue
+        elif all(is_literal(sym_out) for sym_out in symbol.flat_outs):
+            continue
         elif symbol.output is None:
             continue
         else:
             yield symbol
+
+
+def get_first_proxy(proxies) -> Proxy | None:
+    """Get the first proxy from a list of proxies.
+
+    Args:
+        proxies (List[Proxy]): List of proxies
+
+    Returns:
+        Proxy: First proxy from the list
+    """
+    proxies = sequencify(proxies)
+    return next((proxy for proxy in proxies if isinstance(proxy, Proxy)), None)
 
 
 def deconstruct_forward_env_for_backward(trace, env):
@@ -2310,7 +2326,7 @@ def deconstruct_forward_env_for_backward(trace, env):
     # arguments. See test_grad.py:test_torch_autograd_function for an example
     # where this is tested.
     bound_symbols = iter_bound_symbols(trace.bound_symbols)
-    saved_for_backward = tuple(env[sequencify(symbol.output)[0].name].residuals for symbol in bound_symbols)
+    saved_for_backward = tuple(env[get_first_proxy(symbol.output).name].residuals for symbol in bound_symbols)
     return saved_for_backward
 
 
@@ -2320,7 +2336,7 @@ def reconstruct_forward_env_for_backward(trace, saved_for_backward):
     reconstructed_env = {}
 
     for idx, sym in enumerate(bound_symbols):
-        k = sequencify(sym.output)[0].name
+        k = get_first_proxy(sym.output).name
         v = VJPDual(None, saved_for_backward[idx])
         reconstructed_env[k] = v
 
@@ -2569,12 +2585,7 @@ def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
     def _vjp_impl(*args, **kwargs):
         primals, kwargs = tree_map(lambda x: x.primal if isinstance(x, VJPDual) else x, (args, kwargs))
         out_primal, out_residuals = vjp_impl(*primals, **kwargs)
-        # We are saving the residuals and pullback only in the first output
-        # backward_pass then retrieves the residuals and pullback from the first output
-        if isinstance(out_primal, Sequence):
-            return (VJPDual(out_primal[0], out_residuals), *(VJPDual(o, tuple()) for o in out_primal[1:]))
-
-        return (VJPDual(out_primal, out_residuals),)
+        return tree_map(lambda x: VJPDual(x, out_residuals), sequencify(out_primal))
 
     return _vjp_impl
 
@@ -2729,7 +2740,7 @@ def backward_pass(forward_env, trace, init_cotangents):
         # Having a single cotangent is a common case, so we flatten it
         # Otherwise, we will need to rewrite the pullback functions
         cotangents = tree_flatten(cotangents)[0]
-        residuals = forward_env[symbol_output[0].name].residuals
+        residuals = forward_env[get_first_proxy(symbol_output).name].residuals
         if is_constant_for_vjp(symbol):
             # We can skip the pullback if all the arguments are constant
             continue

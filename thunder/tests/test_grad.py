@@ -1934,6 +1934,18 @@ def test_adhoc_executor_grad(executor, device, _):
     torch.testing.assert_close(actual_gr, expected_gr)
 
 
+# See https://github.com/Lightning-AI/lightning-thunder/issues/1732
+def test_symbolic_shape_for_backward_issue_1732():
+    @partial(thunder.jit, cache="symbolic values")
+    def f(a, b):
+        return a * b
+
+    a = make_tensor((1, 32, 232, 232), device="cpu", dtype=torch.float32, requires_grad=True)
+    b = make_tensor((1, 1, 232, 232), device="cpu", dtype=torch.float32, requires_grad=False)
+    out = f(a, b)
+    out.backward(torch.ones_like(out))
+
+
 @pytest.mark.parametrize("device", ("cuda", "cpu"))
 def test_backward_recomputation_decomposed_ops(device):
     if device == "cuda" and not torch.cuda.is_available():
