@@ -2888,9 +2888,6 @@ class DeepSeekSGLangMoEBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         renormalize: bool,
     ):
         assert hidden_states.shape[0] == gating_output.shape[0], "Number of tokens mismatch"
-        M, _ = hidden_states.shape
-        topk_weights = torch.empty(M, topk, dtype=torch.float32, device=hidden_states.device)
-        topk_ids = torch.empty(M, topk, dtype=torch.int32, device=hidden_states.device)
         topk_weights = torch.nn.functional.softmax(gating_output.float(), dim=-1)
         topk_weights, topk_ids = torch.topk(topk_weights, topk, dim=-1)
         if renormalize:
@@ -2898,7 +2895,7 @@ class DeepSeekSGLangMoEBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return topk_weights, topk_ids
 
     # Adapted from
-    # https://github.com/sgl-project/sglang/blob/04d8cd20883937a2b9cb1e23b192b534a64170cc/python/sglang/srt/layers/moe/fused_moe_native.py#L15
+    # https://github.com/sgl-project/sglang/blob/d23cb9a01ed7f7e39f40e3f5ad7d271d3ac52ce2/benchmark/kernels/fused_moe_triton/benchmark_torch_compile_fused_moe.py#L76
     @staticmethod
     def fused_moe_def(
         x,
