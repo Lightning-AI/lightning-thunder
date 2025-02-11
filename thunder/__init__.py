@@ -191,16 +191,18 @@ get_always_executors = extend.get_always_executors
 cudnn_executor: None | extend.Executor = extend.get_executor("cudnn")
 sdpa_executor: None | extend.Executor = extend.get_executor("sdpa")
 torchcompile_cat_executor: None | extend.Executor = extend.get_executor("torchcompile_cat")
+torchcompile_xentropy_executor: None | extend.Executor = extend.get_executor("torchcompile_xentropy")
 apex_executor: None | extend.Executor = extend.get_executor("apex")
 nvfuser_executor: None | extend.Executor = extend.get_executor("nvfuser")
 pytorch_executor: None | extend.Executor = extend.get_executor("torch")
 
-# Default executor list is [cudnn -> sdpa -> torchcompile_cat -> nvfuser -> torch -> python]
+# Default executor list is [cudnn -> sdpa -> torchcompile_cat -> torchcompile_xentropy -> nvfuser -> torch -> python]
 # Note that add_default_executor inserts executor at start of list, hence the reverse order below.
 if nvfuser_executor:
     add_default_executor(nvfuser_executor)
 
 if torchcompile_cat_executor and pytorch._dynamo.is_inductor_supported():
+    add_default_executor(torchcompile_xentropy_executor)
     add_default_executor(torchcompile_cat_executor)
 
 if sdpa_executor:

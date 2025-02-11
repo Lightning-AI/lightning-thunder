@@ -37,7 +37,12 @@ fp8_support_reason: str = ""
 if TE_AVAILABLE:
     from transformer_engine.pytorch import fp8_autocast
     from transformer_engine.pytorch import Linear as TELinear
-    from transformer_engine.pytorch.fp8 import check_fp8_support, FP8GlobalStateManager
+    from transformer_engine.pytorch.fp8 import (
+        check_fp8_support,
+        FP8GlobalStateManager,
+        get_default_fp8_recipe,
+    )
+    from transformer_engine.common.recipe import MXFP8BlockScaling
     import transformer_engine
 
     is_fp8_supported, fp8_support_reason = check_fp8_support()
@@ -699,7 +704,9 @@ def _test_fsdp_transformer_engine(input_data):
         torch.cuda.set_device(rank)
 
         dim = 256
-        n_iter = 10
+        # Running more iterations leads to `nan` for both eager and thunder
+        # with BlockScaling.
+        n_iter = 5
 
         class ThunderModel(torch.nn.Module):
             def __init__(self) -> None:
@@ -725,16 +732,19 @@ def _test_fsdp_transformer_engine(input_data):
         thunder_model.fc1.weight.data = fc1_weight.clone()
         thunder_model.fc2.weight.data = fc2_weight.clone()
 
-        jit_model = thunder.jit(
-            thunder.distributed.fsdp(thunder_model, sharding_strategy=thunder_fsdp_strategy),
-            executors=[
-                transformer_engine_ex,
-            ]
-            + executor.executors_list(),
-            fp8_shard_intermediate_activation=intermediate_activation_sharding,
+        jit_model = thunder.distributed.fsdp(
+            thunder.jit(
+                thunder_model,
+                executors=[
+                    transformer_engine_ex,
+                ]
+                + executor.executors_list(),
+                fp8_shard_intermediate_activation=intermediate_activation_sharding,
+            ),
+            sharding_strategy=thunder_fsdp_strategy,
         )
 
-        optim = torch.optim.SGD(thunder_model.parameters())
+        optim = torch.optim.SGD(jit_model.parameters())
 
         for _ in range(n_iter):
             o = jit_model(x).sum()
@@ -783,39 +793,42 @@ def _test_fsdp_transformer_engine(input_data):
 
         # Compare the state of the two models.
         comparison_exceptions = []
-        for bound_symbol in fwd_traces[-1].bound_symbols:
-            if "te_linear" in bound_symbol.sym.name:
-                thunder_fp8_meta = bound_symbol._call_ctx[bound_symbol.sym.name].func.fp8_meta
-                te_fp8_meta = thunder_to_te_layer_map[bound_symbol.sym.name].fp8_meta
-                try:
-                    # fwd tensor history
-                    assert_close(thunder_fp8_meta["scaling_fwd"].scale, te_fp8_meta["scaling_fwd"].scale)
-                    assert_close(thunder_fp8_meta["scaling_fwd"].scale_inv, te_fp8_meta["scaling_fwd"].scale_inv)
-                    assert_close(thunder_fp8_meta["scaling_fwd"].amax_history, te_fp8_meta["scaling_fwd"].amax_history)
-                    # bwd tensor history
-                    assert_close(thunder_fp8_meta["scaling_bwd"].scale, te_fp8_meta["scaling_bwd"].scale)
-                    assert_close(thunder_fp8_meta["scaling_bwd"].scale_inv, te_fp8_meta["scaling_bwd"].scale_inv)
-                    assert_close(thunder_fp8_meta["scaling_bwd"].amax_history, te_fp8_meta["scaling_bwd"].amax_history)
+        if not isinstance(
+            get_default_fp8_recipe(), MXFP8BlockScaling
+        ):  # BlockScaling recipe doesn't have state like scale, amax_history.
+            for bound_symbol in fwd_traces[-1].bound_symbols:
+                if "te_linear" in bound_symbol.sym.name:
+                    thunder_fp8_meta = bound_symbol._call_ctx[bound_symbol.sym.name].func.fp8_meta
+                    te_fp8_meta = thunder_to_te_layer_map[bound_symbol.sym.name].fp8_meta
+                    try:
+                        # fwd tensor history
+                        assert_close(thunder_fp8_meta["scaling_fwd"].scale, te_fp8_meta["scaling_fwd"].scale)
+                        assert_close(
+                            thunder_fp8_meta["scaling_fwd"].amax_history, te_fp8_meta["scaling_fwd"].amax_history
+                        )
+                        # bwd tensor history
+                        assert_close(thunder_fp8_meta["scaling_bwd"].scale, te_fp8_meta["scaling_bwd"].scale)
+                        assert_close(
+                            thunder_fp8_meta["scaling_bwd"].amax_history, te_fp8_meta["scaling_bwd"].amax_history
+                        )
 
-                    # This has to be on all ranks so that the computation is not blocked
-                    is_same_across_ranks(thunder_fp8_meta["scaling_fwd"].scale)
-                    is_same_across_ranks(thunder_fp8_meta["scaling_fwd"].scale_inv)
-                    # See NOTE: TE forward tensor meta-data sync
-                    is_same_across_ranks(thunder_fp8_meta["scaling_fwd"].amax_history[1:])
-                    is_same_across_ranks(thunder_fp8_meta["scaling_bwd"].scale)
-                    is_same_across_ranks(thunder_fp8_meta["scaling_bwd"].scale_inv)
-                    is_same_across_ranks(thunder_fp8_meta["scaling_bwd"].amax_history)
-                except Exception as e:
-                    # Return exceptions only for rank==0
-                    if rank == 0:
-                        comparison_exceptions.append(e)
+                        # This has to be on all ranks so that the computation is not blocked
+                        is_same_across_ranks(thunder_fp8_meta["scaling_fwd"].scale)
+                        # See NOTE: TE forward tensor meta-data sync
+                        is_same_across_ranks(thunder_fp8_meta["scaling_fwd"].amax_history[1:])
+                        is_same_across_ranks(thunder_fp8_meta["scaling_bwd"].scale)
+                        is_same_across_ranks(thunder_fp8_meta["scaling_bwd"].amax_history)
+                    except Exception as e:
+                        # Return exceptions only for rank==0
+                        if rank == 0:
+                            comparison_exceptions.append(e)
 
         # Compare weights after `n_iters`
         shard_size = int(dim / world_size)
         fsdp_te_params = tuple(te_model.parameters())
         try:
-            assert_close(thunder_model.fc1.weight, fsdp_te_params[0].view(shard_size, dim))
-            assert_close(thunder_model.fc2.weight, fsdp_te_params[1].view(shard_size, dim))
+            assert_close(jit_model.get_parameter("fc1.weight"), fsdp_te_params[0].view(shard_size, dim))
+            assert_close(jit_model.get_parameter("fc2.weight"), fsdp_te_params[1].view(shard_size, dim))
         except Exception as e:
             # Return exceptions only for rank==0
             if rank == 0:
@@ -838,12 +851,12 @@ def _test_fsdp_transformer_engine_bucketing(input_data):
         torch.cuda.set_device(rank)
 
         # data
-        batch_size = 2
-        max_seq_len = 32
-        vocab_size = 32
+        batch_size = 64
+        max_seq_len = 64
+        vocab_size = 64
 
         model_args = dict(
-            dim=32,
+            dim=64,
             n_layers=2,
             n_heads=2,
             n_kv_heads=2,
@@ -851,15 +864,17 @@ def _test_fsdp_transformer_engine_bucketing(input_data):
             multiple_of=32,
             max_seq_len=max_seq_len,
             dropout=0.0,
+            hidden_dim=64,
         )
         gptconf = ModelArgs(**model_args)
         model = Transformer(gptconf)
         model.to(device)
         x = torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int64, device=device)
         y = torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int64, device=device)
-        jit_model = thunder.jit(
-            thunder.distributed.fsdp(model, sharding_strategy=thunder_fsdp_strategy, bucketing_strategy=bucketing),
-            executors=(transformer_engine_ex,) + thunder.get_default_executors(),
+        jit_model = thunder.distributed.fsdp(
+            thunder.jit(model, executors=(transformer_engine_ex,) + thunder.get_default_executors()),
+            sharding_strategy=thunder_fsdp_strategy,
+            bucketing_strategy=bucketing,
         )
 
         sanity_exceptions = []
@@ -918,7 +933,10 @@ def test_native_fsdp(executor, devices, dtype, fsdp_bucketing_strategy):
                 (FSDPType.ZERO2, False),
                 (FSDPType.ZERO3, False),
                 # Intermediate sharding is only availabe TE v1.8 onwards
-                (FSDPType.ZERO3, True),
+                pytest.param(
+                    (FSDPType.ZERO3, True),
+                    marks=pytest.mark.skip("Intermediate sharding is errors in TE 2.0 (also with eager)."),
+                ),
             ),
         ),
         pytest.mark.skipif(not TE_AVAILABLE, reason="TransformerEngine is not installed."),

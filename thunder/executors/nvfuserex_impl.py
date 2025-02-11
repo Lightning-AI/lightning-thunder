@@ -1965,7 +1965,18 @@ def where(
     nva = getnv(a, fd, lc_to_nv_map)
     nvb = getnv(b, fd, lc_to_nv_map)
 
-    return fd.ops.where(nvpred, nva, nvb)
+    # explicit type promotion is necessary, since nvfuser can't do this properly with scalar inputs. See
+    # issue: https://github.com/NVIDIA/Fuser/issues/3816
+    # Determines result dtype
+    numbertype, tensordtype = utils.check_same_dtype(a, b)
+    dtype = tensordtype if tensordtype is not None else numbertype
+
+    # NOTE: for scalar inputs, dtype mapping is different. e.g. float -> double. We convert dtypes to strong
+    # type if the output is supposed to be a tensor proxy
+    if any(map(lambda x: isinstance(x, TensorProxy), (pred, a, b))):
+        dtype = dtypes.to_strong_dtype(dtype)
+
+    return fd.ops.cast(fd.ops.where(nvpred, nva, nvb), lcdtype_to_nvdtype(dtype))
 
 
 register_supported(PrimIDs.WHERE, where, _elementwise_ternary_check)
