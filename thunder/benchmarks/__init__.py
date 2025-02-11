@@ -2878,7 +2878,9 @@ class GPTBlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
 
 class DeepSeekSGLangMoEBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
-    # Taken from
+    # Copyright 2024 SGLang Team
+    # Licensed under the Apache License, Version 2.0 (see linked file for details)
+    # Adapted from
     # https://github.com/sgl-project/sglang/blob/de5533341ee3c1b7667b1eb1f209b6825335d136/python/sglang/srt/layers/moe/topk.py#L23
     @staticmethod
     def fused_topk_native(
