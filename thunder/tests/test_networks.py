@@ -555,7 +555,7 @@ def test_hf_llama():
     assert_close(res2, expected2, rtol=1e-1, atol=1e-1)
 
     # changes this to fewer as needed, the goal is to not have too many fusions
-    assert len(get_fusion_symbols(thunder.last_traces(jm)[-1])) == 7
+    assert len(get_fusion_symbols(thunder.last_traces(jm)[-1])) == 6
 
 
 @requiresCUDA

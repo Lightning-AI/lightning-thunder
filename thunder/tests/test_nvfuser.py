@@ -198,16 +198,15 @@ def test_redundant_cast_nvfusion(executor, device: str, dtype: dtypes.dtype):
     fusions = examine.get_fusion_symbols(extrace)
     assert len(fusions) == 2
 
-    print(extrace)
     # Verifies that the nvFusion inputs and outputs are updated properly
     t0 = fusions[0].output[0]
-    assert fusions[1].args[2].name == "x"
+    assert fusions[1].args[2].name == "b"
     assert t0.name == "b"
     assert extrace.output[0].name == "b"
-    assert len(fusions[0].subsymbols) == 1
+    assert len(fusions[0].subsymbols) == 3
 
     # Verifies the intermediate consumer
-    assert fusions[1].subsymbols[-1].args[0].name == "f"
+    assert fusions[1].subsymbols[-1].args[0].name == "g"
 
 
 @instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
@@ -287,11 +286,7 @@ def test_cse_subsymbol_removal(executor, device, _):
     assert {el.sym.name for el in fw_trace.bound_symbols if not el.sym.is_fusion} == set(outside_fusion_syms)
 
 
-@instantiate(
-    dtypes=NOTHING,
-    devicetypes=(devices.DeviceType.CUDA,),
-    executors=(nvFuserExecutor,),
-)
+@instantiate(dtypes=NOTHING, devicetypes=(devices.DeviceType.CUDA,), executors=(nvFuserExecutor,))
 def test_cse_subsymbol_redundant_args(executor, device, _):
     from thunder.core.pytree import tree_flatten
 
@@ -314,16 +309,12 @@ def test_cse_subsymbol_redundant_args(executor, device, _):
     fusion_bsyms = tuple(filter(lambda a: a.sym.is_fusion, fw_trace.bound_symbols))
 
     # There is a single nvfuser fusion group.
-    assert len(fusion_bsyms) == 2
+    assert len(fusion_bsyms) == 1
     nvf_0 = fusion_bsyms[0]
-    nvf_1 = fusion_bsyms[1]
 
-    assert [t.name for t in tree_flatten(nvf_0.args)[0]] == ["t16", "z"]
-    assert [t.name for t in tree_flatten(nvf_1.args)[0]] == ["t16", "w", "t4"]
-    assert len(nvf_0.subsymbols) == 4
-    assert len(nvf_1.subsymbols) == 6
-    assert [t.name for t in tree_flatten(nvf_0.output)[0]] == ["t4"]
-    assert [t.name for t in tree_flatten(nvf_1.output)[0]] == ["t13"]
+    assert [t.name for t in tree_flatten(nvf_0.args)[0]] == ["t16", "z", "w"]
+    assert len(nvf_0.subsymbols) == 7
+    assert [t.name for t in tree_flatten(nvf_0.output)[0]] == ["t13"]
 
 
 @instantiate(dtypes=NOTHING, devicetypes=(devices.DeviceType.CUDA,), executors=(nvFuserExecutor,))
@@ -396,13 +387,7 @@ def test_cse_rematerialization(executor, device, _):
 #   these tests don't rely on matmul not being executable by nvFuser
 # TODO Explicitly use the nvFuserExecutor in these tests
 #   (by creating executor.make_callable?)
-@instantiate(
-    executors=(nvFuserExecutor,),
-    dtypes=(thunder.float32,),
-    decorators=(
-        pytest.mark.skip(reason="deliberately disabled https://github.com/Lightning-AI/lightning-thunder/issues/1337"),
-    ),
-)
+@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
 def test_nvfuser_toposort_basic(executor, device: str, dtype: dtypes.dtype):
     torch_dtype = ltorch.to_torch_dtype(dtype)
     a = make_tensor((2, 2), device=device, dtype=torch_dtype)
@@ -427,13 +412,7 @@ def test_nvfuser_toposort_basic(executor, device: str, dtype: dtypes.dtype):
 
 # Tests that three separated nvFuser regions can be merged when they have no
 #   dependencies
-@instantiate(
-    executors=(nvFuserExecutor,),
-    dtypes=(thunder.float32,),
-    decorators=(
-        pytest.mark.skip(reason="deliberately disabled https://github.com/Lightning-AI/lightning-thunder/issues/1337"),
-    ),
-)
+@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
 def test_nvfuser_toposort_independent(executor, device: str, dtype: dtypes.dtype):
     torch_dtype = ltorch.to_torch_dtype(dtype)
     a = make_tensor((2, 2), device=device, dtype=torch_dtype)
@@ -460,13 +439,7 @@ def test_nvfuser_toposort_independent(executor, device: str, dtype: dtypes.dtype
 
 # Tests that three separated nvFuser regions can be merged when the middle region
 #   depends on the first region
-@instantiate(
-    executors=(nvFuserExecutor,),
-    dtypes=(thunder.float32,),
-    decorators=(
-        pytest.mark.skip(reason="deliberately disabled https://github.com/Lightning-AI/lightning-thunder/issues/1337"),
-    ),
-)
+@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
 def test_nvfuser_toposort_dependent0(executor, device: str, dtype: dtypes.dtype):
     torch_dtype = ltorch.to_torch_dtype(dtype)
     a = make_tensor((2, 2), device=device, dtype=torch_dtype)
@@ -493,13 +466,7 @@ def test_nvfuser_toposort_dependent0(executor, device: str, dtype: dtypes.dtype)
 
 # Tests that three separated nvFuser regions can be merged when the middle
 #   and final regions depend on the first one
-@instantiate(
-    executors=(nvFuserExecutor,),
-    dtypes=(thunder.float32,),
-    decorators=(
-        pytest.mark.skip(reason="deliberately disabled https://github.com/Lightning-AI/lightning-thunder/issues/1337"),
-    ),
-)
+@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
 def test_nvfuser_toposort_dependent1(executor, device: str, dtype: dtypes.dtype):
     torch_dtype = ltorch.to_torch_dtype(dtype)
     a = make_tensor((2, 2), device=device, dtype=torch_dtype)
@@ -526,13 +493,7 @@ def test_nvfuser_toposort_dependent1(executor, device: str, dtype: dtypes.dtype)
 
 # Tests that three separated nvFuser regions can be merged when each region
 #   depends on the other
-@instantiate(
-    executors=(nvFuserExecutor,),
-    dtypes=(thunder.float32,),
-    decorators=(
-        pytest.mark.skip(reason="deliberately disabled https://github.com/Lightning-AI/lightning-thunder/issues/1337"),
-    ),
-)
+@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
 def test_nvfuser_toposort_dependent2(executor, device: str, dtype: dtypes.dtype):
     torch_dtype = ltorch.to_torch_dtype(dtype)
     a = make_tensor((2, 2), device=device, dtype=torch_dtype)
@@ -559,13 +520,7 @@ def test_nvfuser_toposort_dependent2(executor, device: str, dtype: dtypes.dtype)
 
 # Tests that three separated nvFuser regions can be merged when the first region
 #   is entirely consumed by later regions
-@instantiate(
-    executors=(nvFuserExecutor,),
-    dtypes=(thunder.float32,),
-    decorators=(
-        pytest.mark.skip(reason="deliberately disabled https://github.com/Lightning-AI/lightning-thunder/issues/1337"),
-    ),
-)
+@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
 def test_nvfuser_toposort_dependent3(executor, device: str, dtype: dtypes.dtype):
     torch_dtype = ltorch.to_torch_dtype(dtype)
     a = make_tensor((2, 2), device=device, dtype=torch_dtype)
@@ -591,13 +546,7 @@ def test_nvfuser_toposort_dependent3(executor, device: str, dtype: dtypes.dtype)
 
 
 # Tests that three separated nvFuser regions can be merged even if a PyTorch region has to be reordered BEFORE them
-@instantiate(
-    executors=(nvFuserExecutor,),
-    dtypes=(thunder.float32,),
-    decorators=(
-        pytest.mark.skip(reason="deliberately disabled https://github.com/Lightning-AI/lightning-thunder/issues/1337"),
-    ),
-)
+@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
 def test_nvfuser_toposort_dependent4(executor, device: str, dtype: dtypes.dtype):
     torch_dtype = ltorch.to_torch_dtype(dtype)
     a = make_tensor((2, 2), device=device, dtype=torch_dtype)
@@ -624,13 +573,7 @@ def test_nvfuser_toposort_dependent4(executor, device: str, dtype: dtypes.dtype)
 
 # Tests that three separated nvFuser regions can only be partially merged
 #   if there's a PyTorch data dependency between them
-@instantiate(
-    executors=(nvFuserExecutor,),
-    dtypes=(thunder.float32,),
-    decorators=(
-        pytest.mark.skip(reason="deliberately disabled https://github.com/Lightning-AI/lightning-thunder/issues/1337"),
-    ),
-)
+@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
 def test_nvfuser_toposort_dependent5(executor, device: str, dtype: dtypes.dtype):
     torch_dtype = ltorch.to_torch_dtype(dtype)
     a = make_tensor((2, 2), device=device, dtype=torch_dtype)
