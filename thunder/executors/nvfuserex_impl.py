@@ -133,13 +133,16 @@ def _define_constant(fd: FusionDefinition, constant: Any) -> Any:
     utils.check(False, lambda: f"Cannot translate {constant} of type {type(constant)} into an nvFuser constant")
 
 
-def getnv(x: Any, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
-    if isinstance(x, Proxy):
+# inline_number allows returning Number as-is, instead of wrap it as an nvfuser constant.
+def getnv(x: Any, fd: FusionDefinition, lc_to_nv_map: dict, inline_number: bool = False) -> Any:
+    if inline_number and isinstance(x, Number):
+        return x
+    elif isinstance(x, Proxy):
         return lc_to_nv_map[x]
-    if isinstance(x, (Number, dtypes.dtype, type, Device)):
+    elif isinstance(x, (Number, dtypes.dtype, type, Device)):
         return _define_constant(fd, x)
-    if isinstance(x, Sequence):
-        return tuple(getnv(i, fd, lc_to_nv_map) for i in x)
+    elif isinstance(x, Sequence):
+        return tuple(getnv(i, fd, lc_to_nv_map, inline_number) for i in x)
 
     utils.check(False, lambda: f"Cannot translate {x} of type {type(x)} to an nvFuser object")
 
@@ -1300,7 +1303,16 @@ def nv_slice(
 ) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
-    return fd.ops.slice(nva, start_indices, end_indices, strides)
+    # fd.ops.slice prefers python Number as slice indices, which allows the FusionDefinition print out to inline its
+    # indices. fd.ops.slice requires all input sequence to have identical element type, so we can only inline_number
+    # when all slice indices are python numbers.
+    inline_number = all(map(lambda x: not isinstance(x, Proxy), start_indices + end_indices + strides))
+
+    nv_start_indices = getnv(start_indices, fd, lc_to_nv_map, inline_number=inline_number)
+    nv_end_indices = getnv(end_indices, fd, lc_to_nv_map, inline_number=inline_number)
+    nv_strides = getnv(strides, fd, lc_to_nv_map, inline_number=inline_number)
+
+    return fd.ops.slice(nva, nv_start_indices, nv_end_indices, nv_strides)
 
 
 register_supported(PrimIDs.SLICE, nv_slice, _slice_check)
@@ -1953,7 +1965,18 @@ def where(
     nva = getnv(a, fd, lc_to_nv_map)
     nvb = getnv(b, fd, lc_to_nv_map)
 
-    return fd.ops.where(nvpred, nva, nvb)
+    # explicit type promotion is necessary, since nvfuser can't do this properly with scalar inputs. See
+    # issue: https://github.com/NVIDIA/Fuser/issues/3816
+    # Determines result dtype
+    numbertype, tensordtype = utils.check_same_dtype(a, b)
+    dtype = tensordtype if tensordtype is not None else numbertype
+
+    # NOTE: for scalar inputs, dtype mapping is different. e.g. float -> double. We convert dtypes to strong
+    # type if the output is supposed to be a tensor proxy
+    if any(map(lambda x: isinstance(x, TensorProxy), (pred, a, b))):
+        dtype = dtypes.to_strong_dtype(dtype)
+
+    return fd.ops.cast(fd.ops.where(nvpred, nva, nvb), lcdtype_to_nvdtype(dtype))
 
 
 register_supported(PrimIDs.WHERE, where, _elementwise_ternary_check)
