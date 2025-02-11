@@ -399,6 +399,14 @@ class FXGraphReport:
         with open(folder / file_name, "w") as f:
             print(code_str, file=f)
 
+    def benchmark(self, fn: Callable, time_fn: Callable):
+        compiled_fn = fn(self.graph)
+        inputs = self.get_input_metadata()
+        example_inputs = eval(f"[\n{chr(10).join(arg_like(a) for a in inputs)}]")
+        return time_fn(
+            "compiled_fn(*example_inputs)", globals={"compiled_fn": compiled_fn, "example_inputs": example_inputs}
+        )
+
 
 class FXReport:
     """
@@ -607,6 +615,11 @@ class ThunderFusionReport:
     def __repr__(self):
         return f"<ThunderFusionReport of bound symbol\n{self.nvfusion_bsym}>"
 
+    def benchmark(self, fn: Callable, timer_fn: Callable):
+        compiled_fn = fn(self.nvfusion_bsym)
+        inputs = self.get_inputs()
+        return timer_fn("compiled_fn(*inputs)", globals={"compiled_fn": compiled_fn, "inputs": inputs})
+
     def write_nvfuser_repro(self, folder, file_name=None):
         folder = Path(folder)
         folder.mkdir(exist_ok=True, parents=True)
@@ -649,11 +662,6 @@ class ThunderFusionReport:
             file_name = f"{self.name}_repro_inductor.py"
         with open(folder / file_name, "w") as f:
             f.write(program)
-
-    def run_benchmark(self) -> BenchmarkComparisonData:
-        from thunder.dev_utils.utils import _benchmark_fusion_region_with_nvfuser_and_torch_compile
-
-        return _benchmark_fusion_region_with_nvfuser_and_torch_compile(self.nvfusion_bsym)
 
 
 class ThunderFXGraphReport(FXGraphReport):

@@ -72,35 +72,3 @@ def kernel_time(stmt="pass", setup="pass", globals=None, min_run_time: float = 0
 def wall_time(stmt="pass", setup="pass", globals=None, min_run_time: float = 0.2) -> Measurement:
     t = Timer(stmt=stmt, setup=setup, globals=globals)
     return t.blocked_autorange(min_run_time=min_run_time)
-
-
-# tmp tests
-if __name__ == "__main__":
-    from nvfuser import FusionDefinition, DataType
-
-    def nvfuser_fusion_id2(fd: FusionDefinition) -> None:
-        T0 = fd.define_tensor(
-            shape=[2, 2], contiguity=[True, True], dtype=DataType.Float, is_cpu=False, stride_order=[1, 0]
-        )
-        T1 = fd.define_tensor(
-            shape=[2, 2], contiguity=[True, True], dtype=DataType.Float, is_cpu=False, stride_order=[1, 0]
-        )
-        T2 = fd.ops.cos(T0)
-        T3 = fd.ops.add(T1, T2)
-        S4 = fd.define_scalar(1.00000, dtype=DataType.Double)
-        T5 = fd.ops.add(T3, S4)
-        fd.add_output(T5)
-
-    with FusionDefinition() as fd:
-        nvfuser_fusion_id2(fd)
-
-    inputs = [
-        torch.testing.make_tensor((2, 2), dtype=torch.float32, device="cuda:0"),
-        torch.testing.make_tensor((2, 2), dtype=torch.float32, device="cuda:0"),
-    ]
-
-    # print(kernel_time1(fd.execute, inputs))
-    xx = kernel_time(stmt="fd.execute(inputs)", globals={"fd": fd, "inputs": inputs})
-    yy = wall_time(stmt="fd.execute(inputs)", globals={"fd": fd, "inputs": inputs})
-    print(xx)
-    print(yy)

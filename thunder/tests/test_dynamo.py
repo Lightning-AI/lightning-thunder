@@ -1192,3 +1192,77 @@ def test_thunder_specific_reports(tmp_path):
 
     for file in py_files:
         check(file, cmd)
+
+
+@requiresCUDA
+def test_thunder_timer():
+    from nvfuser import FusionDefinition, DataType
+    from thunder.dynamo.timer import wall_time, kernel_time
+
+    def nvfuser_fusion_id2(fd: FusionDefinition) -> None:
+        T0 = fd.define_tensor(
+            shape=[2, 2], contiguity=[True, True], dtype=DataType.Float, is_cpu=False, stride_order=[1, 0]
+        )
+        T1 = fd.define_tensor(
+            shape=[2, 2], contiguity=[True, True], dtype=DataType.Float, is_cpu=False, stride_order=[1, 0]
+        )
+        T2 = fd.ops.cos(T0)
+        T3 = fd.ops.add(T1, T2)
+        S4 = fd.define_scalar(1.00000, dtype=DataType.Double)
+        T5 = fd.ops.add(T3, S4)
+        fd.add_output(T5)
+
+    with FusionDefinition() as fd:
+        nvfuser_fusion_id2(fd)
+
+    inputs = [
+        torch.testing.make_tensor((2, 2), dtype=torch.float32, device="cuda:0"),
+        torch.testing.make_tensor((2, 2), dtype=torch.float32, device="cuda:0"),
+    ]
+
+    kernel_time(stmt="fd.execute(inputs)", globals={"fd": fd, "inputs": inputs})
+    wall_time(stmt="fd.execute(inputs)", globals={"fd": fd, "inputs": inputs})
+
+
+@requiresCUDA
+def test_thunder_reports_benchmark():
+    from thunder.dynamo.report import fx_report, analyze_thunder_splits
+    from thunder.benchmarks import (
+        torch_executor,
+        torch_compile_executor,
+        thunder_executor,
+        bsym_nvfuser_executor,
+        bsym_torch_compile_executor,
+    )
+    from thunder.dynamo.timer import wall_time, kernel_time
+
+    x = torch.ones(2, 2, device="cuda", requires_grad=True)
+
+    def foo(x):
+        # torch.sinc has automatic fallback registered,
+        # so that operation will be given to inductor.
+        x = x.exp()
+        torch._dynamo.graph_break()
+        y = torch.sinc(x) + torch.cos(x)
+        return y + 1
+
+    results = fx_report(foo, x)
+    for idx, fx_graph_report in enumerate(results.fx_graph_reports):
+        print(fx_graph_report.benchmark(thunder_executor, wall_time))
+        print(fx_graph_report.benchmark(torch_compile_executor, wall_time))
+        print(fx_graph_report.benchmark(torch_executor, wall_time))
+
+        thunder_fx_graph_report = analyze_thunder_splits(fx_graph_report)
+        print(thunder_fx_graph_report.benchmark(thunder_executor, wall_time))
+        print(thunder_fx_graph_report.benchmark(torch_compile_executor, wall_time))
+        print(thunder_fx_graph_report.benchmark(torch_executor, wall_time))
+        for thunder_split_report in thunder_fx_graph_report.subgraph_reports:
+            print(thunder_split_report.benchmark(thunder_executor, wall_time))
+            print(thunder_split_report.benchmark(torch_compile_executor, wall_time))
+            print(thunder_split_report.benchmark(torch_executor, wall_time))
+            thunder_split_report.create_fusion_reports()
+            for nvf in thunder_split_report.fusion_reports:
+                print(nvf.benchmark(bsym_torch_compile_executor, wall_time))
+                print(nvf.benchmark(bsym_torch_compile_executor, kernel_time))
+                print(nvf.benchmark(bsym_nvfuser_executor, wall_time))
+                print(nvf.benchmark(bsym_nvfuser_executor, kernel_time))
