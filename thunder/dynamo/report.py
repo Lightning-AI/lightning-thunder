@@ -20,6 +20,7 @@ from thunder.dynamo.utils import (
     get_split_reasons_string,
     CompilerType,
 )
+
 from thunder.dynamo.repro_script_template import (
     benchmark_multi_exe_code_template,
     repro_code_template,
@@ -34,9 +35,9 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from thunder.dynamo.utils import ExampleInputMetaData
-    from thunder.dev_utils.utils import BenchmarkComparisonData
     from thunder.core.trace import TraceCtx
     from thunder.core.symbol import BoundSymbol
+    from thunder.dynamo.benchmark_utils import CompileSpecificationInterface, TimerInterface
 
 
 def run_backward(fn, *args, **kwargs):
@@ -399,13 +400,115 @@ class FXGraphReport:
         with open(folder / file_name, "w") as f:
             print(code_str, file=f)
 
-    def benchmark(self, fn: Callable, time_fn: Callable):
-        compiled_fn = fn(self.graph)
+    def benchmark(self, compile_fn: CompileSpecificationInterface, time_fn: TimerInterface):
+        compiled_fn = compile_fn.compile(self.graph)
         inputs = self.get_input_metadata()
         example_inputs = eval(f"[\n{chr(10).join(arg_like(a) for a in inputs)}]")
-        return time_fn(
+        return time_fn.time(
             "compiled_fn(*example_inputs)", globals={"compiled_fn": compiled_fn, "example_inputs": example_inputs}
         )
+
+    def _get_import_code(self, compile_fn: CompileSpecificationInterface = None, time_fn: TimerInterface = None):
+        import_strs = [
+            "\n".join(v.import_str for v in torch.fx.graph._custom_builtins.values()),
+            "\n".join(compile_fn.import_str() or []) if compile_fn else "",
+            "\n".join(time_fn.import_str() or []) if time_fn else "",
+        ]
+        return "\n".join(filter(None, import_strs))
+
+    def _get_fx_graph_class_str(self, class_name: str = "DynamoModule"):
+        return _readable(self.graph, class_name, print_output=False)
+
+    def _get_repro_code(
+        self,
+        folder,
+        compile_fn: CompileSpecificationInterface,
+        time_fn: TimerInterface,
+        serialize_inputs: bool = False,
+        inputs: Sequence[torch.Tensor | ExampleInputMetaData] = None,
+        **kwargs,
+    ):
+        from thunder.dynamo.repro_script_template import repro_bench_code_template
+
+        folder = Path(folder)
+        if inputs == None:
+            inputs = self.get_input_metadata()
+        torch_env, thunder_pkgs = get_env()
+        class_str = textwrap.indent(self._get_fx_graph_class_str(), "    ")
+        input_str = textwrap.indent(self._get_input_str(folder, inputs, serialize_inputs), "    ")
+        extra_comment_str = kwargs.get("extra_comment_str") if "extra_comment_str" in kwargs else ""
+        import_str = self._get_import_code(compile_fn, time_fn)
+        code_str = repro_bench_code_template.format(
+            torch_env=torch_env,
+            thunder_pkgs=thunder_pkgs,
+            import_str=import_str,
+            dynamo_module=class_str,
+            inputs=input_str,
+            graph_name=self.graph_name,
+            extra_comment_str=extra_comment_str,
+        )
+        return code_str
+
+    def write_repro_new(
+        self,
+        folder: str | PathLike,
+        file_name: str,
+        compile_fn: CompileSpecificationInterface,
+        serialize_inputs: bool = False,
+        inputs: Sequence[torch.Tensor | ExampleInputMetaData] = None,
+        **kwargs,
+    ) -> None:
+        """
+        Generates a reproduction script for a given FX graph module and writes it to a file.
+
+        Args:
+            folder (str | PathLike): The target directory where the script will be saved.
+            file_name (str): The name of the output script file.
+            serialize_inputs (bool, optional): Whether to serialize the inputs for reproducibility.
+                Defaults to False. If enabled, all inputs will be saved to a file named
+                "{graph_name}_input.pt".
+            inputs (Sequence[torch.Tensor | ExampleInputMetaData], optional):
+                The input tensors or metadata for the FX graph module. Defaults to None, in
+                which case the inputs will be inferred from the placeholders in the FX graph.
+            **kwargs: Additional arguments for customization.
+
+        Example:
+            See the example in :func:`fx_report`.
+        """
+        folder = Path(folder)
+        folder.mkdir(exist_ok=True, parents=True)
+        code_str = self._get_repro_code(folder, compile_fn, None, serialize_inputs, inputs, **kwargs)
+        compile_str = compile_fn.to_source("model")
+
+        code_str = f"""{code_str}
+    compiled_model = {compile_str}
+    result = compiled_model(*inputs)
+test_{self.graph_name}()"""
+        with open(folder / file_name, "w") as f:
+            print(code_str, file=f)
+
+    def write_benchmark_new(
+        self,
+        folder: str | PathLike,
+        file_name: str,
+        compile_fn: CompileSpecificationInterface,
+        time_fn: TimerInterface,
+        serialize_inputs: bool = False,
+        inputs: Sequence[torch.Tensor | ExampleInputMetaData] = None,
+        **kwargs,
+    ):
+        folder = Path(folder)
+        folder.mkdir(exist_ok=True, parents=True)
+        code_str = self._get_repro_code(folder, compile_fn, time_fn, serialize_inputs, inputs, **kwargs)
+        compile_str = compile_fn.to_source("model")
+        timing_str = time_fn.to_source()
+        code_str = f"""{code_str}
+    compiled_model = {compile_str}
+    statistics = {timing_str}
+
+test_{self.graph_name}()"""
+        with open(folder / file_name, "w") as f:
+            print(code_str, file=f)
 
 
 class FXReport:
@@ -615,10 +718,42 @@ class ThunderFusionReport:
     def __repr__(self):
         return f"<ThunderFusionReport of bound symbol\n{self.nvfusion_bsym}>"
 
-    def benchmark(self, fn: Callable, timer_fn: Callable):
-        compiled_fn = fn(self.nvfusion_bsym)
+    def benchmark(self, compile_fn: CompileSpecificationInterface, timer_fn: TimerInterface):
+        compiled_fn = compile_fn.compile(self.nvfusion_bsym)
         inputs = self.get_inputs()
-        return timer_fn("compiled_fn(*inputs)", globals={"compiled_fn": compiled_fn, "inputs": inputs})
+        return timer_fn.time("compiled_fn(*inputs)", globals={"compiled_fn": compiled_fn, "inputs": inputs})
+
+    def write_nvfuser_benchmark(self, folder, time_fn: TimerInterface, file_name=None):
+        folder = Path(folder)
+        folder.mkdir(exist_ok=True, parents=True)
+        nvfuser_callable = self.nvfusion_bsym._call_ctx[self.nvfusion_bsym.sym.name]
+        fd = nvfuser_callable.last_used
+
+        # The API for nvFuser version >=2.14
+        get_repro = getattr(fd, "repro_script_for", None)
+        # The legacy nvFuser API
+        if get_repro is None:
+            get_repro = getattr(fd, "getReproString", None)
+        if get_repro is None:
+            raise RuntimeError("The installed version of nvFuser does not support repro generation unless on crash.")
+
+        inputs = self.get_inputs()
+        repro_code = get_repro(inputs)
+        timing_import_str = "\n".join(time_fn.import_str() or [])
+        timing_str = time_fn.to_source("nvfuser_fn", "inputs")
+        timing_str = timing_str.replace("*inputs", "inputs")
+        repro_code = repro_code.replace("fd.execute(inputs)\n", "")
+        comment_str = f'"""\n{self.nvfusion_bsym}\n"""'
+        code_str = f"""{comment_str}
+{timing_import_str}
+{repro_code}
+nvfuser_fn = fd.execute
+measurement = {timing_str}
+"""
+        if file_name == None:
+            file_name = f"{self.name}_benchmark_nvfuser.py"
+        with open(folder / file_name, "w") as f:
+            print(code_str, file=f)
 
     def write_nvfuser_repro(self, folder, file_name=None):
         folder = Path(folder)
@@ -655,13 +790,37 @@ class ThunderFusionReport:
 
         inputs = self.get_inputs()
         inputs = "[" + "".join(arg_like(inp) for inp in inputs) + "]"
-        program = bsym_torch_compile_repro_template.format(
+        code_str = bsym_torch_compile_repro_template.format(
             python_func=python_func, func_name=nvfusion_name, inputs=inputs
         )
+        code_str = f"""{code_str}
+out = torch_compiled_callable(*inputs)
+"""
         if file_name == None:
             file_name = f"{self.name}_repro_inductor.py"
         with open(folder / file_name, "w") as f:
-            f.write(program)
+            f.write(code_str)
+
+    def write_inductor_benchmark(self, folder: PathLike, time_fn: TimerInterface, file_name=None):
+        folder = Path(folder)
+        folder.mkdir(exist_ok=True, parents=True)
+        python_func = create_python_callable_from_bsym(self.nvfusion_bsym)
+        nvfusion_name = self.nvfusion_bsym.sym.name
+
+        inputs = self.get_inputs()
+        inputs = "[" + "".join(arg_like(inp) for inp in inputs) + "]"
+        timing_import_str = "\n".join(time_fn.import_str() or [])
+        code_str = bsym_torch_compile_repro_template.format(
+            python_func=python_func, func_name=nvfusion_name, inputs=inputs
+        )
+        code_str = f"""{code_str}
+{timing_import_str}
+measurement = {time_fn.to_source("torch_compiled_callable", "inputs")}
+"""
+        if file_name == None:
+            file_name = f"{self.name}_benchmark_inductor.py"
+        with open(folder / file_name, "w") as f:
+            f.write(code_str)
 
 
 class ThunderFXGraphReport(FXGraphReport):
