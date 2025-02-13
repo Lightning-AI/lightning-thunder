@@ -164,7 +164,10 @@ def test_redundant_intermediate_consumers(executor, device: str, dtype: dtypes.d
 
     # Verifies that the second conversion consumes the output of the first conversion
     #   (because the first conversion's output is used in an intermediate operation)
-    assert fusion.subsymbols[-1].args[0].name == "a"
+    conversions = [
+        subsymbol for subsymbol in fusion.subsymbols if subsymbol.sym.id == prims.PrimIDs.CONVERT_ELEMENT_TYPE
+    ]
+    assert conversions[-1].args[0].name == "a"
 
 
 # NOTE the test relies on matmul not being executable by nvFuser
