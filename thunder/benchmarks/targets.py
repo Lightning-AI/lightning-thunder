@@ -89,6 +89,7 @@ parametrize_compute_type_without_backward = pytest.mark.parametrize(
     ids=("inference", "forward"),
 )
 
+
 def benchmark_for_compute_type(compute_type: ComputeType, benchmark, fn: Callable, args, kwargs, has_cuda: bool = True):
     context = record_peak_allocated_memory(benchmark) if has_cuda else nullcontext()
     with context:
@@ -950,6 +951,7 @@ PARAM_SHAPES = [
     (64, 64),
     (128, 64),
 ]
+
 
 @pytest.mark.parametrize(
     "executor,",
