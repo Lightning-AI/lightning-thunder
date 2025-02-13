@@ -1199,7 +1199,7 @@ def test_thunder_specific_reports(tmp_path):
 
 
 @requiresCUDA
-def test_thunder_timer():
+def test_WallTime_KernelTime():
     from nvfuser import FusionDefinition, DataType
 
     def nvfuser_fusion_id2(fd: FusionDefinition) -> None:
@@ -1227,14 +1227,15 @@ def test_thunder_timer():
     KernelTime.time(stmt="fd.execute(inputs)", globals={"fd": fd, "inputs": inputs})
 
 
-def test_CompileSpecification():
+@requiresCUDA
+def test_ThunderCompileSpecification():
     from thunder.executors.torch_compile import torch_compile_cat_ex
     from thunder import nvfuser_executor
 
     def foo(x):
         return x + x
 
-    x = torch.randn(2, 2)
+    x = torch.randn(2, 2, device="cuda")
     thunderjit1 = ThunderCompileSpecification()
     str1 = thunderjit1.to_source("foo")
 
@@ -1256,7 +1257,7 @@ def test_CompileSpecification():
 
 
 @requiresCUDA
-def test_reports_repro(tmp_path):
+def test_reports_repro_v2(tmp_path):
     x = torch.ones(2, 2, device="cuda", requires_grad=True)
 
     def foo(x):
