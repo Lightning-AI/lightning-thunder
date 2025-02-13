@@ -16,6 +16,7 @@ from litgpt.config import configs
 import thunder
 
 from thunder.benchmarks import (
+    AdamBenchmark,
     BatchNormBenchmark,
     Benchmark,
     LitGPTBenchmark,
@@ -82,7 +83,11 @@ parametrize_compute_type_only_training = pytest.mark.parametrize(
     (ComputeType.TRAINING_FORWARD, ComputeType.TRAINING_BACKWARD),
     ids=("forward", "backward"),
 )
-
+parametrize_compute_type_without_backward = pytest.mark.parametrize(
+    "compute_type,",
+    (ComputeType.INFERENCE, ComputeType.TRAINING_FORWARD),
+    ids=("inference", "forward"),
+)
 
 def benchmark_for_compute_type(compute_type: ComputeType, benchmark, fn: Callable, args, kwargs, has_cuda: bool = True):
     context = record_peak_allocated_memory(benchmark) if has_cuda else nullcontext()
@@ -934,3 +939,48 @@ def test_lora_linear(benchmark, executor, compute_type, implementation):
     fn = executor(b.fn())
 
     benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
+
+
+#
+# optimizer benchmarks
+#
+
+
+PARAM_SHAPES = [
+    (64, 64),
+    (128, 64),
+]
+
+@pytest.mark.parametrize(
+    "executor,",
+    [
+        thunderfx_executor,
+        torch_compile_executor,
+        torch_executor,
+    ],
+    ids=["thunderfx", "inductor", "eager"],
+)
+@parametrize_compute_type_without_backward
+@pytest.mark.parametrize(
+    "params",
+    PARAM_SHAPES,
+    ids=[f"params{shape}" for shape in PARAM_SHAPES],
+)
+def test_litgpt_adam(benchmark, executor: None | Callable, params: Sequence[int], compute_type: ComputeType):
+    if executor is None:
+        pytest.skip("Executor is unavailable")
+
+    bench: Benchmark = AdamBenchmark(
+        params=params,
+        device="cuda:0",
+        dtype=thunder.float32,
+        requires_grad=is_requires_grad(compute_type),
+    )
+
+    jfn = executor(bench.fn())
+    args, kwargs = bench.make_batch()
+
+    if len(args) > 1:
+        args = [args]
+
+    benchmark_for_compute_type(compute_type, benchmark, jfn, args, kwargs)

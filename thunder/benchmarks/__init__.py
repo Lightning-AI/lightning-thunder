@@ -3170,6 +3170,94 @@ class LinearLoRABenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return self.lora_cls(self.model)
 
 
+class AdamBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    _args = (
+        BenchmarkArg(
+            name="params",
+            description="An iterable of parameters.",
+        ),
+        BenchmarkArg(
+            name="device",
+            description="A string representing the device to run on. Default is 'cuda'.",
+        ),
+        BenchmarkArg(
+            name="dtype",
+            description="The dtype of the tensors. Default is thunder.float32.",
+        ),
+        BenchmarkArg(
+            name="requires_grad",
+            description="Whether the input tensors require grad. Default is False.",
+        ),
+    )
+
+    @classmethod
+    @property
+    def name(cls) -> str:
+        return "litgpt-adam"
+
+    @classmethod
+    @property
+    def description(cls) -> str:
+        return "LitGPT's 'adam' optimizer"
+
+    @classmethod
+    @property
+    def args(cls) -> tuple[BenchmarkArg, ...]:
+        return cls._args
+
+    def __init__(
+        self,
+        params: Sequence[int],
+        device: str,
+        dtype: dtypes.dtype,
+        requires_grad: bool = True,
+    ) -> None:
+        super().__init__()
+
+        self.params: Sequence[int] = params
+        self.device: str = device
+        self.dtype: dtypes.dtype = dtype
+        self.tdtype: torch.dtype = ltorch.to_torch_dtype(self.dtype)
+        self.requires_grad: bool = requires_grad
+
+        self.devices: list[str] = [device]
+
+    def make_batch(self) -> tuple[list, dict]:
+        input = make_tensor(
+            self.params, device=self.device, dtype=self.tdtype, requires_grad=True
+        )
+        target = make_tensor(
+            self.params, device=self.device, dtype=self.tdtype, requires_grad=False
+        )
+        return (input, target), {}
+
+    def fn(self) -> Callable:
+        def foo(params):
+            from torch.nn import MSELoss
+
+            params_tensor = [
+                torch.nn.Parameter(
+                    make_tensor(shape, device=self.device, dtype=self.tdtype, requires_grad=True)
+                )
+                for shape in self.params
+            ]
+
+            optimizer = torch.optim.Adam(params_tensor, lr=0.001, betas=(0.9, 0.999), eps=1e-08, weight_decay=0, amsgrad=False)
+
+            _loss = MSELoss()
+
+            def steps():
+                optimizer.zero_grad()
+                output = params_tensor
+                loss = _loss(output, target)
+                loss.backward()
+                optimizer.step()
+
+            return steps
+
+        return foo
+
+
 # TODO Add descriptions to the executors when listed, and list them alphabetically
 # TODO Allow querying benchmark for details
 # TODO Allow specifying benchmark arguments
