@@ -247,7 +247,7 @@ class WallTime(TimerInterface):
         return ["from thunder.dynamo.benchmark_utils import WallTime"]
 
     @staticmethod
-    def to_source(fn_name="compiled_model", inputs_name="inputs"):
+    def to_source(fn_name, inputs_name):
         return f'WallTime.time("{fn_name}(*{inputs_name})", globals={{"{fn_name}":{fn_name}, "{inputs_name}": {inputs_name}}})'
 
 
@@ -271,5 +271,5 @@ class KernelTime(TimerInterface):
         return ["from thunder.dynamo.benchmark_utils import KernelTime"]
 
     @staticmethod
-    def to_source(fn_name="compiled_model", inputs_name="inputs"):
+    def to_source(fn_name, inputs_name):
         return f'KernelTime.time("{fn_name}(*{inputs_name})", globals={{"{fn_name}":{fn_name}, "{inputs_name}": {inputs_name}}})'

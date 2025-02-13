@@ -25,6 +25,10 @@ from thunder.dynamo.repro_script_template import (
     pytest_benchmark_multi_exe_code_template,
     repro_code_template,
     bsym_torch_compile_repro_template,
+    FXGRAPH_CLASS_NAME,
+    INPUTS_NAME,
+    CALLABLE_NAME,
+    COMPILED_CALLABLE_NAME,
 )
 from thunder import last_traces, last_backward_traces
 from thunder.benchmarks.targets import backward_only
@@ -261,9 +265,9 @@ class FXGraphReport:
             example_inputs = eval(f"[\n{chr(10).join(arg_like(a) for a in inputs)}]")
             input_file_name = folder / f"{self.graph_name}_inputs.pt"
             torch.save(example_inputs, input_file_name)
-            input_str += f"inputs = torch.load('{input_file_name}')\n"
+            input_str += f"{INPUTS_NAME} = torch.load('{input_file_name}')\n"
         else:
-            input_str = "inputs = [\n"
+            input_str = f"{INPUTS_NAME} = [\n"
             input_str += textwrap.indent("\n".join(arg_like(a) for a in inputs), "    ")
             input_str += "\n]"
         return input_str
@@ -409,7 +413,7 @@ class FXGraphReport:
         ]
         return "\n".join(filter(None, import_strs))
 
-    def _get_fx_graph_class_str(self, class_name: str = "DynamoModule"):
+    def _get_fx_graph_class_str(self, class_name: str = FXGRAPH_CLASS_NAME):
         return _readable(self.graph, class_name, print_output=False)
 
     def _get_repro_code(
@@ -498,20 +502,20 @@ class FXGraphReport:
             inputs = self.get_input_metadata()
         forward_only = not any(hasattr(arg, "requires_grad") and arg.requires_grad for arg in inputs)
         code_str = self._get_repro_code(folder, compile_fn, None, serialize_inputs, inputs, **kwargs)
-        compile_str = compile_fn.to_source("model")
-        code_str += textwrap.indent(f"compiled_model = {compile_str}\n", "    ")
+        compile_str = compile_fn.to_source(CALLABLE_NAME)
+        code_str += textwrap.indent(f"{COMPILED_CALLABLE_NAME} = {compile_str}\n", "    ")
 
         if forward_only:
-            run_str = "result = compiled_model(*inputs)\n"
+            run_str = f"result = {COMPILED_CALLABLE_NAME}(*{INPUTS_NAME})\n"
         else:
-            run_str = "from thunder.dynamo.report import run_forward_backward\nfwd_result, grads = run_forward_backward(compiled_model, *inputs)\n"
+            run_str = f"from thunder.dynamo.report import run_forward_backward\nfwd_result, grads = run_forward_backward({COMPILED_CALLABLE_NAME}, *{INPUTS_NAME})\n"
         code_str += textwrap.indent(run_str, "    ")
 
         if check_consistency:
             if forward_only:
-                check_str = "eager_result = model(*inputs)\ntorch.testing.assert_close(result, eager_result)\n"
+                check_str = f"eager_result = {CALLABLE_NAME}(*{INPUTS_NAME})\ntorch.testing.assert_close(result, eager_result)\n"
             else:
-                check_str = "eager_fwd_result, eager_grads = run_forward_backward(model, *inputs)\ntorch.testing.assert_close(fwd_result, eager_fwd_result)\ntorch.testing.assert_close(grads, eager_grads)\n"
+                check_str = f"eager_fwd_result, eager_grads = run_forward_backward({CALLABLE_NAME}, *{INPUTS_NAME})\ntorch.testing.assert_close(fwd_result, eager_fwd_result)\ntorch.testing.assert_close(grads, eager_grads)\n"
 
             code_str += textwrap.indent(check_str, "    ")
 
@@ -572,11 +576,11 @@ class FXGraphReport:
             inputs = self.get_input_metadata()
         forward_only = not any(hasattr(arg, "requires_grad") and arg.requires_grad for arg in inputs)
         code_str = self._get_repro_code(folder, compile_fn, time_fn, serialize_inputs, inputs, **kwargs)
-        compile_str = compile_fn.to_source("model")
-        fwd_timing_str = time_fn.to_source()
+        compile_str = compile_fn.to_source(CALLABLE_NAME)
+        fwd_timing_str = time_fn.to_source(COMPILED_CALLABLE_NAME, INPUTS_NAME)
         bwd_timing_str = time_fn.to_source("backward_fn", "backward_args")
         code_str = f"""{code_str}
-    compiled_model = {compile_str}
+    {COMPILED_CALLABLE_NAME} = {compile_str}
     # forward
     fwd_measurement = {fwd_timing_str}
 """
@@ -584,7 +588,7 @@ class FXGraphReport:
             code_str = f"""{code_str}
     # backward
     from thunder.benchmarks.targets import backward_only
-    backward_fn, backward_setup = backward_only(compiled_model, *inputs)
+    backward_fn, backward_setup = backward_only({COMPILED_CALLABLE_NAME}, *{INPUTS_NAME})
     backward_args = backward_setup()
     bwd_measurement = {bwd_timing_str}
 """

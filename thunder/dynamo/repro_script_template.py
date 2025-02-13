@@ -1,3 +1,8 @@
+FXGRAPH_CLASS_NAME = "DynamoModule"
+INPUTS_NAME = "inputs"
+CALLABLE_NAME = "model"
+COMPILED_CALLABLE_NAME = "compiled_model"
+
 repro_code_template = '''
 """
 Environment information get from `torch.utils.collect_env.get_pretty_env_info()`:
@@ -138,22 +143,22 @@ bsym = fusion_symbols[0]
 torch_compiled_callable = make_torch_compile_callable(bsym.subsymbols, bsym.flat_args, bsym.flat_outs)
 """
 
-repro_bench_code_template = '''
+repro_bench_code_template = f'''
 """
 Environment information get from `torch.utils.collect_env.get_pretty_env_info()`:
-{torch_env}
+{{torch_env}}
 
 Versions of Thunder related libraries:
-{thunder_pkgs}
+{{thunder_pkgs}}
 
-{extra_comment_str}
+{{extra_comment_str}}
 """
-{import_str}
+{{import_str}}
 
-def test_{graph_name}():
-{dynamo_module}
+def test_{{graph_name}}():
+{{dynamo_module}}
 
-{inputs}
+{{inputs}}
 
-    model = DynamoModule()
+    model = {FXGRAPH_CLASS_NAME}()
 '''
