@@ -139,9 +139,9 @@ class ThunderCompiler:
 
                 compile_fn = ThunderCompileSpecification(**self.thunder_options)
                 if not use_pytest_benchmark:
-                    report.write_repro_new(
+                    report.write_repro_v2(
                         reproducer_folder,
-                        f"{report.graph_name}_repro.py",
+                        file_name=f"{report.graph_name}_repro.py",
                         compile_fn=compile_fn,
                         check_consistency=True,
                         serialize_inputs=serialize_inputs,
@@ -157,7 +157,7 @@ class ThunderCompiler:
                     executor_names_list.append("thunder_cudagraph")
                     executors.append("partial(thunder.jit, transform=CUDAGraphTransform())")
 
-                report.write_benchmark_repro(
+                report.write_pytest_benchmark(
                     reproducer_folder,
                     f"{report.graph_name}_benchmark.py",
                     executor_names_list,

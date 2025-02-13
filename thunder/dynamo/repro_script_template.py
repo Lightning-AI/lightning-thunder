@@ -55,7 +55,7 @@ test_{graph_name}()
 '''
 
 
-benchmark_multi_exe_code_template = '''
+pytest_benchmark_multi_exe_code_template = '''
 """
 Environment information get from `torch.utils.collect_env.get_pretty_env_info()`:
 {torch_env}

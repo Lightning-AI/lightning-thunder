@@ -967,16 +967,6 @@ def default_thunder_cudagraphs_executor(fn: Callable) -> Callable:
     return thunder.jit(fn, executors=executors_list, transforms=transforms, disable_torch_autograd=True)
 
 
-def bsym_torch_compile_executor(bsym) -> Callable:
-    from thunder.executors.torch_compile import make_compiled
-
-    return make_compiled(bsym.subsymbols, bsym.flat_args, bsym.flat_outs)
-
-
-def bsym_nvfuser_executor(nvfusion_bsym) -> Callable:
-    return nvfusion_bsym._call_ctx[nvfusion_bsym.sym.name]
-
-
 #
 # Benchmarks
 #

@@ -96,11 +96,15 @@ class TorchEagerSpecification(CompileSpecificationInterface):
 
 
 class BoundSymbolNvfuserSpecification(CompileSpecificationInterface):
+    # Returns the nvFuser callable from the nvFuser bound symbol.
+    # See the TODO in :class:`thunder.dynamo.report.ThunderFusionReport` for more details.
     def compile(self, nvfusion_bsym):
         return nvfusion_bsym._call_ctx[nvfusion_bsym.sym.name]
 
 
 class BoundSymbolTorchCompileSpecification(CompileSpecificationInterface):
+    # Returns the torch compile callable from the nvFuser bound symbol.
+    # See the TODO in :class:`thunder.dynamo.report.ThunderFusionReport` for more details.
     def compile(self, bsym):
         from thunder.executors.torch_compile import make_compiled
 

@@ -22,7 +22,7 @@ from thunder.dynamo.utils import (
 )
 
 from thunder.dynamo.repro_script_template import (
-    benchmark_multi_exe_code_template,
+    pytest_benchmark_multi_exe_code_template,
     repro_code_template,
     bsym_torch_compile_repro_template,
 )
@@ -197,7 +197,7 @@ class FXGraphReport:
 
     def write_eager_repro(self, folder, use_benchmark: bool = False, serialize_inputs: bool = False):
         if use_benchmark:
-            self.write_benchmark_repro(
+            self.write_pytest_benchmark(
                 folder,
                 f"{self.graph_name}_benchmark_eager.py",
                 ["eager"],
@@ -216,7 +216,7 @@ class FXGraphReport:
         thunder_compile_str = "thunder.jit"
         thunder_import_str = ["import thunder"]
         if use_benchmark:
-            self.write_benchmark_repro(
+            self.write_pytest_benchmark(
                 folder,
                 f"{self.graph_name}_benchmark_thunder.py",
                 ["thunder"],
@@ -236,7 +236,7 @@ class FXGraphReport:
         inductor_compile_str = "torch.compile"
         inductor_import_str = ["import torch"]
         if use_benchmark:
-            self.write_benchmark_repro(
+            self.write_pytest_benchmark(
                 folder,
                 f"{self.graph_name}_benchmark_torchcompile.py",
                 ["torchcompile"],
@@ -268,7 +268,7 @@ class FXGraphReport:
             input_str += "\n]"
         return input_str
 
-    def write_benchmark_repro(
+    def write_pytest_benchmark(
         self,
         folder: str | PathLike,
         file_name: str,
@@ -326,7 +326,7 @@ class FXGraphReport:
         executor_names_str = f"executor_names={executor_name_str}"
         executors_str = "executors=[\n    " + ",\n    ".join(executor_str) + "\n]"
         extra_comment_str = kwargs.get("extra_comment_str") if "extra_comment_str" in kwargs else ""
-        code_str = benchmark_multi_exe_code_template.format(
+        code_str = pytest_benchmark_multi_exe_code_template.format(
             torch_env=torch_env,
             thunder_pkgs=thunder_pkgs,
             torch_import_str=torch_import_str,
@@ -464,7 +464,7 @@ class FXGraphReport:
                 torch.testing.assert_close(result, eager_result)
         return result
 
-    def write_repro_new(
+    def write_repro_v2(
         self,
         folder: str | PathLike,
         compile_fn: CompileSpecificationInterface,
@@ -540,7 +540,7 @@ class FXGraphReport:
             )
             return fwd_measurement, bwd_measurement
 
-    def write_benchmark_new(
+    def write_benchmark(
         self,
         folder: str | PathLike,
         compile_fn: CompileSpecificationInterface,
@@ -654,7 +654,7 @@ def fx_report(fn: Callable, *args, compile_options: dict = None, **kwargs) -> FX
                 graph_report.write_repro(
                     tmpdir, f"{graph_report.graph_name}_mythunder_repro.py", executor_str=my_executor, import_str=my_imports
                 )
-                graph_report.write_benchmark_repro(
+                graph_report.write_pytest_benchmark(
                     tmpdir,
                     f"{graph_report.graph_name}_mythunder_benchmark.py",
                     executor_name_str=["mythunder"],
@@ -770,7 +770,7 @@ class ThunderSplitGraphReport(FXGraphReport):
         executor_names_list = ["thunder"]
         executors = [thunder_ex_str]
 
-        super().write_benchmark_repro(
+        super().write_pytest_benchmark(
             folder,
             f"{self.graph_name}_benchmark_thunder.py",
             executor_names_list,

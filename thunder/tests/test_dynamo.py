@@ -1113,7 +1113,7 @@ def test_fxreport(executor, device: str, dtype: dtypes.dtype, use_benchmark, tmp
         if not use_benchmark:
             r.write_repro(tmp_path, f"{r.graph_name}_mythunder_repro.py", executor_str=my_exe, import_str=my_imports)
         else:
-            r.write_benchmark_repro(
+            r.write_pytest_benchmark(
                 tmp_path, f"{r.graph_name}_mythunder_benchmark.py", ["mythunder"], [my_exe], my_imports
             )
 
@@ -1234,7 +1234,7 @@ def test_CompileSpecification():
     def foo(x):
         return x + x
 
-    x = torch.randn(2, 2, device="cuda")
+    x = torch.randn(2, 2)
     thunderjit1 = ThunderCompileSpecification()
     str1 = thunderjit1.to_source("foo")
 
@@ -1273,13 +1273,13 @@ def test_reports_repro(tmp_path):
     torcheager = TorchEagerSpecification()
     for idx, fx_graph_report in enumerate(results.fx_graph_reports):
         thunder_fx_graph_report = analyze_thunder_splits(fx_graph_report)
-        thunder_fx_graph_report.write_repro_new(tmp_path, thunderjit, check_consistency=True)
+        thunder_fx_graph_report.write_repro_v2(tmp_path, thunderjit, check_consistency=True)
         thunder_fx_graph_report.run_repro(thunderjit, check_consistency=True)
         for thunder_split_report in thunder_fx_graph_report.subgraph_reports:
             split_folder = tmp_path / str(idx)
-            thunder_split_report.write_repro_new(split_folder, torchcompile)
-            thunder_split_report.write_repro_new(split_folder, torcheager)
-            thunder_split_report.write_repro_new(split_folder, thunderjit, check_consistency=True)
+            thunder_split_report.write_repro_v2(split_folder, torchcompile)
+            thunder_split_report.write_repro_v2(split_folder, torcheager)
+            thunder_split_report.write_repro_v2(split_folder, thunderjit, check_consistency=True)
             thunder_split_report.run_repro(thunderjit, check_consistency=True)
             thunder_split_report.create_fusion_reports()
             for nvf in thunder_split_report.fusion_reports:
@@ -1321,12 +1321,12 @@ def test_reports_benchmark(tmp_path):
     fx_graph_report = results.fx_graph_reports[0]
     fx_graph_report.run_benchmark(thunderjit, WallTime)
     thunder_fx_graph_report = analyze_thunder_splits(fx_graph_report)
-    thunder_fx_graph_report.write_benchmark_new(tmp_path, thunderjit, KernelTime)
+    thunder_fx_graph_report.write_benchmark(tmp_path, thunderjit, KernelTime)
     assert len(thunder_fx_graph_report.subgraph_reports) == 1  # exp
     thunder_split_report = thunder_fx_graph_report.subgraph_reports[0]
-    thunder_split_report.write_benchmark_new(tmp_path, torchcompile, WallTime)
-    thunder_split_report.write_benchmark_new(tmp_path, torcheager, WallTime)
-    thunder_split_report.write_benchmark_new(tmp_path, thunderjit, WallTime)
+    thunder_split_report.write_benchmark(tmp_path, torchcompile, WallTime)
+    thunder_split_report.write_benchmark(tmp_path, torcheager, WallTime)
+    thunder_split_report.write_benchmark(tmp_path, thunderjit, WallTime)
     thunder_split_report.create_fusion_reports()
     assert len(thunder_split_report.fusion_reports) == 2  # fwd, bwd
     nvf = thunder_split_report.fusion_reports[0]
@@ -1334,10 +1334,6 @@ def test_reports_benchmark(tmp_path):
     nvf.write_inductor_benchmark(tmp_path, WallTime)
     nvf.run_benchmark(BoundSymbolNvfuserSpecification(), WallTime)
     nvf.run_benchmark(BoundSymbolTorchCompileSpecification(), WallTime)
-    nvf.write_nvfuser_benchmark(tmp_path, KernelTime)
-    nvf.write_inductor_benchmark(tmp_path, KernelTime)
-    nvf.run_benchmark(BoundSymbolNvfuserSpecification(), KernelTime)
-    nvf.run_benchmark(BoundSymbolTorchCompileSpecification(), KernelTime)
 
     def check(file_name, cmd):
         cmd = cmd + [file_name]
