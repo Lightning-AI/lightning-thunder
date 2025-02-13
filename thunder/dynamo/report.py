@@ -475,11 +475,15 @@ class FXGraphReport:
         **kwargs,
     ) -> None:
         """
-        Generates a reproduction script for a given FX graph module and writes it to a file.
+        Generates a reproduction script for the FX graph module with the given compile specification and writes it to a file.
 
         Args:
             folder (str | PathLike): The target directory where the script will be saved.
+            compile_fn (CompileSpecificationInterface): Specifies how the FX graph module should be compiled.
+                See :class:`CompileSpecificationInterface` for details.
             file_name (str): The name of the output script file. Default is the :attr:`graph_name`
+            check_consistency (bool, optional): Whether to verify the correctness of the
+            compiled module by comparing its output with Torch eager mode. Defaults to False.
             serialize_inputs (bool, optional): Whether to serialize the inputs for reproducibility.
                 Defaults to False. If enabled, all inputs will be saved to a file named
                 "{graph_name}_input.pt".
@@ -487,9 +491,6 @@ class FXGraphReport:
                 The input tensors or metadata for the FX graph module. Defaults to None, in
                 which case the inputs will be inferred from the placeholders in the FX graph.
             **kwargs: Additional arguments for customization.
-
-        Example:
-            See the example in :func:`fx_report`.
         """
         folder = Path(folder)
         folder.mkdir(exist_ok=True, parents=True)
@@ -549,6 +550,22 @@ class FXGraphReport:
         inputs: Sequence[torch.Tensor | ExampleInputMetaData] = None,
         **kwargs,
     ):
+        """
+        Generates a benchmark reproduction script for the given compilation and timing specification and writes it to the specified file.
+
+        Args:
+            folder (str | PathLike): The target directory where the script will be saved.
+            compile_fn (CompileSpecificationInterface): Specifies how the FX graph module should be compiled.
+                See :class:`CompileSpecificationInterface` for details.
+            time_fn(TimerInterface): Specifies how the compiled callable is timed. See :class:`TimerInterface` for details.
+            file_name (str): The name of the output script file. Default is the :attr:`graph_name`
+            serialize_inputs (bool, optional): Whether to serialize the inputs for reproducibility. Defaults to False.
+                If enabled, all inputs will be serialized into a single file: "{graph_name}_input.pt".
+            inputs (Sequence[torch.Tensor | ExampleInputMetaData], optional):
+                The input tensors or metadata for the FX graph module. Defaults to None.
+                If not provided, inputs will be inferred from the placeholders in the FX graph.
+            **kwargs: Additional arguments for customization.
+        """
         folder = Path(folder)
         folder.mkdir(exist_ok=True, parents=True)
         if inputs == None:
@@ -765,6 +782,10 @@ class ThunderSplitGraphReport(FXGraphReport):
         )
 
 
+# TODO: `ThunderFusionReport` is expected to inherit from `FXGraphReport` for consistency.
+# However, we currently cannot convert bound symbols to an FX graph.
+# In the future, we might add support for this conversion, making `ThunderFusionReport`
+# consistent with `FXGraphReport`.
 class ThunderFusionReport:
     """
     A report class representing a Thunder nvFusion region.

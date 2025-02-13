@@ -1184,7 +1184,6 @@ def test_thunder_specific_reports(tmp_path):
             for nvf in thunder_split_report.fusion_reports:
                 nvf.write_nvfuser_repro(split_folder / "nvfusion")
                 nvf.write_inductor_repro(split_folder / "nvfusion")
-                bench_data = nvf.run_benchmark()
 
     def check(file_name, cmd):
         cmd = cmd + [file_name]
