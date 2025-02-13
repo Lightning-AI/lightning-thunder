@@ -17,6 +17,7 @@ from thunder.dynamo.utils import (
 )
 from thunder.dynamo.splitter import _splitter
 from thunder.core.utils import check
+from thunder.dynamo.benchmark_utils import ThunderCompileSpecification
 
 if TYPE_CHECKING:
     from thunder.dynamo.utils import SubgraphInfo
@@ -135,12 +136,14 @@ class ThunderCompiler:
                             "from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform",
                         ]
                     )
+
+                compile_fn = ThunderCompileSpecification(**self.thunder_options)
                 if not use_pytest_benchmark:
-                    report.write_repro(
+                    report.write_repro_new(
                         reproducer_folder,
                         f"{report.graph_name}_repro.py",
-                        executor_str=thunder_ex_str,
-                        import_str=import_str,
+                        compile_fn=compile_fn,
+                        check_consistency=True,
                         serialize_inputs=serialize_inputs,
                         inputs=example_inputs[subgraph_idx],
                         extra_comment_str=split_reason_str,
