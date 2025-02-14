@@ -193,7 +193,7 @@ def test_redundant_cast_nvfusion(executor, device: str, dtype: dtypes.dtype):
         y = i.to(torch.float64)
         return d, g, y, i, g2, g3
 
-    cfoo = thunder.jit(foo)
+    cfoo = thunder.jit(foo, fusion_type="dataflow")
     cfoo(a, x)
     traces = thunder.last_traces(cfoo)
 
@@ -305,7 +305,7 @@ def test_cse_subsymbol_redundant_args(executor, device, _):
     x = make_tensor(5, 5, dtype=torch.float16, device=device)
     y = make_tensor(5, 5, dtype=torch.float16, device=device)
     z = make_tensor(5, 5, dtype=torch.float16, device=device)
-    compiled_func = thunder.jit(func, executors=executor.executors_list())
+    compiled_func = thunder.jit(func, executors=executor.executors_list(), fusion_type="dataflow")
     compiled_func(w, x, y, z)
 
     fw_trace = thunder.last_traces(compiled_func)[-1]
@@ -403,7 +403,7 @@ def test_nvfuser_toposort_basic(executor, device: str, dtype: dtypes.dtype):
 
         return c, d, e
 
-    cfoo = thunder.jit(foo)
+    cfoo = thunder.jit(foo, fusion_type="dataflow")
 
     _ = cfoo(a, b)
     traces = thunder.last_traces(cfoo)
@@ -430,7 +430,7 @@ def test_nvfuser_toposort_independent(executor, device: str, dtype: dtypes.dtype
 
         return c, d, e, f, g
 
-    cfoo = thunder.jit(foo)
+    cfoo = thunder.jit(foo, fusion_type="dataflow")
 
     _ = cfoo(a, b)
     traces = thunder.last_traces(cfoo)
@@ -457,7 +457,7 @@ def test_nvfuser_toposort_dependent0(executor, device: str, dtype: dtypes.dtype)
 
         return c, d, e, f, g
 
-    cfoo = thunder.jit(foo)
+    cfoo = thunder.jit(foo, fusion_type="dataflow")
 
     _ = cfoo(a, b)
     traces = thunder.last_traces(cfoo)
@@ -484,7 +484,7 @@ def test_nvfuser_toposort_dependent1(executor, device: str, dtype: dtypes.dtype)
 
         return c, d, e, f, g
 
-    cfoo = thunder.jit(foo)
+    cfoo = thunder.jit(foo, fusion_type="dataflow")
 
     _ = cfoo(a, b)
     traces = thunder.last_traces(cfoo)
@@ -511,7 +511,7 @@ def test_nvfuser_toposort_dependent2(executor, device: str, dtype: dtypes.dtype)
 
         return c, d, e, f, g
 
-    cfoo = thunder.jit(foo)
+    cfoo = thunder.jit(foo, fusion_type="dataflow")
 
     result = cfoo(a, b)
     traces = thunder.last_traces(cfoo)
@@ -538,7 +538,7 @@ def test_nvfuser_toposort_dependent3(executor, device: str, dtype: dtypes.dtype)
 
         return d, f, g
 
-    cfoo = thunder.jit(foo)
+    cfoo = thunder.jit(foo, fusion_type="dataflow")
 
     _ = cfoo(a, b)
     traces = thunder.last_traces(cfoo)
@@ -564,7 +564,7 @@ def test_nvfuser_toposort_dependent4(executor, device: str, dtype: dtypes.dtype)
 
         return d, f, g
 
-    cfoo = thunder.jit(foo)
+    cfoo = thunder.jit(foo, fusion_type="dataflow")
 
     _ = cfoo(a, b)
     traces = thunder.last_traces(cfoo)
@@ -591,7 +591,7 @@ def test_nvfuser_toposort_dependent5(executor, device: str, dtype: dtypes.dtype)
 
         return d, f, g
 
-    cfoo = thunder.jit(foo)
+    cfoo = thunder.jit(foo, fusion_type="dataflow")
 
     _ = cfoo(a, b)
     traces = thunder.last_traces(cfoo)

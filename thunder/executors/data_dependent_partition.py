@@ -12,7 +12,7 @@ from thunder.core.proxies import variableify, Proxy
 from thunder.core.prims import PrimIDs
 
 
-_DEFAULT_FUSION_TYPE = "dataflow"
+_DEFAULT_FUSION_TYPE = "consecutive"
 
 # Represents a region and its parents (regions it consumes the output of) and
 #   children (regions that consume its output)
