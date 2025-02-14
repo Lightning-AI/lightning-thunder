@@ -3208,7 +3208,7 @@ class AdamBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     def __init__(
         self,
         params: Sequence[int],
-        device: str = 'cuda',
+        device: str = "cuda",
         dtype: dtypes.dtype = thunder.float32,
         requires_grad: bool = True,
     ) -> None:
