@@ -1116,9 +1116,7 @@ def test_fxreport(executor, device: str, dtype: dtypes.dtype, use_benchmark, tmp
             "from thunder import pytorch_executor",
             "from functools import partial",
         ]
-        if not use_benchmark:
-            r.write_repro(tmp_path, f"{r.graph_name}_mythunder_repro.py", executor_str=my_exe, import_str=my_imports)
-        else:
+        if use_benchmark:
             r.write_pytest_benchmark(
                 tmp_path, f"{r.graph_name}_mythunder_benchmark.py", ["mythunder"], [my_exe], my_imports
             )
@@ -1127,7 +1125,8 @@ def test_fxreport(executor, device: str, dtype: dtypes.dtype, use_benchmark, tmp
     if use_benchmark:
         cmd = cmd + ["-m", "pytest"]
     py_files = list(tmp_path.glob("*.py"))
-    assert len(py_files) == 4
+    num_of_files = 4 if use_benchmark else 3
+    assert len(py_files) == num_of_files
 
     for file in py_files:
         run_script(file, cmd)
@@ -1270,13 +1269,13 @@ def test_reports_repro_v2(tmp_path):
     torcheager = TorchEagerSpecification()
     for idx, fx_graph_report in enumerate(results.fx_graph_reports):
         thunder_fx_graph_report = analyze_thunder_splits(fx_graph_report)
-        thunder_fx_graph_report.write_repro_v2(tmp_path, thunderjit, check_consistency=True)
+        thunder_fx_graph_report.write_repro(tmp_path, thunderjit, check_consistency=True)
         for thunder_split_report in thunder_fx_graph_report.subgraph_reports:
             split_folder = tmp_path / str(idx)
             split_name = thunder_split_report.graph_name
-            thunder_split_report.write_repro_v2(split_folder, torchcompile, file_name=f"{split_name}_torchcompile.py")
-            thunder_split_report.write_repro_v2(split_folder, torcheager, file_name=f"{split_name}_eager.py")
-            thunder_split_report.write_repro_v2(
+            thunder_split_report.write_repro(split_folder, torchcompile, file_name=f"{split_name}_torchcompile.py")
+            thunder_split_report.write_repro(split_folder, torcheager, file_name=f"{split_name}_eager.py")
+            thunder_split_report.write_repro(
                 split_folder, thunderjit, check_consistency=True, file_name=f"{split_name}_thunder.py"
             )
             thunder_split_report.run_repro(thunderjit, check_consistency=True)
@@ -1359,7 +1358,7 @@ def test_TorchInductorSpecification(tmp_path):
     thunder_split_report.run_benchmark(torchinductor, WallTime)
     thunder_split_report.run_repro(torchinductor)
     thunder_split_report.write_benchmark(tmp_path, torchinductor, WallTime)
-    thunder_split_report.write_repro_v2(tmp_path, torchinductor, file_name="repro.py")
+    thunder_split_report.write_repro(tmp_path, torchinductor, file_name="repro.py")
 
     cmd = [sys.executable]
     py_files = list(tmp_path.rglob("*.py"))

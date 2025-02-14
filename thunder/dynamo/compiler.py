@@ -139,7 +139,7 @@ class ThunderCompiler:
 
                 compile_fn = ThunderCompileSpecification(**self.thunder_options)
                 if not use_pytest_benchmark:
-                    report.write_repro_v2(
+                    report.write_repro(
                         reproducer_folder,
                         file_name=f"{report.graph_name}_repro.py",
                         compile_fn=compile_fn,
