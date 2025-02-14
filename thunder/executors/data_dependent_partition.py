@@ -14,6 +14,7 @@ from thunder.core.prims import PrimIDs
 
 _DEFAULT_FUSION_TYPE = "consecutive"
 
+
 # Represents a region and its parents (regions it consumes the output of) and
 #   children (regions that consume its output)
 #   Essentially creates a directional graph of regions showing their
@@ -296,7 +297,7 @@ def horizontal_merge(graph, merge_func: Callable):
     return topo_order_groups
 
 
-def consecutive_fusion(trace: TraceCtx, merge_func: Callable[[Node, Node], bool]) -> List[List[BoundSymbol]]:
+def consecutive_fusion(trace: TraceCtx, merge_func: Callable[[Node, Node], bool]) -> list[list[BoundSymbol]]:
     """Utility function for creating fusions in the trace with consecutive nodes.
 
     Args:
