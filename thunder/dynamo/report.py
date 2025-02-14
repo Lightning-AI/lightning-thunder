@@ -14,6 +14,7 @@ from thunder.core.utils import sequencify, create_python_callable_from_bsym
 from thunder.dynamo.compiler import thunderfx
 from thunder.dynamo.utils import (
     _get_example_inputs_from_placeholder,
+    _create_random_tensor_from_tensor_metadata,
     _readable,
     arg_like,
     get_env,
@@ -32,6 +33,11 @@ from thunder.dynamo.repro_script_template import (
 )
 from thunder import last_traces, last_backward_traces
 from thunder.benchmarks.targets import backward_only
+from thunder.dynamo.benchmark_utils import (
+    TorchCompileSpecification,
+    ThunderCompileSpecification,
+    TorchEagerSpecification,
+)
 
 
 if TYPE_CHECKING:
@@ -199,6 +205,10 @@ class FXGraphReport:
         example_input_metadata = map(partial(_get_example_inputs_from_placeholder, only_metadata=True), placeholders)
         return list(example_input_metadata)
 
+    def make_example_inputs(self):
+        placeholders = list(n for n in self.graph.graph.nodes if n.op == "placeholder")
+        return list(map(_get_example_inputs_from_placeholder, placeholders))
+
     def write_eager_repro(self, folder, use_benchmark: bool = False, serialize_inputs: bool = False):
         if use_benchmark:
             self.write_pytest_benchmark(
@@ -209,16 +219,18 @@ class FXGraphReport:
                 serialize_inputs=serialize_inputs,
             )
         else:
-            self.write_repro(
+            torcheager = TorchEagerSpecification()
+            self.write_repro_v2(
                 folder,
+                torcheager,
                 f"{self.graph_name}_repro_eager.py",
-                executor_str="None",
                 serialize_inputs=serialize_inputs,
             )
 
     def write_thunder_repro(self, folder, use_benchmark: bool = False, serialize_inputs: bool = False):
         thunder_compile_str = "thunder.jit"
         thunder_import_str = ["import thunder"]
+        default_thunderjit = ThunderCompileSpecification()
         if use_benchmark:
             self.write_pytest_benchmark(
                 folder,
@@ -228,15 +240,12 @@ class FXGraphReport:
                 thunder_import_str,
             )
         else:
-            self.write_repro(
-                folder,
-                f"{self.graph_name}_repro_thunder.py",
-                thunder_compile_str,
-                thunder_import_str,
-                serialize_inputs,
+            self.write_repro_v2(
+                folder, default_thunderjit, f"{self.graph_name}_repro_thunder.py", serialize_inputs=serialize_inputs
             )
 
     def write_inductor_repro(self, folder, use_benchmark: bool = False, serialize_inputs: bool = False):
+        default_torchcompile = TorchCompileSpecification()
         inductor_compile_str = "torch.compile"
         inductor_import_str = ["import torch"]
         if use_benchmark:
@@ -249,12 +258,12 @@ class FXGraphReport:
                 serialize_inputs,
             )
         else:
-            self.write_repro(
+            default_torchcompile = TorchCompileSpecification()
+            self.write_repro_v2(
                 folder,
+                default_torchcompile,
                 f"{self.graph_name}_repro_torchcompile.py",
-                inductor_compile_str,
-                inductor_import_str,
-                serialize_inputs,
+                serialize_inputs=serialize_inputs,
             )
 
     def _get_input_str(self, folder, inputs, serialize_inputs):
@@ -262,7 +271,7 @@ class FXGraphReport:
         if any(arg is None for arg in inputs):
             input_str += f"# Warning: The inputs that cannot be inferred are set to None, requiring the user to manually give inputs according to the code\n"
         if serialize_inputs:
-            example_inputs = eval(f"[\n{chr(10).join(arg_like(a) for a in inputs)}]")
+            example_inputs = self.make_example_inputs()
             input_file_name = folder / f"{self.graph_name}_inputs.pt"
             torch.save(example_inputs, input_file_name)
             input_str += f"{INPUTS_NAME} = torch.load('{input_file_name}')\n"
@@ -448,12 +457,10 @@ class FXGraphReport:
         self,
         compile_fn: CompileSpecificationInterface,
         check_consistency=False,
-        inputs: Sequence[torch.Tensor | ExampleInputMetaData] = None,
     ):
         compiled_model = compile_fn.compile(self.graph)
-        inputs = self.get_input_metadata()
-        example_inputs = eval(f"[\n{chr(10).join(arg_like(a) for a in inputs)}]")
-        forward_only = not any(hasattr(arg, "requires_grad") and arg.requires_grad for arg in inputs)
+        example_inputs = self.make_example_inputs()
+        forward_only = not any(hasattr(arg, "requires_grad") and arg.requires_grad for arg in example_inputs)
         if forward_only:
             result = compiled_model(*example_inputs)
         else:
@@ -528,9 +535,8 @@ class FXGraphReport:
 
     def run_benchmark(self, compile_fn: CompileSpecificationInterface, time_fn: TimerInterface):
         compiled_fn = compile_fn.compile(self.graph)
-        inputs = self.get_input_metadata()
-        forward_only = not any(hasattr(arg, "requires_grad") and arg.requires_grad for arg in inputs)
-        example_inputs = eval(f"[\n{chr(10).join(arg_like(a) for a in inputs)}]")
+        example_inputs = self.make_example_inputs()
+        forward_only = not any(hasattr(arg, "requires_grad") and arg.requires_grad for arg in example_inputs)
         fwd_measurement = time_fn.time(
             "compiled_fn(*example_inputs)", globals={"compiled_fn": compiled_fn, "example_inputs": example_inputs}
         )
@@ -727,7 +733,7 @@ class ThunderSplitGraphReport(FXGraphReport):
         return f"<ThunderSplitGraphReport with {len(self.fusion_reports)} ThunderFusionReport accessible via .fusion_reports>"
 
     def _create_thunder_traces(self):
-        example_inputs = eval(f"[\n{chr(10).join(arg_like(a) for a in self.example_input)}]")
+        example_inputs = [_create_random_tensor_from_tensor_metadata(a) for a in self.example_input]
         # Executes to get the trace
         run_forward_backward(self.compiled_fn, *example_inputs)
         self.fwd_trc = last_traces(self.compiled_fn)[-1]
@@ -760,11 +766,11 @@ class ThunderSplitGraphReport(FXGraphReport):
                 ]
             )
         if not use_benchmark:
-            super().write_repro(
+            default_thunderjit = ThunderCompileSpecification()
+            super().write_repro_v2(
                 folder,
+                default_thunderjit,
                 f"{self.graph_name}_repro_thunder.py",
-                executor_str=thunder_ex_str,
-                import_str=import_str,
                 serialize_inputs=serialize_inputs,
                 inputs=self.example_input,
                 extra_comment_str=self.split_reason,

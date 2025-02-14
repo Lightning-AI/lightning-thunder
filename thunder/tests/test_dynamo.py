@@ -1056,6 +1056,12 @@ def test_thunderfx_meta_tensor():
     assert out.device.type == "meta"
 
 
+def run_script(file_name, cmd):
+    cmd = cmd + [file_name]
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    assert result.returncode == 0, f"Script {file_name} failed: {result}"
+
+
 @requiresCUDA
 def test_report_thunderfx_report(tmp_path, capsys):
     def foo(x):
@@ -1117,11 +1123,6 @@ def test_fxreport(executor, device: str, dtype: dtypes.dtype, use_benchmark, tmp
                 tmp_path, f"{r.graph_name}_mythunder_benchmark.py", ["mythunder"], [my_exe], my_imports
             )
 
-    def check(file_name, cmd):
-        cmd = cmd + [file_name]
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        assert result.returncode == 0, f"Script {file_name} failed: {result}"
-
     cmd = [sys.executable]
     if use_benchmark:
         cmd = cmd + ["-m", "pytest"]
@@ -1129,7 +1130,7 @@ def test_fxreport(executor, device: str, dtype: dtypes.dtype, use_benchmark, tmp
     assert len(py_files) == 4
 
     for file in py_files:
-        check(file, cmd)
+        run_script(file, cmd)
 
 
 def test_leak_on_unsupported_thunder_operator():
@@ -1185,17 +1186,12 @@ def test_thunder_specific_reports(tmp_path):
                 nvf.write_nvfuser_repro(split_folder / "nvfusion")
                 nvf.write_inductor_repro(split_folder / "nvfusion")
 
-    def check(file_name, cmd):
-        cmd = cmd + [file_name]
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        assert result.returncode == 0, f"Script {file_name} failed: {result}"
-
     cmd = [sys.executable]
     py_files = list(tmp_path.rglob("*.py"))
     assert len(py_files) == 16
 
     for file in py_files:
-        check(file, cmd)
+        run_script(file, cmd)
 
 
 @requiresCUDA
@@ -1275,12 +1271,14 @@ def test_reports_repro_v2(tmp_path):
     for idx, fx_graph_report in enumerate(results.fx_graph_reports):
         thunder_fx_graph_report = analyze_thunder_splits(fx_graph_report)
         thunder_fx_graph_report.write_repro_v2(tmp_path, thunderjit, check_consistency=True)
-        thunder_fx_graph_report.run_repro(thunderjit, check_consistency=True)
         for thunder_split_report in thunder_fx_graph_report.subgraph_reports:
             split_folder = tmp_path / str(idx)
-            thunder_split_report.write_repro_v2(split_folder, torchcompile)
-            thunder_split_report.write_repro_v2(split_folder, torcheager)
-            thunder_split_report.write_repro_v2(split_folder, thunderjit, check_consistency=True)
+            split_name = thunder_split_report.graph_name
+            thunder_split_report.write_repro_v2(split_folder, torchcompile, file_name=f"{split_name}_torchcompile.py")
+            thunder_split_report.write_repro_v2(split_folder, torcheager, file_name=f"{split_name}_eager.py")
+            thunder_split_report.write_repro_v2(
+                split_folder, thunderjit, check_consistency=True, file_name=f"{split_name}_thunder.py"
+            )
             thunder_split_report.run_repro(thunderjit, check_consistency=True)
             thunder_split_report.create_fusion_reports()
             for nvf in thunder_split_report.fusion_reports:
@@ -1289,17 +1287,12 @@ def test_reports_repro_v2(tmp_path):
                 nvf.run_repro(BoundSymbolNvfuserSpecification())
                 nvf.run_repro(BoundSymbolTorchCompileSpecification())
 
-    def check(file_name, cmd):
-        cmd = cmd + [file_name]
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        assert result.returncode == 0, f"Script {file_name} failed: {result}"
-
     cmd = [sys.executable]
     py_files = list(tmp_path.rglob("*.py"))
-    assert len(py_files) == 12
+    assert len(py_files) == 16
 
     for file in py_files:
-        check(file, cmd)
+        run_script(file, cmd)
 
 
 @requiresCUDA
@@ -1325,9 +1318,10 @@ def test_reports_benchmark(tmp_path):
     thunder_fx_graph_report.write_benchmark(tmp_path, thunderjit, KernelTime)
     assert len(thunder_fx_graph_report.subgraph_reports) == 1  # exp
     thunder_split_report = thunder_fx_graph_report.subgraph_reports[0]
-    thunder_split_report.write_benchmark(tmp_path, torchcompile, WallTime)
-    thunder_split_report.write_benchmark(tmp_path, torcheager, WallTime)
-    thunder_split_report.write_benchmark(tmp_path, thunderjit, WallTime)
+    split_name = thunder_split_report.graph_name
+    thunder_split_report.write_benchmark(tmp_path, torchcompile, WallTime, file_name=f"{split_name}_torchcompile.py")
+    thunder_split_report.write_benchmark(tmp_path, torcheager, WallTime, file_name=f"{split_name}_eager.py")
+    thunder_split_report.write_benchmark(tmp_path, thunderjit, WallTime, file_name=f"{split_name}_jit.py")
     thunder_split_report.create_fusion_reports()
     assert len(thunder_split_report.fusion_reports) == 2  # fwd, bwd
     nvf = thunder_split_report.fusion_reports[0]
@@ -1336,14 +1330,39 @@ def test_reports_benchmark(tmp_path):
     nvf.run_benchmark(BoundSymbolNvfuserSpecification(), WallTime)
     nvf.run_benchmark(BoundSymbolTorchCompileSpecification(), WallTime)
 
-    def check(file_name, cmd):
-        cmd = cmd + [file_name]
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        assert result.returncode == 0, f"Script {file_name} failed: {result}"
+    cmd = [sys.executable]
+    py_files = list(tmp_path.rglob("*.py"))
+    assert len(py_files) == 6
+
+    for file in py_files:
+        run_script(file, cmd)
+
+
+@requiresCUDA
+def test_TorchInductorSpecification(tmp_path):
+    from thunder.dynamo.benchmark_utils import TorchInductorSpecification
+
+    x = torch.ones(2, 2, device="cuda", requires_grad=True)
+
+    def foo(x):
+        return torch.sinc(x) + torch.cos(x)
+
+    results = fx_report(foo, x)
+    assert len(results.fx_graph_reports) == 1  # 1 Dynamo graphs
+    fx_graph_report = results.fx_graph_reports[0]
+    thunder_fx_graph_report = analyze_thunder_splits(fx_graph_report)
+    assert len(thunder_fx_graph_report.subgraph_reports) == 1  # cos
+    thunder_split_report = thunder_fx_graph_report.subgraph_reports[0]
+
+    ex_inputs = thunder_split_report.make_example_inputs()
+    torchinductor = TorchInductorSpecification(ex_inputs)
+    thunder_split_report.run_benchmark(torchinductor, WallTime)
+    thunder_split_report.run_repro(torchinductor)
+    thunder_split_report.write_benchmark(tmp_path, torchinductor, WallTime)
+    thunder_split_report.write_repro_v2(tmp_path, torchinductor, file_name="repro.py")
 
     cmd = [sys.executable]
     py_files = list(tmp_path.rglob("*.py"))
-    assert len(py_files) == 4
-
+    assert len(py_files) == 2
     for file in py_files:
-        check(file, cmd)
+        run_script(file, cmd)

@@ -80,7 +80,10 @@ class TorchCompileSpecification(CompileSpecificationInterface):
         return f"torch.compile({fn_name}, {kwargs_str})"
 
     def import_str(self):
-        return ["import torch"]
+        # WAR for triton error https://github.com/pytorch/pytorch/issues/124565
+        comment_str = '# Workaround for "RuntimeError: Triton Error [CUDA]: an illegal memory access was encountered"\n# https://github.com/pytorch/pytorch/issues/124565'
+        code = f'if torch.cuda.is_available:\n    torch.empty(1, device="cuda", requires_grad=True).backward()'
+        return ["import torch", comment_str, code]
 
 
 class TorchEagerSpecification(CompileSpecificationInterface):
@@ -93,6 +96,32 @@ class TorchEagerSpecification(CompileSpecificationInterface):
 
     def to_source(self, fn_name):
         return fn_name
+
+
+class TorchInductorSpecification(CompileSpecificationInterface):
+    """
+    A compile specification for :func:`torch.compile`.
+    """
+
+    def __init__(self, inputs):
+        self.inputs: list = inputs
+
+    @staticmethod
+    def torch_inductor(fn, inputs):
+        from torch._inductor import compile as inductor_compile
+        from torch.fx import symbolic_trace
+
+        fx_graph = symbolic_trace(fn)
+        return inductor_compile(fx_graph, inputs)
+
+    def compile(self, fn):
+        return self.torch_inductor(fn, self.inputs)
+
+    def to_source(self, fn_name):
+        return f"TorchInductorSpecification.torch_inductor({fn_name}, inputs)"
+
+    def import_str(self):
+        return ["import torch", "from thunder.dynamo.benchmark_utils import TorchInductorSpecification"]
 
 
 class BoundSymbolNvfuserSpecification(CompileSpecificationInterface):
