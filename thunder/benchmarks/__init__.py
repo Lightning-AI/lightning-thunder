@@ -3232,9 +3232,7 @@ class AdamBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         ]
 
         def foo(params_tensor):
-            return torch.optim.Adam(
-                params_tensor, lr=0.001, betas=(0.9, 0.999), eps=1e-08, weight_decay=0
-            )
+            return torch.optim.Adam(params_tensor, lr=0.001, betas=(0.9, 0.999), eps=1e-08, weight_decay=0)
 
         return foo
 
