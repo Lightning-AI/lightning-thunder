@@ -3186,7 +3186,7 @@ class AdamBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         ),
         BenchmarkArg(
             name="requires_grad",
-            description="Whether the input tensors require grad. Default is False.",
+            description="Whether the input tensors require grad. Default is True.",
         ),
     )
 
@@ -3208,8 +3208,8 @@ class AdamBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     def __init__(
         self,
         params: Sequence[int],
-        device: str,
-        dtype: dtypes.dtype,
+        device: str = 'cuda',
+        dtype: dtypes.dtype = thunder.float32,
         requires_grad: bool = True,
     ) -> None:
         super().__init__()
