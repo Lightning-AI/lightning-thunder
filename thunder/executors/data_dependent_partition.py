@@ -1,18 +1,15 @@
 from __future__ import annotations
 
-from typing import List, Set
+from typing import List
 from collections.abc import Callable
 from copy import copy
-from itertools import chain
 
 import thunder.core.utils as utils
 from thunder.core.compile_data import get_compile_option
 from thunder.core.trace import TraceCtx
 from thunder.core.symbol import BoundSymbol
 from thunder.core.proxies import variableify, Proxy
-import thunder.core.prims as prims
 from thunder.core.prims import PrimIDs
-from thunder.executors import torchex
 
 
 _DEFAULT_FUSION_TYPE = "dataflow"
