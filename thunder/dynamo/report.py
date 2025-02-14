@@ -37,6 +37,10 @@ from thunder.dynamo.benchmark_utils import (
     TorchCompileSpecification,
     ThunderCompileSpecification,
     TorchEagerSpecification,
+    BoundSymbolNvfuserSpecification,
+    BoundSymbolTorchCompileSpecification,
+    WallTime,
+    KernelTime,
 )
 
 
@@ -1010,3 +1014,139 @@ def analyze_thunder_splits(
         )
     report = ThunderFXGraphReport(report.graph, report.graph_name, split_reason, subgraph_reports)
     return report
+
+
+def thunderfx_test_report(
+    fn: Callable,
+    *args,
+    thunder_compile_kwargs: dict = None,
+    folder_path: str | PathLike = "/tmp/thunderfx_report",
+    compare_fusion: bool = False,
+    print_traces: bool = False,
+    check_consistency: bool = True,
+    thredshold: float = 0.5,
+    **kwargs,
+):
+    torch_compile_success = True
+    try:
+        torch_compiled = torch.compile(fn)
+        torch_compiled(*args, **kwargs)
+    except Exception as e:
+        torch_compile_success = False
+        print(f"Failed to run the function using torch.compile with exception: {e}")
+        print(f"Trying with Torch eager...")
+        try:
+            fn(*args, **kwargs)
+        except Exception as e:
+            print(f"Failed to run the function with exception: {e}")
+            return
+        print("The input callable can be successfully executed.")
+    if torch_compile_success:
+        print("The input callable can be successfully executed by torch.compile.")
+
+    # NOTE the input order matters, usually the first is torchcompile time, second is Thunder time
+    # returns False when exceed the thredshold
+    def check_thredshold(a, b):
+        if abs(a - b) / a >= thredshold:
+            return False
+        return True
+
+    def check_thredshold_log(a: float, b, a_name: str, b_name, test_name):
+        if not check_thredshold(a, b):
+            log_str = f"Benchmark on {test_name} needs investigation: {b_name}({b}) is more than {thredshold*100}% slower than {a_name}({a})"
+            print(log_str)
+            return False, log_str
+        log_str = f"Benchmark runs successfully on {test_name}: {b_name}({b}) , {a_name}({a})"
+        print(log_str)
+        return True, None
+
+    def check_timing(report, compile_fn1, compile_fn2, timer_fn, timer_name: str):
+        graph_name = report.graph_name
+        measure1 = report.run_benchmark(compile_fn1, timer_fn)
+        measure2 = report.run_benchmark(compile_fn2, timer_fn)
+
+        record = False
+        log_strs = ""
+        for m1, m2, name in zip(measure1, measure2, ("forward", "backward")):
+            ret = check_thredshold_log(
+                m1.mean,
+                m2.mean,
+                f"{compile_fn1.name} {timer_name}",
+                f"{compile_fn2.name} {timer_name}",
+                f"{graph_name} {name}",
+            )
+            if not ret[0]:
+                record = True
+                log_strs += f"{ret[1]}\n"
+        if record:
+            extra_comment = f"Benchmark results:\n{log_strs}\n"
+            filename1 = f"{graph_name}_{compile_fn1.name}_{timer_name}.py"
+            filename2 = f"{graph_name}_{compile_fn2.name}_{timer_name}.py"
+            report.write_benchmark(
+                folder_path, compile_fn1, timer_fn, file_name=filename1, extra_comment_str=extra_comment
+            )
+            report.write_benchmark(
+                folder_path, compile_fn2, timer_fn, file_name=filename2, extra_comment_str=extra_comment
+            )
+            print(f"The scripts are saved: {filename1}, {filename2}\n\n")
+
+    def check_timing_bsym(report, compile_fn1, compile_fn2, timer_fn, timer_name: str):
+        graph_name = report.name
+        measure1 = report.run_benchmark(compile_fn1, timer_fn)
+        measure2 = report.run_benchmark(compile_fn2, timer_fn)
+
+        log_strs = ""
+        ret = check_thredshold_log(
+            measure1.mean,
+            measure2.mean,
+            f"{compile_fn1.name} {timer_name}",
+            f"{compile_fn2.name} {timer_name}",
+            f"{graph_name}",
+        )
+        if not ret[0]:
+            extra_comment = f"Benchmark results:\n{log_strs}\n"
+            filename1 = f"{graph_name}_{compile_fn1.name}_{timer_name}.py"
+            filename2 = f"{graph_name}_{compile_fn2.name}_{timer_name}.py"
+            report.write_benchmark(
+                folder_path, compile_fn1, timer_fn, file_name=filename1, extra_comment_str=extra_comment
+            )
+            report.write_benchmark(
+                folder_path, compile_fn2, timer_fn, file_name=filename2, extra_comment_str=extra_comment
+            )
+            print(f"The scripts are saved: {filename1}, {filename2}\n\n")
+
+    results = fx_report(fn, *args, compile_options=thunder_compile_kwargs, **kwargs)
+    if thunder_compile_kwargs is None:
+        thunder_compile_kwargs = {}
+    thunderjit_specification = ThunderCompileSpecification(**thunder_compile_kwargs)
+    torchcompile = TorchCompileSpecification()
+    # torcheager = TorchEagerSpecification()
+    for idx, fx_graph_report in enumerate(results.fx_graph_reports):
+        thunder_fx_graph_report = analyze_thunder_splits(fx_graph_report, **thunder_compile_kwargs)
+        print(f"{thunder_fx_graph_report.graph_name}: {thunder_fx_graph_report.split_reason}")
+        for split_report in thunder_fx_graph_report.subgraph_reports:
+            try:
+                split_report.run_repro(thunderjit_specification)
+            except Exception as e:
+                print(f"{split_report.graph_name} failed to run by Thunder")
+                continue
+
+            print(f"{split_report.graph_name} can be successfully executed by Thunder")
+            check_timing(split_report, torchcompile, thunderjit_specification, WallTime, "walltime")
+            check_timing(split_report, torchcompile, thunderjit_specification, KernelTime, "kerneltime")
+
+            if compare_fusion or print_traces:
+                split_report.create_fusion_reports()
+            if print_traces:
+                print(f"forward trace:\n{split_report.fwd_trc}\nbackward trace:\n{split_report.bwd_trc}\n")
+
+            if not compare_fusion:
+                continue
+
+            # Compares nvFusion
+            split_report.create_fusion_reports()
+            bsym_nvfuser = BoundSymbolNvfuserSpecification()
+            bsym_torchcompile = BoundSymbolTorchCompileSpecification()
+            for nvf in split_report.fusion_reports:
+                check_timing_bsym(nvf, bsym_torchcompile, bsym_nvfuser, WallTime, "walltime")
+                check_timing_bsym(nvf, bsym_torchcompile, bsym_nvfuser, KernelTime, "kerneltime")

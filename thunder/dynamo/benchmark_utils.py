@@ -48,7 +48,8 @@ class ThunderCompileSpecification(CompileSpecificationInterface):
         compiled_fn = spec.compile(my_function)
     """
 
-    def __init__(self, **kwargs):
+    def __init__(self, specification_name="thunder", **kwargs):
+        self.name = specification_name
         self.thunder_options: dict = kwargs
 
     def compile(self, fn):
@@ -69,7 +70,8 @@ class TorchCompileSpecification(CompileSpecificationInterface):
     A compile specification for :func:`torch.compile`.
     """
 
-    def __init__(self, **kwargs):
+    def __init__(self, specification_name="torchcompile", **kwargs):
+        self.name = specification_name
         self.torch_compile_options: dict = kwargs
 
     def compile(self, fn):
@@ -91,6 +93,9 @@ class TorchEagerSpecification(CompileSpecificationInterface):
     A compile specification for Torch eager mode, which returns the callable unchanged.
     """
 
+    def __init__(self, specification_name="torcheager"):
+        self.name = specification_name
+
     def compile(self, fn):
         return fn
 
@@ -103,7 +108,8 @@ class TorchInductorSpecification(CompileSpecificationInterface):
     A compile specification for :func:`torch.compile`.
     """
 
-    def __init__(self, inputs):
+    def __init__(self, inputs, specification_name="inductor_backend"):
+        self.name: str = specification_name
         self.inputs: list = inputs
 
     @staticmethod
@@ -125,6 +131,9 @@ class TorchInductorSpecification(CompileSpecificationInterface):
 
 
 class BoundSymbolNvfuserSpecification(CompileSpecificationInterface):
+    def __init__(self, specification_name="nvfusersymbol_nvfuser"):
+        self.name: str = specification_name
+
     # Returns the nvFuser callable from the nvFuser bound symbol.
     # See the TODO in :class:`thunder.dynamo.report.ThunderFusionReport` for more details.
     def compile(self, nvfusion_bsym):
@@ -132,6 +141,9 @@ class BoundSymbolNvfuserSpecification(CompileSpecificationInterface):
 
 
 class BoundSymbolTorchCompileSpecification(CompileSpecificationInterface):
+    def __init__(self, specification_name="nvfusersymbol_torchcompile"):
+        self.name: str = specification_name
+
     # Returns the torch compile callable from the nvFuser bound symbol.
     # See the TODO in :class:`thunder.dynamo.report.ThunderFusionReport` for more details.
     def compile(self, bsym):

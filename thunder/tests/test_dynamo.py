@@ -1252,7 +1252,7 @@ def test_ThunderCompileSpecification():
 
 
 @requiresCUDA
-def test_reports_repro_v2(tmp_path):
+def test_reports_repro(tmp_path):
     x = torch.ones(2, 2, device="cuda", requires_grad=True)
 
     def foo(x):
@@ -1365,3 +1365,20 @@ def test_TorchInductorSpecification(tmp_path):
     assert len(py_files) == 2
     for file in py_files:
         run_script(file, cmd)
+
+
+@requiresCUDA
+def test_autotest_report():
+    from thunder.dynamo.report import thunderfx_test_report
+
+    x = torch.ones(2, 2, device="cuda", requires_grad=True)
+
+    def foo(x):
+        # torch.sinc has automatic fallback registered,
+        # so that operation will be given to inductor.
+        # x = x.exp()
+        # torch._dynamo.graph_break()
+        y = torch.sinc(x) + torch.cos(x)
+        return y + 1
+
+    thunderfx_test_report(foo, x, compare_fusion=True)
