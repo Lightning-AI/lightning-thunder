@@ -24,6 +24,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 
+_DEFAULT_THUNDER_FUSION_TYPE = "dataflow"
+
+
 class ThunderCompiler:
     def __init__(self, **thunder_options):
         """
@@ -63,6 +66,7 @@ class ThunderCompiler:
         # Ref to the documentation of `SubgraphInfo` to know more about the information it contains.
         self.subgraph_infos: list[SubgraphInfo] = []
 
+        thunder_options["fusion_type"] = thunder_options.get("fusion_type", _DEFAULT_THUNDER_FUSION_TYPE)
         self.thunder_options = thunder_options
         self._thunder_jit = partial(jit, **thunder_options)
         self._torch_compile = torch.compile
