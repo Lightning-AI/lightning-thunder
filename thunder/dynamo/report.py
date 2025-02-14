@@ -473,7 +473,7 @@ class FXGraphReport:
             else:
                 eager_result = run_forward_backward(compiled_model, *example_inputs)
                 torch.testing.assert_close(result, eager_result)
-        return result
+        return (result, None) if forward_only else result
 
     def write_repro_v2(
         self,
@@ -540,15 +540,14 @@ class FXGraphReport:
         fwd_measurement = time_fn.time(
             "compiled_fn(*example_inputs)", globals={"compiled_fn": compiled_fn, "example_inputs": example_inputs}
         )
-        if forward_only:
-            return fwd_measurement
-        else:
+        bwd_measurement = None
+        if not forward_only:
             backward_fn, backward_setup = backward_only(compiled_fn, *example_inputs)
             backward_args = backward_setup()
             bwd_measurement = time_fn.time(
                 "backward_fn(*backward_args)", globals={"backward_fn": backward_fn, "backward_args": backward_args}
             )
-            return fwd_measurement, bwd_measurement
+        return fwd_measurement, bwd_measurement
 
     def write_benchmark(
         self,
@@ -589,6 +588,7 @@ class FXGraphReport:
     {COMPILED_CALLABLE_NAME} = {compile_str}
     # forward
     fwd_measurement = {fwd_timing_str}
+    print("fwd_measurement=", fwd_measurement)
 """
         if not forward_only:
             code_str = f"""{code_str}
@@ -597,6 +597,7 @@ class FXGraphReport:
     backward_fn, backward_setup = backward_only({COMPILED_CALLABLE_NAME}, *{INPUTS_NAME})
     backward_args = backward_setup()
     bwd_measurement = {bwd_timing_str}
+    print("bwd_measurement=", bwd_measurement)
 """
 
         code_str += f"test_{self.graph_name}()"
