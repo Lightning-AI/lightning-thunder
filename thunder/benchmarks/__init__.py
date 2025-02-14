@@ -3227,49 +3227,37 @@ class AdamBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     def fn(self) -> Callable:
         params_tensor = [
-            make_tensor(shape, device=self.device, dtype=self.tdtype, requires_grad=False)
-            for shape in self.params
+            make_tensor(shape, device=self.device, dtype=self.tdtype, requires_grad=False) for shape in self.params
         ]
-        grads = [
-            make_tensor(grad, device=self.device, dtype=self.tdtype, requires_grad=False)
-            for grad in self.params
-        ]
-        exp_avgs = [
-            make_tensor(ea, device=self.device, dtype=self.tdtype, requires_grad=False)
-            for ea in self.params
-        ]
+        grads = [make_tensor(grad, device=self.device, dtype=self.tdtype, requires_grad=False) for grad in self.params]
+        exp_avgs = [make_tensor(ea, device=self.device, dtype=self.tdtype, requires_grad=False) for ea in self.params]
         exp_avg_sqs = [
-            make_tensor(eas, device=self.device, dtype=self.tdtype, requires_grad=False)
-            for eas in self.params
+            make_tensor(eas, device=self.device, dtype=self.tdtype, requires_grad=False) for eas in self.params
         ]
         max_exp_avg_sqs = [
-            make_tensor(meas, device=self.device, dtype=self.tdtype, requires_grad=False)
-            for meas in self.params
+            make_tensor(meas, device=self.device, dtype=self.tdtype, requires_grad=False) for meas in self.params
         ]
-        state_steps = [
-            torch.tensor(0, device="cpu", dtype=self.tdtype, requires_grad=False)
-            for _ in self.params
-        ]
+        state_steps = [torch.tensor(0, device="cpu", dtype=self.tdtype, requires_grad=False) for _ in self.params]
 
         @torch.no_grad()
         def foo(params_tensor, grads, exp_avgs, exp_avg_sqs, max_exp_avg_sqs, state_steps):
             return torch.optim._functional.adam(
-                        params_tensor,
-                        grads,
-                        exp_avgs,
-                        exp_avg_sqs,
-                        max_exp_avg_sqs,
-                        state_steps,
-                        foreach=False,
-                        differentiable=False,
-                        amsgrad=False,
-                        lr=0.001,
-                        beta1=0.9,
-                        beta2=0.999,
-                        eps=1e-08,
-                        weight_decay=0,
-                        maximize=False
-                    )
+                params_tensor,
+                grads,
+                exp_avgs,
+                exp_avg_sqs,
+                max_exp_avg_sqs,
+                state_steps,
+                foreach=False,
+                differentiable=False,
+                amsgrad=False,
+                lr=0.001,
+                beta1=0.9,
+                beta2=0.999,
+                eps=1e-08,
+                weight_decay=0,
+                maximize=False,
+            )
 
         return lambda *args, **kwargs: foo(params_tensor, grads, exp_avgs, exp_avg_sqs, max_exp_avg_sqs, state_steps)
 
