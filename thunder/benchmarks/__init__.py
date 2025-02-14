@@ -3223,33 +3223,18 @@ class AdamBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         self.devices: list[str] = [device]
 
     def make_batch(self) -> tuple[list, dict]:
-        input = make_tensor(self.params, device=self.device, dtype=self.tdtype, requires_grad=True)
-        target = make_tensor(self.params, device=self.device, dtype=self.tdtype, requires_grad=False)
-        return (input, target), {}
+        return (make_tensor(self.params, device=self.device, dtype=self.tdtype, requires_grad=True),), {}
 
     def fn(self) -> Callable:
-        def foo(params):
-            from torch.nn import MSELoss
+        params_tensor = [
+            torch.nn.Parameter(make_tensor(shape, device=self.device, dtype=self.tdtype, requires_grad=True))
+            for shape in self.params
+        ]
 
-            params_tensor = [
-                torch.nn.Parameter(make_tensor(shape, device=self.device, dtype=self.tdtype, requires_grad=True))
-                for shape in self.params
-            ]
-
-            optimizer = torch.optim.Adam(
-                params_tensor, lr=0.001, betas=(0.9, 0.999), eps=1e-08, weight_decay=0, amsgrad=False
+        def foo(params_tensor):
+            return torch.optim.Adam(
+                params_tensor, lr=0.001, betas=(0.9, 0.999), eps=1e-08, weight_decay=0
             )
-
-            _loss = MSELoss()
-
-            def steps():
-                optimizer.zero_grad()
-                output = params_tensor
-                loss = _loss(output, target)
-                loss.backward()
-                optimizer.step()
-
-            return steps
 
         return foo
 

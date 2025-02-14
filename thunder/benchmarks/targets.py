@@ -966,12 +966,9 @@ PARAM_SHAPES = [
 @pytest.mark.parametrize(
     "params",
     PARAM_SHAPES,
-    ids=[f"params{shape}" for shape in PARAM_SHAPES],
+    ids=["x".join(map(str, shape)) for shape in PARAM_SHAPES],
 )
 def test_litgpt_adam(benchmark, executor: None | Callable, params: Sequence[int], compute_type: ComputeType):
-    if executor is None:
-        pytest.skip("Executor is unavailable")
-
     bench: Benchmark = AdamBenchmark(
         params=params,
         device="cuda:0",
@@ -981,8 +978,6 @@ def test_litgpt_adam(benchmark, executor: None | Callable, params: Sequence[int]
 
     jfn = executor(bench.fn())
     args, kwargs = bench.make_batch()
-
-    if len(args) > 1:
-        args = [args]
+    args = [args]
 
     benchmark_for_compute_type(compute_type, benchmark, jfn, args, kwargs)
