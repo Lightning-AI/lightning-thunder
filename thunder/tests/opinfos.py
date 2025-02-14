@@ -7881,7 +7881,7 @@ if LooseVersion(torch.__version__) >= "2.4":
                 custom_comparator(partial(assert_close, atol=1e-2, rtol=1e-2)),
                 dtypes=(datatypes.float16, datatypes.bfloat16),
                 devicetypes=(devices.DeviceType.CUDA,),
-                active_if=LooseVersion(torch.__version__) > "2.7"
+                active_if=LooseVersion(torch.__version__) > "2.7",
             ),
         ),
     )
