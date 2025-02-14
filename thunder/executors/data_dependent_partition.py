@@ -296,6 +296,31 @@ def horizontal_merge(graph, merge_func: Callable):
     return topo_order_groups
 
 
+def consecutive_fusion(trace: TraceCtx, merge_func: Callable[[Node, Node], bool]) -> List[List[BoundSymbol]]:
+    """Utility function for creating fusions in the trace with consecutive nodes.
+
+    Args:
+        trace: The trace context to fuse.
+        merge_func: The function that determines if two nodes should be merged.
+
+    Returns:
+        A list of lists of bound symbols that should be fused together.
+    """
+    fusions = [[]]
+    for bsym in trace.bound_symbols:
+        node = Node(0, [bsym], [0], 0, 0)
+        if merge_func(node, node):
+            fusions[-1].append(bsym)
+        else:
+            if fusions[-1]:
+                fusions.append([])
+            fusions[-1].append(bsym)
+            fusions.append([])
+    if not fusions[-1]:
+        del fusions[-1]
+    return fusions
+
+
 def fuse_bound_symbols(trace: TraceCtx, merge_func: Callable):
     graph = Graph(trace)
     dataflow_merge(graph, merge_func)
