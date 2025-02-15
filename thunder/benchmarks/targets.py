@@ -955,7 +955,7 @@ PARAM_SHAPES = [
         torch_compile_executor,
         torch_executor,
     ],
-    ids=["thunderfx", "inductor", "eager"]
+    ids=["thunderfx", "inductor", "eager"],
 )
 @parametrize_compute_type_without_backward
 @pytest.mark.parametrize(

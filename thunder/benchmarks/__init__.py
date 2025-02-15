@@ -3227,11 +3227,12 @@ class SGDBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     def fn(self) -> Callable:
         params_tensor = [
-            make_tensor(shape, device=self.device, dtype=self.tdtype, requires_grad=False)
-            for shape in self.params
+            make_tensor(shape, device=self.device, dtype=self.tdtype, requires_grad=False) for shape in self.params
         ]
         d_p_list = [make_tensor(d_p, device=self.device, dtype=self.tdtype, requires_grad=False) for d_p in self.params]
-        momentum_buffer_list = [make_tensor(mbl, device=self.device, dtype=self.tdtype, requires_grad=False) for mbl in self.params]
+        momentum_buffer_list = [
+            make_tensor(mbl, device=self.device, dtype=self.tdtype, requires_grad=False) for mbl in self.params
+        ]
 
         @torch.no_grad()
         def foo(params_tensor, d_p_list):
@@ -3246,6 +3247,7 @@ class SGDBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
                 nesterov=0.001,
                 maximize=False,
             )
+
         return lambda *args, **kwargs: foo(params_tensor, d_p_list)
 
 
