@@ -3170,6 +3170,85 @@ class LinearLoRABenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return self.lora_cls(self.model)
 
 
+class SGDBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    _args = (
+        BenchmarkArg(
+            name="params",
+            description="An iterable of parameters.",
+        ),
+        BenchmarkArg(
+            name="device",
+            description="A string representing the device to run on. Default is 'cuda'.",
+        ),
+        BenchmarkArg(
+            name="dtype",
+            description="The dtype of the tensors. Default is thunder.float32.",
+        ),
+        BenchmarkArg(
+            name="requires_grad",
+            description="Whether the input tensors require grad. Default is False.",
+        ),
+    )
+
+    @classmethod
+    @property
+    def name(cls) -> str:
+        return "litgpt-sgd"
+
+    @classmethod
+    @property
+    def description(cls) -> str:
+        return "LitGPT's 'SGD' optimizer"
+
+    @classmethod
+    @property
+    def args(cls) -> tuple[BenchmarkArg, ...]:
+        return cls._args
+
+    def __init__(
+        self,
+        params: Sequence[int],
+        device: str = "cuda",
+        dtype: dtypes.dtype = thunder.float32,
+        requires_grad: bool = False,
+    ) -> None:
+        super().__init__()
+
+        self.params: Sequence[int] = params
+        self.device: str = device
+        self.dtype: dtypes.dtype = dtype
+        self.tdtype: torch.dtype = ltorch.to_torch_dtype(self.dtype)
+        self.requires_grad: bool = requires_grad
+
+        self.devices: list[str] = [device]
+
+    def make_batch(self) -> tuple[list, dict]:
+        return (make_tensor(self.params, device=self.device, dtype=self.tdtype, requires_grad=False),), {}
+
+    def fn(self) -> Callable:
+        params_tensor = [
+            make_tensor(shape, device=self.device, dtype=self.tdtype, requires_grad=False)
+            for shape in self.params
+        ]
+        d_p_list = [make_tensor(d_p, device=self.device, dtype=self.tdtype, requires_grad=False) for d_p in self.params]
+        momentum_buffer_list = [make_tensor(mbl, device=self.device, dtype=self.tdtype, requires_grad=False) for mbl in self.params]
+
+        @torch.no_grad()
+        def foo(params_tensor, d_p_list):
+            return torch.optim._functional.sgd(
+                params_tensor,
+                d_p_list,
+                momentum_buffer_list,
+                lr=0.001,
+                momentum=0,
+                weight_decay=0,
+                dampening=0.01,
+                nesterov=0.001,
+                maximize=False,
+            )
+        return lambda *args, **kwargs: foo(params_tensor, d_p_list)
+
+
 # TODO Add descriptions to the executors when listed, and list them alphabetically
 # TODO Allow querying benchmark for details
 # TODO Allow specifying benchmark arguments
