@@ -8463,6 +8463,15 @@ grad_sdpa_opinfo = OpInfo(
     # NOTE: NotImplementedError: Could not run 'aten::_scaled_dot_product_efficient_attention' with arguments from the 'CPU' backend.
     # NOTE: NotImplementedError: Could not run 'aten::_scaled_dot_product_efficient_attention_backward' with arguments from the 'CPU' backend
     devicetypes=(devices.DeviceType.CUDA,),
+    test_directives=(
+        # The test might fail due to numerical issues with bfloat16
+        # https://github.com/Lightning-AI/lightning-thunder/issues/703
+        DecorateInfo(
+            pytest.mark.xfail(strict=False),
+            "test_vjp_correctness_sdpa_manual",
+            dtypes=(datatypes.bfloat16,),
+        ),
+    )
 )
 nn_ops.append(grad_sdpa_opinfo)
 
