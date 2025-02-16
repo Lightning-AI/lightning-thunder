@@ -8471,7 +8471,7 @@ grad_sdpa_opinfo = OpInfo(
             "test_vjp_correctness_sdpa_manual",
             dtypes=(datatypes.bfloat16,),
         ),
-    )
+    ),
 )
 nn_ops.append(grad_sdpa_opinfo)
 
