@@ -8467,7 +8467,7 @@ grad_sdpa_opinfo = OpInfo(
         # The test might fail due to numerical issues with bfloat16
         # https://github.com/Lightning-AI/lightning-thunder/issues/703
         DecorateInfo(
-            pytest.mark.xfail(strict=False),
+            pytest.mark.xfail(strict=False, raises=AssertionError),
             "test_vjp_correctness_sdpa_manual",
             dtypes=(datatypes.bfloat16,),
         ),
