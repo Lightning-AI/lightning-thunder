@@ -993,6 +993,25 @@ def thunderfx_benchmark_report(
     atol=0.0,
     **kwargs,
 ):
+    """
+    A utility function that analyzes the runnability and performance benchmarks of each FX graph.
+
+    1. Checks if the callable can be executed with `torch.compile`.
+    - If it fails, attempts to run it eagerly.
+    - If eager execution also fails, an error is printed, and the function returns.
+    - If eager execution succeeds, the analysis continues.
+
+    2. Collects all ThunderFX subgraphs and verifies whether each subgraph can be successfully executed by Thunder.
+
+    3. For each subgraph:
+    - Compares wall time and kernel time between `torch.compile` and Thunder.
+    - Reports performance metrics and saves the benchmark script in `folder_path` if the difference exceeds the tolerance (`rtol`, `atol`).
+    - Uses `math.isclose` for tolerance checks.
+
+    4. If `compare_fusion` is `True`:
+    - Also compares the wall time and kernel time of each nvFusion region.
+    - Saves the benchmark script when necessary, following the same criteria as above.
+    """
     torch_compile_success = True
     try:
         torch_compiled = torch.compile(fn)
