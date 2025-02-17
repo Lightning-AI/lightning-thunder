@@ -243,7 +243,7 @@ def _grad_forward_scaled_dot_product_flash_attention_impl(
 
 
 sdpfa_gradfwd = sdpa_ex.register_operator(
-    "sdpafx_grad_forward_scaled_dot_product_efficient_attention",
+    "sdpafx_grad_forward_scaled_dot_product_flash_attention",
     meta=_grad_forward_scaled_dot_product_flash_attention_meta,
     fn=_grad_forward_scaled_dot_product_flash_attention_impl,
     tags=(OpTags.DONT_AUTO_RECOMPUTE_IN_BACKWARD,),
@@ -414,7 +414,7 @@ def _scaled_dot_product_flash_attention_backward_impl(
 
 
 sdpfa_bwd = sdpa_ex.register_operator(
-    "sdpafx_scaled_dot_product_efficient_attention_backward",
+    "sdpafx_scaled_dot_product_flash_attention_backward",
     meta=_scaled_dot_product_flash_attention_backward_meta,
     fn=_scaled_dot_product_flash_attention_backward_impl,
 )
