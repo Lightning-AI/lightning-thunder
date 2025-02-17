@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 import textwrap
 
 import torch
+from torch.utils.benchmark.utils.common import select_unit as select_time_unit
 from thunder.core.pytree import tree_flatten
 from thunder.core.utils import sequencify, create_python_callable_from_bsym
 from thunder.dynamo.compiler import thunderfx
@@ -61,6 +62,8 @@ def run_forward_backward(fn, *args, **kwargs):
 
     forward_inputs = tree_flatten((args, kwargs))[0]
     forward_inputs = list(filter(lambda x: isinstance(x, torch.Tensor) and x.requires_grad, forward_inputs))
+    if not forward_inputs:
+        return result, None
     differentiable_tensor_result = list(filter(lambda x: isinstance(x, torch.Tensor) and x.requires_grad, result))
 
     output_grads = []
@@ -433,20 +436,12 @@ class FXGraphReport:
     ):
         compiled_model = compile_fn.compile(self.graph)
         example_inputs = self.make_example_inputs()
-        forward_only = not any(hasattr(arg, "requires_grad") and arg.requires_grad for arg in example_inputs)
-        if forward_only:
-            result = compiled_model(*example_inputs)
-        else:
-            result = run_forward_backward(compiled_model, *example_inputs)
+        result = run_forward_backward(compiled_model, *example_inputs)
 
         if check_consistency:
-            if forward_only:
-                eager_result = compiled_model(*example_inputs)
-                torch.testing.assert_close(result, eager_result)
-            else:
-                eager_result = run_forward_backward(compiled_model, *example_inputs)
-                torch.testing.assert_close(result, eager_result)
-        return (result, None) if forward_only else result
+            eager_result = run_forward_backward(compiled_model, *example_inputs)
+            torch.testing.assert_close(result, eager_result)
+        return result
 
     def write_repro(
         self,
@@ -480,22 +475,15 @@ class FXGraphReport:
         folder.mkdir(exist_ok=True, parents=True)
         if inputs == None:
             inputs = self.get_input_metadata()
-        forward_only = not any(hasattr(arg, "requires_grad") and arg.requires_grad for arg in inputs)
         code_str = self._get_repro_code(folder, compile_fn, None, serialize_inputs, inputs, **kwargs)
         compile_str = compile_fn.to_source(CALLABLE_NAME)
         code_str += textwrap.indent(f"{COMPILED_CALLABLE_NAME} = {compile_str}\n", "    ")
 
-        if forward_only:
-            run_str = f"result = {COMPILED_CALLABLE_NAME}(*{INPUTS_NAME})\n"
-        else:
-            run_str = f"from thunder.dynamo.report import run_forward_backward\nfwd_result, grads = run_forward_backward({COMPILED_CALLABLE_NAME}, *{INPUTS_NAME})\n"
+        run_str = f"from thunder.dynamo.report import run_forward_backward\nfwd_result, grads = run_forward_backward({COMPILED_CALLABLE_NAME}, *{INPUTS_NAME})\n"
         code_str += textwrap.indent(run_str, "    ")
 
         if check_consistency:
-            if forward_only:
-                check_str = f"eager_result = {CALLABLE_NAME}(*{INPUTS_NAME})\ntorch.testing.assert_close(result, eager_result)\n"
-            else:
-                check_str = f"eager_fwd_result, eager_grads = run_forward_backward({CALLABLE_NAME}, *{INPUTS_NAME})\ntorch.testing.assert_close(fwd_result, eager_fwd_result)\ntorch.testing.assert_close(grads, eager_grads)\n"
+            check_str = f"eager_fwd_result, eager_grads = run_forward_backward({CALLABLE_NAME}, *{INPUTS_NAME})\ntorch.testing.assert_close(fwd_result, eager_fwd_result)\ntorch.testing.assert_close(grads, eager_grads)\n"
 
             code_str += textwrap.indent(check_str, "    ")
 
@@ -812,20 +800,22 @@ class ThunderFusionReport:
         nvfuser_repro_code = get_repro(inputs)
         return nvfuser_repro_code
 
-    def write_nvfuser_benchmark(self, folder, time_fn: TimerInterface, file_name=None):
+    def write_nvfuser_benchmark(self, folder, time_fn: TimerInterface, file_name=None, **kwargs):
         folder = Path(folder)
         folder.mkdir(exist_ok=True, parents=True)
+        extra_comment_str = kwargs.get("extra_comment_str") if "extra_comment_str" in kwargs else ""
         repro_code_str = self._get_nvfuser_code()
         timing_import_str = "\n".join(time_fn.import_str() or [])
         timing_str = time_fn.to_source("nvfuser_fn", "inputs")
         timing_str = timing_str.replace("*inputs", "inputs")
         repro_code_str = repro_code_str.replace("fd.execute(inputs)\n", "")
-        comment_str = f'"""\n{self.nvfusion_bsym}\n"""'
+        comment_str = f'"""\n{self.nvfusion_bsym}\n\n{extra_comment_str}"""'
         code_str = f"""{comment_str}
 {timing_import_str}
 {repro_code_str}
 nvfuser_fn = fd.execute
 measurement = {timing_str}
+print(measurement)
 """
         if file_name == None:
             file_name = f"{self.name}_benchmark_nvfuser.py"
@@ -847,14 +837,15 @@ measurement = {timing_str}
     def get_inputs(self):
         return self.nvfusion_bsym._call_ctx[self.nvfusion_bsym.sym.name].last_inputs
 
-    def _get_inductor_code(self):
+    def _get_inductor_code(self, **kwargs):
         python_func = create_python_callable_from_bsym(self.nvfusion_bsym)
         nvfusion_name = self.nvfusion_bsym.sym.name
+        extra_comment_str = kwargs.get("extra_comment_str") if "extra_comment_str" in kwargs else ""
 
         inputs = self.get_inputs()
         inputs = "[" + "".join(arg_like(inp) for inp in inputs) + "]"
         inductor_code_str = bsym_torch_compile_repro_template.format(
-            python_func=python_func, func_name=nvfusion_name, inputs=inputs
+            python_func=python_func, func_name=nvfusion_name, inputs=inputs, extra_comment_str=extra_comment_str
         )
         return inductor_code_str
 
@@ -870,14 +861,15 @@ out = torch_compiled_callable(*inputs)
         with open(folder / file_name, "w") as f:
             f.write(code_str)
 
-    def write_inductor_benchmark(self, folder: PathLike, time_fn: TimerInterface, file_name=None):
+    def write_inductor_benchmark(self, folder: PathLike, time_fn: TimerInterface, file_name=None, **kwargs):
         folder = Path(folder)
         folder.mkdir(exist_ok=True, parents=True)
-        code_str = self._get_inductor_code()
+        code_str = self._get_inductor_code(**kwargs)
         timing_import_str = "\n".join(time_fn.import_str() or [])
         code_str = f"""{code_str}
 {timing_import_str}
 measurement = {time_fn.to_source("torch_compiled_callable", "inputs")}
+print(measurement)
 """
         if file_name == None:
             file_name = f"{self.name}_benchmark_inductor.py"
@@ -1016,27 +1008,27 @@ def analyze_thunder_splits(
     return report
 
 
-def thunderfx_test_report(
+def thunderfx_benchmark_report(
     fn: Callable,
     *args,
+    folder_path: str | PathLike,
     thunder_compile_kwargs: dict = None,
-    folder_path: str | PathLike = "/tmp/thunderfx_report",
     compare_fusion: bool = False,
     print_traces: bool = False,
-    check_consistency: bool = True,
-    thredshold: float = 0.5,
+    rtol=0.5,
+    atol=0.0,
     **kwargs,
 ):
     torch_compile_success = True
     try:
         torch_compiled = torch.compile(fn)
-        torch_compiled(*args, **kwargs)
+        run_forward_backward(torch_compiled, *args, **kwargs)
     except Exception as e:
         torch_compile_success = False
         print(f"Failed to run the function using torch.compile with exception: {e}")
         print(f"Trying with Torch eager...")
         try:
-            fn(*args, **kwargs)
+            run_forward_backward(fn, *args, **kwargs)
         except Exception as e:
             print(f"Failed to run the function with exception: {e}")
             return
@@ -1044,23 +1036,28 @@ def thunderfx_test_report(
     if torch_compile_success:
         print("The input callable can be successfully executed by torch.compile.")
 
-    # NOTE the input order matters, usually the first is torchcompile time, second is Thunder time
-    # returns False when exceed the thredshold
-    def check_thredshold(a, b):
-        if abs(a - b) / a >= thredshold:
-            return False
-        return True
+    # Returns False when exceed the threshold
+    def check_threshold(a, b, rtol, atol):
+        import math
 
-    def check_thredshold_log(a: float, b, a_name: str, b_name, test_name):
-        if not check_thredshold(a, b):
-            log_str = f"Benchmark on {test_name} needs investigation: {b_name}({b}) is more than {thredshold*100}% slower than {a_name}({a})"
+        return math.isclose(a, b, rel_tol=rtol, abs_tol=atol)
+
+    def get_pretty_time_str(a):
+        time_unit, time_scale = select_time_unit(a)
+        return f"{a / time_scale:.3f} {time_unit}"
+
+    def check_threshold_log(a: float, b: float, a_name: str, b_name: str, test_name: str, timer_name: str):
+        a_time_str = get_pretty_time_str(a)
+        b_time_str = get_pretty_time_str(b)
+        if not check_threshold(a, b, rtol=rtol, atol=atol):
+            log_str = f"Benchmark {timer_name} for **{test_name}** requires investigation: {b_name}({b_time_str}) and {a_name}({a_time_str}) is not close (rtol={rtol}, atol={atol})"
             print(log_str)
             return False, log_str
-        log_str = f"Benchmark runs successfully on {test_name}: {b_name}({b}) , {a_name}({a})"
+        log_str = f"Benchmark {timer_name} ran successfully on **{test_name}**: {b_name}({b_time_str}) , {a_name}({a_time_str})"
         print(log_str)
         return True, None
 
-    def check_timing(report, compile_fn1, compile_fn2, timer_fn, timer_name: str):
+    def check_timing(report, compile_fn1: Callable, compile_fn2: Callable, timer_fn: Callable, timer_name: str):
         graph_name = report.graph_name
         measure1 = report.run_benchmark(compile_fn1, timer_fn)
         measure2 = report.run_benchmark(compile_fn2, timer_fn)
@@ -1068,12 +1065,11 @@ def thunderfx_test_report(
         record = False
         log_strs = ""
         for m1, m2, name in zip(measure1, measure2, ("forward", "backward")):
-            ret = check_thredshold_log(
-                m1.mean,
-                m2.mean,
-                f"{compile_fn1.name} {timer_name}",
-                f"{compile_fn2.name} {timer_name}",
-                f"{graph_name} {name}",
+            if m1 is None:
+                assert m2 is None
+                continue
+            ret = check_threshold_log(
+                m1.median, m2.median, compile_fn1.name, compile_fn2.name, f"{graph_name} {name}", timer_name
             )
             if not ret[0]:
                 record = True
@@ -1088,50 +1084,42 @@ def thunderfx_test_report(
             report.write_benchmark(
                 folder_path, compile_fn2, timer_fn, file_name=filename2, extra_comment_str=extra_comment
             )
-            print(f"The scripts are saved: {filename1}, {filename2}\n\n")
+            print(f"The scripts are saved: {filename1}, {filename2}")
+        print("\n")
 
     def check_timing_bsym(report, compile_fn1, compile_fn2, timer_fn, timer_name: str):
         graph_name = report.name
         measure1 = report.run_benchmark(compile_fn1, timer_fn)
         measure2 = report.run_benchmark(compile_fn2, timer_fn)
 
-        log_strs = ""
-        ret = check_thredshold_log(
-            measure1.mean,
-            measure2.mean,
-            f"{compile_fn1.name} {timer_name}",
-            f"{compile_fn2.name} {timer_name}",
-            f"{graph_name}",
+        ret = check_threshold_log(
+            measure1.median, measure2.median, compile_fn1.name, compile_fn2.name, graph_name, timer_name
         )
         if not ret[0]:
-            extra_comment = f"Benchmark results:\n{log_strs}\n"
+            extra_comment = f"Benchmark results:\n{ret[1]}\n"
             filename1 = f"{graph_name}_{compile_fn1.name}_{timer_name}.py"
             filename2 = f"{graph_name}_{compile_fn2.name}_{timer_name}.py"
-            report.write_benchmark(
-                folder_path, compile_fn1, timer_fn, file_name=filename1, extra_comment_str=extra_comment
-            )
-            report.write_benchmark(
-                folder_path, compile_fn2, timer_fn, file_name=filename2, extra_comment_str=extra_comment
-            )
-            print(f"The scripts are saved: {filename1}, {filename2}\n\n")
+            report.write_nvfuser_benchmark(folder_path, timer_fn, file_name=filename1, extra_comment_str=extra_comment)
+            report.write_inductor_benchmark(folder_path, timer_fn, file_name=filename2, extra_comment_str=extra_comment)
+            print(f"The scripts are saved: {filename1}, {filename2}")
+        print("\n")
 
     results = fx_report(fn, *args, compile_options=thunder_compile_kwargs, **kwargs)
     if thunder_compile_kwargs is None:
         thunder_compile_kwargs = {}
     thunderjit_specification = ThunderCompileSpecification(**thunder_compile_kwargs)
     torchcompile = TorchCompileSpecification()
-    # torcheager = TorchEagerSpecification()
     for idx, fx_graph_report in enumerate(results.fx_graph_reports):
         thunder_fx_graph_report = analyze_thunder_splits(fx_graph_report, **thunder_compile_kwargs)
-        print(f"{thunder_fx_graph_report.graph_name}: {thunder_fx_graph_report.split_reason}")
+        print(f"\n{thunder_fx_graph_report.graph_name}: {thunder_fx_graph_report.split_reason}\n")
         for split_report in thunder_fx_graph_report.subgraph_reports:
             try:
                 split_report.run_repro(thunderjit_specification)
             except Exception as e:
-                print(f"{split_report.graph_name} failed to run by Thunder")
+                print(f"Failed to run {split_report.graph_name} using Thunder with exception: {e}\n")
                 continue
 
-            print(f"{split_report.graph_name} can be successfully executed by Thunder")
+            print(f"{split_report.graph_name} can be successfully executed by Thunder\n")
             check_timing(split_report, torchcompile, thunderjit_specification, WallTime, "walltime")
             check_timing(split_report, torchcompile, thunderjit_specification, KernelTime, "kerneltime")
 
@@ -1144,7 +1132,6 @@ def thunderfx_test_report(
                 continue
 
             # Compares nvFusion
-            split_report.create_fusion_reports()
             bsym_nvfuser = BoundSymbolNvfuserSpecification()
             bsym_torchcompile = BoundSymbolTorchCompileSpecification()
             for nvf in split_report.fusion_reports:

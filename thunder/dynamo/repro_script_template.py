@@ -120,7 +120,10 @@ def test_{graph_name}(benchmark, executor, compute_type):
 '''
 
 
-bsym_torch_compile_repro_template = """
+bsym_torch_compile_repro_template = '''
+"""
+{extra_comment_str}
+"""
 {python_func}
 
 from thunder.executors.torch_compile import make_compiled as make_torch_compile_callable
@@ -141,7 +144,7 @@ bsym = fusion_symbols[0]
 # Additionally, it's recommended to visually verify that `bsym` matches the
 # `nvFusion` function above by printing it using `print(bsym)`.
 torch_compiled_callable = make_torch_compile_callable(bsym.subsymbols, bsym.flat_args, bsym.flat_outs)
-"""
+'''
 
 repro_bench_code_template = f'''
 """

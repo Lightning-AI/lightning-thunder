@@ -131,7 +131,7 @@ class TorchInductorSpecification(CompileSpecificationInterface):
 
 
 class BoundSymbolNvfuserSpecification(CompileSpecificationInterface):
-    def __init__(self, specification_name="nvfusersymbol_nvfuser"):
+    def __init__(self, specification_name="nvfuser"):
         self.name: str = specification_name
 
     # Returns the nvFuser callable from the nvFuser bound symbol.
@@ -141,7 +141,7 @@ class BoundSymbolNvfuserSpecification(CompileSpecificationInterface):
 
 
 class BoundSymbolTorchCompileSpecification(CompileSpecificationInterface):
-    def __init__(self, specification_name="nvfusersymbol_torchcompile"):
+    def __init__(self, specification_name="torchcompile"):
         self.name: str = specification_name
 
     # Returns the torch compile callable from the nvFuser bound symbol.

@@ -1368,17 +1368,16 @@ def test_TorchInductorSpecification(tmp_path):
 
 
 @requiresCUDA
-def test_autotest_report():
-    from thunder.dynamo.report import thunderfx_test_report
+def test_autotest_report(tmp_path):
+    from thunder.dynamo.report import thunderfx_benchmark_report
+
+    # Workaround for "RuntimeError: Triton Error [CUDA]: an illegal memory access was encountered"
+    # https://github.com/pytorch/pytorch/issues/124565
+    torch.empty(1, device="cuda", requires_grad=True).backward()
 
     x = torch.ones(2, 2, device="cuda", requires_grad=True)
 
     def foo(x):
-        # torch.sinc has automatic fallback registered,
-        # so that operation will be given to inductor.
-        # x = x.exp()
-        # torch._dynamo.graph_break()
-        y = torch.sinc(x) + torch.cos(x)
-        return y + 1
+        return x * x
 
-    thunderfx_test_report(foo, x, compare_fusion=True)
+    thunderfx_benchmark_report(foo, x, folder_path=tmp_path, compare_fusion=True, rtol=0.1)
