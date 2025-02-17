@@ -1865,6 +1865,18 @@ def test_torch_tensor_to_memory_format(executor: TestExecutor, device: str, _):
         assert_close(torch_result, thunder_result, check_stride=True)
 
 
+def test_torch_tensor_to_return_type():
+    a = torch.randn(2, 4, 5, 3)
+
+    def torch_to(a):
+        return a.to(copy=True)
+
+    jfoo = thunder.jit(torch_to)
+    result = jfoo(a)
+
+    assert result is not a
+
+
 # TODO See issue "Add contiguous and clang.stride_order OpInfos that check stride
 # consistency with PyTorch"
 @instantiate(
