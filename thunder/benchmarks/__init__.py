@@ -3223,21 +3223,17 @@ class SGDBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         self.devices: list[str] = [device]
 
     def make_batch(self) -> tuple[list, dict]:
-        return (make_tensor(self.params, device=self.device, dtype=self.tdtype, requires_grad=False),), {}
+        pt = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=False)
+        params = [pt(shape) for shape in self.params]
+        d_p_list = [pt(d_p) for d_p in self.params]
+        momentum_buffer_list = [pt(mbl) for mbl in self.params]
+        return (params, d_p_list, momentum_buffer_list), {}
 
     def fn(self) -> Callable:
-        params_tensor = [
-            make_tensor(shape, device=self.device, dtype=self.tdtype, requires_grad=False) for shape in self.params
-        ]
-        d_p_list = [make_tensor(d_p, device=self.device, dtype=self.tdtype, requires_grad=False) for d_p in self.params]
-        momentum_buffer_list = [
-            make_tensor(mbl, device=self.device, dtype=self.tdtype, requires_grad=False) for mbl in self.params
-        ]
-
         @torch.no_grad()
-        def foo(params_tensor, d_p_list):
+        def foo(params, d_p_list, momentum_buffer_list):
             return torch.optim._functional.sgd(
-                params_tensor,
+                params,
                 d_p_list,
                 momentum_buffer_list,
                 lr=0.001,
@@ -3248,7 +3244,7 @@ class SGDBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
                 maximize=False,
             )
 
-        return lambda *args, **kwargs: foo(params_tensor, d_p_list)
+        return foo
 
 
 # TODO Add descriptions to the executors when listed, and list them alphabetically

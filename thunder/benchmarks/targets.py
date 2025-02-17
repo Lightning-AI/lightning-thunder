@@ -942,12 +942,6 @@ def test_lora_linear(benchmark, executor, compute_type, implementation):
     benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
 
 
-PARAM_SHAPES = [
-    (64, 64),
-    (128, 64),
-]
-
-
 @pytest.mark.parametrize(
     "executor",
     [
@@ -960,10 +954,10 @@ PARAM_SHAPES = [
 @parametrize_compute_type_without_backward
 @pytest.mark.parametrize(
     "params",
-    PARAM_SHAPES,
-    ids=("x".join(map(str, shape)) for shape in PARAM_SHAPES),
+    [(64, 64), (128, 64)],
+    ids=("64x64", "128x64"),
 )
-def test_litgpt_sgd(benchmark, executor: None | Callable, params: Sequence[int], compute_type: ComputeType):
+def test_optim_functional_sgd(benchmark, executor: None | Callable, params: Sequence[int], compute_type: ComputeType):
     bench: Benchmark = SGDBenchmark(
         params=params,
         device="cuda:0",
@@ -973,6 +967,5 @@ def test_litgpt_sgd(benchmark, executor: None | Callable, params: Sequence[int],
 
     jfn = executor(bench.fn())
     args, kwargs = bench.make_batch()
-    args = [args]
 
     benchmark_for_compute_type(compute_type, benchmark, jfn, args, kwargs)
