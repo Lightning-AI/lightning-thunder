@@ -3223,26 +3223,20 @@ class AdamBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         self.devices: list[str] = [device]
 
     def make_batch(self) -> tuple[list, dict]:
-        return (make_tensor(self.params, device=self.device, dtype=self.tdtype, requires_grad=False),), {}
+        pt = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=False)
+        params = [pt(shape) for shape in self.params]
+        grads = [pt(grad) for grad in self.params]
+        exp_avgs = [pt(ea) for ea in self.params]
+        exp_avg_sqs = [pt(eas) for eas in self.params]
+        max_exp_avg_sqs = [pt(meas) for meas in self.params]
+        state_steps = [torch.tensor(0, device="cpu", dtype=self.tdtype, requires_grad=False) for _ in self.params]
+        return (params, grads, exp_avgs, exp_avg_sqs, max_exp_avg_sqs, state_steps), {}
 
     def fn(self) -> Callable:
-        params_tensor = [
-            make_tensor(shape, device=self.device, dtype=self.tdtype, requires_grad=False) for shape in self.params
-        ]
-        grads = [make_tensor(grad, device=self.device, dtype=self.tdtype, requires_grad=False) for grad in self.params]
-        exp_avgs = [make_tensor(ea, device=self.device, dtype=self.tdtype, requires_grad=False) for ea in self.params]
-        exp_avg_sqs = [
-            make_tensor(eas, device=self.device, dtype=self.tdtype, requires_grad=False) for eas in self.params
-        ]
-        max_exp_avg_sqs = [
-            make_tensor(meas, device=self.device, dtype=self.tdtype, requires_grad=False) for meas in self.params
-        ]
-        state_steps = [torch.tensor(0, device="cpu", dtype=self.tdtype, requires_grad=False) for _ in self.params]
-
         @torch.no_grad()
-        def foo(params_tensor, grads, exp_avgs, exp_avg_sqs, max_exp_avg_sqs, state_steps):
+        def foo(params, grads, exp_avgs, exp_avg_sqs, max_exp_avg_sqs, state_steps):
             return torch.optim._functional.adam(
-                params_tensor,
+                params,
                 grads,
                 exp_avgs,
                 exp_avg_sqs,
@@ -3259,7 +3253,7 @@ class AdamBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
                 maximize=False,
             )
 
-        return lambda *args, **kwargs: foo(params_tensor, grads, exp_avgs, exp_avg_sqs, max_exp_avg_sqs, state_steps)
+        return foo
 
 
 # TODO Add descriptions to the executors when listed, and list them alphabetically
