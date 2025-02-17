@@ -22,7 +22,7 @@ from thunder.transforms.extraction_only_prologue_transform import ExtractionOnly
 
 if TYPE_CHECKING:
     from thunder.dynamo.utils import SubgraphInfo
-    from thunder.core.transform import Transform
+    from thunder.core.transform_common import Transform
     from os import PathLike
     from collections.abc import Callable
 
