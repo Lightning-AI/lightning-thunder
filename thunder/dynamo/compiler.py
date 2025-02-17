@@ -77,7 +77,7 @@ class ThunderCompiler:
         # Ref to the documentation of `SubgraphInfo` to know more about the information it contains.
         self.subgraph_infos: list[SubgraphInfo] = []
 
-        # NOTE: Dynamo already adds guards for modules, so thunder can avoid adding extra metadata checks for parameters
+        # NOTE: Dynamo already adds guards for modules by default (see flag `torch._dynamo.config.guard_nn_modules`), so thunder can avoid adding extra metadata checks for parameters
         #       in prologue.
         _add_prologue_pruning(thunder_options)
         self.thunder_options = thunder_options
