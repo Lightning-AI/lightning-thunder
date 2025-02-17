@@ -3,63 +3,6 @@ INPUTS_NAME = "inputs"
 CALLABLE_NAME = "model"
 COMPILED_CALLABLE_NAME = "compiled_model"
 
-repro_code_template = '''
-"""
-Environment information get from `torch.utils.collect_env.get_pretty_env_info()`:
-{torch_env}
-
-Versions of Thunder related libraries:
-{thunder_pkgs}
-
-{extra_comment_str}
-"""
-{torch_import_str}
-{import_str}
-import argparse
-
-parser = argparse.ArgumentParser(description="Script for executing an FX graph with specified configurations.")
-
-parser.add_argument(
-    "--check_consistency",
-    type=bool,
-    default=False,
-    help="Whether to check consistency (default: False)"
-)
-parser.add_argument(
-    "--compute_type",
-    type=str,
-    choices=["forward", "forward+backward"],
-    default="forward",
-    help="Type of computation to perform (forward, forward+backward)"
-)
-args = parser.parse_args()
-compute_type = args.compute_type
-check_acc = args.check_consistency
-
-def test_{graph_name}():
-{dynamo_module}
-
-{inputs}
-
-    model = DynamoModule()
-    from thunder.dynamo.report import run_repro
-
-    executor = {executor_str}
-    if executor is None:
-        compiled_model = model
-    else:
-        compiled_model = executor(model)
-    result = run_repro(compiled_model, compute_type, *inputs)
-    if check_acc:
-        eager_result = run_repro(model, compute_type, *inputs)
-        for (compute_t, eager_v), (_, cur_v) in zip(eager_result.items(), result.items()):
-            torch.testing.assert_close(eager_v, cur_v, msg=lambda e : f'{{compute_t}}: {{e}}')
-
-
-test_{graph_name}()
-'''
-
-
 pytest_benchmark_multi_exe_code_template = '''
 """
 Environment information get from `torch.utils.collect_env.get_pretty_env_info()`:

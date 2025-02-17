@@ -25,7 +25,6 @@ from thunder.dynamo.utils import (
 
 from thunder.dynamo.repro_script_template import (
     pytest_benchmark_multi_exe_code_template,
-    repro_code_template,
     bsym_torch_compile_repro_template,
     FXGRAPH_CLASS_NAME,
     INPUTS_NAME,
@@ -75,26 +74,6 @@ def run_forward_backward(fn, *args, **kwargs):
 
     torch.autograd.backward(result, output_grads, inputs=forward_inputs)
     return result, [t.grad for t in forward_inputs]
-
-
-def run_repro(compiled_fn, compute_type, *inputs) -> dict[str, float]:
-    """Helper function to execute the forward or backward pass based on the `compute_type` using the executor specified by `executor_name` in `executor_dict`.
-    If the execution fails, an error is raised. On success, the function returns a dictionary containing the forward results and gradient results.
-    """
-    results = {}
-    match compute_type:
-        case "forward":
-            result = compiled_fn(*inputs)
-            results["forward"] = result
-        case "forward+backward":
-            forward_result, grads = run_forward_backward(compiled_fn, *inputs)
-            results["forward"] = forward_result
-            results["backward"] = grads
-        case _:
-            raise ValueError(
-                f"Invalid compute type: '{compute_type}'. Only 'forward' or 'forward+backward' are allowed."
-            )
-    return results
 
 
 def thunderfx_report(
@@ -227,12 +206,7 @@ class FXGraphReport:
             )
         else:
             torcheager = TorchEagerSpecification()
-            self.write_repro(
-                folder,
-                torcheager,
-                f"{self.graph_name}_repro_eager.py",
-                serialize_inputs=serialize_inputs,
-            )
+            self.write_repro(folder, torcheager, f"{self.graph_name}_repro_eager.py", serialize_inputs=serialize_inputs)
 
     def write_thunder_repro(self, folder, use_benchmark: bool = False, serialize_inputs: bool = False):
         thunder_compile_str = "thunder.jit"

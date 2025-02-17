@@ -105,7 +105,9 @@ class TorchEagerSpecification(CompileSpecificationInterface):
 
 class TorchInductorSpecification(CompileSpecificationInterface):
     """
-    A compile specification for :func:`torch.compile`.
+    A compilation specification for using TorchInductor without TorchDynamo.
+    For details on why compilation without TorchDynamo is needed, see:
+    https://github.com/Lightning-AI/lightning-thunder/issues/1521
     """
 
     def __init__(self, inputs, specification_name="inductor_backend"):
