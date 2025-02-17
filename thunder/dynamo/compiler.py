@@ -22,6 +22,7 @@ from thunder.transforms.extraction_only_prologue_transform import ExtractionOnly
 
 if TYPE_CHECKING:
     from thunder.dynamo.utils import SubgraphInfo
+    from thunder.core.transform import Transform
     from os import PathLike
     from collections.abc import Callable
 
@@ -33,7 +34,9 @@ def _add_prologue_pruning(options: dict):
     Args:
         options: The dictionary of options to modify
     """
-    transforms = list(options.get("transforms", []))
+    transforms: list[Transform] | None = options.get("transforms", None)
+    if transforms is None:
+        transforms = []
     transforms.append(ExtractionOnlyPrologueTransform())
     options["transforms"] = transforms
 
