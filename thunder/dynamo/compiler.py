@@ -27,6 +27,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 
+_DEFAULT_THUNDER_FUSION_TYPE = "dataflow"
+
+
 def _add_prologue_pruning(options: dict):
     """
     Add a transform to prune prologue checks to the list of transforms in the given options dictionary.
@@ -80,6 +83,7 @@ class ThunderCompiler:
         # Ref to the documentation of `SubgraphInfo` to know more about the information it contains.
         self.subgraph_infos: list[SubgraphInfo] = []
 
+        thunder_options["fusion_type"] = thunder_options.get("fusion_type", _DEFAULT_THUNDER_FUSION_TYPE)
         # NOTE: Dynamo already adds guards for modules by default (see flag `torch._dynamo.config.guard_nn_modules`), so thunder can avoid adding extra metadata checks for parameters
         #       in prologue.
         _add_prologue_pruning(thunder_options)
