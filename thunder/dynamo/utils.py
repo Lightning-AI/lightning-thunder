@@ -94,19 +94,16 @@ class ExampleInputMetaData:
     shape: list[int]
     storage_shape: list[int]
     strides: list[int]
+    is_contiguous: bool
+    _storage_offset: int
     min_val: int | None = None
     max_val: int | None = None
 
     def stride(self) -> list[int]:
         return self.strides
 
-    def is_contiguous(self) -> bool:
-        expected_stride = 1
-        for s, actual_stride in reversed(list(zip(self.shape, self.strides))):
-            if actual_stride != expected_stride:
-                return False
-            expected_stride *= s
-        return True
+    def storage_offset(self) -> int:
+        return self._storage_offset
 
 
 @dataclasses.dataclass(frozen=True)
@@ -453,12 +450,12 @@ def recompile_graph(gm: torch.fx.GraphModule):
     return gm.recompile()
 
 
+# Gets the minimum storage shape according to the shape, stride and storage offset
 def _get_storage_shape(t: torch.Tensor):
     shape = _concrete_value(t.shape)
-    if t.is_contiguous():
-        return shape
     strides = _concrete_value(t.stride())
-    storage_size = sum(strides[i] * (shape[i] - 1) for i in range(len(shape))) + 1
+    storage_offset = t.storage_offset()
+    storage_size = storage_offset + sum(strides[i] * (shape[i] - 1) for i in range(len(shape))) + 1
     return (storage_size,)
 
 
@@ -477,20 +474,26 @@ def _get_example_input_tensor_metadata(t: torch.Tensor) -> ExampleInputMetaData:
         _concrete_value(t.shape),
         _get_storage_shape(t),
         _concrete_value(t.stride()),
+        t.is_contiguous(),
+        t.storage_offset(),
         min_val,
         max_val,
     )
     return meta_ev
 
 
-def _create_random_tensor_from_tensor_metadata(t: ExampleInputMetaData) -> torch.Tensor:
-    from thunder.tests.make_tensor import make_tensor
-
-    torch_tensor = make_tensor(t.storage_shape, dtype=t.dtype, device=t.device, requires_grad=t.requires_grad)
-    if t.is_contiguous():
-        return torch_tensor
-
-    return torch_tensor.as_strided(t.shape, t.stride())
+def _create_random_tensor_from_tensor_metadata(arg: ExampleInputMetaData) -> torch.Tensor:
+    min_val, max_val = arg.min_val, arg.max_val
+    shape = arg.shape if arg.is_contiguous else arg.storage_shape
+    if min_val is not None and min_val == max_val:
+        tensor = torch.full(
+            shape, min_val, dtype=arg.dtype, device=arg.device, requires_grad=arg.requires_grad, layout=arg.layout
+        )
+    else:
+        tensor = torch.testing.make_tensor(
+            shape, dtype=arg.dtype, device=arg.device, requires_grad=arg.requires_grad, low=min_val, high=max_val
+        )
+    return tensor.set_(tensor, size=arg.shape, storage_offset=arg.storage_offset, stride=arg.stride())
 
 
 def _get_example_inputs_from_placeholder(
@@ -505,9 +508,10 @@ def _get_example_inputs_from_placeholder(
     if "grapharg" in node.meta:
         ev = node.meta["grapharg"].example
         if isinstance(ev, torch.Tensor):
+            ev_metadata = _get_example_input_tensor_metadata(ev)
             if only_metadata:
-                return _get_example_input_tensor_metadata(ev)
-            return ev.detach().clone().requires_grad_(ev.requires_grad)
+                return ev_metadata
+            return _create_random_tensor_from_tensor_metadata(ev_metadata)
 
     if "example_value" not in node.meta:
         return None
@@ -628,24 +632,23 @@ def arg_like_tensor(arg: torch.Tensor | ExampleInputMetaData):
     if isinstance(arg, torch.Tensor):
         arg = _get_example_input_tensor_metadata(arg)
     min_val, max_val = arg.min_val, arg.max_val
-    storage_shape = arg.storage_shape
-    is_contiguous = arg.is_contiguous()
+    shape = arg.shape if arg.is_contiguous else arg.storage_shape
     if min_val is not None and min_val == max_val:
-        meta = f"{storage_shape}, {min_val}, dtype={arg.dtype}, device='{arg.device}', requires_grad={arg.requires_grad}, layout={arg.layout}"
+        meta = f"{shape}, {min_val}, dtype={arg.dtype}, device='{arg.device}', requires_grad={arg.requires_grad}, layout={arg.layout}"
         tensor_str = f"torch.full({meta})"
     else:
-        meta = f"{storage_shape}, dtype={arg.dtype},  device='{arg.device}', requires_grad={arg.requires_grad},"
+        meta = f"{shape}, dtype={arg.dtype},  device='{arg.device}', requires_grad={arg.requires_grad},"
         meta = f"{meta} low={min_val}, high={max_val},"
         tensor_str = f"torch.testing.make_tensor({meta})"
-    if is_contiguous:
+    if arg.is_contiguous and arg.storage_offset() == 0:
         return f"{tensor_str},"
-    return f"{tensor_str}.as_strided({arg.shape}, {arg.stride()}),"
+    return f"{tensor_str}.as_strided({arg.shape}, {arg.stride()}, {arg.storage_offset()}),"
 
 
 def arg_like(arg: Any):
     """Creates a new argument that is similar to the given arg."""
     if isinstance(arg, (torch.Tensor, ExampleInputMetaData)):
-        return f"{arg_like_tensor(arg)}"
+        return arg_like_tensor(arg)
     else:
         # Assume it's a literal that we can just print directly.
         return f"{arg},"

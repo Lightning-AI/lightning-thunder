@@ -11,6 +11,7 @@ import torch.nn.functional as F
 from looseversion import LooseVersion
 from unittest.mock import patch
 import weakref
+import re
 
 from thunder import dtypes
 from thunder.dynamo import thunderfx
@@ -1027,7 +1028,7 @@ def test_thunderfx_last_traces():
 
 
 def test_get_example_input_tensor_metadata():
-    from thunder.dynamo.utils import _get_example_input_tensor_metadata
+    from thunder.dynamo.utils import _get_example_input_tensor_metadata, arg_like_tensor
     from torch._subclasses.fake_tensor import FakeTensorMode
 
     int_tensor = torch.arange(1, 11, dtype=torch.int)
@@ -1042,6 +1043,21 @@ def test_get_example_input_tensor_metadata():
     t0 = torch.randn((5, 10), device="meta")
     meta_t0 = _get_example_input_tensor_metadata(t0)
     assert meta_t0.min_val == None and meta_t0.max_val == None and meta_t0.device.type == "meta"
+    t0_str = arg_like_tensor(meta_t0)
+    assert (
+        t0_str
+        == "torch.testing.make_tensor((5, 10), dtype=torch.float32,  device='meta', requires_grad=False, low=None, high=None,),"
+    )
+
+    t1 = torch.randn(20).as_strided((2, 3), (4, 2), storage_offset=2).requires_grad_()
+    meta_t1 = _get_example_input_tensor_metadata(t1)
+    assert meta_t1.strides == (4, 2)
+    assert meta_t1.storage_offset() == 2
+    assert meta_t1.shape == (2, 3)
+    assert meta_t1.storage_shape == (11,)
+    t1_str = arg_like_tensor(meta_t1)
+    p1 = r"""^torch\.testing\.make_tensor\(\(11,\), dtype=torch\.float32,\s*device='cpu',\s*requires_grad=True,\s*low=[-+]?[0-9]*\.?[0-9]+,\s*high=[-+]?[0-9]*\.?[0-9]+,\)\.as_strided\(\(2, 3\), \(4, 2\), 2\),$"""
+    assert re.fullmatch(p1, t1_str), "The string does not match the expected format!"
 
 
 def test_thunderfx_meta_tensor():
