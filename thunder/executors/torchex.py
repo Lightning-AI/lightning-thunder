@@ -831,9 +831,6 @@ hardshrink = _register_torch_operation("hardshrink", module=torch.nn.functional)
 hardswish = _register_torch_operation("hardswish", module=torch.nn.functional)
 leaky_relu = _register_torch_operation("leaky_relu", module=torch.nn.functional)
 logsigmoid = _register_torch_operation("logsigmoid", module=torch.nn.functional)
-log_sigmoid_backward = _register_torch_operation(
-    "torch.ops.aten.log_sigmoid_backward", like=ltorch.log_sigmoid_backward
-)
 relu = _register_torch_operation("relu", module=torch.nn.functional)
 relu6 = _register_torch_operation("relu6", module=torch.nn.functional)
 selu = _register_torch_operation("selu", module=torch.nn.functional)
@@ -851,10 +848,6 @@ _register_elementwise_unary_implementation(ltorch.gelu, gelu, checker=_always_ex
 _register_elementwise_unary_implementation(ltorch.hardshrink, hardshrink, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.hardswish, hardswish, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.leaky_relu, leaky_relu, checker=_always_executable)
-_register_elementwise_unary_implementation(
-    ltorch.log_sigmoid_backward, log_sigmoid_backward, checker=_always_executable
-)
-_register_elementwise_unary_implementation(ltorch.logsigmoid, logsigmoid)
 _register_elementwise_unary_implementation(ltorch.relu, relu, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.relu6, relu6, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.selu, selu, checker=_elementwise_unary_with_inplace_checker)
@@ -1800,6 +1793,44 @@ ex.register_implementation(
 )
 ex.register_implementation(
     ltorch.max_pool3d, max_pool3d, checker=_always_executable, grad_transform=max_pool3d_bwd_wrapper
+)
+
+def log_sigmoid_backward_meta(
+    g: TensorProxy,
+    a: TensorProxy,
+    buffer: TensorProxy,
+) -> TensorProxy:
+    return TensorProxy(like=a)
+
+log_sigmoid_backward = ex.register_operator(
+    "torch.ops.aten.log_sigmoid_backward",
+    meta=log_sigmoid_backward_meta,
+    fn=torch.ops.aten.log_sigmoid_backward,
+)
+
+def log_sigmoid_backward_wrapper(
+    a: TensorProxy,
+) -> TensorLike:
+    from thunder.torch import abs, exp, logsigmoid
+
+    fwd = logsigmoid(a)
+    g = get_grad(fwd)
+    if a.device.type == "cpu":
+        # buffer is used by PyTorch in cpu-based calculations.  See
+        # https://github.com/pytorch/pytorch/blob/7667235a23e2ffca4d32e6e16aa60a683418e159/torch/_decomp/decompositions.py#L332
+        buffer = exp(-abs(a))
+        a_grad = log_sigmoid_backward(g, a, buffer)
+    else:
+        placeholder_buffer = empty((0,), device=a.device, dtype=a.dtype)
+        a_grad = log_sigmoid_backward(g, a, placeholder_buffer)
+    put_grad(a, a_grad)
+    return fwd
+
+ex.register_implementation(
+    ltorch.logsigmoid,
+    logsigmoid,
+    checker=_always_executable,
+    grad_transform=log_sigmoid_backward_wrapper,
 )
 
 
