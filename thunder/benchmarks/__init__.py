@@ -3229,7 +3229,10 @@ class AdamBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         exp_avgs = [pt(ea) for ea in self.params]
         exp_avg_sqs = [pt(eas) for eas in self.params]
         max_exp_avg_sqs = [pt(meas) for meas in self.params]
-        state_steps = [torch.tensor(0, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad) for _ in self.params]
+        state_steps = [
+            torch.tensor(0, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
+            for _ in self.params
+        ]
         return (params, grads, exp_avgs, exp_avg_sqs, max_exp_avg_sqs, state_steps), {}
 
     def fn(self) -> Callable:
