@@ -1145,7 +1145,7 @@ class InterpreterFrame:
         if (3, 9) <= sys.version_info < (3, 11):
             if inst.starts_line is not None:
                 self.positions = Positions(inst.starts_line, inst.starts_line, 0, 999)
-        elif (3, 11) <= sys.version_info < (3, 13):
+        elif (3, 11) <= sys.version_info < (3, 14):
             if inst.positions is not None:
                 self.positions = inst.positions
         else:
@@ -1922,8 +1922,17 @@ def _iter_lookaside(obj, *sentinel) -> Iterator | INTERPRETER_SIGNALS:
 def _locals_lookaside() -> dict[str, Any]:
     runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
     frame = runtimectx.frame_stack[-1]
-    _locals = frame._locals
-    u_locals = unwrap(_locals)
+
+    # Python < 3.13 returns the same dict every time from locals,
+    # Python >= 3.13 constructs a new one
+    if sys.version_info < (3, 13):
+        _locals = frame._locals
+        u_locals = unwrap(_locals)
+    else:
+        u_locals = {}
+        # TODO: make it originate from lookaside locals
+        _locals = wrap_const(u_locals)
+
     for i, v in enumerate(frame.localsplus):
         name = frame.get_localsplus_name(i)
         if v is Py_NULL():
@@ -2259,8 +2268,8 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
         assert isinstance(uself, list)
         self.value[ukey] = uvalue
         assert self.item_wrappers is not None
-        assert value.item_wrappers is not None
         if isinstance(ukey, slice):
+            assert value.item_wrappers is not None
             self.item_wrappers[ukey] = value.item_wrappers[:]
         else:
             self.item_wrappers[ukey] = value
@@ -3113,6 +3122,7 @@ def globals_lookup(globals_dict: dict | WrappedValue, name: Any) -> Any | INTERP
     if isinstance(unwrap(builtins), ModuleType):
         res = _interpret_call(getattr, builtins, name)
         if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+            # check exception type?
             return do_raise(NameError(f"name '{unwrap(name)}' is not defined"))
         return res
 
@@ -3705,7 +3715,7 @@ def _build_tuple_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kw
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-KW_NAMES
-@register_opcode_handler("KW_NAMES", min_ver=(3, 11))
+@register_opcode_handler("KW_NAMES", min_ver=(3, 11), max_ver=(3, 12))
 def _kw_names_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, frame: InterpreterFrame, **kwargs
 ) -> None:
@@ -3732,11 +3742,44 @@ def _call_handler(
         frame.call_shape_kwnames = None
     else:
         kwargs = {}
-    if unwrap(func_or_null) is not Py_NULL():
-        func = func_or_null
-        args = (func_or_self, *args)
+    if sys.version_info < (3, 13):
+        if unwrap(func_or_null) is not Py_NULL():
+            func = func_or_null
+            args = (func_or_self, *args)
+        else:
+            func = func_or_self
     else:
-        func = func_or_self
+        func = func_or_null
+        if unwrap(func_or_self) is not Py_NULL():
+            args = (func_or_self, *args)
+
+    res = _interpret_call(func, *args, **kwargs)
+    ctx: InterpreterCompileCtx = get_interpretercompilectx()
+    if ctx._with_provenance_tracking:
+        assert isinstance(res, (WrappedValue, INTERPRETER_SIGNALS)), f"{res} unexpected"
+
+    return check_and_append(stack, res)
+
+
+# NOTE This only accepts positional args
+# https://docs.python.org/3.13/library/dis.html#opcode-CALL_KW
+@register_opcode_handler("CALL_KW", min_ver=(3, 13))
+def _call_kw_handler(
+    inst: dis.Instruction, /, stack: InterpreterStack, frame: InterpreterFrame, **kwargs
+) -> None | INTERPRETER_SIGNALS:
+    assert isinstance(inst.arg, int)
+    argc: int = inst.arg
+
+    kwnames = stack.pop()
+    args: tuple[Any, ...] = tuple(reversed(tuple(stack.pop_wrapped() for _ in range(argc))))
+    self_or_null = stack.pop_wrapped()
+    func = stack.pop_wrapped()
+    assert len(args) >= len(kwnames)
+    kwargs = dict(zip(kwnames, args[-len(kwnames) :]))
+    args = args[: -len(kwnames)]
+
+    if unwrap(self_or_null) is not Py_NULL():
+        args = (self_or_null, *args)
 
     res = _interpret_call(func, *args, **kwargs)
     ctx: InterpreterCompileCtx = get_interpretercompilectx()
@@ -3764,13 +3807,18 @@ def _call_function_ex_handler(
 ) -> None | INTERPRETER_SIGNALS:
     assert type(inst.arg) is int
     kwargs = stack.pop_wrapped() if inst.arg & 0x01 else {}
-    args = stack.pop_wrapped()
-    func = stack.pop_wrapped()
     assert wrapped_isinstance(kwargs, Mapping)
+    args = stack.pop_wrapped()
     assert wrapped_isinstance(args, Iterable)
-    assert wrapped_isinstance(func, Callable)
 
-    if (3, 11) <= sys.version_info:
+    if (3, 13) <= sys.version_info:
+        null = stack.pop_wrapped()
+        assert wrapped_isinstance(null, Py_NULL)
+
+    func = stack.pop_wrapped()
+    assert wrapped_isinstance(func, Callable), type(unwrap(func))
+
+    if (3, 11) <= sys.version_info < (3, 13):
         null = stack.pop_wrapped()
         assert wrapped_isinstance(null, Py_NULL)
 
@@ -3968,10 +4016,13 @@ def _compare_op_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwa
         ">=": lambda x, y: x >= y,
     }
 
-    b = stack.pop()
-    a = stack.pop()
+    b = stack.pop_wrapped()
+    a = stack.pop_wrapped()
     assert type(inst.arg) is int
-    if sys.version_info >= (3, 12):
+    if sys.version_info >= (3, 13):
+        # this is not in the dis.dis page...
+        op_nr = inst.arg >> 5
+    elif sys.version_info >= (3, 12):
         # this is not in the dis.dis page...
         op_nr = inst.arg >> 4
     else:
@@ -3979,8 +4030,15 @@ def _compare_op_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwa
     assert op_nr < len(dis.cmp_op), f"{inst}, {dis.cmp_op}"
 
     op = cmp_impls[dis.cmp_op[op_nr]]
+
+    # TODO: interpret
     res: bool = op(unwrap(a), unwrap(b))
     stack.append(res)
+
+    if sys.version_info >= (3, 13) and (inst.arg & 0x10):
+        res_raw = stack.pop_wrapped()
+        res = _interpret_call(bool, res_raw)
+        return check_and_append(stack, res)
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-COPY
@@ -4246,7 +4304,8 @@ def _end_async_for_handler_3_11(
 @register_opcode_handler("END_FOR", min_ver=(3, 12))
 def _end_for_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None:
     stack.pop_wrapped()
-    stack.pop_wrapped()
+    if sys.version_info < (3, 13):
+        stack.pop_wrapped()
 
 
 # https://docs.python.org/3.12/library/dis.html#opcode-END_SEND
@@ -4261,9 +4320,54 @@ def _extended_arg_handler(inst: dis.Instruction, /, stack: InterpreterStack, **k
     pass
 
 
+# https://docs.python.org/3.13/library/dis.html#opcode-FORMAT_SIMPLE
+# TODO Extend the implementation to
+@register_opcode_handler("FORMAT_SIMPLE", min_ver=(3, 13))
+def _format_simple_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
+    value = stack.pop_wrapped()
+
+    def format_simple(value):
+        if isinstance(value, type):  # ugly workaround
+            return type.__format__(value, "")
+        return value.__format__("")
+
+    res = _interpret_call(format_simple, value)
+    return check_and_append(stack, res)
+
+
+# https://docs.python.org/3.13/library/dis.html#opcode-FORMAT_WITH_SPEC
+# TODO Extend the implementation to
+@register_opcode_handler("FORMAT_WITH_SPEC", min_ver=(3, 13))
+def _format_with_spec_handler(
+    inst: dis.Instruction, /, stack: InterpreterStack, **kwargs
+) -> None | INTERPRETER_SIGNALS:
+    spec = stack.pop_wrapped()
+    value = stack.pop_wrapped()
+
+    def format_with_spec(value, spec):
+        return value.__format__(spec)
+
+    res = _interpret_call(format_with_spec, value, spec)
+    return check_and_append(stack, res)
+
+
+# https://docs.python.org/3.13/library/dis.html#opcode-CONVERT_VALUE
+# TODO Extend the implementation to
+@register_opcode_handler("CONVERT_VALUE", min_ver=(3, 13))
+def _convert_value_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
+    assert type(inst.arg) is int
+    value = stack.pop_wrapped()
+
+    assert 1 <= inst.arg <= 3
+    op = (str, repr, ascii)[inst.arg - 1]
+
+    res = _interpret_call(op, value)
+    return check_and_append(stack, res)
+
+
 # https://docs.python.org/3.10/library/dis.html#opcode-FORMAT_VALUE
 # TODO Extend the implementation to
-@register_opcode_handler("FORMAT_VALUE")
+@register_opcode_handler("FORMAT_VALUE", max_ver=(3, 12))
 def _format_value_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     FVC_MASK: int = 0x3
     FVC_NONE: int = 0x0
@@ -4888,7 +4992,45 @@ def _load_fast_check_handler(
     return check_and_append(stack, val)
 
 
-# https://docs.python.org/3.12/library/dis.html#opcode-LOAD_FAST_AND_CLEAR
+# https://docs.python.org/3.13/library/dis.html#opcode-LOAD_FAST_LOAD_FAST
+@register_opcode_handler("LOAD_FAST_LOAD_FAST", min_ver=(3, 13))
+def _load_fast_load_fast_handler(
+    inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, frame: InterpreterFrame, **kwargs
+) -> None | INTERPRETER_SIGNALS:
+    assert isinstance(inst.arg, int)
+    var_num1: int = inst.arg >> 4
+    var_num2: int = inst.arg & 15
+    assert var_num1 >= 0 and var_num1 < len(frame.localsplus)
+    assert var_num2 >= 0 and var_num2 < len(frame.localsplus)
+
+    val1: Any = frame.localsplus[var_num1]
+    name1: str = frame.get_localsplus_name(var_num1)
+    val2: Any = frame.localsplus[var_num2]
+    name2: str = frame.get_localsplus_name(var_num2)
+
+    # empty local variable slots are initialized to Py_NULL()
+    if isinstance(val1, Py_NULL):
+        return do_raise(UnboundLocalError(f"local variable '{name1}' referenced before assignment"))
+
+    # empty local variable slots are initialized to Py_NULL()
+    if isinstance(val2, Py_NULL):
+        return do_raise(UnboundLocalError(f"local variable '{name2}' referenced before assignment"))
+
+    ctx: InterpreterCompileCtx = get_interpretercompilectx()
+    if ctx._with_provenance_tracking:
+        assert isinstance(val1, WrappedValue), f"unexpected value of type {type(val1)}, {val1}, {inst}"
+        assert isinstance(val2, WrappedValue), f"unexpected value of type {type(val2)}, {val2}, {inst}"
+
+    val1 = load_fast_callback(val1, name1)
+    val2 = load_fast_callback(val2, name2)
+
+    if val1 is INTERPRETER_SIGNALS.EXCEPTION_RAISED or val2 is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+        return INTERPRETER_SIGNALS.EXCEPTION_RAISED
+    stack.append(val1)
+    stack.append(val2)
+
+
+# https://docs.python.org/3.13/library/dis.html#opcode-LOAD_FAST_AND_CLEAR
 @register_opcode_handler("LOAD_FAST_AND_CLEAR", min_ver=(3, 12))
 def _load_fast_and_clear_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, frame: InterpreterFrame, **kwargs
@@ -4934,18 +5076,27 @@ def _load_global_handler(
 
     obj: Any | WrappedValue = globals_lookup(globals_dict, wrap_const(co_name))
     if obj is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
-        return do_raise(NameError(f"name '{co_name}' is not defined"))
+        return obj
     else:
         obj = global_callback(obj, co_name)
         if obj is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
             return obj
 
-    if (3, 11) <= sys.version_info:
+    if (3, 11) <= sys.version_info < (3, 13):
         # for 3.11+, the lowest bit indicates whether a NULL should be pushed
         if inst.arg & 1:
             stack.append(wrap_const(Py_NULL()))
 
-    return check_and_append(stack, obj)
+    if obj is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+        return obj
+
+    stack.append(obj)
+    if (3, 13) <= sys.version_info:
+        # for 3.11+, the lowest bit indicates whether a NULL should be pushed, 3.13+ does it after
+        if inst.arg & 1:
+            stack.append(wrap_const(Py_NULL()))
+
+    return
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-LOAD_METHOD
@@ -4980,8 +5131,12 @@ def load_method_helper(obj, name, stack):
         stack.append(func_attr)
         stack.append(self_attr)
     else:
-        stack.append(wrap_const(Py_NULL()))
-        stack.append(meth)
+        if sys.version_info < (3, 13):
+            stack.append(wrap_const(Py_NULL()))
+            stack.append(meth)
+        else:
+            stack.append(meth)
+            stack.append(wrap_const(Py_NULL()))
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-LOAD_NAME
@@ -5030,11 +5185,13 @@ def _make_cell_handler(inst: dis.Instruction, /, frame: InterpreterFrame, **kwar
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-MAKE_FUNCTION
-@register_opcode_handler("MAKE_FUNCTION")
+@register_opcode_handler("MAKE_FUNCTION", max_ver=(3, 12))
 def _make_function_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, globals_dict: dict[str, Any], **kwargs
 ) -> None:
+
     assert type(inst.arg) is int
+    flag: int = inst.arg
 
     if sys.version_info < (3, 11):
         name = stack.pop()
@@ -5046,7 +5203,7 @@ def _make_function_handler(
 
     ctx: InterpreterCompileCtx = get_interpretercompilectx()
 
-    if inst.arg & 0x08:
+    if flag & 0x08:
         # Python will have built at tuple of cell vars
         # (via STORE_DEREF, LOAD_CLOSURE)
         closure = _interpret_call(tuple, stack.pop_wrapped())
@@ -5063,26 +5220,28 @@ def _make_function_handler(
     else:
         closure = None
 
-    if inst.arg & 0x04:
+    if flag & 0x04:
         annotations = stack.pop()
         assert type(annotations) is tuple and len(annotations) % 2 == 0
         annotations = dict(zip(annotations[::2], annotations[1::2]))
     else:
         annotations = None
 
-    if inst.arg & 0x02:
+    if flag & 0x02:
         kwdefaults = stack.pop()
         assert type(kwdefaults) == dict
     else:
         kwdefaults = None
 
-    if inst.arg & 0x01:
+    if flag & 0x01:
         argdefs = stack.pop()
         assert type(argdefs) == tuple
     else:
         argdefs = None
 
     fn = FunctionType(fn_co, unwrap(globals_dict), name, argdefs=argdefs, closure=unwrap(closure))
+
+    # TODO: wrap fn and populate fn.__closure__?
 
     if kwdefaults is not None:
         fn.__kwdefaults__ = kwdefaults
@@ -5091,6 +5250,96 @@ def _make_function_handler(
         fn.__annotations__ = annotations
 
     stack.append(fn)
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-MAKE_FUNCTION
+@register_opcode_handler("MAKE_FUNCTION", min_ver=(3, 13))
+def _make_function_handler_313(
+    inst: dis.Instruction, /, stack: InterpreterStack, globals_dict: dict[str, Any], **kwargs
+) -> None:
+
+    fn_co: CodeType = unwrap(stack.pop_wrapped())
+    name = fn_co.co_name
+
+    ctx: InterpreterCompileCtx = get_interpretercompilectx()
+
+    if fn_co.co_freevars:
+        # will be overridden by SET_FUNCTION_ATTRIBUTE call but we cannot
+        # create the FunctionType below without
+        closure = tuple(CellType() for _ in fn_co.co_freevars)
+    else:
+        closure = None
+
+    fn = FunctionType(fn_co, unwrap(globals_dict), name, closure=closure)
+    stack.append(fn)
+
+
+# https://docs.python.org/3.13/library/dis.html#opcode-SET_FUNCTION_ATTRIBUTE
+@register_opcode_handler("SET_FUNCTION_ATTRIBUTE", min_ver=(3, 13))
+def _set_function_attribute_handler(
+    inst: dis.Instruction, /, stack: InterpreterStack, globals_dict: dict[str, Any], **kwargs
+) -> None:
+
+    assert type(inst.arg) is int
+    flag: int = inst.arg
+
+    fn: FunctionType = unwrap(stack.pop_wrapped())
+
+    ctx: InterpreterCompileCtx = get_interpretercompilectx()
+
+    if flag == 0x08:
+        # Python will have built at tuple of cell vars
+        # (via STORE_DEREF, LOAD_CLOSURE)
+        closure = _interpret_call(tuple, stack.pop_wrapped())
+        if ctx._with_provenance_tracking:
+            for i, cell in enumerate(closure.value):
+                assert isinstance(cell, CellType)
+                if cell != CellType():
+                    cell_wrapper = closure.item_wrappers[i]
+                    # TODO: investigate: the store_deref and load_closure does this to us, apparently
+                    wrapped_contents = cell.cell_contents
+                    if isinstance(wrapped_contents, WrappedValue):
+                        cell.cell_contents = cell.cell_contents.value
+                        populate_attribute_wrapper(cell_wrapper, "cell_contents", wrapped_contents)
+
+        # incontrast to other annotations fn.__closure__ is readonly in Python 3.13
+        # this is a bit bad because we return a new function here, but maybe we can get away with that for now
+        new_fn = FunctionType(
+            fn.__code__,
+            fn.__globals__,
+            fn.__name__,
+            fn.__defaults__,
+            closure=unwrap(closure),
+            kwdefaults=fn.__kwdefaults__,
+        )
+        new_fn.__annotations__ = fn.__annotations__
+        # TODO: wrap new_fn and populate fn.__closure__?
+        stack.append(new_fn)
+        return
+
+    if flag == 0x04:
+        annotations = stack.pop()
+        assert type(annotations) is tuple and len(annotations) % 2 == 0
+        annotations = dict(zip(annotations[::2], annotations[1::2]))
+        fn.__annotations__ = annotations
+        stack.append(fn)
+        return
+
+    if flag == 0x02:
+        kwdefaults = stack.pop()
+        assert type(kwdefaults) == dict
+        fn.__kwdefaults__ = kwdefaults
+        stack.append(fn)
+        return
+
+    if flag == 0x01:
+        argdefs = stack.pop()
+        assert type(argdefs) == tuple
+        fn.__defaults__ = argdefs
+        stack.append(fn)
+        return
+
+    assert False, f"Flag value 0x{flag:x} unexpected in SET_FUNCTION_ATTRIBUTE"
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-MAP_ADD
@@ -5957,6 +6206,62 @@ def _store_fast_handler(
     frame.localsplus[var_num] = tos
 
 
+# https://docs.python.org/3.13/library/dis.html#opcode-STORE_FAST_LOAD_FAST
+@register_opcode_handler("STORE_FAST_LOAD_FAST", min_ver=(3, 13))
+def _store_fast_load_fast_handler(
+    inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, frame: InterpreterFrame, **kwargs
+) -> None:
+    tos = stack.pop_wrapped()
+    assert type(inst.arg) is int
+    var_num_store: int = inst.arg >> 4
+    var_num_load: int = inst.arg & 0xF
+    assert var_num_store >= 0 and var_num_store < len(frame.localsplus)
+    assert var_num_load >= 0 and var_num_load < len(frame.localsplus)
+
+    name: str = co.co_varnames[var_num_store]
+
+    tos = store_fast_callback(tos, name)
+
+    frame.localsplus[var_num_store] = tos
+
+    val: Any = frame.localsplus[var_num_load]
+    name: str = frame.get_localsplus_name(var_num_load)
+
+    # empty local variable slots are initialized to Py_NULL()
+    if isinstance(val, Py_NULL):
+        return do_raise(UnboundLocalError(f"local variable '{name}' referenced before assignment"))
+
+    # TODO: is this needed?
+    ctx: InterpreterCompileCtx = get_interpretercompilectx()
+    if ctx._with_provenance_tracking:
+        assert isinstance(val, WrappedValue), f"unexpected value of type {type(val)}, {val}, {inst}"
+
+    val = load_fast_callback(val, name)
+
+    return check_and_append(stack, val)
+
+
+# https://docs.python.org/3.13/library/dis.html#opcode-STORE_FAST_STORE_FAST
+@register_opcode_handler("STORE_FAST_STORE_FAST", min_ver=(3, 13))
+def _store_fast_store_fast_handler(
+    inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, frame: InterpreterFrame, **kwargs
+) -> None:
+    tos = stack.pop_wrapped()
+    tos1 = stack.pop_wrapped()
+    assert type(inst.arg) is int
+    var_num_1: int = inst.arg >> 4
+    var_num_2: int = inst.arg & 0xF
+
+    name_1: str = co.co_varnames[var_num_1]
+    name_2: str = co.co_varnames[var_num_2]
+
+    tos = store_fast_callback(tos, name_1)
+    tos1 = store_fast_callback(tos1, name_2)
+
+    frame.localsplus[var_num_1] = tos
+    frame.localsplus[var_num_2] = tos1
+
+
 # https://docs.python.org/3.10/library/dis.html#opcode-STORE_NAME
 @register_opcode_handler("STORE_NAME")
 def _store_name_handler(
@@ -6005,6 +6310,19 @@ def _store_subscr_handler(inst: dis.Instruction, /, stack: InterpreterStack, **k
     if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return res
     # otherwise, the return value is discarded
+
+
+# https://docs.python.org/3.13/library/dis.html#opcode-TO_BOOL
+@register_opcode_handler("TO_BOOL", min_ver=(3, 13))
+def _to_bool_handler(
+    inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, frame: InterpreterFrame, **kwargs
+) -> None | INTERPRETER_SIGNALS:
+
+    value = stack.pop_wrapped()
+
+    bool_value = _interpret_call(bool, value)
+
+    return check_and_append(stack, bool_value)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-UNARY_INVERT
@@ -6836,7 +7154,7 @@ def _setup_frame_and_run_python_function(
         for i, (name, value) in enumerate(zip(code.co_freevars, closure)):
             local = freevar_callback(name, value, fn=wrapped_fn, idx=i)
             localsplus.append(local)
-    elif (3, 11) <= sys.version_info < (3, 13):
+    elif (3, 11) <= sys.version_info < (3, 14):
         assert len(code.co_varnames) == code.co_nlocals
         for n in code.co_varnames:
             local = locals_dict.get(n, Py_NULL())
