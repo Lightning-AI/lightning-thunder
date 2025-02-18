@@ -486,14 +486,12 @@ def _create_random_tensor_from_tensor_metadata(arg: ExampleInputMetaData) -> tor
     min_val, max_val = arg.min_val, arg.max_val
     shape = arg.shape if arg.is_contiguous else arg.storage_shape
     if min_val is not None and min_val == max_val:
-        tensor = torch.full(
-            shape, min_val, dtype=arg.dtype, device=arg.device, requires_grad=arg.requires_grad, layout=arg.layout
-        )
+        tensor = torch.full(shape, min_val, dtype=arg.dtype, device=arg.device, layout=arg.layout)
     else:
-        tensor = torch.testing.make_tensor(
-            shape, dtype=arg.dtype, device=arg.device, requires_grad=arg.requires_grad, low=min_val, high=max_val
-        )
-    return tensor.set_(tensor, size=arg.shape, storage_offset=arg.storage_offset, stride=arg.stride())
+        tensor = torch.testing.make_tensor(shape, dtype=arg.dtype, device=arg.device, low=min_val, high=max_val)
+    return tensor.set_(tensor, size=arg.shape, storage_offset=arg.storage_offset(), stride=arg.stride()).requires_grad_(
+        arg.requires_grad
+    )
 
 
 def _get_example_inputs_from_placeholder(

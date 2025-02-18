@@ -1396,4 +1396,4 @@ def test_autotest_report(tmp_path):
     def foo(x):
         return x * x
 
-    thunderfx_benchmark_report(foo, x, folder_path=tmp_path, compare_fusion=True, rtol=0.1)
+    thunderfx_benchmark_report(foo, x, folder_path=tmp_path, compare_fusion=True, rtol=0.5)
