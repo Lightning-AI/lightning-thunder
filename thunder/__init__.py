@@ -549,7 +549,7 @@ def jit(
             computation_trc = remove_context_manager_prims_from_trace(computation_trc)
             computation_traces.append(computation_trc)
 
-            if not compile_options.get("skip_inplace_alias_updates", False):
+            if not compile_options.get("skip_inplace_alias_updates", True):
                 computation_traces.extend([insert_alias_updates(computation_trc)])
                 computation_trc = computation_traces[-1]
             else:
