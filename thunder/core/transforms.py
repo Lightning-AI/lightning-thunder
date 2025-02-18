@@ -1434,7 +1434,7 @@ def _log_sigmoid_grad(
 
     fwd = logsigmoid(a)
     g = get_grad(fwd)
-    a_grad =  g * where(a > 0, exp(-a) / (1 + exp(-a)), 1 - exp(a) / (1 + exp(a)))
+    a_grad = g * where(a > 0, exp(-a) / (1 + exp(-a)), 1 - exp(a) / (1 + exp(a)))
     put_grad(a, a_grad)
 
     return fwd

@@ -1795,6 +1795,7 @@ ex.register_implementation(
     ltorch.max_pool3d, max_pool3d, checker=_always_executable, grad_transform=max_pool3d_bwd_wrapper
 )
 
+
 def log_sigmoid_backward_meta(
     g: TensorProxy,
     a: TensorProxy,
@@ -1802,11 +1803,13 @@ def log_sigmoid_backward_meta(
 ) -> TensorProxy:
     return TensorProxy(like=a)
 
+
 log_sigmoid_backward = ex.register_operator(
     "torch.ops.aten.log_sigmoid_backward",
     meta=log_sigmoid_backward_meta,
     fn=torch.ops.aten.log_sigmoid_backward,
 )
+
 
 def log_sigmoid_backward_wrapper(
     a: TensorProxy,
@@ -1825,6 +1828,7 @@ def log_sigmoid_backward_wrapper(
         a_grad = log_sigmoid_backward(g, a, placeholder_buffer)
     put_grad(a, a_grad)
     return fwd
+
 
 ex.register_implementation(
     ltorch.logsigmoid,
