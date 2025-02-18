@@ -102,6 +102,12 @@ class Executor:
     def can_fuse(self, bsym: BoundSymbol) -> bool:
         sym = bsym.sym
 
+        # !!! this is probably horribly wrong, please help
+        import thunder.core.prims as prims
+
+        if sym.id == prims.PrimIDs.COPY_:
+            return False
+
         if sym.is_fusion:
             return False
 

@@ -155,6 +155,7 @@ class PrimIDs(Enum):
     EMPTY = auto()
     TENSOR_FROM_SEQUENCE = auto()
     CLONE = auto()
+    UPDATE_ALIASES = auto()
     # Probability distribution-related ops
     MULTINOMIAL = auto()
     GET_AND_UPDATE_RNG_STATE = auto()
@@ -2961,6 +2962,18 @@ def _clone_meta(a: TensorProxy, **kwargs) -> TensorProxy:
 
 
 clone = make_prim(PrimIDs.CLONE, "clone", meta=_clone_meta)
+
+
+def _update_aliases_meta(aliases: tuple[TensorProxy], /) -> tuple[TensorProxy]:
+    return tuple(TensorProxy(like=a, requires_grad=a.requires_grad) for a in aliases)
+
+
+update_aliases = make_prim(
+    PrimIDs.UPDATE_ALIASES,
+    "update_aliases",
+    meta=_update_aliases_meta,
+    # tags=(OpTags.DONT_DCE,)
+)
 
 
 # Prim to construct a Tensor from sequence/nested sequence of Numbers.

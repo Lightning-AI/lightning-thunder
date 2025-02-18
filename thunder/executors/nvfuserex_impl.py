@@ -1364,6 +1364,10 @@ def _elementwise_unary_check(a: Number | TensorProxy) -> bool:
     return is_supported_tensor_or_number(a)
 
 
+def _elementwise_nnary_check(args: tuple[TensorProxy]) -> bool:
+    return are_supported_tensors_or_numbers(*args)
+
+
 # NOTE nv_abs to avoid a name conflict with the builin abs
 def nv_abs(a: Number | TensorProxy, /, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
@@ -1722,6 +1726,16 @@ def clone(a: TensorProxy, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
 
 
 register_supported(PrimIDs.CLONE, clone, _elementwise_unary_check)
+
+
+def update_aliases(aliases: tuple[TensorProxy], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+    nvaliases = tuple(getnv(alias, fd, lc_to_nv_map) for alias in aliases)
+
+    return tuple(fd.ops.set(nvalias) for nvalias in nvaliases)
+
+
+register_supported(PrimIDs.UPDATE_ALIASES, update_aliases, _elementwise_nnary_check)
+
 
 #
 # Elementwise binary operations

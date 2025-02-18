@@ -41,6 +41,9 @@ from thunder.core.functionalization import (
     check_inplace_to_views,
     functionalize_inplace_ops,
 )
+from thunder.core.update_aliases import (
+    insert_alias_updates,
+)
 from thunder.core.recipe import Recipe, Lookaside
 from thunder.common import (
     CompileData,
@@ -544,7 +547,12 @@ def jit(
             computation_trc = remove_context_manager_prims_from_trace(computation_trc)
             computation_traces.append(computation_trc)
 
-            orig_to_view_swap_map = check_inplace_to_views(computation_trc)
+            if not compile_options.get("skip_inplace_alias_updates", False):
+                computation_traces.extend([insert_alias_updates(computation_trc)])
+                computation_trc = computation_traces[-1]
+            else:
+                orig_to_view_swap_map = check_inplace_to_views(computation_trc)
+
             if not compile_options.get("skip_inplace_functionalization", False):
                 alias_tensor_indices = []
                 if alias_tensor_indices_str := cache_info["alias_tensor_indices"]:
