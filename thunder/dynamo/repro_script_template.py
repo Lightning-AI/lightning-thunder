@@ -55,7 +55,7 @@ test_{graph_name}()
 '''
 
 
-benchmark_multi_exe_code_template = '''
+pytest_benchmark_multi_exe_code_template = '''
 """
 Environment information get from `torch.utils.collect_env.get_pretty_env_info()`:
 {torch_env}
@@ -136,5 +136,24 @@ bsym = fusion_symbols[0]
 # Additionally, it's recommended to visually verify that `bsym` matches the
 # `nvFusion` function above by printing it using `print(bsym)`.
 torch_compiled_callable = make_torch_compile_callable(bsym.subsymbols, bsym.flat_args, bsym.flat_outs)
-out = torch_compiled_callable(*inputs)
 """
+
+repro_bench_code_template = '''
+"""
+Environment information get from `torch.utils.collect_env.get_pretty_env_info()`:
+{torch_env}
+
+Versions of Thunder related libraries:
+{thunder_pkgs}
+
+{extra_comment_str}
+"""
+{import_str}
+
+def test_{graph_name}():
+{dynamo_module}
+
+{inputs}
+
+    model = DynamoModule()
+'''

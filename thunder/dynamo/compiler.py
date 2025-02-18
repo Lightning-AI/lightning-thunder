@@ -17,14 +17,31 @@ from thunder.dynamo.utils import (
 )
 from thunder.dynamo.splitter import _splitter
 from thunder.core.utils import check
+from thunder.dynamo.benchmark_utils import ThunderCompileSpecification
+from thunder.transforms.extraction_only_prologue_transform import ExtractionOnlyPrologueTransform
 
 if TYPE_CHECKING:
     from thunder.dynamo.utils import SubgraphInfo
+    from thunder.core.transform_common import Transform
     from os import PathLike
     from collections.abc import Callable
 
 
 _DEFAULT_THUNDER_FUSION_TYPE = "dataflow"
+
+
+def _add_prologue_pruning(options: dict):
+    """
+    Add a transform to prune prologue checks to the list of transforms in the given options dictionary.
+
+    Args:
+        options: The dictionary of options to modify
+    """
+    transforms: list[Transform] | None = options.get("transforms", None)
+    if transforms is None:
+        transforms = []
+    transforms.append(ExtractionOnlyPrologueTransform())
+    options["transforms"] = transforms
 
 
 class ThunderCompiler:
@@ -67,6 +84,9 @@ class ThunderCompiler:
         self.subgraph_infos: list[SubgraphInfo] = []
 
         thunder_options["fusion_type"] = thunder_options.get("fusion_type", _DEFAULT_THUNDER_FUSION_TYPE)
+        # NOTE: Dynamo already adds guards for modules by default (see flag `torch._dynamo.config.guard_nn_modules`), so thunder can avoid adding extra metadata checks for parameters
+        #       in prologue.
+        _add_prologue_pruning(thunder_options)
         self.thunder_options = thunder_options
         self._thunder_jit = partial(jit, **thunder_options)
         self._torch_compile = torch.compile
@@ -139,12 +159,14 @@ class ThunderCompiler:
                             "from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform",
                         ]
                     )
+
+                compile_fn = ThunderCompileSpecification(**self.thunder_options)
                 if not use_pytest_benchmark:
-                    report.write_repro(
+                    report.write_repro_v2(
                         reproducer_folder,
-                        f"{report.graph_name}_repro.py",
-                        executor_str=thunder_ex_str,
-                        import_str=import_str,
+                        file_name=f"{report.graph_name}_repro.py",
+                        compile_fn=compile_fn,
+                        check_consistency=True,
                         serialize_inputs=serialize_inputs,
                         inputs=example_inputs[subgraph_idx],
                         extra_comment_str=split_reason_str,
@@ -158,7 +180,7 @@ class ThunderCompiler:
                     executor_names_list.append("thunder_cudagraph")
                     executors.append("partial(thunder.jit, transform=CUDAGraphTransform())")
 
-                report.write_benchmark_repro(
+                report.write_pytest_benchmark(
                     reproducer_folder,
                     f"{report.graph_name}_benchmark.py",
                     executor_names_list,
