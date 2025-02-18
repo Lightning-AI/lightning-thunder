@@ -15,7 +15,6 @@ from thunder.core.utils import sequencify, create_python_callable_from_bsym
 from thunder.dynamo.compiler import thunderfx
 from thunder.dynamo.utils import (
     _get_example_inputs_from_placeholder,
-    _create_random_tensor_from_tensor_metadata,
     _readable,
     arg_like,
     get_env,
@@ -661,7 +660,7 @@ class ThunderSplitGraphReport(FXGraphReport):
         return f"<ThunderSplitGraphReport with {len(self.fusion_reports)} ThunderFusionReport accessible via .fusion_reports>"
 
     def _create_thunder_traces(self):
-        example_inputs = [_create_random_tensor_from_tensor_metadata(a) for a in self.example_input]
+        example_inputs = self.make_example_inputs()
         # Executes to get the trace
         run_forward_backward(self.compiled_fn, *example_inputs)
         self.fwd_trc = last_traces(self.compiled_fn)[-1]
@@ -1097,7 +1096,7 @@ def thunderfx_benchmark_report(
             print(f"The scripts are saved: {filename1}, {filename2}")
         print("\n")
 
-    results = fx_report(fn, *args, compile_options=thunder_compile_kwargs, **kwargs)
+    results = fx_report(fn, *args, **kwargs)
     if thunder_compile_kwargs is None:
         thunder_compile_kwargs = {}
     thunderjit_specification = ThunderCompileSpecification(**thunder_compile_kwargs)
