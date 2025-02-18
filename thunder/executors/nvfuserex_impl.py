@@ -57,7 +57,7 @@ from thunder.executors.utils import (
 )
 
 from thunder.executors.passes import update_fusion_call_ctx
-from thunder.extend import FUEL_LEVEL, FusionExecutor, register_executor, add_default_executor, fuse_bound_symbols
+from thunder.extend import FUEL_LEVEL, FusionExecutor, register_executor, add_default_executor
 from thunder.executors.nvfuserex import nvfuser_version
 
 # NOTE This impl file is here because nvFuser may not be available, so it's imported conditionally
@@ -849,12 +849,26 @@ class nvFuserExecutor(FusionExecutor):
         fusedtrace: TraceCtx = from_trace(trace)
 
         producers, consumers = utils.producers_and_consumers(trace)
+        from thunder.executors.data_dependent_partition import Node, fuse_bound_symbols
 
         fused_bsyms = []
 
-        bound_symbol_groups = fuse_bound_symbols(
-            trace, lambda bsym: self.can_fuse(bsym) and self.has_cuda_input_or_output(bsym)
-        )  # _should_fuse)
+        # TODO has_cuda_input_or_output is too restrictive a check on what should be fused
+        # TODO check whether a function would output a CPU tensor? -- can nvFuser fuse such operations?
+        #   ex. device_put to a CPU device from a CUDA device
+        def _should_fuse(a: Node, b: Node):
+            def _can_fuse_node(n: Node):
+                # if already merged, then node can be fused
+                if len(n.group_bsyms) > 1:
+                    return True
+                bsym: BoundSymbol = n.group_bsyms[0]
+                can_fuse: bool = self.can_fuse(bsym)
+                cuda_in_or_out: bool = self.has_cuda_input_or_output(bsym)
+                return can_fuse and cuda_in_or_out
+
+            return _can_fuse_node(a) and _can_fuse_node(b)
+
+        bound_symbol_groups = fuse_bound_symbols(trace, _should_fuse)
 
         # Counts how many fusions (per executor) have been constructed
         #   (Used to name fusions like nvFusion0, nvFusion1, ...)
