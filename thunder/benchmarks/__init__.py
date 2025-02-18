@@ -3193,12 +3193,12 @@ class SGDBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     @classmethod
     @property
     def name(cls) -> str:
-        return "litgpt-sgd"
+        return "optim-functional-sgd"
 
     @classmethod
     @property
     def description(cls) -> str:
-        return "LitGPT's 'SGD' optimizer"
+        return "Benchmark 'torch.optim._functional.sgd' optimizer"
 
     @classmethod
     @property
@@ -3223,7 +3223,7 @@ class SGDBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         self.devices: list[str] = [device]
 
     def make_batch(self) -> tuple[list, dict]:
-        pt = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=False)
+        pt = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
         params = [pt(shape) for shape in self.params]
         d_p_list = [pt(d_p) for d_p in self.params]
         momentum_buffer_list = [pt(mbl) for mbl in self.params]
