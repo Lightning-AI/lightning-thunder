@@ -477,7 +477,7 @@ def to(
     input_dtype = a.dtype
     if copy and not _will_to_return_self(input_device, input_dtype, device, dtype, memory_format, copy):
         b = prims.empty(a.shape, device=input_device, dtype=input_dtype)
-        return _copy_(a, b)
+        return _copy_(b, a)
 
     device, dtype = _parse_to_device_and_dtype(
         tensor_dtype_or_device, optional_positional_dtype, device=device, dtype=dtype

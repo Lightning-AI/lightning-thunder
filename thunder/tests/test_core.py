@@ -1872,9 +1872,11 @@ def test_torch_tensor_to_return_type():
         return a.to(copy=True)
 
     jfoo = thunder.jit(torch_to)
-    result = jfoo(a)
+    thunder_result = jfoo(a)
+    torch_result = torch_to(a)
 
-    assert result is not a
+    assert thunder_result is not a
+    assert_close(torch_result, thunder_result)
 
 
 # TODO See issue "Add contiguous and clang.stride_order OpInfos that check stride
