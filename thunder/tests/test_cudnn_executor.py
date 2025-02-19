@@ -4,7 +4,7 @@ from typing import Any
 import pytest
 import torch
 from looseversion import LooseVersion
-from torch.testing import assert_close
+from torch.testing import assert_close, make_tensor
 
 import thunder
 import thunder.core.devices as devices
@@ -12,7 +12,7 @@ from thunder import dtypes
 from thunder.core.transforms import vjp
 from thunder.core.utils import flatten_func
 from thunder.tests.framework import instantiate, NOTHING, ops, requiresCUDA, run_snippet, TorchExecutor, version_between
-from thunder.tests.make_tensor import make_tensor, make_tensor_like
+from thunder.tests.make_tensor import make_tensor_like
 from thunder.tests.opinfos import get_opinfo, OpInfo
 from thunder.tests.test_grad import _make_differentiable_wrapper
 

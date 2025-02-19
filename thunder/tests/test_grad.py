@@ -9,6 +9,7 @@ import fdm
 import numpy as np
 import pytest
 import torch
+from torch.testing import make_tensor
 
 import thunder
 import thunder.core.dtypes as dtypes
@@ -31,7 +32,7 @@ from thunder.tests.framework import (
     requiresCUDA,
     version_between,
 )
-from thunder.tests.make_tensor import make_tensor, make_tensor_like
+from thunder.tests.make_tensor import make_tensor_like
 from thunder.tests.opinfos import get_opinfo, opinfos, tensor_creation_ops
 
 # TODO: Move this to thunder.tests.opinfos

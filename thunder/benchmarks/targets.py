@@ -8,6 +8,7 @@ from contextlib import nullcontext
 
 import pytest
 import torch
+from torch.testing import make_tensor
 
 from lightning_utilities.core.imports import package_available
 
@@ -47,7 +48,6 @@ from thunder.benchmarks import (
 from thunder.core.interpreter import interpret
 
 from thunder.tests.litgpt_model import Config as LitGPTConfig
-from thunder.tests.make_tensor import make_tensor
 
 LIGER_FUSED_SWIGLU_AVAILABLE: bool = package_available("liger_kernel.ops.swiglu")
 APEX_FUSED_ROPE_AVAILABLE: bool = package_available("fused_rotary_positional_embedding")

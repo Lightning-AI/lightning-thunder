@@ -476,7 +476,7 @@ def _get_example_input_tensor_metadata(t: torch.Tensor) -> ExampleInputMetaData:
 
 
 def _create_random_tensor_from_tensor_metadata(t: ExampleInputMetaData) -> torch.Tensor:
-    from thunder.tests.make_tensor import make_tensor
+    from torch.testing import make_tensor
 
     return make_tensor(t.storage_shape, dtype=t.dtype, device=t.device, requires_grad=t.requires_grad).as_strided(
         t.shape, t.stride()

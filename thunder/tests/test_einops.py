@@ -4,11 +4,10 @@ from functools import partial, wraps
 
 import pytest
 import torch
-from torch.testing import assert_close
+from torch.testing import assert_close, make_tensor
 
 import thunder
 from thunder.tests.opinfos import get_opinfo
-from thunder.tests.make_tensor import make_tensor
 from thunder.core.transforms import grad
 
 

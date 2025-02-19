@@ -14,7 +14,7 @@ import random
 # TODO: make this import conditional on Torch being available and querying if should test with torch
 import torch
 from looseversion import LooseVersion
-from torch.testing import assert_close
+from torch.testing import assert_close, make_tensor
 
 import thunder.clang as clang
 import thunder.core.devices as devices
@@ -25,7 +25,7 @@ from thunder.core.pytree import tree_map
 from thunder.core.symbol import Symbol
 import thunder.executors as executors
 from thunder.tests.framework import _all_devicetypes, JAX_AVAILABLE, custom_comparator, IS_WINDOWS
-from thunder.tests.make_tensor import make_tensor, make_tensor_like
+from thunder.tests.make_tensor import make_tensor_like
 import thunder.tests.bf16
 import thunder.torch as ltorch
 
@@ -8269,7 +8269,7 @@ def scaled_dot_product_attention_sample_generator(op, device, dtype, requires_gr
 
     # mask cases
     q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
-    bool_attn_mask = make((L, S), dtype=torch.bool, low=1, high=1, requires_grad=False).tril()
+    bool_attn_mask = torch.ones((L, S), dtype=torch.bool, requires_grad=False).tril()
     yield SampleInput(q, k, v, attn_mask=bool_attn_mask, is_causal=False)
 
     q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
@@ -8279,7 +8279,7 @@ def scaled_dot_product_attention_sample_generator(op, device, dtype, requires_gr
     # mask with extra padding: this case will raise if https://github.com/pytorch/pytorch/issues/103749 is fixed
     # when that happens, update the SDPA impl and remove this comment
     q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
-    bool_attn_mask = make((L, S), dtype=torch.bool, low=1, high=1, requires_grad=False).tril()
+    bool_attn_mask = torch.ones((L, S), dtype=torch.bool, requires_grad=False).tril()
     bool_attn_mask[-1, :] = False
     yield SampleInput(q, k, v, attn_mask=bool_attn_mask, dropout_p=0.0, is_causal=False)
 
