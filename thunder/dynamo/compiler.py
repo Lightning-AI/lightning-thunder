@@ -181,7 +181,8 @@ def thunderfx(fn: Callable, /, **kwargs) -> Callable:
     import thunder
 
     # lightning has torch.compile wrapped in `lightning/fabric/wrappers.py`
-    torch_compile_kwarg_names = inspect.getfullargspec(inspect.unwrap(torch.compile)).kwonlyargs
+    torch.compile = inspect.unwrap(torch.compile)
+    torch_compile_kwarg_names = inspect.getfullargspec(torch.compile).kwonlyargs
     thunder_jit_kwarg_names = inspect.getfullargspec(thunder.jit).kwonlyargs
     overlap = [kwarg_name for kwarg_name in thunder_jit_kwarg_names if kwarg_name in torch_compile_kwarg_names]
     check(

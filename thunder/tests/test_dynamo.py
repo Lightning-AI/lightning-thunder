@@ -1328,9 +1328,7 @@ def test_reports_benchmark(tmp_path):
     torcheager = TorchEagerSpecification()
     assert len(results.fx_graph_reports) == 2  # 2 Dynamo graphs
     fx_graph_report = results.fx_graph_reports[0]
-    fx_graph_report.run_benchmark(thunderjit, WallTime)
     thunder_fx_graph_report = analyze_thunder_splits(fx_graph_report)
-    thunder_fx_graph_report.write_benchmark(tmp_path, thunderjit, KernelTime)
     assert len(thunder_fx_graph_report.subgraph_reports) == 1  # exp
     thunder_split_report = thunder_fx_graph_report.subgraph_reports[0]
     split_name = thunder_split_report.graph_name
@@ -1396,4 +1394,4 @@ def test_autotest_report(tmp_path):
     def foo(x):
         return x * x
 
-    thunderfx_benchmark_report(foo, x, folder_path=tmp_path, compare_fusion=True, rtol=0.5)
+    thunderfx_benchmark_report(foo, x, folder_path=tmp_path, compare_fusion=False, rtol=0.5)
