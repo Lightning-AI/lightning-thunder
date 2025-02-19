@@ -1836,14 +1836,6 @@ def logsigmoid(a: TensorProxy, /) -> TensorLike:
     return where(a > 0, -log1p(exp(-a)), a - log1p(exp(a)))
 
 
-@torchsymbol("log_sigmoid_backward", id="log_sigmoid_backward")
-def log_sigmoid_backward(g: TensorProxy, a: TensorProxy, buffer: TensorProxy) -> TensorLike:
-    # buffer is used by PyTorch in cpu-based calculations.  See
-    # https://github.com/pytorch/pytorch/blob/7667235a23e2ffca4d32e6e16aa60a683418e159/torch/_decomp/decompositions.py#L332
-    # This is addressed in the custom grad fn thunder.core.transforms._log_sigmoid_grad.
-    return g * where(a > 0, exp(-a) / (1 + exp(-a)), 1 - exp(a) / (1 + exp(a)))
-
-
 # TODO Should this use clamp? -- Would that propagate NaNs properly?
 @torchsymbol(torch.relu, torch.nn.functional.relu, id="torch.relu", is_method=True)
 def relu(a: TensorLike, /, inplace: bool = False) -> TensorLike:
