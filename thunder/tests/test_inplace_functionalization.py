@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 import torch.testing
-from torch.testing import make_tensor
 
 import thunder
 import thunder.core.devices as devices
@@ -22,7 +21,7 @@ from thunder.tests.framework import (
     nvFuserExecutor,
 )
 from thunder.tests.opinfos import opinfos, OpInfo, make_number, SampleInput
-from thunder.tests.make_tensor import make_tensor_like
+from thunder.tests.make_tensor import make_tensor, make_tensor_like
 from thunder.torch import _torch_to_thunder_function_map, _inplace_to_out_of_place
 
 if TYPE_CHECKING:

@@ -33,7 +33,7 @@ from thunder.executors.sdpaex import sdpa_ex
 from thunder.executors.torch_compile import torch_compile_cat_ex, torch_compile_ex
 from thunder.transforms.cudagraph import CUDAGraphTransform
 from thunder.tests import nanogpt_model, hf_bart_self_attn
-from thunder.tests.make_tensor import make_tensor_like
+from thunder.tests.make_tensor import make_tensor, make_tensor_like
 
 MAX_ALLOCATED_MEMORY_KEYWORD = "max_allocated_memory_MB"
 

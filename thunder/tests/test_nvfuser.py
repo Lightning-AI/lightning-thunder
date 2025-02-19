@@ -2,7 +2,6 @@ import pytest
 from functools import partial
 
 import torch
-from torch.testing import make_tensor
 
 import thunder
 import thunder.examine as examine
@@ -34,6 +33,7 @@ from thunder.tests.framework import (
     nvFuserExecutor,
     TorchExecutor,
 )
+from thunder.tests.make_tensor import make_tensor
 from thunder.tests.opinfos import (
     opinfos,
     tensor_creation_ops,

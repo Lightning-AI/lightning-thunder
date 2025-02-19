@@ -9,7 +9,6 @@ import torch.fx
 import torch.nn as nn
 import torch.nn.functional as F
 from looseversion import LooseVersion
-from torch.testing import make_tensor
 from unittest.mock import patch
 import weakref
 
@@ -28,6 +27,7 @@ from thunder.tests.framework import (
     requiresCUDA,
     version_between,
 )
+from thunder.tests.make_tensor import make_tensor
 from thunder.dynamo.report import thunderfx_report, fx_report, analyze_thunder_splits
 from thunder.dynamo.benchmark_utils import (
     ThunderCompileSpecification,

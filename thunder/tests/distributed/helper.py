@@ -9,10 +9,10 @@ import sys
 
 import torch
 import torch.nn as nn
-from torch.testing import make_tensor
 
 from thunder.core import devices
 from thunder.tests.framework import TorchExecutor, nvFuserExecutor
+from thunder.tests.make_tensor import make_tensor
 
 try:
     import expecttest

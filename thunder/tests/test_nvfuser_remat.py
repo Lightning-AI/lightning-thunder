@@ -2,7 +2,6 @@ import pytest
 from functools import partial, wraps
 
 import torch
-from torch.testing import make_tensor
 
 import thunder
 import thunder.examine
@@ -22,6 +21,7 @@ from thunder.core.transforms import value_and_grad
 from thunder.core.trace import TraceCtx
 from thunder.examine import get_fusions
 from thunder.tests.framework import instantiate, NOTHING, nvFuserExecutor, TorchExecutor, requiresCUDA
+from thunder.tests.make_tensor import make_tensor
 import thunder.torch as ltorch
 
 

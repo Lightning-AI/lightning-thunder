@@ -1,7 +1,6 @@
 import pytest
 
 import torch
-from torch.testing import make_tensor
 
 import thunder
 from thunder.core.pytree import tree_map
@@ -9,6 +8,7 @@ import thunder.torch as ltorch
 from thunder.examine.memory_calculation import get_alloc_memory
 
 from thunder.tests.framework import requiresCUDA, TorchExecutor
+from thunder.tests.make_tensor import make_tensor
 
 
 def measure_memory_usage(trace):

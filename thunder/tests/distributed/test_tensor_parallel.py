@@ -266,8 +266,8 @@ class TensorParallelTest(DistributedParallelTestCase):
     def test_litgpt_causal_self_attention(self):
         from thunder.tests.litgpt_model import Config
         from thunder.tests.litgpt_model import CausalSelfAttention
+        from thunder.tests.make_tensor import make_tensor
         from thunder.distributed.prims import PrimIDs
-        from torch.testing import make_tensor
 
         device = torch.device(f"cuda:{self.rank}")
         dtype = torch.bfloat16
