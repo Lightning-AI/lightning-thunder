@@ -1426,10 +1426,15 @@ def _scaled_mm_transform(
     use_fast_accum: bool = False,
 ):
 
+    def is_row_major(mat: TensorLike) -> bool:
+        return mat.stride()[1] == 1 and mat.stride()[0] > 1
+
     def is_column_major(mat: TensorLike) -> bool:
-        return mat.stride()[0] == 1 and mat.stride()[0] > 1
+        return mat.stride()[0] == 1 and mat.stride()[1] > 1
 
     result_dtype: torch.dtype = to_torch_dtype(a.dtype if out_dtype is None else out_dtype)
+    if not is_row_major(a):
+        a = a.contiguous()
     if not is_column_major(b):
         b = b.t().contiguous().t()
 
