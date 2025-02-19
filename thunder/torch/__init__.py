@@ -5134,7 +5134,7 @@ def _nll_loss_helper(
         padding = [(0, 0, 0)] * out.ndim
         padding[class_dim] = (0, 1, 0)
         padded_out = clang.pad(out, utils.const_as(0, out.dtype), padding)
-        # with the cap and pad, all ignore_index entries would be all zero, mimicing the skip behabior
+        # with the cap and pad, all ignore_index entries would be all zero, mimicking the skip behavior
         out = take_along_dim(padded_out, bcast_target, class_dim)
 
     # This section handles applying the reduction parameter to the output.
