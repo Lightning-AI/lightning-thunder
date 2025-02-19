@@ -1041,6 +1041,20 @@ def thunderfx_benchmark_report(
         return f"{a / time_scale:.3f} {time_unit}"
 
     def check_threshold_log(a: float, b: float, a_name: str, b_name: str, test_name: str, timer_name: str):
+        """
+        Compare two timing measurements against a defined threshold and generate a log message.
+
+        Parameters:
+            a, b (float): Timing measurement for the compilation methods. Typically obtained from `Measurement.median`.
+            a_name, b_name (str): Identifier for the two compilation methods to be compared (e.g., thunder, torch.compile).
+            test_name (str): Name of the function whose performance is being measured.
+            timer_name (str): Identifier for the timing mechanism used.
+
+        Returns:
+            Tuple[bool, str]: A tuple where:
+                - The first element is a boolean indicating whether the performance difference exceeds the threshold.
+                - The second element is a log string detailing the comparison results.
+        """
         a_time_str = get_pretty_time_str(a)
         b_time_str = get_pretty_time_str(b)
         if not check_threshold(a, b, rtol=rtol, atol=atol):

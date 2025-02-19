@@ -503,7 +503,7 @@ def _get_example_inputs_from_placeholder(
     """
     check(node.op == "placeholder", lambda: f"The node must be placeholder type", ValueError)
     # Prefers to use actual example value in GraphArg if available
-    if "grapharg" in node.meta:
+    if "grapharg" in node.meta and node.meta["grapharg"]._example() is not None:
         ev = node.meta["grapharg"].example
         if isinstance(ev, torch.Tensor):
             ev_metadata = _get_example_input_tensor_metadata(ev)

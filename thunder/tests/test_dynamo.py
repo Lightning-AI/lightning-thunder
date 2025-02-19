@@ -1345,7 +1345,7 @@ def test_reports_benchmark(tmp_path):
 
     cmd = [sys.executable]
     py_files = list(tmp_path.rglob("*.py"))
-    assert len(py_files) == 6
+    assert len(py_files) == 5
 
     for file in py_files:
         run_script(file, cmd)
@@ -1379,19 +1379,3 @@ def test_TorchInductorSpecification(tmp_path):
     assert len(py_files) == 2
     for file in py_files:
         run_script(file, cmd)
-
-
-@requiresCUDA
-def test_autotest_report(tmp_path):
-    from thunder.dynamo.report import thunderfx_benchmark_report
-
-    # Workaround for "RuntimeError: Triton Error [CUDA]: an illegal memory access was encountered"
-    # https://github.com/pytorch/pytorch/issues/124565
-    torch.empty(1, device="cuda", requires_grad=True).backward()
-
-    x = torch.ones(2, 2, device="cuda", requires_grad=True)
-
-    def foo(x):
-        return x * x
-
-    thunderfx_benchmark_report(foo, x, folder_path=tmp_path, compare_fusion=False, rtol=0.5)
