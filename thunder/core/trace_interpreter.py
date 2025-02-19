@@ -287,11 +287,11 @@ class TraceSubstitutionProcessor:
                     old = old.replace(shape=new._shape)
 
             if isinstance(new, VJPDual):
-                self.swap_map[variableify(old.primal)] = new
+                self.swap_map[variableify(new.primal)] = old
                 new.primal = old
             else:
                 assert isinstance(new, ProxyInterface), (old, new)
-                self.swap_map[variableify(old)] = new
+                self.swap_map[variableify(new)] = old
 
     def do_swap(self, v):
         if isinstance(v, VJPDual):
