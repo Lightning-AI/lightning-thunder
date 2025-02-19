@@ -7,6 +7,8 @@ from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 import textwrap
+import copy
+
 
 import torch
 from torch.utils.benchmark.utils.common import select_unit as select_time_unit
@@ -603,7 +605,7 @@ def fx_report(fn: Callable, *args, compile_options: dict = None, **kwargs) -> FX
 
     def helper_backend(gm, example_inputs):
         """Helper function to collect FX graphs."""
-        graphs.append(gm)
+        graphs.append(copy.deepcopy(gm))
         return gm.forward
 
     if compile_options is None:
