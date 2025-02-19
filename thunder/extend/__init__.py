@@ -581,24 +581,3 @@ def add_executor_lists(
             new_exc_list.append(exc)
 
     return new_exc_list
-
-
-def fuse_bound_symbols(trace: TraceCtx, can_fuse: Callable):
-    """Utility function for creating fusions in the `trace`.
-    `can_fuse` should be a callable mapping a BoundSymbol argument
-    to bool, whether the symbol is fusible.
-    Returns the bound symbols as a list of lists of bound symbols,
-    each element representing a fusion (if it contains multiple) or
-    single elements."""
-    fusions = [[]]
-    for bsym in trace.bound_symbols:
-        if can_fuse(bsym):
-            fusions[-1].append(bsym)
-        else:
-            if fusions[-1]:
-                fusions.append([])
-            fusions[-1].append(bsym)
-            fusions.append([])
-    if not fusions[-1]:
-        del fusions[-1]
-    return fusions

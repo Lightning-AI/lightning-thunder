@@ -73,12 +73,12 @@ class SplitReason:
     Attributes:
         reason_type: Reason for the split.
         info: String with details of what caused the split.
-        exception: Exception if there was any.
+        exception: String with details of exception if there was any.
     """
 
     reason_type: SplitReasonType
     info: str | None
-    exception: Exception | None = None
+    exception: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -248,7 +248,7 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
             return False, SplitReason(
                 SplitReasonType.EXCEPTION_PROXY_THUNDER_OP,
                 f"Failed while creating proxy for node with name: {node.name} and target: {node.target}, see exception field",
-                exception=e,
+                exception=str(e),
             )
 
         # We need to be under trace context to generate proxies.
@@ -259,7 +259,7 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
                 return False, SplitReason(
                     SplitReasonType.EXCEPTION_META_THUNDER_OP,
                     f"Failed while running meta for node with name: {node.name} and target: {node.target}, see exception field",
-                    exception=e,
+                    exception=str(e),
                 )
 
         # Execution with proxies was successful.
@@ -393,7 +393,7 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
             return False, SplitReason(
                 SplitReasonType.EXCEPTION_PROXY_THUNDER_OP,
                 f"Failed while creating proxy for node with name: {node.name} and target: {node.target}, see exception field",
-                exception=e,
+                exception=str(e),
             )
         # NOTE: `get_method` may throw if relevant method is not found, so we have guarded it with `has_method`.
         method = torchctx.get_method(node.target, args, kwargs)
@@ -666,7 +666,7 @@ def _readable(
     module_code = verbose_python_code.src
     module_code = module_code.lstrip("\n")
     module_code = f"class {module_name}(torch.nn.Module):\n" + module_code
-    module_code = _addindent(module_code, 2)
+    module_code = _addindent(module_code, 4)
 
     submodule_code_list = [""]
     for submodule_name, submodule in module.named_children():
@@ -716,25 +716,7 @@ def thunder_options_to_str(thunder_options: dict) -> str:
     return option_str
 
 
-def reproducer(
-    gm: torch.fx.GraphModule,
-    subgraph_info: SubgraphInfo,
-    thunder_options: dict,
-    args: tuple[torch.Tensor | ExampleInputMetaData],
-    folder: str | os.PathLike,
-    graph_name: str,
-    use_pytest_benchmark: bool = False,
-):
-    folder = Path(folder)
-    folder.mkdir(exist_ok=True)
-    torch_env, thunder_pkgs = get_env()
-    # Ideally we'd use print_readable, but we want verbose=False and there's no
-    # way to set that with print_readable.
-    readable = _readable(gm, "DynamoModule", print_output=False)
-    has_cuda_args = any(hasattr(arg, "device") and arg.device.type == "cuda" for arg in args)
-    thunder_options_str = thunder_options_to_str(thunder_options)
-
-    # split reason
+def get_split_reasons_string(subgraph_info: SubgraphInfo) -> str:
     split_reason_str = "Split Information:\n"
     if subgraph_info.split_reasons:
         num_submodules = len(subgraph_info.submodule_to_compiled_functions)
@@ -746,91 +728,13 @@ def reproducer(
             split_reason_str += f"  Split Reason {id}:\n    {split_reason.info}\n"
     else:
         split_reason_str += "The original graph is not split, and is entirely run by Thunder.\n"
+    return split_reason_str
 
-    with open(folder / f"{graph_name}.py", "w") as f:
-        comment_str = f'''"""
-Environment information get from `torch.utils.collect_env.get_pretty_env_info()`:
-{torch_env}
 
-Versions of Thunder related libraries:
-{thunder_pkgs}
-
-'''
-        comment_str += f'{split_reason_str}"""\n'
-        del split_reason_str
-        if use_pytest_benchmark:
-            comment_str += f"""# NOTE: This script requires `pytest-benchmark==4.0.0` to be installed.
-# To execute the script, run `pytest {graph_name}.py --benchmark-timer=torch.utils.benchmark.utils.timer.timer --benchmark-warmup=on`
-# To check the peak allocated CUDA memory, use --benchmark-json=json_file_name and look at the "max_allocated_memory_MB" field in the json file"""
-        # The packages that are likely to be used by the code generated from the Torch GraphModule
-        code_str = "\n".join([v.import_str for v in torch.fx.graph._custom_builtins.values()])
-        code_str += f"\nfrom functools import partial\nimport thunder\n"
-        if has_cuda_args:
-            code_str += "from thunder.transforms.cudagraph import CUDAGraphTransform\n"
-            code_str += "from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform\n"
-        if use_pytest_benchmark:
-            code_str += f"""import pytest
-
-# NOTE: The reproducer function has already been processed by TorchDynamo.
-# If we let it go through TorchDynamo again, it could be segmented further.
-# To avoid this, we directly use Inductor here.
-# See issue https://github.com/Lightning-AI/lightning-thunder/issues/1521
-def torch_inductor(fn, inputs):
-    from torch._inductor import compile as inductor_compile
-    from torch.fx import symbolic_trace
-
-    fx_graph = symbolic_trace(fn)
-    return inductor_compile(fx_graph, inputs)
-
-bench_executors_dict = {{}}
-bench_executors_dict["thunder"]=partial(thunder.jit, {thunder_options_str})
-bench_executors_dict["torch_inductor"]=torch_inductor
-bench_executors_dict["eager"]=None
-"""
-            if has_cuda_args:
-                code_str += f"""bench_executors_dict["thunder_cugraph"]=partial(thunder.jit, transform=CUDAGraphTransform())\n"""
-            code_str += f"""
-executors = list(bench_executors_dict.values())
-executor_ids = list(bench_executors_dict.keys())
-
-@pytest.mark.parametrize(
-    "executor,",
-    executors,
-    ids=executor_ids,
-)"""
-            func_str = f"def test_{graph_name}(benchmark, executor):\n{readable}\n"
-        else:
-            func_str = f"def test_{graph_name}():\n{readable}\n"
-
-        if any(arg is None for arg in args):
-            func_str += f"# Warning: The inputs that cannot be inferred are set to None, requiring the user to manually give inputs according to the code\n"
-        input_str = f"""inputs = [\n{chr(10).join(arg_like(a) for a in args)}\n"""
-        func_str += f"{_addindent(input_str, 4)}\n]\n"
-
-        if not use_pytest_benchmark:
-            func_str += f"compiled = thunder.jit(DynamoModule(), {thunder_options_str})\n"
-            func_str += "compiled(*inputs)"
-        else:
-            func_str = f"""{func_str}
-mod = DynamoModule()
-if executor == None:
-    compiled = mod
-elif executor == torch_inductor:
-    compiled = executor(mod, inputs)
-else:
-    compiled = executor(mod)
-"""
-            if not has_cuda_args:
-                func_str += f"""benchmark(compiled, *inputs)"""
-            else:
-                func_str += f"""from thunder.benchmarks import record_peak_allocated_memory
-
-with record_peak_allocated_memory(benchmark):
-    benchmark(compiled, *inputs)
-"""
-        print(comment_str, file=f)
-        print(code_str, file=f)
-        print(_addindent(func_str, 4), file=f)
-
-        if not use_pytest_benchmark:
-            print(f"\ntest_{graph_name}()", file=f)
+def get_thunder_module_names(subgraph_info: SubgraphInfo) -> list[str]:
+    thunder_module_names = []
+    for node in subgraph_info.split_graph_module.graph.nodes:
+        target = node.target
+        if isinstance(target, str) and target.startswith("thunder_"):
+            thunder_module_names.append(target)
+    return thunder_module_names

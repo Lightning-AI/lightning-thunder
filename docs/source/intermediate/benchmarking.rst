@@ -272,3 +272,8 @@ As seen earlier, it's possible to write benchmarks for models and not just stand
       benchmark_for_compute_type(compute_type, benchmark, fn, *args, **kwargs)
 
 And that's as simple as that! Just add the decorator ``@parametrize_compute_type`` after your parametrization, add the ``compute_type`` argument, and use ``benchmark_for_compute_type`` to call the benchmark function.
+
+Isolate benchmarks to avoid OutOfMemory errors
+----------------------------------------------
+
+When running multiple benchmarks in sequence, ``pytest`` does not always do a good job cleaning up, and sometimes it happens that, while they work when called standalone, benchmarks fail anyway. The main problem we observed is that memory is not entirely freed before running the next benchmark, therefore the option ``--isolate-benchmarks`` comes in rescue. It will separate the benchmark runs, creating a sub-process for each benchmark configuration and run them one after the other. Logs of failures will be saved in the ``failed_benchmarks_logs`` folder and benchmark results will be saved in the form of json in the ``benchmarks_reports`` folder unless the ``THUNDER_BENCH_DIR`` environment variable is specified.

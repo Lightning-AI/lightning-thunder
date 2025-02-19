@@ -9,6 +9,8 @@ import torch.fx
 import torch.nn as nn
 import torch.nn.functional as F
 from looseversion import LooseVersion
+from unittest.mock import patch
+import weakref
 
 from thunder import dtypes
 from thunder.dynamo import thunderfx
@@ -26,6 +28,16 @@ from thunder.tests.framework import (
     version_between,
 )
 from thunder.tests.make_tensor import make_tensor
+from thunder.dynamo.report import thunderfx_report, fx_report, analyze_thunder_splits
+from thunder.dynamo.benchmark_utils import (
+    ThunderCompileSpecification,
+    TorchCompileSpecification,
+    TorchEagerSpecification,
+    WallTime,
+    KernelTime,
+    BoundSymbolNvfuserSpecification,
+    BoundSymbolTorchCompileSpecification,
+)
 
 
 # This will be applied to all tests in this file.
@@ -826,7 +838,7 @@ def test_dynamo_reproducer_2graph(executor, device: str, dtype: dtypes.dtype, us
 
     from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform
     from thunder import nvfuser_executor
-    from thunder.transforms.cudagraph import CUDAGraphTransform
+    from thunder.transforms import ConstantFolding
 
     def func(x):
         x = torch.sin(x)
@@ -839,8 +851,7 @@ def test_dynamo_reproducer_2graph(executor, device: str, dtype: dtypes.dtype, us
         cfunc = thunderfx(
             func,
             transforms=[
-                NvtxProfileTransform(),
-                CUDAGraphTransform(),
+                ConstantFolding(),
             ],
             executors=[nvfuser_executor],
             cache="constant values",
@@ -855,8 +866,9 @@ def test_dynamo_reproducer_2graph(executor, device: str, dtype: dtypes.dtype, us
     out = cfunc(x)
     cfunc._backend.save_reproducer_to_folder(tmp_path, use_pytest_benchmark=use_pytest_benchmark)
 
-    s1 = f"{tmp_path}/graph0_thunder_0.py"
-    s2 = f"{tmp_path}/graph1_thunder_0.py"
+    suffix = "_benchmark" if use_pytest_benchmark else "_repro"
+    s1 = f"{tmp_path}/graph0_thunder_0{suffix}.py"
+    s2 = f"{tmp_path}/graph1_thunder_0{suffix}.py"
     assert os.path.exists(s1)
     assert os.path.exists(s2)
     cmd = [sys.executable]
@@ -864,8 +876,8 @@ def test_dynamo_reproducer_2graph(executor, device: str, dtype: dtypes.dtype, us
         cmd = cmd + ["-m", "pytest"]
     cmd1 = cmd + [s1]
     cmd2 = cmd + [s2]
-    result1 = subprocess.run(cmd1, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    result2 = subprocess.run(cmd2, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    result1 = subprocess.run(cmd1, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    result2 = subprocess.run(cmd2, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 
     assert result1.returncode == 0, f"Reproducer {s1} failed: {result1}"
     assert result2.returncode == 0, f"Reproducer {s2} failed: {result2}"
@@ -894,7 +906,8 @@ def test_dynamo_reproducer_submodules(use_pytest_benchmark, tmp_path):
     out = jf(x)
     jf._backend.save_reproducer_to_folder(tmp_path, use_pytest_benchmark=use_pytest_benchmark)
 
-    s1 = f"{tmp_path}/graph0_thunder_0.py"
+    suffix = "_benchmark" if use_pytest_benchmark else "_repro"
+    s1 = f"{tmp_path}/graph0_thunder_0{suffix}.py"
     assert os.path.exists(s1)
     cmd = [sys.executable]
     if use_pytest_benchmark:
@@ -960,9 +973,10 @@ def test_dynamo_reproducer_split(executor, device: str, dtype: dtypes.dtype, use
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         assert result.returncode == 0, f"Reproducer {file_name} failed: {result}"
 
-    s1 = f"{tmp_path}/graph0_thunder_0.py"
-    s2 = f"{tmp_path}/graph0_thunder_2.py"
-    s3 = f"{tmp_path}/graph0_thunder_4.py"
+    suffix = "_benchmark" if use_pytest_benchmark else "_repro"
+    s1 = f"{tmp_path}/graph0_thunder_0{suffix}.py"
+    s2 = f"{tmp_path}/graph0_thunder_2{suffix}.py"
+    s3 = f"{tmp_path}/graph0_thunder_4{suffix}.py"
     cmd = [sys.executable]
     if use_pytest_benchmark:
         cmd = cmd + ["-m", "pytest"]
@@ -1040,3 +1054,296 @@ def test_thunderfx_meta_tensor():
     thfoo = thunderfx(foo)
     out = thfoo(t0)
     assert out.device.type == "meta"
+
+
+@requiresCUDA
+def test_report_thunderfx_report(tmp_path, capsys):
+    def foo(x):
+        y = x.sin()
+        torch._dynamo.graph_break()
+        return y + x.cos()
+
+    x = torch.randn(4, 4, device="cuda", requires_grad=True)
+    thunderfx_report(foo, x, folder_path=tmp_path)
+    captured = capsys.readouterr()
+    msg = captured.out
+    assert not captured.err
+    assert "Verifying consistency" in msg
+    assert "Analyzing performance through benchmarking" in msg
+    assert "The input callable can be successfully executed by ThunderFX." in msg
+    assert "Max allocated CUDA memory usage:" in msg
+
+    with patch("torch.compile", side_effect=Exception("compilation raises exception")):
+        thunderfx_report(foo, x, folder_path=tmp_path, check_consistency=False)
+        captured = capsys.readouterr()
+        assert not captured.err
+        assert "Failed to run the function using ThunderFX" in captured.out
+        assert "Failed to save reproducer" in captured.out
+
+
+@instantiate(
+    dtypes=NOTHING,
+    executors=[DynamoThunderExecutor],
+    decorators=(
+        pytest.mark.parametrize("use_benchmark", (True, False), ids=("benchmark", "repro")),
+        pytest.mark.xfail(
+            condition=IS_WINDOWS,
+            strict=True,
+            reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
+        ),
+    ),
+)
+def test_fxreport(executor, device: str, dtype: dtypes.dtype, use_benchmark, tmp_path):
+    def foo(x, y):
+        return x + y
+
+    x = torch.randn(4, 4, device=device, requires_grad=True)
+    y = torch.randn(4, 4, device=device, requires_grad=True)
+    results = fx_report(foo, x, y, compile_options={"dynamic": True})
+    for r in results.fx_graph_reports:
+        r.write_eager_repro(tmp_path, use_benchmark=use_benchmark)
+        r.write_thunder_repro(tmp_path, use_benchmark=use_benchmark)
+        r.write_inductor_repro(tmp_path, use_benchmark=use_benchmark)
+        my_exe = "partial(thunder.jit, executors=[pytorch_executor])"
+        my_imports = [
+            "import thunder",
+            "from thunder import pytorch_executor",
+            "from functools import partial",
+        ]
+        if not use_benchmark:
+            r.write_repro(tmp_path, f"{r.graph_name}_mythunder_repro.py", executor_str=my_exe, import_str=my_imports)
+        else:
+            r.write_pytest_benchmark(
+                tmp_path, f"{r.graph_name}_mythunder_benchmark.py", ["mythunder"], [my_exe], my_imports
+            )
+
+    def check(file_name, cmd):
+        cmd = cmd + [file_name]
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        assert result.returncode == 0, f"Script {file_name} failed: {result}"
+
+    cmd = [sys.executable]
+    if use_benchmark:
+        cmd = cmd + ["-m", "pytest"]
+    py_files = list(tmp_path.glob("*.py"))
+    assert len(py_files) == 4
+
+    for file in py_files:
+        check(file, cmd)
+
+
+def test_leak_on_unsupported_thunder_operator():
+    # This test is to check the fix for a previous leak
+    # which was caused by holding onto the
+    # exception object in split_reason.
+
+    def unsupported_op_fn(w1) -> torch.Tensor:
+        topk_ids = torch.tensor([[0, 1]])
+        # This indexing is not supported by thunder and get's passed to inductor.
+        w13_weights = w1[topk_ids]
+        return w13_weights + 1
+
+    def call_thunderfx_on_leaking_fn():
+        w1 = torch.randn(16, 16, 32, dtype=torch.bfloat16)
+        fn = thunderfx(unsupported_op_fn)
+        fn(w1)
+
+        # There should be two thunder traces because of the split caused by indexing.
+        # In future when thunder supports this indexing, the test will fail here
+        # as we won't be checking for the leak in case of unsupported operation.
+        assert len(fn.last_traces) == 2
+
+        return weakref.ref(w1)
+
+    t_weak_ref = call_thunderfx_on_leaking_fn()
+    assert t_weak_ref() is None
+
+
+@requiresCUDA
+def test_thunder_specific_reports(tmp_path):
+    x = torch.ones(2, 2, device="cuda", requires_grad=True)
+
+    def foo(x):
+        # torch.sinc has automatic fallback registered,
+        # so that operation will be given to inductor.
+        x = x.exp()
+        torch._dynamo.graph_break()
+        y = torch.sinc(x) + torch.cos(x)
+        return y + 1
+
+    results = fx_report(foo, x)
+    for idx, fx_graph_report in enumerate(results.fx_graph_reports):
+        thunder_fx_graph_report = analyze_thunder_splits(fx_graph_report)
+        thunder_fx_graph_report.write_thunder_repro(tmp_path)
+        for thunder_split_report in thunder_fx_graph_report.subgraph_reports:
+            split_folder = tmp_path / str(idx)
+            thunder_split_report.write_eager_repro(split_folder)
+            thunder_split_report.write_thunder_repro(split_folder)
+            thunder_split_report.write_inductor_repro(split_folder)
+            thunder_split_report.create_fusion_reports()
+            for nvf in thunder_split_report.fusion_reports:
+                nvf.write_nvfuser_repro(split_folder / "nvfusion")
+                nvf.write_inductor_repro(split_folder / "nvfusion")
+
+    def check(file_name, cmd):
+        cmd = cmd + [file_name]
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        assert result.returncode == 0, f"Script {file_name} failed: {result}"
+
+    cmd = [sys.executable]
+    py_files = list(tmp_path.rglob("*.py"))
+    assert len(py_files) == 16
+
+    for file in py_files:
+        check(file, cmd)
+
+
+@requiresCUDA
+def test_WallTime_KernelTime():
+    from nvfuser import FusionDefinition, DataType
+
+    def nvfuser_fusion_id2(fd: FusionDefinition) -> None:
+        T0 = fd.define_tensor(
+            shape=[2, 2], contiguity=[True, True], dtype=DataType.Float, is_cpu=False, stride_order=[1, 0]
+        )
+        T1 = fd.define_tensor(
+            shape=[2, 2], contiguity=[True, True], dtype=DataType.Float, is_cpu=False, stride_order=[1, 0]
+        )
+        T2 = fd.ops.cos(T0)
+        T3 = fd.ops.add(T1, T2)
+        S4 = fd.define_scalar(1.00000, dtype=DataType.Double)
+        T5 = fd.ops.add(T3, S4)
+        fd.add_output(T5)
+
+    with FusionDefinition() as fd:
+        nvfuser_fusion_id2(fd)
+
+    inputs = [
+        torch.testing.make_tensor((2, 2), dtype=torch.float32, device="cuda:0"),
+        torch.testing.make_tensor((2, 2), dtype=torch.float32, device="cuda:0"),
+    ]
+
+    WallTime.time(stmt="fd.execute(inputs)", globals={"fd": fd, "inputs": inputs})
+    KernelTime.time(stmt="fd.execute(inputs)", globals={"fd": fd, "inputs": inputs})
+
+
+@requiresCUDA
+def test_ThunderCompileSpecification():
+    from thunder.executors.torch_compile import torch_compile_cat_ex
+    from thunder import nvfuser_executor
+
+    def foo(x):
+        return x + x
+
+    x = torch.randn(2, 2, device="cuda")
+    thunderjit1 = ThunderCompileSpecification()
+    str1 = thunderjit1.to_source("foo")
+
+    thunderjit2 = ThunderCompileSpecification(
+        executors=[torch_compile_cat_ex, nvfuser_executor],
+        cache="constant values",
+        langctx=None,
+        record_history=False,
+    )
+    str2 = thunderjit2.to_source("foo")
+    o1 = thunderjit1.compile(foo)(x)
+    o2 = thunderjit2.compile(foo)(x)
+    assert o1.equal(o2)
+    assert str1 == "thunder.jit(foo, )"
+    assert (
+        str2
+        == "thunder.jit(foo, executors=[thunder.extend.get_executor('torchcompile_cat'),thunder.extend.get_executor('nvfuser')],cache='constant values',langctx=None,record_history=False,)"
+    )
+
+
+@requiresCUDA
+def test_reports_repro_v2(tmp_path):
+    x = torch.ones(2, 2, device="cuda", requires_grad=True)
+
+    def foo(x):
+        # torch.sinc has automatic fallback registered,
+        # so that operation will be given to inductor.
+        x = x.exp()
+        torch._dynamo.graph_break()
+        y = torch.sinc(x) + torch.cos(x)
+        return y + 1
+
+    results = fx_report(foo, x)
+    thunderjit = ThunderCompileSpecification()
+    torchcompile = TorchCompileSpecification(dynamic=True)
+    torcheager = TorchEagerSpecification()
+    for idx, fx_graph_report in enumerate(results.fx_graph_reports):
+        thunder_fx_graph_report = analyze_thunder_splits(fx_graph_report)
+        thunder_fx_graph_report.write_repro_v2(tmp_path, thunderjit, check_consistency=True)
+        thunder_fx_graph_report.run_repro(thunderjit, check_consistency=True)
+        for thunder_split_report in thunder_fx_graph_report.subgraph_reports:
+            split_folder = tmp_path / str(idx)
+            thunder_split_report.write_repro_v2(split_folder, torchcompile)
+            thunder_split_report.write_repro_v2(split_folder, torcheager)
+            thunder_split_report.write_repro_v2(split_folder, thunderjit, check_consistency=True)
+            thunder_split_report.run_repro(thunderjit, check_consistency=True)
+            thunder_split_report.create_fusion_reports()
+            for nvf in thunder_split_report.fusion_reports:
+                nvf.write_nvfuser_repro(split_folder / "nvfusion")
+                nvf.write_inductor_repro(split_folder / "nvfusion")
+                nvf.run_repro(BoundSymbolNvfuserSpecification())
+                nvf.run_repro(BoundSymbolTorchCompileSpecification())
+
+    def check(file_name, cmd):
+        cmd = cmd + [file_name]
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        assert result.returncode == 0, f"Script {file_name} failed: {result}"
+
+    cmd = [sys.executable]
+    py_files = list(tmp_path.rglob("*.py"))
+    assert len(py_files) == 12
+
+    for file in py_files:
+        check(file, cmd)
+
+
+@requiresCUDA
+def test_reports_benchmark(tmp_path):
+    x = torch.ones(2, 2, device="cuda", requires_grad=True)
+
+    def foo(x):
+        # torch.sinc has automatic fallback registered,
+        # so that operation will be given to inductor.
+        x = x.exp()
+        torch._dynamo.graph_break()
+        y = torch.sinc(x) + torch.cos(x)
+        return y + 1
+
+    results = fx_report(foo, x)
+    thunderjit = ThunderCompileSpecification()
+    torchcompile = TorchCompileSpecification()
+    torcheager = TorchEagerSpecification()
+    assert len(results.fx_graph_reports) == 2  # 2 Dynamo graphs
+    fx_graph_report = results.fx_graph_reports[0]
+    fx_graph_report.run_benchmark(thunderjit, WallTime)
+    thunder_fx_graph_report = analyze_thunder_splits(fx_graph_report)
+    thunder_fx_graph_report.write_benchmark(tmp_path, thunderjit, KernelTime)
+    assert len(thunder_fx_graph_report.subgraph_reports) == 1  # exp
+    thunder_split_report = thunder_fx_graph_report.subgraph_reports[0]
+    thunder_split_report.write_benchmark(tmp_path, torchcompile, WallTime)
+    thunder_split_report.write_benchmark(tmp_path, torcheager, WallTime)
+    thunder_split_report.write_benchmark(tmp_path, thunderjit, WallTime)
+    thunder_split_report.create_fusion_reports()
+    assert len(thunder_split_report.fusion_reports) == 2  # fwd, bwd
+    nvf = thunder_split_report.fusion_reports[0]
+    nvf.write_nvfuser_benchmark(tmp_path, WallTime)
+    nvf.write_inductor_benchmark(tmp_path, WallTime)
+    nvf.run_benchmark(BoundSymbolNvfuserSpecification(), WallTime)
+    nvf.run_benchmark(BoundSymbolTorchCompileSpecification(), WallTime)
+
+    def check(file_name, cmd):
+        cmd = cmd + [file_name]
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        assert result.returncode == 0, f"Script {file_name} failed: {result}"
+
+    cmd = [sys.executable]
+    py_files = list(tmp_path.rglob("*.py"))
+    assert len(py_files) == 4
+
+    for file in py_files:
+        check(file, cmd)

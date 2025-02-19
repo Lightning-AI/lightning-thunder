@@ -2527,6 +2527,7 @@ def div_sample_generator(op, device, dtype, requires_grad, **kwargs):
             # numerator, denominator, rounding_mode
             yield SampleInput(make(shape_a), make(shape_b), rounding_mode=rounding_mode)
             yield SampleInput(make(shape_a), number(), rounding_mode=rounding_mode)
+            yield SampleInput(number(), make(shape_a), rounding_mode=rounding_mode)
 
 
 div_opinfo = OpInfo(
@@ -2536,17 +2537,19 @@ div_opinfo = OpInfo(
     torch_reference=torch.div,
     test_directives=(
         # NOTE: PyTorch doesn't support boolean division
-        # TODO: fix dtype mismatch when using nvfuser executors
         DecorateInfo(
             pytest.mark.xfail,
             "test_core_vs_torch_consistency",
             dtypes=(datatypes.bool8,),
             devicetypes=(devices.DeviceType.CPU, devices.DeviceType.CUDA),
         ),
+        # NOTE: bfloat16 and float16 is skipped
+        # See: https://github.com/Lightning-AI/lightning-thunder/issues/1724
         DecorateInfo(
             pytest.mark.xfail,
             "test_core_vs_torch_consistency",
             executors=("nvfuser",),
+            dtypes=(datatypes.bool8, datatypes.bfloat16, datatypes.float16),
         ),
         DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
     ),
@@ -2715,6 +2718,17 @@ def where_sample_generator(op, device, dtype, requires_grad, **kwargs):
     for pred_shape, a_shape, b_shape in cases:
         pred, a, b = make(pred_shape, dtype=torch.bool, requires_grad=False), make(a_shape), make(b_shape)
         yield SampleInput(pred, a, b)
+
+    # NOTE: requires_grad needs tensor inputs on non-pred.
+    if not requires_grad:
+        # generate scalar inputs
+        dtypes = [float, int, bool, complex]
+
+        for dtype in dtypes:
+            pred = make([2, 3], dtype=torch.bool, requires_grad=False)
+            a = dtype(1.0)
+            b = dtype(0.0)
+            yield SampleInput(pred, a, b)
 
 
 def where_error_generator(op, device, dtype=torch.float32, **kwargs):
@@ -4904,7 +4918,7 @@ def index_put_sample_generator(op, device, dtype, requires_grad, **kwargs):
         ((4, 2, 3), [(4,), (1,), ()], (1,), True),
         ((4, 2, 3), [(), (2,), ()], (1,), False),
         ((4, 2, 3), [(2,), (2,)], (1,), True),
-        ((4, 2, 3), [(3)], (1,), False),
+        ((4, 2, 3), [3], (1,), False),
         ((4, 2, 3), [(0,)], (2, 3), False),
         ((4, 2, 3), [(0,), (0,)], (1,), False),
         ((4,), [(2,)], (1,), True),
@@ -8449,6 +8463,15 @@ grad_sdpa_opinfo = OpInfo(
     # NOTE: NotImplementedError: Could not run 'aten::_scaled_dot_product_efficient_attention' with arguments from the 'CPU' backend.
     # NOTE: NotImplementedError: Could not run 'aten::_scaled_dot_product_efficient_attention_backward' with arguments from the 'CPU' backend
     devicetypes=(devices.DeviceType.CUDA,),
+    test_directives=(
+        # The test might fail due to numerical issues with bfloat16
+        # https://github.com/Lightning-AI/lightning-thunder/issues/703
+        DecorateInfo(
+            pytest.mark.xfail(strict=False, raises=AssertionError),
+            "test_vjp_correctness_sdpa_manual",
+            dtypes=(datatypes.bfloat16,),
+        ),
+    ),
 )
 nn_ops.append(grad_sdpa_opinfo)
 
