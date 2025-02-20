@@ -345,7 +345,6 @@ class Symbol:
             lambda: f"A symbol {self} was called while processing a primitive",
             exception_type=AssertionError,
         )
-        assert symbols_list is not None
 
         symbols_list.append(bsym)
         return result
