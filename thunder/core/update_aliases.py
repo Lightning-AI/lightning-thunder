@@ -46,7 +46,7 @@ def _involves_viewed_args(bsym, viewed):
     return any(isinstance(p, TensorProxy) and variableify(p) in viewed for p in bsym.flat_proxy_args)
 
 
-def insert_alias_updates(computation_trace: Trace) -> list[Trace]:
+def insert_alias_updates(computation_trace: Trace) -> Trace:
     swap_map = dict()
     bsyms = []
 
@@ -56,7 +56,7 @@ def insert_alias_updates(computation_trace: Trace) -> list[Trace]:
     for bsym in computation_trace.bound_symbols:
         if _is_inplace_op(bsym) or _is_view_creation_op(bsym):
             # only interested in the input which is modified by the inplace op
-            in_tensor = list(map(variableify, filter(lambda p: isinstance(p, TensorProxy), bsym.flat_proxy_args)))[0]
+            in_tensor = variableify(bsym.flat_proxy_args[0])
             out_tensors = set(map(variableify, filter(lambda p: isinstance(p, TensorProxy), bsym.flat_proxy_outs)))
             if _is_inplace_op(bsym):
                 inplace_inputs.add(in_tensor)
@@ -84,7 +84,7 @@ def insert_alias_updates(computation_trace: Trace) -> list[Trace]:
             group = next((g for g in view_groups if any(g.intersection(in_tensors))), None)
             if group is None:
                 # this is a view creation with operands that are not involved in any inplace ops
-                bsyms.append(bsym.from_bsym_swap_proxies(swap_map))
+                bsyms.append(bsym.from_bsym_swap_proxies(swap_map, skip_output=True))
                 continue
             views_encountered = group.intersection(encountered)
             new_aliases = _get_new_aliases(views_encountered, computation_trace)
