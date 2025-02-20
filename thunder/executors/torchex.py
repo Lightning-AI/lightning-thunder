@@ -1415,7 +1415,7 @@ _register_implementation(ltorch.matmul, matmul, checker=_always_executable)
 _register_implementation(ltorch.outer, outer, checker=_always_executable)
 
 
-def _scaled_mm_transform(
+def _scaled_mm_impl(
     a: TensorLike,
     b: TensorLike,
     scale_a: TensorLike,
@@ -1432,21 +1432,16 @@ def _scaled_mm_transform(
     def is_column_major(mat: TensorLike) -> bool:
         return mat.stride()[0] == 1 and mat.stride()[1] > 1
 
+    utils.check(is_row_major(a), lambda: f"`a` expected to be row-major but its stride is {a.stride()=}")
+    utils.check(is_column_major(b), lambda: f"`b` expected to be column-major but its stride is {b.stride()=}")
     result_dtype: torch.dtype = to_torch_dtype(a.dtype if out_dtype is None else out_dtype)
-    if not is_row_major(a):
-        a = a.contiguous()
-    if not is_column_major(b):
-        b = b.t().contiguous().t()
 
-    return _scaled_mm(a, b, scale_a, scale_b, bias, scale_result, result_dtype, use_fast_accum)
+    return torch._scaled_mm(a, b, scale_a, scale_b, bias, scale_result, result_dtype, use_fast_accum)
 
 
-_register_implementation(
-    ltorch._scaled_mm, _scaled_mm, checker=_always_executable, execution_transform=_scaled_mm_transform
-)
-_register_implementation(
-    ltorch.core_aten_scaled_mm, _scaled_mm, checker=_always_executable, execution_transform=_scaled_mm_transform
-)
+_scaled_mm_impl = ex.register_operator("_scaled_mm_impl", like=ltorch._scaled_mm, fn=_scaled_mm_impl)
+_register_implementation(ltorch._scaled_mm, _scaled_mm_impl, checker=_always_executable)
+_register_implementation(ltorch.core_aten_scaled_mm, _scaled_mm_impl, checker=_always_executable)
 
 
 #
