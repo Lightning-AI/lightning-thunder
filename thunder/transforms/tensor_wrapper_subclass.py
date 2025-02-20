@@ -225,6 +225,14 @@ def make_trace_executable(trace_to_convert: TraceCtx, *args_for_eval, **kwargs_f
     return torch_trace
 
 
+def create_ctor_of_tensor_subclass(unflatten_method, tensor_names):
+    def ctor(tensors, metadata):
+        inner_tensors = dict(zip(tensor_names, tensors))
+        return unflatten_method(inner_tensors, metadata, -1, -1)
+
+    return ctor
+
+
 @dataclass
 class DesugarTensorSubclass:
     computation_trace: TraceCtx
@@ -270,14 +278,7 @@ class DesugarTensorSubclass:
     def _get_non_tensor_attr_names(self, p: SubclassTensorProxy) -> list[str]:
         return p._non_tensor_attr_names
 
-    def translate_fx_graph_into_bsym(
-        self,
-        bsym: BoundSymbol,
-        fx_graph: GraphModule,
-    ) -> BoundSymbol | tuple[BoundSymbol, ...]:
-        import thunder.torch as ltorch
-        from thunder.torch import _torch_to_thunder_function_map
-
+    def _unwrap_bsym_args(self, bsym: BoundSymbol) -> tuple[dict[int, ProxyInterface], list[BoundSymbol]]:
         unwrapped_bsym_args: dict[int, ProxyInterface] = {}
         list_of_flattening_bsyms: list[BoundSymbol] = []
         for a in bsym.flat_args:
@@ -311,6 +312,116 @@ class DesugarTensorSubclass:
                     with tracectx(self.computation_trace):
                         a = proxy(a)
                 unwrapped_bsym_args[len(unwrapped_bsym_args)] = a
+        return unwrapped_bsym_args, list_of_flattening_bsyms
+
+    def _evaluate_ltorch_op(
+        self,
+        list_of_function_call_node: list[Node],
+        ltorch_ops_for_node_of_ops: list[Symbol],
+        unwrapped_bsym_args: dict[int, ProxyInterface],
+        arg_name_to_index: dict[str, int],
+        *,
+        _cur_bsym_for_error_msg: BoundSymbol,
+        _cur_fxgraph_for_error_msg: GraphModule,
+    ) -> list[BoundSymbol]:
+        bsyms: list[BoundSymbol] = []
+        fxnode_output_name_to_tensor_proxy: dict[str, OpOverload] = {}
+        for node, ltorch_op in zip(list_of_function_call_node, ltorch_ops_for_node_of_ops):
+            args: list[Node] = node.args
+
+            arg_proxies: list[ProxyInterface] = []
+            for a in args:
+                if isinstance(a, Node):
+                    if isinstance(a.target, str):
+                        arg_proxies.append(unwrapped_bsym_args[arg_name_to_index[a.target]])
+                    else:
+                        arg_proxies.append(fxnode_output_name_to_tensor_proxy[str(a)])
+                else:
+                    if isinstance(a, immutable_dict):
+                        arg_proxies.append(dict(a))
+                    elif isinstance(a, immutable_list):
+                        arg_proxies.append(list(a))
+                    else:
+                        arg_proxies.append(a)
+
+            self.computation_trace.push_scope([])
+
+            try:
+                with tracectx(self.computation_trace):
+                    out = ltorch_op(*arg_proxies)
+            except Exception as e:
+                msg = (
+                    f"Failing to map `torch.{node}` to `thunder.torch` op of "
+                    f"{ltorch_op} with args of {arg_proxies}\n"
+                    f"BoundSymbol in question is\n```python\n{_cur_bsym_for_error_msg}\n```\n"
+                    f"Corresponding torch.fx Graph is\n```python\n{_cur_fxgraph_for_error_msg.print_readable(print_output=False)}\n```\n"
+                    f"Original error is {e}"
+                )
+                raise type(e)(msg)
+            else:
+                fxnode_output_name_to_tensor_proxy[str(node)] = out
+                bsyms.extend(self.computation_trace.pop_scope())
+        return bsyms, fxnode_output_name_to_tensor_proxy
+
+    def _postprocess_subclass_from_torch_op(
+        self,
+        orig_output: SubclassTensorProxy,
+        node_of_output: Node,
+        arg_name_to_index: dict[str, int],
+        unwrapped_bsym_args: dict[int, ProxyInterface],
+        fxnode_output_name_to_tensor_proxy: dict[str, OpOverload],
+    ) -> tuple[BoundSymbol, SubclassTensorProxy]:
+        # note(crcrpar): args[0] would be list of tensors, and args[1] could be list of non-tensors.
+        args: list[Node] = node_of_output.args[0]
+        new_tensor_proxies = []
+        new_non_tensor_values = []
+        for a in args:
+            value = a
+            if isinstance(a, Node):
+                if isinstance(a.target, str):
+                    value = unwrapped_bsym_args[arg_name_to_index[a.target]]
+                else:
+                    value = fxnode_output_name_to_tensor_proxy[str(a)]
+            if isinstance(value, TensorProxy):
+                new_tensor_proxies.append(value)
+            elif isinstance(value, (immutable_dict, immutable_list)):
+                if isinstance(value, immutable_dict):
+                    new_non_tensor_values.append(dict(value))
+                else:
+                    new_non_tensor_values.append(list(value))
+            else:
+                new_non_tensor_values.append(value)
+        utils.check(
+            len(orig_output._tensors) == len(new_tensor_proxies),
+            lambda: (
+                f"The number of new tensor proxies for {orig_output=} does not match: "
+                f"{len(new_tensor_proxies)=} != {len(orig_output._tensors)=}"
+            ),
+        )
+        with tracectx(self.computation_trace):
+            new_subclass = orig_output.replace()
+        new_subclass._tensors = new_tensor_proxies
+        for name, value in zip(new_subclass._tensor_attr_names, new_tensor_proxies):
+            setattr(new_subclass, name, value)
+        return (
+            prims.unflatten_tensor_subclass.bind(
+                new_subclass._subclass_type,
+                dict(zip(new_subclass._tensor_attr_names, new_tensor_proxies)),
+                dict(zip(new_subclass._non_tensor_attr_names, new_subclass._non_tensors)),
+                output=new_subclass,
+            ),
+            new_subclass,
+        )
+
+    def translate_fx_graph_into_bsym(
+        self,
+        bsym: BoundSymbol,
+        fx_graph: GraphModule,
+        header: str,
+    ) -> BoundSymbol | tuple[BoundSymbol, ...]:
+        from thunder.torch import _torch_to_thunder_function_map
+
+        unwrapped_bsym_args, list_of_flattening_bsyms = self._unwrap_bsym_args(bsym)
 
         node: Node
         list_of_placeholder_node: list[Node] = []
@@ -341,101 +452,38 @@ class DesugarTensorSubclass:
         bsyms: list[BoundSymbol] = []
         if list_of_flattening_bsyms:
             bsyms.extend(list_of_flattening_bsyms)
-        fxnode_output_name_to_tensor_proxy: dict[str, OpOverload] = {}
-        for node, ltorch_op in zip(list_of_function_call_node, ltorch_ops_for_node_of_ops):
-            args: list[Node] = node.args
-
-            arg_proxies: list[ProxyInterface] = []
-            for a in args:
-                if isinstance(a, Node):
-                    if isinstance(a.target, str):
-                        arg_proxies.append(unwrapped_bsym_args[arg_name_to_index[a.target]])
-                    else:
-                        arg_proxies.append(fxnode_output_name_to_tensor_proxy[str(a)])
-                else:
-                    if isinstance(a, immutable_dict):
-                        arg_proxies.append(dict(a))
-                    elif isinstance(a, immutable_list):
-                        arg_proxies.append(list(a))
-                    else:
-                        arg_proxies.append(a)
-
-            self.computation_trace.push_scope([])
-
-            try:
-                with tracectx(self.computation_trace):
-                    out = ltorch_op(*arg_proxies)
-            except Exception as e:
-                msg = (
-                    f"Failing to map `torch.{node}` to `thunder.torch` op of "
-                    f"{ltorch_op} with args of {arg_proxies}\n"
-                    f"BoundSymbol in question is\n```python\n{bsym}\n```\n"
-                    f"Corresponding torch.fx Graph is\n```python\n{fx_graph.print_readable(print_output=False)}\n```\n"
-                    f"Original error is {e}"
-                )
-                raise type(e)(msg)
-            else:
-                fxnode_output_name_to_tensor_proxy[str(node)] = out
-                bsyms.extend(self.computation_trace.pop_scope())
-        if len(bsyms) == 0:
+        bsyms_of_torch_ops, fxnode_output_name_to_tensor_proxy = self._evaluate_ltorch_op(
+            list_of_function_call_node,
+            ltorch_ops_for_node_of_ops,
+            unwrapped_bsym_args,
+            arg_name_to_index,
+            _cur_bsym_for_error_msg=bsym,
+            _cur_fxgraph_for_error_msg=fx_graph,
+        )
+        bsyms.extend(bsyms_of_torch_ops)
+        if not bsyms:
             return [bsym]
 
         orig_output = bsym.flat_outs[0]
         if is_subclass_ctor_bsym := bsym.sym.id == prims.PrimIDs.TENSOR_SUBCLASS_CTOR:
             utils.check_type(orig_output, SubclassTensorProxy)
         if isinstance(orig_output, SubclassTensorProxy):
-            # note(crcrpar): args[0] would be list of tensors, and args[1] could be list of non-tensors.
-            args: list[Node] = node_of_output.args[0]
-            new_tensor_proxies = []
-            new_non_tensor_values = []
-            for a in args:
-                value = a
-                if isinstance(a, Node):
-                    if isinstance(a.target, str):
-                        value = unwrapped_bsym_args[arg_name_to_index[a.target]]
-                    else:
-                        value = fxnode_output_name_to_tensor_proxy[str(a)]
-                if isinstance(value, TensorProxy):
-                    new_tensor_proxies.append(value)
-                elif isinstance(value, (immutable_dict, immutable_list)):
-                    if isinstance(value, immutable_dict):
-                        new_non_tensor_values.append(dict(value))
-                    else:
-                        new_non_tensor_values.append(list(v))
-                else:
-                    new_non_tensor_values.append(value)
-            utils.check(
-                len(orig_output._tensors) == len(new_tensor_proxies),
-                lambda: (
-                    f"The number of new tensor proxies for {orig_output=} does not match: "
-                    f"{len(new_tensor_proxies)=} != {len(orig_output._tensors)=}"
-                ),
+            unflatten_bsym, new_subclass_proxy = self._postprocess_subclass_from_torch_op(
+                orig_output,
+                node_of_output,
+                arg_name_to_index,
+                unwrapped_bsym_args,
+                fxnode_output_name_to_tensor_proxy,
             )
-            with tracectx(self.computation_trace):
-                new_subclass = orig_output.replace()
-            new_subclass._tensors = new_tensor_proxies
-            for name, value in zip(new_subclass._tensor_attr_names, new_tensor_proxies):
-                setattr(new_subclass, name, value)
-            bsyms.append(
-                prims.unflatten_tensor_subclass.bind(
-                    new_subclass._subclass_type,
-                    dict(zip(new_subclass._tensor_attr_names, new_tensor_proxies)),
-                    dict(zip(new_subclass._non_tensor_attr_names, new_subclass._non_tensors)),
-                    output=new_subclass,
-                )
-            )
-
-            self.swap_map[variableify(orig_output)] = new_subclass
-            self.subclass_proxy_to_flatten.add(variableify(new_subclass))
+            bsyms.append(unflatten_bsym)
+            self.swap_map[variableify(orig_output)] = new_subclass_proxy
+            self.subclass_proxy_to_flatten.add(variableify(new_subclass_proxy))
 
         else:
             non_none_args = [n for n in node_of_output.args[0] if n is not None]
             utils.check(len(non_none_args) == 1, lambda: f"{node_of_output.args = }")
             new_out_node = non_none_args[0]
             self.swap_map[variableify(orig_output)] = fxnode_output_name_to_tensor_proxy[str(new_out_node)]
-
-        args = ", ".join([t.name if isinstance(t, ProxyInterface) else f"{t}" for t in bsym.flat_args])
-        header = f"{bsym.sym.id}({args})"
         for i, sbsym in enumerate(bsyms, 1):
             sbsym.header = f"[{i}/{len(bsyms)}] unrolled `__torch_dispatch__` of `{header}`"
         return bsyms
@@ -444,12 +492,6 @@ class DesugarTensorSubclass:
         self,
         trace: TraceCtx,
     ) -> tuple[GraphModule, tuple[OutputWrapperForFxTracing, ...], tuple[torch.Tensor, ...], PyTreeSpec]:
-        def create_ctor(unflatten_method, tensor_names):
-            def ctor(tensors, metadata):
-                inner_tensors = dict(zip(tensor_names, tensors))
-                return unflatten_method(inner_tensors, metadata, -1, -1)
-
-            return ctor
 
         args = tree_map(
             lambda t: maybe_materialize_tensor(
@@ -467,7 +509,9 @@ class DesugarTensorSubclass:
                 desugared_args.extend([getattr(a, name) for name in attrs])
                 desugared_args.append(metadta)
                 end_idx = len(desugared_args)
-                arg_idx_to_sugar[start_idx] = end_idx, create_ctor(type(a).__tensor_unflatten__, attrs)
+                arg_idx_to_sugar[start_idx] = end_idx, create_ctor_of_tensor_subclass(
+                    type(a).__tensor_unflatten__, attrs
+                )
             else:
                 desugared_args.append(a)
 
@@ -621,7 +665,9 @@ class DesugarTensorSubclass:
 
         bsym_with_modified_output = updated_bsym.from_bsym_swap_proxies(self.swap_map)
         self.bsym_to_new_outputs[bsym_with_modified_output] = bsym_with_modified_output
-        return self.translate_fx_graph_into_bsym(bsym_with_modified_output, fx)
+        args = ", ".join([t.name if isinstance(t, ProxyInterface) else f"{t}" for t in bsym.flat_args])
+        header = f"{bsym.sym.id}({args})"
+        return self.translate_fx_graph_into_bsym(bsym_with_modified_output, fx, header=header)
 
 
 def tensor_subclass_dce(trace: TraceCtx) -> TraceCtx:
