@@ -283,7 +283,7 @@ def _cudnn_sdpa_fwd_impl(
 
     if attn_mask is not None:
         if query.ndim > attn_mask.ndim:
-            attn_mask = attn_mask.view((1,) * (query.ndim - attn_mask.ndim), *attn_mask.shape)
+            attn_mask = attn_mask.view(*((1,) * (query.ndim - attn_mask.ndim)), *attn_mask.shape)
         # As cudnn does not support boolean attn_mask, convert these to additive mask with -inf
         if attn_mask.dtype == torch.bool:
             attn_bias = torch.zeros_like(attn_mask, dtype=query.dtype)
@@ -642,7 +642,7 @@ def _cudnn_sdpa_bwd_impl(
 
     if attn_mask is not None:
         if query.ndim > attn_mask.ndim:
-            attn_mask = attn_mask.view((1,) * (query.ndim - attn_mask.ndim), *attn_mask.shape)
+            attn_mask = attn_mask.view(*((1,) * (query.ndim - attn_mask.ndim)), *attn_mask.shape)
         if attn_mask.dtype == torch.bool:
             attn_bias = torch.zeros_like(attn_mask, dtype=query.dtype)
             attn_bias.masked_fill_(attn_mask.logical_not(), float("-inf"))
