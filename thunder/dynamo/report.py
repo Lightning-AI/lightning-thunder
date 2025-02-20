@@ -11,7 +11,6 @@ import copy
 
 
 import torch
-from torch.utils.benchmark.utils.common import select_unit as select_time_unit
 from thunder.core.pytree import tree_flatten
 from thunder.core.utils import sequencify, create_python_callable_from_bsym
 from thunder.dynamo.compiler import thunderfx
@@ -22,6 +21,7 @@ from thunder.dynamo.utils import (
     get_env,
     get_split_reasons_string,
     CompilerType,
+    example_input_meta_to_input,
 )
 
 from thunder.dynamo.repro_script_template import (
@@ -42,6 +42,8 @@ from thunder.dynamo.benchmark_utils import (
     BoundSymbolTorchCompileSpecification,
     WallTime,
     KernelTime,
+    check_timing,
+    check_timing_bsym,
 )
 
 
@@ -183,18 +185,13 @@ class FXGraphReport:
     reproduction and benchmarking scripts for various executors.
     """
 
-    def __init__(self, graph: torch.fx.GraphModule, graph_name: str):
+    def __init__(self, graph: torch.fx.GraphModule, graph_name: str, example_input_meta: list[ExampleInputMetaData]):
         self.graph = graph
         self.graph_name = graph_name
-
-    def get_input_metadata(self):
-        placeholders = list(n for n in self.graph.graph.nodes if n.op == "placeholder")
-        example_input_metadata = map(partial(_get_example_inputs_from_placeholder, only_metadata=True), placeholders)
-        return list(example_input_metadata)
+        self.example_input_meta = example_input_meta
 
     def make_example_inputs(self):
-        placeholders = list(n for n in self.graph.graph.nodes if n.op == "placeholder")
-        return list(map(_get_example_inputs_from_placeholder, placeholders))
+        return [example_input_meta_to_input(meta) for meta in self.example_input_meta]
 
     def write_eager_repro(self, folder, use_benchmark: bool = False, serialize_inputs: bool = False):
         if use_benchmark:
@@ -329,7 +326,7 @@ class FXGraphReport:
         folder = Path(folder)
         folder.mkdir(exist_ok=True, parents=True)
         if inputs == None:
-            inputs = self.get_input_metadata()
+            inputs = self.example_input_meta
         has_cuda_args = any(hasattr(arg, "device") and arg.device.type == "cuda" for arg in inputs)
         has_requires_grad_args = any(hasattr(arg, "requires_grad") and arg.requires_grad for arg in inputs)
         torch_env, thunder_pkgs = get_env()
@@ -449,7 +446,7 @@ class FXGraphReport:
         folder = Path(folder)
         folder.mkdir(exist_ok=True, parents=True)
         if inputs == None:
-            inputs = self.get_input_metadata()
+            inputs = self.example_input_meta
         code_str = self._get_repro_code(folder, compile_fn, None, serialize_inputs, inputs, **kwargs)
         compile_str = compile_fn.to_source(CALLABLE_NAME)
         code_str += textwrap.indent(f"{COMPILED_CALLABLE_NAME} = {compile_str}\n", "    ")
@@ -514,7 +511,7 @@ class FXGraphReport:
         folder = Path(folder)
         folder.mkdir(exist_ok=True, parents=True)
         if inputs == None:
-            inputs = self.get_input_metadata()
+            inputs = self.example_input_meta
         forward_only = not any(hasattr(arg, "requires_grad") and arg.requires_grad for arg in inputs)
         code_str = self._get_repro_code(folder, compile_fn, time_fn, serialize_inputs, inputs, **kwargs)
         compile_str = compile_fn.to_source(CALLABLE_NAME)
@@ -550,9 +547,16 @@ class FXReport:
     """
 
     def __init__(self, graphs: list[torch.fx.GraphModule], graph_names: list[str] = None):
+        self.fx_graph_reports = []
         if graph_names is None:
             graph_names = [f"graph{idx}" for idx in range(len(graphs))]
-        self.fx_graph_reports: list[FXGraphReport] = [FXGraphReport(g, name) for name, g in zip(graph_names, graphs)]
+
+        for g_name, g in zip(graph_names, graphs):
+            placeholders = list(n for n in g.graph.nodes if n.op == "placeholder")
+            example_input_metadata = list(
+                map(partial(_get_example_inputs_from_placeholder, only_metadata=True), placeholders)
+            )
+            self.fx_graph_reports.append(FXGraphReport(g, g_name, example_input_metadata))
 
     def __repr__(self):
         return f"<FXReport with {len(self.fx_graph_reports)} FXGraphReports accessible via .fx_graph_reports>"
@@ -606,7 +610,9 @@ def fx_report(fn: Callable, *args, compile_options: dict = None, **kwargs) -> FX
     def helper_backend(gm, example_inputs):
         """Helper function to collect FX graphs."""
         graphs.append(copy.deepcopy(gm))
-        return gm.forward
+        from torch._inductor import compile
+
+        return compile(gm, example_inputs)
 
     if compile_options is None:
         compile_options = {}
@@ -643,14 +649,13 @@ class ThunderSplitGraphReport(FXGraphReport):
         self,
         graph: torch.fx.GraphModule,
         graph_name: str,
+        example_input_metas,
         compiled_fn: Callable,
-        example_input,
         thunder_options: dict,
         split_reason: str,
     ):
-        super().__init__(graph, graph_name)
+        super().__init__(graph, graph_name, example_input_metas)
         self.compiled_fn = compiled_fn
-        self.example_input = example_input
         self.thunder_options = thunder_options
         self.split_reason = split_reason
 
@@ -683,7 +688,7 @@ class ThunderSplitGraphReport(FXGraphReport):
         thunder_ex_str = (
             f"partial(thunder.jit, {self.thunder_options})" if self.thunder_options is None else "thunder.jit"
         )
-        has_cuda_args = any(hasattr(arg, "device") and arg.device.type == "cuda" for arg in self.example_input)
+        has_cuda_args = any(hasattr(arg, "device") and arg.device.type == "cuda" for arg in self.example_input_meta)
         import_str = ["import thunder", "from functools import partial"]
         if has_cuda_args:
             # Since Thunder compile options don't clearly indicate required imports,
@@ -701,7 +706,6 @@ class ThunderSplitGraphReport(FXGraphReport):
                 default_thunderjit,
                 f"{self.graph_name}_repro_thunder.py",
                 serialize_inputs=serialize_inputs,
-                inputs=self.example_input,
                 extra_comment_str=self.split_reason,
             )
             return
@@ -716,7 +720,6 @@ class ThunderSplitGraphReport(FXGraphReport):
             executor_str=executors,
             import_str=import_str,
             serialize_inputs=serialize_inputs,
-            inputs=self.example_input,
             extra_comment_str=self.split_reason,
         )
 
@@ -748,7 +751,7 @@ class ThunderFusionReport:
 
     def run_benchmark(self, compile_fn: CompileSpecificationInterface, timer_fn: TimerInterface):
         compiled_fn = compile_fn.compile(self.nvfusion_bsym)
-        inputs = self.get_inputs()
+        inputs = self.make_example_inputs()
         return timer_fn.time("compiled_fn(*inputs)", globals={"compiled_fn": compiled_fn, "inputs": inputs})
 
     def run_repro(
@@ -756,7 +759,7 @@ class ThunderFusionReport:
         compile_fn: CompileSpecificationInterface,
     ):
         compiled_fn = compile_fn.compile(self.nvfusion_bsym)
-        inputs = self.get_inputs()
+        inputs = self.make_example_inputs()
         return compiled_fn(*inputs)
 
     def _get_nvfuser_code(self):
@@ -771,7 +774,7 @@ class ThunderFusionReport:
         if get_repro is None:
             raise RuntimeError("The installed version of nvFuser does not support repro generation unless on crash.")
 
-        inputs = self.get_inputs()
+        inputs = self.make_example_inputs()
         nvfuser_repro_code = get_repro(inputs)
         return nvfuser_repro_code
 
@@ -809,15 +812,18 @@ print(measurement)
             print(comment_str, file=f)
             print(repro_code_str, file=f)
 
-    def get_inputs(self):
-        return self.nvfusion_bsym._call_ctx[self.nvfusion_bsym.sym.name].last_inputs
+    def make_example_inputs(self):
+        return [example_input_meta_to_input(meta) for meta in self.get_inputs_meta()]
+
+    def get_inputs_meta(self):
+        return self.nvfusion_bsym._call_ctx[self.nvfusion_bsym.sym.name].last_inputs_meta
 
     def _get_inductor_code(self, **kwargs):
         python_func = create_python_callable_from_bsym(self.nvfusion_bsym)
         nvfusion_name = self.nvfusion_bsym.sym.name
         extra_comment_str = kwargs.get("extra_comment_str") if "extra_comment_str" in kwargs else ""
 
-        inputs = self.get_inputs()
+        inputs = self.get_inputs_meta()
         inputs = "[" + "".join(arg_like(inp) for inp in inputs) + "]"
         inductor_code_str = bsym_torch_compile_repro_template.format(
             python_func=python_func, func_name=nvfusion_name, inputs=inputs, extra_comment_str=extra_comment_str
@@ -869,9 +875,14 @@ class ThunderFXGraphReport(FXGraphReport):
     """
 
     def __init__(
-        self, gm: torch.fx.GraphModule, gm_name: str, split_reason: str, subgraph_reports: list[ThunderSplitGraphReport]
+        self,
+        gm: torch.fx.GraphModule,
+        gm_name: str,
+        example_input_metas,
+        split_reason: str,
+        subgraph_reports: list[ThunderSplitGraphReport],
     ):
-        super().__init__(gm, gm_name)
+        super().__init__(gm, gm_name, example_input_metas)
         self.split_reason = split_reason
         self.subgraph_reports: list[ThunderSplitGraphReport] = subgraph_reports
 
@@ -953,8 +964,8 @@ def analyze_thunder_splits(
     # Dynamo uses lazy generation of the underlying Python code, so we need to
     # force recompilation of the GraphModule before passing it to Thunder.
     recompile_graph(gm)
-    _thunder_jit = partial(jit, **thunder_options, nv_store_fusion_inputs=True)
-    _, subgraph_info = _splitter(gm, _thunder_jit, torch.compile, _unused_sample_args=None)
+    thunder_jit = partial(jit, **thunder_options, nv_store_fusion_inputs_meta=True)
+    _, subgraph_info = _splitter(gm, thunder_jit, torch.compile, _unused_sample_args=None)
 
     thunder_module_names = [f"{report.graph_name}_{name}" for name in get_thunder_module_names(subgraph_info)]
     original_modules_to_thunder_modules = (
@@ -973,14 +984,38 @@ def analyze_thunder_splits(
             ThunderSplitGraphReport(
                 sub_gm_pair[0],
                 name,
-                sub_gm_pair[1].compiled_fn,
                 example_input,
+                sub_gm_pair[1].compiled_fn,
                 thunder_options,
                 split_reason,
             )
         )
-    report = ThunderFXGraphReport(report.graph, report.graph_name, split_reason, subgraph_reports)
+    report = ThunderFXGraphReport(
+        report.graph, report.graph_name, report.example_input_meta, split_reason, subgraph_reports
+    )
     return report
+
+
+def get_thunder_split_reports(fn: Callable, *args, thunder_compile_kwargs: dict = None, **kwargs):
+    reports = fx_report(fn, *args, **kwargs)
+    if thunder_compile_kwargs is None:
+        thunder_compile_kwargs = {}
+    split_reports = []
+    for fx_graph_report in reports.fx_graph_reports:
+        thunder_fx_graph_report = analyze_thunder_splits(fx_graph_report, **thunder_compile_kwargs)
+        print(f"\n{thunder_fx_graph_report.graph_name}: {thunder_fx_graph_report.split_reason}\n")
+        for split_report in thunder_fx_graph_report.subgraph_reports:
+            split_reports.append(split_report)
+    return split_reports
+
+
+def get_nvfusion_reports(split_reports: list[ThunderSplitGraphReport]):
+    nvfusion_reports = []
+    for split_report in split_reports:
+        split_report.create_fusion_reports()
+        for nvfusion_report in split_report.fusion_reports:
+            nvfusion_reports.append(nvfusion_report)
+    return nvfusion_reports
 
 
 def thunderfx_benchmark_report(
@@ -989,7 +1024,6 @@ def thunderfx_benchmark_report(
     folder_path: str | PathLike,
     thunder_compile_kwargs: dict = None,
     compare_fusion: bool = False,
-    print_traces: bool = False,
     rtol=0.5,
     atol=0.0,
     **kwargs,
@@ -1006,14 +1040,36 @@ def thunderfx_benchmark_report(
 
     3. For each subgraph:
     - Compares wall time and kernel time between `torch.compile` and Thunder.
-    - Reports performance metrics and saves the benchmark script in `folder_path` if the difference exceeds the tolerance (`rtol`, `atol`).
+    - Reports performance metrics and saves the benchmark script in `folder_path` if the difference exceeds the tolerance (`rtol`, `atol` in seconds).
     - Uses `math.isclose` for tolerance checks.
 
     4. If `compare_fusion` is `True`:
     - Also compares the wall time and kernel time of each nvFusion region.
     - Saves the benchmark script when necessary, following the same criteria as above.
+
+    Note:
+    - This function may run out of memory (OOM) as it allocates random tensors when executing
+    the graph module in each Report. To prevent OOM issues, users must manually free the
+    input model and arguments to free up memory for `get_nvfusion_reports`, `check_timing`,
+    and `check_timing_bsym`.
+
+    Here is an example:
+
+    ```python
+    split_reports = get_thunder_split_reports(model, x)
+
+    # Frees the parameters and inputs to make room for the reports
+    del model
+    del x
+
+    # Running the model generates the NVFusion symbol, which requires additional memory for the input.
+    # To free up space before generating the NVFusion reports, both the model and input are deleted.
+    nvfusion_reports = get_nvfusion_reports(split_reports)
+
+    check_timing(folder_path, split_reports[0], torchcompile, thunderjit_specification, WallTime, "walltime", rtol, atol)
+    check_timing_bsym(folder_path, nvfusion_reports[0], bsym_torchcompile, bsym_nvfuser, KernelTime, "kerneltime", rtol, atol)
+    ```
     """
-    torch_compile_success = True
     try:
         torch_compiled = torch.compile(fn)
         run_forward_backward(torch_compiled, *args, **kwargs)
@@ -1027,121 +1083,37 @@ def thunderfx_benchmark_report(
             print(f"Failed to run the function with exception: {e}")
             return
         print("The input callable can be successfully executed.")
-    if torch_compile_success:
+    else:
         print("The input callable can be successfully executed by torch.compile.")
 
-    # Returns False when exceed the threshold
-    def check_threshold(a, b, rtol, atol):
-        import math
-
-        return math.isclose(a, b, rel_tol=rtol, abs_tol=atol)
-
-    def get_pretty_time_str(a):
-        time_unit, time_scale = select_time_unit(a)
-        return f"{a / time_scale:.3f} {time_unit}"
-
-    def check_threshold_log(a: float, b: float, a_name: str, b_name: str, test_name: str, timer_name: str):
-        """
-        Compare two timing measurements against a defined threshold and generate a log message.
-
-        Parameters:
-            a, b (float): Timing measurement for the compilation methods. Typically obtained from `Measurement.median`.
-            a_name, b_name (str): Identifier for the two compilation methods to be compared (e.g., thunder, torch.compile).
-            test_name (str): Name of the function whose performance is being measured.
-            timer_name (str): Identifier for the timing mechanism used.
-
-        Returns:
-            Tuple[bool, str]: A tuple where:
-                - The first element is a boolean indicating whether the performance difference exceeds the threshold.
-                - The second element is a log string detailing the comparison results.
-        """
-        a_time_str = get_pretty_time_str(a)
-        b_time_str = get_pretty_time_str(b)
-        if not check_threshold(a, b, rtol=rtol, atol=atol):
-            log_str = f"Benchmark {timer_name} for **{test_name}** requires investigation: {b_name}({b_time_str}) and {a_name}({a_time_str}) is not close (rtol={rtol}, atol={atol})"
-            print(log_str)
-            return False, log_str
-        log_str = f"Benchmark {timer_name} ran successfully on **{test_name}**: {b_name}({b_time_str}) , {a_name}({a_time_str})"
-        print(log_str)
-        return True, None
-
-    def check_timing(report, compile_fn1: Callable, compile_fn2: Callable, timer_fn: Callable, timer_name: str):
-        graph_name = report.graph_name
-        measure1 = report.run_benchmark(compile_fn1, timer_fn)
-        measure2 = report.run_benchmark(compile_fn2, timer_fn)
-
-        record = False
-        log_strs = ""
-        for m1, m2, name in zip(measure1, measure2, ("forward", "backward")):
-            if m1 is None:
-                assert m2 is None
-                continue
-            ret = check_threshold_log(
-                m1.median, m2.median, compile_fn1.name, compile_fn2.name, f"{graph_name} {name}", timer_name
-            )
-            if not ret[0]:
-                record = True
-                log_strs += f"{ret[1]}\n"
-        if record:
-            extra_comment = f"Benchmark results:\n{log_strs}\n"
-            filename1 = f"{graph_name}_{compile_fn1.name}_{timer_name}.py"
-            filename2 = f"{graph_name}_{compile_fn2.name}_{timer_name}.py"
-            report.write_benchmark(
-                folder_path, compile_fn1, timer_fn, file_name=filename1, extra_comment_str=extra_comment
-            )
-            report.write_benchmark(
-                folder_path, compile_fn2, timer_fn, file_name=filename2, extra_comment_str=extra_comment
-            )
-            print(f"The scripts are saved: {filename1}, {filename2}")
-        print("\n")
-
-    def check_timing_bsym(report, compile_fn1, compile_fn2, timer_fn, timer_name: str):
-        graph_name = report.name
-        measure1 = report.run_benchmark(compile_fn1, timer_fn)
-        measure2 = report.run_benchmark(compile_fn2, timer_fn)
-
-        ret = check_threshold_log(
-            measure1.median, measure2.median, compile_fn1.name, compile_fn2.name, graph_name, timer_name
-        )
-        if not ret[0]:
-            extra_comment = f"Benchmark results:\n{ret[1]}\n"
-            filename1 = f"{graph_name}_{compile_fn1.name}_{timer_name}.py"
-            filename2 = f"{graph_name}_{compile_fn2.name}_{timer_name}.py"
-            report.write_nvfuser_benchmark(folder_path, timer_fn, file_name=filename1, extra_comment_str=extra_comment)
-            report.write_inductor_benchmark(folder_path, timer_fn, file_name=filename2, extra_comment_str=extra_comment)
-            print(f"The scripts are saved: {filename1}, {filename2}")
-        print("\n")
-
-    results = fx_report(fn, *args, **kwargs)
     if thunder_compile_kwargs is None:
         thunder_compile_kwargs = {}
+    split_reports = get_thunder_split_reports(fn, *args, **kwargs, thunder_compile_kwargs=thunder_compile_kwargs)
     thunderjit_specification = ThunderCompileSpecification(**thunder_compile_kwargs)
     torchcompile = TorchCompileSpecification()
-    for idx, fx_graph_report in enumerate(results.fx_graph_reports):
-        thunder_fx_graph_report = analyze_thunder_splits(fx_graph_report, **thunder_compile_kwargs)
-        print(f"\n{thunder_fx_graph_report.graph_name}: {thunder_fx_graph_report.split_reason}\n")
-        for split_report in thunder_fx_graph_report.subgraph_reports:
-            try:
-                split_report.run_repro(thunderjit_specification)
-            except Exception as e:
-                print(f"Failed to run {split_report.graph_name} using Thunder with exception: {e}\n")
-                continue
+    for split_report in split_reports:
+        try:
+            split_report.run_repro(thunderjit_specification)
+        except Exception as e:
+            print(f"Failed to run {split_report.graph_name} using Thunder with exception: {e}\n")
+            continue
+        print(f"{split_report.graph_name} can be successfully executed by Thunder\n")
+        check_timing(
+            folder_path, split_report, torchcompile, thunderjit_specification, WallTime, "walltime", rtol, atol
+        )
+        check_timing(
+            folder_path, split_report, torchcompile, thunderjit_specification, KernelTime, "kerneltime", rtol, atol
+        )
 
-            print(f"{split_report.graph_name} can be successfully executed by Thunder\n")
-            check_timing(split_report, torchcompile, thunderjit_specification, WallTime, "walltime")
-            check_timing(split_report, torchcompile, thunderjit_specification, KernelTime, "kerneltime")
-
-            if compare_fusion or print_traces:
-                split_report.create_fusion_reports()
-            if print_traces:
-                print(f"forward trace:\n{split_report.fwd_trc}\nbackward trace:\n{split_report.bwd_trc}\n")
-
-            if not compare_fusion:
-                continue
-
-            # Compares nvFusion
-            bsym_nvfuser = BoundSymbolNvfuserSpecification()
-            bsym_torchcompile = BoundSymbolTorchCompileSpecification()
-            for nvf in split_report.fusion_reports:
-                check_timing_bsym(nvf, bsym_torchcompile, bsym_nvfuser, WallTime, "walltime")
-                check_timing_bsym(nvf, bsym_torchcompile, bsym_nvfuser, KernelTime, "kerneltime")
+    if not compare_fusion:
+        return
+    nvfusion_reports = get_nvfusion_reports(split_reports)
+    bsym_nvfuser = BoundSymbolNvfuserSpecification()
+    bsym_torchcompile = BoundSymbolTorchCompileSpecification()
+    for nvfusion_report in nvfusion_reports:
+        check_timing_bsym(
+            folder_path, nvfusion_report, bsym_torchcompile, bsym_nvfuser, WallTime, "walltime", rtol, atol
+        )
+        check_timing_bsym(
+            folder_path, nvfusion_report, bsym_torchcompile, bsym_nvfuser, KernelTime, "kerneltime", rtol, atol
+        )

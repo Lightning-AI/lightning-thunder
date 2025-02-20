@@ -494,6 +494,26 @@ def _create_random_tensor_from_tensor_metadata(arg: ExampleInputMetaData) -> tor
     )
 
 
+def example_input_meta_to_input(meta):
+    if isinstance(meta, ExampleInputMetaData):
+        return _create_random_tensor_from_tensor_metadata(meta)
+    elif isinstance(meta, (int, bool, float)):
+        return meta
+    else:
+        raise TypeError(f"Unsupported input type: {type(meta)}")
+
+
+def input_to_example_input_meta(input):
+    if isinstance(input, torch.Tensor):
+        return _get_example_input_tensor_metadata(input)
+    elif isinstance(input, (int, bool, float)):
+        return input
+    elif isinstance(input, torch.types.py_sym_types):
+        return input.node.hint
+    else:
+        raise TypeError(f"Unsupported input type: {type(input)}")
+
+
 def _get_example_inputs_from_placeholder(
     node: torch.fx.Node, only_metadata=False
 ) -> tuple[torch.Tensor | ExampleInputMetaData] | torch.Tensor | ExampleInputMetaData:
@@ -520,20 +540,10 @@ def _get_example_inputs_from_placeholder(
         return None
     example_value = node.meta["example_value"]
 
-    if isinstance(example_value, torch.Tensor):
-        ev_metadata = _get_example_input_tensor_metadata(example_value)
-        if only_metadata:
-            return ev_metadata
-        return _create_random_tensor_from_tensor_metadata(ev_metadata)
-    elif isinstance(example_value, tuple):
-        ev_metadatas = tuple(_get_example_input_tensor_metadata(e_v) for e_v in example_value)
-        if only_metadata:
-            return ev_metadatas
-        return tuple(_create_random_tensor_from_tensor_metadata(ev_metadata) for ev_metadata in ev_metadatas)
-    elif isinstance(example_value, torch.types.py_sym_types):
-        return example_value.node.hint
-    else:
-        raise TypeError(f"Unsupported example_value type: {type(example_value)}")
+    example_value = input_to_example_input_meta(example_value)
+    if only_metadata:
+        return example_value
+    return example_input_meta_to_input(example_value)
 
 
 def _checkpoint_function_converter(gm: torch.fx.GraphModule):

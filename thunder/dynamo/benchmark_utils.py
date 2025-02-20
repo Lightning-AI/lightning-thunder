@@ -4,6 +4,7 @@ import torch
 from torch.utils.benchmark import Timer as TorchBenchmarkTimer
 from torch.profiler import profile, ProfilerActivity
 from thunder.dynamo.utils import thunder_options_to_str
+from torch.utils.benchmark.utils.common import select_unit as select_time_unit
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -316,3 +317,107 @@ class KernelTime(TimerInterface):
     @staticmethod
     def to_source(fn_name, inputs_name):
         return f'KernelTime.time("{fn_name}(*{inputs_name})", globals={{"{fn_name}":{fn_name}, "{inputs_name}": {inputs_name}}})'
+
+
+def check_threshold(a, b, rtol, atol):
+    import math
+
+    return math.isclose(a, b, rel_tol=rtol, abs_tol=atol)
+
+
+def get_pretty_time_str(a):
+    time_unit, time_scale = select_time_unit(a)
+    return f"{a / time_scale:.3f} {time_unit}"
+
+
+def check_threshold_log(a: float, b: float, a_name: str, b_name: str, test_name: str, timer_name: str, rtol, atol):
+    """
+    Compare two timing measurements against a defined threshold and generate a log message.
+    If not exceed the threshold, abs(a-b) <= max(rtol * max(abs(a), abs(b)), atol).
+
+    Parameters:
+        a, b (float): Timing measurement for the compilation methods. Typically obtained from `Measurement.median`.
+        a_name, b_name (str): Identifier for the two compilation methods to be compared (e.g., thunder, torch.compile).
+        test_name (str): Name of the function whose performance is being measured.
+        timer_name (str): Identifier for the timing mechanism used.
+        rtol (float): Relative tolerance for the comparison.
+        atol (float): Absolute tolerance for the comparison (in seconds).
+
+    Returns:
+        Tuple[bool, str]: A tuple where:
+            - The first element is a boolean indicating whether the performance difference exceeds the threshold.
+            - The second element is a log string detailing the comparison results.
+    """
+    a_time_str = get_pretty_time_str(a)
+    b_time_str = get_pretty_time_str(b)
+    if not check_threshold(a, b, rtol=rtol, atol=atol):
+        log_str = f"Benchmark {timer_name} for **{test_name}** requires investigation: {b_name}({b_time_str}) and {a_name}({a_time_str}) is not close (rtol={rtol}, atol={atol})"
+        print(log_str)
+        return False, log_str
+    log_str = (
+        f"Benchmark {timer_name} ran successfully on **{test_name}**: {b_name}({b_time_str}) , {a_name}({a_time_str})"
+    )
+    print(log_str)
+    return True, None
+
+
+def check_timing(
+    folder_path,
+    report,
+    compile_fn1: Callable,
+    compile_fn2: Callable,
+    timer_fn: Callable,
+    timer_name: str,
+    rtol=0.5,
+    atol=0.0,
+):
+    """
+    Check the timing of graph report using two different compilation specifications with the provided timer configuration
+    and generate a benchmark script if the difference exceeds the threshold.
+    """
+    graph_name = report.graph_name
+    measure1 = report.run_benchmark(compile_fn1, timer_fn)
+    measure2 = report.run_benchmark(compile_fn2, timer_fn)
+
+    record = False
+    log_strs = ""
+    for m1, m2, name in zip(measure1, measure2, ("forward", "backward")):
+        if m1 is None:
+            assert m2 is None
+            continue
+        ret = check_threshold_log(
+            m1.median, m2.median, compile_fn1.name, compile_fn2.name, f"{graph_name} {name}", timer_name, rtol, atol
+        )
+        if not ret[0]:
+            record = True
+            log_strs += f"{ret[1]}\n"
+    if record:
+        extra_comment = f"Benchmark results:\n{log_strs}\n"
+        filename1 = f"{graph_name}_{compile_fn1.name}_{timer_name}.py"
+        filename2 = f"{graph_name}_{compile_fn2.name}_{timer_name}.py"
+        report.write_benchmark(folder_path, compile_fn1, timer_fn, file_name=filename1, extra_comment_str=extra_comment)
+        report.write_benchmark(folder_path, compile_fn2, timer_fn, file_name=filename2, extra_comment_str=extra_comment)
+        print(f"The scripts are saved: {filename1}, {filename2}")
+    print("\n")
+
+
+def check_timing_bsym(folder_path, report, compile_fn1, compile_fn2, timer_fn, timer_name: str, rtol=0.5, atol=0.0):
+    """
+    Check the timing of the nvfusion region report using two different compilation specifications with the provided timer configuration
+    and generate a benchmark script if the difference exceeds the threshold.
+    """
+    graph_name = report.name
+    measure1 = report.run_benchmark(compile_fn1, timer_fn)
+    measure2 = report.run_benchmark(compile_fn2, timer_fn)
+
+    ret = check_threshold_log(
+        measure1.median, measure2.median, compile_fn1.name, compile_fn2.name, graph_name, timer_name, rtol, atol
+    )
+    if not ret[0]:
+        extra_comment = f"Benchmark results:\n{ret[1]}\n"
+        filename1 = f"{graph_name}_{compile_fn1.name}_{timer_name}.py"
+        filename2 = f"{graph_name}_{compile_fn2.name}_{timer_name}.py"
+        report.write_nvfuser_benchmark(folder_path, timer_fn, file_name=filename1, extra_comment_str=extra_comment)
+        report.write_inductor_benchmark(folder_path, timer_fn, file_name=filename2, extra_comment_str=extra_comment)
+        print(f"The scripts are saved: {filename1}, {filename2}")
+    print("\n")

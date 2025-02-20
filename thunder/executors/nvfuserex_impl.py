@@ -459,6 +459,7 @@ class FusionDefinitionWrapper:
     last_used: None | FusionDefinition = None
     last_inputs: None | Sequence[tuple] = None
     store_inputs: bool = False
+    store_inputs_meta: bool = False
     enable_options: None | list[str] = None
     disable_options: None | list[str] = None
 
@@ -468,6 +469,11 @@ class FusionDefinitionWrapper:
 
         if self.store_inputs:
             self.last_inputs = args
+
+        if self.store_inputs_meta:
+            from thunder.dynamo.utils import input_to_example_input_meta
+
+            self.last_inputs_meta = [input_to_example_input_meta(arg) for arg in args]
 
         kwargs = {}
         # Set device if set in one of the "factory" methods like full, iota, or uniform
@@ -578,6 +584,9 @@ def create_fusion_definition_wrapper(
     store_inputs: None | bool = get_compile_option(
         "nv_store_fusion_inputs", "Allow nvFuser to store fusion inputs for repro."
     )
+    store_inputs_meta: None | bool = get_compile_option(
+        "nv_store_fusion_inputs_meta", "Allow nvFuser to store fusion inputs metadata for repro."
+    )
     enable_options: None | list[str] = get_compile_option("nv_enable_options", "List of NVFUSER_ENABLE options to set.")
     disable_options: None | list[str] = get_compile_option(
         "nv_disable_options", "List of NVFUSER_DISABLE options to set."
@@ -603,6 +612,7 @@ def create_fusion_definition_wrapper(
         get_fd.cache_info,
         get_fd.cache_clear,
         store_inputs=store_inputs,
+        store_inputs_meta=store_inputs_meta,
         enable_options=enable_options,
         disable_options=disable_options,
     )
