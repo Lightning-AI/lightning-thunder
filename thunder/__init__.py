@@ -552,10 +552,9 @@ def jit(
             if not compile_options.get("skip_inplace_alias_updates", True):
                 computation_traces.extend([insert_alias_updates(computation_trc)])
                 computation_trc = computation_traces[-1]
-            else:
-                orig_to_view_swap_map = check_inplace_to_views(computation_trc)
 
             if not compile_options.get("skip_inplace_functionalization", False):
+                orig_to_view_swap_map = check_inplace_to_views(computation_trc)
                 alias_tensor_indices = []
                 if alias_tensor_indices_str := cache_info["alias_tensor_indices"]:
                     alias_tensor_indices: list[list[int]] = [

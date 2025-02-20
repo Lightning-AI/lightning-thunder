@@ -2972,7 +2972,6 @@ update_aliases = make_prim(
     PrimIDs.UPDATE_ALIASES,
     "update_aliases",
     meta=_update_aliases_meta,
-    # tags=(OpTags.DONT_DCE,)
 )
 
 
