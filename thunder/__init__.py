@@ -584,13 +584,7 @@ def jit(
             )
             return cache_entry
 
-    @langctxs.langctx(cd.langctx)
-    @_with_cache_info_ctx
-    def get_computation_and_inputs(*args, **kwargs):
-        # set up a record of things in the current environment that impact caching / prologues
-        # this could be replaced by the respective querying in the prologues
-        cache_info = _get_cache_info()
-
+    def populate_cache_info(cache_info, *args, **kwargs):
         # default dtype (for factory functions)
         cache_info["default_dtype"] = pytorch.get_default_dtype()
 
@@ -632,8 +626,16 @@ def jit(
         cache_info["is_grad_enabled"] = pytorch.is_grad_enabled()
         cd.is_grad_enabled = pytorch.is_grad_enabled()
 
-        # TODO RC1 Add module and function checks to prologue (make it a compile option)
+    @langctxs.langctx(cd.langctx)
+    @_with_cache_info_ctx
+    def get_computation_and_inputs(*args, **kwargs):
+        # set up a record of things in the current environment that impact caching / prologues
+        # this could be replaced by the respective querying in the prologues
+        cache_info = _get_cache_info()
 
+        populate_cache_info(cache_info, *args, **kwargs)
+
+        # TODO RC1 Add module and function checks to prologue (make it a compile option)
         # Checks cache
         cs.last_trace_cache_start = time.perf_counter_ns()
         if (cd.cache_option is CACHE_OPTIONS.CONSTANT_VALUES) or (cd.cache_option is CACHE_OPTIONS.SYMBOLIC_VALUES):
