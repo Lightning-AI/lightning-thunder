@@ -3236,7 +3236,6 @@ class AdamBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return (params, grads, exp_avgs, exp_avg_sqs, max_exp_avg_sqs, state_steps), {}
 
     def fn(self) -> Callable:
-        @torch.no_grad()
         def foo(params, grads, exp_avgs, exp_avg_sqs, max_exp_avg_sqs, state_steps):
             return torch.optim._functional.adam(
                 params,
@@ -3246,6 +3245,7 @@ class AdamBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
                 max_exp_avg_sqs,
                 state_steps,
                 foreach=False,
+                capturable=True,
                 differentiable=False,
                 amsgrad=False,
                 lr=0.001,

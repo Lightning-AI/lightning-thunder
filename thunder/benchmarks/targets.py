@@ -83,10 +83,10 @@ parametrize_compute_type_only_training = pytest.mark.parametrize(
     (ComputeType.TRAINING_FORWARD, ComputeType.TRAINING_BACKWARD),
     ids=("forward", "backward"),
 )
-parametrize_compute_type_without_backward = pytest.mark.parametrize(
+parametrize_compute_type_only_inference = pytest.mark.parametrize(
     "compute_type,",
-    (ComputeType.INFERENCE, ComputeType.TRAINING_FORWARD),
-    ids=("inference", "forward"),
+    (ComputeType.INFERENCE,),
+    ids=("inference",),
 )
 
 
@@ -956,7 +956,7 @@ def test_lora_linear(benchmark, executor, compute_type, implementation):
     ],
     ids=["thunderfx", "inductor", "eager"],
 )
-@parametrize_compute_type_without_backward
+@parametrize_compute_type_only_inference
 @pytest.mark.parametrize(
     "params",
     [(64, 64), (128, 64)],
@@ -970,7 +970,7 @@ def test_optim_functional_adam(benchmark, executor: None | Callable, params: Seq
         requires_grad=is_requires_grad(compute_type),
     )
 
-    jfn = executor(bench.fn())
+    fn = executor(bench.fn())
     args, kwargs = bench.make_batch()
 
-    benchmark_for_compute_type(compute_type, benchmark, jfn, args, kwargs)
+    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
