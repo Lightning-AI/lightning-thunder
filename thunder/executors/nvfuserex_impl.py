@@ -164,7 +164,13 @@ _low_precision_floats = (dtypes.float16, dtypes.float16_, dtypes.bfloat16, dtype
 
 
 def device_supports_fp8() -> bool:
-    cuda_major, _ = torch.cuda.get_device_capability()
+    cuda_major, cuda_minor = torch.cuda.get_device_capability()
+    if (cuda_major, cuda_minor) == (8, 9):
+        cuda_version: str | None = torch.version.cuda
+        if cuda_version is None:
+            return False
+        else:
+            return LooseVersion(cuda_version) >= LooseVersion("12.1") and nvfuser_version() >= LooseVersion("0.2.24")
     return cuda_major > 8
 
 
