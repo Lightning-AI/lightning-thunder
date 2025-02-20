@@ -391,6 +391,199 @@ def jit(
             return ""
         return "-".join(alias_indices)
 
+    def acquire_initial_trace(fn, args, kwargs, cd, cs, ad_hoc_executor):
+        with compile_data_and_stats(cd, cs):
+            # Acquires the trace OR inlines the trace into an existing trace and
+            #   returns the (proxied) result of the operation
+            cs.last_trace_tracing_start = time.perf_counter_ns()
+
+            prologue_trc: TraceCtx
+            computation_trc: TraceCtx
+            jit_results: TraceResults = thunder_general_jit(
+                fn,
+                args,
+                kwargs,
+                ad_hoc_executor=ad_hoc_executor,
+                sharp_edges=cd.sharp_edges,
+            )
+            prologue_trc = jit_results.prologue_trace
+            computation_trc = jit_results.computation_trace
+            epilogue_trc = jit_results.epilogue_trace
+            last_interpreter_log = jit_results.interpreter_log
+            cs.last_interpreter_log = last_interpreter_log
+            cs.last_interpreted_instructions = (i for i in last_interpreter_log if isinstance(i, dis.Instruction))
+            return prologue_trc, computation_trc, epilogue_trc
+
+    def apply_transforms_and_build_cache_entry(cd, cs, cache_info, prologue_trc, computation_trc, epilogue_trc):
+        is_ddp_enabled = getattr(fn, "use_ddp", False)
+        is_fsdp_enabled = getattr(fn, "use_fsdp", False)
+        no_grad_sync = False
+        if is_ddp_enabled or is_fsdp_enabled:
+            from thunder.distributed import get_skip_data_parallel_grad_sync
+
+            no_grad_sync = get_skip_data_parallel_grad_sync()
+        cache_info["no_grad_sync"] = no_grad_sync
+        return_none_instead_of_grads = is_fsdp_enabled and no_grad_sync
+
+        with compile_data_and_stats(cd, cs):
+            prologue_traces = [prologue_trc]
+            computation_traces = [computation_trc]
+
+            computation_trc = wrap_return_value_together_with_arguments(computation_trc)
+            computation_traces.append(computation_trc)
+
+            computation_trc = remove_context_manager_prims_from_trace(computation_trc)
+            computation_traces.append(computation_trc)
+
+            orig_to_view_swap_map = check_inplace_to_views(computation_trc)
+            if not compile_options.get("skip_inplace_functionalization", False):
+                alias_tensor_indices = []
+                if alias_tensor_indices_str := cache_info["alias_tensor_indices"]:
+                    alias_tensor_indices: list[list[int]] = [
+                        [int(i) for i in s.split(",")] for s in alias_tensor_indices_str.split("-")
+                    ]
+                computation_traces.extend(
+                    functionalize_inplace_ops(
+                        computation_trace=computation_trc,
+                        orig_to_view_swap_map=orig_to_view_swap_map,
+                        alias_tensor_indices=alias_tensor_indices,
+                    )
+                )
+                computation_trc = computation_traces[-1]
+
+            epilogue_traces = [epilogue_trc]
+
+            cs.last_trace_tracing_stop = time.perf_counter_ns()
+
+            # Makes the prologue callable
+            cs.last_prologue_transformation_start = time.perf_counter_ns()
+
+            transform: Transform
+            for transform in transforms:
+                thunder.core.utils.check_type(transform, Transform)
+                new_prologue_trc, new_computation_trc, new_epilogue_trc = transform.transform_traces_pre_prologue(
+                    prologue_trc, computation_trc, epilogue_trc, executors_list=cd.executors_list
+                )
+                # if the transform did anything in the transform_traces_pre_prologue step
+                if (
+                    new_prologue_trc is not prologue_trc
+                    or new_computation_trc is not computation_trc
+                    or new_epilogue_trc is not epilogue_trc
+                ):
+                    prologue_trc, computation_trc, epilogue_trc = (
+                        new_prologue_trc,
+                        new_computation_trc,
+                        new_epilogue_trc,
+                    )
+                    prologue_traces.append(prologue_trc)
+                    computation_traces.append(computation_trc)
+                    if epilogue_trc is not None:
+                        epilogue_traces.append(epilogue_trc)
+
+            prologue_traces += transform_for_execution(
+                prologue_trc,
+                executors_list=(pythonex,),
+                use_del_last_used=False,
+            )
+            prologue_trc = prologue_traces[-1]
+            pro = prologue_trc.python_callable(include_decorators=False)
+            pro = prologue_execution_timer(pro)
+
+            epilogue_trc = transform_to_torch_types(epilogue_trc)
+            epilogue = epilogue_trc.python_callable()
+
+            cs.last_prologue_transformation_stop = time.perf_counter_ns()
+            cs.last_prologue_traces = prologue_traces
+            cs.last_prologue = pro
+            cs.last_traces = computation_traces
+            cs.last_epilogue_traces = epilogue_traces
+            backward_traces = []
+            cs.last_backward_traces = backward_traces
+
+            computation_trc = dce(computation_trc)
+            computation_traces.append(computation_trc)
+
+            backward_trc = None
+            if not cd.disable_torch_autograd_support:
+                tensor_cls = (pytorch.Tensor, TensorProxy)
+                requires_grad = any(isinstance(arg, tensor_cls) and arg.requires_grad for arg in computation_trc.args)
+
+                if requires_grad:
+                    # Currently split_forward_backward also includes
+                    # transform_for_execution and various sorting of symbols,
+                    # applying transform_for_execution after this would be
+                    # breaking the order of operations
+                    computation_trc, backward_trc = split_forward_backward(
+                        computation_trc, cd, cs, *computation_trc.args
+                    )
+                    # Note computation_trc and backward_trc have been appended to cs.last_(backward_)traces
+                    # by split_forward_backward
+
+            if backward_trc is None:
+                from thunder.executors.passes import transform_for_execution as transform_for_execution_pass
+                from thunder.executors.passes import _transform_for_operator_executor_execution
+                from thunder.distributed.utils import maybe_sort_waits
+
+                tmp_comp_trc = _transform_for_operator_executor_execution(computation_trc, cd.executors_list)
+                is_transformed, tmp_comp_trc = maybe_sort_waits(tmp_comp_trc)
+                if is_transformed:
+                    computation_trc = tmp_comp_trc
+                    computation_traces.append(computation_trc)
+
+                extraces = transform_for_execution(
+                    computation_trc,
+                    executors_list=cd.executors_list,
+                    use_del_last_used=False,
+                )
+                computation_traces.extend(extraces)
+                computation_trc = computation_traces[-1]
+                computation_trc = thunder.executors.passes.del_last_used(computation_trc)
+
+            if not compile_options.get("disable_inplace_copy_check", False):
+                thunder.core.transform_common._inplace_copy_sanity_check(computation_trc)
+                computation_traces.append(computation_trc)
+
+            for transform in transforms:
+                # NOTE: `backward_trc` could be None.
+                new_computation_trc = transform.transform_trace_post_optimization(
+                    computation_trc, executors_list=cd.executors_list
+                )
+                if new_computation_trc is not computation_trc:
+                    computation_trc = new_computation_trc
+                    computation_traces.append(computation_trc)
+                if backward_trc is not None:
+                    new_backward_trc = transform.transform_trace_post_optimization(
+                        backward_trc, executors_list=cd.executors_list
+                    )
+                    if new_backward_trc is not backward_trc:
+                        backward_trc = new_backward_trc
+                        backward_traces.append(backward_trc)
+
+            if backward_trc is not None:
+                backward_fn = backward_trc.python_callable()
+            else:
+                backward_fn = None
+                # We do not have to return auxiliary tensors, which will only be useful in backward pass
+                computation_trc = unwrap_return_value(computation_trc)
+                computation_traces.append(computation_trc)
+
+            computation_trc = transform_to_torch_types(computation_trc)
+            comp = computation_trc.python_callable()
+
+            # TODO RC1 Update the cache
+            cache_entry = CacheEntry(
+                pro,
+                prologue_traces,
+                comp,
+                computation_traces,
+                epilogue,
+                epilogue_traces,
+                backward_fn,
+                backward_traces,
+                return_none_instead_of_grads,
+            )
+            return cache_entry
+
     @langctxs.langctx(cd.langctx)
     @_with_cache_info_ctx
     def get_computation_and_inputs(*args, **kwargs):
@@ -427,16 +620,6 @@ def jit(
             cd.autocast_stack.push(device, dtype, is_autocast_enabled)
 
         cache_info["is_autocast_enabled"] = is_autocast_enabled
-
-        is_ddp_enabled = getattr(fn, "use_ddp", False)
-        is_fsdp_enabled = getattr(fn, "use_fsdp", False)
-        no_grad_sync = False
-        if is_ddp_enabled or is_fsdp_enabled:
-            from thunder.distributed import get_skip_data_parallel_grad_sync
-
-            no_grad_sync = get_skip_data_parallel_grad_sync()
-        cache_info["no_grad_sync"] = no_grad_sync
-        return_none_instead_of_grads = is_fsdp_enabled and no_grad_sync
 
         # NOTE(crcrpar): If a callable is free from in-place ops whose operand is args and/or their views
         # alaises wouldn't matter, thus it'd be better to nullify this entry in such cases.
@@ -518,185 +701,16 @@ def jit(
         # Resets use of compile flags
         cs.last_compile_reasons = defaultdict(list)
 
+        prologue_trc, computation_trc, epilogue_trc = acquire_initial_trace(fn, args, kwargs, cd, cs, ad_hoc_executor)
+        cache_entry = apply_transforms_and_build_cache_entry(
+            cd, cs, cache_info, prologue_trc, computation_trc, epilogue_trc
+        )
+
+        if cd.cache_option is not CACHE_OPTIONS.NO_CACHING:
+            cs.interpreter_cache.append(cache_entry)
+
         with compile_data_and_stats(cd, cs):
-            # Acquires the trace OR inlines the trace into an existing trace and
-            #   returns the (proxied) result of the operation
-            cs.last_trace_tracing_start = time.perf_counter_ns()
-
-            prologue_trc: TraceCtx
-            computation_trc: TraceCtx
-            jit_results: TraceResults = thunder_general_jit(
-                fn,
-                args,
-                kwargs,
-                ad_hoc_executor=ad_hoc_executor,
-                sharp_edges=cd.sharp_edges,
-            )
-            prologue_trc = jit_results.prologue_trace
-            computation_trc = jit_results.computation_trace
-            epilogue_trc = jit_results.epilogue_trace
-            last_interpreter_log = jit_results.interpreter_log
-
-            prologue_traces = [prologue_trc]
-            computation_traces = [computation_trc]
-
-            computation_trc = wrap_return_value_together_with_arguments(computation_trc)
-            computation_traces.append(computation_trc)
-
-            computation_trc = remove_context_manager_prims_from_trace(computation_trc)
-            computation_traces.append(computation_trc)
-
-            orig_to_view_swap_map = check_inplace_to_views(computation_trc)
-            if not compile_options.get("skip_inplace_functionalization", False):
-                alias_tensor_indices = []
-                if alias_tensor_indices_str := cache_info["alias_tensor_indices"]:
-                    alias_tensor_indices: list[list[int]] = [
-                        [int(i) for i in s.split(",")] for s in alias_tensor_indices_str.split("-")
-                    ]
-                computation_traces.extend(
-                    functionalize_inplace_ops(
-                        computation_trace=computation_trc,
-                        orig_to_view_swap_map=orig_to_view_swap_map,
-                        alias_tensor_indices=alias_tensor_indices,
-                    )
-                )
-                computation_trc = computation_traces[-1]
-
-            epilogue_traces = [epilogue_trc]
-
-            cs.last_trace_tracing_stop = time.perf_counter_ns()
-
-            # Makes the prologue callable
-            cs.last_prologue_transformation_start = time.perf_counter_ns()
-
-            transform: Transform
-            for transform in transforms:
-                thunder.core.utils.check_type(transform, Transform)
-                new_prologue_trc, new_computation_trc, new_epilogue_trc = transform.transform_traces_pre_prologue(
-                    prologue_trc, computation_trc, epilogue_trc, executors_list=cd.executors_list
-                )
-                # if the transform did anything in the transform_traces_pre_prologue step
-                if (
-                    new_prologue_trc is not prologue_trc
-                    or new_computation_trc is not computation_trc
-                    or new_epilogue_trc is not epilogue_trc
-                ):
-                    prologue_trc, computation_trc, epilogue_trc = (
-                        new_prologue_trc,
-                        new_computation_trc,
-                        new_epilogue_trc,
-                    )
-                    prologue_traces.append(prologue_trc)
-                    computation_traces.append(computation_trc)
-                    if epilogue_trc is not None:
-                        epilogue_traces.append(epilogue_trc)
-
-            prologue_traces += transform_for_execution(
-                prologue_trc,
-                executors_list=(pythonex,),
-                use_del_last_used=False,
-            )
-            prologue_trc = prologue_traces[-1]
-            pro = prologue_trc.python_callable(include_decorators=False)
-            pro = prologue_execution_timer(pro)
-
-            epilogue_trc = transform_to_torch_types(epilogue_trc)
-            epilogue = epilogue_trc.python_callable()
-
-            cs.last_prologue_transformation_stop = time.perf_counter_ns()
-            cs.last_prologue_traces = prologue_traces
-            cs.last_prologue = pro
-            cs.last_traces = computation_traces
-            cs.last_epilogue_traces = epilogue_traces
-            backward_traces = []
-            cs.last_backward_traces = backward_traces
-            cs.last_interpreter_log = last_interpreter_log
-            cs.last_interpreted_instructions = (i for i in last_interpreter_log if isinstance(i, dis.Instruction))
-
-            inps, pro_to_epi = pro(*args, **kwargs)
-
-            computation_trc = dce(computation_trc)
-            computation_traces.append(computation_trc)
-
-            backward_trc = None
-            if not cd.disable_torch_autograd_support:
-                tensor_cls = (pytorch.Tensor, TensorProxy)
-                requires_grad = any(isinstance(arg, tensor_cls) and arg.requires_grad for arg in inps)
-
-                if requires_grad:
-                    # Currently split_forward_backward also includes
-                    # transform_for_execution and various sorting of symbols,
-                    # applying transform_for_execution after this would be
-                    # breaking the order of operations
-                    computation_trc, backward_trc = split_forward_backward(computation_trc, cd, cs, *inps)
-                    # Note computation_trc and backward_trc have been appended to cs.last_(backward_)traces
-                    # by split_forward_backward
-
-            if backward_trc is None:
-                from thunder.executors.passes import transform_for_execution as transform_for_execution_pass
-                from thunder.executors.passes import _transform_for_operator_executor_execution
-                from thunder.distributed.utils import maybe_sort_waits
-
-                tmp_comp_trc = _transform_for_operator_executor_execution(computation_trc, cd.executors_list)
-                is_transformed, tmp_comp_trc = maybe_sort_waits(tmp_comp_trc)
-                if is_transformed:
-                    computation_trc = tmp_comp_trc
-                    computation_traces.append(computation_trc)
-
-                extraces = transform_for_execution(
-                    computation_trc,
-                    executors_list=cd.executors_list,
-                    use_del_last_used=False,
-                )
-                computation_traces.extend(extraces)
-                computation_trc = computation_traces[-1]
-                computation_trc = thunder.executors.passes.del_last_used(computation_trc)
-
-            if not compile_options.get("disable_inplace_copy_check", False):
-                thunder.core.transform_common._inplace_copy_sanity_check(computation_trc)
-                computation_traces.append(computation_trc)
-
-            for transform in transforms:
-                # NOTE: `backward_trc` could be None.
-                new_computation_trc = transform.transform_trace_post_optimization(
-                    computation_trc, executors_list=cd.executors_list
-                )
-                if new_computation_trc is not computation_trc:
-                    computation_trc = new_computation_trc
-                    computation_traces.append(computation_trc)
-                if backward_trc is not None:
-                    new_backward_trc = transform.transform_trace_post_optimization(
-                        backward_trc, executors_list=cd.executors_list
-                    )
-                    if new_backward_trc is not backward_trc:
-                        backward_trc = new_backward_trc
-                        backward_traces.append(backward_trc)
-
-            if backward_trc is not None:
-                backward_fn = backward_trc.python_callable()
-            else:
-                backward_fn = None
-                # We do not have to return auxiliary tensors, which will only be useful in backward pass
-                computation_trc = unwrap_return_value(computation_trc)
-                computation_traces.append(computation_trc)
-
-            computation_trc = transform_to_torch_types(computation_trc)
-            comp = computation_trc.python_callable()
-
-            # TODO RC1 Update the cache
-            cache_entry = CacheEntry(
-                pro,
-                prologue_traces,
-                comp,
-                computation_traces,
-                epilogue,
-                epilogue_traces,
-                backward_fn,
-                backward_traces,
-                return_none_instead_of_grads,
-            )
-            if cd.cache_option is not CACHE_OPTIONS.NO_CACHING:
-                cs.interpreter_cache.append(cache_entry)
+            inps, pro_to_epi = cache_entry.prologue_fn(*args, **kwargs)
 
         return cache_entry, inps, pro_to_epi
 
