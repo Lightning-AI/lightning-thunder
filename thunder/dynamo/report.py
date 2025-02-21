@@ -38,8 +38,6 @@ from thunder.dynamo.benchmark_utils import (
     TorchCompileSpecification,
     ThunderCompileSpecification,
     TorchEagerSpecification,
-    BoundSymbolNvfuserSpecification,
-    BoundSymbolTorchCompileSpecification,
     WallTime,
     KernelTime,
     check_timing,
@@ -1072,7 +1070,7 @@ def thunderfx_benchmark_report(
     nvfusion_reports = get_nvfusion_reports(split_reports)
 
     check_timing(folder_path, split_reports[0], torchcompile, thunderjit_specification, WallTime, "walltime", rtol, atol)
-    check_timing_bsym(folder_path, nvfusion_reports[0], bsym_torchcompile, bsym_nvfuser, KernelTime, "kerneltime", rtol, atol)
+    check_timing_bsym(folder_path, nvfusion_reports[0], KernelTime, "kerneltime", rtol, atol)
     ```
     """
     try:
@@ -1112,12 +1110,7 @@ def thunderfx_benchmark_report(
     if not compare_fusion:
         return
     nvfusion_reports = get_nvfusion_reports(split_reports)
-    bsym_nvfuser = BoundSymbolNvfuserSpecification()
-    bsym_torchcompile = BoundSymbolTorchCompileSpecification()
+
     for nvfusion_report in nvfusion_reports:
-        check_timing_bsym(
-            folder_path, nvfusion_report, bsym_torchcompile, bsym_nvfuser, WallTime, "walltime", rtol, atol
-        )
-        check_timing_bsym(
-            folder_path, nvfusion_report, bsym_torchcompile, bsym_nvfuser, KernelTime, "kerneltime", rtol, atol
-        )
+        check_timing_bsym(folder_path, nvfusion_report, WallTime, "walltime", rtol, atol)
+        check_timing_bsym(folder_path, nvfusion_report, KernelTime, "kerneltime", rtol, atol)

@@ -401,22 +401,24 @@ def check_timing(
     print("\n")
 
 
-def check_timing_bsym(folder_path, report, compile_fn1, compile_fn2, timer_fn, timer_name: str, rtol=0.5, atol=0.0):
+def check_timing_bsym(folder_path, report, timer_fn, timer_name: str, rtol=0.5, atol=0.0):
     """
     Check the timing of the nvfusion region report using two different compilation specifications with the provided timer configuration
     and generate a benchmark script if the difference exceeds the threshold.
     """
     graph_name = report.name
-    measure1 = report.run_benchmark(compile_fn1, timer_fn)
-    measure2 = report.run_benchmark(compile_fn2, timer_fn)
+    bsym_nvfuser = BoundSymbolNvfuserSpecification()
+    bsym_torchcompile = BoundSymbolTorchCompileSpecification()
+    measure1 = report.run_benchmark(bsym_nvfuser, timer_fn)
+    measure2 = report.run_benchmark(bsym_torchcompile, timer_fn)
 
     ret = check_threshold_log(
-        measure1.median, measure2.median, compile_fn1.name, compile_fn2.name, graph_name, timer_name, rtol, atol
+        measure1.median, measure2.median, bsym_nvfuser.name, bsym_torchcompile.name, graph_name, timer_name, rtol, atol
     )
     if not ret[0]:
         extra_comment = f"Benchmark results:\n{ret[1]}\n"
-        filename1 = f"{graph_name}_{compile_fn1.name}_{timer_name}.py"
-        filename2 = f"{graph_name}_{compile_fn2.name}_{timer_name}.py"
+        filename1 = f"{graph_name}_{bsym_nvfuser.name}_{timer_name}.py"
+        filename2 = f"{graph_name}_{bsym_torchcompile.name}_{timer_name}.py"
         report.write_nvfuser_benchmark(folder_path, timer_fn, file_name=filename1, extra_comment_str=extra_comment)
         report.write_inductor_benchmark(folder_path, timer_fn, file_name=filename2, extra_comment_str=extra_comment)
         print(f"The scripts are saved: {filename1}, {filename2}")
