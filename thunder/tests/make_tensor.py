@@ -1,6 +1,3 @@
-import collections.abc
-from typing import cast, List, Optional, Tuple, Union
-
 import torch
 import thunder
 
@@ -18,8 +15,8 @@ def make_tensor(
 ) -> torch.Tensor:
     r"""Creates a tensor with the given :attr:`shape`, :attr:`device`, and :attr:`dtype`, and filled with
     values uniformly drawn from ``[low, high)``.
-    Calls either torch.full or torch.testing.make_tensor to allow for low == high, whereas torch.testing.make_tensor
-    enforces low < high.
+    Calls torch.testing.make_tensor and optionally torch.Tensor.fill_ to allow for low == high, as
+    torch.testing.make_tensor enforces low < high.
 
     Args:
         shape (Tuple[int, ...]): Single integer or a sequence of integers defining the shape of the output tensor.
@@ -51,14 +48,13 @@ def make_tensor(
     if isinstance(device, thunder.devices.Device):
         device = device.device_str()
 
-    if len(shape) == 1 and isinstance(shape[0], collections.abc.Sequence):
-        shape = shape[0]  # type: ignore[assignment]
-    shape = cast(tuple[int, ...], tuple(shape))
-
+    fill_value = None
     if low is not None and low == high:
-        return torch.full(shape, low, device=device, dtype=dtype)
+        fill_value = low
+        low = None
+        high = None
 
-    return torch.testing.make_tensor(
+    t = torch.testing.make_tensor(
         *shape,
         dtype=dtype,
         device=device,
@@ -69,6 +65,11 @@ def make_tensor(
         exclude_zero=exclude_zero,
         memory_format=memory_format,
     )
+
+    if fill_value is not None:
+        t.fill_(fill_value)
+
+    return t
 
 
 def make_tensor_like(a, **kwargs):
