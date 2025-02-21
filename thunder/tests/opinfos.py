@@ -3092,21 +3092,40 @@ def to_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # None
     yield SampleInput(make(4, 4))
 
+    # None - copy
+    yield SampleInput(make(4, 4), copy=True)
+
     # device
     yield SampleInput(make(4, 4), device)
     yield SampleInput(make(4, 4), "cpu")
     yield SampleInput(make(4, 4), "cpu", dtype=to_dtype)
 
+    # device - copy
+    yield SampleInput(make(4, 4), device, copy=True)
+    yield SampleInput(make(4, 4), "cpu", copy=True)
+    yield SampleInput(make(4, 4), "cpu", dtype=to_dtype, copy=True)
+
     # dtype
     yield SampleInput(make(4, 4), dtype)
+
+    # dtype - copy
+    yield SampleInput(make(4, 4), dtype, copy=True)
 
     # device and dtype
     yield SampleInput(make(4, 4), device, dtype)
     yield SampleInput(make(4, 4), "cpu", to_dtype)
 
+    # device and dtype - copy
+    yield SampleInput(make(4, 4), device, dtype, copy=True)
+    yield SampleInput(make(4, 4), "cpu", to_dtype, copy=True)
+
     # tensor
     yield SampleInput(make(4, 4), make(2, 2))
     yield SampleInput(make(4, 4), make(2, 2, device="cpu", dtype=to_dtype))
+
+    # tensor - copy
+    yield SampleInput(make(4, 4), make(2, 2), copy=True)
+    yield SampleInput(make(4, 4), make(2, 2, device="cpu", dtype=to_dtype), copy=True)
 
 
 to_opinfo = OpInfo(
