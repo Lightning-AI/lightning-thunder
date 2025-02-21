@@ -5,6 +5,7 @@ from collections.abc import Callable
 from enum import auto, Enum
 from collections.abc import Sequence
 from contextlib import nullcontext
+from typing import Any, Optional
 
 import pytest
 import torch
@@ -996,13 +997,25 @@ def test_lora_linear(benchmark, executor, compute_type, implementation):
 )
 @parametrize_compute_type_only_inference
 @pytest.mark.parametrize(
-    "params",
+    "params,",
     [(64, 64), (128, 64)],
     ids=["64x64", "128x64"],
 )
-def test_optim_functional_adam(benchmark, executor: None | Callable, params: Sequence[int], compute_type: ComputeType):
+@pytest.mark.parametrize(
+    "foreach,",
+    [True, False],
+    ids=["foreach-true", "foreach-false"],
+)
+@pytest.mark.parametrize(
+    "fused,",
+    [True, False],
+    ids=["fused-true", "fused-false"],
+)
+def test_optim_functional_adam(benchmark, executor: None | Callable, params: Sequence[int], foreach: Optional[bool], fused: Optional[bool], compute_type: ComputeType):
     bench: Benchmark = AdamBenchmark(
         params=params,
+        foreach=foreach,
+        fused=fused,
         device="cuda:0",
         dtype=thunder.float32,
         requires_grad=is_requires_grad(compute_type),

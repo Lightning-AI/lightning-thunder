@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import partial
 from numbers import Number
-from typing import Any
+from typing import Any, Optional
 from contextlib import contextmanager
 
 import torch
@@ -3277,6 +3277,14 @@ class AdamBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
             description="An iterable of parameters.",
         ),
         BenchmarkArg(
+            name="foreach",
+            description="An optional boolean parameter to enable multi-tensor adam (horizontal fusion).",
+        ),
+        BenchmarkArg(
+            name="fused",
+            description="An optional boolean parameter to enable fused adam (vertical fusion).",
+        ),
+        BenchmarkArg(
             name="device",
             description="A string representing the device to run on. Default is 'cuda'.",
         ),
@@ -3308,6 +3316,8 @@ class AdamBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     def __init__(
         self,
         params: Sequence[int],
+        foreach: Optional[bool],
+        fused: Optional[bool],
         device: str = "cuda",
         dtype: dtypes.dtype = thunder.float32,
         requires_grad: bool = False,
@@ -3315,6 +3325,8 @@ class AdamBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         super().__init__()
 
         self.params: Sequence[int] = params
+        self.foreach: Optional[bool] = foreach
+        self.fused: Optional[bool] = fused
         self.device: str = device
         self.dtype: dtypes.dtype = dtype
         self.tdtype: torch.dtype = ltorch.to_torch_dtype(self.dtype)
@@ -3326,9 +3338,9 @@ class AdamBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         pt = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
         params = [pt(shape) for shape in self.params]
         grads = [pt(grad) for grad in self.params]
-        exp_avgs = [pt(ea) for ea in self.params]
-        exp_avg_sqs = [pt(eas) for eas in self.params]
-        max_exp_avg_sqs = [pt(meas) for meas in self.params]
+        exp_avgs = [pt(ea, requires_grad=False) for ea in self.params]
+        exp_avg_sqs = [pt(eas, requires_grad=False) for eas in self.params]
+        max_exp_avg_sqs = [pt(meas, requires_grad=False) for meas in self.params]
         state_steps = [
             torch.tensor(0, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
             for _ in self.params
@@ -3344,9 +3356,11 @@ class AdamBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
                 exp_avg_sqs,
                 max_exp_avg_sqs,
                 state_steps,
-                foreach=False,
+                foreach=self.foreach,
+                # to enable dynamo trace
                 capturable=True,
                 differentiable=False,
+                fused=self.fused,
                 amsgrad=False,
                 lr=0.001,
                 beta1=0.9,
