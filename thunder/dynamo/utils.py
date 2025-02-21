@@ -1,12 +1,11 @@
 from __future__ import annotations
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from enum import Enum, auto
 from typing import TYPE_CHECKING
 import dataclasses
 import inspect
 import itertools
 import copy
-from pathlib import Path
 
 import torch
 from torch.nn.modules.module import _addindent
@@ -499,6 +498,8 @@ def example_input_meta_to_input(meta):
         return _create_random_tensor_from_tensor_metadata(meta)
     elif isinstance(meta, (int, bool, float)):
         return meta
+    elif isinstance(meta, Sequence):
+        return [example_input_meta_to_input(i) for i in meta]
     else:
         raise TypeError(f"Unsupported input type: {type(meta)}")
 
@@ -510,6 +511,8 @@ def input_to_example_input_meta(input):
         return input
     elif isinstance(input, torch.types.py_sym_types):
         return input.node.hint
+    elif isinstance(input, Sequence):
+        return [input_to_example_input_meta(i) for i in input]
     else:
         raise TypeError(f"Unsupported input type: {type(input)}")
 
