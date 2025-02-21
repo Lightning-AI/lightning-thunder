@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import partial
 from numbers import Number
-from typing import Any
+from typing import Any, Optional
 from contextlib import contextmanager
 
 import torch
@@ -3177,6 +3177,14 @@ class SGDBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
             description="An iterable of parameters.",
         ),
         BenchmarkArg(
+            name="foreach",
+            description="An optional boolean parameter to enable multi-tensor adam (horizontal fusion).",
+        ),
+        BenchmarkArg(
+            name="fused",
+            description="An optional boolean parameter to enable fused adam (vertical fusion).",
+        ),
+        BenchmarkArg(
             name="device",
             description="A string representing the device to run on. Default is 'cuda'.",
         ),
@@ -3208,6 +3216,8 @@ class SGDBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     def __init__(
         self,
         params: Sequence[int],
+        foreach: Optional[bool],
+        fused: Optional[bool],
         device: str = "cuda",
         dtype: dtypes.dtype = thunder.float32,
         requires_grad: bool = False,
@@ -3215,6 +3225,8 @@ class SGDBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         super().__init__()
 
         self.params: Sequence[int] = params
+        self.foreach: Optional[bool] = foreach
+        self.fused: Optional[bool] = fused
         self.device: str = device
         self.dtype: dtypes.dtype = dtype
         self.tdtype: torch.dtype = ltorch.to_torch_dtype(self.dtype)
@@ -3230,12 +3242,13 @@ class SGDBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return (params, d_p_list, momentum_buffer_list), {}
 
     def fn(self) -> Callable:
-        @torch.no_grad()
         def foo(params, d_p_list, momentum_buffer_list):
             return torch.optim._functional.sgd(
                 params,
                 d_p_list,
                 momentum_buffer_list,
+                self.foreach,
+                self.fused,
                 lr=0.001,
                 momentum=0,
                 weight_decay=0,
