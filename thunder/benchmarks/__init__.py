@@ -3178,11 +3178,11 @@ class SGDBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         ),
         BenchmarkArg(
             name="foreach",
-            description="An optional boolean parameter to enable multi-tensor adam (horizontal fusion).",
+            description="An optional boolean parameter to enable multi-tensor sgd (horizontal fusion).",
         ),
         BenchmarkArg(
             name="fused",
-            description="An optional boolean parameter to enable fused adam (vertical fusion).",
+            description="An optional boolean parameter to enable fused sgd (vertical fusion).",
         ),
         BenchmarkArg(
             name="device",
