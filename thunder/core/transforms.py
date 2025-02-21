@@ -1348,29 +1348,6 @@ register_grad(pids.MATMUL, _matmul_prim_grad)
 #
 
 
-def _embedding_prim_grad(
-    a: TensorProxy, /, weight, *, padding_idx=-1, max_norm=None, norm_type=2.0, scale_grad_by_freq=False, sparse=False
-) -> TensorProxy:
-    fwd = prims.embedding(
-        a,
-        weight,
-        padding_idx=padding_idx,
-        max_norm=max_norm,
-        norm_type=norm_type,
-        scale_grad_by_freq=scale_grad_by_freq,
-        sparse=sparse,
-    )
-
-    g = get_grad(fwd)
-    a_grad = prims.embedding_backward(g, a, weight.shape[0], padding_idx, scale_grad_by_freq, sparse)
-    put_grad(a, a_grad)
-
-    return fwd
-
-
-register_grad(pids.EMBEDDING, _embedding_prim_grad)
-
-
 def _maximum_grad(a: TensorProxy, b: TensorProxy, /):
     fwd = prims.maximum(a, b)
 
