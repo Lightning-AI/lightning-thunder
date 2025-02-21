@@ -201,7 +201,7 @@ def test_sdpa_attn_mask(attn_mask_requires_grad, device: str, dtype: torch.dtype
     output = expected.mean()
     output.backward()
 
-    jfun = thunder.jit(func)
+    jfun = thunder.jit(func, executors=[sdpa_ex])
     actual = jfun(query1, key1, value1, attn_mask1)
     output = actual.mean()
     output.backward()

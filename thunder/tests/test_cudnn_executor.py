@@ -65,10 +65,14 @@ def grad_scaled_dot_product_attention_reference_generator(op, device, dtype, req
         q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
         yield SampleInput(q, k, v, None, dropout_p=0.0, is_causal=False, scale=0.123)
 
-    # TODO: cudnnex only support of grad_attn_mask with batch dim 1 and both sequence lenghts divisible by 64. Release 9.0.1 will relax this constraint.
     # Additive attn_mask
+    # with different broadcasting patterns
     q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
-    additive_attn_mask = make((1, n_head, L, S), dtype=q.dtype).tril()
+    additive_attn_mask = make((1, 1, L, S), dtype=q.dtype, requires_grad=requires_grad)
+    yield SampleInput(q, k, v, additive_attn_mask, is_causal=False)
+    additive_attn_mask = make((1, n_head, L, S), dtype=q.dtype, requires_grad=requires_grad)
+    yield SampleInput(q, k, v, additive_attn_mask, is_causal=False)
+    additive_attn_mask = make((N, n_head, L, S), dtype=q.dtype, requires_grad=requires_grad)
     yield SampleInput(q, k, v, additive_attn_mask, is_causal=False)
 
     # Boolean attn_mask
