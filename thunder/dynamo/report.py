@@ -62,11 +62,13 @@ def run_forward_backward(fn, *args, **kwargs):
     result = fn(*args, **kwargs)
     result = sequencify(result)
 
+    differentiable_tensor_result = list(filter(lambda x: isinstance(x, torch.Tensor) and x.requires_grad, result))
+
+    if not differentiable_tensor_result:
+        return result, None
+
     forward_inputs = tree_flatten((args, kwargs))[0]
     forward_inputs = list(filter(lambda x: isinstance(x, torch.Tensor) and x.requires_grad, forward_inputs))
-    if not forward_inputs:
-        return result, None
-    differentiable_tensor_result = list(filter(lambda x: isinstance(x, torch.Tensor) and x.requires_grad, result))
 
     output_grads = []
     for diff_result in differentiable_tensor_result:
@@ -475,10 +477,13 @@ class FXGraphReport:
         )
         bwd_measurement = None
         if not forward_only:
-            backward_fn, backward_setup = backward_only(compiled_fn, *example_inputs)
-            backward_args = backward_setup()
+            backward_fn, backward_setup = backward_only(
+                compiled_fn, *example_inputs, setup_graph_on_each_invocation=True
+            )
             bwd_measurement = time_fn.time(
-                "backward_fn(*backward_args)", globals={"backward_fn": backward_fn, "backward_args": backward_args}
+                "backward_fn(*backward_args)",
+                setup="backward_args=backward_setup()",
+                globals={"backward_fn": backward_fn, "backward_setup": backward_setup},
             )
         return fwd_measurement, bwd_measurement
 
