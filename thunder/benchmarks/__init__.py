@@ -3316,8 +3316,8 @@ class AdamBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     def __init__(
         self,
         params: Sequence[int],
-        foreach: Optional[bool],
-        fused: Optional[bool],
+        foreach: bool | None,
+        fused: bool | None,
         device: str = "cuda",
         dtype: dtypes.dtype = thunder.float32,
         requires_grad: bool = False,
@@ -3325,8 +3325,8 @@ class AdamBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         super().__init__()
 
         self.params: Sequence[int] = params
-        self.foreach: Optional[bool] = foreach
-        self.fused: Optional[bool] = fused
+        self.foreach: bool | None = foreach
+        self.fused: bool | None = fused
         self.device: str = device
         self.dtype: dtypes.dtype = dtype
         self.tdtype: torch.dtype = ltorch.to_torch_dtype(self.dtype)

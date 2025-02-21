@@ -1011,7 +1011,14 @@ def test_lora_linear(benchmark, executor, compute_type, implementation):
     [True, False],
     ids=["fused-true", "fused-false"],
 )
-def test_optim_functional_adam(benchmark, executor: None | Callable, params: Sequence[int], foreach: Optional[bool], fused: Optional[bool], compute_type: ComputeType):
+def test_optim_functional_adam(
+    benchmark,
+    executor: None | Callable,
+    params: Sequence[int],
+    foreach: bool | None,
+    fused: bool | None,
+    compute_type: ComputeType,
+):
     bench: Benchmark = AdamBenchmark(
         params=params,
         foreach=foreach,
