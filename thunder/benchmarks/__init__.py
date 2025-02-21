@@ -2877,6 +2877,106 @@ class GPTBlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return model
 
 
+class DeepSeekSGLangMoEBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    # Copyright 2024 SGLang Team
+    # Licensed under the Apache License, Version 2.0 (see linked file for details)
+    # Adapted from
+    # https://github.com/sgl-project/sglang/blob/de5533341ee3c1b7667b1eb1f209b6825335d136/python/sglang/srt/layers/moe/topk.py#L23
+    @staticmethod
+    def fused_topk_native(
+        hidden_states: torch.Tensor,
+        gating_output: torch.Tensor,
+        topk: int,
+        renormalize: bool,
+    ):
+        assert hidden_states.shape[0] == gating_output.shape[0], "Number of tokens mismatch"
+        topk_weights = torch.nn.functional.softmax(gating_output.float(), dim=-1)
+        topk_weights, topk_ids = torch.topk(topk_weights, topk, dim=-1)
+        if renormalize:
+            topk_weights = topk_weights / topk_weights.sum(dim=-1, keepdim=True)
+        return topk_weights, topk_ids
+
+    # Adapted from
+    # https://github.com/sgl-project/sglang/blob/d23cb9a01ed7f7e39f40e3f5ad7d271d3ac52ce2/benchmark/kernels/fused_moe_triton/benchmark_torch_compile_fused_moe.py#L76
+    @staticmethod
+    def fused_moe_def(
+        x,
+        w1,
+        w2,
+        input_gating,
+        topk,
+        use_fp8_w8a8=False,
+        w1_scale=None,
+        w2_scale=None,
+        a1_scale=None,
+        a2_scale=None,
+    ) -> torch.Tensor:
+        assert not use_fp8_w8a8, "Not supported"
+
+        topk_weights, topk_ids = DeepSeekSGLangMoEBenchmark.fused_topk_native(
+            hidden_states=x,
+            gating_output=input_gating,
+            topk=topk,
+            renormalize=True,
+        )
+        w13_weights = w1[topk_ids]
+        w1_weights, w3_weights = torch.chunk(w13_weights, 2, dim=2)
+        w2_weights = w2[topk_ids]
+        x1 = torch.einsum("ti,taoi -> tao", x, w1_weights)
+        x1 = torch.nn.functional.silu(x1)
+        x3 = torch.einsum("ti, taoi -> tao", x, w3_weights)
+        expert_outs = torch.einsum("tao, taio -> tai", (x1 * x3), w2_weights)
+        return torch.einsum("tai,ta -> ti", expert_outs, topk_weights.to(expert_outs.dtype))
+
+    def __init__(
+        self,
+        *,
+        model: str,
+        tp_size: int,
+        batch_size: int,
+        use_fp8: bool,
+    ) -> None:
+        super().__init__()
+
+        from transformers import AutoConfig
+
+        config = AutoConfig.from_pretrained(model, trust_remote_code=True)
+        self.num_experts = config.n_routed_experts
+        self.topk = config.num_experts_per_tok
+        self.hidden_size = config.hidden_size
+        self.dtype = config.torch_dtype
+        intermediate_size = config.intermediate_size
+        self.shard_intermediate_size = 2 * intermediate_size // tp_size
+        self.use_fp8 = use_fp8
+        self.num_tokens = batch_size
+
+    def make_batch(self) -> tuple[list, dict]:
+        make = partial(make_tensor, device="cuda", requires_grad=False)
+
+        x = make((self.num_tokens, self.hidden_size), dtype=self.dtype)
+
+        if self.use_fp8:
+            init_dtype = self.dtype
+            w1 = make((self.num_experts, self.shard_intermediate_size, self.hidden_size), dtype=init_dtype)
+            w2 = make((self.num_experts, self.hidden_size, self.shard_intermediate_size // 2), dtype=init_dtype)
+            w1 = w1.to(torch.float8_e4m3fn)
+            w2 = w2.to(torch.float8_e4m3fn)
+            w1_scale = make((self.num_experts,), dtype=torch.float32)
+            w2_scale = make((self.num_experts,), dtype=torch.float32)
+            a1_scale = make((1,), dtype=torch.float32)
+            a2_scale = make((1,), dtype=torch.float32)
+        else:
+            w1 = make((self.num_experts, self.shard_intermediate_size, self.hidden_size), dtype=self.dtype)
+            w2 = make((self.num_experts, self.hidden_size, self.shard_intermediate_size // 2), dtype=self.dtype)
+            w1_scale = w2_scale = a1_scale = a2_scale = None
+
+        input_gating = make((self.num_tokens, self.num_experts), dtype=torch.float32)
+        return (x, w1, w2, input_gating, self.topk, self.use_fp8, w1_scale, w2_scale, a1_scale, a2_scale), {}
+
+    def fn(self) -> Callable:
+        return DeepSeekSGLangMoEBenchmark.fused_moe_def
+
+
 class BatchNormBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     def __init__(
         self,

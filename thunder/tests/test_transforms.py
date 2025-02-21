@@ -574,7 +574,8 @@ def test_disable_params_check_thunderfx():
 
     model = Model()
     x = torch.randn(16, 16)
-    cmodel = thunderfx(model, transforms=[ExtractionOnlyPrologueTransform()])
+    # NOTE: The `ExtractionOnlyPrologueTransform` transform is applied by default on `thunderfx` path.
+    cmodel = thunderfx(model)
     _ = cmodel(x)
     tfn = cmodel._backend.subgraph_infos[0].thunder_compiled_fns[0]
     prologue_trc = thunder.last_prologue_traces(tfn)[-1]

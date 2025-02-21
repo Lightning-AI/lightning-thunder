@@ -32,6 +32,7 @@ from thunder.benchmarks import (
     TorchbenchBenchmark,
     HFBenchmark,
     LinearLoRABenchmark,
+    DeepSeekSGLangMoEBenchmark,
     thunder_apex_executor,
     thunder_apex_nvfuser_executor,
     thunder_cudnn_executor,
@@ -730,6 +731,43 @@ def backward_only_setup_graph_on_each_invocation(fn: Callable, *args, **kwargs):
         torch.autograd.backward(result, output_grads)
 
     return backward_fn, backward_setup
+
+
+# Thunder executor: RuntimeError: Advanced indexing currently only supports zero or one-dimensional integer tensors,
+# but found a tensor with dtype thunder.dtypes.int64 and 2 dimensions
+# https://github.com/Lightning-AI/lightning-thunder/issues/764
+moe_executors = (torch_executor, torch_compile_executor, thunderfx_executor)
+moe_executors_ids = (
+    "torch",
+    "torch.compile",
+    "thunderfx",
+)
+
+
+@pytest.mark.parametrize(
+    "bs,",
+    (2**i for i in range(0, 6)),
+    ids=(f"bs{2**i}" for i in range(0, 6)),
+)
+@pytest.mark.parametrize(
+    "executor,",
+    moe_executors,
+    ids=moe_executors_ids,
+)
+@pytest.mark.parametrize(
+    "compute_type,",
+    (ComputeType.INFERENCE,),
+    ids=("inference",),
+)
+def test_deepseek_sglang_moe(benchmark, bs, executor: Callable, compute_type: ComputeType):
+    bench: Benchmark = DeepSeekSGLangMoEBenchmark(
+        model="deepseek-ai/DeepSeek-R1", tp_size=8, batch_size=bs, use_fp8=False
+    )
+
+    args, kwargs = bench.make_batch()
+    fn = executor(bench.fn())
+
+    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
 
 
 #
