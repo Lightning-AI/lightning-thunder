@@ -81,12 +81,12 @@ def run_forward_backward(fn, *args, **kwargs):
     return result, [t.grad for t in forward_inputs]
 
 
-def thunderfx_report(
+def thunderfx_pytest_benchmark_report(
     fn: Callable,
     *args,
     compile_kwargs: dict = None,
     folder_path: str | PathLike = "/tmp/thunderfx_report",
-    check_consistency: bool = True,
+    check_consistency: bool = False,
     check_benchmark: bool = True,
     serialize_consistency_inputs: bool = False,
     serialize_benchmark_inputs: bool = False,
@@ -1077,9 +1077,8 @@ def thunderfx_benchmark_report(
     """
     try:
         torch_compiled = torch.compile(fn)
-        run_forward_backward(torch_compiled, *args, **kwargs)
+        torch_compiled(*args, **kwargs)
     except Exception as e:
-        torch_compile_success = False
         print(f"Failed to run the function using torch.compile with exception: {e}")
         print(f"Trying with Torch eager...")
         try:

@@ -29,7 +29,7 @@ from thunder.tests.framework import (
     version_between,
 )
 from thunder.tests.make_tensor import make_tensor
-from thunder.dynamo.report import thunderfx_report, fx_report, analyze_thunder_splits
+from thunder.dynamo.report import thunderfx_pytest_benchmark_report, fx_report, analyze_thunder_splits
 from thunder.dynamo.benchmark_utils import (
     ThunderCompileSpecification,
     TorchCompileSpecification,
@@ -1079,14 +1079,14 @@ def run_script(file_name, cmd):
 
 
 @requiresCUDA
-def test_report_thunderfx_report(tmp_path, capsys):
+def test_report_thunderfx_pytest_benchmark_report(tmp_path, capsys):
     def foo(x):
         y = x.sin()
         torch._dynamo.graph_break()
         return y + x.cos()
 
     x = torch.randn(4, 4, device="cuda", requires_grad=True)
-    thunderfx_report(foo, x, folder_path=tmp_path)
+    thunderfx_pytest_benchmark_report(foo, x, folder_path=tmp_path, check_consistency=True)
     captured = capsys.readouterr()
     msg = captured.out
     assert not captured.err
@@ -1096,7 +1096,7 @@ def test_report_thunderfx_report(tmp_path, capsys):
     assert "Max allocated CUDA memory usage:" in msg
 
     with patch("torch.compile", side_effect=Exception("compilation raises exception")):
-        thunderfx_report(foo, x, folder_path=tmp_path, check_consistency=False)
+        thunderfx_pytest_benchmark_report(foo, x, folder_path=tmp_path, check_consistency=False)
         captured = capsys.readouterr()
         assert not captured.err
         assert "Failed to run the function using ThunderFX" in captured.out
