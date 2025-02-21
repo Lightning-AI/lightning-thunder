@@ -391,133 +391,7 @@ def jit(
             return ""
         return "-".join(alias_indices)
 
-    @langctxs.langctx(cd.langctx)
-    @_with_cache_info_ctx
-    def get_computation_and_inputs(*args, **kwargs):
-        # set up a record of things in the current environment that impact caching / prologues
-        # this could be replaced by the respective querying in the prologues
-        cache_info = _get_cache_info()
-
-        # default dtype (for factory functions)
-        cache_info["default_dtype"] = pytorch.get_default_dtype()
-
-        # default device (for factory functions)
-        cache_info["default_device"] = pytorch.get_default_device()
-
-        # autocast related operations
-        is_autocast_enabled = False
-        if pytorch.is_autocast_enabled() or pytorch.is_autocast_cpu_enabled():
-            if pytorch.is_autocast_enabled() and pytorch.is_autocast_cpu_enabled():
-                raise NotImplementedError(
-                    "thunder.autocast does not support torch.is_autocast_enabled() and torch.is_autocast_cpu_enabled() simultaneously at this moment."
-                )
-            is_autocast_enabled = True
-            autocast_gpu_dtype = dtypes.to_dtype(pytorch.get_autocast_gpu_dtype())
-            autocast_cpu_dtype = dtypes.to_dtype(pytorch.get_autocast_cpu_dtype())
-            cache_info.update(
-                autocast_config_torch_enabled=pytorch.is_autocast_enabled(),
-                autocast_config_torch_cpu_enabled=pytorch.is_autocast_cpu_enabled(),
-                autocast_gpu_dtype=str(autocast_gpu_dtype),
-                autocast_cpu_dtype=str(autocast_cpu_dtype),
-            )
-            autocast_thunder_dtype = autocast_cpu_dtype if pytorch.is_autocast_cpu_enabled() else autocast_gpu_dtype
-            cache_info.update(autocast_thunder_dtype=str(autocast_thunder_dtype))
-            device = "cuda" if pytorch.is_autocast_enabled() else "cpu"
-            dtype = autocast_thunder_dtype
-            cd.autocast_stack.push(device, dtype, is_autocast_enabled)
-
-        cache_info["is_autocast_enabled"] = is_autocast_enabled
-
-        is_ddp_enabled = getattr(fn, "use_ddp", False)
-        is_fsdp_enabled = getattr(fn, "use_fsdp", False)
-        no_grad_sync = False
-        if is_ddp_enabled or is_fsdp_enabled:
-            from thunder.distributed import get_skip_data_parallel_grad_sync
-
-            no_grad_sync = get_skip_data_parallel_grad_sync()
-        cache_info["no_grad_sync"] = no_grad_sync
-        return_none_instead_of_grads = is_fsdp_enabled and no_grad_sync
-
-        # NOTE(crcrpar): If a callable is free from in-place ops whose operand is args and/or their views
-        # alaises wouldn't matter, thus it'd be better to nullify this entry in such cases.
-        # It however would require the functionalized computation trace to interact with `cache_info`,
-        # which seems to break the consistency of cache_info, leading to a failure in cache_info check.
-        cache_info["alias_tensor_indices"] = _alias_tensor_of_args_kwargs(*args, **kwargs)
-
-        # Store the `is_grad_enabled` state of PyTorch. This is used by vjp transform
-        # to treat certain Symbols as constant.
-        cache_info["is_grad_enabled"] = pytorch.is_grad_enabled()
-        cd.is_grad_enabled = pytorch.is_grad_enabled()
-
-        # TODO RC1 Add module and function checks to prologue (make it a compile option)
-
-        # Checks cache
-        cs.last_trace_cache_start = time.perf_counter_ns()
-        if (cd.cache_option is CACHE_OPTIONS.CONSTANT_VALUES) or (cd.cache_option is CACHE_OPTIONS.SYMBOLIC_VALUES):
-            for cache_entry in reversed(cs.interpreter_cache):
-                with compile_data_and_stats(cd, cs):
-                    (
-                        pro,
-                        pro_traces,
-                        comp,
-                        comp_traces,
-                        epilogue,
-                        epilogue_traces,
-                        backward_fn,
-                        backward_traces,
-                        _return_none_instead_of_grads,
-                    ) = cache_entry
-                    try:
-                        inps, pro_to_epi = pro(*args, **kwargs)
-                    except Exception:
-                        continue
-
-                    # Updates cache statistics
-                    cs.cache_hits += 1
-                    cs.last_traces = comp_traces
-                    cs.last_interpreted_instructions = None
-                    cs.last_interpreter_log = None
-                    cs.last_prologue_traces = pro_traces
-                    cs.last_prologue = pro
-                    cs.last_prologue_transformation_start = 0
-                    cs.last_prologue_transformation_stop = 0
-                    cs.last_computation_transformation_start = 0
-                    cs.last_computation_transformation_stop = 0
-
-                    return cache_entry, inps, pro_to_epi
-
-        if cd.cache_option is CACHE_OPTIONS.SAME_INPUT:
-            if len(cs.interpreter_cache):
-                cache_entry = cs.interpreter_cache[0]
-                (
-                    pro,
-                    pro_traces,
-                    comp,
-                    comp_traces,
-                    epilogue,
-                    epilogue_traces,
-                    backward_fn,
-                    backward_traces,
-                ) = cache_entry
-
-                inps, pro_to_epi = pro(*args, **kwargs)
-
-                # Updates cache statistics
-                cs.cache_hits += 1
-                cs.last_traces = comp_traces
-                cs.last_interpreted_instructions = None
-                cs.last_interpreter_log = None
-                cs.last_prologue_traces = pro_traces
-                cs.last_prologue = pro
-
-                return cache_entry, inps, pro_to_epi
-
-        cs.cache_misses += 1
-        cs.last_trace_cache_stop = time.perf_counter_ns()
-
-        # Resets use of compile flags
-        cs.last_compile_reasons = defaultdict(list)
-
+    def acquire_initial_trace(fn, args, kwargs, cd, cs, ad_hoc_executor):
         with compile_data_and_stats(cd, cs):
             # Acquires the trace OR inlines the trace into an existing trace and
             #   returns the (proxied) result of the operation
@@ -536,7 +410,22 @@ def jit(
             computation_trc = jit_results.computation_trace
             epilogue_trc = jit_results.epilogue_trace
             last_interpreter_log = jit_results.interpreter_log
+            cs.last_interpreter_log = last_interpreter_log
+            cs.last_interpreted_instructions = (i for i in last_interpreter_log if isinstance(i, dis.Instruction))
+            return prologue_trc, computation_trc, epilogue_trc
 
+    def apply_transforms_and_build_cache_entry(cd, cs, cache_info, prologue_trc, computation_trc, epilogue_trc):
+        is_ddp_enabled = getattr(fn, "use_ddp", False)
+        is_fsdp_enabled = getattr(fn, "use_fsdp", False)
+        no_grad_sync = False
+        if is_ddp_enabled or is_fsdp_enabled:
+            from thunder.distributed import get_skip_data_parallel_grad_sync
+
+            no_grad_sync = get_skip_data_parallel_grad_sync()
+        cache_info["no_grad_sync"] = no_grad_sync
+        return_none_instead_of_grads = is_fsdp_enabled and no_grad_sync
+
+        with compile_data_and_stats(cd, cs):
             prologue_traces = [prologue_trc]
             computation_traces = [computation_trc]
 
@@ -610,10 +499,6 @@ def jit(
             cs.last_epilogue_traces = epilogue_traces
             backward_traces = []
             cs.last_backward_traces = backward_traces
-            cs.last_interpreter_log = last_interpreter_log
-            cs.last_interpreted_instructions = (i for i in last_interpreter_log if isinstance(i, dis.Instruction))
-
-            inps, pro_to_epi = pro(*args, **kwargs)
 
             computation_trc = dce(computation_trc)
             computation_traces.append(computation_trc)
@@ -621,14 +506,16 @@ def jit(
             backward_trc = None
             if not cd.disable_torch_autograd_support:
                 tensor_cls = (pytorch.Tensor, TensorProxy)
-                requires_grad = any(isinstance(arg, tensor_cls) and arg.requires_grad for arg in inps)
+                requires_grad = any(isinstance(arg, tensor_cls) and arg.requires_grad for arg in computation_trc.args)
 
                 if requires_grad:
                     # Currently split_forward_backward also includes
                     # transform_for_execution and various sorting of symbols,
                     # applying transform_for_execution after this would be
                     # breaking the order of operations
-                    computation_trc, backward_trc = split_forward_backward(computation_trc, cd, cs, *inps)
+                    computation_trc, backward_trc = split_forward_backward(
+                        computation_trc, cd, cs, *computation_trc.args
+                    )
                     # Note computation_trc and backward_trc have been appended to cs.last_(backward_)traces
                     # by split_forward_backward
 
@@ -695,8 +582,137 @@ def jit(
                 backward_traces,
                 return_none_instead_of_grads,
             )
-            if cd.cache_option is not CACHE_OPTIONS.NO_CACHING:
-                cs.interpreter_cache.append(cache_entry)
+            return cache_entry
+
+    def populate_cache_info(cache_info, *args, **kwargs):
+        # default dtype (for factory functions)
+        cache_info["default_dtype"] = pytorch.get_default_dtype()
+
+        # default device (for factory functions)
+        cache_info["default_device"] = pytorch.get_default_device()
+
+        # autocast related operations
+        is_autocast_enabled = False
+        if pytorch.is_autocast_enabled() or pytorch.is_autocast_cpu_enabled():
+            if pytorch.is_autocast_enabled() and pytorch.is_autocast_cpu_enabled():
+                raise NotImplementedError(
+                    "thunder.autocast does not support torch.is_autocast_enabled() and torch.is_autocast_cpu_enabled() simultaneously at this moment."
+                )
+            is_autocast_enabled = True
+            autocast_gpu_dtype = dtypes.to_dtype(pytorch.get_autocast_gpu_dtype())
+            autocast_cpu_dtype = dtypes.to_dtype(pytorch.get_autocast_cpu_dtype())
+            cache_info.update(
+                autocast_config_torch_enabled=pytorch.is_autocast_enabled(),
+                autocast_config_torch_cpu_enabled=pytorch.is_autocast_cpu_enabled(),
+                autocast_gpu_dtype=str(autocast_gpu_dtype),
+                autocast_cpu_dtype=str(autocast_cpu_dtype),
+            )
+            autocast_thunder_dtype = autocast_cpu_dtype if pytorch.is_autocast_cpu_enabled() else autocast_gpu_dtype
+            cache_info.update(autocast_thunder_dtype=str(autocast_thunder_dtype))
+            device = "cuda" if pytorch.is_autocast_enabled() else "cpu"
+            dtype = autocast_thunder_dtype
+            cd.autocast_stack.push(device, dtype, is_autocast_enabled)
+
+        cache_info["is_autocast_enabled"] = is_autocast_enabled
+
+        # NOTE(crcrpar): If a callable is free from in-place ops whose operand is args and/or their views
+        # alaises wouldn't matter, thus it'd be better to nullify this entry in such cases.
+        # It however would require the functionalized computation trace to interact with `cache_info`,
+        # which seems to break the consistency of cache_info, leading to a failure in cache_info check.
+        cache_info["alias_tensor_indices"] = _alias_tensor_of_args_kwargs(*args, **kwargs)
+
+        # Store the `is_grad_enabled` state of PyTorch. This is used by vjp transform
+        # to treat certain Symbols as constant.
+        cache_info["is_grad_enabled"] = pytorch.is_grad_enabled()
+        cd.is_grad_enabled = pytorch.is_grad_enabled()
+
+    @langctxs.langctx(cd.langctx)
+    @_with_cache_info_ctx
+    def get_computation_and_inputs(*args, **kwargs):
+        # set up a record of things in the current environment that impact caching / prologues
+        # this could be replaced by the respective querying in the prologues
+        cache_info = _get_cache_info()
+
+        populate_cache_info(cache_info, *args, **kwargs)
+
+        # TODO RC1 Add module and function checks to prologue (make it a compile option)
+        # Checks cache
+        cs.last_trace_cache_start = time.perf_counter_ns()
+        if (cd.cache_option is CACHE_OPTIONS.CONSTANT_VALUES) or (cd.cache_option is CACHE_OPTIONS.SYMBOLIC_VALUES):
+            for cache_entry in reversed(cs.interpreter_cache):
+                with compile_data_and_stats(cd, cs):
+                    (
+                        pro,
+                        pro_traces,
+                        comp,
+                        comp_traces,
+                        epilogue,
+                        epilogue_traces,
+                        backward_fn,
+                        backward_traces,
+                        _return_none_instead_of_grads,
+                    ) = cache_entry
+                    try:
+                        inps, pro_to_epi = pro(*args, **kwargs)
+                    except Exception:
+                        continue
+
+                    # Updates cache statistics
+                    cs.cache_hits += 1
+                    cs.last_traces = comp_traces
+                    cs.last_interpreted_instructions = None
+                    cs.last_interpreter_log = None
+                    cs.last_prologue_traces = pro_traces
+                    cs.last_prologue = pro
+                    cs.last_prologue_transformation_start = 0
+                    cs.last_prologue_transformation_stop = 0
+                    cs.last_computation_transformation_start = 0
+                    cs.last_computation_transformation_stop = 0
+
+                    return cache_entry, inps, pro_to_epi
+
+        if cd.cache_option is CACHE_OPTIONS.SAME_INPUT:
+            if len(cs.interpreter_cache):
+                cache_entry = cs.interpreter_cache[0]
+                (
+                    pro,
+                    pro_traces,
+                    comp,
+                    comp_traces,
+                    epilogue,
+                    epilogue_traces,
+                    backward_fn,
+                    backward_traces,
+                ) = cache_entry
+
+                inps, pro_to_epi = pro(*args, **kwargs)
+
+                # Updates cache statistics
+                cs.cache_hits += 1
+                cs.last_traces = comp_traces
+                cs.last_interpreted_instructions = None
+                cs.last_interpreter_log = None
+                cs.last_prologue_traces = pro_traces
+                cs.last_prologue = pro
+
+                return cache_entry, inps, pro_to_epi
+
+        cs.cache_misses += 1
+        cs.last_trace_cache_stop = time.perf_counter_ns()
+
+        # Resets use of compile flags
+        cs.last_compile_reasons = defaultdict(list)
+
+        prologue_trc, computation_trc, epilogue_trc = acquire_initial_trace(fn, args, kwargs, cd, cs, ad_hoc_executor)
+        cache_entry = apply_transforms_and_build_cache_entry(
+            cd, cs, cache_info, prologue_trc, computation_trc, epilogue_trc
+        )
+
+        if cd.cache_option is not CACHE_OPTIONS.NO_CACHING:
+            cs.interpreter_cache.append(cache_entry)
+
+        with compile_data_and_stats(cd, cs):
+            inps, pro_to_epi = cache_entry.prologue_fn(*args, **kwargs)
 
         return cache_entry, inps, pro_to_epi
 
