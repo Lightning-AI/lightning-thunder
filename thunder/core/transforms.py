@@ -1619,7 +1619,6 @@ augmented_forward_impls = {
     prims.PrimIDs.FMOD: lambda x, y: (prims.fmod(x, y), (x, y)),
     prims.PrimIDs.COPY_: lambda x, y, grad_enabled: (prims.copy_(x, y, grad_enabled=grad_enabled), tuple()),
     prims.PrimIDs.CLONE: lambda x: (prims.clone(x), tuple()),
-    # prims.PrimIDs.UPDATE_ALIASES: lambda x: (prims.update_aliases(x), (x,)),
 }
 
 
@@ -1650,7 +1649,6 @@ backward_impls = {
     # The copy should not be differentiable. We return None to enable the generation of the backward graph through them.
     prims.PrimIDs.COPY_: lambda g: (g, None),
     prims.PrimIDs.CLONE: lambda g: g,
-    # prims.PrimIDs.UPDATE_ALIASES: lambda *g: (g,),  # !!! this is a hack to make safe_map_flat happy in backward_pass
 }
 
 

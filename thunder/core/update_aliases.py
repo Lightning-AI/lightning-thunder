@@ -30,7 +30,9 @@ def _get_new_aliases(aliases, trace):
 
 
 def _is_inplace_op(bsym):
-    return bsym.sym.tags and prims.OpTags.IN_PLACE in bsym.sym.tags
+    return (bsym.sym.tags and prims.OpTags.IN_PLACE in bsym.sym.tags) or (
+        bsym.subsymbols and bsym.subsymbols[-1].sym.id == prims.PrimIDs.COPY_
+    )
 
 
 def _is_view_creation_op(bsym):
@@ -93,8 +95,8 @@ def insert_alias_updates(computation_trace: Trace) -> Trace:
             bsyms.append(update_bsym)
             encountered.update(out_tensors)
             new_bsym = bsym.from_bsym_swap_proxies(swap_map)
-            if _is_inplace_op(bsym):
-                #  This relies on these being one element sets
+            if _is_inplace_op(bsym) and len(out_tensors) == 1:
+                #  This relies on these being one element sets (ltorch.setitem_ yields no outs).
                 swap_map[in_tensors.pop()] = unvariableify(out_tensors.pop())
             bsyms.append(new_bsym)
 
