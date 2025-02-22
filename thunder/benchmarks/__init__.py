@@ -3173,6 +3173,10 @@ class LinearLoRABenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 class RMSpropBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     _args = (
         BenchmarkArg(
+            name="config",
+            description="Config to enable single tensor or multi-tensor (foreach).",
+        ),
+        BenchmarkArg(
             name="params",
             description="An iterable of parameters.",
         ),
@@ -3207,6 +3211,7 @@ class RMSpropBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     def __init__(
         self,
+        config: tuple[str, bool],
         params: Sequence[int],
         device: str = "cuda",
         dtype: dtypes.dtype = thunder.float32,
@@ -3214,6 +3219,7 @@ class RMSpropBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     ) -> None:
         super().__init__()
 
+        self.config: tuple[str, bool] = config
         self.params: Sequence[int] = params
         self.device: str = device
         self.dtype: dtypes.dtype = dtype
@@ -3226,14 +3232,15 @@ class RMSpropBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         pt = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
         params = [pt(shape) for shape in self.params]
         grads = [pt(grad) for grad in self.params]
-        square_avgs = [pt(sq_avgs) for sq_avgs in self.params]
-        grad_avgs = [pt(g_avgs) for g_avgs in self.params]
-        momentum_buffer_list = [pt(mbl) for mbl in self.params]
+        square_avgs = [pt(sq_avgs, requires_grad=False) for sq_avgs in self.params]
+        grad_avgs = [pt(g_avgs, requires_grad=False) for g_avgs in self.params]
+        momentum_buffer_list = [pt(mbl, requires_grad=False) for mbl in self.params]
         state_steps = [torch.tensor(0, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad) for _ in self.params]
         return (params, grads, square_avgs, grad_avgs, momentum_buffer_list, state_steps), {}
 
     def fn(self) -> Callable:
         def foo(params, grads, square_avgs, grad_avgs, momentum_buffer_list, state_steps):
+            name, foreach = self.config
             return torch.optim._functional.rmsprop(
                 params,
                 grads,
@@ -3241,6 +3248,7 @@ class RMSpropBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
                 grad_avgs,
                 momentum_buffer_list,
                 state_steps,
+                foreach=foreach,
                 capturable=True,
                 lr=0.01,
                 alpha=0.99,

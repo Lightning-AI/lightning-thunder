@@ -957,8 +957,17 @@ def test_lora_linear(benchmark, executor, compute_type, implementation):
     [(64, 64), (128, 64)],
     ids=["64x64", "128x64"],
 )
-def test_optim_functional_rmsprop(benchmark, executor: None | Callable, params: Sequence[int], compute_type: ComputeType):
+@pytest.mark.parametrize(
+    "config,",
+    [
+        ("single_tensor", False),
+        ("multi_tensor", True),
+    ],
+    ids=["single_tensor", "multi_tensor(foreach)"],
+)
+def test_optim_functional_rmsprop(benchmark, executor: None | Callable, config: tuple[str, bool], params: Sequence[int], compute_type: ComputeType):
     bench: Benchmark = RMSpropBenchmark(
+        config=config,
         params=params,
         device="cuda:0",
         dtype=thunder.float32,
