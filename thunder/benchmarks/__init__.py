@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import partial
 from numbers import Number
-from typing import Any, Optional
+from typing import Any
 from contextlib import contextmanager
 
 import torch

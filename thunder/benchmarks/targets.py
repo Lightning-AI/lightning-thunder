@@ -5,7 +5,6 @@ from collections.abc import Callable
 from enum import auto, Enum
 from collections.abc import Sequence
 from contextlib import nullcontext
-from typing import Any, Optional
 
 import pytest
 import torch
