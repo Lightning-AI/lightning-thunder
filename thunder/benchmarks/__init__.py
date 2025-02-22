@@ -3273,16 +3273,12 @@ class LinearLoRABenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 class AdamBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     _args = (
         BenchmarkArg(
+            name="config",
+            description="Config to enable single tensor, multi-tensor (foreach), or fused.",
+        ),
+        BenchmarkArg(
             name="params",
             description="An iterable of parameters.",
-        ),
-        BenchmarkArg(
-            name="foreach",
-            description="An optional boolean parameter to enable multi-tensor adam (horizontal fusion).",
-        ),
-        BenchmarkArg(
-            name="fused",
-            description="An optional boolean parameter to enable fused adam (vertical fusion).",
         ),
         BenchmarkArg(
             name="device",
@@ -3315,18 +3311,16 @@ class AdamBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     def __init__(
         self,
+        config: tuple[str, bool, bool],
         params: Sequence[int],
-        foreach: bool | None,
-        fused: bool | None,
         device: str = "cuda",
         dtype: dtypes.dtype = thunder.float32,
         requires_grad: bool = False,
     ) -> None:
         super().__init__()
 
+        self.config: tuple[str, bool, bool] = config
         self.params: Sequence[int] = params
-        self.foreach: bool | None = foreach
-        self.fused: bool | None = fused
         self.device: str = device
         self.dtype: dtypes.dtype = dtype
         self.tdtype: torch.dtype = ltorch.to_torch_dtype(self.dtype)
@@ -3349,6 +3343,7 @@ class AdamBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     def fn(self) -> Callable:
         def foo(params, grads, exp_avgs, exp_avg_sqs, max_exp_avg_sqs, state_steps):
+            name, foreach, fused = self.config
             return torch.optim._functional.adam(
                 params,
                 grads,
@@ -3356,11 +3351,11 @@ class AdamBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
                 exp_avg_sqs,
                 max_exp_avg_sqs,
                 state_steps,
-                foreach=self.foreach,
+                foreach=foreach,
                 # to enable dynamo trace
                 capturable=True,
                 differentiable=False,
-                fused=self.fused,
+                fused=fused,
                 amsgrad=False,
                 lr=0.001,
                 beta1=0.9,

@@ -1002,27 +1002,24 @@ def test_lora_linear(benchmark, executor, compute_type, implementation):
     ids=["64x64", "128x64"],
 )
 @pytest.mark.parametrize(
-    "foreach,",
-    [True, False],
-    ids=["foreach-true", "foreach-false"],
-)
-@pytest.mark.parametrize(
-    "fused,",
-    [True, False],
-    ids=["fused-true", "fused-false"],
+    "config,",
+    [
+        ("single_tensor", False, False),
+        ("multi_tensor", True, False),
+        ("fused", False, True),
+    ],
+    ids=["single_tensor", "multi_tensor(foreach)", "fused"],
 )
 def test_optim_functional_adam(
     benchmark,
     executor: None | Callable,
+    config: tuple[str, bool, bool],
     params: Sequence[int],
-    foreach: bool | None,
-    fused: bool | None,
     compute_type: ComputeType,
 ):
     bench: Benchmark = AdamBenchmark(
+        config=config,
         params=params,
-        foreach=foreach,
-        fused=fused,
         device="cuda:0",
         dtype=thunder.float32,
         requires_grad=is_requires_grad(compute_type),
