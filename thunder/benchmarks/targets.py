@@ -965,13 +965,15 @@ def test_lora_linear(benchmark, executor, compute_type, implementation):
     ],
     ids=["single_tensor", "multi_tensor(foreach)"],
 )
-def test_optim_functional_rmsprop(benchmark, executor: None | Callable, config: tuple[str, bool], params: Sequence[int], compute_type: ComputeType):
+def test_optim_functional_rmsprop(
+    benchmark, executor: None | Callable, config: tuple[str, bool], params: Sequence[int], compute_type: ComputeType
+):
     bench: Benchmark = RMSpropBenchmark(
         config=config,
         params=params,
         device="cuda:0",
         dtype=thunder.float32,
-        requires_grad=is_requires_grad(compute_type)
+        requires_grad=is_requires_grad(compute_type),
     )
 
     fn = executor(bench.fn())

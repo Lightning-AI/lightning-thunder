@@ -3235,7 +3235,10 @@ class RMSpropBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         square_avgs = [pt(sq_avgs, requires_grad=False) for sq_avgs in self.params]
         grad_avgs = [pt(g_avgs, requires_grad=False) for g_avgs in self.params]
         momentum_buffer_list = [pt(mbl, requires_grad=False) for mbl in self.params]
-        state_steps = [torch.tensor(0, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad) for _ in self.params]
+        state_steps = [
+            torch.tensor(0, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
+            for _ in self.params
+        ]
         return (params, grads, square_avgs, grad_avgs, momentum_buffer_list, state_steps), {}
 
     def fn(self) -> Callable:
@@ -3259,6 +3262,7 @@ class RMSpropBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
             )
 
         return foo
+
 
 # TODO Add descriptions to the executors when listed, and list them alphabetically
 # TODO Allow querying benchmark for details
