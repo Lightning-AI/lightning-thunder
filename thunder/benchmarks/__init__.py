@@ -3270,6 +3270,104 @@ class LinearLoRABenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return self.lora_cls(self.model)
 
 
+class AdamBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    _args = (
+        BenchmarkArg(
+            name="config",
+            description="Config to enable single tensor, multi-tensor (foreach), or fused.",
+        ),
+        BenchmarkArg(
+            name="params",
+            description="An iterable of parameters.",
+        ),
+        BenchmarkArg(
+            name="device",
+            description="A string representing the device to run on. Default is 'cuda'.",
+        ),
+        BenchmarkArg(
+            name="dtype",
+            description="The dtype of the tensors. Default is thunder.float32.",
+        ),
+        BenchmarkArg(
+            name="requires_grad",
+            description="Whether the input tensors require grad. Default is False.",
+        ),
+    )
+
+    @classmethod
+    @property
+    def name(cls) -> str:
+        return "optim-functional-adam"
+
+    @classmethod
+    @property
+    def description(cls) -> str:
+        return "Benchmark 'torch.optim._functional.adam' optimizer"
+
+    @classmethod
+    @property
+    def args(cls) -> tuple[BenchmarkArg, ...]:
+        return cls._args
+
+    def __init__(
+        self,
+        config: tuple[str, bool, bool],
+        params: Sequence[int],
+        device: str = "cuda",
+        dtype: dtypes.dtype = thunder.float32,
+        requires_grad: bool = False,
+    ) -> None:
+        super().__init__()
+
+        self.config: tuple[str, bool, bool] = config
+        self.params: Sequence[int] = params
+        self.device: str = device
+        self.dtype: dtypes.dtype = dtype
+        self.tdtype: torch.dtype = ltorch.to_torch_dtype(self.dtype)
+        self.requires_grad: bool = requires_grad
+
+        self.devices: list[str] = [device]
+
+    def make_batch(self) -> tuple[list, dict]:
+        pt = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
+        params = [pt(shape) for shape in self.params]
+        grads = [pt(grad) for grad in self.params]
+        exp_avgs = [pt(ea, requires_grad=False) for ea in self.params]
+        exp_avg_sqs = [pt(eas, requires_grad=False) for eas in self.params]
+        max_exp_avg_sqs = [pt(meas, requires_grad=False) for meas in self.params]
+        state_steps = [
+            torch.tensor(0, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
+            for _ in self.params
+        ]
+        return (params, grads, exp_avgs, exp_avg_sqs, max_exp_avg_sqs, state_steps), {}
+
+    def fn(self) -> Callable:
+        def foo(params, grads, exp_avgs, exp_avg_sqs, max_exp_avg_sqs, state_steps):
+            name, foreach, fused = self.config
+            return torch.optim._functional.adam(
+                params,
+                grads,
+                exp_avgs,
+                exp_avg_sqs,
+                max_exp_avg_sqs,
+                state_steps,
+                foreach=foreach,
+                # to enable dynamo trace
+                capturable=True,
+                differentiable=False,
+                fused=fused,
+                amsgrad=False,
+                lr=0.001,
+                beta1=0.9,
+                beta2=0.999,
+                eps=1e-08,
+                weight_decay=0,
+                maximize=False,
+            )
+
+        return foo
+
+
 # TODO Add descriptions to the executors when listed, and list them alphabetically
 # TODO Allow querying benchmark for details
 # TODO Allow specifying benchmark arguments

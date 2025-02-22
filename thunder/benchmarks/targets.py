@@ -16,6 +16,7 @@ from litgpt.config import configs
 import thunder
 
 from thunder.benchmarks import (
+    AdamBenchmark,
     BatchNormBenchmark,
     Benchmark,
     LitGPTBenchmark,
@@ -82,6 +83,11 @@ parametrize_compute_type_only_training = pytest.mark.parametrize(
     "compute_type,",
     (ComputeType.TRAINING_FORWARD, ComputeType.TRAINING_BACKWARD),
     ids=("forward", "backward"),
+)
+parametrize_compute_type_only_inference = pytest.mark.parametrize(
+    "compute_type,",
+    (ComputeType.INFERENCE,),
+    ids=("inference",),
 )
 
 
@@ -970,5 +976,55 @@ def test_lora_linear(benchmark, executor, compute_type, implementation):
 
     args, kwargs = b.make_batch()
     fn = executor(b.fn())
+
+    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
+
+
+#
+# optimizer benchmarks
+#
+
+
+@pytest.mark.parametrize(
+    "executor,",
+    [
+        thunderfx_executor,
+        torch_compile_executor,
+        torch_executor,
+    ],
+    ids=["thunderfx", "inductor", "eager"],
+)
+@parametrize_compute_type_only_inference
+@pytest.mark.parametrize(
+    "params,",
+    [(64, 64), (128, 64)],
+    ids=["64x64", "128x64"],
+)
+@pytest.mark.parametrize(
+    "config,",
+    [
+        ("single_tensor", False, False),
+        ("multi_tensor", True, False),
+        ("fused", False, True),
+    ],
+    ids=["single_tensor", "multi_tensor(foreach)", "fused"],
+)
+def test_optim_functional_adam(
+    benchmark,
+    executor: None | Callable,
+    config: tuple[str, bool, bool],
+    params: Sequence[int],
+    compute_type: ComputeType,
+):
+    bench: Benchmark = AdamBenchmark(
+        config=config,
+        params=params,
+        device="cuda:0",
+        dtype=thunder.float32,
+        requires_grad=is_requires_grad(compute_type),
+    )
+
+    fn = executor(bench.fn())
+    args, kwargs = bench.make_batch()
 
     benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
