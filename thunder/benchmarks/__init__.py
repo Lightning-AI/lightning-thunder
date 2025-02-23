@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import partial
 from numbers import Number
-from typing import Any, Optional
+from typing import Any
 from contextlib import contextmanager
 
 import torch
@@ -3173,16 +3173,12 @@ class LinearLoRABenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 class SGDBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     _args = (
         BenchmarkArg(
+            name="config",
+            description="Config to enable single tensor, multi-tensor (foreach), or fused.",
+        ),
+        BenchmarkArg(
             name="params",
             description="An iterable of parameters.",
-        ),
-        BenchmarkArg(
-            name="foreach",
-            description="An optional boolean parameter to enable multi-tensor sgd (horizontal fusion).",
-        ),
-        BenchmarkArg(
-            name="fused",
-            description="An optional boolean parameter to enable fused sgd (vertical fusion).",
         ),
         BenchmarkArg(
             name="device",
@@ -3215,18 +3211,16 @@ class SGDBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     def __init__(
         self,
+        config: tuple[str, bool, bool],
         params: Sequence[int],
-        foreach: bool | None,
-        fused: bool | None,
         device: str = "cuda",
         dtype: dtypes.dtype = thunder.float32,
         requires_grad: bool = False,
     ) -> None:
         super().__init__()
 
+        self.config: tuple[str, bool, bool] = config
         self.params: Sequence[int] = params
-        self.foreach: bool | None = foreach
-        self.fused: bool | None = fused
         self.device: str = device
         self.dtype: dtypes.dtype = dtype
         self.tdtype: torch.dtype = ltorch.to_torch_dtype(self.dtype)
@@ -3237,23 +3231,24 @@ class SGDBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     def make_batch(self) -> tuple[list, dict]:
         pt = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
         params = [pt(shape) for shape in self.params]
-        d_p_list = [pt(d_p) for d_p in self.params]
-        momentum_buffer_list = [pt(mbl) for mbl in self.params]
+        d_p_list = [pt(d_p, requires_grad=False) for d_p in self.params]
+        momentum_buffer_list = [pt(mbl, requires_grad=False) for mbl in self.params]
         return (params, d_p_list, momentum_buffer_list), {}
 
     def fn(self) -> Callable:
         def foo(params, d_p_list, momentum_buffer_list):
+            name, foreach, fused = self.config
             return torch.optim._functional.sgd(
                 params,
                 d_p_list,
                 momentum_buffer_list,
-                self.foreach,
-                self.fused,
+                foreach=foreach,
+                fused=fused,
+                weight_decay=0.0,
                 lr=0.001,
-                momentum=0,
-                weight_decay=0,
+                momentum=0.0,
                 dampening=0.01,
-                nesterov=0.001,
+                nesterov=False,
                 maximize=False,
             )
 
