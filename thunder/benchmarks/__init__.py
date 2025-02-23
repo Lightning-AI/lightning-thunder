@@ -3270,6 +3270,91 @@ class LinearLoRABenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return self.lora_cls(self.model)
 
 
+class SGDBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    _args = (
+        BenchmarkArg(
+            name="config",
+            description="Config to enable single tensor, multi-tensor (foreach), or fused.",
+        ),
+        BenchmarkArg(
+            name="params",
+            description="An iterable of parameters.",
+        ),
+        BenchmarkArg(
+            name="device",
+            description="A string representing the device to run on. Default is 'cuda'.",
+        ),
+        BenchmarkArg(
+            name="dtype",
+            description="The dtype of the tensors. Default is thunder.float32.",
+        ),
+        BenchmarkArg(
+            name="requires_grad",
+            description="Whether the input tensors require grad. Default is False.",
+        ),
+    )
+
+    @classmethod
+    @property
+    def name(cls) -> str:
+        return "optim-functional-sgd"
+
+    @classmethod
+    @property
+    def description(cls) -> str:
+        return "Benchmark 'torch.optim._functional.sgd' optimizer"
+
+    @classmethod
+    @property
+    def args(cls) -> tuple[BenchmarkArg, ...]:
+        return cls._args
+
+    def __init__(
+        self,
+        config: tuple[str, bool, bool],
+        params: Sequence[int],
+        device: str = "cuda",
+        dtype: dtypes.dtype = thunder.float32,
+        requires_grad: bool = False,
+    ) -> None:
+        super().__init__()
+
+        self.config: tuple[str, bool, bool] = config
+        self.params: Sequence[int] = params
+        self.device: str = device
+        self.dtype: dtypes.dtype = dtype
+        self.tdtype: torch.dtype = ltorch.to_torch_dtype(self.dtype)
+        self.requires_grad: bool = requires_grad
+
+        self.devices: list[str] = [device]
+
+    def make_batch(self) -> tuple[list, dict]:
+        pt = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
+        params = [pt(shape) for shape in self.params]
+        d_p_list = [pt(d_p, requires_grad=False) for d_p in self.params]
+        momentum_buffer_list = [pt(mbl, requires_grad=False) for mbl in self.params]
+        return (params, d_p_list, momentum_buffer_list), {}
+
+    def fn(self) -> Callable:
+        def foo(params, d_p_list, momentum_buffer_list):
+            name, foreach, fused = self.config
+            return torch.optim._functional.sgd(
+                params,
+                d_p_list,
+                momentum_buffer_list,
+                foreach=foreach,
+                fused=fused,
+                weight_decay=0.0,
+                lr=0.001,
+                momentum=0.0,
+                dampening=0.01,
+                nesterov=False,
+                maximize=False,
+            )
+
+        return foo
+
+
 # TODO Add descriptions to the executors when listed, and list them alphabetically
 # TODO Allow querying benchmark for details
 # TODO Allow specifying benchmark arguments
