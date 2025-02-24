@@ -59,16 +59,18 @@ class CUDAGraphRunner:
     change.
     """
 
-    def __init__(self, share_mem_pool: bool = False):
+    def __init__(self, *, share_mem_pool: bool = False):
         self.cuda_graph_cache = {}  # cahce_key (.make_cache_key) -> (graph, static_inputs, static_outputs)
         self.python_callables = {}  # fn_name -> (callable. static_input_mask (or None))
         self.trace_symbols = {}  # fn_name -> (bsyms, inputs, outputs)
         self.name_counter = 1
 
+        # NOTE: Every invocation of CUDAGraphTransform has a single CUDAGraphRunner associated with it.
+        # This should  allow the runner to share a single memory pool across all graphs it constructs.
         if share_mem_pool:
-            self.global_mem_pool = torch.cuda.graph_pool_handle()
+            self.mem_pool = torch.cuda.graph_pool_handle()
         else:
-            self.global_mem_pool = None
+            self.mem_pool = None
 
     def get_static_buffer(self, x):
         if isinstance(x, torch.Tensor):
@@ -100,7 +102,7 @@ class CUDAGraphRunner:
         # which is shared across all graphs here. However, we havent observed any memeory 
         # saving from this, so it is not enabled by default.
         graph = torch.cuda.CUDAGraph()
-        with torch.cuda.graph(graph, stream=stream, pool=self.global_mem_pool):
+        with torch.cuda.graph(graph, stream=stream, pool=self.mem_pool):
             static_outputs = fn(*static_inputs)
 
         return graph, static_inputs, static_outputs
@@ -209,7 +211,7 @@ class CUDAGraphTransform(Transform):
     in order to override ``can_fuse```or other methods.
     """
 
-    def __init__(self, share_mem_pool: bool = False):
+    def __init__(self, *, share_mem_pool: bool = False):
         super().__init__()
         self.cuda_graph_runner = CUDAGraphRunner(share_mem_pool)
 
