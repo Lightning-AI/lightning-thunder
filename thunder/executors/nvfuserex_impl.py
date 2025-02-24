@@ -1969,7 +1969,7 @@ def minimum(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefin
     nva = getnv(a, fd, lc_to_nv_map)
     nvb = getnv(b, fd, lc_to_nv_map)
 
-    return fd.ops.maximum(nva, nvb)
+    return fd.ops.minimum(nva, nvb)
 
 
 register_supported(PrimIDs.MINIMUM, minimum, _elementwise_binary_check)
