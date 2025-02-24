@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 import textwrap
 import copy
+from itertools import chain
 
 
 import torch
@@ -66,17 +67,22 @@ def run_forward_backward(fn, *args, **kwargs):
         return result, None
 
     forward_inputs = tree_flatten((args, kwargs))[0]
-    forward_inputs = list(filter(lambda x: isinstance(x, torch.Tensor) and x.requires_grad, forward_inputs))
+    inputs_requires_grad = list(filter(lambda x: isinstance(x, torch.Tensor) and x.requires_grad, forward_inputs))
+    if isinstance(fn, torch.nn.Module):
+        params_requires_grad = list(
+            f for f in chain(fn.parameters(), fn.buffers()) if isinstance(f, torch.Tensor) and f.requires_grad
+        )
+        inputs_requires_grad = inputs_requires_grad + params_requires_grad
 
     output_grads = []
     for diff_result in differentiable_tensor_result:
         output_grads.append(torch.ones_like(diff_result))
 
-    for i in forward_inputs:
+    for i in inputs_requires_grad:
         i.grad = None
 
-    torch.autograd.backward(result, output_grads, inputs=forward_inputs)
-    return result, [t.grad for t in forward_inputs]
+    torch.autograd.backward(result, output_grads, inputs=inputs_requires_grad)
+    return result, [t.grad for t in inputs_requires_grad]
 
 
 def thunderfx_pytest_benchmark_report(
@@ -411,7 +417,7 @@ class FXGraphReport:
         result = run_forward_backward(compiled_model, *example_inputs)
 
         if check_consistency:
-            eager_result = run_forward_backward(compiled_model, *example_inputs)
+            eager_result = run_forward_backward(self.graph, *example_inputs)
             torch.testing.assert_close(result, eager_result)
         return result
 
@@ -1072,7 +1078,7 @@ def thunderfx_benchmark_report(
     """
     try:
         torch_compiled = torch.compile(fn)
-        torch_compiled(*args, **kwargs)
+        run_forward_backward(torch_compiled, *args, **kwargs)
     except Exception as e:
         print(f"Failed to run the function using torch.compile with exception: {e}")
         print(f"Trying with Torch eager...")
