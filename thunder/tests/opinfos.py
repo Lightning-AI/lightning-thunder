@@ -8359,7 +8359,7 @@ def grad_scaled_dot_product_attention_sample_generator(op, device, dtype, requir
     """https://pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html"""
     from thunder.executors.sdpaex import SpdaBackend
 
-    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad, low=-0.5, high=0.5)
     # Reference metadata:
     # https://github.com/pytorch/pytorch/blob/main/torch/_meta_registrations.py#L4863-L4899
     # * query (batch_size, num_heads, query_seq_len, E)
