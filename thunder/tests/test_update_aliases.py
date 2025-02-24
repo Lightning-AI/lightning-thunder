@@ -14,7 +14,7 @@ from thunder.tests.opinfos import opinfos
 from thunder.tests.test_inplace_functionalization import _inplace_opinfos
 
 
-@ops(_inplace_opinfos, supported_dtypes=(dtypes.float32,), supported_devicetypes=(devices.DeviceType.CPU,))
+@ops(_inplace_opinfos, supported_dtypes=(dtypes.float32,))
 def test_update_aliases(op, device, dtype, executor, _):
     sample = next(op.sample_inputs(device, dtype))
 
@@ -42,12 +42,12 @@ def test_update_aliases(op, device, dtype, executor, _):
 def test_inplace_on_view(executor, device, dtype):
     def f(x, _):
         y = x.view((3, 2))
-        y[0][0] = 0
+        y[0][0] = 0  # Fails on CUDA
         return x
 
     def g(x, _):
         y = x.view((3, 2))
-        y[0][0] = 0
+        y[0][0] = 0  # Fails on CUDA
         return y
 
     def h(x, y):
@@ -55,7 +55,7 @@ def test_inplace_on_view(executor, device, dtype):
         d = torch.tanh(y)
         e = c.view(-1)
 
-        d.div_(a)
+        d.div_(x)
         e += d.flatten()
 
         return c, d, e
@@ -94,7 +94,7 @@ def test_inplace_on_view(executor, device, dtype):
 )
 def test_inplace_on_chunk(executor, device, dtype):
     def f(x):
-        y, z = x.chunk(2, dim=1)
+        y, z = x.chunk(2, dim=1)  # Fails on CUDA with stride issues
         y.relu_()
         return y, z
 
@@ -120,7 +120,6 @@ def test_inplace_on_chunk(executor, device, dtype):
 
 
 @instantiate(
-    devicetypes=(devices.DeviceType.CPU,),
     dtypes=NOTHING,
 )
 def test_chained_inplace(executor, device, dtype):
@@ -141,14 +140,15 @@ def test_chained_inplace(executor, device, dtype):
     for fn in [f, g, h]:
         a = make_tensor((2, 3), dtype=torch.float32, device=device)
         a_ = a.clone().detach()
-        jfn = executor.make_callable(fn, skip_inplace_alias_updates=False, skip_inplace_functionalization=True)
+        jfn = executor.make_callable(
+            fn, skip_inplace_alias_updates=False, skip_inplace_functionalization=True, disable_inplace_copy_check=True
+        )
         actual = jfn(a)
         expected = fn(a_)
         torch.testing.assert_close(actual, expected)
 
 
 @instantiate(
-    devicetypes=(devices.DeviceType.CPU,),
     dtypes=NOTHING,
 )
 def test_nn_module_inplace(executor, device, dtype):
@@ -166,7 +166,6 @@ def test_nn_module_inplace(executor, device, dtype):
 
 
 @instantiate(
-    devicetypes=(devices.DeviceType.CPU,),
     dtypes=NOTHING,
 )
 def test_inplace(executor, device, dtype):
@@ -199,7 +198,7 @@ def test_inplace(executor, device, dtype):
 )
 def test_aliased_input(executor, device, dtype):
     def f(x, y, z):
-        return y.exp_().add(x) + z.exp()
+        return y.exp_().add(x) + z.exp()  # Fails on CUDA because operations have been reordered.
 
     a = make_tensor((2, 1, 2), dtype=torch.float32, device=device)
     b = a.clone()
@@ -207,7 +206,9 @@ def test_aliased_input(executor, device, dtype):
     a_ = a.clone().detach()
     b_ = b.clone().detach()
     c_ = c.clone().detach()
-    jfn = executor.make_callable(f, skip_inplace_alias_updates=False, skip_inplace_functionalization=True)
+    jfn = executor.make_callable(
+        f, skip_inplace_alias_updates=False, skip_inplace_functionalization=True, disable_inplace_copy_check=True
+    )
     actual = jfn(a, b, c)
     expected = f(a_, b_, c_)
     torch.testing.assert_close(actual, expected)

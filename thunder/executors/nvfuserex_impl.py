@@ -838,6 +838,11 @@ class nvFuserExecutor(FusionExecutor):
         )
         return cse_trace
 
+    def can_fuse(self, bsym: BoundSymbol) -> bool:
+        if bsym.sym.id == prims.PrimIDs.UPDATE_ALIASES:
+            return False
+        return super().can_fuse(bsym)
+
     # TODO Restore fusion logic here -- this just replaces supported operations in isolation at the moment
     def fusion_pass(self, trace: TraceCtx) -> TraceCtx:
         start_time_ns: int = time.perf_counter_ns()

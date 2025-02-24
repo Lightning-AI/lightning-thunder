@@ -8,6 +8,48 @@ from thunder.core.pytree import tree_flatten, tree_unflatten
 from thunder.core.symbol import BoundSymbol
 from thunder.core.trace import from_trace, tracectx, TraceCtx as Trace, TraceProvenance
 
+# from thunder.core.utils import ProxyDict
+
+# # this doesn't work because if an inplace operation is performed on a view, the
+# # result won't be reflected in the base.
+# def _create_functional_bsym_from(inplace_bsym: BoundSymbol) -> BoundSymbol:
+#     from thunder.torch import _inplace_to_out_of_place, setitem_, setitem
+
+#     functional_sym, optional_inplace_arg_index = _inplace_to_out_of_place[inplace_bsym.sym]
+#     args, kwargs = inplace_bsym.args, inplace_bsym.kwargs
+#     if optional_inplace_arg_index > -1:
+#         # Update `inplace` from `True` to `False`. e.g. `relu(x, inplace=True)` -> `relu(x, inplace=False)`
+#         flat_args, flat_args_spec = tree_flatten((args, kwargs))
+#         flat_args[optional_inplace_arg_index] = False
+#         args, kwargs = tree_unflatten(flat_args, flat_args_spec)
+#     functional_output = inplace_bsym.output
+#     if inplace_bsym.sym is setitem_:
+#         # setitem does not return a value, take the output of the setitem subsymbol
+#         assert inplace_bsym.subsymbols[0].sym is setitem
+#         functional_output = inplace_bsym.subsymbols[0].output
+#     functional_bsym = functional_sym.bind(
+#         *args,
+#         **kwargs,
+#         output=functional_output,
+#         subsymbols=inplace_bsym.subsymbols,
+#         _call_ctx=inplace_bsym._call_ctx,
+#     )
+#     if functional_bsym.subsymbols[-1].sym.id == prims.PrimIDs.COPY_:
+#         last_ssym_out = functional_bsym.subsymbols[-1].flat_proxy_outs[0]
+#         functional_bsym.subsymbols = functional_bsym.subsymbols[:-1]
+#         penultimate_ssym = functional_bsym.subsymbols[-1]
+#         new_last_ssym = penultimate_ssym.from_bsym_swap_proxies({variableify(penultimate_ssym.flat_proxy_outs[0]): last_ssym_out})
+#         functional_bsym.subsymbols[-1] = new_last_ssym
+#     if len(functional_bsym.subsymbols) == 1 and functional_bsym.rhs == functional_bsym.subsymbols[0].rhs:
+#         functional_bsym.subsymbols = functional_bsym.subsymbols[0].subsymbols
+#     return functional_bsym
+
+# def _maybe_create_functional_bsym_from(bsym):
+#     if _is_inplace_op(bsym) and bsym.sym.id != 'setitem_':
+#         return _create_functional_bsym_from(bsym)
+#     else:
+#         return bsym
+
 
 def _get_update_bsym(group, swap_map, new_aliases):
     aliases = tuple(unvariableify(alias) for alias in group)
@@ -62,6 +104,7 @@ def insert_alias_updates(computation_trace: Trace) -> Trace:
             out_tensors = set(map(variableify, filter(lambda p: isinstance(p, TensorProxy), bsym.flat_proxy_outs)))
             if _is_inplace_op(bsym):
                 inplace_inputs.add(in_tensor)
+                out_tensors = set()
             for group in view_groups:
                 if in_tensor in group:
                     group.update(out_tensors)
@@ -74,16 +117,29 @@ def insert_alias_updates(computation_trace: Trace) -> Trace:
     view_groups = [group for group in view_groups if len(group.intersection(inplace_inputs)) != 0]
     viewed = set(reduce(set.union, view_groups, set()))
     encountered = set()
+    # trace_args_set = ProxyDict()
+    # for a in filter(
+    #     lambda a: isinstance(a, TensorProxy), tree_flatten((computation_trace.args, computation_trace.kwargs))[0]
+    # ):
+    #     trace_args_set[a] = a
+
     for bsym in computation_trace.bound_symbols:
         if _is_inplace_op(bsym) or _is_view_creation_op(bsym) or _involves_viewed_args(bsym, viewed):
             in_tensors = map(variableify, filter(lambda p: isinstance(p, TensorProxy), bsym.flat_proxy_args))
             if _is_inplace_op(bsym):
-                in_tensors = {list(in_tensors)[0]}
+                in_tensor = list(in_tensors)[0]
+                in_tensors = {in_tensor}
+                # if unvariableify(in_tensor) in trace_args_set:
+                #     # this is an inplace op on an input to the computation, and we don't want to update the aliases
+                #     # for this input, so we skip it to keep nvfuser happy.
+                #     encountered.add(in_tensor)
+                #     bsyms.append(bsym.from_bsym_swap_proxies(swap_map, skip_output=True))
+                #     continue
             else:
                 in_tensors = set(in_tensors)
             out_tensors = set(map(variableify, filter(lambda p: isinstance(p, TensorProxy), bsym.flat_proxy_outs)))
             encountered.update(in_tensors)
-            group = next((g for g in view_groups if any(g.intersection(in_tensors))), None)
+            group = set(reduce(set.union, filter(lambda g: any(g.intersection(in_tensors)), view_groups), set()))
             if group is None:
                 # this is a view creation with operands that are not involved in any inplace ops
                 bsyms.append(bsym.from_bsym_swap_proxies(swap_map, skip_output=True))
@@ -95,10 +151,11 @@ def insert_alias_updates(computation_trace: Trace) -> Trace:
             bsyms.append(update_bsym)
             encountered.update(out_tensors)
             new_bsym = bsym.from_bsym_swap_proxies(swap_map)
+            # new_bsym = _maybe_create_functional_bsym_from(new_bsym)
+            bsyms.append(new_bsym)
             if _is_inplace_op(bsym) and len(out_tensors) == 1:
                 #  This relies on these being one element sets (ltorch.setitem_ yields no outs).
                 swap_map[in_tensors.pop()] = unvariableify(out_tensors.pop())
-            bsyms.append(new_bsym)
 
         else:
             bsyms.append(bsym.from_bsym_swap_proxies(swap_map))
