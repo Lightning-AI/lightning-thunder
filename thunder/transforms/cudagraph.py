@@ -213,7 +213,7 @@ class CUDAGraphTransform(Transform):
 
     def __init__(self, *, share_mem_pool: bool = False):
         super().__init__()
-        self.cuda_graph_runner = CUDAGraphRunner(share_mem_pool)
+        self.cuda_graph_runner = CUDAGraphRunner(share_mem_pool=share_mem_pool)
 
     def fuse(self, region: Region, fusion_counter: int) -> BoundSymbol:
         inputs = [unvariableify(inp) for inp in region.inputs]
