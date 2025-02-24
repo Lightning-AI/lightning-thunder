@@ -472,6 +472,13 @@ def to(
     copy: bool = False,
     memory_format: None | torch.memory_format = None,
 ) -> TensorLike:
+
+    input_device = a.device
+    input_dtype = a.dtype
+    if copy and not _will_to_return_self(input_device, input_dtype, device, dtype, memory_format, copy):
+        b = prims.empty(a.shape, device=input_device, dtype=input_dtype)
+        return _copy_(b, a)
+
     device, dtype = _parse_to_device_and_dtype(
         tensor_dtype_or_device, optional_positional_dtype, device=device, dtype=dtype
     )
@@ -1834,14 +1841,6 @@ _inplace_to_out_of_place[leaky_relu] = leaky_relu, 2
 @torchsymbol(torch.nn.functional.logsigmoid, is_method=False)
 def logsigmoid(a: TensorProxy, /) -> TensorLike:
     return where(a > 0, -log1p(exp(-a)), a - log1p(exp(a)))
-
-
-@torchsymbol("log_sigmoid_backward", id="log_sigmoid_backward")
-def log_sigmoid_backward(g: TensorProxy, a: TensorProxy, buffer: TensorProxy) -> TensorLike:
-    # buffer is used by PyTorch in cpu-based calculations.  See
-    # https://github.com/pytorch/pytorch/blob/7667235a23e2ffca4d32e6e16aa60a683418e159/torch/_decomp/decompositions.py#L332
-    # This is addressed in the custom grad fn thunder.core.transforms._log_sigmoid_grad.
-    return g * where(a > 0, exp(-a) / (1 + exp(-a)), 1 - exp(a) / (1 + exp(a)))
 
 
 # TODO Should this use clamp? -- Would that propagate NaNs properly?
@@ -5101,31 +5100,50 @@ def _nll_loss_helper(
     #   ATen prevents nll_loss from having these errors by skipping target values that match ignore_index first before
     # indexing the input tensor.
     #
-    # What do we do?
-    #   We mask the ignore_index entries on the output tensor from take_along_axis because we expect the targets to be
-    # within [0, num_class) range.
+    # What do we do:
+    #   Because prims.take_along_axis doesn't allow out of bound access. We need to treat this more carefully.
     #
-    # Why do we like our approach better?
-    #   Mimicking Aten behavior requires masking the target tensor before calling take_along_axis, which would add more
-    # operations to the fusion. We should follow this approach until we see real examples where ignore_index is
-    # out-of-bounds of [0, num_class) range.
+    #   1. When ignore_index is within [0, num_class) range. We mask the ignore_index entries on the output
+    #   tensor from prims.take_along_axis.
+    #
+    #   2. otherwise, ignore_index is not in bound of class_dim sizes, we cannot mask the target for
+    #   prims.take_along_axis. Two action is done:
+    #       i. cap the `ignore_index` entries in target as `num_class`;
+    #       ii. pad the logits so the last entry at index `num_class` is all zero.
+    #
+    #   Neither approach is ideal, because we have an explicit mask or pad, where we should have been able to
+    #   predicate those access inside prims.take_along_axis.
     #
     # What are the alternative options?
     #   We can add a `mode` parameter to take_along_axis that controls how to handle out-of-bounds indices.
     # The jax.numpy.take_along_axis has this feature.
+    can_mask_target = isinstance(ignore_index, Number) and ignore_index >= 0 and ignore_index < num_class
 
     out = -a
 
     if weight is not None:
-        bcast_weight = reshape(weight, [num_class] + [1 for _ in range(2, a.ndim)])
+        bcast_weight = reshape(weight, [weight.size(0)] + [1 for _ in range(2, a.ndim)])
         out = out * bcast_weight
 
     # Make target broadcastable with output, which has same shape as input tensor.
     bcast_target = unsqueeze(target, class_dim)
 
-    out = take_along_dim(out, bcast_target, class_dim)
-    selected_target_mask = bcast_target != ignore_index
-    out = where(selected_target_mask, out, 0)
+    if can_mask_target:
+        # scenario 1 in handling `ignore_index` parameter
+        out = take_along_dim(out, bcast_target, class_dim)
+        selected_target_mask = bcast_target != ignore_index
+        out = where(selected_target_mask, out, 0)
+    else:
+        # scenario 2 in handling `ignore_index` parameter
+        # i. cap the ignore_index to be num_class
+        selected_target_mask = bcast_target != ignore_index
+        bcast_target = where(selected_target_mask, bcast_target, num_class)
+        # ii. pad the logits to have an all-zero entry at index num_class
+        padding = [(0, 0, 0)] * out.ndim
+        padding[class_dim] = (0, 1, 0)
+        padded_out = clang.pad(out, utils.const_as(0, out.dtype), padding)
+        # with the cap and pad, all ignore_index entries would be all zero, mimicking the skip behavior
+        out = take_along_dim(padded_out, bcast_target, class_dim)
 
     # This section handles applying the reduction parameter to the output.
     # We return None for the total_weight when reduction is "none" or "sum" since it is unused in the backwards pass.
@@ -5139,9 +5157,16 @@ def _nll_loss_helper(
             # Gather the weights for each target class.
             # Mask the ignored target classes.
             # Sum together all target weights.
-            expanded_weight = expand(bcast_weight, a.shape)
-            selected_weight = take_along_dim(expanded_weight, bcast_target, class_dim)
-            selected_weight = where(selected_target_mask, selected_weight, 0)
+            if can_mask_target:
+                expanded_weight = expand(bcast_weight, a.shape)
+                selected_weight = take_along_dim(expanded_weight, bcast_target, class_dim)
+                selected_weight = where(selected_target_mask, selected_weight, 0)
+            else:
+                # handling `ignore_index` parameter also requires padding weight for the ignore_index entries.
+                weight = clang.pad(weight, utils.const_as(0, weight.dtype), [(0, 1, 0)])
+                bcast_weight = reshape(weight, [weight.shape[0]] + [1 for _ in range(2, a.ndim)])
+                expanded_weight = expand(bcast_weight, padded_out.shape)
+                selected_weight = take_along_dim(expanded_weight, bcast_target, class_dim)
             bcast_weight_sum = sum(selected_weight)
             return (reduced_sum / bcast_weight_sum), bcast_weight_sum
         else:

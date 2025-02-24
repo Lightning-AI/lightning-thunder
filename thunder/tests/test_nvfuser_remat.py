@@ -240,7 +240,6 @@ def test_apply_rematerialization_consumer_early_exit(executor, device, _):
 @instantiate(
     dtypes=NOTHING,
     executors=(nvFuserExecutor,),
-    decorators=(pytest.mark.skip(reason="temporarily disabled horizontal fusion"),),
 )
 def test_find_nvfuser_producer_consumer_pairs(executor, device, _):
     n_fusion_regions = 7
@@ -257,7 +256,7 @@ def test_find_nvfuser_producer_consumer_pairs(executor, device, _):
 
     t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
     initial_trace = thunder.trace()(func, t0)
-    compiled_func = thunder.jit(initial_trace.python_callable())
+    compiled_func = thunder.jit(initial_trace.python_callable(), fusion_type="dataflow")
     _ = compiled_func(t0)
     traces = thunder.last_traces(compiled_func)
     trace = traces[-1]
@@ -515,19 +514,19 @@ def test_not_rematerialize_matmul():
 
     # At the time of writing, linear and matmul are not fused into nvFuser
     # regions by default therefore, we should enable them separately
-    jmodel = thunder.jit(model, nv_enable_linear=True, nv_enable_matmul=True)
+    jmodel = thunder.jit(model, nv_enable_linear=True, nv_enable_matmul=True, fusion_type="dataflow")
     jmodel(inp)
 
-    def assert_subsymbol_count(trace: TraceCtx, /, num_linears: int, num_matmuls: int, num_fusions: int):
+    def assert_subsymbol_count(trace: TraceCtx, /, num_linears: int, num_matmuls: int):
         fusions = thunder.examine.get_fusion_symbols(trace)
-        assert len(fusions) == num_fusions
+        assert len(fusions) == 1
 
-        subsymbol_ids = [subsymbol.sym.id for f in fusions for subsymbol in f.subsymbols]
+        subsymbol_ids = [subsymbol.sym.id for subsymbol in fusions[0].subsymbols]
         assert subsymbol_ids.count(prims.PrimIDs.LINEAR) == num_linears
         assert subsymbol_ids.count(prims.PrimIDs.MATMUL) == num_matmuls
 
     fw_trace = thunder.last_traces(jmodel)[-1]
-    assert_subsymbol_count(fw_trace, num_linears=2, num_matmuls=0, num_fusions=2)
+    assert_subsymbol_count(fw_trace, num_linears=2, num_matmuls=0)
 
     bw_trace = thunder.last_backward_traces(jmodel)[-1]
-    assert_subsymbol_count(bw_trace, num_linears=0, num_matmuls=4, num_fusions=1)
+    assert_subsymbol_count(bw_trace, num_linears=0, num_matmuls=4)
