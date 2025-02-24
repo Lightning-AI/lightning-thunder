@@ -545,24 +545,27 @@ def test_cudagraph_pools():
 
     from thunder.transforms.cudagraph import CUDAGraphTransform
 
-    def run_cg(share_mem_pool=False):
+    def run_cg(n , m, share_mem_pool=False):
         jfn = thunder.jit(workload, transforms=(CUDAGraphTransform(share_mem_pool=share_mem_pool),), executors=())
-        n = 512
-        m = 256
 
         a = torch.randn(n, n, device="cuda")
         jfn(a)
         b = torch.randn(m, m, device="cuda")
         jfn(b)
 
-    run_cg()
-    reserved_memory_without_pool = torch.cuda.memory_reserved()
+    def run_graphs(n ,m):
+        run_cg(n, m)
+        reserved_memory_without_pool = torch.cuda.memory_reserved()
+        run_cg(n, m, True)
+        reserved_memory_with_pool = torch.cuda.memory_reserved()
+        assert reserved_memory_with_pool < reserved_memory_without_pool
 
-    run_cg(True)
-    reserved_memory_with_pool = torch.cuda.memory_reserved()
-
-    assert reserved_memory_with_pool < reserved_memory_without_pool
-
+    run_graphs(1024, 1024)
+    run_graphs(1024, 512)
+    run_graphs(512, 1024)
+    run_graphs(15, 5)
+    run_graphs(5, 15)
+    run_graphs(5, 5)
 
 
 def test_disable_params_and_buffer_check():
