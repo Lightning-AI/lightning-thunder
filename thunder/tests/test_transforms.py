@@ -531,7 +531,7 @@ def test_cudagraph_empty_inputs():
 
 
 @pytest.mark.skip(
-    reason="Pools in CUDAGraphTransform are not sharing properly. ",
+    reason="Pools in CUDAGraphTransform are not sharing properly. https://github.com/Lightning-AI/lightning-thunder/issues/1792",
 )
 @requiresCUDA
 def test_cudagraph_pools():
