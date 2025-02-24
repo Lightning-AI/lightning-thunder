@@ -59,11 +59,16 @@ class CUDAGraphRunner:
     change.
     """
 
-    def __init__(self):
+    def __init__(self, share_mem_pool: bool = False):
         self.cuda_graph_cache = {}  # cahce_key (.make_cache_key) -> (graph, static_inputs, static_outputs)
         self.python_callables = {}  # fn_name -> (callable. static_input_mask (or None))
         self.trace_symbols = {}  # fn_name -> (bsyms, inputs, outputs)
         self.name_counter = 1
+
+        if share_mem_pool:
+            self.global_mem_pool = torch.cuda.graph_pool_handle()
+        else:
+            self.global_mem_pool = None
 
     def get_static_buffer(self, x):
         if isinstance(x, torch.Tensor):
@@ -96,7 +101,7 @@ class CUDAGraphRunner:
         # PyTorch's Inductor: torch/_inductor/cudagraph_trees.py
         # Design doc: https://docs.google.com/document/d/1ZrxLGWz7T45MSX6gPsL6Ln4t0eZCSfWewtJ_qLd_D0E/view
         graph = torch.cuda.CUDAGraph()
-        with torch.cuda.graph(graph, stream=stream):
+        with torch.cuda.graph(graph, stream=stream, pool=self.global_mem_pool):
             static_outputs = fn(*static_inputs)
 
         return graph, static_inputs, static_outputs
@@ -205,9 +210,9 @@ class CUDAGraphTransform(Transform):
     in order to override ``can_fuse```or other methods.
     """
 
-    def __init__(self):
+    def __init__(self, share_mem_pool: bool = False):
         super().__init__()
-        self.cuda_graph_runner = CUDAGraphRunner()
+        self.cuda_graph_runner = CUDAGraphRunner(share_mem_pool)
 
     def fuse(self, region: Region, fusion_counter: int) -> BoundSymbol:
         inputs = [unvariableify(inp) for inp in region.inputs]
