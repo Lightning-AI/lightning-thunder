@@ -82,12 +82,6 @@ def insert_alias_updates(computation_trace: Trace) -> Trace:
             if _is_inplace_op(bsym):
                 in_tensor = list(in_tensors)[0]
                 in_tensors = {in_tensor}
-                # if unvariableify(in_tensor) in trace_args_set:
-                #     # this is an inplace op on an input to the computation, and we don't want to update the aliases
-                #     # for this input, so we skip it to keep nvfuser happy.
-                #     encountered.add(in_tensor)
-                #     bsyms.append(bsym.from_bsym_swap_proxies(swap_map, skip_output=True))
-                #     continue
             else:
                 in_tensors = set(in_tensors)
             out_tensors = set(map(variableify, filter(lambda p: isinstance(p, TensorProxy), bsym.flat_proxy_outs)))
