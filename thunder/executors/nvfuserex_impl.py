@@ -1964,6 +1964,7 @@ def maximum(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefin
 
 register_supported(PrimIDs.MAXIMUM, maximum, _elementwise_binary_check)
 
+
 def minimum(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
     nvb = getnv(b, fd, lc_to_nv_map)
@@ -2707,5 +2708,3 @@ def embedding(
 
 register_supported(PrimIDs.EMBEDDING, embedding, _embedding_check)
 register_supported(ltorch.embedding, embedding, _embedding_check)
-
-
