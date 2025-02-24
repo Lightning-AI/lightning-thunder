@@ -8435,7 +8435,7 @@ def grad_scaled_dot_product_attention_sample_generator(op, device, dtype, requir
         # Test the scale factor which was added in torch 2.1
         if LooseVersion(torch.__version__) >= LooseVersion("2.1.0"):
             q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
-            yield SampleInput(q, k, v, attn_mask := None, dropout_p := 0.0, is_causal := False, scale=0.123)
+            yield SampleInput(q, k, v, attn_mask := None, dropout_p := 0.0, is_causal := False, scale=0.125)
 
         # NOTE Flash attention sdpa does not support attn_mask argument; These cases always use memory efficient sdpa.
         q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
@@ -8463,15 +8463,6 @@ grad_sdpa_opinfo = OpInfo(
     # NOTE: NotImplementedError: Could not run 'aten::_scaled_dot_product_efficient_attention' with arguments from the 'CPU' backend.
     # NOTE: NotImplementedError: Could not run 'aten::_scaled_dot_product_efficient_attention_backward' with arguments from the 'CPU' backend
     devicetypes=(devices.DeviceType.CUDA,),
-    test_directives=(
-        # The test might fail due to numerical issues with bfloat16
-        # https://github.com/Lightning-AI/lightning-thunder/issues/703
-        DecorateInfo(
-            pytest.mark.xfail(strict=False, raises=AssertionError),
-            "test_vjp_correctness_sdpa_manual",
-            dtypes=(datatypes.bfloat16,),
-        ),
-    ),
 )
 nn_ops.append(grad_sdpa_opinfo)
 
