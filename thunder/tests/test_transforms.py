@@ -545,7 +545,7 @@ def test_cudagraph_pools():
 
     from thunder.transforms.cudagraph import CUDAGraphTransform
 
-    def run_cg(n , m, share_mem_pool=False):
+    def run_cg(n, m, share_mem_pool=False):
         jfn = thunder.jit(workload, transforms=(CUDAGraphTransform(share_mem_pool=share_mem_pool),), executors=())
 
         a = torch.randn(n, n, device="cuda")
@@ -553,7 +553,7 @@ def test_cudagraph_pools():
         b = torch.randn(m, m, device="cuda")
         jfn(b)
 
-    def run_graphs(n ,m):
+    def run_graphs(n, m):
         run_cg(n, m)
         reserved_memory_without_pool = torch.cuda.memory_reserved()
         run_cg(n, m, True)

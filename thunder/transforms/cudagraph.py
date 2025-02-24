@@ -99,7 +99,7 @@ class CUDAGraphRunner:
 
         # Record
         # NOTE: we are (optionally) using a global memory pool
-        # which is shared across all graphs here. However, we havent observed any memeory 
+        # which is shared across all graphs here. However, we havent observed any memeory
         # saving from this, so it is not enabled by default.
         graph = torch.cuda.CUDAGraph()
         with torch.cuda.graph(graph, stream=stream, pool=self.mem_pool):
