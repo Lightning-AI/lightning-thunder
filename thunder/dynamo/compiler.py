@@ -162,7 +162,7 @@ class ThunderCompiler:
 
                 compile_fn = ThunderCompileSpecification(**self.thunder_options)
                 if not use_pytest_benchmark:
-                    report.write_repro_v2(
+                    report.write_repro(
                         reproducer_folder,
                         file_name=f"{report.graph_name}_repro.py",
                         compile_fn=compile_fn,
@@ -203,6 +203,8 @@ def thunderfx(fn: Callable, /, **kwargs) -> Callable:
     """
     import thunder
 
+    # lightning has torch.compile wrapped in `lightning/fabric/wrappers.py`
+    torch.compile = inspect.unwrap(torch.compile)
     torch_compile_kwarg_names = inspect.getfullargspec(torch.compile).kwonlyargs
     thunder_jit_kwarg_names = inspect.getfullargspec(thunder.jit).kwonlyargs
     overlap = [kwarg_name for kwarg_name in thunder_jit_kwarg_names if kwarg_name in torch_compile_kwarg_names]
