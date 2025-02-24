@@ -96,10 +96,9 @@ class CUDAGraphRunner:
         torch.cuda.synchronize()
 
         # Record
-        # NOTE: We are using default private pool here, but it is possibly better to
-        # use a custom pool for better memory management. See CUDA Graphs Tree in
-        # PyTorch's Inductor: torch/_inductor/cudagraph_trees.py
-        # Design doc: https://docs.google.com/document/d/1ZrxLGWz7T45MSX6gPsL6Ln4t0eZCSfWewtJ_qLd_D0E/view
+        # NOTE: we are (optionally) using a global memory pool
+        # which is shared across all graphs here. However, we havent observed any memeory 
+        # saving from this, so it is not enabled by default.
         graph = torch.cuda.CUDAGraph()
         with torch.cuda.graph(graph, stream=stream, pool=self.global_mem_pool):
             static_outputs = fn(*static_inputs)
