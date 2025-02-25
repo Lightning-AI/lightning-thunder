@@ -8740,13 +8740,28 @@ def nll_loss_sample_generator(op, device, dtype, requires_grad, **kwargs):
         # Input is expected to be log-probs.
         # We provide a which is log-stochastic in channel dims.
         a = make(input_shape, requires_grad=False)
-        for dim in range(2 if len(input_shape) >= 2 else 1, a.ndim):
+        class_dim = 1 if len(input_shape) >= 2 else 0
+        for dim in range(class_dim + 1, a.ndim):
             a = a.log_softmax(dim=dim)
         a.requires_grad_(requires_grad)
 
+        target = make(target_shape, low=0, high=C, dtype=torch.long, requires_grad=False)
+        # NOTE pytorch `cuda` behavior for scalar target == ignore_index diverges from the cpu behavior.
+        # def foo(device):
+        #     ignore_index = -100
+        #     logits = torch.randn(5, device=device, dtype=torch.float32, requires_grad=False)
+        #     weight = torch.randn(5, device=device, dtype=torch.float32, requires_grad=False)
+        #     labels = torch.tensor(ignore_index, device=device)
+        #     print(torch.nn.functional.cross_entropy(logits, labels, weight, ignore_index=ignore_index))
+        # foo("cpu")  # tensor(nan)
+        # foo("cuda") # tensor(0., device='cuda:0')
+        if target.ndim != 0:
+            # sprinkle ignore_index in the target, verify correctness, see issue 1744.
+            target = torch.where(make(target_shape, low=0.0, high=1.0, requires_grad=False) > 0.3, target, ignore_index)
+
         yield SampleInput(
             a,
-            target := make(target_shape, low=0, high=C, dtype=torch.long, requires_grad=False),
+            target=target,
             weight=make(C, low=1.0, high=2.0, requires_grad=False) if weight_flag else None,
             ignore_index=ignore_index,
             reduction=reduction_str,

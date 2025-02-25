@@ -11,7 +11,7 @@ from thunder.core.proxies import Proxy, ProxyTag, unvariableify
 from thunder.core.symbol import BoundSymbol, Symbol
 from thunder.core.trace import TraceCtx, from_trace, TraceProvenance, get_tracectx, set_tracectx, reset_tracectx
 from thunder.executors.utils import Region
-from thunder.extend import fuse_bound_symbols
+from thunder.executors.data_dependent_partition import fuse_bound_symbols, Node
 
 
 @dataclass(**utils.default_dataclass_params)
@@ -59,11 +59,18 @@ class CUDAGraphRunner:
     change.
     """
 
-    def __init__(self):
+    def __init__(self, *, share_mem_pool: bool = False):
         self.cuda_graph_cache = {}  # cahce_key (.make_cache_key) -> (graph, static_inputs, static_outputs)
         self.python_callables = {}  # fn_name -> (callable. static_input_mask (or None))
         self.trace_symbols = {}  # fn_name -> (bsyms, inputs, outputs)
         self.name_counter = 1
+
+        # NOTE: Every invocation of CUDAGraphTransform has a single CUDAGraphRunner associated with it.
+        # This should  allow the runner to share a single memory pool across all graphs it constructs.
+        if share_mem_pool:
+            self.mem_pool = torch.cuda.graph_pool_handle()
+        else:
+            self.mem_pool = None
 
     def get_static_buffer(self, x):
         if isinstance(x, torch.Tensor):
@@ -91,12 +98,11 @@ class CUDAGraphRunner:
         torch.cuda.synchronize()
 
         # Record
-        # NOTE: We are using default private pool here, but it is possibly better to
-        # use a custom pool for better memory management. See CUDA Graphs Tree in
-        # PyTorch's Inductor: torch/_inductor/cudagraph_trees.py
-        # Design doc: https://docs.google.com/document/d/1ZrxLGWz7T45MSX6gPsL6Ln4t0eZCSfWewtJ_qLd_D0E/view
+        # NOTE: we are (optionally) using a global memory pool
+        # which is shared across all graphs here. However, we havent observed any memeory
+        # saving from this, so it is not enabled by default.
         graph = torch.cuda.CUDAGraph()
-        with torch.cuda.graph(graph, stream=stream):
+        with torch.cuda.graph(graph, stream=stream, pool=self.mem_pool):
             static_outputs = fn(*static_inputs)
 
         return graph, static_inputs, static_outputs
@@ -205,9 +211,9 @@ class CUDAGraphTransform(Transform):
     in order to override ``can_fuse```or other methods.
     """
 
-    def __init__(self):
+    def __init__(self, *, share_mem_pool: bool = False):
         super().__init__()
-        self.cuda_graph_runner = CUDAGraphRunner()
+        self.cuda_graph_runner = CUDAGraphRunner(share_mem_pool=share_mem_pool)
 
     def fuse(self, region: Region, fusion_counter: int) -> BoundSymbol:
         inputs = [unvariableify(inp) for inp in region.inputs]
@@ -271,6 +277,19 @@ class CUDAGraphTransform(Transform):
     def transform_trace_post_optimization(self, trace: TraceCtx, **kwargs) -> TraceCtx:
         start_time_ns: int = time.perf_counter_ns()
 
+        def _should_fuse(a: Node, b: Node):
+            # TODO: modify the logic to be able to potentially better handle
+            # islands around data-dependent ops once these are supported by Thunder.
+
+            def _can_fuse_node(n: Node):
+                if len(n.group_bsyms) > 1:
+                    return True
+
+                bsym: BoundSymbol = n.group_bsyms[0]
+                return self.can_fuse(bsym)
+
+            return _can_fuse_node(a) and _can_fuse_node(b)
+
         fused_trace: TraceCtx = from_trace(trace)
         # Tracking CollectionProxies that are being consumed
         # by the `clear_collection_names`.
@@ -278,7 +297,7 @@ class CUDAGraphTransform(Transform):
         fused_trace.clear_collection_names = set()
         fused_trace_tok = set_tracectx(fused_trace)
 
-        bound_symbols_groups = fuse_bound_symbols(trace, self.can_fuse)
+        bound_symbols_groups = fuse_bound_symbols(trace, _should_fuse)
 
         producers, consumers = utils.producers_and_consumers(trace)
 
