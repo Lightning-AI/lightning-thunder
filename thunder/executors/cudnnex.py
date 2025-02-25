@@ -482,7 +482,6 @@ def _make_cudnn_sdpa_backward_graph(
     Bias = None
     dBias = None
     if attn_mask is not None:
-        attn_mask_stride = _compute_row_major_strides(attn_mask.shape)
         Bias = graph.tensor(
             name="bias", dim=attn_mask.shape, stride=attn_mask_stride, data_type=torch_to_cudnn_dtype(attn_mask.dtype)
         )
