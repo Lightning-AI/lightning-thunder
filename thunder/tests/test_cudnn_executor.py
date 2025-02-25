@@ -74,6 +74,8 @@ def grad_scaled_dot_product_attention_reference_generator(op, device, dtype, req
     yield SampleInput(q, k, v, additive_attn_mask, is_causal=False)
     additive_attn_mask = make((N, n_head, L, S), dtype=q.dtype, requires_grad=requires_grad)
     yield SampleInput(q, k, v, additive_attn_mask, is_causal=False)
+    additive_attn_mask = make((N, 1, L, S), dtype=q.dtype, requires_grad=requires_grad)
+    yield SampleInput(q, k, v, additive_attn_mask, is_causal=False)
 
     # Boolean attn_mask
     q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
