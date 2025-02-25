@@ -193,12 +193,11 @@ def test_inplace(executor, device, dtype):
 
 
 @instantiate(
-    devicetypes=(devices.DeviceType.CPU,),
     dtypes=NOTHING,
 )
 def test_aliased_input(executor, device, dtype):
     def f(x, y, z):
-        return y.exp_().add(x) + z.exp()  # Fails on CUDA because operations have been reordered.
+        return y.exp_().add(x) + z.exp()
 
     a = make_tensor((2, 1, 2), dtype=torch.float32, device=device)
     b = a.clone()

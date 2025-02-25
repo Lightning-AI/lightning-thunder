@@ -2176,7 +2176,7 @@ def copy_(
     nvcopy_to = getnv(copy_to, fd, lc_to_nv_map)
     alias_output = fd.ops.set(nvcopy_from)
     fd.add_output(alias_output, alias_input=nvcopy_to)
-    return nvcopy_to
+    return alias_output
 
 
 register_supported(PrimIDs.COPY_, copy_, _copy__check)
