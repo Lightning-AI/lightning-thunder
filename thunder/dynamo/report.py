@@ -1002,26 +1002,106 @@ def analyze_thunder_splits(
     return report
 
 
-def get_thunder_split_reports(fn: Callable, *args, thunder_compile_kwargs: dict = None, **kwargs):
+def check_torch_runnablility(fn: Callable, *args, **kwargs):
+    try:
+        # WAR for triton error https://github.com/pytorch/pytorch/issues/124565
+        if torch.cuda.is_available():
+            torch.empty(1, device="cuda", requires_grad=True).backward()
+        torch_compiled = torch.compile(fn)
+        run_forward_backward(torch_compiled, *args, **kwargs)
+    except Exception as e:
+        print(f"Failed to run the function using torch.compile with exception: {e}")
+        print(f"Trying with Torch eager...")
+        try:
+            run_forward_backward(fn, *args, **kwargs)
+        except Exception as e:
+            print(f"Failed to run the function with exception: {e}")
+            return
+        print("The input callable can be successfully executed in eager mode.")
+    else:
+        print("The input callable can be successfully executed by torch.compile.")
+
+
+def get_thunder_fxgraph_reports(
+    fn: Callable, *args, thunder_compile_kwargs: dict = None, check_runnablility=True, **kwargs
+) -> list[ThunderFXGraphReport]:
+    """
+    Generates a list of :class:`ThunderFXGraphReport` objects for a given callable.
+
+    This function performs the following steps:
+    1. Checks if the callable can be executed with `torch.compile` or eager execution when `check_runnablility` is `True`.
+    2. Generates the dynamo segmented FX graphs and further analyzes the Thunder-split subgraphs of the FX graph.
+    """
+    if check_runnablility:
+        check_torch_runnablility(fn, *args, **kwargs)
+
     reports = fx_report(fn, *args, **kwargs)
     if thunder_compile_kwargs is None:
         thunder_compile_kwargs = {}
-    split_reports = []
-    for fx_graph_report in reports.fx_graph_reports:
-        thunder_fx_graph_report = analyze_thunder_splits(fx_graph_report, **thunder_compile_kwargs)
-        print(f"\n{thunder_fx_graph_report.graph_name}: {thunder_fx_graph_report.split_reason}\n")
-        for split_report in thunder_fx_graph_report.subgraph_reports:
-            split_reports.append(split_report)
-    return split_reports
+    thunder_fxgraph_reports = []
+    for fxgraph_report in reports.fx_graph_reports:
+        thunder_fxgraph_report = analyze_thunder_splits(fxgraph_report, **thunder_compile_kwargs)
+        thunder_fxgraph_reports.append(thunder_fxgraph_report)
+    return thunder_fxgraph_reports
 
 
-def get_nvfusion_reports(split_reports: list[ThunderSplitGraphReport]):
-    nvfusion_reports = []
+def make_nvfusion_reports(split_reports: list[ThunderSplitGraphReport]):
+    """
+    Creates nvFusion reports for each Thunder-split report.
+    """
     for split_report in split_reports:
         split_report.create_fusion_reports()
-        for nvfusion_report in split_report.fusion_reports:
-            nvfusion_reports.append(nvfusion_report)
-    return nvfusion_reports
+
+
+def thunderfx_benchmark_report_from_splits(
+    thunder_fxgraph_reports: list[ThunderFXGraphReport],
+    folder_path: str | PathLike,
+    thunder_compile_kwargs: dict = None,
+    compare_fusion: bool = False,
+    rtol=0.5,
+    atol=0.0,
+):
+    """
+    A utility function that analyzes the runnability and performance benchmarks of each Thunder-split FX graph and nvFusion regions(optional). It prints out the performance metrics and saves the benchmark script in `folder_path` if the difference exceeds the tolerance (`rtol`, `atol` in seconds).
+    """
+    folder_path = Path(folder_path)
+    folder_path.mkdir(exist_ok=True, parents=True)
+    if thunder_compile_kwargs is None:
+        thunder_compile_kwargs = {}
+    thunderjit_specification = ThunderCompileSpecification(**thunder_compile_kwargs)
+    torchcompile = TorchCompileSpecification()
+
+    runnable_split_reports: list[ThunderSplitGraphReport] = []
+    for thunder_fxgraph_report in thunder_fxgraph_reports:
+        print(f"\n{thunder_fxgraph_report.graph_name}: {thunder_fxgraph_report.split_reason}\n")
+        graph_folder = folder_path / thunder_fxgraph_report.graph_name
+        graph_folder.mkdir()
+        for split_report in thunder_fxgraph_report.subgraph_reports:
+            try:
+                split_report.run_repro(thunderjit_specification)
+            except Exception as e:
+                print(f"Failed to run {split_report.graph_name} using Thunder with exception: {e}\n")
+                continue
+            print(f"{split_report.graph_name} can be successfully executed by Thunder\n")
+
+            check_timing(
+                graph_folder, split_report, torchcompile, thunderjit_specification, WallTime, "walltime", rtol, atol
+            )
+            check_timing(
+                graph_folder, split_report, torchcompile, thunderjit_specification, KernelTime, "kerneltime", rtol, atol
+            )
+            runnable_split_reports.append(split_report)
+    if not compare_fusion:
+        return
+    make_nvfusion_reports(runnable_split_reports)
+
+    for graph_report in thunder_fxgraph_reports:
+        graph_nvfusion_folder = folder_path / graph_report.graph_name / "nvfusion_reports"
+        graph_nvfusion_folder.mkdir()
+        for split_report in graph_report.subgraph_reports:
+            for nvfusion_report in split_report.fusion_reports:
+                check_timing_bsym(graph_nvfusion_folder, nvfusion_report, WallTime, "walltime", rtol, atol)
+                check_timing_bsym(graph_nvfusion_folder, nvfusion_report, KernelTime, "kerneltime", rtol, atol)
 
 
 def thunderfx_benchmark_report(
@@ -1062,58 +1142,20 @@ def thunderfx_benchmark_report(
     Here is an example:
 
     ```python
-    split_reports = get_thunder_split_reports(model, x)
+    thunder_fxgraph_reports = get_thunder_fxgraph_reports(model, x)
 
     # Frees the parameters and inputs to make room for the reports
     del model
     del x
 
-    # Running the model generates the NVFusion symbol, which requires additional memory for the input.
-    # To free up space before generating the NVFusion reports, both the model and input are deleted.
-    nvfusion_reports = get_nvfusion_reports(split_reports)
-
-    check_timing(folder_path, split_reports[0], torchcompile, thunderjit_specification, WallTime, "walltime", rtol, atol)
-    check_timing_bsym(folder_path, nvfusion_reports[0], KernelTime, "kerneltime", rtol, atol)
+    thunderfx_benchmark_report_from_splits(thunder_fxgraph_reports, folder_path, compare_fusion=True)
     ```
     """
-    try:
-        torch_compiled = torch.compile(fn)
-        run_forward_backward(torch_compiled, *args, **kwargs)
-    except Exception as e:
-        print(f"Failed to run the function using torch.compile with exception: {e}")
-        print(f"Trying with Torch eager...")
-        try:
-            run_forward_backward(fn, *args, **kwargs)
-        except Exception as e:
-            print(f"Failed to run the function with exception: {e}")
-            return
-        print("The input callable can be successfully executed.")
-    else:
-        print("The input callable can be successfully executed by torch.compile.")
-
-    if thunder_compile_kwargs is None:
-        thunder_compile_kwargs = {}
-    split_reports = get_thunder_split_reports(fn, *args, **kwargs, thunder_compile_kwargs=thunder_compile_kwargs)
-    thunderjit_specification = ThunderCompileSpecification(**thunder_compile_kwargs)
-    torchcompile = TorchCompileSpecification()
-    for split_report in split_reports:
-        try:
-            split_report.run_repro(thunderjit_specification)
-        except Exception as e:
-            print(f"Failed to run {split_report.graph_name} using Thunder with exception: {e}\n")
-            continue
-        print(f"{split_report.graph_name} can be successfully executed by Thunder\n")
-        check_timing(
-            folder_path, split_report, torchcompile, thunderjit_specification, WallTime, "walltime", rtol, atol
-        )
-        check_timing(
-            folder_path, split_report, torchcompile, thunderjit_specification, KernelTime, "kerneltime", rtol, atol
-        )
-
-    if not compare_fusion:
-        return
-    nvfusion_reports = get_nvfusion_reports(split_reports)
-
-    for nvfusion_report in nvfusion_reports:
-        check_timing_bsym(folder_path, nvfusion_report, WallTime, "walltime", rtol, atol)
-        check_timing_bsym(folder_path, nvfusion_report, KernelTime, "kerneltime", rtol, atol)
+    folder_path = Path(folder_path)
+    folder_path.mkdir(exist_ok=True, parents=True)
+    thunder_fxgraph_reports = get_thunder_fxgraph_reports(
+        fn, *args, **kwargs, thunder_compile_kwargs=thunder_compile_kwargs
+    )
+    thunderfx_benchmark_report_from_splits(
+        thunder_fxgraph_reports, folder_path, thunder_compile_kwargs, compare_fusion, rtol, atol
+    )
