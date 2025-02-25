@@ -747,7 +747,7 @@ def jit(
         return wrapped
 
     # For more context see `NOTE: Split autograd.Function`
-    disable_split_autograd: bool = compile_options.get("disable_split_autograd", False)
+    disable_split_autograd: bool = compile_options.get("thunderfx_disable_split_autograd", False)
 
     def maybe_connect_to_autograd(cache_entry, result):
         if cache_entry.backward_fn:
