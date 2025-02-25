@@ -156,7 +156,6 @@ def _make_cudnn_sdpa_forward_graph(query, key, value, attn_mask, dropout_p, is_c
     V = graph.tensor(name="V", dim=value.shape, stride=value_stride, data_type=torch_to_cudnn_dtype(value.dtype))
     Bias = None
     if attn_mask is not None:
-        attn_mask_stride = _compute_row_major_strides(attn_mask.shape)
         Bias = graph.tensor(
             name="bias", dim=attn_mask.shape, stride=attn_mask_stride, data_type=torch_to_cudnn_dtype(attn_mask.dtype)
         )
