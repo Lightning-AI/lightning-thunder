@@ -39,6 +39,7 @@ from thunder.dynamo.benchmark_utils import (
     TorchCompileSpecification,
     ThunderCompileSpecification,
     TorchEagerSpecification,
+    TorchInductorSpecification,
     WallTime,
     KernelTime,
     check_timing,
@@ -1053,6 +1054,7 @@ def make_nvfusion_reports(split_reports: list[ThunderSplitGraphReport]):
         split_report.create_fusion_reports()
 
 
+# NOTE: Here we use TorchInductorSpecification (TorchInductor without TorchDynamo) to compare with Thunder. Reason: https://github.com/Lightning-AI/lightning-thunder/issues/1521
 def thunderfx_benchmark_report_from_splits(
     thunder_fxgraph_reports: list[ThunderFXGraphReport],
     folder_path: str | PathLike,
@@ -1068,8 +1070,7 @@ def thunderfx_benchmark_report_from_splits(
     folder_path.mkdir(exist_ok=True, parents=True)
     if thunder_compile_kwargs is None:
         thunder_compile_kwargs = {}
-    thunderjit_specification = ThunderCompileSpecification(**thunder_compile_kwargs)
-    torchcompile = TorchCompileSpecification()
+    thunderjit = ThunderCompileSpecification(**thunder_compile_kwargs)
 
     runnable_split_reports: list[ThunderSplitGraphReport] = []
     for thunder_fxgraph_report in thunder_fxgraph_reports:
@@ -1078,18 +1079,15 @@ def thunderfx_benchmark_report_from_splits(
         graph_folder.mkdir()
         for split_report in thunder_fxgraph_report.subgraph_reports:
             try:
-                split_report.run_repro(thunderjit_specification)
+                split_report.run_repro(thunderjit)
             except Exception as e:
                 print(f"Failed to run {split_report.graph_name} using Thunder with exception: {e}\n")
                 continue
             print(f"{split_report.graph_name} can be successfully executed by Thunder\n")
 
-            check_timing(
-                graph_folder, split_report, torchcompile, thunderjit_specification, WallTime, "walltime", rtol, atol
-            )
-            check_timing(
-                graph_folder, split_report, torchcompile, thunderjit_specification, KernelTime, "kerneltime", rtol, atol
-            )
+            torchinductor = TorchInductorSpecification(split_report.make_example_inputs())
+            check_timing(graph_folder, split_report, torchinductor, thunderjit, WallTime, "walltime", rtol, atol)
+            check_timing(graph_folder, split_report, torchinductor, thunderjit, KernelTime, "kerneltime", rtol, atol)
             runnable_split_reports.append(split_report)
     if not compare_fusion:
         return
