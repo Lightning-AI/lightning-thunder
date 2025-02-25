@@ -12,7 +12,6 @@ from thunder.core.trace import TraceCtx, from_trace, set_tracectx, reset_tracect
 from thunder.core.transform_common import replace_redundant_inputs
 from thunder.core.vjp_utils import get_saved_for_backward_tensors, set_saved_for_backward_tensors
 from .utils import is_cudagraph_capturing
-from thunder.core.compile_data import get_compile_option
 
 if TYPE_CHECKING:
     from thunder.core.trace import VariableInterface
