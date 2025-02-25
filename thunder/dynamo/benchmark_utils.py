@@ -23,7 +23,7 @@ class CompileSpecificationInterface:
         - :class:`ThunderCompileSpecification`
     """
 
-    def compile(self, fn: Callable) -> Callable:
+    def compile(self, fn: Callable, **kwargs) -> Callable:
         """Compiles the given callable and returns the compiled version."""
         raise NotImplementedError("Subclasses should implement the 'compile' method if needed.")
 
@@ -53,7 +53,7 @@ class ThunderCompileSpecification(CompileSpecificationInterface):
         self.name = specification_name
         self.thunder_options: dict = kwargs
 
-    def compile(self, fn, *args):
+    def compile(self, fn, **kwargs):
         from thunder import jit
 
         return jit(fn, **self.thunder_options)
@@ -75,7 +75,7 @@ class TorchCompileSpecification(CompileSpecificationInterface):
         self.name = specification_name
         self.torch_compile_options: dict = kwargs
 
-    def compile(self, fn, *args):
+    def compile(self, fn, **kwargs):
         return torch.compile(fn, **self.torch_compile_options)
 
     def to_source(self, fn_name):
@@ -97,7 +97,7 @@ class TorchEagerSpecification(CompileSpecificationInterface):
     def __init__(self, specification_name="torcheager"):
         self.name = specification_name
 
-    def compile(self, fn, *args):
+    def compile(self, fn, **kwargs):
         return fn
 
     def to_source(self, fn_name):
@@ -122,8 +122,9 @@ class TorchInductorSpecification(CompileSpecificationInterface):
         fx_graph = symbolic_trace(fn)
         return inductor_compile(fx_graph, inputs)
 
-    def compile(self, fn, inputs):
-        return self.torch_inductor(fn, inputs)
+    def compile(self, fn, **kwargs):
+        assert "inputs" in kwargs, "inputs is required for TorchInductorSpecification"
+        return self.torch_inductor(fn, kwargs["inputs"])
 
     def to_source(self, fn_name):
         return f"TorchInductorSpecification.torch_inductor({fn_name}, inputs)"

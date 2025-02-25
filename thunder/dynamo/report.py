@@ -414,7 +414,7 @@ class FXGraphReport:
         check_consistency=False,
     ):
         example_inputs = self.make_example_inputs()
-        compiled_model = compile_fn.compile(self.graph, example_inputs)
+        compiled_model = compile_fn.compile(self.graph, inputs=example_inputs)
         result = run_forward_backward(compiled_model, *example_inputs)
 
         if check_consistency:
@@ -475,7 +475,7 @@ class FXGraphReport:
 
     def run_benchmark(self, compile_fn: CompileSpecificationInterface, time_fn: TimerInterface):
         example_inputs = self.make_example_inputs()
-        compiled_fn = compile_fn.compile(self.graph, example_inputs)
+        compiled_fn = compile_fn.compile(self.graph, inputs=example_inputs)
 
         forward_only = not any(hasattr(arg, "requires_grad") and arg.requires_grad for arg in example_inputs)
         fwd_measurement = time_fn.time(
