@@ -121,9 +121,30 @@ class CudnnexLRUCache(OrderedDict):
 _cudnnex_cache = CudnnexLRUCache(maxlen=1024)
 
 
-def _make_cudnn_sdpa_forward_graph(
-    query, key, value, attn_mask, dropout_p, is_causal, query_stride, key_stride, value_stride
-):
+def _get_strides(
+    query: torch.Tensor | TensorProxy,
+    key: torch.Tensor | TensorProxy,
+    value: torch.Tensor | TensorProxy,
+    attn_mask: torch.Tensor | TensorProxy | None,
+) -> tuple[tuple[int, ...], tuple[int, ...], tuple[int, ...], tuple[int, ...] | None]:
+    if isinstance(query, TensorProxy):
+        # TensorProxy do not contain stride information, but cudnn graph requires them.
+        # Assume row major layout for now. If the strides during execution are different, a new graph will be built.
+        query_stride = _compute_row_major_strides(query.shape)
+        key_stride = _compute_row_major_strides(key.shape)
+        value_stride = _compute_row_major_strides(value.shape)
+        attn_mask_stride = _compute_row_major_strides(attn_mask.shape) if attn_mask is not None else None
+    else:
+        query_stride = query.stride()
+        key_stride = key.stride()
+        value_stride = value.stride()
+        attn_mask_stride = attn_mask.stride() if attn_mask is not None else None
+
+    return query_stride, key_stride, value_stride, attn_mask_stride
+
+
+def _make_cudnn_sdpa_forward_graph(query, key, value, attn_mask, dropout_p, is_causal):
+    query_stride, key_stride, value_stride, attn_mask_stride = _get_strides(query, key, value, attn_mask)
     graph = cudnn.pygraph(
         intermediate_data_type=cudnn.data_type.FLOAT,
         compute_data_type=cudnn.data_type.FLOAT,
@@ -310,7 +331,7 @@ def _cudnn_sdpa_fwd_impl(
         softmax_stats,
         graph,
     ) = _make_cudnn_sdpa_forward_graph(
-        query, key, value, attn_mask, dropout_p, is_causal, query.stride(), key.stride(), value.stride()
+        query, key, value, attn_mask, dropout_p, is_causal,
     )
 
     b, h_q, s_q, d_q = query.size()
@@ -385,12 +406,6 @@ def _cudnn_sdpa_checker(
             return False
 
     try:
-        # TensorProxy do not contain stride information, but cudnn graph requires them.
-        # Assume row major layout for now. If the strides during execution are different, a new graph will be built.
-        query_stride = _compute_row_major_strides(query.size())
-        key_stride = _compute_row_major_strides(key.size())
-        value_stride = _compute_row_major_strides(value.size())
-
         if attn_mask is not None:
             # Make attn_mask to be of the same dimensionality as other input tensors
             attn_mask_shape = (1,) * (query.ndim - attn_mask.ndim) + attn_mask.shape
@@ -401,7 +416,7 @@ def _cudnn_sdpa_checker(
 
         # Build both forward and backward graphs
         _make_cudnn_sdpa_forward_graph(
-            query, key, value, attn_mask, dropout_p, is_causal, query_stride, key_stride, value_stride
+            query, key, value, attn_mask, dropout_p, is_causal
         )
         _make_cudnn_sdpa_backward_graph(
             query,
