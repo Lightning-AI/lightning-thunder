@@ -122,9 +122,8 @@ class TorchInductorSpecification(CompileSpecificationInterface):
         fx_graph = symbolic_trace(fn)
         return inductor_compile(fx_graph, inputs)
 
-    def compile(self, fn, **kwargs):
-        assert "inputs" in kwargs, "inputs is required for TorchInductorSpecification"
-        return self.torch_inductor(fn, kwargs["inputs"])
+    def compile(self, fn, *, inputs, **kwargs):
+        return self.torch_inductor(fn, inputs)
 
     def to_source(self, fn_name):
         return f"TorchInductorSpecification.torch_inductor({fn_name}, inputs)"

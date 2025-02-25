@@ -1004,7 +1004,11 @@ def analyze_thunder_splits(
     return report
 
 
-def check_torch_runnablility(fn: Callable, *args, **kwargs):
+def check_torch_compile_runnability(fn: Callable, *args, **kwargs):
+    """
+    Checks if the input callable can be successfully executed by torch.compile.
+    If not, it will try to run it in eager mode.
+    """
     try:
         # WAR for triton error https://github.com/pytorch/pytorch/issues/124565
         if torch.cuda.is_available():
@@ -1017,7 +1021,7 @@ def check_torch_runnablility(fn: Callable, *args, **kwargs):
         try:
             run_forward_backward(fn, *args, **kwargs)
         except Exception as e:
-            print(f"Failed to run the function with exception: {e}")
+            print(f"Failed to run the function in eager mode with exception: {e}")
             return
         print("The input callable can be successfully executed in eager mode.")
     else:
@@ -1033,9 +1037,16 @@ def get_thunder_fxgraph_reports(
     This function performs the following steps:
     1. Checks if the callable can be executed with `torch.compile` or eager execution when `check_runnablility` is `True`.
     2. Generates the dynamo segmented FX graphs and further analyzes the Thunder-split subgraphs of the FX graph.
+
+    Parameters:
+        fn: The callable to analyze.
+        *args: Arguments to pass to the callable.
+        thunder_compile_kwargs: Keyword arguments for Thunder compilation.
+        check_runnablility: Whether to check if the callable can be executed with `torch.compile` or eager execution.
+        **kwargs: Keyword arguments to pass to the callable.
     """
     if check_runnablility:
-        check_torch_runnablility(fn, *args, **kwargs)
+        check_torch_compile_runnability(fn, *args, **kwargs)
 
     reports = fx_report(fn, *args, **kwargs)
     if thunder_compile_kwargs is None:
