@@ -32,7 +32,7 @@ def _maybe_xfail() -> None:
 def test_make_cudnn_sdpa_backward_graph_with_mask():
     from thunder.executors.cudnnex import _make_cudnn_sdpa_backward_graph
 
-    batch_size = 2 # Note that batch_size=1 is supported
+    batch_size = 2  # Note that batch_size=1 is supported
     sequence_length = 4096
 
     # "Qwen/Qwen2.5-7B"
@@ -45,7 +45,9 @@ def test_make_cudnn_sdpa_backward_graph_with_mask():
     v = torch.rand(shape, dtype=torch.bfloat16, device="cuda", requires_grad=True)
 
     # "BHTS" case is working
-    mask = torch.ones(batch_size, num_attention_heads, sequence_length, sequence_length, dtype=torch.bool, device="cuda")
+    mask = torch.ones(
+        batch_size, num_attention_heads, sequence_length, sequence_length, dtype=torch.bool, device="cuda"
+    )
     mask = torch.where(mask, 0.0, float("-inf")).to(torch.bfloat16)
     # mask = mask.expand(batch_size, num_attention_heads, sequence_length, sequence_length)
     _make_cudnn_sdpa_backward_graph(q, k, v, mask, 0.0, None)

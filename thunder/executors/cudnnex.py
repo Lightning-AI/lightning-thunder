@@ -446,9 +446,9 @@ def _make_cudnn_sdpa_backward_graph(
     attn_mask,
     dropout_p,
     is_causal,
-    grad_query = None,
-    grad_key = None,
-    grad_value = None,
+    grad_query=None,
+    grad_key=None,
+    grad_value=None,
 ):
     query_stride, key_stride, value_stride, attn_mask_stride = _get_strides(query, key, value, attn_mask)
     b, h, s_q, _ = query.shape
