@@ -33,7 +33,7 @@ from thunder.dynamo.repro_script_template import (
     COMPILED_CALLABLE_NAME,
 )
 from thunder import last_traces, last_backward_traces
-from thunder.benchmarks.targets import backward_only
+from thunder.benchmarks.utils import backward_only
 from thunder.dynamo.benchmark_utils import (
     TorchCompileSpecification,
     ThunderCompileSpecification,
