@@ -65,7 +65,7 @@ def test_make_cudnn_sdpa_backward_graph_with_mask():
     mask = torch.where(mask, 0.0, float("-inf")).to(torch.bfloat16)
     # Reason: dbias cannot be reduced just across heads.
     # Supported reduction patterns are [1,1,T,S], [1,H,T,S], [B,H,T,S] at: (!batch_dim_reduction_requested) && head_dim_reduction_requested
-    # See issue: ...
+    # See: https://github.com/Lightning-AI/lightning-thunder/issues/1799
     with pytest.raises(cudnn.cudnnGraphNotSupportedError, match="No valid engine configs"):
         _make_cudnn_sdpa_backward_graph(q, k, v, mask, 0.0, None)
 
