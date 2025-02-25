@@ -3202,7 +3202,8 @@ def test_unpack_sequence_element_info():
             assert "cpu f32[3]" in str(bsym)
 
 
-def test_apply_autograd_memory():
+@pytest.mark.parametrize("disable_split_autograd", (True, False))
+def test_apply_autograd_memory(disable_split_autograd):
     from thunder.executors.torch_autograd import connect_to_autograd
 
     def foo():
@@ -3219,6 +3220,7 @@ def test_apply_autograd_memory():
             saved_tensors=(o,),
             saved_other=(),
             return_none_instead_of_grads=True,
+            disable_split_autograd=disable_split_autograd,
         )
         return [weakref.ref(x), weakref.ref(o)]
 
