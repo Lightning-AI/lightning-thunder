@@ -12,6 +12,7 @@ from thunder.core.trace import TraceCtx, from_trace, set_tracectx, reset_tracect
 from thunder.core.transform_common import replace_redundant_inputs
 from thunder.core.vjp_utils import get_saved_for_backward_tensors, set_saved_for_backward_tensors
 from .utils import is_cudagraph_capturing
+from thunder.core.compile_data import get_compile_option
 
 if TYPE_CHECKING:
     from thunder.core.trace import VariableInterface
@@ -61,6 +62,7 @@ def rename_bwd_trace_outputs(bwd_trace: TraceCtx, fwd_trace: TraceCtx) -> TraceC
     return renamed_bwd_trace
 
 
+# NOTE: Split autograd.Function
 # We split the autograd.Function into two parts because this allows
 # the args to the ThunderOutputFunction.backward to go out of scope
 # and the tensors (the grad_outs matching the flattened output) to be
@@ -189,13 +191,14 @@ def connect_to_autograd(
     saved_tensors,
     saved_other,
     return_none_instead_of_grads,
+    disable_split_autograd,
 ):
     # PyTorch seems to not like our side channel trick when capturing graphs
     # through dynamo and using cuda graphs.
     # Of course, the real trick is to use the CUDAGraphTransform instead
     # of having something else apply it while introducing funny additional
     # conditions for success.
-    if not is_cudagraph_capturing():
+    if not is_cudagraph_capturing() and not disable_split_autograd:
         side_channel = {}
     else:
         side_channel = None

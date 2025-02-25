@@ -29,6 +29,12 @@ if TYPE_CHECKING:
 
 _DEFAULT_THUNDER_FUSION_TYPE = "dataflow"
 
+# Split Autograd is disabled by default as
+# it can lead to race conditions when using thunderFX + TE + FSDP
+# leading to NCCL hang-up due to collective mismatch.
+# TODO(kshitij12345): Investiage more and understand if the bug is in PyTorch or elsewhere.
+_DEFAULT_THUNDERFX_DISABLE_SPLIT_AUTOGRAD = True
+
 
 def _add_prologue_pruning(options: dict):
     """
@@ -87,6 +93,9 @@ class ThunderCompiler:
         # NOTE: Dynamo already adds guards for modules by default (see flag `torch._dynamo.config.guard_nn_modules`), so thunder can avoid adding extra metadata checks for parameters
         #       in prologue.
         _add_prologue_pruning(thunder_options)
+        thunder_options["disable_split_autograd"] = thunder_options.get(
+            "disable_split_autograd", _DEFAULT_THUNDERFX_DISABLE_SPLIT_AUTOGRAD
+        )
         self.thunder_options = thunder_options
         self._thunder_jit = partial(jit, **thunder_options)
         self._torch_compile = torch.compile
