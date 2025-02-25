@@ -219,7 +219,8 @@ if torch.distributed.is_available():
         torch.cuda.set_device(local_rank)
 
         torch.distributed.init_process_group(
-            init_method=init_method, backend=backend,
+            init_method=init_method,
+            backend=backend,
             world_size=world_size,
             rank=rank,
             device_id=torch.device("cuda", local_rank),
