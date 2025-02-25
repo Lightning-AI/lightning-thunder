@@ -78,7 +78,7 @@ def test_basic(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None)
 
     # out should have grad_fn and its name should be ThunderFunctionBackward
     assert out.grad_fn is not None
-    assert out.grad_fn.name() == "ThunderOutputFunctionBackward"
+    assert out.grad_fn.name() == "ThunderFunctionBackward"
 
     # We record the GraphModules that was compiled by ThunderCompiler
     backend = compiled._backend
@@ -341,7 +341,7 @@ def test_force_skip_lazy_graph_module(executor, device: str, dtype: dtypes.dtype
 
         # out should have grad_fn and its name should be ThunderFunctionBackward
         assert out.grad_fn is not None
-        assert out.grad_fn.name() == "ThunderOutputFunctionBackward"
+        assert out.grad_fn.name() == "ThunderFunctionBackward"
 
         backend = cfunc._backend
         # We record the GraphModules that was compiled by ThunderCompiler
