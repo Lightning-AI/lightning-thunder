@@ -417,12 +417,6 @@ def _cudnn_sdpa_checker(
             attn_mask,
             dropout_p,
             is_causal,
-            query_stride,
-            key_stride,
-            value_stride,
-            query_stride,
-            key_stride,
-            value_stride,  # Use the same strides as inputs for their respective grads
         )
     # If cudnn can't support the graph, return false
     # Please turn on cudnn API logging for helpful messages that mention why the graph is not supported.
@@ -453,13 +447,8 @@ def _make_cudnn_sdpa_backward_graph(
     attn_mask,
     dropout_p,
     is_causal,
-    query_stride,
-    key_stride,
-    value_stride,
-    grad_query_stride,
-    grad_key_stride,
-    grad_value_stride,
 ):
+    query_stride, key_stride, value_stride, attn_mask_stride = _get_strides(query, key, value, attn_mask)
     b, h, s_q, _ = query.shape
     _, _, _, d_v = value.shape
 
@@ -527,6 +516,7 @@ def _make_cudnn_sdpa_backward_graph(
         dropout=dropout_tuple,
     )
 
+    grad_query_stride, grad_key_stride, grad_value_stride = query_stride, key_stride, value_stride
     dQ.set_output(True).set_dim(query.shape).set_stride(grad_query_stride).set_data_type(
         torch_to_cudnn_dtype(query.dtype)
     )
@@ -686,12 +676,6 @@ def _cudnn_sdpa_bwd_impl(
         attn_mask,
         dropout_p,
         is_causal,
-        query.stride(),
-        key.stride(),
-        value.stride(),
-        grad_query.stride(),
-        grad_key.stride(),
-        grad_value.stride(),
     )
 
     # Default value of scale, if not provided, in all torch versions
