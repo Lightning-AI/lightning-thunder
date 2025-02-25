@@ -3220,7 +3220,7 @@ def test_apply_autograd_memory(thunderfx_disable_split_autograd):
             saved_tensors=(o,),
             saved_other=(),
             return_none_instead_of_grads=True,
-            thunderfx_disable_split_autograd=thunderfx_disable_split_autograd,
+            disable_split_autograd=thunderfx_disable_split_autograd,
         )
         return [weakref.ref(x), weakref.ref(o)]
 
