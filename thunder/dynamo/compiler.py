@@ -32,7 +32,7 @@ _DEFAULT_THUNDER_FUSION_TYPE = "dataflow"
 # Split Autograd is disabled by default as
 # it can lead to race conditions when using thunderFX + TE + FSDP
 # leading to NCCL hang-up due to collective mismatch.
-# TODO(kshitij12345): Investiage more and understand if the bug is in PyTorch or elsewhere.
+# TODO(kshitij12345): Investigate more and understand if the bug is in PyTorch or elsewhere.
 _DEFAULT_THUNDERFX_DISABLE_SPLIT_AUTOGRAD = True
 
 
