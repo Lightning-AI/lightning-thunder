@@ -1,10 +1,8 @@
+import random
 from typing import Any
 
 import torch
-import numpy as np
-import random
 
-from lightning_utilities.core.imports import package_available
 from looseversion import LooseVersion
 
 
@@ -71,24 +69,15 @@ def _get_cudnn_handle(query_device):
 # WARNING: cudnn executor is experimental. Tests that use cudnn might fail.\n
 # Issue for tracking support: https://github.com/Lightning-AI/lightning-thunder/issues/880~
 
-from dataclasses import dataclass
-from functools import lru_cache
-from typing import Union, Dict
-
 import thunder.core.dtypes as dtypes
-from thunder.torch import TensorLike
-from thunder.core.compile_data import get_compile_option
-from thunder.core.proxies import Proxy, TensorProxy
-from thunder.core.prims import OpTags
-
-
-from thunder.core.transforms import (
-    get_grad,
-    put_grad,
-    put_grads,
-)
-from thunder.extend import OperatorExecutor, register_executor
 import thunder.torch as ltorch
+from thunder.core.compile_data import get_compile_option
+from thunder.core.prims import OpTags
+from thunder.core.proxies import TensorProxy
+
+from thunder.core.transforms import get_grad, put_grad, put_grads
+from thunder.extend import OperatorExecutor, register_executor
+from thunder.torch import TensorLike
 
 cudnn_ex: OperatorExecutor = OperatorExecutor("cudnn", version=cudnn_backend_version)
 register_executor(cudnn_ex)
@@ -330,7 +319,12 @@ def _cudnn_sdpa_fwd_impl(
         softmax_stats,
         graph,
     ) = _make_cudnn_sdpa_forward_graph(
-        query, key, value, attn_mask, dropout_p, is_causal,
+        query,
+        key,
+        value,
+        attn_mask,
+        dropout_p,
+        is_causal,
     )
 
     b, h_q, s_q, d_q = query.size()
@@ -414,9 +408,7 @@ def _cudnn_sdpa_checker(
             attn_mask = TensorProxy(like=attn_mask, shape=attn_mask_shape, dtype=attn_mask_dtype)
 
         # Build both forward and backward graphs
-        _make_cudnn_sdpa_forward_graph(
-            query, key, value, attn_mask, dropout_p, is_causal
-        )
+        _make_cudnn_sdpa_forward_graph(query, key, value, attn_mask, dropout_p, is_causal)
         _make_cudnn_sdpa_backward_graph(
             query,
             key,
