@@ -218,6 +218,7 @@ def torch_to_cudnn_dtype(lc_dtype: dtypes.dtype):
     }
     return _torch_to_cudnn_dtype_map[lc_dtype]
 
+
 def _compute_row_major_strides(shape):
     """
     Compute contiguous strides for a row-major layout tensor of the given shape.
