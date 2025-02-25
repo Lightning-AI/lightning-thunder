@@ -413,8 +413,8 @@ class FXGraphReport:
         compile_fn: CompileSpecificationInterface,
         check_consistency=False,
     ):
-        compiled_model = compile_fn.compile(self.graph)
         example_inputs = self.make_example_inputs()
+        compiled_model = compile_fn.compile(self.graph, example_inputs)
         result = run_forward_backward(compiled_model, *example_inputs)
 
         if check_consistency:
@@ -474,8 +474,9 @@ class FXGraphReport:
             print(code_str, file=f)
 
     def run_benchmark(self, compile_fn: CompileSpecificationInterface, time_fn: TimerInterface):
-        compiled_fn = compile_fn.compile(self.graph)
         example_inputs = self.make_example_inputs()
+        compiled_fn = compile_fn.compile(self.graph, example_inputs)
+
         forward_only = not any(hasattr(arg, "requires_grad") and arg.requires_grad for arg in example_inputs)
         fwd_measurement = time_fn.time(
             "compiled_fn(*example_inputs)", globals={"compiled_fn": compiled_fn, "example_inputs": example_inputs}
@@ -1071,6 +1072,7 @@ def thunderfx_benchmark_report_from_splits(
     if thunder_compile_kwargs is None:
         thunder_compile_kwargs = {}
     thunderjit = ThunderCompileSpecification(**thunder_compile_kwargs)
+    torchinductor = TorchInductorSpecification()
 
     runnable_split_reports: list[ThunderSplitGraphReport] = []
     for thunder_fxgraph_report in thunder_fxgraph_reports:
@@ -1085,7 +1087,6 @@ def thunderfx_benchmark_report_from_splits(
                 continue
             print(f"{split_report.graph_name} can be successfully executed by Thunder\n")
 
-            torchinductor = TorchInductorSpecification(split_report.make_example_inputs())
             check_timing(graph_folder, split_report, torchinductor, thunderjit, WallTime, "walltime", rtol, atol)
             check_timing(graph_folder, split_report, torchinductor, thunderjit, KernelTime, "kerneltime", rtol, atol)
             runnable_split_reports.append(split_report)

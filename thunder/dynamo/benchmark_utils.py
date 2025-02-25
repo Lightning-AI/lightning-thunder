@@ -53,7 +53,7 @@ class ThunderCompileSpecification(CompileSpecificationInterface):
         self.name = specification_name
         self.thunder_options: dict = kwargs
 
-    def compile(self, fn):
+    def compile(self, fn, *args):
         from thunder import jit
 
         return jit(fn, **self.thunder_options)
@@ -75,7 +75,7 @@ class TorchCompileSpecification(CompileSpecificationInterface):
         self.name = specification_name
         self.torch_compile_options: dict = kwargs
 
-    def compile(self, fn):
+    def compile(self, fn, *args):
         return torch.compile(fn, **self.torch_compile_options)
 
     def to_source(self, fn_name):
@@ -97,7 +97,7 @@ class TorchEagerSpecification(CompileSpecificationInterface):
     def __init__(self, specification_name="torcheager"):
         self.name = specification_name
 
-    def compile(self, fn):
+    def compile(self, fn, *args):
         return fn
 
     def to_source(self, fn_name):
@@ -111,9 +111,8 @@ class TorchInductorSpecification(CompileSpecificationInterface):
     https://github.com/Lightning-AI/lightning-thunder/issues/1521
     """
 
-    def __init__(self, inputs, specification_name="inductor_backend"):
+    def __init__(self, specification_name="inductor_backend"):
         self.name: str = specification_name
-        self.inputs: list = inputs
 
     @staticmethod
     def torch_inductor(fn, inputs):
@@ -123,8 +122,8 @@ class TorchInductorSpecification(CompileSpecificationInterface):
         fx_graph = symbolic_trace(fn)
         return inductor_compile(fx_graph, inputs)
 
-    def compile(self, fn):
-        return self.torch_inductor(fn, self.inputs)
+    def compile(self, fn, inputs):
+        return self.torch_inductor(fn, inputs)
 
     def to_source(self, fn_name):
         return f"TorchInductorSpecification.torch_inductor({fn_name}, inputs)"
