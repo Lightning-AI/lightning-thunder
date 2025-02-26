@@ -81,7 +81,7 @@ def insert_alias_updates(computation_trace: Trace) -> Trace:
             out_tensors = set(map(variableify, filter(lambda p: isinstance(p, TensorProxy), bsym.flat_proxy_outs)))
             encountered.update(in_tensors)
             group = set(reduce(set.union, filter(lambda g: any(g.intersection(in_tensors)), view_groups), set()))
-            if group is None:
+            if len(group) == 0:
                 # This is a view creation with operands that are not involved in any inplace ops.
                 bsyms.append(bsym.from_bsym_swap_proxies(swap_map, skip_output=True))
                 continue

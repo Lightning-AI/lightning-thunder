@@ -1764,6 +1764,7 @@ def clone(a: TensorProxy, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
 register_supported(PrimIDs.CLONE, clone, _elementwise_unary_check)
 
 # update_aliases is disabled.  nvfuser does not support it.
+# TODO: Enable this once nvfuser supports it.
 # def update_aliases(aliases: tuple[TensorProxy], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
 #     nvaliases = tuple(getnv(alias, fd, lc_to_nv_map) for alias in aliases)
 #     return tuple(fd.ops.set(nvalias) for nvalias in nvaliases)

@@ -1646,7 +1646,6 @@ backward_impls = {
     prims.PrimIDs.LOG1P: lambda x, g: g / (x + 1),
     prims.PrimIDs.LOG2: lambda x, g: g / (x * 0.6931471805599453),
     prims.PrimIDs.FMOD: lambda x, y, g: (g, -g * prims.trunc(x / y)),
-    # The copy should not be differentiable. We return None to enable the generation of the backward graph through them.
     prims.PrimIDs.COPY_: lambda g: (g, None),
     prims.PrimIDs.CLONE: lambda g: g,
 }
@@ -2301,11 +2300,11 @@ def iter_bound_symbols(bound_symbols):
             yield symbol
 
 
-def get_first_proxy(proxies) -> Proxy | None:
+def get_first_proxy(proxies: list[Proxy]) -> Proxy | None:
     """Get the first proxy from a list of proxies.
 
     Args:
-        proxies (List[Proxy]): List of proxies
+        proxies: List of proxies
 
     Returns:
         Proxy: First proxy from the list
