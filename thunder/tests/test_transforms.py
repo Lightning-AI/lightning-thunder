@@ -532,36 +532,29 @@ def test_cudagraph_empty_inputs():
 
 @requiresCUDA
 def test_cudagraph_fw_bw():
-    import torch.nn as nn
-    
-    class BlockModel(nn.Module):
-        def __init__(self, input_size, output_size):
-            super(BlockModel, self).__init__()
-            self.output_layer = nn.Linear(input_size, output_size)
-    
-        def forward(self, x):
-            x = self.output_layer(x).relu_()
-            return x
-
+    import torch
+    import thunder
+    import litgpt
+    from torch.testing import make_tensor
+    from functools import partial
     from thunder.transforms.cudagraph import CUDAGraphTransform
 
-    def run_cg(n, factor=2.5):
-        with torch.device("cuda"):
-            workload = BlockModel(n, n)
+    device = torch.device("cuda")
 
-        jfn = thunder.jit(workload, transforms=[CUDAGraphTransform()], executors=())
+    cfg = litgpt.Config.from_name("open_llama_3b", n_layer=2)
+    with device:
+        make = partial(make_tensor, low=0, high=255, device=device, dtype=torch.long, requires_grad=False)
+        shape = (1,) + (cfg.block_size,)
 
-        a = torch.randn(n, n, device="cuda")
+        x = make(shape)
+        m = litgpt.GPT(cfg)
 
-        init_resereved_mem = torch.cuda.memory_reserved()
-        o = jfn(a)
-        reserved_mem_fw = torch.cuda.memory_reserved()
-        o.sum().backward()
-        reserved_mem_bw = torch.cuda.memory_reserved()
+    m = thunder.jit(m, transforms=[CUDAGraphTransform()])
 
-        assert reserved_mem_bw - init_resereved_mem < factor * (reserved_mem_fw - init_resereved_mem)
+    o = m(x)
+    o.sum().backward()
 
-    run_cg(2048, factor=2.65)
+    assert torch.cuda.max_memory_allocated() / 1e9 < 8
 
 
 @pytest.mark.skip(
