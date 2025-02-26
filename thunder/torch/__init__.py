@@ -1934,6 +1934,20 @@ def silu(a: TensorLike, /, inplace: bool = False) -> TensorLike:
 _inplace_to_out_of_place[silu] = silu, 1
 
 
+@torchsymbol(torch.nn.functional.softshrink, is_method=False)
+def softshrink(a: TensorProxy, /, lambd: float = 0.5) -> TensorLike:
+    utils.check(
+        not dtypes.is_complex_dtype(a.dtype),
+        lambda: f"softshrink not implemented for '{a.dtype}'",
+    )
+    utils.check(
+        lambd >= 0,
+        lambda: f"lambda must be greater or equal to 0, but found to be {lambd}'",
+    )
+    # `a * 0` has the correct behavior for NaNs
+    return where(abs(a) > lambd, a - sign(a) * lambd, a * 0)
+
+
 @torchsymbol(torch.nn.functional.tanhshrink)
 def tanhshrink(a: TensorLike, /) -> TensorLike:
     return a - tanh(a)
