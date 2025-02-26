@@ -549,12 +549,14 @@ def test_cudagraph_fw_bw():
         x = make(shape)
         m = litgpt.GPT(cfg)
 
-    m = thunder.jit(m, transforms=[CUDAGraphTransform()])
+    cg_transform = CUDAGraphTransform()
+    m = thunder.jit(m, transforms=[cg_transform])
 
     o = m(x)
     o.sum().backward()
-
-    assert torch.cuda.max_memory_allocated() / 1e9 < 8
+    
+    # Ensure all saved for backwards tensors are marked as static inputs
+    assert all(cg_transform.cuda_graph_runner.python_callables["CUDAGraph2"][1][1:-2])
 
 
 @pytest.mark.skip(
