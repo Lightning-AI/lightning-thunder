@@ -530,6 +530,40 @@ def test_cudagraph_empty_inputs():
     assert any(("CUDAGraph" in bsym.sym.name) for bsym in thunder.last_traces(jfn)[-1].bound_symbols)
 
 
+@requiresCUDA
+def test_cudagraph_fw_bw():
+    import torch.nn as nn
+    
+    class BlockModel(nn.Module):
+        def __init__(self, input_size, output_size):
+            super(BlockModel, self).__init__()
+            self.output_layer = nn.Linear(input_size, output_size)
+    
+        def forward(self, x):
+            x = self.output_layer(x).relu_()
+            return x
+
+    from thunder.transforms.cudagraph import CUDAGraphTransform
+
+    def run_cg(n, factor=2.5):
+        with torch.device("cuda"):
+            workload = BlockModel(n, n)
+
+        jfn = thunder.jit(workload, transforms=[CUDAGraphTransform()], executors=())
+
+        a = torch.randn(n, n, device="cuda")
+
+        init_resereved_mem = torch.cuda.memory_reserved()
+        o = jfn(a)
+        reserved_mem_fw = torch.cuda.memory_reserved()
+        o.sum().backward()
+        reserved_mem_bw = torch.cuda.memory_reserved()
+
+        assert reserved_mem_bw - init_resereved_mem < factor * (reserved_mem_fw - init_resereved_mem)
+
+    run_cg(2048, factor=2.65)
+
+
 @pytest.mark.skip(
     reason="Pools in CUDAGraphTransform are not sharing properly. https://github.com/Lightning-AI/lightning-thunder/issues/1792",
 )
