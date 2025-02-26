@@ -848,11 +848,6 @@ class nvFuserExecutor(FusionExecutor):
         )
         return cse_trace
 
-    def can_fuse(self, bsym: BoundSymbol) -> bool:
-        if bsym.sym.id == prims.PrimIDs.UPDATE_ALIASES:
-            return False
-        return super().can_fuse(bsym)
-
     # TODO Restore fusion logic here -- this just replaces supported operations in isolation at the moment
     def fusion_pass(self, trace: TraceCtx) -> TraceCtx:
         start_time_ns: int = time.perf_counter_ns()
@@ -1768,14 +1763,13 @@ def clone(a: TensorProxy, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
 
 register_supported(PrimIDs.CLONE, clone, _elementwise_unary_check)
 
+# update_aliases is disabled.  nvfuser does not support it.
+# def update_aliases(aliases: tuple[TensorProxy], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+#     nvaliases = tuple(getnv(alias, fd, lc_to_nv_map) for alias in aliases)
+#     return tuple(fd.ops.set(nvalias) for nvalias in nvaliases)
 
-def update_aliases(aliases: tuple[TensorProxy], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
-    nvaliases = tuple(getnv(alias, fd, lc_to_nv_map) for alias in aliases)
 
-    return tuple(fd.ops.set(nvalias) for nvalias in nvaliases)
-
-
-register_supported(PrimIDs.UPDATE_ALIASES, update_aliases, _elementwise_nnary_check)
+# register_supported(PrimIDs.UPDATE_ALIASES, update_aliases, _elementwise_nnary_check)
 
 
 #

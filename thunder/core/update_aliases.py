@@ -1,11 +1,7 @@
-from collections import defaultdict
-from itertools import chain
 from functools import reduce, partial
 
 import thunder.core.prims as prims
 from thunder.core.proxies import TensorProxy, variableify, unvariableify
-from thunder.core.pytree import tree_flatten, tree_unflatten
-from thunder.core.symbol import BoundSymbol
 from thunder.core.trace import from_trace, tracectx, TraceCtx as Trace, TraceProvenance
 
 
@@ -20,7 +16,6 @@ def _get_update_bsym(group, swap_map, new_aliases):
 
 def _get_new_alias(alias, trace):
     with tracectx(trace):
-        # !! better to use the meta function?
         new_alias = TensorProxy(like=alias.proxy, requires_grad=alias.proxy.requires_grad)
     return new_alias
 
@@ -38,8 +33,7 @@ def _is_inplace_op(bsym):
 def _is_view_creation_op(bsym):
     import thunder.torch as ltorch
 
-    # !!! check on _syms_that_may_return_views?
-    return bsym.sym in ltorch._syms_returning_views
+    return bsym.sym in ltorch._syms_returning_views or bsym.sym in ltorch._syms_that_may_return_views
 
 
 def _involves_viewed_args(bsym, viewed):
@@ -88,7 +82,7 @@ def insert_alias_updates(computation_trace: Trace) -> Trace:
             encountered.update(in_tensors)
             group = set(reduce(set.union, filter(lambda g: any(g.intersection(in_tensors)), view_groups), set()))
             if group is None:
-                # this is a view creation with operands that are not involved in any inplace ops
+                # This is a view creation with operands that are not involved in any inplace ops.
                 bsyms.append(bsym.from_bsym_swap_proxies(swap_map, skip_output=True))
                 continue
             views_encountered = group.intersection(encountered)

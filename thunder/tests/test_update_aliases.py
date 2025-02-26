@@ -3,26 +3,18 @@ from collections.abc import Callable
 import pytest
 import torch.testing
 
-import thunder
 import thunder.core.dtypes as dtypes
-import thunder.core.devices as devices
-import thunder.core.prims as prims
-from thunder.core.symbol import Symbol
-from thunder.tests.make_tensor import make_tensor, make_tensor_like
+from thunder.tests.make_tensor import make_tensor
 from thunder.tests.framework import instantiate, ops, NOTHING, TorchExecutor, TorchCompileExecutor, nvFuserExecutor
-from thunder.tests.opinfos import opinfos
 from thunder.tests.test_inplace_functionalization import _inplace_opinfos
 
 
 @ops(_inplace_opinfos, supported_dtypes=(dtypes.float32,))
 def test_update_aliases(op, device, dtype, executor, _):
     sample = next(op.sample_inputs(device, dtype))
-
-    # polygamma expects an int as its first argument and a tensor as its second but
-    # torch.Tensor.polygamma_ wants opposite; tensor first, int second.
-    # ref:
-    # - https://pytorch.org/docs/stable/special.html#torch.special.polygamma
-    # - https://pytorch.org/docs/stable/generated/torch.Tensor.polygamma_.html
+    # The sample generator is the one for `polygamma`.
+    # `polygamma` expects an int as its first argument and a tensor as its second but
+    # `polygamma_` wants opposite; tensor first, int second.
     args = list(sample.args)
     if op.name == "polygamma_":
         args[0], args[1] = args[1], args[0]
@@ -30,26 +22,44 @@ def test_update_aliases(op, device, dtype, executor, _):
     j_op = executor.make_callable(
         op.torch_reference, skip_inplace_alias_updates=False, skip_inplace_functionalization=True
     )
-    actual = j_op(*sample.args, **sample.kwargs)
+    actual = j_op(*args, **sample.kwargs)
     expected = op.torch_reference(*args, **sample.kwargs)
     torch.testing.assert_close(actual, expected, equal_nan=True)
 
 
+# These tests fail with nvFuser because its fusion pass dce's the final copy_ bsym, which has no output.
 @instantiate(
-    devicetypes=(devices.DeviceType.CPU,),
     dtypes=NOTHING,
+    executors=(
+        TorchExecutor,
+        TorchCompileExecutor,
+    ),
 )
-def test_inplace_on_view(executor, device, dtype):
+def test_setitem_on_view(executor, device, dtype):
     def f(x, _):
         y = x.view((3, 2))
-        y[0][0] = 0  # Fails on CUDA
+        y[0][0] = 0
         return x
 
     def g(x, _):
         y = x.view((3, 2))
-        y[0][0] = 0  # Fails on CUDA
+        y[0][0] = 0
         return y
 
+    for fn in [f, g]:
+        a = make_tensor((2, 3), dtype=torch.float32, device=device)
+        b = make_tensor((2, 3), dtype=torch.float32, device=device)
+        a_, b_ = a.clone().detach(), b.clone().detach()
+        jfn = executor.make_callable(fn, skip_inplace_alias_updates=False, skip_inplace_functionalization=True)
+        actual = jfn(a, b)
+        expected = fn(a_, b_)
+        torch.testing.assert_close(actual, expected)
+
+
+@instantiate(
+    dtypes=NOTHING,
+)
+def test_inplace_on_view(executor, device, dtype):
     def h(x, y):
         c = torch.exp(x)
         d = torch.tanh(y)
@@ -78,7 +88,7 @@ def test_inplace_on_view(executor, device, dtype):
         bb = b + 1
         return aa, bb
 
-    for fn in [f, g, h, i, j]:
+    for fn in [h, i, j]:
         a = make_tensor((2, 3), dtype=torch.float32, device=device)
         b = make_tensor((2, 3), dtype=torch.float32, device=device)
         a_, b_ = a.clone().detach(), b.clone().detach()
@@ -88,16 +98,34 @@ def test_inplace_on_view(executor, device, dtype):
         torch.testing.assert_close(actual, expected)
 
 
+# These tests fail with nvFuser with stride issues.
+# See https://github.com/NVIDIA/Fuser/issues/3957.
 @instantiate(
-    devicetypes=(devices.DeviceType.CPU,),
     dtypes=NOTHING,
+    executors=(
+        TorchExecutor,
+        TorchCompileExecutor,
+    ),
 )
-def test_inplace_on_chunk(executor, device, dtype):
+def test_inplace_on_chunk_non_default_dim(executor, device, dtype):
     def f(x):
-        y, z = x.chunk(2, dim=1)  # Fails on CUDA with stride issues
+        y, z = x.chunk(2, dim=1)
         y.relu_()
         return y, z
 
+    for fn in [f]:
+        a = make_tensor((2, 3), dtype=torch.float32, device=device)
+        a_ = a.clone().detach()
+        jfn = executor.make_callable(fn, skip_inplace_alias_updates=False, skip_inplace_functionalization=True)
+        actual = jfn(a)
+        expected = fn(a_)
+        torch.testing.assert_close(actual, expected)
+
+
+@instantiate(
+    dtypes=NOTHING,
+)
+def test_inplace_on_chunk(executor, device, dtype):
     def g(x):
         y, z = x.chunk(2, dim=0)
         y.relu_()
@@ -110,7 +138,7 @@ def test_inplace_on_chunk(executor, device, dtype):
         y[0].add_(1)
         return y
 
-    for fn in [f, g, h]:
+    for fn in [g, h]:
         a = make_tensor((2, 3), dtype=torch.float32, device=device)
         a_ = a.clone().detach()
         jfn = executor.make_callable(fn, skip_inplace_alias_updates=False, skip_inplace_functionalization=True)
@@ -214,3 +242,22 @@ def test_aliased_input(executor, device, dtype):
     torch.testing.assert_close(a, a_)
     torch.testing.assert_close(b, b_)
     torch.testing.assert_close(c, c_)
+
+
+@instantiate(
+    dtypes=NOTHING,
+)
+def test_write_to_intermediate_result(executor, device, dtype):
+    if executor == nvFuserExecutor:
+        pytest.xfail("nvFuser does not support writing to intermediate results")
+
+    def fn(x):
+        y = x.view(-1)
+        y.add_(1)
+        return y
+
+    a = make_tensor((2, 3), dtype=torch.float32, device=device)
+    jfn = executor.make_callable(fn, skip_inplace_alias_updates=True, skip_inplace_functionalization=True)
+    actual = jfn(a)
+    expected = fn(a)
+    torch.testing.assert_close(actual, expected)
