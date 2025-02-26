@@ -33,7 +33,7 @@ from thunder.tests.framework import (
     nvFuserExecutor,
     TorchExecutor,
 )
-from thunder.tests.make_tensor import make_tensor, make_tensor_like
+from thunder.tests.make_tensor import make_tensor
 from thunder.tests.opinfos import (
     opinfos,
     tensor_creation_ops,

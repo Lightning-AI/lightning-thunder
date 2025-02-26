@@ -316,7 +316,7 @@ def canonicalize_bsym_args(
 
 
 def create_functional_bsym_from(inplace_bsym: BoundSymbol) -> BoundSymbol:
-    from thunder.torch import _inplace_to_out_of_place, setitem_, setitem
+    from thunder.torch import _inplace_to_out_of_place, polygamma_, setitem_, setitem
 
     functional_sym, optional_inplace_arg_index = _inplace_to_out_of_place[inplace_bsym.sym]
     args, kwargs = inplace_bsym.args, inplace_bsym.kwargs
@@ -330,6 +330,15 @@ def create_functional_bsym_from(inplace_bsym: BoundSymbol) -> BoundSymbol:
         # setitem does not return a value, take the output of the setitem subsymbol
         assert inplace_bsym.subsymbols[0].sym is setitem
         functional_output = inplace_bsym.subsymbols[0].output
+    if inplace_bsym.sym is polygamma_:
+        # polygamma expects an int as its first argument and a tensor as its second but
+        # torch.Tensor.polygamma_ wants opposite; tensor first, int second.
+        # ref:
+        # - https://pytorch.org/docs/stable/special.html#torch.special.polygamma
+        # - https://pytorch.org/docs/stable/generated/torch.Tensor.polygamma_.html
+        flat_args, flat_args_spec = tree_flatten((args, kwargs))
+        flat_args[0], flat_args[1] = flat_args[1], flat_args[0]
+        args, kwargs = tree_unflatten(flat_args, flat_args_spec)
     functional_bsym = functional_sym.bind(
         *args,
         **kwargs,

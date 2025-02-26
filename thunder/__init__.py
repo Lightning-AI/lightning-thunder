@@ -753,6 +753,9 @@ def jit(
 
         return wrapped
 
+    # For more context see `NOTE: Split autograd.Function`
+    disable_split_autograd: bool = compile_options.get("thunderfx_disable_split_autograd", False)
+
     def maybe_connect_to_autograd(cache_entry, result):
         if cache_entry.backward_fn:
             # If the backward function is available, we need to connect the
@@ -767,6 +770,7 @@ def jit(
                 saved_tensors=saved_tensors,
                 saved_other=saved_other,
                 return_none_instead_of_grads=cache_entry.return_none_instead_of_grads,
+                disable_split_autograd=disable_split_autograd,
             )
             result = data_for_autograd["output"]
 
