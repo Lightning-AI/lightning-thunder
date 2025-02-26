@@ -1076,7 +1076,18 @@ def thunderfx_benchmark_report_from_splits(
     atol=0.0,
 ):
     """
-    A utility function that analyzes the runnability and performance benchmarks of each Thunder-split FX graph and nvFusion regions(optional). It prints out the performance metrics and saves the benchmark script in `folder_path` if the difference exceeds the tolerance (`rtol`, `atol` in seconds).
+    A utility function that analyzes the runnability and performance benchmarks of each Thunder-split FX graph and nvFusion regions(optional).
+    It prints out the performance metrics and saves the benchmark script in `folder_path` if the difference exceeds
+    the tolerance (`rtol`, `atol` in seconds).
+    the function will create the following folder structure:
+    folder_path
+    └── graph0
+        ├── graph0_thunder_0_thunder_walltime.py
+        └── nvfusion_reports
+            └── graph0_thunder_0_nvfusion0_forward_nvfuser_kerneltime.py
+    It separates subfolders for each `graph[index]` and `nvfusion_report`.
+    The script for each FX graph is named as `graph[index]_[thunder_split_name]_[executor_name]_[timer_name].py`.
+    The script for each nvfusion region is named as `graph[index]_[thunder_split_name]_[nvfusion_name]_[forward/backward]_[executor_name]_[timer_name].py`.
     """
     folder_path = Path(folder_path)
     folder_path.mkdir(exist_ok=True, parents=True)
@@ -1146,8 +1157,9 @@ def thunderfx_benchmark_report(
     Note:
     - This function may run out of memory (OOM) as it allocates random tensors when executing
     the graph module in each Report. To prevent OOM issues, users must manually free the
-    input model and arguments to free up memory for `get_nvfusion_reports`, `check_timing`,
+    input model and arguments to free up memory for `make_nvfusion_reports`, `check_timing`,
     and `check_timing_bsym`.
+    - See `thunderfx_benchmark_report_from_splits` for details on the generated folders and scripts.
 
     Here is an example:
 
