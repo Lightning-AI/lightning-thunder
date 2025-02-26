@@ -364,6 +364,7 @@ def jit(
         executor_lookasides=executor_lookasides,
         debug_options=debug_options,
     )
+    cd.transforms = transforms
     cs = CompileStats()
 
     def _alias_tensor_of_args_kwargs_dict(*args, **kwargs) -> dict[int, list[int]]:
@@ -427,7 +428,9 @@ def jit(
 
         with compile_data_and_stats(cd, cs):
             prologue_traces = [prologue_trc]
+            cs.last_prologue_traces = prologue_traces
             computation_traces = [computation_trc]
+            cs.last_traces = computation_traces
 
             computation_trc = wrap_return_value_together_with_arguments(computation_trc)
             computation_traces.append(computation_trc)
@@ -452,6 +455,7 @@ def jit(
                 computation_trc = computation_traces[-1]
 
             epilogue_traces = [epilogue_trc]
+            cs.last_epilogue_traces = epilogue_traces
 
             cs.last_trace_tracing_stop = time.perf_counter_ns()
 
@@ -493,10 +497,7 @@ def jit(
             epilogue = epilogue_trc.python_callable()
 
             cs.last_prologue_transformation_stop = time.perf_counter_ns()
-            cs.last_prologue_traces = prologue_traces
             cs.last_prologue = pro
-            cs.last_traces = computation_traces
-            cs.last_epilogue_traces = epilogue_traces
             backward_traces = []
             cs.last_backward_traces = backward_traces
 
@@ -750,6 +751,9 @@ def jit(
 
     get_computation_and_inputs = decorate_computation_function(get_computation_and_inputs, host_execution_timer)
     cd.get_computation_and_inputs = get_computation_and_inputs
+    cd.populate_cache_info = populate_cache_info
+    cd.acquire_initial_trace = acquire_initial_trace
+    cd.apply_transforms_and_build_cache_entry = apply_transforms_and_build_cache_entry
 
     def update_call_statistics(fn):
         def wrapped(*args, **kwargs):
