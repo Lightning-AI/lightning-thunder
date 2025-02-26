@@ -554,7 +554,7 @@ def test_cudagraph_fw_bw():
 
     o = m(x)
     o.sum().backward()
-    
+
     # Ensure all saved for backwards tensors are marked as static inputs
     assert all(cg_transform.cuda_graph_runner.python_callables["CUDAGraph2"][1][1:-2])
 
