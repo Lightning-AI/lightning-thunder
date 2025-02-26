@@ -276,3 +276,32 @@ def test_vjp_correctness_cudnn_sdpa(dtype, may_cat_grad_qkv):
         # compare gradients of query, key, value, and attn_mask
         for eg, ag in zip(expected_grad, actual_grad):
             torch.testing.assert_close(eg, ag, atol=2e-1, rtol=2e-2)
+
+
+def test_compute_row_major_strides():
+    from thunder.executors.cudnnex import _compute_row_major_strides
+
+    # Test case 1: 2D tensor
+    shape = (3, 4)
+    expected_strides = (4, 1)
+    assert _compute_row_major_strides(shape) == expected_strides
+
+    # Test case 2: 3D tensor
+    shape = (2, 3, 4)
+    expected_strides = (12, 4, 1)
+    assert _compute_row_major_strides(shape) == expected_strides
+
+    # Test case 3: 1D tensor
+    shape = (5,)
+    expected_strides = (1,)
+    assert _compute_row_major_strides(shape) == expected_strides
+
+    # Test case 4: 4D tensor
+    shape = (2, 3, 4, 5)
+    expected_strides = (60, 20, 5, 1)
+    assert _compute_row_major_strides(shape) == expected_strides
+
+    # Test case 5: Empty shape
+    shape = ()
+    expected_strides = ()
+    assert _compute_row_major_strides(shape) == expected_strides
