@@ -530,6 +530,44 @@ def test_cudagraph_empty_inputs():
     assert any(("CUDAGraph" in bsym.sym.name) for bsym in thunder.last_traces(jfn)[-1].bound_symbols)
 
 
+@pytest.mark.skip(
+    reason="Pools in CUDAGraphTransform are not sharing properly. https://github.com/Lightning-AI/lightning-thunder/issues/1792",
+)
+@requiresCUDA
+def test_cudagraph_pools():
+    def workload(a):
+        with torch.no_grad():
+            inter = [a * i for i in range(50)]
+            b = inter.pop()
+            while inter:
+                b = b + inter.pop()
+            return b
+
+    from thunder.transforms.cudagraph import CUDAGraphTransform
+
+    def run_cg(n, m, share_mem_pool=False):
+        jfn = thunder.jit(workload, transforms=(CUDAGraphTransform(share_mem_pool=share_mem_pool),), executors=())
+
+        a = torch.randn(n, n, device="cuda")
+        jfn(a)
+        b = torch.randn(m, m, device="cuda")
+        jfn(b)
+
+    def run_graphs(n, m):
+        run_cg(n, m)
+        reserved_memory_without_pool = torch.cuda.memory_reserved()
+        run_cg(n, m, True)
+        reserved_memory_with_pool = torch.cuda.memory_reserved()
+        assert reserved_memory_with_pool < reserved_memory_without_pool
+
+    run_graphs(1024, 1024)
+    run_graphs(1024, 512)
+    run_graphs(512, 1024)
+    run_graphs(15, 5)
+    run_graphs(5, 15)
+    run_graphs(5, 5)
+
+
 def test_disable_params_and_buffer_check():
     from thunder.tests.litgpt_model import Config
     from litgpt.model import GPT

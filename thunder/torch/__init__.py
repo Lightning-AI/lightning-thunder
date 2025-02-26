@@ -357,8 +357,9 @@ def _old_torch_typestring_to_devicetype_and_dtype(typestring: str) -> tuple[Devi
     return devicetype_str, dtype_str
 
 
-@torchsymbol(torch.Tensor.type, is_method=True)
-def type(a: TensorLike, /, dtype: None | str | dtypeLike = None, non_blocking: bool = False) -> str | TensorLike:
+# NOTE: Using name `torch_type` to avoid conflict with Python's `type`
+@torchsymbol(torch.Tensor.type, is_method=True, method_name="type", id="torch.Tensor.type")
+def torch_type(a: TensorLike, /, dtype: None | str | dtypeLike = None, non_blocking: bool = False) -> str | TensorLike:
     utils.check(
         not non_blocking,
         lambda: f"type(): `non_blocking==True` is currently not supported.",
@@ -386,7 +387,7 @@ def type(a: TensorLike, /, dtype: None | str | dtypeLike = None, non_blocking: b
     return to(a, dev, dtype)
 
 
-register_method("type", type)
+register_method("type", torch_type)
 
 #
 # Data movement and transformation operations
@@ -2190,7 +2191,7 @@ def polygamma(n: int, a: TensorLike, /) -> TensorLike:
 
 
 @torchsymbol(torch.Tensor.polygamma_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
-def polygamma_(n: int, a: TensorLike, /) -> TensorLike:
+def polygamma_(a: TensorLike, n: int, /) -> TensorLike:
     return _copy_(a, polygamma(n, a))
 
 

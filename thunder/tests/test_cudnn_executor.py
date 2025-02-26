@@ -65,10 +65,14 @@ def grad_scaled_dot_product_attention_reference_generator(op, device, dtype, req
         q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
         yield SampleInput(q, k, v, None, dropout_p=0.0, is_causal=False, scale=0.123)
 
-    # TODO: cudnnex only support of grad_attn_mask with batch dim 1 and both sequence lenghts divisible by 64. Release 9.0.1 will relax this constraint.
     # Additive attn_mask
+    # with different broadcasting patterns
     q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
-    additive_attn_mask = make((1, n_head, L, S), dtype=q.dtype).tril()
+    additive_attn_mask = make((1, 1, L, S), dtype=q.dtype, requires_grad=requires_grad)
+    yield SampleInput(q, k, v, additive_attn_mask, is_causal=False)
+    additive_attn_mask = make((1, n_head, L, S), dtype=q.dtype, requires_grad=requires_grad)
+    yield SampleInput(q, k, v, additive_attn_mask, is_causal=False)
+    additive_attn_mask = make((N, n_head, L, S), dtype=q.dtype, requires_grad=requires_grad)
     yield SampleInput(q, k, v, additive_attn_mask, is_causal=False)
 
     # Boolean attn_mask
@@ -272,3 +276,32 @@ def test_vjp_correctness_cudnn_sdpa(dtype, may_cat_grad_qkv):
         # compare gradients of query, key, value, and attn_mask
         for eg, ag in zip(expected_grad, actual_grad):
             torch.testing.assert_close(eg, ag, atol=2e-1, rtol=2e-2)
+
+
+def test_compute_row_major_strides():
+    from thunder.executors.cudnnex import _compute_row_major_strides
+
+    # Test case 1: 2D tensor
+    shape = (3, 4)
+    expected_strides = (4, 1)
+    assert _compute_row_major_strides(shape) == expected_strides
+
+    # Test case 2: 3D tensor
+    shape = (2, 3, 4)
+    expected_strides = (12, 4, 1)
+    assert _compute_row_major_strides(shape) == expected_strides
+
+    # Test case 3: 1D tensor
+    shape = (5,)
+    expected_strides = (1,)
+    assert _compute_row_major_strides(shape) == expected_strides
+
+    # Test case 4: 4D tensor
+    shape = (2, 3, 4, 5)
+    expected_strides = (60, 20, 5, 1)
+    assert _compute_row_major_strides(shape) == expected_strides
+
+    # Test case 5: Empty shape
+    shape = ()
+    expected_strides = ()
+    assert _compute_row_major_strides(shape) == expected_strides

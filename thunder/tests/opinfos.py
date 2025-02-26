@@ -3038,7 +3038,7 @@ def type_error_generator_tensor(op, device, dtype=torch.float32, **kwargs):
 
 
 type_opinfo_tensor = OpInfo(
-    ltorch.type,
+    ltorch.torch_type,
     sample_input_generator=type_sample_generator_tensor,
     error_input_generator=type_error_generator_tensor,
     torch_reference=torch.Tensor.type,
@@ -3069,7 +3069,7 @@ def string_compare(actual, expected, **kwargs):
 
 
 type_opinfo_str = OpInfo(
-    ltorch.type,
+    ltorch.torch_type,
     sample_input_generator=type_sample_generator_str,
     error_input_generator=type_error_generator_str,
     torch_reference=torch.Tensor.type,
