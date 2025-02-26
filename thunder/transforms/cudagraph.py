@@ -9,7 +9,15 @@ from thunder.core.transform_common import Transform
 from thunder.core import utils, prims, vjp_utils
 from thunder.core.proxies import Proxy, ProxyTag, unvariableify
 from thunder.core.symbol import BoundSymbol, Symbol
-from thunder.core.trace import TraceCtx, from_trace, TraceProvenance, get_tracectx, set_tracectx, reset_tracectx, TraceTag
+from thunder.core.trace import (
+    TraceCtx,
+    from_trace,
+    TraceProvenance,
+    get_tracectx,
+    set_tracectx,
+    reset_tracectx,
+    TraceTag,
+)
 from thunder.executors.utils import Region
 from thunder.executors.data_dependent_partition import fuse_bound_symbols, Node
 
@@ -330,11 +338,14 @@ class CUDAGraphTransform(Transform):
         return fused_trace
 
     def transform_trace_post_optimization(self, trace, **kwargs):
-        if trace.siginfo().name == 'backward_fn':
+        if trace.siginfo().name == "backward_fn":
             # TODO: Backward TraceTag
             assert self.outputs_from_forward is not None, "called on backward without forward before"
-            assert len(trace.bound_symbols[2].args) == 2 and trace.bound_symbols[2].args[0].name == 'saved_for_backward'
-            assert trace.bound_symbols[8].sym.name == 'unpack_sequence' and trace.bound_symbols[8].args[0] is trace.bound_symbols[2].output[0]
+            assert len(trace.bound_symbols[2].args) == 2 and trace.bound_symbols[2].args[0].name == "saved_for_backward"
+            assert (
+                trace.bound_symbols[8].sym.name == "unpack_sequence"
+                and trace.bound_symbols[8].args[0] is trace.bound_symbols[2].output[0]
+            )
 
             saved_for_backwards_unpacked = trace.bound_symbols[8].output
             assert len(saved_for_backwards_unpacked) == len(self.outputs_from_forward)
@@ -349,10 +360,13 @@ class CUDAGraphTransform(Transform):
             assert self.outputs_from_forward is None, "called on augmented forward twice without backward in between"
             cudagraph_output_names = set()
             for bsym in new_trace.bound_symbols:
-                if bsym.sym.name.startswith('CUDAGraph'):
+                if bsym.sym.name.startswith("CUDAGraph"):
                     for o in bsym.flat_proxy_outs:
                         cudagraph_output_names.add(o.name)
             saved_for_backward = vjp_utils.get_saved_for_backward_tensors(new_trace)
-            self.outputs_from_forward = [o.name in cudagraph_output_names or ProxyTag.STATIC_MEMORY_LOCATION in o.tags for o in saved_for_backward]
+            self.outputs_from_forward = [
+                o.name in cudagraph_output_names or ProxyTag.STATIC_MEMORY_LOCATION in o.tags
+                for o in saved_for_backward
+            ]
 
         return new_trace
