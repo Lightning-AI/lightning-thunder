@@ -1279,6 +1279,7 @@ elementwise_unary_ops.append(sigmoid_opinfo)
 sign_opinfo = OpInfo(
     clang.sign,
     sample_input_generator=elementwise_unary_generator,
+    singularity_fn=lambda x: x,
     torch_reference=_elementwise_unary_torch(torch.sgn),
     test_directives=(
         # TODO nvFuser needs support for complex sign
@@ -1286,6 +1287,12 @@ sign_opinfo = OpInfo(
             pytest.mark.xfail,
             dtypes=(datatypes.complexfloating,),
             executors=("nvfuser",),
+        ),
+        # The finite difference method used in test_vjp_correctness has numerical
+        # issues with constant derivative 0.
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_vjp_correctness",
         ),
     ),
 )
@@ -1750,7 +1757,7 @@ elementwise_unary_ops.append(relu6_opinfo)
 
 
 # fdm.jvp, which is used in test_vjp_correctness, behaves badly at jump discontinuties of the partial derviatives
-def hardshrink_singularity_fn_producer(sample: SampleInput):
+def shrink_singularity_fn_producer(sample: SampleInput):
     lambd = sample.kwargs.get("lambd", 0.5)
     return lambda a: torch.where(a >= 0, a - lambd, a + lambd)
 
@@ -1760,10 +1767,29 @@ hardshrink_opinfo = OpInfo(
     dtypes=(datatypes.floating,),
     sample_input_generator=get_elementwise_unary_with_kwargs_generator([{}, {"lambd": 0.25}, {"lambd": -0.1}]),
     torch_reference=_elementwise_unary_torch(torch.nn.functional.hardshrink),
-    singularity_fn_producer=hardshrink_singularity_fn_producer,
+    singularity_fn_producer=shrink_singularity_fn_producer,
     test_directives=(),
 )
 elementwise_unary_ops.append(hardshrink_opinfo)
+
+
+softshrink_opinfo = OpInfo(
+    ltorch.softshrink,
+    dtypes=(datatypes.floating,),
+    sample_input_generator=get_elementwise_unary_with_kwargs_generator([{}, {"lambd": 0.25}, {"lambd": 0.1}]),
+    torch_reference=_elementwise_unary_torch(torch.nn.functional.softshrink),
+    singularity_fn_producer=shrink_singularity_fn_producer,
+    test_directives=(
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=1e-4, rtol=1e-2)),
+            dtypes=(
+                datatypes.float16,
+                datatypes.bfloat16,
+            ),
+        ),
+    ),
+)
+elementwise_unary_ops.append(softshrink_opinfo)
 
 
 hardswish_opinfo = OpInfo(
