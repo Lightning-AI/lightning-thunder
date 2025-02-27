@@ -530,6 +530,35 @@ def test_cudagraph_empty_inputs():
     assert any(("CUDAGraph" in bsym.sym.name) for bsym in thunder.last_traces(jfn)[-1].bound_symbols)
 
 
+@requiresCUDA
+def test_cudagraph_fw_bw():
+    import torch
+    import thunder
+    import litgpt
+    from torch.testing import make_tensor
+    from functools import partial
+    from thunder.transforms.cudagraph import CUDAGraphTransform
+
+    device = torch.device("cuda")
+
+    cfg = litgpt.Config.from_name("open_llama_3b", n_layer=2)
+    with device:
+        make = partial(make_tensor, low=0, high=255, device=device, dtype=torch.long, requires_grad=False)
+        shape = (1,) + (cfg.block_size,)
+
+        x = make(shape)
+        m = litgpt.GPT(cfg)
+
+    cg_transform = CUDAGraphTransform()
+    m = thunder.jit(m, transforms=[cg_transform])
+
+    o = m(x)
+    o.sum().backward()
+
+    # Ensure all saved for backwards tensors are marked as static inputs
+    assert all(cg_transform.cuda_graph_runner.python_callables["CUDAGraph2"][1][1:-2])
+
+
 @pytest.mark.skip(
     reason="Pools in CUDAGraphTransform are not sharing properly. https://github.com/Lightning-AI/lightning-thunder/issues/1792",
 )
