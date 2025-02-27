@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import partial
 from numbers import Number
-from typing import Any
+from typing import Any, Optional
 from contextlib import contextmanager
 
 import torch
@@ -3270,7 +3270,7 @@ class LinearLoRABenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return self.lora_cls(self.model)
 
 
-class AdamBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+class OptimBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     _args = (
         BenchmarkArg(
             name="config",
@@ -3292,17 +3292,21 @@ class AdamBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
             name="requires_grad",
             description="Whether the input tensors require grad. Default is False.",
         ),
+        BenchmarkArg(
+            name="optimizer_name",
+            description="The name of the optimizer to benchmark.",
+        ),
     )
 
     @classmethod
     @property
     def name(cls) -> str:
-        return "optim-functional-adam"
+        return "optim-functional"
 
     @classmethod
     @property
     def description(cls) -> str:
-        return "Benchmark 'torch.optim._functional.adam' optimizer"
+        return "Benchmark functional optimizers"
 
     @classmethod
     @property
@@ -3311,11 +3315,12 @@ class AdamBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     def __init__(
         self,
-        config: tuple[str, bool, bool],
+        config: tuple[str, bool, Optional[bool]],
         params: Sequence[int],
         device: str = "cuda",
         dtype: dtypes.dtype = thunder.float32,
         requires_grad: bool = False,
+        optimizer_name: str = "adam",
     ) -> None:
         super().__init__()
 
@@ -3325,45 +3330,97 @@ class AdamBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         self.dtype: dtypes.dtype = dtype
         self.tdtype: torch.dtype = ltorch.to_torch_dtype(self.dtype)
         self.requires_grad: bool = requires_grad
+        self.optimizer_name: str = optimizer_name
 
         self.devices: list[str] = [device]
 
     def make_batch(self) -> tuple[list, dict]:
         pt = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
         params = [pt(shape) for shape in self.params]
-        grads = [pt(grad) for grad in self.params]
-        exp_avgs = [pt(ea, requires_grad=False) for ea in self.params]
-        exp_avg_sqs = [pt(eas, requires_grad=False) for eas in self.params]
-        max_exp_avg_sqs = [pt(meas, requires_grad=False) for meas in self.params]
-        state_steps = [
-            torch.tensor(0, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
-            for _ in self.params
-        ]
-        return (params, grads, exp_avgs, exp_avg_sqs, max_exp_avg_sqs, state_steps), {}
+
+        if self.optimizer_name == "adam":
+            grads = [pt(grad) for grad in self.params]
+            exp_avgs = [pt(ea, requires_grad=False) for ea in self.params]
+            exp_avg_sqs = [pt(eas, requires_grad=False) for eas in self.params]
+            max_exp_avg_sqs = [pt(meas, requires_grad=False) for meas in self.params]
+            state_steps = [
+                torch.tensor(0, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
+                for _ in self.params
+            ]
+            return (params, grads, exp_avgs, exp_avg_sqs, max_exp_avg_sqs, state_steps), {}
+
+        elif self.optimizer_name == "sgd":
+            d_p_list = [pt(d_p, requires_grad=False) for d_p in self.params]
+            momentum_buffer_list = [pt(mbl, requires_grad=False) for mbl in self.params]
+            return (params, d_p_list, momentum_buffer_list), {}
+
+        elif self.optimizer_name == "rmsprop":
+            grads = [pt(grad) for grad in self.params]
+            square_avgs = [pt(sq_avgs, requires_grad=False) for sq_avgs in self.params]
+            grad_avgs = [pt(g_avgs, requires_grad=False) for g_avgs in self.params]
+            momentum_buffer_list = [pt(mbl, requires_grad=False) for mbl in self.params]
+            state_steps = [
+                torch.tensor(0, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
+                for _ in self.params
+            ]
+            return (params, grads, square_avgs, grad_avgs, momentum_buffer_list, state_steps), {}
+
+        else:
+            raise ValueError(f"Unsupported optimizer: {self.optimizer_name}")
 
     def fn(self) -> Callable:
-        def foo(params, grads, exp_avgs, exp_avg_sqs, max_exp_avg_sqs, state_steps):
-            name, foreach, fused = self.config
-            return torch.optim._functional.adam(
-                params,
-                grads,
-                exp_avgs,
-                exp_avg_sqs,
-                max_exp_avg_sqs,
-                state_steps,
-                foreach=foreach,
-                # to enable dynamo trace
-                capturable=True,
-                differentiable=False,
-                fused=fused,
-                amsgrad=False,
-                lr=0.001,
-                beta1=0.9,
-                beta2=0.999,
-                eps=1e-08,
-                weight_decay=0,
-                maximize=False,
-            )
+        def foo(*args):
+
+            if len(self.config) == 2:
+                name, foreach = self.config
+            else:
+                name, foreach, fused = self.config
+
+            if self.optimizer_name == "adam":
+                return torch.optim._functional.adam(
+                    *args,
+                    foreach=foreach,
+                    # to enable dynamo trace
+                    capturable=True,
+                    differentiable=False,
+                    fused=fused,
+                    amsgrad=False,
+                    lr=0.001,
+                    beta1=0.9,
+                    beta2=0.999,
+                    eps=1e-08,
+                    weight_decay=0,
+                    maximize=False,
+                )
+
+            elif self.optimizer_name == "sgd":
+                return torch.optim._functional.sgd(
+                    *args,
+                    foreach=foreach,
+                    fused=fused,
+                    weight_decay=0.0,
+                    lr=0.001,
+                    momentum=0.0,
+                    dampening=0.01,
+                    nesterov=False,
+                    maximize=False,
+                )
+
+            elif self.optimizer_name == "rmsprop":
+                return torch.optim._functional.rmsprop(
+                    *args,
+                    foreach=foreach,
+                    capturable=True,
+                    lr=0.01,
+                    alpha=0.99,
+                    eps=1e-08,
+                    weight_decay=0.0,
+                    momentum=0.0,
+                    centered=False,
+                )
+
+            else:
+                raise ValueError(f"Unsupported optimizer: {self.optimizer_name}")
 
         return foo
 

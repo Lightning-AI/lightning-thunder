@@ -5,6 +5,7 @@ from collections.abc import Callable
 from enum import auto, Enum
 from collections.abc import Sequence
 from contextlib import nullcontext
+from typing import Optional
 
 import pytest
 import torch
@@ -16,7 +17,7 @@ from litgpt.config import configs
 import thunder
 
 from thunder.benchmarks import (
-    AdamBenchmark,
+    OptimBenchmark,
     BatchNormBenchmark,
     Benchmark,
     LitGPTBenchmark,
@@ -1009,19 +1010,26 @@ def test_lora_linear(benchmark, executor, compute_type, implementation):
     ],
     ids=["single_tensor", "multi_tensor(foreach)", "fused"],
 )
-def test_optim_functional_adam(
+@pytest.mark.parametrize(
+    "optimizer_name",
+    ["adam", "sgd", "rmsprop"],
+    ids=["adam", "sgd", "rmsprop"],
+)
+def test_optim_functional(
     benchmark,
     executor: None | Callable,
-    config: tuple[str, bool, bool],
+    config: tuple[str, bool, Optional[bool]],
     params: Sequence[int],
     compute_type: ComputeType,
+    optimizer_name: str,
 ):
-    bench: Benchmark = AdamBenchmark(
+    bench: Benchmark = OptimBenchmark(
         config=config,
         params=params,
         device="cuda:0",
         dtype=thunder.float32,
         requires_grad=is_requires_grad(compute_type),
+        optimizer_name=optimizer_name,
     )
 
     fn = executor(bench.fn())
