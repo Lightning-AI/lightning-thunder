@@ -3315,7 +3315,7 @@ class OptimBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     def __init__(
         self,
-        config: tuple[str, bool, Optional[bool]],
+        config: tuple[str, bool, bool | None],
         params: Sequence[int],
         device: str = "cuda",
         dtype: dtypes.dtype = thunder.float32,

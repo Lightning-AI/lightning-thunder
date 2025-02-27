@@ -1018,7 +1018,7 @@ def test_lora_linear(benchmark, executor, compute_type, implementation):
 def test_optim_functional(
     benchmark,
     executor: None | Callable,
-    config: tuple[str, bool, Optional[bool]],
+    config: tuple[str, bool, bool | None],
     params: Sequence[int],
     compute_type: ComputeType,
     optimizer_name: str,
