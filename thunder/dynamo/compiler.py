@@ -29,6 +29,12 @@ if TYPE_CHECKING:
 
 _DEFAULT_THUNDER_FUSION_TYPE = "dataflow"
 
+# Split Autograd is disabled by default as
+# it can lead to race conditions when using thunderFX + TE + FSDP
+# leading to NCCL hang-up due to collective mismatch.
+# TODO(kshitij12345): Investigate more and understand if the bug is in PyTorch or elsewhere.
+_DEFAULT_THUNDERFX_DISABLE_SPLIT_AUTOGRAD = True
+
 
 def _add_prologue_pruning(options: dict):
     """
@@ -87,6 +93,9 @@ class ThunderCompiler:
         # NOTE: Dynamo already adds guards for modules by default (see flag `torch._dynamo.config.guard_nn_modules`), so thunder can avoid adding extra metadata checks for parameters
         #       in prologue.
         _add_prologue_pruning(thunder_options)
+        thunder_options["thunderfx_disable_split_autograd"] = thunder_options.get(
+            "thunderfx_disable_split_autograd", _DEFAULT_THUNDERFX_DISABLE_SPLIT_AUTOGRAD
+        )
         self.thunder_options = thunder_options
         self._thunder_jit = partial(jit, **thunder_options)
         self._torch_compile = torch.compile
@@ -162,7 +171,7 @@ class ThunderCompiler:
 
                 compile_fn = ThunderCompileSpecification(**self.thunder_options)
                 if not use_pytest_benchmark:
-                    report.write_repro_v2(
+                    report.write_repro(
                         reproducer_folder,
                         file_name=f"{report.graph_name}_repro.py",
                         compile_fn=compile_fn,
@@ -203,6 +212,8 @@ def thunderfx(fn: Callable, /, **kwargs) -> Callable:
     """
     import thunder
 
+    # lightning has torch.compile wrapped in `lightning/fabric/wrappers.py`
+    torch.compile = inspect.unwrap(torch.compile)
     torch_compile_kwarg_names = inspect.getfullargspec(torch.compile).kwonlyargs
     thunder_jit_kwarg_names = inspect.getfullargspec(thunder.jit).kwonlyargs
     overlap = [kwarg_name for kwarg_name in thunder_jit_kwarg_names if kwarg_name in torch_compile_kwarg_names]

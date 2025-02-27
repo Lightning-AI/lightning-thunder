@@ -712,9 +712,9 @@ def torch_compile_executor(fn: Callable) -> Callable:
 
 def thunderfx_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
-    backend = thunder.dynamo.ThunderCompiler()
+    backend = thunder.dynamo.thunderfx
     torch._dynamo.reset()
-    return torch.compile(fn, backend=backend)
+    return backend(fn)
 
 
 def thunder_torch_executor(fn: Callable) -> Callable:

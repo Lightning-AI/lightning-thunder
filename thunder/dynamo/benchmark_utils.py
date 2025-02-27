@@ -4,6 +4,7 @@ import torch
 from torch.utils.benchmark import Timer as TorchBenchmarkTimer
 from torch.profiler import profile, ProfilerActivity
 from thunder.dynamo.utils import thunder_options_to_str
+from torch.utils.benchmark.utils.common import select_unit as select_time_unit
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -22,7 +23,7 @@ class CompileSpecificationInterface:
         - :class:`ThunderCompileSpecification`
     """
 
-    def compile(self, fn: Callable) -> Callable:
+    def compile(self, fn: Callable, **kwargs) -> Callable:
         """Compiles the given callable and returns the compiled version."""
         raise NotImplementedError("Subclasses should implement the 'compile' method if needed.")
 
@@ -48,10 +49,11 @@ class ThunderCompileSpecification(CompileSpecificationInterface):
         compiled_fn = spec.compile(my_function)
     """
 
-    def __init__(self, **kwargs):
+    def __init__(self, specification_name="thunder", **kwargs):
+        self.name = specification_name
         self.thunder_options: dict = kwargs
 
-    def compile(self, fn):
+    def compile(self, fn, **kwargs):
         from thunder import jit
 
         return jit(fn, **self.thunder_options)
@@ -69,10 +71,11 @@ class TorchCompileSpecification(CompileSpecificationInterface):
     A compile specification for :func:`torch.compile`.
     """
 
-    def __init__(self, **kwargs):
+    def __init__(self, specification_name="torchcompile", **kwargs):
+        self.name = specification_name
         self.torch_compile_options: dict = kwargs
 
-    def compile(self, fn):
+    def compile(self, fn, **kwargs):
         return torch.compile(fn, **self.torch_compile_options)
 
     def to_source(self, fn_name):
@@ -80,7 +83,10 @@ class TorchCompileSpecification(CompileSpecificationInterface):
         return f"torch.compile({fn_name}, {kwargs_str})"
 
     def import_str(self):
-        return ["import torch"]
+        # WAR for triton error https://github.com/pytorch/pytorch/issues/124565
+        comment_str = '# Workaround for "RuntimeError: Triton Error [CUDA]: an illegal memory access was encountered"\n# https://github.com/pytorch/pytorch/issues/124565'
+        code = f'if torch.cuda.is_available():\n    torch.empty(1, device="cuda", requires_grad=True).backward()'
+        return ["import torch", comment_str, code]
 
 
 class TorchEagerSpecification(CompileSpecificationInterface):
@@ -88,14 +94,48 @@ class TorchEagerSpecification(CompileSpecificationInterface):
     A compile specification for Torch eager mode, which returns the callable unchanged.
     """
 
-    def compile(self, fn):
+    def __init__(self, specification_name="torcheager"):
+        self.name = specification_name
+
+    def compile(self, fn, **kwargs):
         return fn
 
     def to_source(self, fn_name):
         return fn_name
 
 
+class TorchInductorSpecification(CompileSpecificationInterface):
+    """
+    A compilation specification for using TorchInductor without TorchDynamo.
+    For details on why compilation without TorchDynamo is needed, see:
+    https://github.com/Lightning-AI/lightning-thunder/issues/1521
+    """
+
+    def __init__(self, specification_name="inductor_backend"):
+        self.name: str = specification_name
+
+    @staticmethod
+    def torch_inductor(fn, inputs):
+        from torch._inductor import compile as inductor_compile
+        from torch.fx import symbolic_trace
+
+        fx_graph = symbolic_trace(fn)
+        return inductor_compile(fx_graph, inputs)
+
+    def compile(self, fn, *, inputs, **kwargs):
+        return self.torch_inductor(fn, inputs)
+
+    def to_source(self, fn_name):
+        return f"TorchInductorSpecification.torch_inductor({fn_name}, inputs)"
+
+    def import_str(self):
+        return ["import torch", "from thunder.dynamo.benchmark_utils import TorchInductorSpecification"]
+
+
 class BoundSymbolNvfuserSpecification(CompileSpecificationInterface):
+    def __init__(self, specification_name="nvfuser"):
+        self.name: str = specification_name
+
     # Returns the nvFuser callable from the nvFuser bound symbol.
     # See the TODO in :class:`thunder.dynamo.report.ThunderFusionReport` for more details.
     def compile(self, nvfusion_bsym):
@@ -103,6 +143,9 @@ class BoundSymbolNvfuserSpecification(CompileSpecificationInterface):
 
 
 class BoundSymbolTorchCompileSpecification(CompileSpecificationInterface):
+    def __init__(self, specification_name="torchcompile"):
+        self.name: str = specification_name
+
     # Returns the torch compile callable from the nvFuser bound symbol.
     # See the TODO in :class:`thunder.dynamo.report.ThunderFusionReport` for more details.
     def compile(self, bsym):
@@ -247,7 +290,7 @@ class WallTime(TimerInterface):
         return ["from thunder.dynamo.benchmark_utils import WallTime"]
 
     @staticmethod
-    def to_source(fn_name="compiled_model", inputs_name="inputs"):
+    def to_source(fn_name, inputs_name):
         return f'WallTime.time("{fn_name}(*{inputs_name})", globals={{"{fn_name}":{fn_name}, "{inputs_name}": {inputs_name}}})'
 
 
@@ -271,5 +314,111 @@ class KernelTime(TimerInterface):
         return ["from thunder.dynamo.benchmark_utils import KernelTime"]
 
     @staticmethod
-    def to_source(fn_name="compiled_model", inputs_name="inputs"):
+    def to_source(fn_name, inputs_name):
         return f'KernelTime.time("{fn_name}(*{inputs_name})", globals={{"{fn_name}":{fn_name}, "{inputs_name}": {inputs_name}}})'
+
+
+def check_threshold(a, b, rtol, atol):
+    import math
+
+    return math.isclose(a, b, rel_tol=rtol, abs_tol=atol)
+
+
+def get_pretty_time_str(a):
+    time_unit, time_scale = select_time_unit(a)
+    return f"{a / time_scale:.3f} {time_unit}"
+
+
+def check_threshold_log(a: float, b: float, a_name: str, b_name: str, test_name: str, timer_name: str, rtol, atol):
+    """
+    Compare two timing measurements against a defined threshold and generate a log message.
+    If not exceed the threshold, abs(a-b) <= max(rtol * max(abs(a), abs(b)), atol).
+
+    Parameters:
+        a, b (float): Timing measurement for the compilation methods. Typically obtained from `Measurement.median`.
+        a_name, b_name (str): Identifier for the two compilation methods to be compared (e.g., thunder, torch.compile).
+        test_name (str): Name of the function whose performance is being measured.
+        timer_name (str): Identifier for the timing mechanism used.
+        rtol (float): Relative tolerance for the comparison.
+        atol (float): Absolute tolerance for the comparison (in seconds).
+
+    Returns:
+        Tuple[bool, str]: A tuple where:
+            - The first element is a boolean indicating whether the performance difference exceeds the threshold.
+            - The second element is a log string detailing the comparison results.
+    """
+    a_time_str = get_pretty_time_str(a)
+    b_time_str = get_pretty_time_str(b)
+    if not check_threshold(a, b, rtol=rtol, atol=atol):
+        log_str = f"Benchmark {timer_name} for **{test_name}** requires investigation: {b_name}({b_time_str}) and {a_name}({a_time_str}) is not close (rtol={rtol}, atol={atol})"
+        print(log_str)
+        return False, log_str
+    log_str = (
+        f"Benchmark {timer_name} ran successfully on **{test_name}**: {b_name}({b_time_str}) , {a_name}({a_time_str})"
+    )
+    print(log_str)
+    return True, None
+
+
+def check_timing(
+    folder_path,
+    report,
+    compile_fn1: Callable,
+    compile_fn2: Callable,
+    timer_fn: Callable,
+    timer_name: str,
+    rtol=0.5,
+    atol=0.0,
+):
+    """
+    Check the timing of graph report using two different compilation specifications with the provided timer configuration
+    and generate a benchmark script if the difference exceeds the threshold.
+    """
+    graph_name = report.graph_name
+    measure1 = report.run_benchmark(compile_fn1, timer_fn)
+    measure2 = report.run_benchmark(compile_fn2, timer_fn)
+
+    record = False
+    log_strs = ""
+    for m1, m2, name in zip(measure1, measure2, ("forward", "backward")):
+        if m1 is None:
+            assert m2 is None
+            continue
+        ret = check_threshold_log(
+            m1.median, m2.median, compile_fn1.name, compile_fn2.name, f"{graph_name} {name}", timer_name, rtol, atol
+        )
+        if not ret[0]:
+            record = True
+            log_strs += f"{ret[1]}\n"
+    if record:
+        extra_comment = f"Benchmark results:\n{log_strs}\n"
+        filename1 = f"{graph_name}_{compile_fn1.name}_{timer_name}.py"
+        filename2 = f"{graph_name}_{compile_fn2.name}_{timer_name}.py"
+        report.write_benchmark(folder_path, compile_fn1, timer_fn, file_name=filename1, extra_comment_str=extra_comment)
+        report.write_benchmark(folder_path, compile_fn2, timer_fn, file_name=filename2, extra_comment_str=extra_comment)
+        print(f"The scripts are saved: {filename1}, {filename2}")
+    print("\n")
+
+
+def check_timing_bsym(folder_path, report, timer_fn, timer_name: str, rtol=0.5, atol=0.0):
+    """
+    Check the timing of the nvfusion region report using two different compilation specifications with the provided timer configuration
+    and generate a benchmark script if the difference exceeds the threshold.
+    """
+    graph_name = report.name
+    bsym_nvfuser = BoundSymbolNvfuserSpecification()
+    bsym_torchcompile = BoundSymbolTorchCompileSpecification()
+    measure1 = report.run_benchmark(bsym_nvfuser, timer_fn)
+    measure2 = report.run_benchmark(bsym_torchcompile, timer_fn)
+
+    ret = check_threshold_log(
+        measure1.median, measure2.median, bsym_nvfuser.name, bsym_torchcompile.name, graph_name, timer_name, rtol, atol
+    )
+    if not ret[0]:
+        extra_comment = f"Benchmark results:\n{ret[1]}\n"
+        filename1 = f"{graph_name}_{bsym_nvfuser.name}_{timer_name}.py"
+        filename2 = f"{graph_name}_{bsym_torchcompile.name}_{timer_name}.py"
+        report.write_nvfuser_benchmark(folder_path, timer_fn, file_name=filename1, extra_comment_str=extra_comment)
+        report.write_inductor_benchmark(folder_path, timer_fn, file_name=filename2, extra_comment_str=extra_comment)
+        print(f"The scripts are saved: {filename1}, {filename2}")
+    print("\n")
