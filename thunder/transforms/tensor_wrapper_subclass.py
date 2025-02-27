@@ -693,7 +693,7 @@ class DesugarTensorSubclass:
         return out
 
 
-def tensor_subclass_dce(trace: TraceCtx) -> TraceCtx:
+def tensor_subclass_dce(trace: TraceCtx, is_bwd_trace: bool) -> TraceCtx:
     """Remove ``tensor.__tensor_flatten__``s as possible.
 
     This function tries to remove flattening of tensor subclass
@@ -707,6 +707,30 @@ def tensor_subclass_dce(trace: TraceCtx) -> TraceCtx:
     swap_map: dict[Variable, TensorProxy] = {}
     producer_map = utils.producers(trace)
     bsym_to_exclude: set[BoundSymbol] = set()
+
+    # Handle adhoc executor subsymbols for backward trace
+    if is_bwd_trace:
+        from thunder.core.compile_data import get_compile_data
+        from thunder.extend import AdHocExecutor
+
+        cd = get_compile_data()
+        ad_hoc_executor: AdHocExecutor | None = None
+        if cd is not None:
+            executors_list = list(filter(lambda executor: isinstance(executor, AdHocExecutor), cd.executors_list))
+            if executors_list:
+                ad_hoc_executor = executors_list[0]
+
+        if ad_hoc_executor is not None and ad_hoc_executor._implmap:
+            new_bsyms = []
+            for bsym in trace.bound_symbols:
+                if ad_hoc_executor.can_execute(bsym) and bsym.subsymbols:
+                    new_bsyms.extend(bsym.subsymbols)
+                else:
+                    new_bsyms.append(bsym)
+            trace = from_trace(trace)
+            trace.bound_symbols = new_bsyms
+            # Rebuild producer map with updated bound symbols
+            producer_map = utils.producers(trace)
 
     subclass_flatten_bsym: BoundSymbol
     for subclass_flatten_bsym in filter(
@@ -756,7 +780,7 @@ def tensor_subclass_dce(trace: TraceCtx) -> TraceCtx:
     return new_trace
 
 
-def unroll_tensor_subclasses(trace: TraceCtx) -> TraceCtx:
+def unroll_tensor_subclasses(trace: TraceCtx, is_bwd_trace: bool = False) -> TraceCtx:
     """Unroll tensor subclasses in ``computation_trace``.
 
     Two things are happening inside of this function:
@@ -803,6 +827,6 @@ def unroll_tensor_subclasses(trace: TraceCtx) -> TraceCtx:
     computation_trace_with_subclass_tensor_unrolled.set_provenance(
         TraceProvenance(f"tensor subclasses unrolled (took {elapsed_time_millis} milliseconds)")
     )
-    dced_computation_trace = tensor_subclass_dce(computation_trace_with_subclass_tensor_unrolled)
+    dced_computation_trace = tensor_subclass_dce(computation_trace_with_subclass_tensor_unrolled, is_bwd_trace)
     warn_tensor_subclass_support()
     return dced_computation_trace
