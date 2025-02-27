@@ -549,52 +549,25 @@ def test_cudagraph_fw_bw():
         x = make(shape)
         m = litgpt.GPT(cfg)
 
-    cg_transform = CUDAGraphTransform()
+    cg_transform = CUDAGraphTransform(share_mem_pool=True)
     m = thunder.jit(m, transforms=[cg_transform])
+
+    before_snapshot = torch.cuda.memory_snapshot()
 
     o = m(x)
     o.sum().backward()
 
+    after_snapshot = torch.cuda.memory_snapshot()
+
     # Ensure all saved for backwards tensors are marked as static inputs
     assert all(cg_transform.cuda_graph_runner.python_callables["CUDAGraph2"][1][1:-2])
-
-
-@pytest.mark.skip(
-    reason="Pools in CUDAGraphTransform are not sharing properly. https://github.com/Lightning-AI/lightning-thunder/issues/1792",
-)
-@requiresCUDA
-def test_cudagraph_pools():
-    def workload(a):
-        with torch.no_grad():
-            inter = [a * i for i in range(50)]
-            b = inter.pop()
-            while inter:
-                b = b + inter.pop()
-            return b
-
-    from thunder.transforms.cudagraph import CUDAGraphTransform
-
-    def run_cg(n, m, share_mem_pool=False):
-        jfn = thunder.jit(workload, transforms=(CUDAGraphTransform(share_mem_pool=share_mem_pool),), executors=())
-
-        a = torch.randn(n, n, device="cuda")
-        jfn(a)
-        b = torch.randn(m, m, device="cuda")
-        jfn(b)
-
-    def run_graphs(n, m):
-        run_cg(n, m)
-        reserved_memory_without_pool = torch.cuda.memory_reserved()
-        run_cg(n, m, True)
-        reserved_memory_with_pool = torch.cuda.memory_reserved()
-        assert reserved_memory_with_pool < reserved_memory_without_pool
-
-    run_graphs(1024, 1024)
-    run_graphs(1024, 512)
-    run_graphs(512, 1024)
-    run_graphs(15, 5)
-    run_graphs(5, 15)
-    run_graphs(5, 5)
+    
+    # Ensure that all newly allocated segments are allocated in the shared memeory pool or the global pool
+    for segment in after_snapshot:
+        if segment in before_snapshot:
+            continue
+        else:
+            assert segment["segment_pool_id"] == cg_transform.cuda_graph_runner.mem_pool or str(segment["segment_pool_id"]) == "(0, 0)"
 
 
 def test_disable_params_and_buffer_check():
