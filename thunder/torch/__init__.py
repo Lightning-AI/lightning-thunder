@@ -1546,6 +1546,11 @@ def abs(a: NumberLike | TensorLike, /) -> Number | TensorLike:
     return clang.abs(a)
 
 
+@torchsymbol(torch.ops.aten.abs, torch.ops.aten.abs.default, id="torch.ops.aten.abs")
+def core_aten_abs(a: TensorLike) -> TensorLike:
+    return clang.abs(a)
+
+
 @torchsymbol(torch.abs_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def abs_(a: NumberLike | TensorLike, /) -> Number | TensorLike:
     return prims.copy_(abs(a), a)
