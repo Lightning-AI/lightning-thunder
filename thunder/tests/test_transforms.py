@@ -567,7 +567,7 @@ def test_cudagraph_fw_bw():
         if segment in before_snapshot:
             continue
         else:
-            assert segment["segment_pool_id"] == cg_transform.cuda_graph_runner.mem_pool or str(segment["segment_pool_id"]) == "(0, 0)"
+            assert (segment["segment_pool_id"] == cg_transform.cuda_graph_runner.mem_pool[0] or str(segment["segment_pool_id"]) == "(0, 0)")
 
 
 def test_disable_params_and_buffer_check():
