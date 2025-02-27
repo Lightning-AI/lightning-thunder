@@ -97,7 +97,7 @@ class CUDAGraphRunner:
 
         torch.cuda.synchronize()
         if self.stream:
-            # In teh case of multiple devices and shared emmeory pooling, we want to use one stream/pool per device
+            # In the case of multiple devices and shared memory pooling, we want to use one stream/pool per device
             cur_device_index = None
             for arg in static_inputs:
                 if isinstance(arg, torch.Tensor):
