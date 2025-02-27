@@ -1944,6 +1944,17 @@ class SubclassTensorProxy(TensorProxy):
             is_dunder_init_following_make_wrapper_subclass = True
 
         if not is_dunder_init_following_make_wrapper_subclass:
+            from thunder.core.pytree import tree_map
+
+            def maybe_cast(a):
+                if isinstance(a, torch.device):
+                    return devices.to_device(a)
+                if isinstance(a, torch.dtype):
+                    return dtypes.to_dtype(a)
+                return a
+
+            args, kwargs = tree_map(lambda a: maybe_cast(a), (args, kwargs))
+
             super().__init__(*args, **kwargs)
 
             self._tensors = kwarg_tensors
