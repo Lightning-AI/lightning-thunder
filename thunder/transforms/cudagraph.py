@@ -108,9 +108,9 @@ class CUDAGraphRunner:
         torch.cuda.synchronize()
 
         # Record
-        # NOTE: we are (optionally) using a global memory pool
-        # which is shared across all graphs here. However, we havent observed any memeory
-        # saving from this, so it is not enabled by default.
+        # NOTE: we are (optionally) using a global memory pool and stream here
+        # This may have unintended consequences if graph capture and replay occur in different orders
+        # so disabled by default.
         graph = torch.cuda.CUDAGraph()
         with torch.cuda.graph(graph, stream=stream, pool=self.mem_pool):
             static_outputs = fn(*static_inputs)
