@@ -235,31 +235,47 @@ class DesugarTensorSubclass:
     bsym_to_new_outputs: dict[BoundSymbol, list[TensorProxy]] = field(init=False, default_factory=dict)
 
     def __post_init__(self) -> None:
-        # Check if this trace is backward trace
-        is_backward_trace: bool = False
-        if len(self.computation_trace.bound_symbols) > 6:
+        self.flat_trace_args = self._get_flat_trace_args()
+        self._identify_subclass_proxies_to_flatten()
+
+    def _get_flat_trace_args(self) -> Sequence[ProxyInterface]:
+        """Determine and flatten the trace arguments based on whether this is a backward trace."""
+        if self._is_backward_trace():
             maybe_unpack_C0_bsym = self.computation_trace.bound_symbols[4]
             maybe_unpack_C1_bsym = self.computation_trace.bound_symbols[5]
-            is_backward_trace = (
-                maybe_unpack_C0_bsym.args
-                and maybe_unpack_C1_bsym.args
-                and (
-                    maybe_unpack_C0_bsym.sym.id,
-                    maybe_unpack_C1_bsym.sym.id,
-                    getattr(maybe_unpack_C0_bsym.args[0], "name", ""),
-                    getattr(maybe_unpack_C1_bsym.args[0], "name", ""),
-                )
-                == (
-                    prims.PrimIDs.UNPACK_SEQUENCE,
-                    prims.PrimIDs.UNPACK_SEQUENCE,
-                    "C0",
-                    "C1",
-                )
+            flat_args, _ = tree_flatten((maybe_unpack_C0_bsym.output, maybe_unpack_C1_bsym.output))
+            return flat_args
+
+        flat_args, _ = tree_flatten((self.computation_trace.args, self.computation_trace.kwargs))
+        return flat_args
+
+    def _is_backward_trace(self) -> bool:
+        """Check if the current trace is a backward trace by examining bound symbols."""
+        if len(self.computation_trace.bound_symbols) <= 6:
+            return False
+
+        maybe_unpack_C0_bsym = self.computation_trace.bound_symbols[4]
+        maybe_unpack_C1_bsym = self.computation_trace.bound_symbols[5]
+
+        return (
+            maybe_unpack_C0_bsym.args
+            and maybe_unpack_C1_bsym.args
+            and (
+                maybe_unpack_C0_bsym.sym.id,
+                maybe_unpack_C1_bsym.sym.id,
+                getattr(maybe_unpack_C0_bsym.args[0], "name", ""),
+                getattr(maybe_unpack_C1_bsym.args[0], "name", ""),
             )
-            if is_backward_trace:
-                self.flat_trace_args, _ = tree_flatten((maybe_unpack_C0_bsym.output, maybe_unpack_C1_bsym.output))
-        if not is_backward_trace:
-            self.flat_trace_args, _ = tree_flatten((self.computation_trace.args, self.computation_trace.kwargs))
+            == (
+                prims.PrimIDs.UNPACK_SEQUENCE,
+                prims.PrimIDs.UNPACK_SEQUENCE,
+                "C0",
+                "C1",
+            )
+        )
+
+    def _identify_subclass_proxies_to_flatten(self) -> None:
+        """Identify SubclassTensorProxy instances that need to be flattened."""
         for arg in self.flat_trace_args:
             if isinstance(arg, SubclassTensorProxy):
                 self.subclass_proxy_to_flatten.add(variableify(arg))
