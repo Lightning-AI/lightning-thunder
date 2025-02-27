@@ -570,74 +570,127 @@ class DesugarTensorSubclass:
         return fx, fx(*desugared_args), tuple(orig_output), out_specs[0]
 
     def __call__(self, bsym: BoundSymbol) -> list[BoundSymbol]:
-        updated_bsym: BoundSymbol = bsym.from_bsym_swap_proxies(self.swap_map)
-        if bsym.sym.id == prims.PrimIDs.RETURN:
-            new_swap_map = {}
-            for k, v in self.swap_map.items():
-                if isinstance(v, SubclassTensorProxy):
-                    continue
-                new_swap_map[k] = v
-            if not self.subclass_proxy_to_flatten or True:
-                return [updated_bsym]
+        """Process a bound symbol, handling tensor subclasses appropriately."""
+        updated_bsym = bsym.from_bsym_swap_proxies(self.swap_map)
 
-        is_bsym_of_subclass_ctor = bsym.sym.id == prims.PrimIDs.TENSOR_SUBCLASS_CTOR
-        returns_subclass = any(isinstance(a, SubclassTensorProxy) for a in updated_bsym.flat_proxy_outs)
-        no_subclass_args = all(not isinstance(a, SubclassTensorProxy) for a in updated_bsym.flat_proxy_args)
-        is_unpack = bsym.sym.id in {prims.PrimIDs.UNPACK_TRIVIAL, prims.PrimIDs.UNPACK_SEQUENCE}
-        is_subclass_ctor = is_bsym_of_subclass_ctor or (no_subclass_args and returns_subclass and not is_unpack)
+        # Handle return operation
+        if bsym.sym.id == prims.PrimIDs.RETURN:
+            return self._handle_return_operation(updated_bsym)
+
+        # Determine the type of bound symbol
+        is_subclass_ctor, no_subclass_args = self._classify_bound_symbol(updated_bsym)
+
+        # Fast path: if not a subclass constructor and has no subclass args, return as is
         if not is_subclass_ctor and no_subclass_args:
             return [updated_bsym]
 
+        # Verify we can handle this bound symbol
         utils.check(
             len(updated_bsym.flat_outs) < 2,
             lambda: f"bsym has {len(updated_bsym.flat_outs)} outputs",
             exception_type=NotImplementedError,
         )
 
-        trace = trace_from_bsym_or_bsyms(updated_bsym)
+        # Convert the bound symbol to an FX graph and process it
+        return self._process_bound_symbol_with_fx(updated_bsym, is_subclass_ctor)
+
+    def _handle_return_operation(self, bsym: BoundSymbol) -> list[BoundSymbol]:
+        """Handle return operation bound symbols."""
+        # Filter out SubclassTensorProxy entries from swap_map
+        new_swap_map = {k: v for k, v in self.swap_map.items() if not isinstance(v, SubclassTensorProxy)}
+        # Early return if no subclass proxies to flatten or always true condition
+        if not self.subclass_proxy_to_flatten or True:
+            return [bsym]
+        return [bsym]  # This is redundant but matches original behavior
+
+    def _classify_bound_symbol(self, bsym: BoundSymbol) -> tuple[bool, bool]:
+        """Determine if the bound symbol is a subclass constructor and if it has subclass args."""
+        is_bsym_of_subclass_ctor = bsym.sym.id == prims.PrimIDs.TENSOR_SUBCLASS_CTOR
+        returns_subclass = any(isinstance(a, SubclassTensorProxy) for a in bsym.flat_proxy_outs)
+        no_subclass_args = all(not isinstance(a, SubclassTensorProxy) for a in bsym.flat_proxy_args)
+        is_unpack = bsym.sym.id in {prims.PrimIDs.UNPACK_TRIVIAL, prims.PrimIDs.UNPACK_SEQUENCE}
+
+        is_subclass_ctor = is_bsym_of_subclass_ctor or (no_subclass_args and returns_subclass and not is_unpack)
+        return is_subclass_ctor, no_subclass_args
+
+    def _process_bound_symbol_with_fx(self, bsym: BoundSymbol, is_subclass_ctor: bool) -> list[BoundSymbol]:
+        """Process a bound symbol by converting it to an FX graph and handling the results."""
+        # Convert the bound symbol to an FX graph
+        trace = trace_from_bsym_or_bsyms(bsym)
         fx, sequencified_cosmeticized_out, orig_output, _ = self.convert_trace_to_fx_graph_and_get_fake_result(trace)
+
         utils.check(
             len(sequencified_cosmeticized_out) == len(orig_output),
             lambda: f"{len(sequencified_cosmeticized_out)=}, {len(orig_output)=}",
         )
-        if is_subclass_ctor:
-            utils.check(len(sequencified_cosmeticized_out) == 1 and len(orig_output) == 1, lambda: "")
-            fake_tensor_subclass = orig_output[0]
-            subclass_proxy = updated_bsym.flat_outs[0]
-            tensor_attr_names, metadata = fake_tensor_subclass.__tensor_flatten__()
-            subclass_proxy._tensor_attr_names = tensor_attr_names
-            subclass_proxy._non_tensor_attr_names = list(metadata.keys())
-            self.subclass_proxy_to_flatten.add(variableify(subclass_proxy))
-            for name, value in zip(
-                tensor_attr_names + subclass_proxy._non_tensor_attr_names,
-                subclass_proxy._tensors + subclass_proxy._non_tensor_attr_names,
-            ):
-                setattr(subclass_proxy, name, value)
-            return [updated_bsym]
 
+        # Handle subclass constructor case
+        if is_subclass_ctor:
+            return self._handle_subclass_constructor(bsym, sequencified_cosmeticized_out, orig_output)
+
+        # Handle regular operation case
+        return self._handle_regular_operation(bsym, fx, sequencified_cosmeticized_out, orig_output)
+
+    def _handle_subclass_constructor(
+        self, bsym: BoundSymbol, sequencified_cosmeticized_out, orig_output
+    ) -> list[BoundSymbol]:
+        """Handle a bound symbol that constructs a tensor subclass."""
+        utils.check(len(sequencified_cosmeticized_out) == 1 and len(orig_output) == 1, lambda: "")
+        fake_tensor_subclass = orig_output[0]
+        subclass_proxy = bsym.flat_outs[0]
+
+        # Extract tensor attributes and metadata
+        tensor_attr_names, metadata = fake_tensor_subclass.__tensor_flatten__()
+        subclass_proxy._tensor_attr_names = tensor_attr_names
+        subclass_proxy._non_tensor_attr_names = list(metadata.keys())
+        self.subclass_proxy_to_flatten.add(variableify(subclass_proxy))
+
+        # Set attributes on the proxy
+        for name, value in zip(
+            tensor_attr_names + subclass_proxy._non_tensor_attr_names,
+            subclass_proxy._tensors + subclass_proxy._non_tensor_attr_names,
+        ):
+            setattr(subclass_proxy, name, value)
+        return [bsym]
+
+    def _handle_regular_operation(
+        self, bsym: BoundSymbol, fx, sequencified_cosmeticized_out, orig_output
+    ) -> list[BoundSymbol]:
+        """Handle a bound symbol that is a regular operation (not a constructor)."""
+        # Process outputs
+        out = self._process_outputs(sequencified_cosmeticized_out, orig_output)
+
+        # Create proxies for the outputs
+        with tracectx(self.computation_trace):
+            out_proxy = tree_map(proxy_fake_tensor, out)
+
+        # Verify output counts match
+        utils.check(
+            len(bsym.flat_outs) == len(out_proxy),
+            lambda: f"{len(bsym.flat_outs)=}, {len(out_proxy)=}, {out_proxy=}, {bsym.flat_outs=}",
+        )
+
+        # Update swap map with new proxies
+        sequence_out = [variableify(a) for a in bsym.flat_outs]
+        self.swap_map.update(dict(zip(sequence_out, utils.sequencify(out_proxy))))
+
+        # Create bound symbol with updated outputs
+        bsym_with_modified_output = bsym.from_bsym_swap_proxies(self.swap_map)
+        self.bsym_to_new_outputs[bsym_with_modified_output] = bsym_with_modified_output
+
+        # Translate the FX graph into bound symbols
+        return self.translate_fx_graph_into_bsym(bsym_with_modified_output, fx)
+
+    def _process_outputs(self, sequencified_cosmeticized_out, orig_output) -> list:
+        """Process and validate the outputs from the FX graph execution."""
         out = []
-        for i, (cosmeticized_out, orig_out) in enumerate(zip(sequencified_cosmeticized_out, orig_output)):
+        for cosmeticized_out, orig_out in zip(sequencified_cosmeticized_out, orig_output):
             if isinstance(cosmeticized_out.inner_tensors, dict):
                 utils.check(
                     is_traceable_wrapper_subclass(orig_out), lambda: f"{cosmeticized_out=} don't match {orig_out=}"
                 )
-                out.append(orig_out)
-            else:
-                out.append(orig_out)
-
-        with tracectx(self.computation_trace):
-            out_proxy = tree_map(proxy_fake_tensor, out)
-
-        utils.check(
-            len(updated_bsym.flat_outs) == len(out_proxy),
-            lambda: f"{len(bsym.flat_outs)=}, {len(out_proxy)=}, {out_proxy=}, {bsym.flat_outs=}",
-        )
-        sequence_out = [variableify(a) for a in updated_bsym.flat_outs]
-        self.swap_map.update(dict(zip(sequence_out, utils.sequencify(out_proxy))))
-
-        bsym_with_modified_output = updated_bsym.from_bsym_swap_proxies(self.swap_map)
-        self.bsym_to_new_outputs[bsym_with_modified_output] = bsym_with_modified_output
-        return self.translate_fx_graph_into_bsym(bsym_with_modified_output, fx)
+            out.append(orig_out)
+        return out
 
 
 def tensor_subclass_dce(trace: TraceCtx) -> TraceCtx:
