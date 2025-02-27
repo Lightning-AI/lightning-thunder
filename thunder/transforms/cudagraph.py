@@ -74,10 +74,10 @@ class CUDAGraphRunner:
         self.name_counter = 1
 
         # NOTE: Every invocation of CUDAGraphTransform has a single CUDAGraphRunner associated with it.
-        # This should  allow the runner to share a single memory pool across all graphs it constructs.
+        # This should allow the runner to share a single memory pool across all graphs it constructs on a given device.
         if share_mem_pool:
-            self.mem_pool = torch.cuda.graph_pool_handle()
-            self.stream = torch.cuda.Stream()
+            self.mem_pool = [torch.cuda.graph_pool_handle()] * torch.cuda.device_count()
+            self.stream = [torch.cuda.Stream()] * torch.cuda.device_count()
         else:
             self.mem_pool = None
             self.stream = None
@@ -91,15 +91,28 @@ class CUDAGraphRunner:
         self, fn: Callable, args: list[any], static_args_mask: tuple[bool, ...]
     ) -> tuple[torch.cuda.CUDAGraph, Sequence[torch.Tensor | Any], Sequence[torch.Tensor | Any]]:
 
-        # Warmup
+        static_inputs = tuple(
+            self.get_static_buffer(arg) if not is_static else arg for arg, is_static in zip(args, static_args_mask)
+        )
+        
         torch.cuda.synchronize()
-        stream = self.stream if self.stream else torch.cuda.Stream()
+        if self.stream:
+            # In teh case of multiple devices and shared emmeory pooling, we want to use one stream/pool per device
+            cur_device_index = None
+            for arg in static_inputs:
+                if isinstance(arg, torch.Tensor):
+                    cur_device_index = arg.device.index
+                    break
+                assert cur_device_index is not None, "No tensor found in static inputs, cannot infer which stream to use for graph capture"
+            stream = self.stream[cur_device_index]
+            pool = self.mem_pool[cur_device_index]
+        else:
+            stream = self.stream
+            pool = self.mem_pool
         stream.wait_stream(torch.cuda.current_stream())
 
+        # Warmup
         with torch.cuda.stream(stream):
-            static_inputs = tuple(
-                self.get_static_buffer(arg) if not is_static else arg for arg, is_static in zip(args, static_args_mask)
-            )
             for _ in range(3):
                 fn(*static_inputs)
 
@@ -112,7 +125,7 @@ class CUDAGraphRunner:
         # This may have unintended consequences if graph capture and replay occur in different orders
         # so disabled by default.
         graph = torch.cuda.CUDAGraph()
-        with torch.cuda.graph(graph, stream=stream, pool=self.mem_pool):
+        with torch.cuda.graph(graph, stream=stream, pool=pool):
             static_outputs = fn(*static_inputs)
 
         return graph, static_inputs, static_outputs
