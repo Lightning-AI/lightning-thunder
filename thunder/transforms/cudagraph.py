@@ -107,7 +107,7 @@ class CUDAGraphRunner:
             stream = self.stream[cur_device_index]
             pool = self.mem_pool[cur_device_index]
         else:
-            stream = self.stream
+            stream = torch.cuda.Stream()
             pool = self.mem_pool
         stream.wait_stream(torch.cuda.current_stream())
 
