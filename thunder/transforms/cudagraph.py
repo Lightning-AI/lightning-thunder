@@ -77,8 +77,10 @@ class CUDAGraphRunner:
         # This should  allow the runner to share a single memory pool across all graphs it constructs.
         if share_mem_pool:
             self.mem_pool = torch.cuda.graph_pool_handle()
+            self.stream = torch.cuda.Stream()
         else:
             self.mem_pool = None
+            self.stream = None
 
     def get_static_buffer(self, x):
         if isinstance(x, torch.Tensor):
@@ -91,7 +93,7 @@ class CUDAGraphRunner:
 
         # Warmup
         torch.cuda.synchronize()
-        stream = torch.cuda.Stream()
+        stream = self.stream if self.stream else torch.cuda.Stream()
         stream.wait_stream(torch.cuda.current_stream())
 
         with torch.cuda.stream(stream):
