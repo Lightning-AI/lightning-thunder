@@ -1944,7 +1944,8 @@ def softshrink(a: TensorProxy, /, lambd: float = 0.5) -> TensorLike:
         lambd >= 0,
         lambda: f"lambda must be greater or equal to 0, but found to be {lambd}'",
     )
-    # `a * 0` has the correct behavior for NaNs
+    # If a is NaN, then sign(a) is NaN. To propagate NaNs,
+    # `a * 0` is used instead of `0`.
     return where(abs(a) > lambd, a - sign(a) * lambd, a * 0)
 
 
