@@ -473,31 +473,12 @@ def to(
     copy: bool = False,
     memory_format: None | torch.memory_format = None,
 ) -> TensorLike:
-
-    input_device = a.device
-    input_dtype = a.dtype
-    if copy and not _will_to_return_self(input_device, input_dtype, device, dtype, memory_format, copy):
-        b = prims.empty(a.shape, device=input_device, dtype=input_dtype)
-        return _copy_(b, a)
-
     device, dtype = _parse_to_device_and_dtype(
         tensor_dtype_or_device, optional_positional_dtype, device=device, dtype=dtype
     )
 
     if copy:
-        if device is not None:
-            device = to_device(device)
-            a = prims.device_put(a, device)
-        if dtype is not None:
-            dtype = to_dtype(dtype)
-            a = prims.convert_element_type(a, dtype)
-        if memory_format is not None:
-            # NOTE not sure if we need to handle torch.preserve_format explicitly
-            if memory_format == torch.channels_last:
-                a = prims.stride_order(a, (3, 0, 2, 1))
-            elif memory_format == torch.channels_last_3d:
-                a = prims.stride_order(a, (4, 0, 3, 2, 1))
-        return a
+        a = prims.clone(a)
 
     # NOTE copy == False
     # NOTE to() returns the tensor unmodified if the device and dtype requested are the same
@@ -1932,6 +1913,21 @@ def silu(a: TensorLike, /, inplace: bool = False) -> TensorLike:
 
 
 _inplace_to_out_of_place[silu] = silu, 1
+
+
+@torchsymbol(torch.nn.functional.softshrink, is_method=False)
+def softshrink(a: TensorProxy, /, lambd: float = 0.5) -> TensorLike:
+    utils.check(
+        not dtypes.is_complex_dtype(a.dtype),
+        lambda: f"softshrink not implemented for '{a.dtype}'",
+    )
+    utils.check(
+        lambd >= 0,
+        lambda: f"lambda must be greater or equal to 0, but found to be {lambd}'",
+    )
+    # If a is NaN, then sign(a) is NaN. To propagate NaNs,
+    # `a * 0` is used instead of `0`.
+    return where(abs(a) > lambd, a - sign(a) * lambd, a * 0)
 
 
 @torchsymbol(torch.nn.functional.tanhshrink)

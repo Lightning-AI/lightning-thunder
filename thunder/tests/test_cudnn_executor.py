@@ -63,7 +63,7 @@ def grad_scaled_dot_product_attention_reference_generator(op, device, dtype, req
     # Test the scale factor which was added in torch 2.1
     if LooseVersion(torch.__version__) >= LooseVersion("2.1.0"):
         q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
-        yield SampleInput(q, k, v, None, dropout_p=0.0, is_causal=False, scale=0.123)
+        yield SampleInput(q, k, v, None, dropout_p=0.0, is_causal=False, scale=0.125)
 
     # Additive attn_mask
     # with different broadcasting patterns
