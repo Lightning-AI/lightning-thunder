@@ -6,10 +6,18 @@ from typing import Any
 import torch
 
 from thunder.core.transform_common import Transform
-from thunder.core import utils, prims
+from thunder.core import utils, prims, vjp_utils
 from thunder.core.proxies import Proxy, ProxyTag, unvariableify
 from thunder.core.symbol import BoundSymbol, Symbol
-from thunder.core.trace import TraceCtx, from_trace, TraceProvenance, get_tracectx, set_tracectx, reset_tracectx
+from thunder.core.trace import (
+    TraceCtx,
+    from_trace,
+    TraceProvenance,
+    get_tracectx,
+    set_tracectx,
+    reset_tracectx,
+    TraceTag,
+)
 from thunder.executors.utils import Region
 from thunder.executors.data_dependent_partition import fuse_bound_symbols, Node
 
@@ -59,11 +67,18 @@ class CUDAGraphRunner:
     change.
     """
 
-    def __init__(self):
+    def __init__(self, *, share_mem_pool: bool = False):
         self.cuda_graph_cache = {}  # cahce_key (.make_cache_key) -> (graph, static_inputs, static_outputs)
         self.python_callables = {}  # fn_name -> (callable. static_input_mask (or None))
         self.trace_symbols = {}  # fn_name -> (bsyms, inputs, outputs)
         self.name_counter = 1
+
+        # NOTE: Every invocation of CUDAGraphTransform has a single CUDAGraphRunner associated with it.
+        # This should  allow the runner to share a single memory pool across all graphs it constructs.
+        if share_mem_pool:
+            self.mem_pool = torch.cuda.graph_pool_handle()
+        else:
+            self.mem_pool = None
 
     def get_static_buffer(self, x):
         if isinstance(x, torch.Tensor):
@@ -91,12 +106,11 @@ class CUDAGraphRunner:
         torch.cuda.synchronize()
 
         # Record
-        # NOTE: We are using default private pool here, but it is possibly better to
-        # use a custom pool for better memory management. See CUDA Graphs Tree in
-        # PyTorch's Inductor: torch/_inductor/cudagraph_trees.py
-        # Design doc: https://docs.google.com/document/d/1ZrxLGWz7T45MSX6gPsL6Ln4t0eZCSfWewtJ_qLd_D0E/view
+        # NOTE: we are (optionally) using a global memory pool
+        # which is shared across all graphs here. However, we havent observed any memeory
+        # saving from this, so it is not enabled by default.
         graph = torch.cuda.CUDAGraph()
-        with torch.cuda.graph(graph, stream=stream):
+        with torch.cuda.graph(graph, stream=stream, pool=self.mem_pool):
             static_outputs = fn(*static_inputs)
 
         return graph, static_inputs, static_outputs
@@ -205,9 +219,10 @@ class CUDAGraphTransform(Transform):
     in order to override ``can_fuse```or other methods.
     """
 
-    def __init__(self):
+    def __init__(self, *, share_mem_pool: bool = False):
         super().__init__()
-        self.cuda_graph_runner = CUDAGraphRunner()
+        self.cuda_graph_runner = CUDAGraphRunner(share_mem_pool=share_mem_pool)
+        self.outputs_from_forward = None
 
     def fuse(self, region: Region, fusion_counter: int) -> BoundSymbol:
         inputs = [unvariableify(inp) for inp in region.inputs]
@@ -268,7 +283,7 @@ class CUDAGraphTransform(Transform):
 
         return True
 
-    def transform_trace_post_optimization(self, trace: TraceCtx, **kwargs) -> TraceCtx:
+    def generate_fused_trace(self, trace: TraceCtx, **kwargs) -> TraceCtx:
         start_time_ns: int = time.perf_counter_ns()
 
         def _should_fuse(a: Node, b: Node):
@@ -321,3 +336,37 @@ class CUDAGraphTransform(Transform):
         fused_trace.set_provenance(TraceProvenance(f"CUDAGraph fusion (took {elapsed_time_ms} milliseconds)"))
 
         return fused_trace
+
+    def transform_trace_post_optimization(self, trace, **kwargs):
+        if trace.siginfo().name == "backward_fn":
+            # TODO: Backward TraceTag
+            assert self.outputs_from_forward is not None, "called on backward without forward before"
+            assert len(trace.bound_symbols[2].args) == 2 and trace.bound_symbols[2].args[0].name == "saved_for_backward"
+            assert (
+                trace.bound_symbols[8].sym.name == "unpack_sequence"
+                and trace.bound_symbols[8].args[0] is trace.bound_symbols[2].output[0]
+            )
+
+            saved_for_backwards_unpacked = trace.bound_symbols[8].output
+            assert len(saved_for_backwards_unpacked) == len(self.outputs_from_forward)
+            for is_static, p_bw in zip(self.outputs_from_forward, saved_for_backwards_unpacked):
+                if is_static:
+                    p_bw.tags.add(ProxyTag.STATIC_MEMORY_LOCATION)
+            self.outputs_from_forward = None
+
+        new_trace = self.generate_fused_trace(trace, **kwargs)
+
+        if TraceTag.AUGMENTED_FORWARD in new_trace.tags:
+            assert self.outputs_from_forward is None, "called on augmented forward twice without backward in between"
+            cudagraph_output_names = set()
+            for bsym in new_trace.bound_symbols:
+                if bsym.sym.name.startswith("CUDAGraph"):
+                    for o in bsym.flat_proxy_outs:
+                        cudagraph_output_names.add(o.name)
+            saved_for_backward = vjp_utils.get_saved_for_backward_tensors(new_trace)
+            self.outputs_from_forward = [
+                o.name in cudagraph_output_names or ProxyTag.STATIC_MEMORY_LOCATION in o.tags
+                for o in saved_for_backward
+            ]
+
+        return new_trace

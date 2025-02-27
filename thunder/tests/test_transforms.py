@@ -530,6 +530,73 @@ def test_cudagraph_empty_inputs():
     assert any(("CUDAGraph" in bsym.sym.name) for bsym in thunder.last_traces(jfn)[-1].bound_symbols)
 
 
+@requiresCUDA
+def test_cudagraph_fw_bw():
+    import torch
+    import thunder
+    import litgpt
+    from torch.testing import make_tensor
+    from functools import partial
+    from thunder.transforms.cudagraph import CUDAGraphTransform
+
+    device = torch.device("cuda")
+
+    cfg = litgpt.Config.from_name("open_llama_3b", n_layer=2)
+    with device:
+        make = partial(make_tensor, low=0, high=255, device=device, dtype=torch.long, requires_grad=False)
+        shape = (1,) + (cfg.block_size,)
+
+        x = make(shape)
+        m = litgpt.GPT(cfg)
+
+    cg_transform = CUDAGraphTransform()
+    m = thunder.jit(m, transforms=[cg_transform])
+
+    o = m(x)
+    o.sum().backward()
+
+    # Ensure all saved for backwards tensors are marked as static inputs
+    assert all(cg_transform.cuda_graph_runner.python_callables["CUDAGraph2"][1][1:-2])
+
+
+@pytest.mark.skip(
+    reason="Pools in CUDAGraphTransform are not sharing properly. https://github.com/Lightning-AI/lightning-thunder/issues/1792",
+)
+@requiresCUDA
+def test_cudagraph_pools():
+    def workload(a):
+        with torch.no_grad():
+            inter = [a * i for i in range(50)]
+            b = inter.pop()
+            while inter:
+                b = b + inter.pop()
+            return b
+
+    from thunder.transforms.cudagraph import CUDAGraphTransform
+
+    def run_cg(n, m, share_mem_pool=False):
+        jfn = thunder.jit(workload, transforms=(CUDAGraphTransform(share_mem_pool=share_mem_pool),), executors=())
+
+        a = torch.randn(n, n, device="cuda")
+        jfn(a)
+        b = torch.randn(m, m, device="cuda")
+        jfn(b)
+
+    def run_graphs(n, m):
+        run_cg(n, m)
+        reserved_memory_without_pool = torch.cuda.memory_reserved()
+        run_cg(n, m, True)
+        reserved_memory_with_pool = torch.cuda.memory_reserved()
+        assert reserved_memory_with_pool < reserved_memory_without_pool
+
+    run_graphs(1024, 1024)
+    run_graphs(1024, 512)
+    run_graphs(512, 1024)
+    run_graphs(15, 5)
+    run_graphs(5, 15)
+    run_graphs(5, 5)
+
+
 def test_disable_params_and_buffer_check():
     from thunder.tests.litgpt_model import Config
     from litgpt.model import GPT
