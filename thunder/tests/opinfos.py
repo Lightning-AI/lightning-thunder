@@ -1279,6 +1279,7 @@ elementwise_unary_ops.append(sigmoid_opinfo)
 sign_opinfo = OpInfo(
     clang.sign,
     sample_input_generator=partial(elementwise_unary_generator, small=True),
+    singularity_fn=lambda x: x,
     torch_reference=_elementwise_unary_torch(torch.sgn),
     test_directives=(
         # TODO nvFuser needs support for complex sign
