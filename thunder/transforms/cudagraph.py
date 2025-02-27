@@ -94,7 +94,7 @@ class CUDAGraphRunner:
         static_inputs = tuple(
             self.get_static_buffer(arg) if not is_static else arg for arg, is_static in zip(args, static_args_mask)
         )
-        
+
         torch.cuda.synchronize()
         if self.stream:
             # In teh case of multiple devices and shared emmeory pooling, we want to use one stream/pool per device
@@ -103,7 +103,9 @@ class CUDAGraphRunner:
                 if isinstance(arg, torch.Tensor):
                     cur_device_index = arg.device.index
                     break
-                assert cur_device_index is not None, "No tensor found in static inputs, cannot infer which stream to use for graph capture"
+                assert (
+                    cur_device_index is not None
+                ), "No tensor found in static inputs, cannot infer which stream to use for graph capture"
             stream = self.stream[cur_device_index]
             pool = self.mem_pool[cur_device_index]
         else:

@@ -561,13 +561,16 @@ def test_cudagraph_fw_bw():
 
     # Ensure all saved for backwards tensors are marked as static inputs
     assert all(cg_transform.cuda_graph_runner.python_callables["CUDAGraph2"][1][1:-2])
-    
+
     # Ensure that all newly allocated segments are allocated in the shared memeory pool or the global pool
     for segment in after_snapshot:
         if segment in before_snapshot:
             continue
         else:
-            assert (segment["segment_pool_id"] == cg_transform.cuda_graph_runner.mem_pool[0] or str(segment["segment_pool_id"]) == "(0, 0)")
+            assert (
+                segment["segment_pool_id"] == cg_transform.cuda_graph_runner.mem_pool[0]
+                or str(segment["segment_pool_id"]) == "(0, 0)"
+            )
 
 
 def test_disable_params_and_buffer_check():
