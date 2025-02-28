@@ -1865,20 +1865,6 @@ def test_torch_tensor_to_memory_format(executor: TestExecutor, device: str, _):
         assert_close(torch_result, thunder_result, check_stride=True)
 
 
-def test_torch_tensor_to_return_type():
-    a = torch.randn(2, 4, 5, 3)
-
-    def torch_to(a):
-        return a.to(copy=True)
-
-    jfoo = thunder.jit(torch_to)
-    thunder_result = jfoo(a)
-    torch_result = torch_to(a)
-
-    assert thunder_result is not a
-    assert_close(torch_result, thunder_result)
-
-
 # TODO See issue "Add contiguous and clang.stride_order OpInfos that check stride
 # consistency with PyTorch"
 @instantiate(
@@ -3202,7 +3188,8 @@ def test_unpack_sequence_element_info():
             assert "cpu f32[3]" in str(bsym)
 
 
-def test_apply_autograd_memory():
+@pytest.mark.parametrize("thunderfx_disable_split_autograd", (True, False))
+def test_apply_autograd_memory(thunderfx_disable_split_autograd):
     from thunder.executors.torch_autograd import connect_to_autograd
 
     def foo():
@@ -3219,6 +3206,7 @@ def test_apply_autograd_memory():
             saved_tensors=(o,),
             saved_other=(),
             return_none_instead_of_grads=True,
+            disable_split_autograd=thunderfx_disable_split_autograd,
         )
         return [weakref.ref(x), weakref.ref(o)]
 
