@@ -224,6 +224,34 @@ class TorchProfileTimer:
             pass
 
 
+class TimerWithCUDAMemoryUsage:
+    """
+    A timer wrapper that tracks CUDA memory usage alongside timing measurements.
+
+    Example usage:
+        t = TimerWithCUDAMemoryUsage(TimerInterface.time)
+        t0 = t()  # Records initial memory and time
+        # ... code to measure ...
+        t1 = t()  # Records final memory and time
+        duration = t1 - t0  # Get elapsed time
+        memory_mb = t.max_allocated_memory  # Get peak memory usage in MB
+
+    Note:
+        The memory tracking adds some overhead to the timing measurements.
+        Memory usage is recorded in megabytes (MB).
+    """
+
+    def __init__(self, timer):
+        self.max_allocated_memory = 0.0
+        self.timer = timer
+
+    def __call__(self):
+        # Max allocated memory is recorded in MB
+        self.max_allocated_memory = torch.cuda.max_memory_allocated() / (1024 * 1024.0)
+        torch.cuda.reset_peak_memory_stats()
+        return self.timer()
+
+
 class TimerInterface:
     """
     Defines an interface for specifying how to timing a callable and generate a statistic object.
