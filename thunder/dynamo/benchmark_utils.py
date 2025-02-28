@@ -241,7 +241,7 @@ class TimerWithCUDAMemoryUsage:
         Memory usage is recorded in megabytes (MB).
     """
 
-    def __init__(self, timer):
+    def __init__(self, timer=torch.utils.benchmark.utils.timer.timer):
         self.max_allocated_memory = 0.0
         self.timer = timer
 
@@ -262,8 +262,7 @@ class TimerInterface:
         - :class:`KernelTime`
     """
 
-    @staticmethod
-    def time(fn, *args, **kwargs):
+    def time(self, *args, **kwargs):
         """
         Measures the execution time of a given callable.
         Subclasses must implement this method to define a specific timing mechanism.
@@ -273,31 +272,32 @@ class TimerInterface:
         """
         raise NotImplementedError("Subclasses should implement the 'time' method if needed.")
 
-    @staticmethod
-    def to_source(*args, **kwargs) -> str:
+    def to_source(self, *args, **kwargs) -> str:
         """
         Converts the timing function into its source code representation.
         Subclasses can implement this method to define how the timing logic is represented as code.
         """
         raise NotImplementedError("Subclasses should implement the 'to_source' method if needed.")
 
-    @staticmethod
-    def import_str(*args, **kwargs):
+    def import_str(self, *args, **kwargs):
         """
         Returns the necessary import statements for the timing implementation.
         """
         return None
 
 
-class WallTime(TimerInterface):
+class TorchBenchmarkTimerSpecification(TimerInterface):
     """
-    A timing utility that measures execution time using `torch.utils.benchmark.Timer`.
-    This class implements `TimerInterface` and provides a method to measure wall-clock time
-    using PyTorch's benchmarking utilities.
+    A timing utility that measures execution time using :class:`torch.utils.benchmark.utils.timer.Timer`.
+    the inner timer is used as the custom timer in timeit.Timer to return the current time, default is :func:`torch.utils.benchmark.utils.timer.timer`.
+    See: :class:`torch.utils.benchmark.utils.timer.Timer` for more details.
     """
 
-    @staticmethod
-    def time(stmt="pass", setup="pass", globals=None, min_run_time: float = 0.2) -> Measurement:
+    def __init__(self, name, inner_timer=torch.utils.benchmark.utils.timer.timer):
+        self.inner_timer = inner_timer
+        self.name = name
+
+    def time(self, stmt="pass", setup="pass", globals=None, min_run_time: float = 0.2) -> Measurement:
         """
         Measures execution time using PyTorch's :func:`torch.utils.benchmark.Timer.blocked_autorange()`.
 
@@ -310,40 +310,26 @@ class WallTime(TimerInterface):
         Returns:
             Measurement: A benchmarking result containing execution time statistics, see :class:`torch.utils.benchmark.utils.common.Measurement`.
         """
-        t = TorchBenchmarkTimer(stmt=stmt, setup=setup, globals=globals)
-        return t.blocked_autorange(min_run_time=min_run_time)
+        t = TorchBenchmarkTimer(stmt=stmt, setup=setup, globals=globals, timer=self.inner_timer)
+        measurement = t.blocked_autorange(min_run_time=min_run_time)
+        if hasattr(self.inner_timer, "max_allocated_memory"):
+            measurement.max_allocated_memory = self.inner_timer.max_allocated_memory
+        return measurement
 
-    @staticmethod
-    def import_str():
-        return ["from thunder.dynamo.benchmark_utils import WallTime"]
+    def import_str(self):
+        return [f"from thunder.dynamo.benchmark_utils import {self.name}"]
 
-    @staticmethod
-    def to_source(fn_name, inputs_name):
-        return f'WallTime.time("{fn_name}(*{inputs_name})", globals={{"{fn_name}":{fn_name}, "{inputs_name}": {inputs_name}}})'
+    def to_source(self, fn_name, inputs_name):
+        return f'{self.name}.time("{fn_name}(*{inputs_name})", globals={{"{fn_name}":{fn_name}, "{inputs_name}": {inputs_name}}})'
 
 
-class KernelTime(TimerInterface):
-    """
-    A timing utility that measures CUDA kernel time using PyTorch's :class:`torch.utils.benchmark.Timer` with a custom time function :class:`TorchProfileTimer`.
-    """
+WallTime = TorchBenchmarkTimerSpecification("WallTime")
 
-    @staticmethod
-    def time(stmt="pass", setup="pass", globals=None, min_run_time: float = 0.2) -> Measurement:
-        """
-        Measures kernel time using PyTorch's `Timer.blocked_autorange()` with the kernel timing using :func:`torch.profiler.profile`.
-        More details see :class:`TorchProfileTimer`
-        """
-        inner_timer = TorchProfileTimer()
-        t = TorchBenchmarkTimer(stmt=stmt, setup=setup, timer=inner_timer, globals=globals)
-        return t.blocked_autorange(min_run_time=min_run_time)
+walltime_with_memory_usage = TimerWithCUDAMemoryUsage()
+WallTimeWithMemoryUsage = TorchBenchmarkTimerSpecification("WallTimeWithMemoryUsage", walltime_with_memory_usage)
 
-    @staticmethod
-    def import_str():
-        return ["from thunder.dynamo.benchmark_utils import KernelTime"]
-
-    @staticmethod
-    def to_source(fn_name, inputs_name):
-        return f'KernelTime.time("{fn_name}(*{inputs_name})", globals={{"{fn_name}":{fn_name}, "{inputs_name}": {inputs_name}}})'
+torch_profile_timer = TorchProfileTimer()
+KernelTime = TorchBenchmarkTimerSpecification("KernelTime", torch_profile_timer)
 
 
 def check_threshold(a, b, rtol, atol):
