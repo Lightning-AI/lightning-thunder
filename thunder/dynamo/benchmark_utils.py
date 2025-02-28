@@ -360,6 +360,16 @@ def check_threshold_log(a: float, b: float, a_name: str, b_name: str, test_name:
     return True, None
 
 
+def is_report_using_cuda(report):
+    from thunder.dynamo.utils import ExampleInputMetaData
+    from thunder.core.pytree import tree_map
+
+    def _check_tensor(x):
+        return isinstance(x, ExampleInputMetaData) and x.device.type == "cuda"
+
+    return any(tree_map(_check_tensor, report.example_input_meta))
+
+
 def check_timing(
     folder_path,
     report,
@@ -375,8 +385,28 @@ def check_timing(
     and generate a benchmark script if the difference exceeds the threshold.
     """
     graph_name = report.graph_name
-    measure1 = report.run_benchmark(compile_fn1, timer_fn)
-    measure2 = report.run_benchmark(compile_fn2, timer_fn)
+    if not is_report_using_cuda(report):
+        print(f"{graph_name} doesn't use CUDA, skip benchmark {timer_name}")
+        return
+    filename1 = f"{graph_name}_{compile_fn1.name}_{timer_name}.py"
+    filename2 = f"{graph_name}_{compile_fn2.name}_{timer_name}.py"
+
+    def try_and_log_benchmark(compile_fn, filename):
+        try:
+            return report.run_benchmark(compile_fn, timer_fn)
+        except Exception as e:
+            msg = f"Benchmark {timer_name} on {graph_name} using {compile_fn.name} failed with exception {e}, benchmark script failed_{filename} is saved"
+            print(msg)
+            report.write_benchmark(
+                folder_path, compile_fn, timer_fn, file_name=f"failed_{filename1}", extra_comment_str=msg
+            )
+            return None
+
+    measure1 = try_and_log_benchmark(compile_fn1, filename1)
+    measure2 = try_and_log_benchmark(compile_fn2, filename2)
+
+    if measure1 is None or measure2 is None:
+        return
 
     record = False
     log_strs = ""
@@ -392,8 +422,6 @@ def check_timing(
             log_strs += f"{ret[1]}\n"
     if record:
         extra_comment = f"Benchmark results:\n{log_strs}\n"
-        filename1 = f"{graph_name}_{compile_fn1.name}_{timer_name}.py"
-        filename2 = f"{graph_name}_{compile_fn2.name}_{timer_name}.py"
         report.write_benchmark(folder_path, compile_fn1, timer_fn, file_name=filename1, extra_comment_str=extra_comment)
         report.write_benchmark(folder_path, compile_fn2, timer_fn, file_name=filename2, extra_comment_str=extra_comment)
         print(f"The scripts are saved: {filename1}, {filename2}")

@@ -413,6 +413,7 @@ class FXGraphReport:
         compile_fn: CompileSpecificationInterface,
         check_consistency=False,
     ):
+        torch._dynamo.reset()
         example_inputs = self.make_example_inputs()
         compiled_model = compile_fn.compile(self.graph, inputs=example_inputs)
         result = run_forward_backward(compiled_model, *example_inputs)
@@ -474,6 +475,12 @@ class FXGraphReport:
             print(code_str, file=f)
 
     def run_benchmark(self, compile_fn: CompileSpecificationInterface, time_fn: TimerInterface):
+        # From torch.compile docs - https://pytorch.org/docs/stable/generated/torch.compile.html
+        # > Multiple compiled results can be associated with a frame up to torch._dynamo.config.cache_size_limit, which defaults to 8; at which point we will fall back to eager.
+        # Ref: https://github.com/pytorch/pytorch/blob/34d726011f482b716d879bf665aef100a7c08a8d/torch/_dynamo/__init__.py#L97
+        # > reset function clears all compile caches and restore initial state.  This function is intended
+        # to reset Dynamo's state *as if* you had started a fresh process invocation.
+        torch._dynamo.reset()
         example_inputs = self.make_example_inputs()
         compiled_fn = compile_fn.compile(self.graph, inputs=example_inputs)
 
@@ -624,6 +631,7 @@ def fx_report(fn: Callable, *args, compile_options: dict = None, **kwargs) -> FX
 
     if compile_options is None:
         compile_options = {}
+    torch._dynamo.reset()
     compiled = torch.compile(fn, **compile_options, backend=helper_backend)
     compiled(*args, **kwargs)
 
@@ -1013,6 +1021,7 @@ def check_torch_compile_runnability(fn: Callable, *args, **kwargs):
         # WAR for triton error https://github.com/pytorch/pytorch/issues/124565
         if torch.cuda.is_available():
             torch.empty(1, device="cuda", requires_grad=True).backward()
+        torch._dynamo.reset()
         torch_compiled = torch.compile(fn)
         run_forward_backward(torch_compiled, *args, **kwargs)
     except Exception as e:
@@ -1102,13 +1111,6 @@ def thunderfx_benchmark_report_from_splits(
         graph_folder = folder_path / thunder_fxgraph_report.graph_name
         graph_folder.mkdir()
         for split_report in thunder_fxgraph_report.subgraph_reports:
-            try:
-                split_report.run_repro(thunderjit)
-            except Exception as e:
-                print(f"Failed to run {split_report.graph_name} using Thunder with exception: {e}\n")
-                continue
-            print(f"{split_report.graph_name} can be successfully executed by Thunder\n")
-
             check_timing(graph_folder, split_report, torchinductor, thunderjit, WallTime, "walltime", rtol, atol)
             check_timing(graph_folder, split_report, torchinductor, thunderjit, KernelTime, "kerneltime", rtol, atol)
             runnable_split_reports.append(split_report)
