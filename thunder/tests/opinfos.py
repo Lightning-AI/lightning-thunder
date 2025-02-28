@@ -1830,7 +1830,14 @@ hardtanh_opinfo = OpInfo(
     torch_reference=_elementwise_unary_torch(torch.nn.functional.hardtanh),
     dtypes=(datatypes.floating,),
     singularity_fn_producer=hardtanh_singularity_fn_producer,
-    test_directives=(),
+    test_directives=(
+        # test_vjp_correctess compares exact derivatives to finite differences,
+        # and there are numerical issues for finite differences of (piecewise) constant functions
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_vjp_correctness",
+        ),
+    ),
 )
 elementwise_unary_ops.append(hardtanh_opinfo)
 
