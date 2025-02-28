@@ -33,7 +33,8 @@ def sample_generator_wrapper(sample_generator):
 
     def f(*args, **kwargs):
         for sample in sample_generator(*args, **kwargs):
-            yield SampleInput(*(list(sample.args) + [True]), **sample.kwargs)
+            sample.kwargs["inplace"] = True
+            yield SampleInput(*sample.args, **sample.kwargs)
 
     return f
 

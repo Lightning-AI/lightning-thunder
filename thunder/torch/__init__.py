@@ -1899,6 +1899,14 @@ def hardtanh(a: TensorProxy, /, min_val: float = -1.0, max_val: float = 1.0, inp
 _inplace_to_out_of_place[hardtanh] = hardtanh, 3
 
 
+@torchsymbol(torch.nn.functional.hardtanh_, is_method=False, tags=(prims.OpTags.IN_PLACE,))
+def hardtanh_(a: TensorProxy, /, min_val: float = -1.0, max_val: float = 1.0) -> TensorLike:
+    return _copy_(a, hardtanh(a, min_val, max_val, False))
+
+
+_inplace_to_out_of_place[hardtanh_] = hardtanh, -1
+
+
 # id=torch.selu because we ignore inplace argument in torch.nn.functional.selu
 @torchsymbol(torch.selu, torch.nn.functional.selu, id="torch.selu", is_method=False)
 def selu(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
