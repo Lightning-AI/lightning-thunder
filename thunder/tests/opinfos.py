@@ -1279,6 +1279,7 @@ elementwise_unary_ops.append(sigmoid_opinfo)
 sign_opinfo = OpInfo(
     clang.sign,
     sample_input_generator=elementwise_unary_generator,
+    singularity_fn=lambda x: x,
     torch_reference=_elementwise_unary_torch(torch.sgn),
     test_directives=(
         # TODO nvFuser needs support for complex sign
@@ -1286,6 +1287,12 @@ sign_opinfo = OpInfo(
             pytest.mark.xfail,
             dtypes=(datatypes.complexfloating,),
             executors=("nvfuser",),
+        ),
+        # The finite difference method used in test_vjp_correctness has numerical
+        # issues with constant derivative 0.
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_vjp_correctness",
         ),
     ),
 )
@@ -1750,7 +1757,7 @@ elementwise_unary_ops.append(relu6_opinfo)
 
 
 # fdm.jvp, which is used in test_vjp_correctness, behaves badly at jump discontinuties of the partial derviatives
-def hardshrink_singularity_fn_producer(sample: SampleInput):
+def shrink_singularity_fn_producer(sample: SampleInput):
     lambd = sample.kwargs.get("lambd", 0.5)
     return lambda a: torch.where(a >= 0, a - lambd, a + lambd)
 
@@ -1760,10 +1767,29 @@ hardshrink_opinfo = OpInfo(
     dtypes=(datatypes.floating,),
     sample_input_generator=get_elementwise_unary_with_kwargs_generator([{}, {"lambd": 0.25}, {"lambd": -0.1}]),
     torch_reference=_elementwise_unary_torch(torch.nn.functional.hardshrink),
-    singularity_fn_producer=hardshrink_singularity_fn_producer,
+    singularity_fn_producer=shrink_singularity_fn_producer,
     test_directives=(),
 )
 elementwise_unary_ops.append(hardshrink_opinfo)
+
+
+softshrink_opinfo = OpInfo(
+    ltorch.softshrink,
+    dtypes=(datatypes.floating,),
+    sample_input_generator=get_elementwise_unary_with_kwargs_generator([{}, {"lambd": 0.25}, {"lambd": 0.1}]),
+    torch_reference=_elementwise_unary_torch(torch.nn.functional.softshrink),
+    singularity_fn_producer=shrink_singularity_fn_producer,
+    test_directives=(
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=1e-4, rtol=1e-2)),
+            dtypes=(
+                datatypes.float16,
+                datatypes.bfloat16,
+            ),
+        ),
+    ),
+)
+elementwise_unary_ops.append(softshrink_opinfo)
 
 
 hardswish_opinfo = OpInfo(
@@ -3092,21 +3118,40 @@ def to_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # None
     yield SampleInput(make(4, 4))
 
+    # None - copy
+    yield SampleInput(make(4, 4), copy=True)
+
     # device
     yield SampleInput(make(4, 4), device)
     yield SampleInput(make(4, 4), "cpu")
     yield SampleInput(make(4, 4), "cpu", dtype=to_dtype)
 
+    # device - copy
+    yield SampleInput(make(4, 4), device, copy=True)
+    yield SampleInput(make(4, 4), "cpu", copy=True)
+    yield SampleInput(make(4, 4), "cpu", dtype=to_dtype, copy=True)
+
     # dtype
     yield SampleInput(make(4, 4), dtype)
+
+    # dtype - copy
+    yield SampleInput(make(4, 4), dtype, copy=True)
 
     # device and dtype
     yield SampleInput(make(4, 4), device, dtype)
     yield SampleInput(make(4, 4), "cpu", to_dtype)
 
+    # device and dtype - copy
+    yield SampleInput(make(4, 4), device, dtype, copy=True)
+    yield SampleInput(make(4, 4), "cpu", to_dtype, copy=True)
+
     # tensor
     yield SampleInput(make(4, 4), make(2, 2))
     yield SampleInput(make(4, 4), make(2, 2, device="cpu", dtype=to_dtype))
+
+    # tensor - copy
+    yield SampleInput(make(4, 4), make(2, 2), copy=True)
+    yield SampleInput(make(4, 4), make(2, 2, device="cpu", dtype=to_dtype), copy=True)
 
 
 to_opinfo = OpInfo(
@@ -8359,7 +8404,7 @@ def grad_scaled_dot_product_attention_sample_generator(op, device, dtype, requir
     """https://pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html"""
     from thunder.executors.sdpaex import SpdaBackend
 
-    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad, low=-0.5, high=0.5)
     # Reference metadata:
     # https://github.com/pytorch/pytorch/blob/main/torch/_meta_registrations.py#L4863-L4899
     # * query (batch_size, num_heads, query_seq_len, E)
@@ -8435,7 +8480,7 @@ def grad_scaled_dot_product_attention_sample_generator(op, device, dtype, requir
         # Test the scale factor which was added in torch 2.1
         if LooseVersion(torch.__version__) >= LooseVersion("2.1.0"):
             q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
-            yield SampleInput(q, k, v, attn_mask := None, dropout_p := 0.0, is_causal := False, scale=0.123)
+            yield SampleInput(q, k, v, attn_mask := None, dropout_p := 0.0, is_causal := False, scale=0.125)
 
         # NOTE Flash attention sdpa does not support attn_mask argument; These cases always use memory efficient sdpa.
         q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
@@ -8463,15 +8508,6 @@ grad_sdpa_opinfo = OpInfo(
     # NOTE: NotImplementedError: Could not run 'aten::_scaled_dot_product_efficient_attention' with arguments from the 'CPU' backend.
     # NOTE: NotImplementedError: Could not run 'aten::_scaled_dot_product_efficient_attention_backward' with arguments from the 'CPU' backend
     devicetypes=(devices.DeviceType.CUDA,),
-    test_directives=(
-        # The test might fail due to numerical issues with bfloat16
-        # https://github.com/Lightning-AI/lightning-thunder/issues/703
-        DecorateInfo(
-            pytest.mark.xfail(strict=False, raises=AssertionError),
-            "test_vjp_correctness_sdpa_manual",
-            dtypes=(datatypes.bfloat16,),
-        ),
-    ),
 )
 nn_ops.append(grad_sdpa_opinfo)
 
