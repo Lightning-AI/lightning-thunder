@@ -3284,18 +3284,18 @@ def clone(a: TensorProxy, *, memory_format=torch.preserve_format) -> TensorProxy
     # If you're hitting this you could try commenting this check out; if your
     # model does not actually rely on specified memory formats then it should
     # be fine.
-    if memory_format is not torch.preserve_format:
+    if memory_format not in (torch.preserve_format, torch.contiguous_format):
         raise NotImplementedError("only preserve_format is currently supported")
-    return prims.clone(a)
+    return prims.clone(a, memory_format=memory_format)
 
 
 @torchsymbol(torch.ops.aten.clone, torch.ops.aten.clone.default, id="torch.ops.aten.clone")
 def core_aten_clone(a: TensorProxy, *, memory_format: None | torch.memory_format = None) -> TensorProxy:
     if memory_format is None:
         memory_format = torch.preserve_format
-    if memory_format is not torch.preserve_format:
+    if memory_format not in (torch.preserve_format, torch.contiguous_format):
         raise NotImplementedError("only preserve_format is currently supported")
-    return prims.clone(a)
+    return prims.clone(a, memory_format=memory_format)
 
 
 # Because we do not use @torchsymbol, we need to manually register the
