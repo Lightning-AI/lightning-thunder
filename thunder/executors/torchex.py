@@ -462,7 +462,7 @@ def _empty_prims_transform(
 
 
 def _clone_prims_transform(a: TensorLike, **kwargs) -> TensorLike:
-    return clone(a)
+    return clone(a, memory_format=kwargs.get("memory_format", torch.preserve_format))
 
 
 def _tensor_from_sequence_prims_transform(
