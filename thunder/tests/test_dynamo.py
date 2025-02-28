@@ -36,6 +36,7 @@ from thunder.dynamo.benchmark_utils import (
     TorchEagerSpecification,
     WallTime,
     KernelTime,
+    WallTimeWithMemoryUsage,
     BoundSymbolNvfuserSpecification,
     BoundSymbolTorchCompileSpecification,
 )
@@ -1269,6 +1270,8 @@ def test_WallTime_KernelTime():
 
     WallTime.time(stmt="fd.execute(inputs)", globals={"fd": fd, "inputs": inputs})
     KernelTime.time(stmt="fd.execute(inputs)", globals={"fd": fd, "inputs": inputs})
+    m = WallTimeWithMemoryUsage.time(stmt="fd.execute(inputs)", globals={"fd": fd, "inputs": inputs})
+    assert m.max_allocated_memory > 0
 
 
 @requiresCUDA
