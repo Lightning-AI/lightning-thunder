@@ -308,8 +308,9 @@ def find_cut(
     required_consumer_symbols = tuple(
         utils.find_producer_symbols(consumer_trace, consumer.output, external_consumer_inputs)
     )
+    # !!! Filtering out the Nones coming from update_aliases + CDE
     required_consumer_vars += tuple(
-        chain.from_iterable((y.name for y in x.flat_outs) for x in required_consumer_symbols)
+        chain.from_iterable((y.name for y in x.flat_outs if y is not None) for x in required_consumer_symbols)
     )
 
     # TODO: Use TensorProxy properties to compute the weights
