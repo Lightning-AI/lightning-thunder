@@ -416,15 +416,8 @@ def jit(
             return prologue_trc, computation_trc, epilogue_trc
 
     def apply_transforms_and_build_cache_entry(cd, cs, cache_info, prologue_trc, computation_trc, epilogue_trc):
-        is_ddp_enabled = getattr(fn, "use_ddp", False)
         is_fsdp_enabled = getattr(fn, "use_fsdp", False)
-        no_grad_sync = False
-        if is_ddp_enabled or is_fsdp_enabled:
-            from thunder.distributed import get_skip_data_parallel_grad_sync
-
-            no_grad_sync = get_skip_data_parallel_grad_sync()
-        cache_info["no_grad_sync"] = no_grad_sync
-        return_none_instead_of_grads = is_fsdp_enabled and no_grad_sync
+        return_none_instead_of_grads = is_fsdp_enabled and cache_info["no_grad_sync"]
 
         with compile_data_and_stats(cd, cs):
             prologue_traces = [prologue_trc]
@@ -626,6 +619,17 @@ def jit(
         # to treat certain Symbols as constant.
         cache_info["is_grad_enabled"] = pytorch.is_grad_enabled()
         cd.is_grad_enabled = pytorch.is_grad_enabled()
+
+        is_ddp_enabled = getattr(fn, "use_ddp", False)
+        is_fsdp_enabled = getattr(fn, "use_fsdp", False)
+        no_grad_sync = False
+        if is_ddp_enabled or is_fsdp_enabled:
+            from thunder.distributed import get_skip_data_parallel_grad_sync
+
+            no_grad_sync = get_skip_data_parallel_grad_sync()
+        cache_info["no_grad_sync"] = no_grad_sync
+
+
 
     @langctxs.langctx(cd.langctx)
     @_with_cache_info_ctx
