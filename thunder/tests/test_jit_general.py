@@ -1194,7 +1194,7 @@ def test_custom_autograd_function():
     x = torch.randn((2, 2), dtype=torch.float64, requires_grad=True)
     model = Model().to(dtype=torch.float64)
     jitted = thunder.jit(model)
-    gradcheck(jitted, (x,))
+    gradcheck(jitted, (x,), check_batched_grad=False)
 
     jitted.zero_grad()
     x = torch.randn((2, 2), dtype=torch.float64, requires_grad=True)
@@ -1204,13 +1204,16 @@ def test_custom_autograd_function():
 
 
 def test_autograd_function_apply():
+
+    # see https://github.com/Lightning-AI/lightning-thunder/issues/1248#issuecomment-2388655917
+    # for why `torch.foo` instead of `torch.Tensor.foo`
     def forward(ctx, x):
         saved_for_backward = (x,)
-        return x.sin(), saved_for_backward
+        return torch.sin(x), saved_for_backward
 
     def backward(ctx, grad_output, *saved_tensors):
         (x,) = saved_tensors
-        return grad_output * x.cos()
+        return grad_output * torch.cos(x)
 
     def my_sin(x):
         return torch.ops.higher_order.autograd_function_apply(
@@ -1228,13 +1231,6 @@ def test_autograd_function_apply():
     y = jitted(x)
     y_ref = my_sin(x_ref)
     torch.testing.assert_close(y, y_ref)
-
-    initial_computation_trace = thunder.last_traces(jitted)[0]
-    assert any(
-        bsym.sym.id == "torch.ops.higher_order.autograd_function_apply"
-        for bsym in initial_computation_trace.bound_symbols
-        if isinstance(bsym.sym.id, str)
-    )
 
     grad = torch.rand_like(y)
     actual_grad = torch.autograd.grad(y, x, grad)
@@ -1269,6 +1265,72 @@ def test_autograd_function_apply():
 
     with pytest.raises(GradcheckError):
         gradcheck(jitted, (x,))
+
+
+def test_autograd_function_apply_with_no_grad():
+    # This case is using `torch` operations
+    def forward(_, x):
+        saved_for_backward = (x,)
+
+        with torch.no_grad():
+            sin = torch.sin(x)
+        return sin, saved_for_backward
+
+    def backward(_, grad_output, *saved_tensors):
+        return grad_output * 2
+
+    def my_sin(x):
+        res = torch.ops.higher_order.autograd_function_apply(
+            forward,
+            backward,
+            x,
+            args_tensor_mask=[True],
+            non_differentiable_idx=[],
+        )
+        return res
+
+    jitted = thunder.jit(my_sin)
+    x = torch.randn((2, 2), requires_grad=True)
+
+    out = jitted(x)
+    grad = torch.rand_like(out)
+    out.backward(grad)
+
+    # Verify that `backward` was applied.
+    torch.testing.assert_close(x.grad, grad * 2)
+
+    # This is using `thunder` operations
+    # NOTE - This takes a different codepath compared to above.
+    def forward(_, x):
+        saved_for_backward = (x,)
+        thunder.torch._set_grad_enabled_with_warning(False)
+        sin = thunder.torch.sin(x)
+        thunder.torch._set_grad_enabled_with_warning(True)
+        return sin, saved_for_backward
+
+    def backward(_, grad_output, *saved_tensors):
+        # NOTE - This is incorrect on purpose
+        return grad_output * 2
+
+    def fn(x):
+        res = thunder.torch.autograd_function_apply(
+            forward,
+            backward,
+            x,
+            args_tensor_mask=[True],
+            non_differentiable_idx=[],
+        )
+        return res
+
+    jitted = thunder.jit(fn)
+    x = torch.randn((2, 2), requires_grad=True)
+
+    out = jitted(x)
+    grad = torch.rand_like(out)
+    out.backward(grad)
+
+    # Verify that `backward` was applied.
+    torch.testing.assert_close(x.grad, grad * 2)
 
 
 def test_autograd_function_empty_forward():
@@ -1487,3 +1549,42 @@ def test_cache_symbolic_values_dict():
     expected = foo(b, "b")
 
     assert_close(actual, expected)
+
+
+def test_specific_dataclass_returns():
+    import transformers
+
+    def fn(x):
+        return transformers.modeling_outputs.BaseModelOutputWithPast(last_hidden_state=x)
+
+    jfn = thunder.jit(fn)
+    x = torch.randn(2, 2)
+    expected = fn(x)
+    res = jfn(x)
+    assert expected.last_hidden_state is x
+    assert res.last_hidden_state is x
+
+
+def test_modulelist_idx():
+    class MyModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.l = torch.nn.ModuleList(
+                [
+                    torch.nn.Linear(4, 4),
+                    torch.nn.Linear(4, 4),
+                ]
+            )
+
+        def forward(self, x):
+            for m in self.l[:-1]:
+                x = m(x)
+            x = self.l[-1](x)
+            return x
+
+    m = MyModel()
+    jm = thunder.jit(m)
+    x = torch.randn(2, 4)
+    expected = m(x)
+    res = jm(x)
+    assert_close(res, expected)

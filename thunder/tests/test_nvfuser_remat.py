@@ -256,7 +256,7 @@ def test_find_nvfuser_producer_consumer_pairs(executor, device, _):
 
     t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
     initial_trace = thunder.trace()(func, t0)
-    compiled_func = thunder.jit(initial_trace.python_callable())
+    compiled_func = thunder.jit(initial_trace.python_callable(), fusion_type="dataflow")
     _ = compiled_func(t0)
     traces = thunder.last_traces(compiled_func)
     trace = traces[-1]
@@ -514,7 +514,7 @@ def test_not_rematerialize_matmul():
 
     # At the time of writing, linear and matmul are not fused into nvFuser
     # regions by default therefore, we should enable them separately
-    jmodel = thunder.jit(model, nv_enable_linear=True, nv_enable_matmul=True)
+    jmodel = thunder.jit(model, nv_enable_linear=True, nv_enable_matmul=True, fusion_type="dataflow")
     jmodel(inp)
 
     def assert_subsymbol_count(trace: TraceCtx, /, num_linears: int, num_matmuls: int):

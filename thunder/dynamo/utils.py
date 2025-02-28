@@ -1,12 +1,11 @@
 from __future__ import annotations
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from enum import Enum, auto
 from typing import TYPE_CHECKING
 import dataclasses
 import inspect
 import itertools
 import copy
-from pathlib import Path
 
 import torch
 from torch.nn.modules.module import _addindent
@@ -26,9 +25,10 @@ if TYPE_CHECKING:
 auto_register_ops = set(itertools.chain(*torch_auto_registered_ops.values()))
 
 
-# Currently, thunder as mapping torch these function but they
-# just throw warning.
-UNSUPPORTED_THUNDER_FUNCTION = (torch._C._set_grad_enabled,)
+# Currently, thunder has mapping for these torch function but they
+# just raise a warning (or don't support the exact behaviour)
+# Previously used for `torch._C._set_grad_enabled` when it just raised a warning.
+UNSUPPORTED_THUNDER_FUNCTION = ()
 
 
 class CompilerType(Enum):
@@ -72,12 +72,12 @@ class SplitReason:
     Attributes:
         reason_type: Reason for the split.
         info: String with details of what caused the split.
-        exception: Exception if there was any.
+        exception: String with details of exception if there was any.
     """
 
     reason_type: SplitReasonType
     info: str | None
-    exception: Exception | None = None
+    exception: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -93,11 +93,16 @@ class ExampleInputMetaData:
     shape: list[int]
     storage_shape: list[int]
     strides: list[int]
+    is_contiguous: bool
+    _storage_offset: int
     min_val: int | None = None
     max_val: int | None = None
 
     def stride(self) -> list[int]:
         return self.strides
+
+    def storage_offset(self) -> int:
+        return self._storage_offset
 
 
 @dataclasses.dataclass(frozen=True)
@@ -159,10 +164,15 @@ def get_proxy_inputs_from_node(node: torch.fx.Node) -> tuple[tuple, dict]:
     # We need to be under trace context to generate proxies.
     with thunder.core.trace.tracectx(TraceCtx()):
 
-        def make_tensor_proxy(arg_node):
+        def make_input_proxy(arg_node):
             # This is a Node in the graph representing a Tensor or tuple of Tensors or
             # a PyTorch object like one representing torch.autocast.
             if isinstance(arg_node, torch.fx.Node):
+                # Higher-order operator nodes take get_attr nodes as input to get the called module
+                if arg_node.op == "get_attr":
+                    attr = getattr(arg_node.graph.owning_module, arg_node.target)
+                    if isinstance(attr, torch.nn.Module):
+                        return attr
                 if "example_value" not in arg_node.meta:
                     # This is a non tensor object like `torch.autocast` ctx manager object.
                     return arg_node
@@ -184,15 +194,15 @@ def get_proxy_inputs_from_node(node: torch.fx.Node) -> tuple[tuple, dict]:
                         for e_v in example_value
                     )
                 else:
-                    # NOTE - This will be caught will be caught and be part of the SplitReason.
-                    raise TypeError(f"Received `make_tensor_proxy` received example_value which wasn't Tensor or Tuple")
+                    # NOTE - This will be caught and be part of the SplitReason.
+                    raise TypeError(f"`make_input_proxy` received example_value which wasn't Tensor or Tuple")
                 return proxy(example_value)
 
             # This is int, float, etc.
             return arg_node
 
-        proxy_args = torch.fx.map_arg(node.args, make_tensor_proxy)
-        proxy_kwargs = {k: torch.fx.map_arg(v, make_tensor_proxy) for k, v in node.kwargs.items()}
+        proxy_args = torch.fx.map_arg(node.args, make_input_proxy)
+        proxy_kwargs = {k: torch.fx.map_arg(v, make_input_proxy) for k, v in node.kwargs.items()}
         return proxy_args, proxy_kwargs
 
 
@@ -242,7 +252,7 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
             return False, SplitReason(
                 SplitReasonType.EXCEPTION_PROXY_THUNDER_OP,
                 f"Failed while creating proxy for node with name: {node.name} and target: {node.target}, see exception field",
-                exception=e,
+                exception=str(e),
             )
 
         # We need to be under trace context to generate proxies.
@@ -253,7 +263,7 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
                 return False, SplitReason(
                     SplitReasonType.EXCEPTION_META_THUNDER_OP,
                     f"Failed while running meta for node with name: {node.name} and target: {node.target}, see exception field",
-                    exception=e,
+                    exception=str(e),
                 )
 
         # Execution with proxies was successful.
@@ -264,36 +274,20 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
 
 def get_nodes_in_unsupported_ctx_regions(gm: torch.fx.GraphModule) -> set[torch.fx.Node]:
     """
-    Finds the node within `autocast` or other supported context and marks them as unsupported.
+    Finds the node within unsupported context and marks them as unsupported.
     Even though, thunder may support the operation within the reason, it doesn't correctly apply the change
     triggered from the context.
     """
-    # NOTE - Currently only detects the autocast regions.
+    # NOTE - Currently doesn't ban any ctx (previously used for `no_grad` and `autocast`).
 
     nodes_in_unsupported_ctx_regions: set[torch.fx.Node] = set()
-    ctx_cnt = 0  # Count of `enters_autocast` we have seen till now
+    ctx_cnt = 0  # Count of  we have seen till now
 
-    # We want to mark nodes disabling `autograd` as unsupported
-    # because `thunder` doesn't correctly deal with these stateful functions.
-
-    def is_no_grad_ctx_enter(node):
-        if node.target == torch._C._set_grad_enabled:
-            arg: bool = node.args[0]
-            assert isinstance(arg, bool)
-            return not arg  # arg is False (i.e. grad was disabled)
-        return False
-
-    def is_no_grad_ctx_exit(node):
-        if node.target == torch._C._set_grad_enabled:
-            arg: bool = node.args[0]
-            assert isinstance(arg, bool)
-            return arg  # arg is True (i.e. grad was enabled)
-        return False
-
+    UNSUPPORTED_THUNDER_CTX = ()
     for node in gm.graph.nodes:
-        if node.op == "call_function" and is_no_grad_ctx_enter(node):
+        if node.op == "call_function" and node.target in UNSUPPORTED_THUNDER_CTX:
             ctx_cnt += 1
-        elif node.op == "call_function" and is_no_grad_ctx_exit(node):
+        elif node.op == "call_function" and node.target in UNSUPPORTED_THUNDER_CTX:
             ctx_cnt -= 1
         else:
             if ctx_cnt > 0:
@@ -348,7 +342,6 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
 
     target = node.target  # Target is the function to call.
     if node.op == "call_method":
-        self_arg = node.args[0]
         target = getattr(torch.Tensor, node.target, None)
         assert target is not None, f"Failed to find method {node.target}"
 
@@ -362,7 +355,7 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
         return False, split_reason
 
     # These functions are present in `_torch_to_thunder_function_map` but don't mimic exact behavior.
-    # Eg. torch._C._set_grad_enabled's thunder implementation just throws warning that this is unsupported.
+    # Eg. previously torch._C._set_grad_enabled's thunder implementation just threw warning that this is unsupported.
     if target in UNSUPPORTED_THUNDER_FUNCTION:
         split_reason = SplitReason(
             SplitReasonType.UNSUPPORTED_NODE,
@@ -370,14 +363,16 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
         )
         return False, split_reason
 
-    # The checkpointed function must be fully supported by Thunder
-    if target is torch.ops.higher_order.tag_activation_checkpoint:
+    # The higher order function must be fully supported by Thunder
+    if target in (torch.ops.higher_order.tag_activation_checkpoint, torch.ops.higher_order.autograd_function_apply):
         m = node.graph.owning_module
-        get_attr_node = node.args[0]
-        assert get_attr_node.op == "get_attr"
-        checkpointed_fn = getattr(m, get_attr_node.target)
-        is_module_supported, split_reason = is_graphmodule_supported_by_thunder(checkpointed_fn)
-        return is_module_supported, split_reason
+        for arg_node in node.args:
+            if arg_node.op == "get_attr":
+                called_module = getattr(m, arg_node.target)
+                is_module_supported, split_reason = is_graphmodule_supported_by_thunder(called_module)
+                if not is_module_supported:
+                    return is_module_supported, split_reason
+        return True, None
 
     # If thunder has a mapping for this operation, try executing the meta function and see.
     # We have a symbol for `torch.where`, but we don't support one overload of it.
@@ -402,7 +397,7 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
             return False, SplitReason(
                 SplitReasonType.EXCEPTION_PROXY_THUNDER_OP,
                 f"Failed while creating proxy for node with name: {node.name} and target: {node.target}, see exception field",
-                exception=e,
+                exception=str(e),
             )
         # NOTE: `get_method` may throw if relevant method is not found, so we have guarded it with `has_method`.
         method = torchctx.get_method(node.target, args, kwargs)
@@ -454,19 +449,19 @@ def recompile_graph(gm: torch.fx.GraphModule):
     return gm.recompile()
 
 
+# Gets the minimum storage shape according to the shape, stride and storage offset
 def _get_storage_shape(t: torch.Tensor):
     shape = _concrete_value(t.shape)
-    if t.is_contiguous():
-        return shape
     strides = _concrete_value(t.stride())
-    storage_size = sum(strides[i] * (shape[i] - 1) for i in range(len(shape))) + 1
+    storage_offset = t.storage_offset()
+    storage_size = storage_offset + sum(strides[i] * (shape[i] - 1) for i in range(len(shape))) + 1
     return (storage_size,)
 
 
 def _get_example_input_tensor_metadata(t: torch.Tensor) -> ExampleInputMetaData:
     min_val = None
     max_val = None
-    if not isinstance(t, FakeTensor) and t.numel() != 0:
+    if not isinstance(t, FakeTensor) and t.device.type != "meta" and t.numel() != 0:
         minmax: tuple[torch.Tensor, torch.Tensor] = torch.aminmax(t)
         min_val = minmax[0].cpu().item()
         max_val = minmax[1].cpu().item()
@@ -478,18 +473,48 @@ def _get_example_input_tensor_metadata(t: torch.Tensor) -> ExampleInputMetaData:
         _concrete_value(t.shape),
         _get_storage_shape(t),
         _concrete_value(t.stride()),
+        t.is_contiguous(),
+        t.storage_offset(),
         min_val,
         max_val,
     )
     return meta_ev
 
 
-def _create_random_tensor_from_tensor_metadata(t: ExampleInputMetaData) -> torch.Tensor:
-    from thunder.tests.make_tensor import make_tensor
-
-    return make_tensor(t.storage_shape, dtype=t.dtype, device=t.device, requires_grad=t.requires_grad).as_strided(
-        t.shape, t.stride()
+def _create_random_tensor_from_tensor_metadata(arg: ExampleInputMetaData) -> torch.Tensor:
+    min_val, max_val = arg.min_val, arg.max_val
+    shape = arg.shape if arg.is_contiguous else arg.storage_shape
+    if min_val is not None and min_val == max_val:
+        tensor = torch.full(shape, min_val, dtype=arg.dtype, device=arg.device, layout=arg.layout)
+    else:
+        tensor = torch.testing.make_tensor(shape, dtype=arg.dtype, device=arg.device, low=min_val, high=max_val)
+    return tensor.set_(tensor, size=arg.shape, storage_offset=arg.storage_offset(), stride=arg.stride()).requires_grad_(
+        arg.requires_grad
     )
+
+
+def example_input_meta_to_input(meta):
+    if isinstance(meta, ExampleInputMetaData):
+        return _create_random_tensor_from_tensor_metadata(meta)
+    elif isinstance(meta, (int, bool, float)):
+        return meta
+    elif isinstance(meta, Sequence):
+        return [example_input_meta_to_input(i) for i in meta]
+    else:
+        raise TypeError(f"Unsupported input type: {type(meta)}")
+
+
+def input_to_example_input_meta(input):
+    if isinstance(input, torch.Tensor):
+        return _get_example_input_tensor_metadata(input)
+    elif isinstance(input, (int, bool, float)):
+        return input
+    elif isinstance(input, torch.types.py_sym_types):
+        return input.node.hint
+    elif isinstance(input, Sequence):
+        return [input_to_example_input_meta(i) for i in input]
+    else:
+        raise TypeError(f"Unsupported input type: {type(input)}")
 
 
 def _get_example_inputs_from_placeholder(
@@ -502,30 +527,26 @@ def _get_example_inputs_from_placeholder(
     check(node.op == "placeholder", lambda: f"The node must be placeholder type", ValueError)
     # Prefers to use actual example value in GraphArg if available
     if "grapharg" in node.meta:
-        ev = node.meta["grapharg"].example
-        if isinstance(ev, torch.Tensor):
-            if only_metadata:
-                return _get_example_input_tensor_metadata(ev)
-            return ev.detach().clone().requires_grad_(ev.requires_grad)
+        try:
+            ev = node.meta["grapharg"].example
+        except AssertionError:
+            # TensorWeakRef is None
+            pass
+        else:
+            if isinstance(ev, torch.Tensor):
+                ev_metadata = _get_example_input_tensor_metadata(ev)
+                if only_metadata:
+                    return ev_metadata
+                return _create_random_tensor_from_tensor_metadata(ev_metadata)
 
     if "example_value" not in node.meta:
         return None
     example_value = node.meta["example_value"]
 
-    if isinstance(example_value, torch.Tensor):
-        ev_metadata = _get_example_input_tensor_metadata(example_value)
-        if only_metadata:
-            return ev_metadata
-        return _create_random_tensor_from_tensor_metadata(ev_metadata)
-    elif isinstance(example_value, tuple):
-        ev_metadatas = tuple(_get_example_input_tensor_metadata(e_v) for e_v in example_value)
-        if only_metadata:
-            return ev_metadatas
-        return tuple(_create_random_tensor_from_tensor_metadata(ev_metadata) for ev_metadata in ev_metadatas)
-    elif isinstance(example_value, torch.types.py_sym_types):
-        return example_value.node.hint
-    else:
-        raise TypeError(f"Unsupported example_value type: {type(example_value)}")
+    example_value = input_to_example_input_meta(example_value)
+    if only_metadata:
+        return example_value
+    return example_input_meta_to_input(example_value)
 
 
 def _checkpoint_function_converter(gm: torch.fx.GraphModule):
@@ -624,28 +645,26 @@ def remove_empty_autocast(graph_module: torch.fx.GraphModule) -> torch.fx.GraphM
 
 def arg_like_tensor(arg: torch.Tensor | ExampleInputMetaData):
     """Creates a new argument like the given tensor or tensor metadata"""
-    min_val = None
-    max_val = None
     if isinstance(arg, torch.Tensor):
-        if arg.numel() != 0:
-            min_val, max_val = torch.aminmax(arg)
-            min_val = min_val.cpu().item()
-            max_val = max_val.cpu().item()
-    else:
-        min_val, max_val = arg.min_val, arg.max_val
-    storage_shape = _get_storage_shape(arg) if isinstance(arg, torch.Tensor) else arg.storage_shape
+        arg = _get_example_input_tensor_metadata(arg)
+    min_val, max_val = arg.min_val, arg.max_val
+    shape = arg.shape if arg.is_contiguous else arg.storage_shape
     if min_val is not None and min_val == max_val:
-        meta = f"{storage_shape}, {min_val}, dtype={arg.dtype}, device='{arg.device}', requires_grad={arg.requires_grad}, layout={arg.layout}"
-        return f"torch.full({meta}).as_strided({arg.shape}, {arg.stride()}),"
-    meta = f"{storage_shape}, dtype={arg.dtype},  device='{arg.device}', requires_grad={arg.requires_grad},"
-    meta = f"{meta} low={min_val}, high={max_val},"
-    return f"torch.testing.make_tensor({meta}).as_strided({arg.shape}, {arg.stride()}),"
+        meta = f"{shape}, {min_val}, dtype={arg.dtype}, device='{arg.device}', requires_grad={arg.requires_grad}, layout={arg.layout}"
+        tensor_str = f"torch.full({meta})"
+    else:
+        meta = f"{shape}, dtype={arg.dtype},  device='{arg.device}', requires_grad={arg.requires_grad},"
+        meta = f"{meta} low={min_val}, high={max_val},"
+        tensor_str = f"torch.testing.make_tensor({meta})"
+    if arg.is_contiguous and arg.storage_offset() == 0:
+        return f"{tensor_str},"
+    return f"{tensor_str}.as_strided({arg.shape}, {arg.stride()}, {arg.storage_offset()}),"
 
 
 def arg_like(arg: Any):
     """Creates a new argument that is similar to the given arg."""
     if isinstance(arg, (torch.Tensor, ExampleInputMetaData)):
-        return f"{arg_like_tensor(arg)}"
+        return arg_like_tensor(arg)
     else:
         # Assume it's a literal that we can just print directly.
         return f"{arg},"
@@ -671,12 +690,11 @@ def _readable(
         verbose=False,
         include_stride=include_stride,
         include_device=include_device,
-        colored=colored,
     )
     module_code = verbose_python_code.src
     module_code = module_code.lstrip("\n")
     module_code = f"class {module_name}(torch.nn.Module):\n" + module_code
-    module_code = _addindent(module_code, 2)
+    module_code = _addindent(module_code, 4)
 
     submodule_code_list = [""]
     for submodule_name, submodule in module.named_children():
@@ -726,25 +744,7 @@ def thunder_options_to_str(thunder_options: dict) -> str:
     return option_str
 
 
-def reproducer(
-    gm: torch.fx.GraphModule,
-    subgraph_info: SubgraphInfo,
-    thunder_options: dict,
-    args: tuple[torch.Tensor | ExampleInputMetaData],
-    folder: str | os.PathLike,
-    graph_name: str,
-    use_pytest_benchmark: bool = False,
-):
-    folder = Path(folder)
-    folder.mkdir(exist_ok=True)
-    torch_env, thunder_pkgs = get_env()
-    # Ideally we'd use print_readable, but we want verbose=False and there's no
-    # way to set that with print_readable.
-    readable = _readable(gm, "DynamoModule", print_output=False)
-    has_cuda_args = any(hasattr(arg, "device") and arg.device.type == "cuda" for arg in args)
-    thunder_options_str = thunder_options_to_str(thunder_options)
-
-    # split reason
+def get_split_reasons_string(subgraph_info: SubgraphInfo) -> str:
     split_reason_str = "Split Information:\n"
     if subgraph_info.split_reasons:
         num_submodules = len(subgraph_info.submodule_to_compiled_functions)
@@ -756,57 +756,13 @@ def reproducer(
             split_reason_str += f"  Split Reason {id}:\n    {split_reason.info}\n"
     else:
         split_reason_str += "The original graph is not split, and is entirely run by Thunder.\n"
+    return split_reason_str
 
-    with open(folder / f"{graph_name}.py", "w") as f:
-        comment_str = f'''"""
-Environment information get from `torch.utils.collect_env.get_pretty_env_info()`:
-{torch_env}
 
-Versions of Thunder related libraries:
-{thunder_pkgs}
-
-'''
-        comment_str += f'{split_reason_str}"""\n'
-        del split_reason_str
-        if use_pytest_benchmark:
-            comment_str += f"""# NOTE: This script requires `pytest-benchmark==4.0.0` to be installed.
-# To execute the script, run `pytest {graph_name}.py`"""
-        import_str = f"from functools import partial\n\nimport torch\nimport thunder\n"
-        if has_cuda_args:
-            import_str += "from thunder.transforms.cudagraph import CUDAGraphTransform\n"
-            import_str += "from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform\n"
-        if use_pytest_benchmark:
-            code_str = f"def test_{graph_name}(benchmark):\n{readable}\n"
-        else:
-            code_str = f"def test_{graph_name}():\n{readable}\n"
-
-        if any(arg is None for arg in args):
-            code_str += f"# Warning: The inputs that cannot be inferred are set to None, requiring the user to manually give inputs according to the code\n"
-        input_str = f"""inputs = [\n{chr(10).join(arg_like(a) for a in args)}\n"""
-        code_str += f"{_addindent(input_str, 4)}\n]\n"
-
-        if not use_pytest_benchmark:
-            code_str += f"compiled = thunder.jit(DynamoModule(), {thunder_options_str})\n"
-            code_str += "compiled(*inputs)"
-        else:
-            code_str += "from thunder.dynamo.compiler_graph_benchmark import ThunderCompilerGraphBenchmarking\n"
-            code_str = f"""{code_str}
-bench_executors_dict = {{}}
-bench_executors_dict["thunder"]=partial(thunder.jit, {thunder_options_str})
-bench_executors_dict["torch.compile"]=torch.compile
-bench_executors_dict["dynamo_eager"]=partial(torch.compile, backend="eager")
-bench_executors_dict["eager"]=None
-"""
-            if has_cuda_args:
-                code_str = f"""{code_str}bench_executors_dict["thunder_cugraph"]=partial(thunder.jit, transform=CUDAGraphTransform())\n"""
-            code_str += f"""
-backend = ThunderCompilerGraphBenchmarking(benchmark, executors=bench_executors_dict)
-compiled = torch.compile(backend=backend)(DynamoModule())
-compiled(*inputs)
-"""
-        print(comment_str, file=f)
-        print(import_str, file=f)
-        print(_addindent(code_str, 4), file=f)
-
-        if not use_pytest_benchmark:
-            print(f"\ntest_{graph_name}()", file=f)
+def get_thunder_module_names(subgraph_info: SubgraphInfo) -> list[str]:
+    thunder_module_names = []
+    for node in subgraph_info.split_graph_module.graph.nodes:
+        target = node.target
+        if isinstance(target, str) and target.startswith("thunder_"):
+            thunder_module_names.append(target)
+    return thunder_module_names

@@ -4,6 +4,7 @@ import os
 from collections.abc import Callable
 from enum import auto, Enum
 from collections.abc import Sequence
+from contextlib import nullcontext
 
 import pytest
 import torch
@@ -28,6 +29,9 @@ from thunder.benchmarks import (
     NanoGPTLayerNormBenchmark,
     ResNet50Benchmark,
     TorchbenchBenchmark,
+    HFBenchmark,
+    LinearLoRABenchmark,
+    DeepSeekSGLangMoEBenchmark,
     thunder_apex_executor,
     thunder_apex_nvfuser_executor,
     thunder_cudnn_executor,
@@ -38,6 +42,7 @@ from thunder.benchmarks import (
     torch_compile_executor,
     torch_executor,
     thunder_transformerengine_executor,
+    record_peak_allocated_memory,
 )
 from thunder.core.interpreter import interpret
 
@@ -56,7 +61,6 @@ IMPORTANT_CONFIGS = [
     "phi-2",
 ]
 RUN_ALL_CONFIGS = os.environ.get("THUNDER_BENCH_RUN_ALL_CONFIGS", "0") == "1"
-MAX_ALLOCATED_MEMORY_KEYWORD = "max_allocated_memory_MB"
 
 
 class ComputeType(Enum):
@@ -81,63 +85,9 @@ parametrize_compute_type_only_training = pytest.mark.parametrize(
 )
 
 
-import functools
-
-
-def timer_and_memory_stats(benchmark) -> float:
-    """
-    Make a timer that also records the peak allocated memory.
-
-    pytest-benchmark has the following benchmarking code structure:
-
-    start = timer()
-    for _ in loops_range:
-        function_to_benchmark(*args, **kwargs)
-    end = timer()
-
-    So the information about the peak allocated memory should be recorded
-    after the function_to_benchmark call and we need to reset the peak memory
-    stats before the function_to_benchmark call.
-
-    If reset_peak_memory_stats is called inside the function_to_benchmark call,
-    the peak memory stats will be reset multiple times and the peak memory
-    stats may not be accurate.
-
-    Args:
-        benchmark: The pytest-benchmark object
-
-    Returns:
-        The decorator that records the peak allocated memory
-    """
-
-    def deco(old_timer):
-        @functools.wraps(old_timer)
-        def timer():
-            ret = old_timer()
-            benchmark.extra_info[MAX_ALLOCATED_MEMORY_KEYWORD] = torch.cuda.max_memory_allocated() / (1024 * 1024.0)
-            torch.cuda.reset_peak_memory_stats()
-            return ret
-
-        return timer
-
-    return deco
-
-
-from contextlib import contextmanager
-
-
-@contextmanager
-def record_peak_allocated_memory(benchmark):
-    old_timer = benchmark._timer
-    benchmark._timer = timer_and_memory_stats(benchmark)(benchmark._timer)
-    try:
-        yield
-    finally:
-        benchmark._timer = old_timer
-
-
-def benchmark_for_compute_type(compute_type: ComputeType, benchmark, fn: Callable, args, kwargs):
-    with record_peak_allocated_memory(benchmark):
+def benchmark_for_compute_type(compute_type: ComputeType, benchmark, fn: Callable, args, kwargs, has_cuda: bool = True):
+    context = record_peak_allocated_memory(benchmark) if has_cuda else nullcontext()
+    with context:
         match compute_type:
             case ComputeType.INFERENCE | ComputeType.TRAINING_FORWARD:
                 benchmark(fn, *args, **kwargs)
@@ -777,6 +727,43 @@ def backward_only_setup_graph_on_each_invocation(fn: Callable, *args, **kwargs):
     return backward_fn, backward_setup
 
 
+# Thunder executor: RuntimeError: Advanced indexing currently only supports zero or one-dimensional integer tensors,
+# but found a tensor with dtype thunder.dtypes.int64 and 2 dimensions
+# https://github.com/Lightning-AI/lightning-thunder/issues/764
+moe_executors = (torch_executor, torch_compile_executor, thunderfx_executor)
+moe_executors_ids = (
+    "torch",
+    "torch.compile",
+    "thunderfx",
+)
+
+
+@pytest.mark.parametrize(
+    "bs,",
+    (2**i for i in range(0, 6)),
+    ids=(f"bs{2**i}" for i in range(0, 6)),
+)
+@pytest.mark.parametrize(
+    "executor,",
+    moe_executors,
+    ids=moe_executors_ids,
+)
+@pytest.mark.parametrize(
+    "compute_type,",
+    (ComputeType.INFERENCE,),
+    ids=("inference",),
+)
+def test_deepseek_sglang_moe(benchmark, bs, executor: Callable, compute_type: ComputeType):
+    bench: Benchmark = DeepSeekSGLangMoEBenchmark(
+        model="deepseek-ai/DeepSeek-R1", tp_size=8, batch_size=bs, use_fp8=False
+    )
+
+    args, kwargs = bench.make_batch()
+    fn = executor(bench.fn())
+
+    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
+
+
 #
 # interpreter benchmarks
 #
@@ -882,6 +869,104 @@ def test_torchbench_canary(benchmark, module_name, executor, compute_type: Compu
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=FutureWarning)
         b = TorchbenchBenchmark(module_name, device="cuda", requires_grad=is_requires_grad(compute_type))
+
+    args, kwargs = b.make_batch()
+    fn = executor(b.fn())
+
+    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
+
+
+hf_model_ids = [
+    "bigcode/starcoder2-7b",
+    "google/gemma-7b",
+    "google/gemma-2-9b-it",
+    "meta-llama/Llama-3.2-3B",
+    "meta-llama/Meta-Llama-3-8B-Instruct",
+    "microsoft/Phi-3.5-mini-instruct",
+    "microsoft/phi-4",
+    "mistralai/Mistral-Nemo-Base-2407",
+    "Qwen/Qwen2-7B",
+    "Qwen/Qwen2.5-7B-Instruct",
+]
+hf_seq_lengths = [4096 * 2**i for i in range(0, 6)]
+
+
+@pytest.mark.parametrize(
+    "executor,",
+    [
+        thunderfx_executor,
+        torch_compile_executor,
+        torch_executor,
+    ],
+    ids=["thunderfx", "inductor", "eager"],
+)
+@parametrize_compute_type
+@pytest.mark.parametrize("peft", [True, False], ids=["PEFT", "FT"])
+@pytest.mark.parametrize(
+    "seq_length",
+    hf_seq_lengths,
+)
+@pytest.mark.parametrize("batch_size", range(1, 5), ids=[f"BS{i}" for i in range(1, 5)])
+@pytest.mark.parametrize("model_id", hf_model_ids, ids=hf_model_ids)
+def test_hf_transformers(
+    benchmark, model_id: str, seq_length: int, batch_size: int, peft: bool, executor, compute_type
+):
+    if not importlib.util.find_spec("transformers"):
+        pytest.skip("HF transformers not available.")
+
+    b = HFBenchmark(
+        model_id,
+        seq_length,
+        batch_size,
+        device="cuda",
+        dtype=torch.bfloat16,
+        requires_grad=is_requires_grad(compute_type),
+        enable_peft=peft,
+    )
+
+    if seq_length > b.config.max_position_embeddings:
+        pytest.skip("Sequence length larger than maximum for the model.")
+
+    args, kwargs = b.make_batch()
+    fn = executor(b.fn())
+
+    if compute_type == ComputeType.TRAINING_BACKWARD:
+        return_fn = lambda *args, **kwargs: fn(*args, **kwargs).loss
+    else:
+        kwargs["labels"] = None
+        return_fn = fn
+
+    benchmark_for_compute_type(compute_type, benchmark, return_fn, args, kwargs)
+
+
+@pytest.mark.parametrize(
+    "executor,",
+    [
+        thunderfx_executor,
+        torch_compile_executor,
+        torch_executor,
+    ],
+    ids=["thunderfx", "inductor", "eager"],
+)
+@parametrize_compute_type
+@pytest.mark.parametrize("implementation,", ["HF", "NeMo"])
+def test_lora_linear(benchmark, executor, compute_type, implementation):
+    match implementation:
+        case "HF":
+            if not importlib.util.find_spec("transformers"):
+                pytest.skip("HF transformers not available.")
+            if not importlib.util.find_spec("peft"):
+                pytest.skip("HF peft not available.")
+        case "NeMo":
+            if not importlib.util.find_spec("nemo.collections.llm"):
+                pytest.skip("NeMo not available.")
+
+    b = LinearLoRABenchmark(
+        implementation=implementation,
+        device="cuda",
+        dtype=torch.bfloat16,
+        requires_grad=is_requires_grad(compute_type),
+    )
 
     args, kwargs = b.make_batch()
     fn = executor(b.fn())

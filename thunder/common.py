@@ -392,8 +392,12 @@ def _unpack_inputs(fn, tracectx: TraceCtx, args, kwargs, *, rename_proxies: bool
 
 # TODO Update cacheable types
 def _make_subkey_for(x: Any) -> tuple[bool, None | tuple]:
-    if isinstance(x, (torch.Tensor, TensorProxy)):
+    if isinstance(x, torch.Tensor):
         return True, (type(x), x.shape, x.device, x.dtype, x.requires_grad)
+
+    if isinstance(x, TensorProxy):
+        # calling _shape instead shape to avoid leaving a prims.shape in the trace
+        return True, (type(x), x._shape, x.device, x.dtype, x.requires_grad)
 
     # TODO Add NumPy ndarray support
     if isinstance(x, np.ndarray):
@@ -649,14 +653,10 @@ def transform_for_execution(
 
     # TODO If only_execute_prims, then flatten to prims here
 
-    # Runs passes that are generally useful
-    dce_trace = dce(trace)
-    traces.append(dce_trace)
-
     # cse_trace = cse(dce_trace)
     # traces.append(cse_trace)
 
-    extrace = executors.passes.transform_for_execution(dce_trace, executors_list)
+    extrace = executors.passes.transform_for_execution(trace, executors_list)
 
     traces.append(extrace)
 

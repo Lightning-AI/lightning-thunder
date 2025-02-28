@@ -84,34 +84,13 @@ for op in opinfos:
         _inplace_opinfos.append(inplace_opinfo)
 
 
-@dataclass(frozen=True)
-class InplaceOpWrapper:
-    torch_func: Callable
-    is_polygamma: bool
-    jitted: bool
-
-    def __call__(self, *args, **kwargs):
-        # polygamma expects an int as its first argument and a tensor as its second but
-        # torch.Tensor.polygamma_ wants opposite; tensor first, int second.
-        # ref:
-        # - https://pytorch.org/docs/stable/special.html#torch.special.polygamma
-        # - https://pytorch.org/docs/stable/generated/torch.Tensor.polygamma_.html
-        args = list(args)
-        idx = int(self.is_polygamma and self.jitted)
-        t = args[idx] + 1.0
-        args[idx] = t
-
-        self.torch_func(*args, **kwargs)
-        return t
-
-
 @ops(_inplace_opinfos, supported_dtypes=(dtypes.float32,))
 def test_functionalization(op: OpInfo, device: str, dtype: dtypes.dtype, executor, _):
     import thunder
 
     is_polygamma = op.name == "polygamma_"
-    inplace_op = InplaceOpWrapper(op.torch_reference, is_polygamma, False)
-    jitted_inplace_op = executor.make_callable(InplaceOpWrapper(op.torch_reference, is_polygamma, True))
+    inplace_op = op.torch_reference
+    jitted_inplace_op = executor.make_callable(op.torch_reference)
     sample: SampleInput
     for idx, sample in enumerate(op.sample_inputs(device, dtype)):
         if idx > 0:
@@ -119,11 +98,16 @@ def test_functionalization(op: OpInfo, device: str, dtype: dtypes.dtype, executo
 
         args = list(sample.args)
         if is_polygamma:
+            # polygamma expects an int as its first argument and a tensor as its second but
+            # torch.Tensor.polygamma_ wants opposite; tensor first, int second.
+            # ref:
+            # - https://pytorch.org/docs/stable/special.html#torch.special.polygamma
+            # - https://pytorch.org/docs/stable/generated/torch.Tensor.polygamma_.html
             tmp = args[0]
             args[0] = args[1]
             args[1] = tmp
         expected = inplace_op(*args, **sample.kwargs)
-        actual = jitted_inplace_op(*sample.args, **sample.kwargs)
+        actual = jitted_inplace_op(*args, **sample.kwargs)
         torch.testing.assert_close(actual, expected, equal_nan=True)
 
     # make sure `prims.copy_` does not exist in the trace thanks to functionalization
@@ -478,11 +462,11 @@ def test_multiple_inplace_to_multiple_args(executor, device, _):
 def test_inplace_to_tensors_with_grad(executor, device, _):
     @torch.no_grad
     def add_y(x, y):
-        x.add_(y, alpha=0.1)
+        return x.add_(y, alpha=0.1)
 
     @torch.no_grad
     def add_grad(x, y):
-        x.add_(x.grad, alpha=0.1)
+        return x.add_(x.grad, alpha=0.1)
 
     for f in (add_y, add_grad):
         jitted_f = executor.make_callable(f)
@@ -721,6 +705,17 @@ def test_inplace_to_alias_func_args(executor, device, dtype):
     out, out_ref = jitted_f(a, b, a), f(a_ref, b_ref, a_ref)
     torch.testing.assert_close(out, out_ref)
     torch.testing.assert_close((a, b), (a_ref, b_ref))
+
+    def f(a):
+        return a.zero_()
+
+    a = make_tensor(shape, device=device, dtype=torch_dtype)
+    out_expected = torch.zeros_like(a)
+
+    jitted_f = executor.make_callable(f)
+    out = jitted_f(a)
+
+    torch.testing.assert_close(out, out_expected)
 
 
 @instantiate(dtypes=NOTHING)

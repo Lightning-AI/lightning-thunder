@@ -11,6 +11,7 @@ from thunder.core.symbol import BoundSymbol
 from thunder.core.trace import TraceCtx, from_trace, set_tracectx, reset_tracectx
 from thunder.core.transform_common import replace_redundant_inputs
 from thunder.core.vjp_utils import get_saved_for_backward_tensors, set_saved_for_backward_tensors
+from .utils import is_cudagraph_capturing
 
 if TYPE_CHECKING:
     from thunder.core.trace import VariableInterface
@@ -60,10 +61,25 @@ def rename_bwd_trace_outputs(bwd_trace: TraceCtx, fwd_trace: TraceCtx) -> TraceC
     return renamed_bwd_trace
 
 
+# NOTE: Split autograd.Function
+# We split the autograd.Function into two parts because this allows
+# the args to the ThunderOutputFunction.backward to go out of scope
+# and the tensors (the grad_outs matching the flattened output) to be
+# deallocated when they have been processed by the compiled backward function.
+# For the correspondence between the functions hidden from autograd, we use
+# a side channel (an empt dict) passed as an argument. To link the two
+# functions in autograd, we use a dummy tensor on the meta device.
 class ThunderFunction(torch.autograd.Function):
     @staticmethod
     def forward(
-        ctx, return_none_instead_of_grads, compiled_backward, saved_tensors, saved_other, flat_output, *flat_args
+        ctx,
+        return_none_instead_of_grads,
+        compiled_backward,
+        side_channel,
+        saved_tensors,
+        saved_other,
+        flat_output,
+        *flat_args,
     ):
         # Here we just propagate the tensors through the autograd graph
         ctx.return_none_instead_of_grads = return_none_instead_of_grads
@@ -80,50 +96,125 @@ class ThunderFunction(torch.autograd.Function):
         def detach_if_tensor(t):
             # Some operations may claim to return Tensor (as per their meta function)
             # but may return None at Runtime (eg. noticed this for sdpa)
-            if isinstance(t, torch.Tensor):
+            if isinstance(t, torch.Tensor) and t._base is not None:
+                # Only detach if the Tensor is a view.
+                # This is needed because TransformerEngine can create (non-view) tensors that have different
+                # metadata on the `t.detach()` output than on `t`. (Ideally, this shouldn't be the case)
+                # See https://github.com/Lightning-AI/lightning-thunder/pull/1600 for details.
                 return t.detach()
             return t
 
         saved_tensors = tuple(map(detach_if_tensor, saved_tensors))
 
-        # We must save tensors using ctx.save_for_backward
-        ctx.save_for_backward(*saved_tensors)
-        return flat_output
+        ctx.side_channel = side_channel
+        if side_channel is not None:
+            assert not side_channel
+            ctx.side_channel["fw"] = flat_output
+            # We must save tensors using ctx.save_for_backward but
+            # we want to save the tensors in the function returning the outputs to avoid memory leaks
+            # (basically ref-cycles via output.grad_fn.next_functions[0, 0].saved_tensors[0] == output
+            # PyTorch autograd handles this gracefully for output.grad_fn.saved_tensors)
+            ctx.side_channel["tensors_to_save"] = saved_tensors
+            return torch.randn(1, device="meta", requires_grad=True)
+        else:
+            ctx.save_for_backward(*saved_tensors)
+            return flat_output
 
     # NOTE: If `torch.autograd.function.once_differentiable` is to be removed,
     # one must take care of correctly removing the `detach_if_tensor` above.
     # For more context, see NOTE [Saved view of output of torch.autograd.Function leaks] above.
     @staticmethod
     @torch.autograd.function.once_differentiable
-    def backward(ctx, *args):
-        # ctx.saved_tensors is a tuple of tensors saved in forward. Our compiled
-        # backward is a really long function that takes all the tensors saved in
-        # forward and gradually uses them to compute the gradients of the
-        # inputs. Unfortunately, Python holds a reference to all arguments of a
-        # function until the function returns, even if we delete the variable
-        # "saved_tensors" inside the function, the tensors will still be held in
-        # memory until the function returns. Fortunately, Python passes mutable
-        # objects by reference, so we can just replace the saved_tensors with an
-        # empty list and the memory will be freed immediately. We must also
-        # delete the reference to the saved_tensors in the context, otherwise
-        # the memory will be freed only when the context is deleted.
-        saved_tensors_list = list(ctx.saved_tensors)  # Make a copy as we will mutate it
+    def backward(ctx, *raw_args):
+        if ctx.side_channel is not None:
+            args = ctx.side_channel.pop("bw")
+            saved_tensors_list = ctx.side_channel.pop("saved_tensors")
+            assert not ctx.side_channel
+        else:
+            args = list(raw_args)
+            # ctx.saved_tensors is a tuple of tensors saved in forward. Our compiled
+            # backward is a really long function that takes all the tensors saved in
+            # forward and gradually uses them to compute the gradients of the
+            # inputs. Unfortunately, Python holds a reference to all arguments of a
+            # function until the function returns, even if we delete the variable
+            # "saved_tensors" inside the function, the tensors will still be held in
+            # memory until the function returns. Fortunately, Python passes mutable
+            # objects by reference, so we can just replace the saved_tensors with an
+            # empty list and the memory will be freed immediately. We must also
+            # delete the reference to the saved_tensors in the context, otherwise
+            # the memory will be freed only when the context is deleted.
+            saved_tensors_list = list(ctx.saved_tensors)  # Make a copy as we will mutate it
 
-        # This is an undocumented API, but it's the only way to clear the
-        # reference to the saved tensors in the context
-        ctx.maybe_clear_saved_tensors()  # Delete the reference to all saved tensors in the context
+            # This is an undocumented API, but it's the only way to clear the
+            # reference to the saved tensors in the context
+            ctx.maybe_clear_saved_tensors()  # Delete the reference to all saved tensors in the context
         grads = ctx.compiled_backward([saved_tensors_list, ctx.saved_other], args)
 
+        assert not args
         # Inside the compiled backward we must clear the saved_tensors_list
         assert not saved_tensors_list, "saved_tensors_list must be empty after calling compiled_backward"
         # TODO(crcrpar): Remove if-else once `dist_prims.stash_grad_for_fsdp` starts to return `None`
         # NOTE(crcrpar): In fsdp no-sync, unsharded gradients are attached and accumulated to their parameters as the attr of `_thunder_fsdp_unsharded_grad` in order to avoid shape mismatch of a param and its grad. When exiting the no_sync context, the accumulated, unsharded gradients are reduce-scattered into the attr of `grad` and `_thunder_fsdp_unsharded_grad` is removed.
         if not ctx.return_none_instead_of_grads:
-            return (None, None, None, None, None, *grads)
+            return (None, None, None, None, None, None, *grads)
         else:
             n_grads = len(grads)
             del grads
-            return (None, None, None, None, None, *([None] * n_grads))
+            return (None, None, None, None, None, None, *([None] * n_grads))
+
+
+class ThunderOutputFunction(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, dummy, side_channel, *args):
+        ctx.side_channel = side_channel
+        ctx.num_args = len(args)
+        res = ctx.side_channel.pop("fw")
+        ctx.save_for_backward(*ctx.side_channel.pop("tensors_to_save"))
+        assert not ctx.side_channel
+        return res
+
+    @staticmethod
+    def backward(ctx, *args):
+        assert not ctx.side_channel
+        ctx.side_channel["bw"] = list(args)
+        ctx.side_channel["saved_tensors"] = list(ctx.saved_tensors)  # see above
+        ctx.maybe_clear_saved_tensors()  # Delete the reference to all saved tensors in the context
+        return torch.randn(1, device="meta"), None, *([None] * ctx.num_args)
+
+
+def connect_to_autograd(
+    *,
+    backward_fn,
+    flat_args,
+    flat_output,
+    saved_tensors,
+    saved_other,
+    return_none_instead_of_grads,
+    disable_split_autograd,
+):
+    # PyTorch seems to not like our side channel trick when capturing graphs
+    # through dynamo and using cuda graphs.
+    # Of course, the real trick is to use the CUDAGraphTransform instead
+    # of having something else apply it while introducing funny additional
+    # conditions for success.
+    if not is_cudagraph_capturing() and not disable_split_autograd:
+        side_channel = {}
+    else:
+        side_channel = None
+
+    dummy_res = ThunderFunction.apply(
+        return_none_instead_of_grads,
+        backward_fn,
+        side_channel,
+        saved_tensors,
+        saved_other,
+        flat_output,
+        *flat_args,
+    )
+    if side_channel is not None:
+        # we need to pass the inputs to avoid "leave has moved inside the graph"
+        # if the function returns an argument as is
+        ThunderOutputFunction.apply(dummy_res, side_channel, *flat_args)
 
 
 def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stats, /, *flat_args):
@@ -344,5 +435,9 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     fw_extrace._include_te_fp8_autocast = True
     # We only want the forward function to be called with `te.fp8_autocast` manager.
     bw_extrace._include_te_fp8_autocast = False
+
+    if len(bw_extrace.bound_symbols) == 1:
+        # only return, no unpacking, so no gradient is calculated
+        bw_extrace = None
 
     return fw_extrace, bw_extrace

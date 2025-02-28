@@ -190,7 +190,7 @@ class ConstantFolding(thunder.Transform):
                         const_number_swapmap[variableify(bsym.output)] = new_concrete_output
                         new_bsym = bsym
                     elif new_concrete_output.ndim == 0:
-                        isinstance(new_concrete_output, torch.Tensor)
+                        assert isinstance(new_concrete_output, torch.Tensor)
                         new_bsym = BoundSymbol(
                             thunder.prims.full,
                             args=(

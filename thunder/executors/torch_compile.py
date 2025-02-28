@@ -54,7 +54,7 @@ def to_torch_translator(bsym: BoundSymbol) -> Callable:
             torch_op = pytorch_ex.opmap.get(bsym.subsymbols[0].sym.name)
 
         if torch_op is None:
-            raise RuntimeError("op not found for {bsym.sym.name}")
+            raise RuntimeError(f"op not found for {bsym.sym.name}")
 
         return torch_op(*args, **kwargs)
 
@@ -72,6 +72,7 @@ def make_compiled(
     region_trace = TraceCtx(None)
     region_trace.args = sorted_unique_inputs
     region_trace.kwargs = {}
+    region_trace.names = {a.name for a in region_trace.args}
     with tracectx(region_trace):
         for a in sorted_unique_inputs:
             prims.unpack_trivial(a, name=a.name)
@@ -79,9 +80,15 @@ def make_compiled(
     region_trace.bound_symbols += list(bsyms)
     region_trace.bound_symbols.append(prims.python_return.bind(sorted_unique_outputs, output=None))
     for bsym in region_trace.bound_symbols:
+        if bsym.sym == prims.unpack_trivial:
+            continue
         for o in bsym.flat_outs:
             if o is not None:
                 region_trace.add_name(o.name)
+        for sbsym in bsym.subsymbols:
+            for o in sbsym.flat_outs:
+                if o is not None and o.name not in region_trace.names:
+                    region_trace.add_name(o.name)
 
     # maybe make this the default if no sig info is present?
     region_trace._siginfo = SigInfo("to_be_compiled")
@@ -243,6 +250,41 @@ supported_ops = {
     prims.erf.id,
 }
 torch_compile_cat_ex._implmap = {
+    op: ImplInfo(checker=cuda_device_checker) for op in pytorch_ex.implmap if op in supported_ops
+}
+
+# Similar to torchcomile_cat, this executor is meant to be used with nvfuser_executor to allow
+# inductor to claim cross_entropy computation.
+required_ops = {
+    "nll_loss_backward",
+    "log_softmax_backward",
+    "torch.log_softmax",
+    "torch.nn.functional.nll_loss",
+    "torch.nn.functional.cross_entropy",
+}
+torch_compile_xentropy_ex = TorchCompileExecutor(name="torchcompile_xentropy", required_ops=required_ops)
+register_executor(torch_compile_xentropy_ex)
+
+supported_ops = {
+    prims.broadcast_in_dim.id,
+    prims.convert_element_type.id,
+    prims.div.id,
+    prims.ne.id,
+    prims.neg.id,
+    prims.pad.id,
+    prims.reshape.id,
+    prims.slice_prim.id,
+    prims.where.id,
+    "nll_loss_backward",
+    "log_softmax_backward",
+    "torch.log_softmax",
+    "torch.nn.functional.nll_loss",
+    "torch.sum",
+    "torch.take_along_dim",
+    "torch.Tensor.contiguous",
+}
+
+torch_compile_xentropy_ex._implmap = {
     op: ImplInfo(checker=cuda_device_checker) for op in pytorch_ex.implmap if op in supported_ops
 }
 

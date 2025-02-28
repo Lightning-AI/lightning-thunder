@@ -4,7 +4,12 @@ import torch
 from torch._dynamo import is_inductor_supported
 
 import thunder
-from thunder.executors.torch_compile import supported_ops, torch_compile_ex, torch_compile_cat_ex
+from thunder.executors.torch_compile import (
+    supported_ops,
+    torch_compile_ex,
+    torch_compile_cat_ex,
+    torch_compile_xentropy_ex,
+)
 from thunder.executors.torchex import ex as pytorch_ex
 from thunder.executors.nvfuserex import nvfuserex
 from thunder.tests.bf16 import device_supports_bf16
@@ -38,6 +43,7 @@ def test_torch_compile_litgpt():
 # https://github.com/Lightning-AI/lightning-thunder/issues/292 The issue was
 # that the CSE pass was not being run correctly on the TorchCompile region.
 # Here we test that everything works as expected.
+@pytest.mark.skip(reason="https://github.com/NVIDIA/Fuser/issues/3688")
 @pytest.mark.skipif(not is_inductor_supported(), reason="inductor unsupported")
 @requiresCUDA
 @pytest.mark.skipif(not device_supports_bf16(torch.device("cuda")), reason="bf16 is not supported")
@@ -90,3 +96,51 @@ def test_transform_for_execution_for_callable():
     a = torch.randn(3)
     jfn = thunder.jit(fn, executors=(thunder.executors.torch_compile.torch_compile_ex,))
     assert_close(jfn(a), fn(a))
+
+
+@pytest.mark.skipif(not is_inductor_supported(), reason="inductor unsupported")
+@requiresCUDA
+@pytest.mark.skipif(not device_supports_bf16(torch.device("cuda")), reason="bf16 is not supported")
+def test_litgpt_fabric_for_callable():
+    from typing import Any, Optional, Tuple, Union, List, Dict
+    from collections.abc import Callable
+    from litgpt.model import Config, GPT
+    import torch.nn as nn
+
+    def jit(fn: Callable, executors: list[str]) -> Any:
+        assert executors is not None
+        return thunder.jit(fn, executors=executors)
+
+    def forward_and_loss(model: nn.Module, input_ids: torch.Tensor) -> torch.Tensor:
+        logits = model(input_ids)
+        return logits
+
+    forward_and_loss_jitted = jit(forward_and_loss, executors=("sdpa", "torchcompile", "nvfuser", "torch"))
+
+    config = Config(block_size=2, n_layer=2, n_embd=8, n_head=4, padded_vocab_size=8)
+
+    with torch.device("cuda"):
+        model = GPT(config)
+
+    input_ids = torch.zeros(1, 2, dtype=torch.int64, device="cuda")
+    out = forward_and_loss(model, input_ids)
+    out_jitted = forward_and_loss_jitted(model, input_ids)
+
+    assert_close(out, out_jitted)
+
+
+@requiresCUDA
+def test_torch_compile_xentropy_loss():
+    from transformers.loss.loss_utils import ForCausalLMLoss
+
+    logits = torch.randn(1, 2, 6, device="cuda", requires_grad=True)
+    labels = torch.randint(0, 6, (1, 2), device="cuda")
+    vocab_size = 6
+
+    closs_fn = thunder.jit(ForCausalLMLoss, executors=[torch_compile_xentropy_ex])
+    _ = closs_fn(logits, labels, vocab_size, ignore_index=-1)
+    forward_trace = thunder.last_traces(closs_fn)[-1].python()
+
+    # make a single torch.compile region
+    assert "TorchCompile0" in forward_trace
+    assert "TorchCompile1" not in forward_trace

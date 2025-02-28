@@ -17,7 +17,7 @@ from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
 from thunder.core.proxies import Proxy, NumberProxy, TensorProxy, variableify, CONSTRAINT, Variable
 from thunder.core.baseutils import *
 from thunder.core.codeutils import *
-from thunder.core.trace import TraceCtx
+from thunder.core.trace import TraceCtx, tracectx
 import thunder.core.prims as prims
 
 if TYPE_CHECKING:
@@ -1097,7 +1097,8 @@ def find_producer_symbols(trace: TraceCtx, proxies: Sequence[Proxy], stop_proxie
         stop_proxies: proxies to stop at
 
     Returns:
-        tuple of symbols that produce the given proxies
+        tuple of symbols that produce the given proxies. In case of duplicate bound_symbols in trace, e.g. prims.shape.
+        The returned tuple would drop the duplicates and only preserve the first encounter.
 
     Example:
         >>> import torch
@@ -1128,11 +1129,23 @@ def find_producer_symbols(trace: TraceCtx, proxies: Sequence[Proxy], stop_proxie
         if p is not None:
             result.add(p)
             for arg in p.flat_args:
-                arg_name = arg.name if isinstance(arg, Proxy) else None
+                if not isinstance(arg, Proxy):
+                    continue
+                arg_name = arg.name
                 if arg_name not in map(lambda x: x.name, stop_proxies) and arg_name not in seen:
                     queue.append(arg)
                     seen.add(arg_name)
-    original_order = {bsym: i for i, bsym in enumerate(trace.bound_symbols)}
+    # original_order maps from bound_symbol to the index/order of its occurence in the trace. The order is
+    # used to sort producer bound symbols to preserve the correctness of data dependency.
+    original_order = dict()
+    for i, bsym in enumerate(trace.bound_symbols):
+        # Don't overwrite the order if it's already encountered. This is necessary for duplicate bsyms.
+        # e.g. duplicate shape queries. By preserving the smaller index, we ensure that the re-ordered
+        # shape queies would be placed before any consumers of its outputs, hence preserving the correctness
+        # of data dependency.
+        if bsym in original_order:
+            continue
+        original_order[bsym] = i
     return tuple(sorted(result, key=lambda x: original_order[x]))
 
 
@@ -1233,3 +1246,16 @@ class AutocastStack:
 
         # Not found on the stack.
         return None
+
+
+def create_python_callable_from_bsym(bsym: BoundSymbolInterface) -> str:
+    trace = TraceCtx()
+    si = SigInfo(bsym.sym.name)
+    si.args = [(v.name, None) for v in bsym.flat_args]
+    trace._siginfo = si
+    trace.bound_symbols = list(bsym.subsymbols)
+
+    with tracectx(trace):
+        prims.python_return(bsym.output)
+
+    return trace.python(include_decorators=False)

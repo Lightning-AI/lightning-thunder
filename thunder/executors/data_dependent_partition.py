@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-from typing import List, Set
 from collections.abc import Callable
 from copy import copy
-from itertools import chain
 
 import thunder.core.utils as utils
+from thunder.core.compile_data import get_compile_option
 from thunder.core.trace import TraceCtx
 from thunder.core.symbol import BoundSymbol
 from thunder.core.proxies import variableify, Proxy
-import thunder.core.prims as prims
 from thunder.core.prims import PrimIDs
-from thunder.executors import torchex
+
+
+_DEFAULT_FUSION_TYPE = "consecutive"
 
 
 # Represents a region and its parents (regions it consumes the output of) and
@@ -296,8 +296,45 @@ def horizontal_merge(graph, merge_func: Callable):
     return topo_order_groups
 
 
-def fuse_bound_symbols(trace: TraceCtx, merge_func: Callable):
+def consecutive_fusion(trace: TraceCtx, merge_func: Callable[[Node, Node], bool]) -> list[list[BoundSymbol]]:
+    """Utility function for creating fusions in the trace with consecutive nodes.
+
+    Args:
+        trace: The trace context to fuse.
+        merge_func: The function that determines if two nodes should be merged.
+
+    Returns:
+        A list of lists of bound symbols that should be fused together.
+    """
+    fusions = [[]]
+    for bsym in trace.bound_symbols:
+        node = Node(0, [bsym], [0], 0, 0)
+        if merge_func(node, node):
+            fusions[-1].append(bsym)
+        else:
+            if fusions[-1]:
+                fusions.append([])
+            fusions[-1].append(bsym)
+            fusions.append([])
+    if not fusions[-1]:
+        del fusions[-1]
+    return fusions
+
+
+def dataflow_fusion(trace: TraceCtx, merge_func: Callable):
     graph = Graph(trace)
     dataflow_merge(graph, merge_func)
     ret = horizontal_merge(graph, merge_func)
     return ret
+
+
+def fuse_bound_symbols(trace: TraceCtx, merge_func: Callable):
+    fusion_type: None | str = get_compile_option("fusion_type", "Choose the type of fusion to use")
+    fusion_type = fusion_type or _DEFAULT_FUSION_TYPE
+    match fusion_type:
+        case "consecutive":
+            return consecutive_fusion(trace, merge_func)
+        case "dataflow":
+            return dataflow_fusion(trace, merge_func)
+        case _:
+            raise ValueError(f"Unknown fusion type: {fusion_type}")

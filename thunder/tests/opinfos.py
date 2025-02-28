@@ -25,7 +25,7 @@ from thunder.core.pytree import tree_map
 from thunder.core.symbol import Symbol
 import thunder.executors as executors
 from thunder.tests.framework import _all_devicetypes, JAX_AVAILABLE, custom_comparator, IS_WINDOWS
-from thunder.tests.make_tensor import make_tensor
+from thunder.tests.make_tensor import make_tensor, make_tensor_like
 import thunder.tests.bf16
 import thunder.torch as ltorch
 
@@ -58,16 +58,6 @@ def prims_wrapper(prim):
 
 def round_remainder(x, y):
     return x - torch.round(x / y) * y
-
-
-def push_away_from_singularities(x, singularity_fn, eps):
-    """This function takes a tensor and moves individual values away
-    from singularities in `eps` increments, until they are further than
-    `eps` away from them. The `singularity_fn`  returns the (signed)
-    distance from `x` to the nearest singularity."""
-    x_dist = singularity_fn(x)
-    x_ = torch.where((x_dist >= 0) & (x_dist < eps), x + eps, x)
-    return torch.where((x_dist <= 0) & (x_dist > -eps), x_ - eps, x_)
 
 
 # Randomly select a fraction of the elements in a tensor and set them to specified value
@@ -208,10 +198,24 @@ class SampleInput:
         args, kwargs = tree_map(_to, self.args), tree_map(_to, self.kwargs)
         return SampleInput(*args, **kwargs)
 
-    def remove_singularities(self, singularity_fn, eps):
+    def remove_singularities(self, op, eps):
+
+        singularity_fn = op.singularity_fn_producer(self)
+        if singularity_fn is None:
+            return self
+
+        def _push_away_from_singularities(x, dist_fn, eps):
+            """This function takes a tensor and moves individual values away
+            from singularities in `eps` increments, until they are further than
+            `eps` away from them. The `dist_fn` returns the (signed)
+            distance from `x` to the nearest singularity."""
+            x_dist = dist_fn(x)
+            x_ = torch.where((x_dist >= 0) & (x_dist < eps), x + eps, x)
+            return torch.where((x_dist < 0) & (x_dist > -eps), x_ - eps, x_)
+
         def _remove_singularities(x):
             if isinstance(x, torch.Tensor) and datatypes.is_float_dtype(datatypes.to_dtype(x)):
-                return push_away_from_singularities(x, singularity_fn, eps)
+                return _push_away_from_singularities(x, singularity_fn, eps)
 
             return x
 
@@ -1275,6 +1279,7 @@ elementwise_unary_ops.append(sigmoid_opinfo)
 sign_opinfo = OpInfo(
     clang.sign,
     sample_input_generator=elementwise_unary_generator,
+    singularity_fn=lambda x: x,
     torch_reference=_elementwise_unary_torch(torch.sgn),
     test_directives=(
         # TODO nvFuser needs support for complex sign
@@ -1282,6 +1287,12 @@ sign_opinfo = OpInfo(
             pytest.mark.xfail,
             dtypes=(datatypes.complexfloating,),
             executors=("nvfuser",),
+        ),
+        # The finite difference method used in test_vjp_correctness has numerical
+        # issues with constant derivative 0.
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_vjp_correctness",
         ),
     ),
 )
@@ -1655,6 +1666,7 @@ celu_opinfo = OpInfo(
     dtypes=(datatypes.floating,),
     sample_input_generator=get_elementwise_unary_with_alpha_generator(),
     torch_reference=_elementwise_unary_torch(torch.celu),
+    singularity_fn=lambda x: x,
     test_directives=(),
 )
 elementwise_unary_ops.append(celu_opinfo)
@@ -1682,6 +1694,17 @@ leaky_relu_opinfo = OpInfo(
     test_directives=(),
 )
 elementwise_unary_ops.append(leaky_relu_opinfo)
+
+
+logsigmoid_opinfo = OpInfo(
+    ltorch.logsigmoid,
+    dtypes=(datatypes.floating,),
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=torch.nn.functional.logsigmoid,
+    domain=(-1, 1),
+    test_directives=(),
+)
+elementwise_unary_ops.append(logsigmoid_opinfo)
 
 
 relu_opinfo = OpInfo(
@@ -1734,7 +1757,7 @@ elementwise_unary_ops.append(relu6_opinfo)
 
 
 # fdm.jvp, which is used in test_vjp_correctness, behaves badly at jump discontinuties of the partial derviatives
-def hardshrink_singularity_fn_producer(sample: SampleInput):
+def shrink_singularity_fn_producer(sample: SampleInput):
     lambd = sample.kwargs.get("lambd", 0.5)
     return lambda a: torch.where(a >= 0, a - lambd, a + lambd)
 
@@ -1744,10 +1767,29 @@ hardshrink_opinfo = OpInfo(
     dtypes=(datatypes.floating,),
     sample_input_generator=get_elementwise_unary_with_kwargs_generator([{}, {"lambd": 0.25}, {"lambd": -0.1}]),
     torch_reference=_elementwise_unary_torch(torch.nn.functional.hardshrink),
-    singularity_fn_producer=hardshrink_singularity_fn_producer,
+    singularity_fn_producer=shrink_singularity_fn_producer,
     test_directives=(),
 )
 elementwise_unary_ops.append(hardshrink_opinfo)
+
+
+softshrink_opinfo = OpInfo(
+    ltorch.softshrink,
+    dtypes=(datatypes.floating,),
+    sample_input_generator=get_elementwise_unary_with_kwargs_generator([{}, {"lambd": 0.25}, {"lambd": 0.1}]),
+    torch_reference=_elementwise_unary_torch(torch.nn.functional.softshrink),
+    singularity_fn_producer=shrink_singularity_fn_producer,
+    test_directives=(
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=1e-4, rtol=1e-2)),
+            dtypes=(
+                datatypes.float16,
+                datatypes.bfloat16,
+            ),
+        ),
+    ),
+)
+elementwise_unary_ops.append(softshrink_opinfo)
 
 
 hardswish_opinfo = OpInfo(
@@ -1821,6 +1863,32 @@ selu_opinfo = OpInfo(
     ),
 )
 elementwise_unary_ops.append(selu_opinfo)
+
+
+tanhshrink_opinfo = OpInfo(
+    ltorch.tanhshrink,
+    dtypes=(datatypes.inexact,),
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=_elementwise_unary_torch(torch.nn.functional.tanhshrink),
+    test_directives=(
+        # Torch doesn't support CPU float16 or complex32 tanhshrink
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16, datatypes.complex32),
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=1e-2, rtol=1e-2)),
+            executors=("nvfuser",),
+            dtypes=(
+                datatypes.float16,
+                datatypes.bfloat16,
+            ),
+        ),
+    ),
+)
+elementwise_unary_ops.append(tanhshrink_opinfo)
 
 
 round_opinfo = OpInfo(
@@ -2177,11 +2245,20 @@ lt_opinfo = OpInfo(
 )
 elementwise_binary_ops.append(lt_opinfo)
 
+
+def min_max_singularity_fn_producer(sample):
+    a, b = sample.args
+    if a.shape == b.shape or b.shape == ():
+        return lambda x: x - b if x is a else make_tensor_like(x, low=1)
+    return lambda x: x - a if x is b else make_tensor_like(x, low=1)
+
+
 maximum_opinfo = OpInfo(
     clang.maximum,
     sample_input_generator=partial(elementwise_binary_generator, no_rhs_numbers=True),
     torch_reference=torch.maximum,
     supports_grad=True,
+    singularity_fn_producer=min_max_singularity_fn_producer,
 )
 elementwise_binary_ops.append(maximum_opinfo)
 
@@ -2189,6 +2266,7 @@ minimum_opinfo = OpInfo(
     clang.minimum,
     sample_input_generator=partial(elementwise_binary_generator, no_rhs_numbers=True),
     torch_reference=torch.minimum,
+    singularity_fn_producer=min_max_singularity_fn_producer,
 )
 elementwise_binary_ops.append(minimum_opinfo)
 
@@ -2495,6 +2573,7 @@ def div_sample_generator(op, device, dtype, requires_grad, **kwargs):
             # numerator, denominator, rounding_mode
             yield SampleInput(make(shape_a), make(shape_b), rounding_mode=rounding_mode)
             yield SampleInput(make(shape_a), number(), rounding_mode=rounding_mode)
+            yield SampleInput(number(), make(shape_a), rounding_mode=rounding_mode)
 
 
 div_opinfo = OpInfo(
@@ -2504,17 +2583,19 @@ div_opinfo = OpInfo(
     torch_reference=torch.div,
     test_directives=(
         # NOTE: PyTorch doesn't support boolean division
-        # TODO: fix dtype mismatch when using nvfuser executors
         DecorateInfo(
             pytest.mark.xfail,
             "test_core_vs_torch_consistency",
             dtypes=(datatypes.bool8,),
             devicetypes=(devices.DeviceType.CPU, devices.DeviceType.CUDA),
         ),
+        # NOTE: bfloat16 and float16 is skipped
+        # See: https://github.com/Lightning-AI/lightning-thunder/issues/1724
         DecorateInfo(
             pytest.mark.xfail,
             "test_core_vs_torch_consistency",
             executors=("nvfuser",),
+            dtypes=(datatypes.bool8, datatypes.bfloat16, datatypes.float16),
         ),
         DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
     ),
@@ -2683,6 +2764,17 @@ def where_sample_generator(op, device, dtype, requires_grad, **kwargs):
     for pred_shape, a_shape, b_shape in cases:
         pred, a, b = make(pred_shape, dtype=torch.bool, requires_grad=False), make(a_shape), make(b_shape)
         yield SampleInput(pred, a, b)
+
+    # NOTE: requires_grad needs tensor inputs on non-pred.
+    if not requires_grad:
+        # generate scalar inputs
+        dtypes = [float, int, bool, complex]
+
+        for dtype in dtypes:
+            pred = make([2, 3], dtype=torch.bool, requires_grad=False)
+            a = dtype(1.0)
+            b = dtype(0.0)
+            yield SampleInput(pred, a, b)
 
 
 def where_error_generator(op, device, dtype=torch.float32, **kwargs):
@@ -2895,6 +2987,30 @@ tril_opinfo = OpInfo(
 )
 conditional_and_mask_ops.append(tril_opinfo)
 
+triu_opinfo = OpInfo(
+    ltorch.triu,
+    sample_input_generator=tril_sample_generator,
+    torch_reference=torch.triu,
+    test_directives=(
+        # Not all PyTorch versions support complex32 triu
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.complex32,),
+        ),
+        # PyTorch 2.0 doesn't support CUDA bfloat16 triu
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            devicetypes=(devices.DeviceType.CUDA,),
+            dtypes=(datatypes.bfloat16,),
+            active_if=(LooseVersion(torch.__version__) < "2.1"),
+        ),
+    ),
+)
+
+conditional_and_mask_ops.append(triu_opinfo)
+
 # Puts all elementwise ternary opinfos into the "opinfos" list
 opinfos.extend(conditional_and_mask_ops)
 
@@ -2968,7 +3084,7 @@ def type_error_generator_tensor(op, device, dtype=torch.float32, **kwargs):
 
 
 type_opinfo_tensor = OpInfo(
-    ltorch.type,
+    ltorch.torch_type,
     sample_input_generator=type_sample_generator_tensor,
     error_input_generator=type_error_generator_tensor,
     torch_reference=torch.Tensor.type,
@@ -2999,7 +3115,7 @@ def string_compare(actual, expected, **kwargs):
 
 
 type_opinfo_str = OpInfo(
-    ltorch.type,
+    ltorch.torch_type,
     sample_input_generator=type_sample_generator_str,
     error_input_generator=type_error_generator_str,
     torch_reference=torch.Tensor.type,
@@ -3022,21 +3138,40 @@ def to_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # None
     yield SampleInput(make(4, 4))
 
+    # None - copy
+    yield SampleInput(make(4, 4), copy=True)
+
     # device
     yield SampleInput(make(4, 4), device)
     yield SampleInput(make(4, 4), "cpu")
     yield SampleInput(make(4, 4), "cpu", dtype=to_dtype)
 
+    # device - copy
+    yield SampleInput(make(4, 4), device, copy=True)
+    yield SampleInput(make(4, 4), "cpu", copy=True)
+    yield SampleInput(make(4, 4), "cpu", dtype=to_dtype, copy=True)
+
     # dtype
     yield SampleInput(make(4, 4), dtype)
+
+    # dtype - copy
+    yield SampleInput(make(4, 4), dtype, copy=True)
 
     # device and dtype
     yield SampleInput(make(4, 4), device, dtype)
     yield SampleInput(make(4, 4), "cpu", to_dtype)
 
+    # device and dtype - copy
+    yield SampleInput(make(4, 4), device, dtype, copy=True)
+    yield SampleInput(make(4, 4), "cpu", to_dtype, copy=True)
+
     # tensor
     yield SampleInput(make(4, 4), make(2, 2))
     yield SampleInput(make(4, 4), make(2, 2, device="cpu", dtype=to_dtype))
+
+    # tensor - copy
+    yield SampleInput(make(4, 4), make(2, 2), copy=True)
+    yield SampleInput(make(4, 4), make(2, 2, device="cpu", dtype=to_dtype), copy=True)
 
 
 to_opinfo = OpInfo(
@@ -4848,7 +4983,7 @@ def index_put_sample_generator(op, device, dtype, requires_grad, **kwargs):
         ((4, 2, 3), [(4,), (1,), ()], (1,), True),
         ((4, 2, 3), [(), (2,), ()], (1,), False),
         ((4, 2, 3), [(2,), (2,)], (1,), True),
-        ((4, 2, 3), [(3)], (1,), False),
+        ((4, 2, 3), [3], (1,), False),
         ((4, 2, 3), [(0,)], (2, 3), False),
         ((4, 2, 3), [(0,), (0,)], (1,), False),
         ((4,), [(2,)], (1,), True),
@@ -7808,9 +7943,14 @@ if LooseVersion(torch.__version__) >= "2.4":
             ),
             # See issue - https://github.com/Lightning-AI/lightning-thunder/issues/1395
             DecorateInfo(
-                custom_comparator(partial(assert_close, atol=2e-3, rtol=2e-3)),
+                custom_comparator(partial(assert_close, atol=1e-2, rtol=1e-2)),
                 dtypes=(datatypes.float16,),
                 devicetypes=(devices.DeviceType.CUDA,),
+            ),
+            DecorateInfo(
+                pytest.mark.skip(reason="Flaky. See https://github.com/Lightning-AI/lightning-thunder/issues/1678"),
+                "test_core_vs_torch_consistency",
+                dtypes=(datatypes.bfloat16,),
             ),
         ),
     )
@@ -8284,7 +8424,7 @@ def grad_scaled_dot_product_attention_sample_generator(op, device, dtype, requir
     """https://pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html"""
     from thunder.executors.sdpaex import SpdaBackend
 
-    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad, low=-0.5, high=0.5)
     # Reference metadata:
     # https://github.com/pytorch/pytorch/blob/main/torch/_meta_registrations.py#L4863-L4899
     # * query (batch_size, num_heads, query_seq_len, E)
@@ -8360,7 +8500,7 @@ def grad_scaled_dot_product_attention_sample_generator(op, device, dtype, requir
         # Test the scale factor which was added in torch 2.1
         if LooseVersion(torch.__version__) >= LooseVersion("2.1.0"):
             q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
-            yield SampleInput(q, k, v, attn_mask := None, dropout_p := 0.0, is_causal := False, scale=0.123)
+            yield SampleInput(q, k, v, attn_mask := None, dropout_p := 0.0, is_causal := False, scale=0.125)
 
         # NOTE Flash attention sdpa does not support attn_mask argument; These cases always use memory efficient sdpa.
         q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
@@ -8656,13 +8796,28 @@ def nll_loss_sample_generator(op, device, dtype, requires_grad, **kwargs):
         # Input is expected to be log-probs.
         # We provide a which is log-stochastic in channel dims.
         a = make(input_shape, requires_grad=False)
-        for dim in range(2 if len(input_shape) >= 2 else 1, a.ndim):
+        class_dim = 1 if len(input_shape) >= 2 else 0
+        for dim in range(class_dim + 1, a.ndim):
             a = a.log_softmax(dim=dim)
         a.requires_grad_(requires_grad)
 
+        target = make(target_shape, low=0, high=C, dtype=torch.long, requires_grad=False)
+        # NOTE pytorch `cuda` behavior for scalar target == ignore_index diverges from the cpu behavior.
+        # def foo(device):
+        #     ignore_index = -100
+        #     logits = torch.randn(5, device=device, dtype=torch.float32, requires_grad=False)
+        #     weight = torch.randn(5, device=device, dtype=torch.float32, requires_grad=False)
+        #     labels = torch.tensor(ignore_index, device=device)
+        #     print(torch.nn.functional.cross_entropy(logits, labels, weight, ignore_index=ignore_index))
+        # foo("cpu")  # tensor(nan)
+        # foo("cuda") # tensor(0., device='cuda:0')
+        if target.ndim != 0:
+            # sprinkle ignore_index in the target, verify correctness, see issue 1744.
+            target = torch.where(make(target_shape, low=0.0, high=1.0, requires_grad=False) > 0.3, target, ignore_index)
+
         yield SampleInput(
             a,
-            target := make(target_shape, low=0, high=C, dtype=torch.long, requires_grad=False),
+            target=target,
             weight=make(C, low=1.0, high=2.0, requires_grad=False) if weight_flag else None,
             ignore_index=ignore_index,
             reduction=reduction_str,

@@ -48,6 +48,7 @@ def make_aug_forward_and_backward(bsym: BoundSymbol) -> tuple[Callable, Callable
     import thunder
     from thunder.common import _make_cache_key
     from thunder.core.transforms import _get_gradfn_and_executor, eval_trace
+    from thunder.core.transform_common import dce
 
     joint_forward_backward, executor = _get_gradfn_and_executor(bsym)
     utils.check(
@@ -59,7 +60,8 @@ def make_aug_forward_and_backward(bsym: BoundSymbol) -> tuple[Callable, Callable
     if cached_result is not None and not getattr(joint_forward_backward, "_disable_caching", False):
         return cached_result
 
-    joint_trace = thunder.trace(inline_trace=False, use_dce=False)(joint_forward_backward, *bsym.args, **bsym.kwargs)
+    # dce is necessary to remove duplicated shape queries, otherwise the trace might overwritten NumberProxy variables
+    joint_trace = thunder.trace(inline_trace=False, use_dce=True)(joint_forward_backward, *bsym.args, **bsym.kwargs)
     consumers = utils.consumers(joint_trace)
 
     def find_backward_input(forward_output):
