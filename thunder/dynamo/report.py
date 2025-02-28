@@ -42,6 +42,7 @@ from thunder.dynamo.benchmark_utils import (
     TorchInductorSpecification,
     WallTime,
     KernelTime,
+    WallTimeWithMemoryUsage,
     check_timing,
     check_timing_bsym,
 )
@@ -546,6 +547,8 @@ class FXGraphReport:
     # forward
     fwd_measurement = {fwd_timing_str}
     print("fwd_measurement=", fwd_measurement)
+    if hasattr(fwd_measurement, "max_allocated_memory"):
+        print(f"fwd_measurement.max_allocated_memory={{fwd_measurement.max_allocated_memory}}MB")
 """
         if not forward_only:
             code_str = f"""{code_str}
@@ -555,6 +558,8 @@ class FXGraphReport:
     backward_args = backward_setup()
     bwd_measurement = {bwd_timing_str}
     print("bwd_measurement=", bwd_measurement)
+    if hasattr(bwd_measurement, "max_allocated_memory"):
+        print(f"bwd_measurement.max_allocated_memory={{bwd_measurement.max_allocated_memory}}MB")
 """
 
         code_str += f"test_{self.graph_name}()"
@@ -1144,7 +1149,7 @@ def thunderfx_benchmark_report_from_splits(
         graph_folder = folder_path / thunder_fxgraph_report.graph_name
         graph_folder.mkdir()
         for split_report in thunder_fxgraph_report.subgraph_reports:
-            check_timing(graph_folder, split_report, torchinductor, thunderjit, WallTime, "walltime", rtol, atol)
+            check_timing(graph_folder, split_report, torchinductor, thunderjit, WallTimeWithMemoryUsage, "walltime", rtol, atol)
             check_timing(graph_folder, split_report, torchinductor, thunderjit, KernelTime, "kerneltime", rtol, atol)
             runnable_split_reports.append(split_report)
     if not compare_fusion:

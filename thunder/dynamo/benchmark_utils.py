@@ -428,6 +428,12 @@ def check_timing(
         if m1 is None:
             assert m2 is None
             continue
+
+        if timer_fn.name == "WallTimeWithMemoryUsage":
+            print(
+                f"Max_allocated_memory: [{graph_name} {name}] {compile_fn1.name}({m1.max_allocated_memory}MB); {compile_fn2.name}({m2.max_allocated_memory}MB)"
+            )
+
         ret = check_threshold_log(
             m1.median, m2.median, compile_fn1.name, compile_fn2.name, f"{graph_name} {name}", timer_name, rtol, atol
         )
