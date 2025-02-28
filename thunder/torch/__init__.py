@@ -1892,7 +1892,7 @@ def hardtanh(a: TensorProxy, /, min_val: float = -1.0, max_val: float = 1.0, inp
     utils.check(min_val < max_val, lambda: f"max_val {max_val} must be larger than min_val {min_val}")
     out = clamp(a, min_val, max_val)
     if inplace:
-        return _copy_(out, a)
+        return _copy_(a, out)
     return out
 
 
