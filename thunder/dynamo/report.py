@@ -1149,7 +1149,9 @@ def thunderfx_benchmark_report_from_splits(
         graph_folder = folder_path / thunder_fxgraph_report.graph_name
         graph_folder.mkdir()
         for split_report in thunder_fxgraph_report.subgraph_reports:
-            check_timing(graph_folder, split_report, torchinductor, thunderjit, WallTimeWithMemoryUsage, "walltime", rtol, atol)
+            check_timing(
+                graph_folder, split_report, torchinductor, thunderjit, WallTimeWithMemoryUsage, "walltime", rtol, atol
+            )
             check_timing(graph_folder, split_report, torchinductor, thunderjit, KernelTime, "kerneltime", rtol, atol)
             runnable_split_reports.append(split_report)
     if not compare_fusion:
