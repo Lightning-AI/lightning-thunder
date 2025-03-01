@@ -325,10 +325,10 @@ def make_te_linear_meta(is_grad_enabled: bool = False):
 
             # https://github.com/NVIDIA/TransformerEngine/blob/f2b09d2a206ebaddbec6aa7da1158a449f0457f9/transformer_engine/pytorch/module/linear.py/#L270-L274
             saved_tensors = (
-                TensorProxy(like=a, shape=a.shape, dtype=float8_e4m3fn),             # saved_inputmat
-                TensorProxy(like=w, shape=w.shape, dtype=uint8),                     # fp8_weight (rowwise)
-                TensorProxy(like=w, shape=w.shape, dtype=uint8),                     # fp8_weight (colwise)
-                TensorProxy(like=w, shape=w.shape),                                  # weight
+                TensorProxy(like=a, shape=a.shape, dtype=float8_e4m3fn),  # saved_inputmat
+                TensorProxy(like=w, shape=w.shape, dtype=uint8),  # fp8_weight (rowwise)
+                TensorProxy(like=w, shape=w.shape, dtype=uint8),  # fp8_weight (colwise)
+                TensorProxy(like=w, shape=w.shape),  # weight
                 None if bias is None else TensorProxy(like=bias, shape=bias.shape),  # bias
             )
 
