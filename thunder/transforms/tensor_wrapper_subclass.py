@@ -41,7 +41,7 @@ if TYPE_CHECKING:
     from optree import PyTreeSpec
     from torch.fx import GraphModule
     from torch._ops import OpOverload
-    from thunder.core.symbol import Symbol, BoundSymbol
+    from thunder.core.symbol import BoundSymbol
 
 
 __all__ = [
@@ -227,12 +227,39 @@ def make_trace_executable(trace_to_convert: TraceCtx, *args_for_eval, **kwargs_f
 
 @dataclass
 class DesugarTensorSubclass:
+    """Transforms tensor subclass operations into their underlying tensor operations.
+
+    This class handles the desugaring of tensor subclass operations by:
+    1. Identifying tensor subclass proxies that need to be flattened
+    2. Converting bound symbols involving tensor subclasses to FX graphs
+    3. Translating FX graphs back to Thunder bound symbols
+    4. Managing the mapping between original and desugared operations
+
+    Attributes:
+        computation_trace: The trace context being processed
+        swap_map: Maps variables to their corresponding proxy interfaces
+        fake_tensor_mode: Mode for creating fake tensors during tracing
+        flat_trace_args: Flattened arguments of the trace
+        subclass_proxy_to_flatten: Set of tensor subclass proxies to be flattened
+        bsym_to_new_outputs: Maps bound symbols to their new tensor proxy outputs
+        fx_graphs:
+            List of pairs of :class:`~thunder.core.symbol.BoundSymbol` and generated FX graph module
+        proxy_to_strides:
+            Maps :class:`~thunder.core.proxies.TensorProxy` and :class:`~thunder.core.proxies.SubclassTensorProxy`
+            to strides of corresponding :class:`~torch._subclasses.fake_tensor.FakeTensor`s
+            that are acquired through :mod:`torch.fx`.
+        queried_proxies_of_strides: Track proxies whose strides are utilized in their materialization.
+    """
+
     computation_trace: TraceCtx
     swap_map: dict[Variable, ProxyInterface] = field(init=False, default_factory=dict)
     fake_tensor_mode: FakeTensorMode = field(init=False, default_factory=FakeTensorMode)
     flat_trace_args: Sequence[ProxyInterface] = field(init=False, default=None)
     subclass_proxy_to_flatten: set[Variable] = field(init=False, default_factory=set)
     bsym_to_new_outputs: dict[BoundSymbol, list[TensorProxy]] = field(init=False, default_factory=dict)
+    fx_graphs: list[tuple[BoundSymbol, GraphModule]] = field(init=False, default_factory=list)
+    proxy_to_strides: dict[Variable, tuple[int, ...] | list[tuple[int, ...]]] = field(init=False, default_factory=dict)
+    queried_proxies_of_strides: list[str] = field(init=False, default_factory=list)
 
     def __post_init__(self) -> None:
         self.flat_trace_args = self._get_flat_trace_args()
@@ -281,18 +308,33 @@ class DesugarTensorSubclass:
                 self.subclass_proxy_to_flatten.add(variableify(arg))
 
     def _get_tensor_attr_names(self, p: SubclassTensorProxy) -> list[str]:
+        """Get the names of tensor attributes from a SubclassTensorProxy."""
         return p._tensor_attr_names
 
     def _get_non_tensor_attr_names(self, p: SubclassTensorProxy) -> list[str]:
+        """Get the names of non-tensor attributes from a SubclassTensorProxy."""
         return p._non_tensor_attr_names
 
     def translate_fx_graph_into_bsym(
         self,
         bsym: BoundSymbol,
         fx_graph: GraphModule,
-    ) -> BoundSymbol | tuple[BoundSymbol, ...]:
-        import thunder.torch as ltorch
+    ) -> list[BoundSymbol]:
+        """Translate an FX graph into Thunder bound symbols.
+
+        Args:
+            bsym: The original bound symbol
+            fx_graph: The FX graph to translate
+
+        Returns:
+            The translated bound symbol(s)
+
+        This method converts operations in the FX graph to Thunder bound symbols,
+        handling tensor subclass flattening and unflattening as needed.
+        """
         from thunder.torch import _torch_to_thunder_function_map
+
+        self.fx_graphs.append((bsym, fx_graph))
 
         unwrapped_bsym_args: dict[int, ProxyInterface] = {}
         list_of_flattening_bsyms: list[BoundSymbol] = []
@@ -357,34 +399,39 @@ class DesugarTensorSubclass:
         bsyms: list[BoundSymbol] = []
         if list_of_flattening_bsyms:
             bsyms.extend(list_of_flattening_bsyms)
+
+        # Define arg_mapper outside the loop
+        def arg_mapper(arg, current_node):
+            if isinstance(arg, Node):  # Fixed: check for Node type, not node variable
+                if isinstance(arg.target, str):
+                    return unwrapped_bsym_args[arg_name_to_index[arg.target]]
+                else:
+                    return fxnode_output_name_to_tensor_proxy[str(arg)]
+            elif isinstance(arg, immutable_dict):
+                return dict(arg)
+            elif isinstance(arg, immutable_list):
+                return list(arg)
+            else:
+                return arg
+
         fxnode_output_name_to_tensor_proxy: dict[str, OpOverload] = {}
         for node, ltorch_op in zip(list_of_function_call_node, ltorch_ops_for_node_of_ops):
             args: list[Node] = node.args
 
-            arg_proxies: list[ProxyInterface] = []
-            for a in args:
-                if isinstance(a, Node):
-                    if isinstance(a.target, str):
-                        arg_proxies.append(unwrapped_bsym_args[arg_name_to_index[a.target]])
-                    else:
-                        arg_proxies.append(fxnode_output_name_to_tensor_proxy[str(a)])
-                else:
-                    if isinstance(a, immutable_dict):
-                        arg_proxies.append(dict(a))
-                    elif isinstance(a, immutable_list):
-                        arg_proxies.append(list(a))
-                    else:
-                        arg_proxies.append(a)
+            # Use a lambda to bind the current node to arg_mapper
+            current_mapper = lambda arg: arg_mapper(arg, node)
 
+            arg_proxies = tree_map(current_mapper, args)
+            kwargs_to_ltorch = tree_map(current_mapper, node.kwargs)
             self.computation_trace.push_scope([])
 
             try:
                 with tracectx(self.computation_trace):
-                    out = ltorch_op(*arg_proxies)
+                    out = ltorch_op(*arg_proxies, **kwargs_to_ltorch)
             except Exception as e:
                 msg = (
                     f"Failing to map `torch.{node}` to `thunder.torch` op of "
-                    f"{ltorch_op} with args of {arg_proxies}\n"
+                    f"{ltorch_op} with args of {arg_proxies} and kwargs of {kwargs_to_ltorch}\n"
                     f"BoundSymbol in question is\n```python\n{bsym}\n```\n"
                     f"Corresponding torch.fx Graph is\n```python\n{fx_graph.print_readable(print_output=False)}\n```\n"
                     f"Original error is {e}"
@@ -393,6 +440,7 @@ class DesugarTensorSubclass:
             else:
                 fxnode_output_name_to_tensor_proxy[str(node)] = out
                 bsyms.extend(self.computation_trace.pop_scope())
+
         if len(bsyms) == 0:
             return [bsym]
 
@@ -417,7 +465,7 @@ class DesugarTensorSubclass:
                     if isinstance(value, immutable_dict):
                         new_non_tensor_values.append(dict(value))
                     else:
-                        new_non_tensor_values.append(list(v))
+                        new_non_tensor_values.append(list(value))
                 else:
                     new_non_tensor_values.append(value)
             utils.check(
@@ -456,10 +504,57 @@ class DesugarTensorSubclass:
             sbsym.header = f"[{i}/{len(bsyms)}] unrolled `__torch_dispatch__` of `{header}`"
         return bsyms
 
+    def _materialize_proxy_for_fx(self, proxy: ProxyInterface | Number | str):
+        if isinstance(proxy, SubclassTensorProxy):
+            fake_tensor_subclass = _make_fake_subclass_tensor_from_subclass_tensor_proxy(proxy, self.fake_tensor_mode)
+            if (var_proxy := variableify(proxy)) in self.proxy_to_strides:
+                tensor_attr_names, metadata = fake_tensor_subclass.__tensor_flatten__()
+                strides = self.proxy_to_strides[var_proxy]
+                utils.check(len(tensor_attr_names) == len(strides), lambda: f"{tensor_attr_names = }, {strides = }")
+                inner_tensors: dict[str, FakeTensor] = {}
+                for name, stride in zip(tensor_attr_names, strides):
+                    t = getattr(fake_tensor_subclass, name)
+                    inner_tensors[name] = torch.as_strided(t, t.size(), stride)
+                self.queried_proxies_of_strides.append(var_proxy.proxy.name)
+                return fake_tensor_subclass.__class__.__tensor_unflatten__(
+                    inner_tensors, metadata, outer_size=-1, outer_stride=-1
+                )
+            return fake_tensor_subclass
+        elif isinstance(proxy, TensorProxy):
+            fake_tensor = _materialize_tensor_proxy(proxy, self.fake_tensor_mode)
+            if (var_proxy := variableify(proxy)) in self.proxy_to_strides:
+                stride = self.proxy_to_strides[var_proxy]
+                self.queried_proxies_of_strides.append(var_proxy.proxy.name)
+                return torch.as_strided(fake_tensor, fake_tensor.size(), stride)
+            return fake_tensor
+        elif isinstance(proxy, (Number, str)):
+            return proxy
+        else:
+            return proxy.value
+
+    def _materialize_trace_args_for_fx(self, trace: TraceCtx):
+        return tree_map(
+            self._materialize_proxy_for_fx,
+            trace.args,
+        )
+
     def convert_trace_to_fx_graph_and_get_fake_result(
         self,
         trace: TraceCtx,
     ) -> tuple[GraphModule, tuple[OutputWrapperForFxTracing, ...], tuple[torch.Tensor, ...], PyTreeSpec]:
+        """Convert a Thunder trace to an FX graph and execute it with fake tensors.
+
+        Args:
+            trace: The Thunder trace to convert
+
+        Returns:
+            A tuple containing:
+            - The FX GraphModule
+            - The wrapped outputs from executing the FX graph
+            - The original tensor outputs
+            - The PyTree specification for the output structure
+        """
+
         def create_ctor(unflatten_method, tensor_names):
             def ctor(tensors, metadata):
                 inner_tensors = dict(zip(tensor_names, tensors))
@@ -467,13 +562,7 @@ class DesugarTensorSubclass:
 
             return ctor
 
-        args = tree_map(
-            lambda t: maybe_materialize_tensor(
-                t,
-                self.fake_tensor_mode,
-            ),
-            trace.args,
-        )
+        args = self._materialize_trace_args_for_fx(trace)
         desugared_args = []
         arg_idx_to_sugar: dict[int, tuple[int, Any]] = {}
         for a in args:
@@ -567,10 +656,29 @@ class DesugarTensorSubclass:
         ):
             fx: GraphModule = make_fx(f_with_wrap_and_unwrap)(*desugared_args)
 
+        arity_of_fx_forward = fx.forward.__code__.co_argcount - 1
+        utils.check(
+            arity_of_fx_forward == len(desugared_args),
+            lambda: f"{arity_of_fx_forward=}, {len(desugared_args)=}, {desugared_args=}",
+        )
+
         return fx, fx(*desugared_args), tuple(orig_output), out_specs[0]
 
     def __call__(self, bsym: BoundSymbol) -> list[BoundSymbol]:
-        """Process a bound symbol, handling tensor subclasses appropriately."""
+        """Process a bound symbol, handling tensor subclasses appropriately.
+
+        Args:
+            bsym: The bound symbol to process
+
+        Returns:
+            A list of processed bound symbols
+        """
+        if self.proxy_to_strides:
+            diff_of_proxy_to_strides = {
+                variableify(v): self.proxy_to_strides[k] for k, v in self.swap_map.items() if k in self.proxy_to_strides
+            }
+            self.proxy_to_strides.update(diff_of_proxy_to_strides)
+
         updated_bsym = bsym.from_bsym_swap_proxies(self.swap_map)
 
         # Handle return operation
@@ -594,17 +702,29 @@ class DesugarTensorSubclass:
         # Convert the bound symbol to an FX graph and process it
         return self._process_bound_symbol_with_fx(updated_bsym, is_subclass_ctor)
 
+    # TODO(crcrpar): Remove this method.
     def _handle_return_operation(self, bsym: BoundSymbol) -> list[BoundSymbol]:
-        """Handle return operation bound symbols."""
+        """Handle return operation bound symbols.
+
+        Args:
+            bsym: The return operation bound symbol
+
+        Returns:
+            A list containing the processed bound symbol
+        """
         # Filter out SubclassTensorProxy entries from swap_map
         new_swap_map = {k: v for k, v in self.swap_map.items() if not isinstance(v, SubclassTensorProxy)}
-        # Early return if no subclass proxies to flatten or always true condition
-        if not self.subclass_proxy_to_flatten or True:
-            return [bsym]
-        return [bsym]  # This is redundant but matches original behavior
+        return [bsym]
 
     def _classify_bound_symbol(self, bsym: BoundSymbol) -> tuple[bool, bool]:
-        """Determine if the bound symbol is a subclass constructor and if it has subclass args."""
+        """Determine if the bound symbol is a subclass constructor and if it has subclass args.
+
+        Args:
+            bsym: The bound symbol to classify
+
+        Returns:
+            A tuple of (is_subclass_ctor, no_subclass_args)
+        """
         is_bsym_of_subclass_ctor = bsym.sym.id == prims.PrimIDs.TENSOR_SUBCLASS_CTOR
         returns_subclass = any(isinstance(a, SubclassTensorProxy) for a in bsym.flat_proxy_outs)
         no_subclass_args = all(not isinstance(a, SubclassTensorProxy) for a in bsym.flat_proxy_args)
@@ -614,7 +734,15 @@ class DesugarTensorSubclass:
         return is_subclass_ctor, no_subclass_args
 
     def _process_bound_symbol_with_fx(self, bsym: BoundSymbol, is_subclass_ctor: bool) -> list[BoundSymbol]:
-        """Process a bound symbol by converting it to an FX graph and handling the results."""
+        """Process a bound symbol by converting it to an FX graph and handling the results.
+
+        Args:
+            bsym: The bound symbol to process
+            is_subclass_ctor: Whether the bound symbol is a subclass constructor
+
+        Returns:
+            A list of processed bound symbols
+        """
         # Convert the bound symbol to an FX graph
         trace = trace_from_bsym_or_bsyms(bsym)
         fx, sequencified_cosmeticized_out, orig_output, _ = self.convert_trace_to_fx_graph_and_get_fake_result(trace)
@@ -634,29 +762,62 @@ class DesugarTensorSubclass:
     def _handle_subclass_constructor(
         self, bsym: BoundSymbol, sequencified_cosmeticized_out, orig_output
     ) -> list[BoundSymbol]:
-        """Handle a bound symbol that constructs a tensor subclass."""
-        utils.check(len(sequencified_cosmeticized_out) == 1 and len(orig_output) == 1, lambda: "")
-        fake_tensor_subclass = orig_output[0]
-        subclass_proxy = bsym.flat_outs[0]
+        """Handle a bound symbol that constructs a tensor subclass.
 
-        # Extract tensor attributes and metadata
-        tensor_attr_names, metadata = fake_tensor_subclass.__tensor_flatten__()
-        subclass_proxy._tensor_attr_names = tensor_attr_names
-        subclass_proxy._non_tensor_attr_names = list(metadata.keys())
+        Args:
+            bsym: The bound symbol to process
+            sequencified_cosmeticized_out: The wrapped outputs from the FX graph
+            orig_output: The original tensor outputs
+
+        Returns:
+            A list containing the processed bound symbol
+        """
+        utils.check(len(sequencified_cosmeticized_out) == 1 and len(orig_output) == 1, lambda: "")
+        subclass_proxy = bsym.flat_outs[0]
+        utils.check_type(subclass_proxy, SubclassTensorProxy)
         self.subclass_proxy_to_flatten.add(variableify(subclass_proxy))
 
+        # Extract tensor attributes and metadata
+        fake_tensor_subclass = orig_output[0]
+        tensor_attr_names, metadata = fake_tensor_subclass.__tensor_flatten__()
+        fake_tensors = [getattr(fake_tensor_subclass, name) for name in tensor_attr_names]
+
+        # with tracectx(self.computation_trace):
+        #     proxy_of_fake_tensors = [proxy_fake_tensor(t) for t in fake_tensors]
+
         # Set attributes on the proxy
-        for name, value in zip(
-            tensor_attr_names + subclass_proxy._non_tensor_attr_names,
-            subclass_proxy._tensors + subclass_proxy._non_tensor_attr_names,
-        ):
-            setattr(subclass_proxy, name, value)
+        subclass_proxy._tensor_attr_names = tensor_attr_names
+        subclass_proxy._non_tensor_attr_names = list(metadata.keys())
+        # subclass_proxy._tensors.extend(proxy_of_fake_tensors)
+        for name, proxy in zip(tensor_attr_names, subclass_proxy._tensors):
+            setattr(subclass_proxy, name, proxy)
+        for key, val in metadata.items():
+            setattr(subclass_proxy, key, val)
+
+        strides: list[tuple[int, ...]] = [t.stride() for t in fake_tensors]
+
+        # TODO(crcrpar): Track only if strides indicate that the tensor is not contiguous.
+        self.proxy_to_strides[variableify(subclass_proxy)] = strides
+        for p, s in zip(subclass_proxy._tensors, strides):
+            self.proxy_to_strides[variableify(p)] = s
+        bsym.header += f" Tensor Subclass Transform: {strides=} from {subclass_proxy.name=}"
+
         return [bsym]
 
     def _handle_regular_operation(
         self, bsym: BoundSymbol, fx, sequencified_cosmeticized_out, orig_output
     ) -> list[BoundSymbol]:
-        """Handle a bound symbol that is a regular operation (not a constructor)."""
+        """Handle a bound symbol that is a regular operation (not a constructor).
+
+        Args:
+            bsym: The bound symbol to process
+            fx: The FX graph module
+            sequencified_cosmeticized_out: The wrapped outputs from the FX graph
+            orig_output: The original tensor outputs
+
+        Returns:
+            A list of processed bound symbols
+        """
         # Process outputs
         out = self._process_outputs(sequencified_cosmeticized_out, orig_output)
 
@@ -679,10 +840,48 @@ class DesugarTensorSubclass:
         self.bsym_to_new_outputs[bsym_with_modified_output] = bsym_with_modified_output
 
         # Translate the FX graph into bound symbols
-        return self.translate_fx_graph_into_bsym(bsym_with_modified_output, fx)
+        bsyms = self.translate_fx_graph_into_bsym(bsym_with_modified_output, fx)
+
+        utils.check(
+            len(bsym.flat_proxy_outs) == len(orig_output),
+            lambda: f"{len(bsym.flat_proxy_outs)=}, {len(orig_output)=}",
+        )
+
+        strides_in_header: str | None = None
+        for proxy, fake_tensor in zip(out_proxy, orig_output):
+            # TODO(crcrpar): Track only proxies whose strides are not contiguous.
+            if is_traceable_wrapper_subclass(fake_tensor):
+                tensor_attr_names, _ = fake_tensor.__tensor_flatten__()
+                strides = [getattr(fake_tensor, name).stride() for name in tensor_attr_names]
+                var_p = variableify(proxy)
+                self.proxy_to_strides[var_p] = strides
+
+                strides_in_header = f"{proxy.name=}, {strides=}"
+                # TODO(crcrpar): Might better track tensot components as well
+                # for p, s in zip(proxy._tensors, strides):
+                #     self.proxy_to_strides[variableify(p)] = s
+            elif isinstance(fake_tensor, FakeTensor):
+                stride = fake_tensor.stride()
+                var_p = variableify(proxy)
+                self.proxy_to_strides[var_p] = stride
+                strides_in_header = f"{proxy.name=}, {stride=}"
+            else:
+                utils.check(False, lambda: f"{proxy=}, {fake_tensor=}")
+        if strides_in_header is not None:
+            bsyms[-1].header += f" Tensor Subclass Transform: {strides_in_header}"
+
+        return bsyms
 
     def _process_outputs(self, sequencified_cosmeticized_out, orig_output) -> list:
-        """Process and validate the outputs from the FX graph execution."""
+        """Process and validate the outputs from the FX graph execution.
+
+        Args:
+            sequencified_cosmeticized_out: The wrapped outputs from the FX graph
+            orig_output: The original tensor outputs
+
+        Returns:
+            A list of processed outputs
+        """
         out = []
         for cosmeticized_out, orig_out in zip(sequencified_cosmeticized_out, orig_output):
             if isinstance(cosmeticized_out.inner_tensors, dict):
