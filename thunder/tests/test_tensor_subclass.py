@@ -159,8 +159,6 @@ def test_func_of_subclass_ctor_wrapper(executor, device, _):
     actual = jitted(x, scale)
     torch.testing.assert_close((expected._x, expected._scale), (actual._x, actual._scale))
 
-    print(thunder.last_traces(jitted)[0])
-
 
 @instantiate(
     dtypes=(thunder.core.dtypes.float32,),
@@ -304,6 +302,10 @@ def test_torchao_float8_linear(executor, device, dtype, bias):
     ):
         pytest.xfail("numerical error")
     torch.testing.assert_close(actual, expected)
+
+    with torch.no_grad():
+        grad = torch.ones_like(actual)
+    actual.backward(grad)
 
     # TODO(crcrpar): Think of how to push tensor subclasses to `thunder.jit`.
     # Currently no subgraphs go to thunder.jit.
