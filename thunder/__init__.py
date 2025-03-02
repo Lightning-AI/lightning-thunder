@@ -634,7 +634,9 @@ def jit(
                     # by split_forward_backward
 
             if not _unroll_tensor_subclasses_applied:
-                computation_trc = unroll_tensor_subclasses(computation_trc)
+                computation_trc, _ = unroll_tensor_subclasses(
+                    computation_trc, is_bwd_trace=False, proxy_to_strides=None
+                )
                 computation_traces.append(computation_trc)
 
             if backward_trc is None:

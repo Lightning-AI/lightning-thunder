@@ -159,7 +159,9 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     fw_traces = [fw_trace]
     bw_traces = [bw_trace]
 
-    fw_trace = unroll_tensor_subclasses(fw_trace)
+    fw_trace, saved_proxy_for_bwd_to_strides = unroll_tensor_subclasses(
+        fw_trace, is_bwd_trace=False, proxy_to_strides=None
+    )
     fw_traces.append(fw_trace)
 
     from thunder.distributed import FSDPType
@@ -266,7 +268,7 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     if getattr(compile_data.fn, "use_fsdp", False):
         bw_trace = _fsdp_comm_bucketing.apply_bucketing_to_backward_trace(bw_trace)
 
-    bw_trace = unroll_tensor_subclasses(bw_trace, is_bwd_trace=True)
+    bw_trace, _ = unroll_tensor_subclasses(bw_trace, is_bwd_trace=True, proxy_to_strides=saved_proxy_for_bwd_to_strides)
     bw_traces.append(bw_trace)
 
     # Now we can run the optimization passes on the backward trace

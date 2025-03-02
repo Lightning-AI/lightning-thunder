@@ -249,6 +249,9 @@ class DesugarTensorSubclass:
             to strides of corresponding :class:`~torch._subclasses.fake_tensor.FakeTensor`s
             that are acquired through :mod:`torch.fx`.
         queried_proxies_of_strides: Track proxies whose strides are utilized in their materialization.
+        saved_tensors_for_backward:
+            Saved :class:`~thunder.core.proxies.TensorProxy`s and :class:`~thunder.core.proxies.SubclassTensorProxy`s
+            that are gotten from updated :class:`~thunder.core.symbol.BoundSymbol` of return.
     """
 
     computation_trace: TraceCtx
@@ -260,6 +263,7 @@ class DesugarTensorSubclass:
     fx_graphs: list[tuple[BoundSymbol, GraphModule]] = field(init=False, default_factory=list)
     proxy_to_strides: dict[Variable, tuple[int, ...] | list[tuple[int, ...]]] = field(init=False, default_factory=dict)
     queried_proxies_of_strides: list[str] = field(init=False, default_factory=list)
+    saved_tensors_for_backward: list[TensorProxy | SubclassTensorProxy | Any] = field(init=False, default_factory=list)
 
     def __post_init__(self) -> None:
         self.flat_trace_args = self._get_flat_trace_args()
@@ -300,6 +304,32 @@ class DesugarTensorSubclass:
                 "C1",
             )
         )
+
+    def _is_augmented_forward_trace(self) -> bool:
+        if self._is_backward_trace():
+            return False
+        fwd_return_bsyms = [
+            bsym for bsym in self.computation_trace.bound_symbols if bsym.sym.id == prims.PrimIDs.RETURN
+        ]
+        utils.check(
+            len(fwd_return_bsyms) == 1, lambda: f"{len(fwd_return_bsyms)} bsyms of {prims.PrimIDs.RETURN} found"
+        )
+        fwd_return_bsym: BoundSymbol = fwd_return_bsyms[0]
+        args = fwd_return_bsym.args
+        return isinstance(args, tuple) and len(args) == 2 and isinstance(args[0], dict) and isinstance(args[1], tuple)
+
+    def _get_flat_saved_tensors_for_backward(
+        self, bsym: BoundSymbol | None = None
+    ) -> Sequence[TensorProxy | SubclassTensorProxy | Any]:
+        if bsym is None:
+            fwd_return_bsyms = [
+                bsym for bsym in self.computation_trace.bound_symbols if bsym.sym.id == prims.PrimIDs.RETURN
+            ]
+            fwd_return_bsym: BoundSymbol = fwd_return_bsyms[0]
+        else:
+            fwd_return_bsym = bsym
+        args = fwd_return_bsym.args
+        return tree_flatten(args[1])[0]
 
     def _identify_subclass_proxies_to_flatten(self) -> None:
         """Identify SubclassTensorProxy instances that need to be flattened."""
@@ -714,6 +744,10 @@ class DesugarTensorSubclass:
         """
         # Filter out SubclassTensorProxy entries from swap_map
         new_swap_map = {k: v for k, v in self.swap_map.items() if not isinstance(v, SubclassTensorProxy)}
+
+        if self._is_augmented_forward_trace():
+            updated_saved_for_backward = self._get_flat_saved_tensors_for_backward(bsym)
+            self.saved_tensors_for_backward = list(updated_saved_for_backward)
         return [bsym]
 
     def _classify_bound_symbol(self, bsym: BoundSymbol) -> tuple[bool, bool]:
@@ -745,6 +779,9 @@ class DesugarTensorSubclass:
         """
         # Convert the bound symbol to an FX graph
         trace = trace_from_bsym_or_bsyms(bsym)
+        fx: GraphModule
+        sequencified_cosmeticized_out: tuple[OutputWrapperForFxTracing, ...]
+        orig_output: tuple[torch.Tensor, ...]
         fx, sequencified_cosmeticized_out, orig_output, _ = self.convert_trace_to_fx_graph_and_get_fake_result(trace)
 
         utils.check(
@@ -760,7 +797,10 @@ class DesugarTensorSubclass:
         return self._handle_regular_operation(bsym, fx, sequencified_cosmeticized_out, orig_output)
 
     def _handle_subclass_constructor(
-        self, bsym: BoundSymbol, sequencified_cosmeticized_out, orig_output
+        self,
+        bsym: BoundSymbol,
+        sequencified_cosmeticized_out: tuple[OutputWrapperForFxTracing, ...],
+        orig_output: tuple[torch.Tensor, ...],
     ) -> list[BoundSymbol]:
         """Handle a bound symbol that constructs a tensor subclass.
 
@@ -800,12 +840,17 @@ class DesugarTensorSubclass:
         self.proxy_to_strides[variableify(subclass_proxy)] = strides
         for p, s in zip(subclass_proxy._tensors, strides):
             self.proxy_to_strides[variableify(p)] = s
+        self.proxy_to_strides[variableify(subclass_proxy)] = strides
         bsym.header += f" Tensor Subclass Transform: {strides=} from {subclass_proxy.name=}"
 
         return [bsym]
 
     def _handle_regular_operation(
-        self, bsym: BoundSymbol, fx, sequencified_cosmeticized_out, orig_output
+        self,
+        bsym: BoundSymbol,
+        fx: GraphModule,
+        sequencified_cosmeticized_out: tuple[OutputWrapperForFxTracing, ...],
+        orig_output: tuple[torch.Tensor, ...],
     ) -> list[BoundSymbol]:
         """Handle a bound symbol that is a regular operation (not a constructor).
 
@@ -872,7 +917,11 @@ class DesugarTensorSubclass:
 
         return bsyms
 
-    def _process_outputs(self, sequencified_cosmeticized_out, orig_output) -> list:
+    def _process_outputs(
+        self,
+        sequencified_cosmeticized_out: tuple[OutputWrapperForFxTracing, ...],
+        orig_output: tuple[torch.Tensor, ...],
+    ) -> list[torch.Tensor]:
         """Process and validate the outputs from the FX graph execution.
 
         Args:
@@ -890,6 +939,31 @@ class DesugarTensorSubclass:
                 )
             out.append(orig_out)
         return out
+
+    def get_proxy_to_strides_for_saved_for_backward(self) -> dict[Variable, tuple[int, ...] | list[tuple[int, ...]]]:
+        if self._is_backward_trace():
+            return {}
+        if not self._is_augmented_forward_trace():
+            return {}
+        utils.check(
+            (
+                (self._is_augmented_forward_trace() and self.saved_tensors_for_backward)
+                or (not self.saved_tensors_for_backward)
+            ),
+            lambda: f"{self._is_augmented_forward_trace() = }, {self.saved_tensors_for_backward = }",
+        )
+        saved_tensors_for_backward: list[TensorProxy | SubclassTensorProxy | Any]
+        if self._is_augmented_forward_trace():
+            saved_tensors_for_backward = self.saved_tensors_for_backward
+        else:
+            saved_tensors_for_backward = self._get_flat_saved_tensors_for_backward()
+
+        d = {
+            k: self.proxy_to_strides[k]
+            for k in [variableify(v) for v in saved_tensors_for_backward]
+            if k in self.proxy_to_strides
+        }
+        return d
 
 
 def tensor_subclass_dce(trace: TraceCtx, is_bwd_trace: bool) -> TraceCtx:
@@ -979,7 +1053,12 @@ def tensor_subclass_dce(trace: TraceCtx, is_bwd_trace: bool) -> TraceCtx:
     return new_trace
 
 
-def unroll_tensor_subclasses(trace: TraceCtx, is_bwd_trace: bool = False) -> TraceCtx:
+def unroll_tensor_subclasses(
+    trace: TraceCtx,
+    *,
+    is_bwd_trace: bool = False,
+    proxy_to_strides: dict[Variable, tuple[int, ...] | list[tuple[int, ...]]] | None = None,
+) -> tuple[TraceCtx, dict[Variable, tuple[int, ...] | list[tuple[int, ...]]]]:
     """Unroll tensor subclasses in ``computation_trace``.
 
     Two things are happening inside of this function:
@@ -1008,6 +1087,8 @@ def unroll_tensor_subclasses(trace: TraceCtx, is_bwd_trace: bool = False) -> Tra
     start_time_ns = time.perf_counter_ns()
 
     desugar_tensor_subclass = DesugarTensorSubclass(computation_trace=trace)
+    if proxy_to_strides is not None and proxy_to_strides:
+        desugar_tensor_subclass.proxy_to_strides.update(proxy_to_strides)
     updated_bsyms: list[BoundSymbol] = []
     bsym: BoundSymbol
     for bsym in trace.bound_symbols:
@@ -1015,7 +1096,7 @@ def unroll_tensor_subclasses(trace: TraceCtx, is_bwd_trace: bool = False) -> Tra
         updated_bsyms.extend(maybe_desugared_bsyms)
 
     if not desugar_tensor_subclass.subclass_proxy_to_flatten:
-        return trace
+        return trace, desugar_tensor_subclass.proxy_to_strides
 
     end_time_ns = time.perf_counter_ns()
     elapsed_time_ns = end_time_ns - start_time_ns
@@ -1028,4 +1109,7 @@ def unroll_tensor_subclasses(trace: TraceCtx, is_bwd_trace: bool = False) -> Tra
     )
     dced_computation_trace = tensor_subclass_dce(computation_trace_with_subclass_tensor_unrolled, is_bwd_trace)
     warn_tensor_subclass_support()
-    return dced_computation_trace
+    return (
+        dced_computation_trace,
+        desugar_tensor_subclass.get_proxy_to_strides_for_saved_for_backward() if not is_bwd_trace else {},
+    )
