@@ -1965,6 +1965,8 @@ class SubclassTensorProxy(TensorProxy):
 
             args, kwargs = tree_map(lambda a: maybe_cast(a), (args, kwargs))
 
+            # NOTE(crcrpar): This doesn't work as https://github.com/Lightning-AI/lightning-thunder/pull/1500's
+            # OpExProcessor's evaluation tries to re-add already registered `name`s to a trace.
             super().__init__(*args, **kwargs)
 
             self._tensors = kwarg_tensors
