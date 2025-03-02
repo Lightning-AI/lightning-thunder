@@ -175,22 +175,22 @@ def trace_from_bsym_or_bsyms(bsym_or_bsyms: BoundSymbol | Sequence[BoundSymbol])
     from thunder.core.compile_data import get_compile_data
 
     cd = get_compile_data()
-    ad_hoc_executor = None
+    temporary_executor = None
     if cd is not None:
-        from thunder.extend import AdHocExecutor
+        from thunder.extend import TemporaryExecutor
 
-        executors_list = list(filter(lambda t: isinstance(t, AdHocExecutor), cd.executors_list))
+        executors_list = list(filter(lambda t: isinstance(t, TemporaryExecutor), cd.executors_list))
         if executors_list:
-            ad_hoc_executor = executors_list[0]
+            temporary_executor = executors_list[0]
 
     bsyms = list(utils.sequencify(bsym_or_bsyms))
     trace_args = bsyms[0].flat_proxy_args
     trace_name = bsyms[0].sym.name
 
-    if ad_hoc_executor is not None and ad_hoc_executor._implmap:
+    if temporary_executor is not None and temporary_executor._implmap:
         tmp_bsyms = []
         for bsym in bsyms:
-            if ad_hoc_executor.can_execute(bsym) and bsym.subsymbols:
+            if temporary_executor.can_execute(bsym) and bsym.subsymbols:
                 tmp_bsyms.extend(bsym.subsymbols)
             else:
                 tmp_bsyms.append(bsym)
