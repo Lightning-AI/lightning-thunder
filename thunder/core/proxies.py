@@ -2014,6 +2014,19 @@ class SubclassTensorProxy(TensorProxy):
                     self._non_tensors.append(a)
             baseutils.check(self._tensors, lambda: f"`{self._name}._tensors` must not be empty")
 
+    def copy_attributes_from(self, other: SubclassTensorProxy) -> None:
+        self._subclass_type = other._subclass_type
+        self._tensors = other._tensors
+        self._non_tensors = other._non_tensors
+        if hasattr(other, "_tensor_attr_names"):
+            self._tensor_attr_names = other._tensor_attr_names
+            for n, t in zip(self._tensor_attr_names, self._tensors):
+                setattr(self, n, t)
+        if hasattr(other, "_non_tensor_attr_names"):
+            self._non_tensor_attr_names = other._non_tensor_attr_names
+            for n, t in zip(self._non_tensor_attr_names, self._non_tensors):
+                setattr(self, n, t)
+
     def __tensor_flatten__(self) -> tuple[list[TensorProxy], dict[str, Any]]:
         return self._tensor_attr_names, self.metadata
 
