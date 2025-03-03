@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import partial
 from numbers import Number
-from typing import Any, Optional
+from typing import Any
 from contextlib import contextmanager
 
 import torch
@@ -3365,64 +3365,55 @@ class OptimBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
             ]
             return (params, grads, square_avgs, grad_avgs, momentum_buffer_list, state_steps), {}
 
-        else:
-            raise ValueError(f"Unsupported optimizer: {self.optimizer_name}")
-
     def fn(self) -> Callable:
-        def foo(*args):
+        if len(self.config) == 2:
+            name, foreach = self.config
+        else:
+            name, foreach, fused = self.config
 
-            if len(self.config) == 2:
-                name, foreach = self.config
-            else:
-                name, foreach, fused = self.config
+        optimizer_func = getattr(torch.optim._functional, self.optimizer_name)
 
-            if self.optimizer_name == "adam":
-                return torch.optim._functional.adam(
-                    *args,
-                    foreach=foreach,
-                    # to enable dynamo trace
-                    capturable=True,
-                    differentiable=False,
-                    fused=fused,
-                    amsgrad=False,
-                    lr=0.001,
-                    beta1=0.9,
-                    beta2=0.999,
-                    eps=1e-08,
-                    weight_decay=0,
-                    maximize=False,
-                )
+        if self.optimizer_name == "adam":
+            kwargs = {
+                "foreach": foreach,
+                # to enable dynamo trace
+                "capturable": True,
+                "differentiable": False,
+                "fused": fused,
+                "amsgrad": False,
+                "lr": 0.001,
+                "beta1": 0.9,
+                "beta2": 0.999,
+                "eps": 1e-08,
+                "weight_decay": 0,
+                "maximize": False,
+            }
 
-            elif self.optimizer_name == "sgd":
-                return torch.optim._functional.sgd(
-                    *args,
-                    foreach=foreach,
-                    fused=fused,
-                    weight_decay=0.0,
-                    lr=0.001,
-                    momentum=0.0,
-                    dampening=0.01,
-                    nesterov=False,
-                    maximize=False,
-                )
+        elif self.optimizer_name == "sgd":
+            kwargs = {
+                "foreach": foreach,
+                "fused": fused,
+                "weight_decay": 0.0,
+                "lr": 0.001,
+                "momentum": 0.0,
+                "dampening": 0.01,
+                "nesterov": False,
+                "maximize": False,
+            }
 
-            elif self.optimizer_name == "rmsprop":
-                return torch.optim._functional.rmsprop(
-                    *args,
-                    foreach=foreach,
-                    capturable=True,
-                    lr=0.01,
-                    alpha=0.99,
-                    eps=1e-08,
-                    weight_decay=0.0,
-                    momentum=0.0,
-                    centered=False,
-                )
+        elif self.optimizer_name == "rmsprop":
+            kwargs = {
+                "foreach": foreach,
+                "capturable": True,
+                "lr": 0.01,
+                "alpha": 0.99,
+                "eps": 1e-08,
+                "weight_decay": 0.0,
+                "momentum": 0.0,
+                "centered": False,
+            }
 
-            else:
-                raise ValueError(f"Unsupported optimizer: {self.optimizer_name}")
-
-        return foo
+        return partial(optimizer_func, **kwargs)
 
 
 # TODO Add descriptions to the executors when listed, and list them alphabetically

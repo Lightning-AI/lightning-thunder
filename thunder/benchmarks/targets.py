@@ -5,7 +5,6 @@ from collections.abc import Callable
 from enum import auto, Enum
 from collections.abc import Sequence
 from contextlib import nullcontext
-from typing import Optional
 
 import pytest
 import torch
@@ -897,7 +896,7 @@ def test_lora_linear(benchmark, executor, compute_type, implementation):
         ("multi_tensor", True, False),
         ("fused", False, True),
     ],
-    ids=["single_tensor", "multi_tensor(foreach)", "fused"],
+    ids=["single_tensor", "multi_tensor", "fused"],
 )
 @pytest.mark.parametrize(
     "optimizer_name",
