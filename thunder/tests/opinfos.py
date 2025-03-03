@@ -1815,6 +1815,33 @@ hardswish_opinfo = OpInfo(
 elementwise_unary_ops.append(hardswish_opinfo)
 
 
+def hardtanh_singularity_fn_producer(sample):
+    min_val = sample.kwargs.get("min_val", -1.0)
+    max_val = sample.kwargs.get("max_val", 1.0)
+    mid_point = (min_val + max_val) / 2
+    return lambda a: torch.where(a >= mid_point, a - max_val, a - min_val)
+
+
+hardtanh_opinfo = OpInfo(
+    ltorch.hardtanh,
+    sample_input_generator=get_elementwise_unary_with_kwargs_generator(
+        [{}, {"min_val": 0.5}, {"max_val": 0}, {"min_val": -1.5, "max_val": 2}]
+    ),
+    torch_reference=_elementwise_unary_torch(torch.nn.functional.hardtanh),
+    dtypes=(datatypes.floating,),
+    singularity_fn_producer=hardtanh_singularity_fn_producer,
+    test_directives=(
+        # test_vjp_correctess compares exact derivatives to finite differences,
+        # and there are numerical issues for finite differences of (piecewise) constant functions
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_vjp_correctness",
+        ),
+    ),
+)
+elementwise_unary_ops.append(hardtanh_opinfo)
+
+
 selu_opinfo = OpInfo(
     ltorch.selu,
     dtypes=(datatypes.floating,),

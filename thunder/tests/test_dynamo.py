@@ -452,6 +452,7 @@ def test_where_nonzero_overload(executor, device: str, dtype: dtypes.dtype):
     dtypes=(dtypes.float32,),
     executors=(DynamoThunderExecutor,),
     decorators=(
+        pytest.mark.skip(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1821"),
         pytest.mark.parametrize(
             "optim",
             (

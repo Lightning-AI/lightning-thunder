@@ -36,7 +36,7 @@ def test_te_linear_forward_backward(fp8_recipe):
     # TE inputs (3D input)
     x_te = torch.randn(3, 768, 4096, device=device, dtype=dtype, requires_grad=True)
     te_linear1 = te.Linear(4096, 4096, params_dtype=dtype)
-    te_linear2 = te.Linear(4096, 4096, params_dtype=dtype)
+    te_linear2 = te.Linear(4096, 2048, params_dtype=dtype)
 
     # thunder inputs
     x = x_te.detach().clone()
@@ -197,7 +197,7 @@ def test_te_with_autocast():
 
 
 # NOTE: strict=False as it passes on Blackwell.
-@pytest.mark.xfail(strict=False, raises=RuntimeError, reason="Retain graph is not supported by TE")
+@pytest.mark.xfail(strict=False, raises=(RuntimeError, TypeError), reason="Retain graph is not supported by TE")
 @requiresCUDA
 def test_te_with_retain_graph():
     def foo(x, w):
