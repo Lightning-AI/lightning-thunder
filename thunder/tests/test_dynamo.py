@@ -78,7 +78,7 @@ def test_basic(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None)
 
     # out should have grad_fn and its name should be ThunderFunctionBackward
     assert out.grad_fn is not None
-    assert out.grad_fn.name() == "ThunderOutputFunctionBackward"
+    assert out.grad_fn.name() == "ThunderFunctionBackward"
 
     # We record the GraphModules that was compiled by ThunderCompiler
     backend = compiled._backend
@@ -341,7 +341,7 @@ def test_force_skip_lazy_graph_module(executor, device: str, dtype: dtypes.dtype
 
         # out should have grad_fn and its name should be ThunderFunctionBackward
         assert out.grad_fn is not None
-        assert out.grad_fn.name() == "ThunderOutputFunctionBackward"
+        assert out.grad_fn.name() == "ThunderFunctionBackward"
 
         backend = cfunc._backend
         # We record the GraphModules that was compiled by ThunderCompiler
@@ -452,6 +452,7 @@ def test_where_nonzero_overload(executor, device: str, dtype: dtypes.dtype):
     dtypes=(dtypes.float32,),
     executors=(DynamoThunderExecutor,),
     decorators=(
+        pytest.mark.skip(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1821"),
         pytest.mark.parametrize(
             "optim",
             (
@@ -1367,8 +1368,7 @@ def test_TorchInductorSpecification(tmp_path):
     assert len(thunder_fx_graph_report.subgraph_reports) == 1  # cos
     thunder_split_report = thunder_fx_graph_report.subgraph_reports[0]
 
-    ex_inputs = thunder_split_report.make_example_inputs()
-    torchinductor = TorchInductorSpecification(ex_inputs)
+    torchinductor = TorchInductorSpecification()
     thunder_split_report.run_benchmark(torchinductor, WallTime)
     thunder_split_report.run_repro(torchinductor)
     thunder_split_report.write_benchmark(tmp_path, torchinductor, WallTime)
