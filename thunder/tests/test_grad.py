@@ -719,9 +719,7 @@ def test_vjp_correctness_einsum_manual(op, device, dtype, executor, comp):
     dtypes=(dtypes.float32,),
     # TODO Reenable this test when we track the requires_grad consistently for all operators
     # See https://github.com/Lightning-AI/lightning-thunder/issues/1768
-    decorators=(
-        pytest.mark.xfail(strict=True, reason="Requires_grad propagation is not implemented"),
-    ),
+    decorators=(pytest.mark.xfail(strict=True, reason="Requires_grad propagation is not implemented"),),
 )
 def test_requires_grad(executor, device, dtype):
     import thunder.torch as ltorch
