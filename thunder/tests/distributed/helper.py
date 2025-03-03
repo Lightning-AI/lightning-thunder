@@ -182,6 +182,7 @@ if torch.distributed.is_available():
 
             local_rank = self.rank % torch.cuda.device_count()
             torch.cuda.set_device(local_rank)
+            os.environ["LOCAL_RANK"] = str(local_rank)
 
             torch.distributed.init_process_group(
                 init_method=self.init_method,
@@ -191,7 +192,6 @@ if torch.distributed.is_available():
                 device_id=torch.device("cuda", local_rank),
             )
 
-            torch.distributed.barrier()
             try:
                 self.run_test(test_name, pipe)
             except Exception:
