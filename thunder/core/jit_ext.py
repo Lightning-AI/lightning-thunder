@@ -743,6 +743,7 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     from thunder.core.trace_interpreter import interpret_trace
     from thunder.core.transforms import dce
     from thunder.core.pytree import tree_flatten, tree_unflatten
+    from thunder.extend import TemporaryExecutor
 
     custom_autograd_function_cls = unwrap(obj)
     custom_forward = custom_autograd_function_cls.forward
@@ -786,7 +787,8 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
         flat_output, _ = tree_flatten(output)
         return tree_unflatten(flat_output, spec_of_fwd_output)
 
-    custom_fwd_sym = get_jit_ctx().ad_hoc_executor.register_operator(
+    temporary_executor: TemporaryExecutor = get_jit_ctx().ad_hoc_executor
+    custom_fwd_sym = temporary_executor.register_operator(
         custom_autograd_function_cls.__name__,
         like=core_of_forward,
     )

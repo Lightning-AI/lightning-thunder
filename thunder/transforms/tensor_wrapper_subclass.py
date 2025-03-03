@@ -984,19 +984,19 @@ def tensor_subclass_dce(trace: TraceCtx, is_bwd_trace: bool) -> TraceCtx:
     # Handle adhoc executor subsymbols for backward trace
     if is_bwd_trace:
         from thunder.core.compile_data import get_compile_data
-        from thunder.extend import AdHocExecutor
+        from thunder.extend import TemporaryExecutor
 
         cd = get_compile_data()
-        ad_hoc_executor: AdHocExecutor | None = None
+        temporary_executor: TemporaryExecutor | None = None
         if cd is not None:
-            executors_list = list(filter(lambda executor: isinstance(executor, AdHocExecutor), cd.executors_list))
+            executors_list = list(filter(lambda executor: isinstance(executor, T), cd.executors_list))
             if executors_list:
-                ad_hoc_executor = executors_list[0]
+                temporary_executor = executors_list[0]
 
-        if ad_hoc_executor is not None and ad_hoc_executor._implmap:
+        if temporary_executor is not None and temporary_executor._implmap:
             new_bsyms = []
             for bsym in trace.bound_symbols:
-                if ad_hoc_executor.can_execute(bsym) and bsym.subsymbols:
+                if temporary_executor.can_execute(bsym) and bsym.subsymbols:
                     new_bsyms.extend(bsym.subsymbols)
                 else:
                     new_bsyms.append(bsym)
