@@ -61,13 +61,26 @@ def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: 
                         self.add_bsyms_from_function(execution_transform, *bsym.args, **bsym.kwargs)
                         return
                     elif isinstance(ex, OperatorExecutor):
+                        from thunder.extend import TemporaryExecutor
+
                         # NOTE execution_transform is None and the executor is an operator executor
-                        # Calls the operator executor's operation
-                        # TODO Instead of directly acquiring the symbol from the implmap, we probably
-                        #   want to hide this behind a function
-                        op = ex.implmap[bsym.sym.id].symbol
-                        self.add_bsyms_from_function(op, *bsym.args, **bsym.kwargs)
-                        return
+                        if ex.name == "torch" or isinstance(ex, TemporaryExecutor):
+                            # For TorchExecutor, we can bypass the function call in add_bsyms_from_function
+                            # and directly create the bound symbol
+                            op = ex.implmap[bsym.sym.id].symbol
+
+                            # Create a bound symbol directly without executing the function
+                            new_bsym = op.bind(*bsym.args, **bsym.kwargs, output=bsym.output)
+                            self.add_processed_bsyms([new_bsym])
+
+                            # Set the result without actually executing the function
+                            self.set_result(new_bsym.output)
+                            return
+                        else:
+                            # For other OperatorExecutors, use the original approach
+                            op = ex.implmap[bsym.sym.id].symbol
+                            self.add_bsyms_from_function(op, *bsym.args, **bsym.kwargs)
+                            return
                     elif isinstance(ex, FusionExecutor):
                         # NOTE execution_transform is None and the executor is a fusion executor
                         # Preserves the symbol as is (it will be handled in the fusion pass)
