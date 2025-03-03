@@ -69,7 +69,6 @@ import warnings
 
 # Type annotation helpers
 TensorLike = TensorProxy
-FutureTensorLike = FutureTensorProxy
 DeviceLike = str | devices.Device | torch.device
 dtypeLike = dtypes.dtype | torch.dtype
 
@@ -5523,7 +5522,7 @@ if torch.distributed.is_available():
         group: torch.distributed.ProcessGroup | None = None,
         async_op: bool = False,
         dim: int | None = None,
-    ) -> TensorLike | FutureTensorLike:
+    ) -> TensorLike | FutureTensorProxy:
         group = group if group is not None else torch.distributed.new_group()
 
         return dist_prims.all_gather(a, group, async_op, dim=dim)
@@ -5570,7 +5569,7 @@ if torch.distributed.is_available():
         group: None | torch.distributed.ProcessGroup | str = None,
         async_op: bool = False,
         **kwargs,
-    ) -> TensorLike | FutureTensorLike:
+    ) -> TensorLike | FutureTensorProxy:
         # note: torch.ops._c10d_functional takes name of group
         if isinstance(group, str):
             from torch._C._distributed_c10d import _resolve_process_group
@@ -5614,7 +5613,7 @@ if torch.distributed.is_available():
         src: int,
         group: torch.distributed.ProcessGroup | None = None,
         async_op: bool = False,
-    ) -> TensorLike | FutureTensorLike:
+    ) -> TensorLike | FutureTensorProxy:
         group = group if group is not None else torch.distributed.new_group()
 
         return dist_prims.broadcast(a, src, group, async_op)
@@ -5629,7 +5628,7 @@ if torch.distributed.is_available():
         group: torch.distributed.ProcessGroup | None = None,
         async_op: bool = False,
         dim: int | None = None,
-    ) -> TensorLike | FutureTensorLike:
+    ) -> TensorLike | FutureTensorProxy:
         op = to_thunder_distributed_reduce_op(op)
         group = group if group is not None else torch.distributed.new_group()
 
