@@ -1029,7 +1029,7 @@ def test_thunderfx_last_traces():
 
 
 def test_get_example_input_tensor_metadata():
-    from thunder.dynamo.utils import _get_example_input_tensor_metadata, arg_like_tensor
+    from thunder.dynamo.utils import _get_example_input_tensor_metadata, arg_like_tensor, arg_like
     from torch._subclasses.fake_tensor import FakeTensorMode
 
     int_tensor = torch.arange(1, 11, dtype=torch.int)
@@ -1059,6 +1059,22 @@ def test_get_example_input_tensor_metadata():
     t1_str = arg_like_tensor(meta_t1)
     p1 = r"""^torch\.testing\.make_tensor\(\(11,\), dtype=torch\.float32,\s*device='cpu',\s*requires_grad=True,\s*low=[-+]?[0-9]*\.?[0-9]+,\s*high=[-+]?[0-9]*\.?[0-9]+,\)\.as_strided\(\(2, 3\), \(4, 2\), 2\),$"""
     assert re.fullmatch(p1, t1_str), "The string does not match the expected format!"
+
+    inputs = [
+        [
+            torch.randn((), dtype=torch.bfloat16, device="cuda:0", requires_grad=False),
+            torch.randn((), dtype=torch.bfloat16, device="cuda:0", requires_grad=False),
+        ],
+        torch.randn(24512, dtype=torch.bfloat16, device="cuda:0", requires_grad=False).as_strided(
+            (128, 1, 128), (192, 24576, 1), 0
+        ),
+    ]
+    str_out = arg_like(inputs)
+    out = eval(str_out)[0]
+    assert len(out) == len(inputs) and len(out[0]) == len(inputs[0])
+    assert out[0][0].shape == inputs[0][0].shape
+    assert out[0][1].shape == inputs[0][1].shape
+    assert out[1].shape == inputs[1].shape and out[1].stride() == inputs[1].stride()
 
 
 def test_thunderfx_meta_tensor():

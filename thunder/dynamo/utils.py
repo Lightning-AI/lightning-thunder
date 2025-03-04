@@ -665,9 +665,12 @@ def arg_like(arg: Any):
     """Creates a new argument that is similar to the given arg."""
     if isinstance(arg, (torch.Tensor, ExampleInputMetaData)):
         return arg_like_tensor(arg)
-    else:
-        # Assume it's a literal that we can just print directly.
+    elif isinstance(arg, Sequence):
+        return "[" + "".join(arg_like(a) for a in arg) + "],"
+    elif isinstance(arg, (int, bool, float)):
         return f"{arg},"
+    else:
+        raise TypeError(f"Unsupported input type: {type(arg)}")
 
 
 def _readable(
