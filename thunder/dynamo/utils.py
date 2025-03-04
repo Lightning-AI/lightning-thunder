@@ -483,11 +483,12 @@ def _get_example_input_tensor_metadata(t: torch.Tensor) -> ExampleInputMetaData:
 
 def _create_random_tensor_from_tensor_metadata(arg: ExampleInputMetaData) -> torch.Tensor:
     min_val, max_val = arg.min_val, arg.max_val
-    shape = arg.shape if arg.is_contiguous else arg.storage_shape
     if min_val is not None and min_val == max_val:
-        tensor = torch.full(shape, min_val, dtype=arg.dtype, device=arg.device, layout=arg.layout)
+        tensor = torch.full(arg.storage_shape, min_val, dtype=arg.dtype, device=arg.device, layout=arg.layout)
     else:
-        tensor = torch.testing.make_tensor(shape, dtype=arg.dtype, device=arg.device, low=min_val, high=max_val)
+        tensor = torch.testing.make_tensor(
+            arg.storage_shape, dtype=arg.dtype, device=arg.device, low=min_val, high=max_val
+        )
     return tensor.set_(tensor, size=arg.shape, storage_offset=arg.storage_offset(), stride=arg.stride()).requires_grad_(
         arg.requires_grad
     )
@@ -648,7 +649,7 @@ def arg_like_tensor(arg: torch.Tensor | ExampleInputMetaData):
     if isinstance(arg, torch.Tensor):
         arg = _get_example_input_tensor_metadata(arg)
     min_val, max_val = arg.min_val, arg.max_val
-    shape = arg.shape if arg.is_contiguous else arg.storage_shape
+    shape = arg.shape if arg.is_contiguous and arg.storage_offset() == 0 else arg.storage_shape
     if min_val is not None and min_val == max_val:
         meta = f"{shape}, {min_val}, dtype={arg.dtype}, device='{arg.device}', requires_grad={arg.requires_grad}, layout={arg.layout}"
         tensor_str = f"torch.full({meta})"
