@@ -3366,11 +3366,8 @@ class OptimBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
             return (params, grads, square_avgs, grad_avgs, momentum_buffer_list, state_steps), {}
 
     def fn(self) -> Callable:
-        if len(self.config) == 2:
-            name, foreach = self.config
-        else:
-            name, foreach, fused = self.config
 
+        name, foreach, fused = self.config
         optimizer_func = getattr(torch.optim._functional, self.optimizer_name)
 
         if self.optimizer_name == "adam":
