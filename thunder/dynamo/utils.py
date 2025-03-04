@@ -723,13 +723,18 @@ def _readable(
 
 
 def get_env() -> tuple[str, str]:
-    """Retrieve detailed environment information using `torch.utils.collect_env.get_pretty_env_info()`.
+    """Retrieve detailed environment information using `torch.utils.collect_env.get_pip_packages()`.
     Additionally, include the installed versions of Thunder and NvFuser (if available via pip).
     """
 
-    from torch.utils.collect_env import run, get_pretty_env_info, get_pip_packages
+    from torch.utils.collect_env import run, get_pip_packages
 
-    torch_env = get_pretty_env_info()
+    torch_env = "CUDA devices:\n"
+    for i in range(torch.cuda.device_count()):
+        torch_env += f"  {i}: {torch.cuda.get_device_name(i)}\n"
+    torch_env += f"CUDA version: {torch.version.cuda}\n"
+    _, packages = get_pip_packages(run)
+    torch_env += packages
     _, thunder_packages = get_pip_packages(run, {"lightning-thunder", "nvfuser"})
     return torch_env, thunder_packages
 
