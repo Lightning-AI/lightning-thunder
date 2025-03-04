@@ -32,11 +32,11 @@ def _functional_te_checker(a, w, bias):
     return True
 
 
-def _te_fp8_recipe_meta():
+def _te_fp8_recipe_meta(recipe_name: str):
     return AnyProxy(object())
 
 
-def _te_fp8_recipe_impl():
+def _te_fp8_recipe_impl(recipe_name: str):
     if not fun_te_states.recipe:
         fun_te_states.recipe = te.fp8.get_default_fp8_recipe()
 
@@ -70,10 +70,9 @@ _te_linear_fwd = functional_te_ex.register_operator("te_functional_fwd", meta=_l
 
 
 def _te_linear_fwd_wrapper(a, w, bias):
-    recipe = _te_fp8_recipe()
+    recipe = _te_fp8_recipe("delayed")
 
-    forward_recipe_state, input_quantizer, weight_quantizer = _te_fp8_state(recipe, ("forward",), 2)
-    fun_te_states.forward_state_buffer += [forward_recipe_state]
+    forward_recipe_state, input_quantizer, weight_quantizer = _te_fp8_state(recipe, "forward", 2)
 
     out, _, _ = _te_linear_fwd(a, w, bias, forward_recipe_state, input_quantizer, weight_quantizer)
 
@@ -105,6 +104,7 @@ _te_linear_bwd = functional_te_ex.register_operator("te_functional_bwd", meta=_l
 
 
 def _te_fp8_state_meta(recipe, mode, num_quantizers):
+    # Placeholder o
     o = object()
     return AnyProxy(o), *(AnyProxy(o) for _ in range(num_quantizers))
 
@@ -115,6 +115,12 @@ def _te_fp8_state_impl(recipe, mode, num_quantizers):
         mode=mode,
         num_quantizers=num_quantizers,
     )
+
+    if mode == "forward":
+        fun_te_states.forward_state_buffer += [recipe_state]
+    else:
+        fun_te_states.backward_state_buffer += [recipe_state]
+
     return recipe_state, *recipe_state.make_quantizers()
 
 
@@ -139,14 +145,15 @@ _te_fp8_syncronization = functional_te_ex.register_operator(
 
 
 def _te_linear_bwd_wrapper(a, w, bias):
-    recipe = _te_fp8_recipe()
+    recipe = _te_fp8_recipe("delayed")
 
-    forward_recipe_state, input_quantizer, weight_quantizer = _te_fp8_state(recipe, ("forward",), 2)
+    forward_recipe_state, input_quantizer, weight_quantizer = _te_fp8_state(recipe, "forward", 2)
 
     primal, gemm_a, gemm_w = _te_linear_fwd(a, w, bias, forward_recipe_state, input_quantizer, weight_quantizer)
 
-    backward_recipe_state, grad_output_quantizer = _te_fp8_state(recipe, ("backward",), 1)
-    fun_te_states.backward_state_buffer += [backward_recipe_state]
+    _te_fp8_syncronization(recipe, True)
+
+    backward_recipe_state, grad_output_quantizer = _te_fp8_state(recipe, "backward", 1)
 
     grad_a, grad_w = _te_linear_bwd(
         get_grad(primal),
