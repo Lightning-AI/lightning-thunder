@@ -779,7 +779,6 @@ def jit(
                 comp = []
                 new_computation_trc = []
                 for c_trc in computation_trc:
-                    print(c_trc)
                     c_trc = transform_to_torch_types(c_trc)
                     new_computation_trc.append(c_trc)
                     comp.append(c_trc.python_callable())
