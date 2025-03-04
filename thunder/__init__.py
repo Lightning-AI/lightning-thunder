@@ -547,7 +547,7 @@ def jit(
             computation_traces.append(computation_trc)
 
             orig_to_view_swap_map = check_inplace_to_views(computation_trc)
-            if not compile_options.get("skip_inplace_functionalization", False):
+            if compile_options.get("skip_inplace_functionalization", False):
                 alias_tensor_indices = []
                 if alias_tensor_indices_str := cache_info["alias_tensor_indices"]:
                     alias_tensor_indices: list[list[int]] = [
@@ -779,6 +779,7 @@ def jit(
                 comp = []
                 new_computation_trc = []
                 for c_trc in computation_trc:
+                    print(c_trc)
                     c_trc = transform_to_torch_types(c_trc)
                     new_computation_trc.append(c_trc)
                     comp.append(c_trc.python_callable())
