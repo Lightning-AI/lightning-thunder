@@ -52,6 +52,7 @@ if TYPE_CHECKING:
     from os import PathLike
     from collections.abc import Sequence
 
+    from torch._dynamo.output_graph import GraphCompileReason
     from thunder.dynamo.utils import ExampleInputMetaData
     from thunder.core.trace import TraceCtx
     from thunder.core.symbol import BoundSymbol
@@ -196,6 +197,14 @@ class FXGraphReport:
         self.graph = graph
         self.graph_name = graph_name
         self.example_input_meta = example_input_meta
+        self.ops = [node.target for node in self.graph.graph.nodes if node.op in ("call_function", "call_method")]
+
+    def __str__(self):
+        output = f"Graph Name: {self.graph_name}\n"
+        output += "  Operators used in the graph:\n"
+        for op in self.ops:
+            output += f"    {op}\n"
+        return output
 
     def make_example_inputs(self):
         return [example_input_meta_to_input(meta) for meta in self.example_input_meta]
@@ -561,8 +570,14 @@ class FXReport:
     module and provides methods to generate reproduction and benchmark scripts.
     """
 
-    def __init__(self, graphs: list[torch.fx.GraphModule], graph_names: list[str] = None):
+    def __init__(
+        self,
+        graphs: list[torch.fx.GraphModule],
+        graph_names: list[str] = None,
+        dynamo_break_reasons: list[GraphCompileReason] = None,
+    ):
         self.fx_graph_reports = []
+        self.dynamo_break_reasons = dynamo_break_reasons
         if graph_names is None:
             graph_names = [f"graph{idx}" for idx in range(len(graphs))]
 
@@ -573,8 +588,20 @@ class FXReport:
             )
             self.fx_graph_reports.append(FXGraphReport(g, g_name, example_input_metadata))
 
-    def __repr__(self):
-        return f"<FXReport with {len(self.fx_graph_reports)} FXGraphReports accessible via .fx_graph_reports>"
+    def __str__(self):
+        output = f"Dynamo Graph Count: {len(self.fx_graph_reports)}\n"
+        if self.dynamo_break_reasons:
+            output += "Dynamo Break Reasons:\n"
+            for idx, reason in enumerate(self.dynamo_break_reasons):
+                output += f"  Break Reason {idx+1}:\n"
+                output += f"    Reason: {reason.reason}\n"
+                output += "    User Stack:\n"
+                for frame_summary in reason.user_stack:
+                    output += f"      {frame_summary}\n"
+        output += f"Graph information:\n"
+        for idx, graph_report in enumerate(self.fx_graph_reports):
+            output += textwrap.indent(f"{graph_report}\n", "  ")
+        return output
 
 
 def fx_report(fn: Callable, *args, compile_options: dict = None, **kwargs) -> FXReport:
@@ -621,10 +648,14 @@ def fx_report(fn: Callable, *args, compile_options: dict = None, **kwargs) -> FX
                 graph_report.write_benchmark(tmpdir, my_thunderjit, WallTime, f"{graph_name}_mythunder_benchmark.py")
     """
     graphs = []
+    break_reasons = []
 
     def helper_backend(gm, example_inputs):
         """Helper function to collect FX graphs."""
         graphs.append(copy.deepcopy(gm))
+        if gm.compile_subgraph_reason.graph_break:
+            break_reasons.append(gm.compile_subgraph_reason)
+
         from torch._inductor import compile
 
         return compile(gm, example_inputs)
@@ -635,7 +666,7 @@ def fx_report(fn: Callable, *args, compile_options: dict = None, **kwargs) -> FX
     compiled = torch.compile(fn, **compile_options, backend=helper_backend)
     compiled(*args, **kwargs)
 
-    return FXReport(graphs)
+    return FXReport(graphs, dynamo_break_reasons=break_reasons)
 
 
 class ThunderSplitGraphReport(FXGraphReport):
@@ -678,9 +709,6 @@ class ThunderSplitGraphReport(FXGraphReport):
         self.fusion_reports: list[ThunderFusionReport] = []
         self.fwd_trc: TraceCtx = None
         self.bwd_trc: TraceCtx = None
-
-    def __repr__(self):
-        return f"<ThunderSplitGraphReport with {len(self.fusion_reports)} ThunderFusionReport accessible via .fusion_reports>"
 
     def _create_thunder_traces(self):
         example_inputs = self.make_example_inputs()
@@ -762,7 +790,7 @@ class ThunderFusionReport:
         self.nvfusion_bsym = bsym
         self.name = name
 
-    def __repr__(self):
+    def __str__(self):
         return f"<ThunderFusionReport of bound symbol\n{self.nvfusion_bsym}>"
 
     def run_benchmark(self, compile_fn: CompileSpecificationInterface, timer_fn: TimerInterface):
@@ -902,8 +930,12 @@ class ThunderFXGraphReport(FXGraphReport):
         self.split_reason = split_reason
         self.subgraph_reports: list[ThunderSplitGraphReport] = subgraph_reports
 
-    def __repr__(self):
-        return f"<ThunderFXGraphReport with {len(self.subgraph_reports)} ThunderSplitGraphReport accessible via .subgraph_reports>"
+    def __str__(self):
+        output = f"Thunder-specific Information of {self.graph_name}:\n"
+        output += textwrap.indent(self.split_reason, "  ")
+        for report in self.subgraph_reports:
+            output += textwrap.indent(report.__str__(), "  ")
+        return output
 
 
 def analyze_thunder_splits(
@@ -1058,11 +1090,13 @@ def get_thunder_fxgraph_reports(
         check_torch_compile_runnability(fn, *args, **kwargs)
 
     reports = fx_report(fn, *args, **kwargs)
+    print(reports)
     if thunder_compile_kwargs is None:
         thunder_compile_kwargs = {}
     thunder_fxgraph_reports = []
     for fxgraph_report in reports.fx_graph_reports:
         thunder_fxgraph_report = analyze_thunder_splits(fxgraph_report, **thunder_compile_kwargs)
+        print(thunder_fxgraph_report)
         thunder_fxgraph_reports.append(thunder_fxgraph_report)
     return thunder_fxgraph_reports
 
@@ -1107,7 +1141,6 @@ def thunderfx_benchmark_report_from_splits(
 
     runnable_split_reports: list[ThunderSplitGraphReport] = []
     for thunder_fxgraph_report in thunder_fxgraph_reports:
-        print(f"\n{thunder_fxgraph_report.graph_name}: {thunder_fxgraph_report.split_reason}\n")
         graph_folder = folder_path / thunder_fxgraph_report.graph_name
         graph_folder.mkdir()
         for split_report in thunder_fxgraph_report.subgraph_reports:
