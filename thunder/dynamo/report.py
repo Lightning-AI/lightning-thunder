@@ -472,7 +472,7 @@ class FXGraphReport:
         if file_name is None:
             file_name = f"{self.graph_name}.py"
         with open(folder / file_name, "w") as f:
-            print(code_str, file=f)
+            f.write(code_str)
 
     def run_benchmark(self, compile_fn: CompileSpecificationInterface, time_fn: TimerInterface):
         # From torch.compile docs - https://pytorch.org/docs/stable/generated/torch.compile.html
