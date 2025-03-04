@@ -23,7 +23,7 @@ class CompileSpecificationInterface:
         - :class:`ThunderCompileSpecification`
     """
 
-    def compile(self, fn: Callable) -> Callable:
+    def compile(self, fn: Callable, **kwargs) -> Callable:
         """Compiles the given callable and returns the compiled version."""
         raise NotImplementedError("Subclasses should implement the 'compile' method if needed.")
 
@@ -53,7 +53,7 @@ class ThunderCompileSpecification(CompileSpecificationInterface):
         self.name = specification_name
         self.thunder_options: dict = kwargs
 
-    def compile(self, fn):
+    def compile(self, fn, **kwargs):
         from thunder import jit
 
         return jit(fn, **self.thunder_options)
@@ -75,7 +75,7 @@ class TorchCompileSpecification(CompileSpecificationInterface):
         self.name = specification_name
         self.torch_compile_options: dict = kwargs
 
-    def compile(self, fn):
+    def compile(self, fn, **kwargs):
         return torch.compile(fn, **self.torch_compile_options)
 
     def to_source(self, fn_name):
@@ -97,7 +97,7 @@ class TorchEagerSpecification(CompileSpecificationInterface):
     def __init__(self, specification_name="torcheager"):
         self.name = specification_name
 
-    def compile(self, fn):
+    def compile(self, fn, **kwargs):
         return fn
 
     def to_source(self, fn_name):
@@ -111,9 +111,8 @@ class TorchInductorSpecification(CompileSpecificationInterface):
     https://github.com/Lightning-AI/lightning-thunder/issues/1521
     """
 
-    def __init__(self, inputs, specification_name="inductor_backend"):
+    def __init__(self, specification_name="inductor_backend"):
         self.name: str = specification_name
-        self.inputs: list = inputs
 
     @staticmethod
     def torch_inductor(fn, inputs):
@@ -123,8 +122,8 @@ class TorchInductorSpecification(CompileSpecificationInterface):
         fx_graph = symbolic_trace(fn)
         return inductor_compile(fx_graph, inputs)
 
-    def compile(self, fn):
-        return self.torch_inductor(fn, self.inputs)
+    def compile(self, fn, *, inputs, **kwargs):
+        return self.torch_inductor(fn, inputs)
 
     def to_source(self, fn_name):
         return f"TorchInductorSpecification.torch_inductor({fn_name}, inputs)"
@@ -361,6 +360,16 @@ def check_threshold_log(a: float, b: float, a_name: str, b_name: str, test_name:
     return True, None
 
 
+def is_report_using_cuda(report):
+    from thunder.dynamo.utils import ExampleInputMetaData
+    from thunder.core.pytree import tree_map
+
+    def _check_tensor(x):
+        return isinstance(x, ExampleInputMetaData) and x.device.type == "cuda"
+
+    return any(tree_map(_check_tensor, report.example_input_meta))
+
+
 def check_timing(
     folder_path,
     report,
@@ -376,8 +385,28 @@ def check_timing(
     and generate a benchmark script if the difference exceeds the threshold.
     """
     graph_name = report.graph_name
-    measure1 = report.run_benchmark(compile_fn1, timer_fn)
-    measure2 = report.run_benchmark(compile_fn2, timer_fn)
+    if not is_report_using_cuda(report):
+        print(f"{graph_name} doesn't use CUDA, skip benchmark {timer_name}")
+        return
+    filename1 = f"{graph_name}_{compile_fn1.name}_{timer_name}.py"
+    filename2 = f"{graph_name}_{compile_fn2.name}_{timer_name}.py"
+
+    def try_and_log_benchmark(compile_fn, filename):
+        try:
+            return report.run_benchmark(compile_fn, timer_fn)
+        except Exception as e:
+            msg = f"Benchmark {timer_name} on {graph_name} using {compile_fn.name} failed with exception {e}, benchmark script failed_{filename} is saved"
+            print(msg)
+            report.write_benchmark(
+                folder_path, compile_fn, timer_fn, file_name=f"failed_{filename1}", extra_comment_str=msg
+            )
+            return None
+
+    measure1 = try_and_log_benchmark(compile_fn1, filename1)
+    measure2 = try_and_log_benchmark(compile_fn2, filename2)
+
+    if measure1 is None or measure2 is None:
+        return
 
     record = False
     log_strs = ""
@@ -393,8 +422,6 @@ def check_timing(
             log_strs += f"{ret[1]}\n"
     if record:
         extra_comment = f"Benchmark results:\n{log_strs}\n"
-        filename1 = f"{graph_name}_{compile_fn1.name}_{timer_name}.py"
-        filename2 = f"{graph_name}_{compile_fn2.name}_{timer_name}.py"
         report.write_benchmark(folder_path, compile_fn1, timer_fn, file_name=filename1, extra_comment_str=extra_comment)
         report.write_benchmark(folder_path, compile_fn2, timer_fn, file_name=filename2, extra_comment_str=extra_comment)
         print(f"The scripts are saved: {filename1}, {filename2}")
