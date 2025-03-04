@@ -73,7 +73,7 @@ def insert_alias_updates(computation_trace: Trace) -> Trace:
     for bsym in computation_trace.bound_symbols:
         if _is_inplace_op(bsym) or _is_view_creation_op(bsym) or _involves_viewed_args(bsym, viewed):
             in_tensors = map(variableify, filter(lambda p: isinstance(p, TensorProxy), bsym.flat_proxy_args))
-            if _is_inplace_op(bsym):
+            if _is_inplace_op(bsym) and in_tensors:
                 in_tensor = list(in_tensors)[0]
                 in_tensors = {in_tensor}
             else:
@@ -81,11 +81,11 @@ def insert_alias_updates(computation_trace: Trace) -> Trace:
             out_tensors = set(map(variableify, filter(lambda p: isinstance(p, TensorProxy), bsym.flat_proxy_outs)))
             encountered.update(in_tensors)
             group = set(reduce(set.union, filter(lambda g: any(g.intersection(in_tensors)), view_groups), set()))
-            if len(group) == 0:
-                # This is a view creation with operands that are not involved in any inplace ops.
+            if not group or not (views_encountered := group.intersection(encountered)):
+                # If group is empty, this is a view creation with operands that are not involved in any inplace ops.
                 bsyms.append(bsym.from_bsym_swap_proxies(swap_map, skip_output=True))
                 continue
-            views_encountered = group.intersection(encountered)
+
             new_aliases = _get_new_aliases(views_encountered, computation_trace)
 
             update_bsym, swap_map = _get_update_bsym(views_encountered, swap_map, new_aliases)
@@ -93,7 +93,7 @@ def insert_alias_updates(computation_trace: Trace) -> Trace:
             encountered.update(out_tensors)
             new_bsym = bsym.from_bsym_swap_proxies(swap_map)
             bsyms.append(new_bsym)
-            if _is_inplace_op(bsym) and len(out_tensors) == 1:
+            if _is_inplace_op(bsym) and len(out_tensors) == 1 and len(in_tensors) == 1:
                 #  This relies on these being one element sets (ltorch.setitem_ yields no outs).
                 swap_map[in_tensors.pop()] = unvariableify(out_tensors.pop())
 
