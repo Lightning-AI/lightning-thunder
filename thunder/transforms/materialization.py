@@ -163,7 +163,7 @@ class MaterializationTransform(Transform):
             # initialize things not persisted in the state dict
             module_init_from_original_module_init(transform, model, non_persistent_only=True)
             # load the state dict
-            model.load_state_dict(state_dict)
+            model.load_state_dict(state_dict, strict=False)
 
         return module_init_from_transformed_state_dict
 
