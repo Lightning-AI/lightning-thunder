@@ -2193,6 +2193,7 @@ def copy_(
 
 register_supported(PrimIDs.COPY_, copy_, _copy__check)
 
+
 # Removes excessive float casts, like those that occur when autocasting
 # NOTE This passes actually changes a program's semantics, because it will take a sequence like
 #   fp32 -> fp16 -> fp32 and remove all the operations, but casting fp32 values to fp16 can
@@ -2712,4 +2713,3 @@ register_supported(ltorch.embedding, embedding, _embedding_check)
 
 # At module/class level
 NVFUSER_SUPPORTS_OPTIONS = nvfuser_version() >= LooseVersion("0.2.23")
-
