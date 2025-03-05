@@ -3337,126 +3337,23 @@ class OptimBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     def make_batch(self) -> tuple[list, dict]:
         pt = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
         params = [pt(shape) for shape in self.params]
-
-        if self.optimizer_name == "adam":
-            grads = [pt(grad) for grad in self.params]
-            exp_avgs = [pt(ea, requires_grad=False) for ea in self.params]
-            exp_avg_sqs = [pt(eas, requires_grad=False) for eas in self.params]
-            max_exp_avg_sqs = [pt(meas, requires_grad=False) for meas in self.params]
-            state_steps = [
-                torch.tensor(0, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
-                for _ in self.params
-            ]
-            return (params, grads, exp_avgs, exp_avg_sqs, max_exp_avg_sqs, state_steps), {}
-
-        elif self.optimizer_name == "adamax":
-            grads = [pt(grad) for grad in self.params]
-            exp_avgs = [pt(ea, requires_grad=False) for ea in self.params]
-            exp_infs = [pt(ei, requires_grad=False) for ei in self.params]
-            state_steps = [
-                torch.tensor(0, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
-                for _ in self.params
-            ]
-            return (params, grads, exp_avgs, exp_infs, state_steps), {}
-
-        elif self.optimizer_name == "adadelta":
-            grads = [pt(grad) for grad in self.params]
-            square_avgs = [pt(sq_avgs, requires_grad=False) for sq_avgs in self.params]
-            acc_deltas = [pt(acc_d, requires_grad=False) for acc_d in self.params]
-            state_steps = [
-                torch.tensor(0, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
-                for _ in self.params
-            ]
-            return (params, grads, square_avgs, acc_deltas, state_steps), {}
-
-        elif self.optimizer_name == "adagrad":
-            grads = [pt(grad) for grad in self.params]
-            state_sums = [pt(ss, requires_grad=False) for ss in self.params]
-            state_steps = [
-                torch.tensor(0, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
-                for _ in self.params
-            ]
-            return (params, grads, state_sums, state_steps), {}
-
-        elif self.optimizer_name == "adamw":
-            grads = [pt(grad) for grad in self.params]
-            exp_avgs = [pt(ev, requires_grad=False) for ev in self.params]
-            exp_avg_sqs = [pt(eas, requires_grad=False) for eas in self.params]
-            max_exp_avg_sqs = [pt(meas, requires_grad=False) for meas in self.params]
-            state_steps = [
-                torch.tensor(0, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
-                for _ in self.params
-            ]
-            return (params, grads, exp_avgs, exp_avg_sqs, max_exp_avg_sqs, state_steps), {}
-
-        elif self.optimizer_name == "asgd":
-            grads = [pt(grad) for grad in self.params]
-            axs = [pt(a, requires_grad=False) for a in self.params]
-            mus = [torch.tensor(1.0, device=self.device, dtype=self.tdtype, requires_grad=False) for _ in self.params]
-            etas = [torch.tensor(0.01, device=self.device, dtype=self.tdtype, requires_grad=False) for _ in self.params]
-            state_steps = [
-                torch.tensor(0, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
-                for _ in self.params
-            ]
-            return (params, grads, axs, mus, etas, state_steps), {}
-
-        elif self.optimizer_name == "nadam":
-            grads = [pt(grad) for grad in self.params]
-            exp_avgs = [pt(ev, requires_grad=False) for ev in self.params]
-            exp_avg_sqs = [pt(eas, requires_grad=False) for eas in self.params]
-            mu_products = [
-                torch.tensor(1.0, device=self.device, dtype=self.tdtype, requires_grad=False) for _ in self.params
-            ]
-            state_steps = [
-                torch.tensor(0, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
-                for _ in self.params
-            ]
-            return (params, grads, exp_avgs, exp_avg_sqs, mu_products, state_steps), {}
-
-        elif self.optimizer_name == "radam":
-            grads = [pt(grad) for grad in self.params]
-            exp_avgs = [pt(ev, requires_grad=False) for ev in self.params]
-            exp_avg_sqs = [pt(eas, requires_grad=False) for eas in self.params]
-            state_steps = [
-                torch.tensor(0, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
-                for _ in self.params
-            ]
-            return (params, grads, exp_avgs, exp_avg_sqs, state_steps), {}
-
-        elif self.optimizer_name == "rmsprop":
-            grads = [pt(grad) for grad in self.params]
-            square_avgs = [pt(sq_avgs, requires_grad=False) for sq_avgs in self.params]
-            grad_avgs = [pt(g_avgs, requires_grad=False) for g_avgs in self.params]
-            momentum_buffer_list = [pt(mbl, requires_grad=False) for mbl in self.params]
-            state_steps = [
-                torch.tensor(0, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
-                for _ in self.params
-            ]
-            return (params, grads, square_avgs, grad_avgs, momentum_buffer_list, state_steps), {}
-
-        elif self.optimizer_name == "rprop":
-            grads = [pt(grad) for grad in self.params]
-            prevs = [pt(p, requires_grad=False) for p in self.params]
-            step_sizes = [pt(s_size, requires_grad=False) for s_size in self.params]
-            state_steps = [
-                torch.tensor(0, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
-                for _ in self.params
-            ]
-            return (params, grads, prevs, step_sizes, state_steps), {}
-
-        elif self.optimizer_name == "sgd":
-            d_p_list = [pt(d_p, requires_grad=False) for d_p in self.params]
-            momentum_buffer_list = [pt(mbl, requires_grad=False) for mbl in self.params]
-            return (params, d_p_list, momentum_buffer_list), {}
-
-    def fn(self) -> Callable:
+        grads = [pt(grad) for grad in self.params]
+        state_steps = [
+            torch.tensor(0, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
+            for _ in self.params
+        ]
 
         name, foreach, fused = self.config
-        optimizer_func = getattr(torch.optim._functional, self.optimizer_name)
+        common_kwargs = {
+            "foreach": foreach,
+        }
 
         if self.optimizer_name == "adam":
+            exp_avgs = [pt(ea, requires_grad=False) for ea in self.params]
+            exp_avg_sqs = [pt(eas, requires_grad=False) for eas in self.params]
+            max_exp_avg_sqs = [pt(meas, requires_grad=False) for meas in self.params]
             kwargs = {
-                "foreach": foreach,
+                **common_kwargs,
                 # to enable dynamo trace
                 "capturable": True,
                 "differentiable": False,
@@ -3469,49 +3366,61 @@ class OptimBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
                 "weight_decay": 0,
                 "maximize": False,
             }
+            return (params, grads, exp_avgs, exp_avg_sqs, max_exp_avg_sqs, state_steps), kwargs
 
         elif self.optimizer_name == "adamax":
+            exp_avgs = [pt(ea, requires_grad=False) for ea in self.params]
+            exp_infs = [pt(ei, requires_grad=False) for ei in self.params]
             kwargs = {
-                "foreach": foreach,
+                **common_kwargs,
                 # to enable dynamo trace
-                "capturable": False,
+                "capturable": True,
                 "eps": 1e-8,
                 "beta1": 0.9,
                 "beta2": 0.999,
                 "lr": 0.9,
                 "weight_decay": 0.01,
             }
+            return (params, grads, exp_avgs, exp_infs, state_steps), kwargs
 
         elif self.optimizer_name == "adadelta":
+            square_avgs = [pt(sq_avgs, requires_grad=False) for sq_avgs in self.params]
+            acc_deltas = [pt(acc_d, requires_grad=False) for acc_d in self.params]
             kwargs = {
+                **common_kwargs,
                 # to enable dynamo trace
-                "capturable": False,
-                "foreach": foreach,
+                "capturable": True,
                 "lr": 0.001,
                 "rho": 0.9,
                 "eps": 1e-6,
                 "weight_decay": 0,
                 "maximize": False,
             }
+            return (params, grads, square_avgs, acc_deltas, state_steps), kwargs
 
         elif self.optimizer_name == "adagrad":
+            state_sums = [pt(ss, requires_grad=False) for ss in self.params]
             kwargs = {
+                **common_kwargs,
                 # fused_adagrad is only supported in CPU
                 # https://github.com/pytorch/pytorch/pull/124905
                 "fused": False,
-                "foreach": foreach,
                 "lr": 0.001,
                 "weight_decay": 0,
                 "lr_decay": 0.01,
                 "eps": 1e-8,
                 "maximize": False,
             }
+            return (params, grads, state_sums, state_steps), kwargs
 
         elif self.optimizer_name == "adamw":
+            exp_avgs = [pt(ev, requires_grad=False) for ev in self.params]
+            exp_avg_sqs = [pt(eas, requires_grad=False) for eas in self.params]
+            max_exp_avg_sqs = [pt(meas, requires_grad=False) for meas in self.params]
             kwargs = {
-                "foreach": foreach,
+                **common_kwargs,
                 # to enable dynamo trace
-                "capturable": False,
+                "capturable": True,
                 "fused": fused,
                 "amsgrad": False,
                 "beta1": 0.009,
@@ -3521,24 +3430,34 @@ class OptimBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
                 "eps": 1e-6,
                 "maximize": False,
             }
+            return (params, grads, exp_avgs, exp_avg_sqs, max_exp_avg_sqs, state_steps), kwargs
 
         elif self.optimizer_name == "asgd":
+            axs = [pt(a, requires_grad=False) for a in self.params]
+            mus = [torch.tensor(1.0, device=self.device, dtype=self.tdtype, requires_grad=False) for _ in self.params]
+            etas = [torch.tensor(0.01, device=self.device, dtype=self.tdtype, requires_grad=False) for _ in self.params]
             kwargs = {
-                "foreach": foreach,
+                **common_kwargs,
                 # to enable dynamo trace
-                "capturable": False,
+                "capturable": True,
                 "lambd": 1e-3,
                 "lr": 0.01,
                 "t0": 1e-6,
                 "alpha": 0.1,
                 "weight_decay": 0.01,
             }
+            return (params, grads, axs, mus, etas, state_steps), kwargs
 
         elif self.optimizer_name == "nadam":
+            exp_avgs = [pt(ev, requires_grad=False) for ev in self.params]
+            exp_avg_sqs = [pt(eas, requires_grad=False) for eas in self.params]
+            mu_products = [
+                torch.tensor(1.0, device=self.device, dtype=self.tdtype, requires_grad=False) for _ in self.params
+            ]
             kwargs = {
-                "foreach": foreach,
+                **common_kwargs,
                 # to enable dynamo trace
-                "capturable": False,
+                "capturable": True,
                 "beta1": 0.009,
                 "beta2": 0.99,
                 "lr": 0.01,
@@ -3546,22 +3465,29 @@ class OptimBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
                 "momentum_decay": 0.01,
                 "eps": 1e-6,
             }
+            return (params, grads, exp_avgs, exp_avg_sqs, mu_products, state_steps), kwargs
 
         elif self.optimizer_name == "radam":
+            exp_avgs = [pt(ev, requires_grad=False) for ev in self.params]
+            exp_avg_sqs = [pt(eas, requires_grad=False) for eas in self.params]
             kwargs = {
-                "foreach": foreach,
+                **common_kwargs,
                 # to enable dynamo trace
-                "capturable": False,
+                "capturable": True,
                 "beta1": 0.009,
                 "beta2": 0.99,
                 "lr": 0.01,
                 "weight_decay": 0.001,
                 "eps": 1e-6,
             }
+            return (params, grads, exp_avgs, exp_avg_sqs, state_steps), kwargs
 
         elif self.optimizer_name == "rmsprop":
+            square_avgs = [pt(sq_avgs, requires_grad=False) for sq_avgs in self.params]
+            grad_avgs = [pt(g_avgs, requires_grad=False) for g_avgs in self.params]
+            momentum_buffer_list = [pt(mbl, requires_grad=False) for mbl in self.params]
             kwargs = {
-                "foreach": foreach,
+                **common_kwargs,
                 # to enable dynamo trace
                 "capturable": True,
                 "lr": 0.01,
@@ -3571,12 +3497,15 @@ class OptimBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
                 "momentum": 0.0,
                 "centered": False,
             }
+            return (params, grads, square_avgs, grad_avgs, momentum_buffer_list, state_steps), kwargs
 
         elif self.optimizer_name == "rprop":
+            prevs = [pt(p, requires_grad=False) for p in self.params]
+            step_sizes = [pt(s_size, requires_grad=False) for s_size in self.params]
             kwargs = {
-                "foreach": foreach,
+                **common_kwargs,
                 # to enable dynamo trace
-                "capturable": False,
+                "capturable": True,
                 "maximize": False,
                 "differentiable": False,
                 "has_complex": False,
@@ -3585,10 +3514,13 @@ class OptimBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
                 "etaminus": 0.5,
                 "etaplus": 1.2,
             }
+            return (params, grads, prevs, step_sizes, state_steps), kwargs
 
         elif self.optimizer_name == "sgd":
+            d_p_list = [pt(d_p, requires_grad=False) for d_p in self.params]
+            momentum_buffer_list = [pt(mbl, requires_grad=False) for mbl in self.params]
             kwargs = {
-                "foreach": foreach,
+                **common_kwargs,
                 "fused": fused,
                 "weight_decay": 0.0,
                 "lr": 0.001,
@@ -3597,8 +3529,12 @@ class OptimBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
                 "nesterov": False,
                 "maximize": False,
             }
+            return (params, d_p_list, momentum_buffer_list), kwargs
 
-        return partial(optimizer_func, **kwargs)
+    def fn(self) -> Callable:
+        optimizer_func = getattr(torch.optim._functional, self.optimizer_name)
+
+        return partial(optimizer_func)
 
 
 # TODO Add descriptions to the executors when listed, and list them alphabetically
