@@ -1407,20 +1407,11 @@ register_grad(pids.COPY_WITH_SETITEM, _copy_with_setitem_grad)
 def _log_sigmoid_grad(
     a: TensorProxy,
 ) -> TensorProxy:
-    from thunder.torch import abs, exp, log_sigmoid_backward, logsigmoid
+    from thunder.torch import where, exp, logsigmoid
 
     fwd = logsigmoid(a)
-
     g = get_grad(fwd)
-    if a.device.type == "cpu":
-        # NOTE PyTorch's CPU computation for logsigmoid's grad uses an additional "buffer" tensor, see
-        # https://github.com/pytorch/pytorch/blob/7667235a23e2ffca4d32e6e16aa60a683418e159/torch/_decomp/decompositions.py#L332
-        buffer = exp(-abs(a))
-        a_grad = log_sigmoid_backward(g, a, buffer)
-    else:
-        # Here a placeholder tensor is provided.
-        placeholder_buffer = empty((0,), device=a.device, dtype=a.dtype)
-        a_grad = log_sigmoid_backward(g, a, placeholder_buffer)
+    a_grad = g * where(a > 0, exp(-a) / (1 + exp(-a)), 1 - exp(a) / (1 + exp(a)))
     put_grad(a, a_grad)
 
     return fwd
@@ -1586,6 +1577,7 @@ augmented_forward_impls = {
     prims.PrimIDs.LGAMMA: lambda x: (prims.lgamma(x), (x,)),
     prims.PrimIDs.NDTRI: lambda x: (prims.ndtri(x), (prims.ndtri(x),)),
     prims.PrimIDs.SINH: lambda x: (prims.sinh(x), (x,)),
+    prims.PrimIDs.SIGN: lambda x: (prims.sign(x), (x,)),
     prims.PrimIDs.SQRT: lambda x: (prims.sqrt(x), (prims.sqrt(x),)),
     prims.PrimIDs.LOG10: lambda x: (prims.log10(x), (x,)),
     prims.PrimIDs.LOG1P: lambda x: (prims.log1p(x), (x,)),
@@ -1616,6 +1608,7 @@ backward_impls = {
     prims.PrimIDs.LGAMMA: lambda x, g: g * prims.digamma(x),
     prims.PrimIDs.NDTRI: lambda result, g: g * prims.exp(0.5 * result**2) * math.sqrt(2.0 * math.pi),
     prims.PrimIDs.SINH: lambda x, g: prims.mul(g, prims.cosh(x)),
+    prims.PrimIDs.SIGN: lambda x, g: g * 0,
     prims.PrimIDs.SQRT: lambda result, g: g / (2.0 * result),
     prims.PrimIDs.LOG10: lambda x, g: g / (x * 2.302585092994046),
     prims.PrimIDs.LOG1P: lambda x, g: g / (x + 1),

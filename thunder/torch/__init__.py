@@ -357,8 +357,9 @@ def _old_torch_typestring_to_devicetype_and_dtype(typestring: str) -> tuple[Devi
     return devicetype_str, dtype_str
 
 
-@torchsymbol(torch.Tensor.type, is_method=True)
-def type(a: TensorLike, /, dtype: None | str | dtypeLike = None, non_blocking: bool = False) -> str | TensorLike:
+# NOTE: Using name `torch_type` to avoid conflict with Python's `type`
+@torchsymbol(torch.Tensor.type, is_method=True, method_name="type", id="torch.Tensor.type")
+def torch_type(a: TensorLike, /, dtype: None | str | dtypeLike = None, non_blocking: bool = False) -> str | TensorLike:
     utils.check(
         not non_blocking,
         lambda: f"type(): `non_blocking==True` is currently not supported.",
@@ -386,7 +387,7 @@ def type(a: TensorLike, /, dtype: None | str | dtypeLike = None, non_blocking: b
     return to(a, dev, dtype)
 
 
-register_method("type", type)
+register_method("type", torch_type)
 
 #
 # Data movement and transformation operations
@@ -477,19 +478,7 @@ def to(
     )
 
     if copy:
-        if device is not None:
-            device = to_device(device)
-            a = prims.device_put(a, device)
-        if dtype is not None:
-            dtype = to_dtype(dtype)
-            a = prims.convert_element_type(a, dtype)
-        if memory_format is not None:
-            # NOTE not sure if we need to handle torch.preserve_format explicitly
-            if memory_format == torch.channels_last:
-                a = prims.stride_order(a, (3, 0, 2, 1))
-            elif memory_format == torch.channels_last_3d:
-                a = prims.stride_order(a, (4, 0, 3, 2, 1))
-        return a
+        a = prims.clone(a)
 
     # NOTE copy == False
     # NOTE to() returns the tensor unmodified if the device and dtype requested are the same
@@ -1836,14 +1825,6 @@ def logsigmoid(a: TensorProxy, /) -> TensorLike:
     return where(a > 0, -log1p(exp(-a)), a - log1p(exp(a)))
 
 
-@torchsymbol("log_sigmoid_backward", id="log_sigmoid_backward")
-def log_sigmoid_backward(g: TensorProxy, a: TensorProxy, buffer: TensorProxy) -> TensorLike:
-    # buffer is used by PyTorch in cpu-based calculations.  See
-    # https://github.com/pytorch/pytorch/blob/7667235a23e2ffca4d32e6e16aa60a683418e159/torch/_decomp/decompositions.py#L332
-    # This is addressed in the custom grad fn thunder.core.transforms._log_sigmoid_grad.
-    return g * where(a > 0, exp(-a) / (1 + exp(-a)), 1 - exp(a) / (1 + exp(a)))
-
-
 # TODO Should this use clamp? -- Would that propagate NaNs properly?
 @torchsymbol(torch.relu, torch.nn.functional.relu, id="torch.relu", is_method=True)
 def relu(a: TensorLike, /, inplace: bool = False) -> TensorLike:
@@ -1906,6 +1887,26 @@ def hardswish(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
 _inplace_to_out_of_place[hardswish] = hardswish, 1
 
 
+@torchsymbol(torch.nn.functional.hardtanh, is_method=False)
+def hardtanh(a: TensorProxy, /, min_val: float = -1.0, max_val: float = 1.0, inplace: bool = False) -> TensorLike:
+    utils.check(min_val < max_val, lambda: f"max_val {max_val} must be larger than min_val {min_val}")
+    out = clamp(a, min_val, max_val)
+    if inplace:
+        return _copy_(a, out)
+    return out
+
+
+_inplace_to_out_of_place[hardtanh] = hardtanh, 3
+
+
+@torchsymbol(torch.nn.functional.hardtanh_, is_method=False, tags=(prims.OpTags.IN_PLACE,))
+def hardtanh_(a: TensorProxy, /, min_val: float = -1.0, max_val: float = 1.0) -> TensorLike:
+    return _copy_(a, hardtanh(a, min_val, max_val, False))
+
+
+_inplace_to_out_of_place[hardtanh_] = hardtanh, -1
+
+
 # id=torch.selu because we ignore inplace argument in torch.nn.functional.selu
 @torchsymbol(torch.selu, torch.nn.functional.selu, id="torch.selu", is_method=False)
 def selu(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
@@ -1932,6 +1933,21 @@ def silu(a: TensorLike, /, inplace: bool = False) -> TensorLike:
 
 
 _inplace_to_out_of_place[silu] = silu, 1
+
+
+@torchsymbol(torch.nn.functional.softshrink, is_method=False)
+def softshrink(a: TensorProxy, /, lambd: float = 0.5) -> TensorLike:
+    utils.check(
+        not dtypes.is_complex_dtype(a.dtype),
+        lambda: f"softshrink not implemented for '{a.dtype}'",
+    )
+    utils.check(
+        lambd >= 0,
+        lambda: f"lambda must be greater or equal to 0, but found to be {lambd}'",
+    )
+    # If a is NaN, then sign(a) is NaN. To propagate NaNs,
+    # `a * 0` is used instead of `0`.
+    return where(abs(a) > lambd, a - sign(a) * lambd, a * 0)
 
 
 @torchsymbol(torch.nn.functional.tanhshrink)
@@ -2210,7 +2226,7 @@ def polygamma(n: int, a: TensorLike, /) -> TensorLike:
 
 
 @torchsymbol(torch.Tensor.polygamma_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
-def polygamma_(n: int, a: TensorLike, /) -> TensorLike:
+def polygamma_(a: TensorLike, n: int, /) -> TensorLike:
     return _copy_(a, polygamma(n, a))
 
 
@@ -5097,31 +5113,50 @@ def _nll_loss_helper(
     #   ATen prevents nll_loss from having these errors by skipping target values that match ignore_index first before
     # indexing the input tensor.
     #
-    # What do we do?
-    #   We mask the ignore_index entries on the output tensor from take_along_axis because we expect the targets to be
-    # within [0, num_class) range.
+    # What do we do:
+    #   Because prims.take_along_axis doesn't allow out of bound access. We need to treat this more carefully.
     #
-    # Why do we like our approach better?
-    #   Mimicking Aten behavior requires masking the target tensor before calling take_along_axis, which would add more
-    # operations to the fusion. We should follow this approach until we see real examples where ignore_index is
-    # out-of-bounds of [0, num_class) range.
+    #   1. When ignore_index is within [0, num_class) range. We mask the ignore_index entries on the output
+    #   tensor from prims.take_along_axis.
+    #
+    #   2. otherwise, ignore_index is not in bound of class_dim sizes, we cannot mask the target for
+    #   prims.take_along_axis. Two action is done:
+    #       i. cap the `ignore_index` entries in target as `num_class`;
+    #       ii. pad the logits so the last entry at index `num_class` is all zero.
+    #
+    #   Neither approach is ideal, because we have an explicit mask or pad, where we should have been able to
+    #   predicate those access inside prims.take_along_axis.
     #
     # What are the alternative options?
     #   We can add a `mode` parameter to take_along_axis that controls how to handle out-of-bounds indices.
     # The jax.numpy.take_along_axis has this feature.
+    can_mask_target = isinstance(ignore_index, Number) and ignore_index >= 0 and ignore_index < num_class
 
     out = -a
 
     if weight is not None:
-        bcast_weight = reshape(weight, [num_class] + [1 for _ in range(2, a.ndim)])
+        bcast_weight = reshape(weight, [weight.size(0)] + [1 for _ in range(2, a.ndim)])
         out = out * bcast_weight
 
     # Make target broadcastable with output, which has same shape as input tensor.
     bcast_target = unsqueeze(target, class_dim)
 
-    out = take_along_dim(out, bcast_target, class_dim)
-    selected_target_mask = bcast_target != ignore_index
-    out = where(selected_target_mask, out, 0)
+    if can_mask_target:
+        # scenario 1 in handling `ignore_index` parameter
+        out = take_along_dim(out, bcast_target, class_dim)
+        selected_target_mask = bcast_target != ignore_index
+        out = where(selected_target_mask, out, 0)
+    else:
+        # scenario 2 in handling `ignore_index` parameter
+        # i. cap the ignore_index to be num_class
+        selected_target_mask = bcast_target != ignore_index
+        bcast_target = where(selected_target_mask, bcast_target, num_class)
+        # ii. pad the logits to have an all-zero entry at index num_class
+        padding = [(0, 0, 0)] * out.ndim
+        padding[class_dim] = (0, 1, 0)
+        padded_out = clang.pad(out, utils.const_as(0, out.dtype), padding)
+        # with the cap and pad, all ignore_index entries would be all zero, mimicking the skip behavior
+        out = take_along_dim(padded_out, bcast_target, class_dim)
 
     # This section handles applying the reduction parameter to the output.
     # We return None for the total_weight when reduction is "none" or "sum" since it is unused in the backwards pass.
@@ -5135,9 +5170,16 @@ def _nll_loss_helper(
             # Gather the weights for each target class.
             # Mask the ignored target classes.
             # Sum together all target weights.
-            expanded_weight = expand(bcast_weight, a.shape)
-            selected_weight = take_along_dim(expanded_weight, bcast_target, class_dim)
-            selected_weight = where(selected_target_mask, selected_weight, 0)
+            if can_mask_target:
+                expanded_weight = expand(bcast_weight, a.shape)
+                selected_weight = take_along_dim(expanded_weight, bcast_target, class_dim)
+                selected_weight = where(selected_target_mask, selected_weight, 0)
+            else:
+                # handling `ignore_index` parameter also requires padding weight for the ignore_index entries.
+                weight = clang.pad(weight, utils.const_as(0, weight.dtype), [(0, 1, 0)])
+                bcast_weight = reshape(weight, [weight.shape[0]] + [1 for _ in range(2, a.ndim)])
+                expanded_weight = expand(bcast_weight, padded_out.shape)
+                selected_weight = take_along_dim(expanded_weight, bcast_target, class_dim)
             bcast_weight_sum = sum(selected_weight)
             return (reduced_sum / bcast_weight_sum), bcast_weight_sum
         else:

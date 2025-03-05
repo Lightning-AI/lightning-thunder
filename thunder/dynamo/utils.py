@@ -1,12 +1,11 @@
 from __future__ import annotations
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from enum import Enum, auto
 from typing import TYPE_CHECKING
 import dataclasses
 import inspect
 import itertools
 import copy
-from pathlib import Path
 
 import torch
 from torch.nn.modules.module import _addindent
@@ -73,12 +72,12 @@ class SplitReason:
     Attributes:
         reason_type: Reason for the split.
         info: String with details of what caused the split.
-        exception: Exception if there was any.
+        exception: String with details of exception if there was any.
     """
 
     reason_type: SplitReasonType
     info: str | None
-    exception: Exception | None = None
+    exception: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -94,11 +93,16 @@ class ExampleInputMetaData:
     shape: list[int]
     storage_shape: list[int]
     strides: list[int]
+    is_contiguous: bool
+    _storage_offset: int
     min_val: int | None = None
     max_val: int | None = None
 
     def stride(self) -> list[int]:
         return self.strides
+
+    def storage_offset(self) -> int:
+        return self._storage_offset
 
 
 @dataclasses.dataclass(frozen=True)
@@ -248,7 +252,7 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
             return False, SplitReason(
                 SplitReasonType.EXCEPTION_PROXY_THUNDER_OP,
                 f"Failed while creating proxy for node with name: {node.name} and target: {node.target}, see exception field",
-                exception=e,
+                exception=str(e),
             )
 
         # We need to be under trace context to generate proxies.
@@ -259,7 +263,7 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
                 return False, SplitReason(
                     SplitReasonType.EXCEPTION_META_THUNDER_OP,
                     f"Failed while running meta for node with name: {node.name} and target: {node.target}, see exception field",
-                    exception=e,
+                    exception=str(e),
                 )
 
         # Execution with proxies was successful.
@@ -393,7 +397,7 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
             return False, SplitReason(
                 SplitReasonType.EXCEPTION_PROXY_THUNDER_OP,
                 f"Failed while creating proxy for node with name: {node.name} and target: {node.target}, see exception field",
-                exception=e,
+                exception=str(e),
             )
         # NOTE: `get_method` may throw if relevant method is not found, so we have guarded it with `has_method`.
         method = torchctx.get_method(node.target, args, kwargs)
@@ -445,12 +449,12 @@ def recompile_graph(gm: torch.fx.GraphModule):
     return gm.recompile()
 
 
+# Gets the minimum storage shape according to the shape, stride and storage offset
 def _get_storage_shape(t: torch.Tensor):
     shape = _concrete_value(t.shape)
-    if t.is_contiguous():
-        return shape
     strides = _concrete_value(t.stride())
-    storage_size = sum(strides[i] * (shape[i] - 1) for i in range(len(shape))) + 1
+    storage_offset = t.storage_offset()
+    storage_size = storage_offset + sum(strides[i] * (shape[i] - 1) for i in range(len(shape))) + 1
     return (storage_size,)
 
 
@@ -469,18 +473,48 @@ def _get_example_input_tensor_metadata(t: torch.Tensor) -> ExampleInputMetaData:
         _concrete_value(t.shape),
         _get_storage_shape(t),
         _concrete_value(t.stride()),
+        t.is_contiguous(),
+        t.storage_offset(),
         min_val,
         max_val,
     )
     return meta_ev
 
 
-def _create_random_tensor_from_tensor_metadata(t: ExampleInputMetaData) -> torch.Tensor:
-    from thunder.tests.make_tensor import make_tensor
-
-    return make_tensor(t.storage_shape, dtype=t.dtype, device=t.device, requires_grad=t.requires_grad).as_strided(
-        t.shape, t.stride()
+def _create_random_tensor_from_tensor_metadata(arg: ExampleInputMetaData) -> torch.Tensor:
+    min_val, max_val = arg.min_val, arg.max_val
+    shape = arg.shape if arg.is_contiguous else arg.storage_shape
+    if min_val is not None and min_val == max_val:
+        tensor = torch.full(shape, min_val, dtype=arg.dtype, device=arg.device, layout=arg.layout)
+    else:
+        tensor = torch.testing.make_tensor(shape, dtype=arg.dtype, device=arg.device, low=min_val, high=max_val)
+    return tensor.set_(tensor, size=arg.shape, storage_offset=arg.storage_offset(), stride=arg.stride()).requires_grad_(
+        arg.requires_grad
     )
+
+
+def example_input_meta_to_input(meta):
+    if isinstance(meta, ExampleInputMetaData):
+        return _create_random_tensor_from_tensor_metadata(meta)
+    elif isinstance(meta, (int, bool, float)):
+        return meta
+    elif isinstance(meta, Sequence):
+        return [example_input_meta_to_input(i) for i in meta]
+    else:
+        raise TypeError(f"Unsupported input type: {type(meta)}")
+
+
+def input_to_example_input_meta(input):
+    if isinstance(input, torch.Tensor):
+        return _get_example_input_tensor_metadata(input)
+    elif isinstance(input, (int, bool, float)):
+        return input
+    elif isinstance(input, torch.types.py_sym_types):
+        return input.node.hint
+    elif isinstance(input, Sequence):
+        return [input_to_example_input_meta(i) for i in input]
+    else:
+        raise TypeError(f"Unsupported input type: {type(input)}")
 
 
 def _get_example_inputs_from_placeholder(
@@ -493,30 +527,26 @@ def _get_example_inputs_from_placeholder(
     check(node.op == "placeholder", lambda: f"The node must be placeholder type", ValueError)
     # Prefers to use actual example value in GraphArg if available
     if "grapharg" in node.meta:
-        ev = node.meta["grapharg"].example
-        if isinstance(ev, torch.Tensor):
-            if only_metadata:
-                return _get_example_input_tensor_metadata(ev)
-            return ev.detach().clone().requires_grad_(ev.requires_grad)
+        try:
+            ev = node.meta["grapharg"].example
+        except AssertionError:
+            # TensorWeakRef is None
+            pass
+        else:
+            if isinstance(ev, torch.Tensor):
+                ev_metadata = _get_example_input_tensor_metadata(ev)
+                if only_metadata:
+                    return ev_metadata
+                return _create_random_tensor_from_tensor_metadata(ev_metadata)
 
     if "example_value" not in node.meta:
         return None
     example_value = node.meta["example_value"]
 
-    if isinstance(example_value, torch.Tensor):
-        ev_metadata = _get_example_input_tensor_metadata(example_value)
-        if only_metadata:
-            return ev_metadata
-        return _create_random_tensor_from_tensor_metadata(ev_metadata)
-    elif isinstance(example_value, tuple):
-        ev_metadatas = tuple(_get_example_input_tensor_metadata(e_v) for e_v in example_value)
-        if only_metadata:
-            return ev_metadatas
-        return tuple(_create_random_tensor_from_tensor_metadata(ev_metadata) for ev_metadata in ev_metadatas)
-    elif isinstance(example_value, torch.types.py_sym_types):
-        return example_value.node.hint
-    else:
-        raise TypeError(f"Unsupported example_value type: {type(example_value)}")
+    example_value = input_to_example_input_meta(example_value)
+    if only_metadata:
+        return example_value
+    return example_input_meta_to_input(example_value)
 
 
 def _checkpoint_function_converter(gm: torch.fx.GraphModule):
@@ -615,28 +645,26 @@ def remove_empty_autocast(graph_module: torch.fx.GraphModule) -> torch.fx.GraphM
 
 def arg_like_tensor(arg: torch.Tensor | ExampleInputMetaData):
     """Creates a new argument like the given tensor or tensor metadata"""
-    min_val = None
-    max_val = None
     if isinstance(arg, torch.Tensor):
-        if arg.numel() != 0:
-            min_val, max_val = torch.aminmax(arg)
-            min_val = min_val.cpu().item()
-            max_val = max_val.cpu().item()
-    else:
-        min_val, max_val = arg.min_val, arg.max_val
-    storage_shape = _get_storage_shape(arg) if isinstance(arg, torch.Tensor) else arg.storage_shape
+        arg = _get_example_input_tensor_metadata(arg)
+    min_val, max_val = arg.min_val, arg.max_val
+    shape = arg.shape if arg.is_contiguous else arg.storage_shape
     if min_val is not None and min_val == max_val:
-        meta = f"{storage_shape}, {min_val}, dtype={arg.dtype}, device='{arg.device}', requires_grad={arg.requires_grad}, layout={arg.layout}"
-        return f"torch.full({meta}).as_strided({arg.shape}, {arg.stride()}),"
-    meta = f"{storage_shape}, dtype={arg.dtype},  device='{arg.device}', requires_grad={arg.requires_grad},"
-    meta = f"{meta} low={min_val}, high={max_val},"
-    return f"torch.testing.make_tensor({meta}).as_strided({arg.shape}, {arg.stride()}),"
+        meta = f"{shape}, {min_val}, dtype={arg.dtype}, device='{arg.device}', requires_grad={arg.requires_grad}, layout={arg.layout}"
+        tensor_str = f"torch.full({meta})"
+    else:
+        meta = f"{shape}, dtype={arg.dtype},  device='{arg.device}', requires_grad={arg.requires_grad},"
+        meta = f"{meta} low={min_val}, high={max_val},"
+        tensor_str = f"torch.testing.make_tensor({meta})"
+    if arg.is_contiguous and arg.storage_offset() == 0:
+        return f"{tensor_str},"
+    return f"{tensor_str}.as_strided({arg.shape}, {arg.stride()}, {arg.storage_offset()}),"
 
 
 def arg_like(arg: Any):
     """Creates a new argument that is similar to the given arg."""
     if isinstance(arg, (torch.Tensor, ExampleInputMetaData)):
-        return f"{arg_like_tensor(arg)}"
+        return arg_like_tensor(arg)
     else:
         # Assume it's a literal that we can just print directly.
         return f"{arg},"
@@ -729,3 +757,12 @@ def get_split_reasons_string(subgraph_info: SubgraphInfo) -> str:
     else:
         split_reason_str += "The original graph is not split, and is entirely run by Thunder.\n"
     return split_reason_str
+
+
+def get_thunder_module_names(subgraph_info: SubgraphInfo) -> list[str]:
+    thunder_module_names = []
+    for node in subgraph_info.split_graph_module.graph.nodes:
+        target = node.target
+        if isinstance(target, str) and target.startswith("thunder_"):
+            thunder_module_names.append(target)
+    return thunder_module_names

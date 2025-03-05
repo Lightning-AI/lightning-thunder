@@ -29,6 +29,9 @@ from thunder.benchmarks import (
     NanoGPTLayerNormBenchmark,
     ResNet50Benchmark,
     TorchbenchBenchmark,
+    HFBenchmark,
+    LinearLoRABenchmark,
+    DeepSeekSGLangMoEBenchmark,
     thunder_apex_executor,
     thunder_apex_nvfuser_executor,
     thunder_cudnn_executor,
@@ -45,6 +48,7 @@ from thunder.core.interpreter import interpret
 
 from thunder.tests.litgpt_model import Config as LitGPTConfig
 from thunder.tests.make_tensor import make_tensor
+from thunder.benchmarks.utils import backward_only
 
 LIGER_FUSED_SWIGLU_AVAILABLE: bool = package_available("liger_kernel.ops.swiglu")
 APEX_FUSED_ROPE_AVAILABLE: bool = package_available("fused_rotary_positional_embedding")
@@ -612,116 +616,41 @@ def test_litgpt_qkv_split_rope(
     benchmark_for_compute_type(compute_type, benchmark, jfn, args, kwargs)
 
 
-def backward_only(fn: Callable, *args, setup_graph_on_each_invocation=False, **kwargs):
-    """
-    Returns a function that runs the backward pass of the given function.
-
-    The returned function should be called with the output of setup function.
-
-    Args:
-        fn: The forward function
-        setup_graph_on_each_invocation: Should the forward graph be setup on each invocation.
-                                        Defaults to False.
-        *args: Arguments to the forward function
-        **kwargs: Keyword arguments to the forward function
-
-    Returns:
-        A tuple of the backward function and the setup function
-        that returns the arguments for the backward function.
-    """
-    if setup_graph_on_each_invocation:
-        return backward_only_setup_graph_on_each_invocation(fn, *args, **kwargs)
-
-    return backward_only_setup_graph_once(fn, *args, **kwargs)
+# Thunder executor: RuntimeError: Advanced indexing currently only supports zero or one-dimensional integer tensors,
+# but found a tensor with dtype thunder.dtypes.int64 and 2 dimensions
+# https://github.com/Lightning-AI/lightning-thunder/issues/764
+moe_executors = (torch_executor, torch_compile_executor, thunderfx_executor)
+moe_executors_ids = (
+    "torch",
+    "torch.compile",
+    "thunderfx",
+)
 
 
-def backward_only_setup_graph_once(fn: Callable, *args, **kwargs):
-    """
-    Returns a function that runs the backward pass of the given function.
+@pytest.mark.parametrize(
+    "bs,",
+    (2**i for i in range(0, 6)),
+    ids=(f"bs{2**i}" for i in range(0, 6)),
+)
+@pytest.mark.parametrize(
+    "executor,",
+    moe_executors,
+    ids=moe_executors_ids,
+)
+@pytest.mark.parametrize(
+    "compute_type,",
+    (ComputeType.INFERENCE,),
+    ids=("inference",),
+)
+def test_deepseek_sglang_moe(benchmark, bs, executor: Callable, compute_type: ComputeType):
+    bench: Benchmark = DeepSeekSGLangMoEBenchmark(
+        model="deepseek-ai/DeepSeek-R1", tp_size=8, batch_size=bs, use_fp8=False
+    )
 
-    The returned function should be called with the output gradients.
+    args, kwargs = bench.make_batch()
+    fn = executor(bench.fn())
 
-    Args:
-        fn: The forward function
-        *args: Arguments to the forward function
-        **kwargs: Keyword arguments to the forward function
-
-    Returns:
-        A tuple of the backward function and the setup function
-        that returns the arguments for the backward function.
-    """
-    result = fn(*args, **kwargs)
-    result = thunder.core.utils.sequencify(result)
-
-    forward_inputs = thunder.core.pytree.tree_flatten((args, kwargs))[0]
-    forward_inputs = list(filter(lambda x: isinstance(x, torch.Tensor) and x.requires_grad, forward_inputs))
-    backwardable_tensor_result = list(filter(lambda x: isinstance(x, torch.Tensor) and x.requires_grad, result))
-
-    # Capture metadata for backward to avoid keeping the result in memory
-    backwardable_result_metadata = [(r.dtype, r.device, r.shape) for r in backwardable_tensor_result]
-
-    def backward_setup():
-        output_grads = []
-        for dtype, device, shape in backwardable_result_metadata:
-            torch_dtype = thunder.torch.to_torch_dtype(dtype)
-            torch_device = thunder.core.devices.to_torch_device(device)
-            output_grads.append(make_tensor(shape, dtype=torch_dtype, device=torch_device, requires_grad=False))
-        return output_grads
-
-    def backward_fn(*output_grads):
-        for i in forward_inputs:
-            i.grad = None
-
-        torch.autograd.backward(result, output_grads, retain_graph=True)
-
-    return backward_fn, backward_setup
-
-
-def backward_only_setup_graph_on_each_invocation(fn: Callable, *args, **kwargs):
-    """
-    Returns a function that runs the backward pass of the given function.
-
-    The returned function should be called with the output of setup function.
-
-    NOTE: The forward graph will be setup on each invocation.
-
-    Args:
-        fn: The forward function
-        *args: Arguments to the forward function
-        **kwargs: Keyword arguments to the forward function
-
-    Returns:
-        A tuple of the backward function and the setup function
-        that returns the arguments for the backward function.
-    """
-
-    # backward setup takes care of running the forward, saving the relevant context for backward
-    # and returning the `grads` for output.
-    def backward_setup():
-        result = fn(*args, **kwargs)
-        result = thunder.core.utils.sequencify(result)
-
-        forward_inputs = thunder.core.pytree.tree_flatten((args, kwargs))[0]
-        forward_inputs = list(filter(lambda x: isinstance(x, torch.Tensor) and x.requires_grad, forward_inputs))
-        backwardable_tensor_result = list(filter(lambda x: isinstance(x, torch.Tensor) and x.requires_grad, result))
-
-        # Capture metadata for backward to avoid keeping the result in memory
-        backwardable_result_metadata = [(r.dtype, r.device, r.shape) for r in backwardable_tensor_result]
-        output_grads = []
-        for dtype, device, shape in backwardable_result_metadata:
-            torch_dtype = thunder.torch.to_torch_dtype(dtype)
-            torch_device = thunder.core.devices.to_torch_device(device)
-            output_grads.append(make_tensor(shape, dtype=torch_dtype, device=torch_device, requires_grad=False))
-        return result, forward_inputs, output_grads
-
-    # Actually do the backward pass.
-    def backward_fn(result, forward_inputs, output_grads):
-        for i in forward_inputs:
-            i.grad = None
-
-        torch.autograd.backward(result, output_grads)
-
-    return backward_fn, backward_setup
+    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
 
 
 #
@@ -829,6 +758,104 @@ def test_torchbench_canary(benchmark, module_name, executor, compute_type: Compu
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=FutureWarning)
         b = TorchbenchBenchmark(module_name, device="cuda", requires_grad=is_requires_grad(compute_type))
+
+    args, kwargs = b.make_batch()
+    fn = executor(b.fn())
+
+    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
+
+
+hf_model_ids = [
+    "bigcode/starcoder2-7b",
+    "google/gemma-7b",
+    "google/gemma-2-9b-it",
+    "meta-llama/Llama-3.2-3B",
+    "meta-llama/Meta-Llama-3-8B-Instruct",
+    "microsoft/Phi-3.5-mini-instruct",
+    "microsoft/phi-4",
+    "mistralai/Mistral-Nemo-Base-2407",
+    "Qwen/Qwen2-7B",
+    "Qwen/Qwen2.5-7B-Instruct",
+]
+hf_seq_lengths = [4096 * 2**i for i in range(0, 6)]
+
+
+@pytest.mark.parametrize(
+    "executor,",
+    [
+        thunderfx_executor,
+        torch_compile_executor,
+        torch_executor,
+    ],
+    ids=["thunderfx", "inductor", "eager"],
+)
+@parametrize_compute_type
+@pytest.mark.parametrize("peft", [True, False], ids=["PEFT", "FT"])
+@pytest.mark.parametrize(
+    "seq_length",
+    hf_seq_lengths,
+)
+@pytest.mark.parametrize("batch_size", range(1, 5), ids=[f"BS{i}" for i in range(1, 5)])
+@pytest.mark.parametrize("model_id", hf_model_ids, ids=hf_model_ids)
+def test_hf_transformers(
+    benchmark, model_id: str, seq_length: int, batch_size: int, peft: bool, executor, compute_type
+):
+    if not importlib.util.find_spec("transformers"):
+        pytest.skip("HF transformers not available.")
+
+    b = HFBenchmark(
+        model_id,
+        seq_length,
+        batch_size,
+        device="cuda",
+        dtype=torch.bfloat16,
+        requires_grad=is_requires_grad(compute_type),
+        enable_peft=peft,
+    )
+
+    if seq_length > b.config.max_position_embeddings:
+        pytest.skip("Sequence length larger than maximum for the model.")
+
+    args, kwargs = b.make_batch()
+    fn = executor(b.fn())
+
+    if compute_type == ComputeType.TRAINING_BACKWARD:
+        return_fn = lambda *args, **kwargs: fn(*args, **kwargs).loss
+    else:
+        kwargs["labels"] = None
+        return_fn = fn
+
+    benchmark_for_compute_type(compute_type, benchmark, return_fn, args, kwargs)
+
+
+@pytest.mark.parametrize(
+    "executor,",
+    [
+        thunderfx_executor,
+        torch_compile_executor,
+        torch_executor,
+    ],
+    ids=["thunderfx", "inductor", "eager"],
+)
+@parametrize_compute_type
+@pytest.mark.parametrize("implementation,", ["HF", "NeMo"])
+def test_lora_linear(benchmark, executor, compute_type, implementation):
+    match implementation:
+        case "HF":
+            if not importlib.util.find_spec("transformers"):
+                pytest.skip("HF transformers not available.")
+            if not importlib.util.find_spec("peft"):
+                pytest.skip("HF peft not available.")
+        case "NeMo":
+            if not importlib.util.find_spec("nemo.collections.llm"):
+                pytest.skip("NeMo not available.")
+
+    b = LinearLoRABenchmark(
+        implementation=implementation,
+        device="cuda",
+        dtype=torch.bfloat16,
+        requires_grad=is_requires_grad(compute_type),
+    )
 
     args, kwargs = b.make_batch()
     fn = executor(b.fn())

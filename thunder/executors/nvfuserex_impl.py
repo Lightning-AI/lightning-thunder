@@ -57,7 +57,7 @@ from thunder.executors.utils import (
 )
 
 from thunder.executors.passes import update_fusion_call_ctx
-from thunder.extend import FUEL_LEVEL, FusionExecutor, register_executor, add_default_executor, fuse_bound_symbols
+from thunder.extend import FUEL_LEVEL, FusionExecutor, register_executor, add_default_executor
 from thunder.executors.nvfuserex import nvfuser_version
 
 # NOTE This impl file is here because nvFuser may not be available, so it's imported conditionally
@@ -459,6 +459,7 @@ class FusionDefinitionWrapper:
     last_used: None | FusionDefinition = None
     last_inputs: None | Sequence[tuple] = None
     store_inputs: bool = False
+    store_inputs_meta: bool = False
     enable_options: None | list[str] = None
     disable_options: None | list[str] = None
 
@@ -468,6 +469,11 @@ class FusionDefinitionWrapper:
 
         if self.store_inputs:
             self.last_inputs = args
+
+        if self.store_inputs_meta:
+            from thunder.dynamo.utils import input_to_example_input_meta
+
+            self.last_inputs_meta = [input_to_example_input_meta(arg) for arg in args]
 
         kwargs = {}
         # Set device if set in one of the "factory" methods like full, iota, or uniform
@@ -578,6 +584,9 @@ def create_fusion_definition_wrapper(
     store_inputs: None | bool = get_compile_option(
         "nv_store_fusion_inputs", "Allow nvFuser to store fusion inputs for repro."
     )
+    store_inputs_meta: None | bool = get_compile_option(
+        "nv_store_fusion_inputs_meta", "Allow nvFuser to store fusion inputs metadata for repro."
+    )
     enable_options: None | list[str] = get_compile_option("nv_enable_options", "List of NVFUSER_ENABLE options to set.")
     disable_options: None | list[str] = get_compile_option(
         "nv_disable_options", "List of NVFUSER_DISABLE options to set."
@@ -603,6 +612,7 @@ def create_fusion_definition_wrapper(
         get_fd.cache_info,
         get_fd.cache_clear,
         store_inputs=store_inputs,
+        store_inputs_meta=store_inputs_meta,
         enable_options=enable_options,
         disable_options=disable_options,
     )
@@ -849,12 +859,26 @@ class nvFuserExecutor(FusionExecutor):
         fusedtrace: TraceCtx = from_trace(trace)
 
         producers, consumers = utils.producers_and_consumers(trace)
+        from thunder.executors.data_dependent_partition import Node, fuse_bound_symbols
 
         fused_bsyms = []
 
-        bound_symbol_groups = fuse_bound_symbols(
-            trace, lambda bsym: self.can_fuse(bsym) and self.has_cuda_input_or_output(bsym)
-        )  # _should_fuse)
+        # TODO has_cuda_input_or_output is too restrictive a check on what should be fused
+        # TODO check whether a function would output a CPU tensor? -- can nvFuser fuse such operations?
+        #   ex. device_put to a CPU device from a CUDA device
+        def _should_fuse(a: Node, b: Node):
+            def _can_fuse_node(n: Node):
+                # if already merged, then node can be fused
+                if len(n.group_bsyms) > 1:
+                    return True
+                bsym: BoundSymbol = n.group_bsyms[0]
+                can_fuse: bool = self.can_fuse(bsym)
+                cuda_in_or_out: bool = self.has_cuda_input_or_output(bsym)
+                return can_fuse and cuda_in_or_out
+
+            return _can_fuse_node(a) and _can_fuse_node(b)
+
+        bound_symbol_groups = fuse_bound_symbols(trace, _should_fuse)
 
         # Counts how many fusions (per executor) have been constructed
         #   (Used to name fusions like nvFusion0, nvFusion1, ...)
@@ -1929,6 +1953,26 @@ def sub(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinitio
 
 
 register_supported(PrimIDs.SUB, sub, _elementwise_binary_check)
+
+
+def maximum(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+    nva = getnv(a, fd, lc_to_nv_map)
+    nvb = getnv(b, fd, lc_to_nv_map)
+
+    return fd.ops.maximum(nva, nvb)
+
+
+register_supported(PrimIDs.MAXIMUM, maximum, _elementwise_binary_check)
+
+
+def minimum(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+    nva = getnv(a, fd, lc_to_nv_map)
+    nvb = getnv(b, fd, lc_to_nv_map)
+
+    return fd.ops.minimum(nva, nvb)
+
+
+register_supported(PrimIDs.MINIMUM, minimum, _elementwise_binary_check)
 
 
 #

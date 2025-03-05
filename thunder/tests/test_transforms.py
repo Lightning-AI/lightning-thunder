@@ -530,6 +530,49 @@ def test_cudagraph_empty_inputs():
     assert any(("CUDAGraph" in bsym.sym.name) for bsym in thunder.last_traces(jfn)[-1].bound_symbols)
 
 
+@requiresCUDA
+def test_cudagraph_fw_bw():
+    import torch
+    import thunder
+    import litgpt
+    from torch.testing import make_tensor
+    from functools import partial
+    from thunder.transforms.cudagraph import CUDAGraphTransform
+
+    device = torch.device("cuda")
+
+    cfg = litgpt.Config.from_name("open_llama_3b", n_layer=2)
+    with device:
+        make = partial(make_tensor, low=0, high=255, device=device, dtype=torch.long, requires_grad=False)
+        shape = (1,) + (cfg.block_size,)
+
+        x = make(shape)
+        m = litgpt.GPT(cfg)
+
+    cg_transform = CUDAGraphTransform(share_mem_pool=True)
+    m = thunder.jit(m, transforms=[cg_transform])
+
+    before_snapshot = torch.cuda.memory_snapshot()
+
+    o = m(x)
+    o.sum().backward()
+
+    after_snapshot = torch.cuda.memory_snapshot()
+
+    # Ensure all saved for backwards tensors are marked as static inputs
+    assert all(cg_transform.cuda_graph_runner.python_callables["CUDAGraph2"][1][1:-2])
+
+    # Ensure that all newly allocated segments are allocated in the shared memeory pool or the global pool
+    for segment in after_snapshot:
+        if segment in before_snapshot:
+            continue
+        else:
+            assert (
+                segment["segment_pool_id"] == cg_transform.cuda_graph_runner.mem_pool[0]
+                or str(segment["segment_pool_id"]) == "(0, 0)"
+            )
+
+
 def test_disable_params_and_buffer_check():
     from thunder.tests.litgpt_model import Config
     from litgpt.model import GPT
@@ -574,7 +617,8 @@ def test_disable_params_check_thunderfx():
 
     model = Model()
     x = torch.randn(16, 16)
-    cmodel = thunderfx(model, transforms=[ExtractionOnlyPrologueTransform()])
+    # NOTE: The `ExtractionOnlyPrologueTransform` transform is applied by default on `thunderfx` path.
+    cmodel = thunderfx(model)
     _ = cmodel(x)
     tfn = cmodel._backend.subgraph_infos[0].thunder_compiled_fns[0]
     prologue_trc = thunder.last_prologue_traces(tfn)[-1]

@@ -191,16 +191,18 @@ get_always_executors = extend.get_always_executors
 cudnn_executor: None | extend.Executor = extend.get_executor("cudnn")
 sdpa_executor: None | extend.Executor = extend.get_executor("sdpa")
 torchcompile_cat_executor: None | extend.Executor = extend.get_executor("torchcompile_cat")
+torchcompile_xentropy_executor: None | extend.Executor = extend.get_executor("torchcompile_xentropy")
 apex_executor: None | extend.Executor = extend.get_executor("apex")
 nvfuser_executor: None | extend.Executor = extend.get_executor("nvfuser")
 pytorch_executor: None | extend.Executor = extend.get_executor("torch")
 
-# Default executor list is [cudnn -> sdpa -> torchcompile_cat -> nvfuser -> torch -> python]
+# Default executor list is [cudnn -> sdpa -> torchcompile_cat -> torchcompile_xentropy -> nvfuser -> torch -> python]
 # Note that add_default_executor inserts executor at start of list, hence the reverse order below.
 if nvfuser_executor:
     add_default_executor(nvfuser_executor)
 
 if torchcompile_cat_executor and pytorch._dynamo.is_inductor_supported():
+    add_default_executor(torchcompile_xentropy_executor)
     add_default_executor(torchcompile_cat_executor)
 
 if sdpa_executor:
@@ -744,6 +746,9 @@ def jit(
 
         return wrapped
 
+    # For more context see `NOTE: Split autograd.Function`
+    disable_split_autograd: bool = compile_options.get("thunderfx_disable_split_autograd", False)
+
     def maybe_connect_to_autograd(cache_entry, result):
         if cache_entry.backward_fn:
             # If the backward function is available, we need to connect the
@@ -758,6 +763,7 @@ def jit(
                 saved_tensors=saved_tensors,
                 saved_other=saved_other,
                 return_none_instead_of_grads=cache_entry.return_none_instead_of_grads,
+                disable_split_autograd=disable_split_autograd,
             )
             result = data_for_autograd["output"]
 

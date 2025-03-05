@@ -6,12 +6,20 @@ from typing import Any
 import torch
 
 from thunder.core.transform_common import Transform
-from thunder.core import utils, prims
+from thunder.core import utils, prims, vjp_utils
 from thunder.core.proxies import Proxy, ProxyTag, unvariableify
 from thunder.core.symbol import BoundSymbol, Symbol
-from thunder.core.trace import TraceCtx, from_trace, TraceProvenance, get_tracectx, set_tracectx, reset_tracectx
+from thunder.core.trace import (
+    TraceCtx,
+    from_trace,
+    TraceProvenance,
+    get_tracectx,
+    set_tracectx,
+    reset_tracectx,
+    TraceTag,
+)
 from thunder.executors.utils import Region
-from thunder.extend import fuse_bound_symbols
+from thunder.executors.data_dependent_partition import fuse_bound_symbols, Node
 
 
 @dataclass(**utils.default_dataclass_params)
@@ -59,11 +67,20 @@ class CUDAGraphRunner:
     change.
     """
 
-    def __init__(self):
+    def __init__(self, *, share_mem_pool: bool = False):
         self.cuda_graph_cache = {}  # cahce_key (.make_cache_key) -> (graph, static_inputs, static_outputs)
         self.python_callables = {}  # fn_name -> (callable. static_input_mask (or None))
         self.trace_symbols = {}  # fn_name -> (bsyms, inputs, outputs)
         self.name_counter = 1
+
+        # NOTE: Every invocation of CUDAGraphTransform has a single CUDAGraphRunner associated with it.
+        # This should allow the runner to share a single memory pool across all graphs it constructs on a given device.
+        if share_mem_pool:
+            self.mem_pool = [torch.cuda.graph_pool_handle()] * torch.cuda.device_count()
+            self.stream = [torch.cuda.Stream()] * torch.cuda.device_count()
+        else:
+            self.mem_pool = None
+            self.stream = None
 
     def get_static_buffer(self, x):
         if isinstance(x, torch.Tensor):
@@ -74,15 +91,30 @@ class CUDAGraphRunner:
         self, fn: Callable, args: list[any], static_args_mask: tuple[bool, ...]
     ) -> tuple[torch.cuda.CUDAGraph, Sequence[torch.Tensor | Any], Sequence[torch.Tensor | Any]]:
 
-        # Warmup
+        static_inputs = tuple(
+            self.get_static_buffer(arg) if not is_static else arg for arg, is_static in zip(args, static_args_mask)
+        )
+
         torch.cuda.synchronize()
-        stream = torch.cuda.Stream()
+        if self.stream:
+            # In the case of multiple devices and shared memory pooling, we want to use one stream/pool per device
+            cur_device_index = None
+            for arg in static_inputs:
+                if isinstance(arg, torch.Tensor):
+                    cur_device_index = arg.device.index
+                    break
+                assert (
+                    cur_device_index is not None
+                ), "No tensor found in static inputs, cannot infer which stream to use for graph capture"
+            stream = self.stream[cur_device_index]
+            pool = self.mem_pool[cur_device_index]
+        else:
+            stream = torch.cuda.Stream()
+            pool = self.mem_pool
         stream.wait_stream(torch.cuda.current_stream())
 
+        # Warmup
         with torch.cuda.stream(stream):
-            static_inputs = tuple(
-                self.get_static_buffer(arg) if not is_static else arg for arg, is_static in zip(args, static_args_mask)
-            )
             for _ in range(3):
                 fn(*static_inputs)
 
@@ -91,12 +123,11 @@ class CUDAGraphRunner:
         torch.cuda.synchronize()
 
         # Record
-        # NOTE: We are using default private pool here, but it is possibly better to
-        # use a custom pool for better memory management. See CUDA Graphs Tree in
-        # PyTorch's Inductor: torch/_inductor/cudagraph_trees.py
-        # Design doc: https://docs.google.com/document/d/1ZrxLGWz7T45MSX6gPsL6Ln4t0eZCSfWewtJ_qLd_D0E/view
+        # NOTE: we are (optionally) using a global memory pool and stream here
+        # This may have unintended consequences if graph capture and replay occur in different orders
+        # so disabled by default.
         graph = torch.cuda.CUDAGraph()
-        with torch.cuda.graph(graph, stream=stream):
+        with torch.cuda.graph(graph, stream=stream, pool=pool):
             static_outputs = fn(*static_inputs)
 
         return graph, static_inputs, static_outputs
@@ -205,9 +236,10 @@ class CUDAGraphTransform(Transform):
     in order to override ``can_fuse```or other methods.
     """
 
-    def __init__(self):
+    def __init__(self, *, share_mem_pool: bool = False):
         super().__init__()
-        self.cuda_graph_runner = CUDAGraphRunner()
+        self.cuda_graph_runner = CUDAGraphRunner(share_mem_pool=share_mem_pool)
+        self.outputs_from_forward = None
 
     def fuse(self, region: Region, fusion_counter: int) -> BoundSymbol:
         inputs = [unvariableify(inp) for inp in region.inputs]
@@ -268,8 +300,21 @@ class CUDAGraphTransform(Transform):
 
         return True
 
-    def transform_trace_post_optimization(self, trace: TraceCtx, **kwargs) -> TraceCtx:
+    def generate_fused_trace(self, trace: TraceCtx, **kwargs) -> TraceCtx:
         start_time_ns: int = time.perf_counter_ns()
+
+        def _should_fuse(a: Node, b: Node):
+            # TODO: modify the logic to be able to potentially better handle
+            # islands around data-dependent ops once these are supported by Thunder.
+
+            def _can_fuse_node(n: Node):
+                if len(n.group_bsyms) > 1:
+                    return True
+
+                bsym: BoundSymbol = n.group_bsyms[0]
+                return self.can_fuse(bsym)
+
+            return _can_fuse_node(a) and _can_fuse_node(b)
 
         fused_trace: TraceCtx = from_trace(trace)
         # Tracking CollectionProxies that are being consumed
@@ -278,7 +323,7 @@ class CUDAGraphTransform(Transform):
         fused_trace.clear_collection_names = set()
         fused_trace_tok = set_tracectx(fused_trace)
 
-        bound_symbols_groups = fuse_bound_symbols(trace, self.can_fuse)
+        bound_symbols_groups = fuse_bound_symbols(trace, _should_fuse)
 
         producers, consumers = utils.producers_and_consumers(trace)
 
@@ -308,3 +353,37 @@ class CUDAGraphTransform(Transform):
         fused_trace.set_provenance(TraceProvenance(f"CUDAGraph fusion (took {elapsed_time_ms} milliseconds)"))
 
         return fused_trace
+
+    def transform_trace_post_optimization(self, trace, **kwargs):
+        if trace.siginfo().name == "backward_fn":
+            # TODO: Backward TraceTag
+            assert self.outputs_from_forward is not None, "called on backward without forward before"
+            assert len(trace.bound_symbols[2].args) == 2 and trace.bound_symbols[2].args[0].name == "saved_for_backward"
+            assert (
+                trace.bound_symbols[8].sym.name == "unpack_sequence"
+                and trace.bound_symbols[8].args[0] is trace.bound_symbols[2].output[0]
+            )
+
+            saved_for_backwards_unpacked = trace.bound_symbols[8].output
+            assert len(saved_for_backwards_unpacked) == len(self.outputs_from_forward)
+            for is_static, p_bw in zip(self.outputs_from_forward, saved_for_backwards_unpacked):
+                if is_static:
+                    p_bw.tags.add(ProxyTag.STATIC_MEMORY_LOCATION)
+            self.outputs_from_forward = None
+
+        new_trace = self.generate_fused_trace(trace, **kwargs)
+
+        if TraceTag.AUGMENTED_FORWARD in new_trace.tags:
+            assert self.outputs_from_forward is None, "called on augmented forward twice without backward in between"
+            cudagraph_output_names = set()
+            for bsym in new_trace.bound_symbols:
+                if bsym.sym.name.startswith("CUDAGraph"):
+                    for o in bsym.flat_proxy_outs:
+                        cudagraph_output_names.add(o.name)
+            saved_for_backward = vjp_utils.get_saved_for_backward_tensors(new_trace)
+            self.outputs_from_forward = [
+                o.name in cudagraph_output_names or ProxyTag.STATIC_MEMORY_LOCATION in o.tags
+                for o in saved_for_backward
+            ]
+
+        return new_trace

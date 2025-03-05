@@ -17,11 +17,37 @@ from thunder.dynamo.utils import (
 )
 from thunder.dynamo.splitter import _splitter
 from thunder.core.utils import check
+from thunder.dynamo.benchmark_utils import ThunderCompileSpecification
+from thunder.transforms.extraction_only_prologue_transform import ExtractionOnlyPrologueTransform
 
 if TYPE_CHECKING:
     from thunder.dynamo.utils import SubgraphInfo
+    from thunder.core.transform_common import Transform
     from os import PathLike
     from collections.abc import Callable
+
+
+_DEFAULT_THUNDER_FUSION_TYPE = "dataflow"
+
+# Split Autograd is disabled by default as
+# it can lead to race conditions when using thunderFX + TE + FSDP
+# leading to NCCL hang-up due to collective mismatch.
+# TODO(kshitij12345): Investigate more and understand if the bug is in PyTorch or elsewhere.
+_DEFAULT_THUNDERFX_DISABLE_SPLIT_AUTOGRAD = True
+
+
+def _add_prologue_pruning(options: dict):
+    """
+    Add a transform to prune prologue checks to the list of transforms in the given options dictionary.
+
+    Args:
+        options: The dictionary of options to modify
+    """
+    transforms: list[Transform] | None = options.get("transforms", None)
+    if transforms is None:
+        transforms = []
+    transforms.append(ExtractionOnlyPrologueTransform())
+    options["transforms"] = transforms
 
 
 class ThunderCompiler:
@@ -63,6 +89,13 @@ class ThunderCompiler:
         # Ref to the documentation of `SubgraphInfo` to know more about the information it contains.
         self.subgraph_infos: list[SubgraphInfo] = []
 
+        thunder_options["fusion_type"] = thunder_options.get("fusion_type", _DEFAULT_THUNDER_FUSION_TYPE)
+        # NOTE: Dynamo already adds guards for modules by default (see flag `torch._dynamo.config.guard_nn_modules`), so thunder can avoid adding extra metadata checks for parameters
+        #       in prologue.
+        _add_prologue_pruning(thunder_options)
+        thunder_options["thunderfx_disable_split_autograd"] = thunder_options.get(
+            "thunderfx_disable_split_autograd", _DEFAULT_THUNDERFX_DISABLE_SPLIT_AUTOGRAD
+        )
         self.thunder_options = thunder_options
         self._thunder_jit = partial(jit, **thunder_options)
         self._torch_compile = torch.compile
@@ -135,12 +168,14 @@ class ThunderCompiler:
                             "from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform",
                         ]
                     )
+
+                compile_fn = ThunderCompileSpecification(**self.thunder_options)
                 if not use_pytest_benchmark:
                     report.write_repro(
                         reproducer_folder,
-                        f"{report.graph_name}_repro.py",
-                        executor_str=thunder_ex_str,
-                        import_str=import_str,
+                        file_name=f"{report.graph_name}_repro.py",
+                        compile_fn=compile_fn,
+                        check_consistency=True,
                         serialize_inputs=serialize_inputs,
                         inputs=example_inputs[subgraph_idx],
                         extra_comment_str=split_reason_str,
@@ -154,7 +189,7 @@ class ThunderCompiler:
                     executor_names_list.append("thunder_cudagraph")
                     executors.append("partial(thunder.jit, transform=CUDAGraphTransform())")
 
-                report.write_benchmark_repro(
+                report.write_pytest_benchmark(
                     reproducer_folder,
                     f"{report.graph_name}_benchmark.py",
                     executor_names_list,
@@ -177,6 +212,8 @@ def thunderfx(fn: Callable, /, **kwargs) -> Callable:
     """
     import thunder
 
+    # lightning has torch.compile wrapped in `lightning/fabric/wrappers.py`
+    torch.compile = inspect.unwrap(torch.compile)
     torch_compile_kwarg_names = inspect.getfullargspec(torch.compile).kwonlyargs
     thunder_jit_kwarg_names = inspect.getfullargspec(thunder.jit).kwonlyargs
     overlap = [kwarg_name for kwarg_name in thunder_jit_kwarg_names if kwarg_name in torch_compile_kwarg_names]
@@ -203,7 +240,7 @@ def thunderfx(fn: Callable, /, **kwargs) -> Callable:
             return self._func(*args, **kwargs)
 
         @property
-        def last_traces(self) -> [Trace]:
+        def last_traces(self) -> list[Trace]:
             """
             Get the Thunder traces for all the forward subgraphs of a ThunderFX
             callable.
@@ -211,7 +248,7 @@ def thunderfx(fn: Callable, /, **kwargs) -> Callable:
             .. note:: The object must have been invoked before calling this
                       function.
             """
-            rv: [Trace] = []
+            rv: list[Trace] = []
             if not self._backend.subgraph_infos:
                 warnings.warn("Must invoke the function before using last_traces")
             for sinfo in self._backend.subgraph_infos:
@@ -223,7 +260,7 @@ def thunderfx(fn: Callable, /, **kwargs) -> Callable:
             return rv
 
         @property
-        def last_backward_traces(self) -> [Trace]:
+        def last_backward_traces(self) -> list[Trace]:
             """
             Get the Thunder traces for all the backward subgraphs of a
             ThunderFX callable.
@@ -231,7 +268,7 @@ def thunderfx(fn: Callable, /, **kwargs) -> Callable:
             .. note:: The object must have been invoked before calling this
                       function.
             """
-            rv: [Trace] = []
+            rv: list[Trace] = []
             if not self._backend.subgraph_infos:
                 warnings.warn("last_backward_traces used before function invoked")
             for sinfo in self._backend.subgraph_infos:
