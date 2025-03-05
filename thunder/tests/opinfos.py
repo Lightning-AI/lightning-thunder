@@ -8185,7 +8185,10 @@ log_softmax_opinfo = OpInfo(
         #   (which are 1.6e-2 and 1e-5)
         DecorateInfo(
             custom_comparator(partial(assert_close, atol=1e-2, rtol=1e-2)),
-            dtypes=(datatypes.bfloat16,),
+            dtypes=(
+                datatypes.float16,
+                datatypes.bfloat16,
+            ),
         ),
     ),
 )
