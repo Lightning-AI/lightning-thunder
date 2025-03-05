@@ -8174,6 +8174,25 @@ softmax_opinfo = OpInfo(
 nn_ops.append(softmax_opinfo)
 
 
+softmin_opinfo = OpInfo(
+    ltorch.softmin,
+    supports_grad=True,
+    sample_input_generator=softmax_sample_generator,
+    torch_reference=torch.nn.functional.softmin,
+    dtypes=(datatypes.floating,),
+    test_directives=(
+        # torch.softmin doesn't support float16 on CPU
+        # RuntimeError: "softmax_lastdim_kernel_impl" not implemented for 'Half'
+        DecorateInfo(
+            pytest.mark.xfail,
+            dtypes=(datatypes.float16,),
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+    ),
+)
+nn_ops.append(softmin_opinfo)
+
+
 log_softmax_opinfo = OpInfo(
     ltorch.log_softmax,
     sample_input_generator=softmax_sample_generator,
