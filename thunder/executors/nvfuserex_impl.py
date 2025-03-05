@@ -2698,10 +2698,14 @@ def embedding(
     fd: FusionDefinition,
     lc_to_nv_map: dict,
 ) -> Any:
+    # embedding forward without renorm could be implemented as `index_select`, which is supported
+    # by nvfuser codegen
     if max_norm is None:
         nv_input = getnv(input, fd, lc_to_nv_map)
         nv_weight = getnv(weight, fd, lc_to_nv_map)
         restore_shape = None
+        # high order indices can be reshaped into an array and then restore the shape after
+        # index_select
         if nv_input.ndim > 1:
             restore_shape = []
             for i in range(input.ndim):
