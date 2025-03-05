@@ -464,9 +464,10 @@ class FusionDefinitionWrapper:
     disable_options: None | list[str] = None
 
     def __call__(self, *args):
-        fd = self.get_fd(self.to_descriptors(args))
-        self.last_used = fd
-
+        torch.cuda.nvtx.range_push("nvfuser_ex.__call__")
+        if self.last_used is None:
+            self.last_used = self.get_fd(self.to_descriptors(args))
+        fd = self.last_used
         if self.store_inputs:
             self.last_inputs = args
 
@@ -480,18 +481,18 @@ class FusionDefinitionWrapper:
         if hasattr(fd, "_selected_device"):
             kwargs["device"] = fd._selected_device
 
-        if nvfuser_version() >= LooseVersion("0.2.23"):
-            # nvFuser expects empty list instead of None values.
-            kwargs["_enable_options"] = self.enable_options if self.enable_options is not None else []
-            kwargs["_disable_options"] = self.disable_options if self.disable_options is not None else []
-
+        if NVFUSER_SUPPORTS_OPTIONS:
+            kwargs["_enable_options"] = self.enable_options or []
+            kwargs["_disable_options"] = self.disable_options or []
         elif self.enable_options or self.disable_options:
             warnings.warn(
                 f"nv_enable_options/nv_disable_options require nvFuser version 0.2.23 and above, found version {nvfuser_version()}. These options will be ignored."
             )
 
         with annotate_for_profile(self.name):
-            return fd.execute(args, **kwargs)
+            results = fd.execute(args, **kwargs)
+            torch.cuda.nvtx.range_pop()
+            return results
 
     def __repr__(self):
         return f"FusionDefinitionWrapper({self.name})"
@@ -2192,7 +2193,6 @@ def copy_(
 
 register_supported(PrimIDs.COPY_, copy_, _copy__check)
 
-
 # Removes excessive float casts, like those that occur when autocasting
 # NOTE This passes actually changes a program's semantics, because it will take a sequence like
 #   fp32 -> fp16 -> fp32 and remove all the operations, but casting fp32 values to fp16 can
@@ -2708,3 +2708,8 @@ def embedding(
 
 register_supported(PrimIDs.EMBEDDING, embedding, _embedding_check)
 register_supported(ltorch.embedding, embedding, _embedding_check)
+
+
+# At module/class level
+NVFUSER_SUPPORTS_OPTIONS = nvfuser_version() >= LooseVersion("0.2.23")
+
