@@ -1068,10 +1068,10 @@ def test_get_example_input_tensor_metadata():
     # Tests for nested inputs
     inputs = [
         [
-            torch.randn((), dtype=torch.bfloat16, device="cuda:0", requires_grad=False),
-            torch.randn((), dtype=torch.bfloat16, device="cuda:0", requires_grad=False),
+            torch.randn((), dtype=torch.bfloat16, device="cpu", requires_grad=False),
+            torch.randn((), dtype=torch.bfloat16, device="cpu", requires_grad=False),
         ],
-        torch.randn(24512, dtype=torch.bfloat16, device="cuda:0", requires_grad=False).as_strided(
+        torch.randn(24512, dtype=torch.bfloat16, device="cpu", requires_grad=False).as_strided(
             (128, 1, 128), (192, 24576, 1), 0
         ),
     ]
