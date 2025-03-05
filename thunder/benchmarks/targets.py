@@ -900,8 +900,8 @@ def test_lora_linear(benchmark, executor, compute_type, implementation):
 )
 @pytest.mark.parametrize(
     "optimizer_name",
-    ["adam", "sgd", "rmsprop"],
-    ids=["adam", "sgd", "rmsprop"],
+    ["adam", "adamax", "adadelta", "adagrad", "adamw", "asgd", "nadam", "radam", "rmsprop", "rprop", "sgd"],
+    ids=["adam", "adamax", "adadelta", "adagrad", "adamw", "asgd", "nadam", "radam", "rmsprop", "rprop", "sgd"],
 )
 def test_optim_functional(
     benchmark,
