@@ -8161,15 +8161,6 @@ softmax_opinfo = OpInfo(
     sample_input_generator=softmax_sample_generator,
     torch_reference=torch.softmax,
     dtypes=(datatypes.floating,),
-    test_directives=(
-        # torch.softmax doesn't support float16 on CPU
-        # RuntimeError: "softmax_lastdim_kernel_impl" not implemented for 'Half'
-        DecorateInfo(
-            pytest.mark.xfail,
-            dtypes=(datatypes.float16,),
-            devicetypes=(devices.DeviceType.CPU,),
-        ),
-    ),
 )
 nn_ops.append(softmax_opinfo)
 
@@ -8180,15 +8171,6 @@ softmin_opinfo = OpInfo(
     sample_input_generator=softmax_sample_generator,
     torch_reference=torch.nn.functional.softmin,
     dtypes=(datatypes.floating,),
-    test_directives=(
-        # torch.softmin doesn't support float16 on CPU
-        # RuntimeError: "softmax_lastdim_kernel_impl" not implemented for 'Half'
-        DecorateInfo(
-            pytest.mark.xfail,
-            dtypes=(datatypes.float16,),
-            devicetypes=(devices.DeviceType.CPU,),
-        ),
-    ),
 )
 nn_ops.append(softmin_opinfo)
 
@@ -8199,14 +8181,6 @@ log_softmax_opinfo = OpInfo(
     torch_reference=None if LooseVersion(torch.__version__) < "1.13" else torch._refs.log_softmax,
     dtypes=(datatypes.floating,),
     test_directives=(
-        # torch.log_softmax doesn't support float16 on CPU
-        # RuntimeError: "log_softmax_lastdim_kernel_impl" not implemented for 'Half'
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_core_vs_torch_consistency",
-            dtypes=(datatypes.float16,),
-            devicetypes=(devices.DeviceType.CPU,),
-        ),
         # Sets more permissive atol and rtol precisions for bfloat16 than assert_close's defaults
         #   (which are 1.6e-2 and 1e-5)
         DecorateInfo(
