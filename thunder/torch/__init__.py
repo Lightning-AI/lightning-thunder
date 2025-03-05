@@ -5344,6 +5344,17 @@ def softmax(a: TensorLike, dim: int, dtype: None | dtypeLike = None, _stacklevel
     return _softmax(a, dim=dim, dtype=dtype)
 
 
+@torchsymbol(torch.nn.functional.softmin, is_method=False, id="torch.nn.functional.softmin")
+def _softmin(a: TensorLike, /, dim: int, *, dtype: None | dtypeLike = None) -> TensorLike:
+    return softmax(-a, dim, dtype)
+
+
+# A wrapper to support `torch.nn.Softmin` whose `forward` passes the kwarg of `_stacklevel=5` to `torch.nn.functional.softmin`.
+# ref: https://github.com/pytorch/pytorch/blob/8d12ba9acfa20ed7df438a8892c9bf8e6bef5775/torch/nn/modules/activation.py#L1487
+def softmin(a: TensorLike, dim: int, dtype: None | dtypeLike = None, _stacklevel: int = 3) -> TensorLike:
+    return _softmin(a, dim=dim, dtype=dtype)
+
+
 def torch_device(type: DeviceLike, index: int | None = None) -> devices.Device:
     if isinstance(type, (devices.Device, torch.device)):
         # PyTorch behavior:
