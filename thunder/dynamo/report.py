@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 import textwrap
 import copy
+from itertools import chain
 
 
 import torch
@@ -33,11 +34,12 @@ from thunder.dynamo.repro_script_template import (
     COMPILED_CALLABLE_NAME,
 )
 from thunder import last_traces, last_backward_traces
-from thunder.benchmarks.targets import backward_only
+from thunder.benchmarks.utils import backward_only
 from thunder.dynamo.benchmark_utils import (
     TorchCompileSpecification,
     ThunderCompileSpecification,
     TorchEagerSpecification,
+    TorchInductorSpecification,
     WallTime,
     KernelTime,
     check_timing,
@@ -50,6 +52,7 @@ if TYPE_CHECKING:
     from os import PathLike
     from collections.abc import Sequence
 
+    from torch._dynamo.output_graph import GraphCompileReason
     from thunder.dynamo.utils import ExampleInputMetaData
     from thunder.core.trace import TraceCtx
     from thunder.core.symbol import BoundSymbol
@@ -66,17 +69,22 @@ def run_forward_backward(fn, *args, **kwargs):
         return result, None
 
     forward_inputs = tree_flatten((args, kwargs))[0]
-    forward_inputs = list(filter(lambda x: isinstance(x, torch.Tensor) and x.requires_grad, forward_inputs))
+    inputs_requires_grad = list(filter(lambda x: isinstance(x, torch.Tensor) and x.requires_grad, forward_inputs))
+    if isinstance(fn, torch.nn.Module):
+        params_requires_grad = list(
+            f for f in chain(fn.parameters(), fn.buffers()) if isinstance(f, torch.Tensor) and f.requires_grad
+        )
+        inputs_requires_grad = inputs_requires_grad + params_requires_grad
 
     output_grads = []
     for diff_result in differentiable_tensor_result:
         output_grads.append(torch.ones_like(diff_result))
 
-    for i in forward_inputs:
+    for i in inputs_requires_grad:
         i.grad = None
 
-    torch.autograd.backward(result, output_grads, inputs=forward_inputs)
-    return result, [t.grad for t in forward_inputs]
+    torch.autograd.backward(differentiable_tensor_result, output_grads, inputs=inputs_requires_grad)
+    return result, [t.grad for t in inputs_requires_grad]
 
 
 def thunderfx_pytest_benchmark_report(
@@ -189,6 +197,14 @@ class FXGraphReport:
         self.graph = graph
         self.graph_name = graph_name
         self.example_input_meta = example_input_meta
+        self.ops = [node.target for node in self.graph.graph.nodes if node.op in ("call_function", "call_method")]
+
+    def __str__(self):
+        output = f"Graph Name: {self.graph_name}\n"
+        output += "  Operators used in the graph:\n"
+        for op in self.ops:
+            output += f"    {op}\n"
+        return output
 
     def make_example_inputs(self):
         return [example_input_meta_to_input(meta) for meta in self.example_input_meta]
@@ -406,12 +422,13 @@ class FXGraphReport:
         compile_fn: CompileSpecificationInterface,
         check_consistency=False,
     ):
-        compiled_model = compile_fn.compile(self.graph)
+        torch._dynamo.reset()
         example_inputs = self.make_example_inputs()
+        compiled_model = compile_fn.compile(self.graph, inputs=example_inputs)
         result = run_forward_backward(compiled_model, *example_inputs)
 
         if check_consistency:
-            eager_result = run_forward_backward(compiled_model, *example_inputs)
+            eager_result = run_forward_backward(self.graph, *example_inputs)
             torch.testing.assert_close(result, eager_result)
         return result
 
@@ -467,8 +484,15 @@ class FXGraphReport:
             print(code_str, file=f)
 
     def run_benchmark(self, compile_fn: CompileSpecificationInterface, time_fn: TimerInterface):
-        compiled_fn = compile_fn.compile(self.graph)
+        # From torch.compile docs - https://pytorch.org/docs/stable/generated/torch.compile.html
+        # > Multiple compiled results can be associated with a frame up to torch._dynamo.config.cache_size_limit, which defaults to 8; at which point we will fall back to eager.
+        # Ref: https://github.com/pytorch/pytorch/blob/34d726011f482b716d879bf665aef100a7c08a8d/torch/_dynamo/__init__.py#L97
+        # > reset function clears all compile caches and restore initial state.  This function is intended
+        # to reset Dynamo's state *as if* you had started a fresh process invocation.
+        torch._dynamo.reset()
         example_inputs = self.make_example_inputs()
+        compiled_fn = compile_fn.compile(self.graph, inputs=example_inputs)
+
         forward_only = not any(hasattr(arg, "requires_grad") and arg.requires_grad for arg in example_inputs)
         fwd_measurement = time_fn.time(
             "compiled_fn(*example_inputs)", globals={"compiled_fn": compiled_fn, "example_inputs": example_inputs}
@@ -546,8 +570,14 @@ class FXReport:
     module and provides methods to generate reproduction and benchmark scripts.
     """
 
-    def __init__(self, graphs: list[torch.fx.GraphModule], graph_names: list[str] = None):
+    def __init__(
+        self,
+        graphs: list[torch.fx.GraphModule],
+        graph_names: list[str] = None,
+        dynamo_break_reasons: list[GraphCompileReason] = None,
+    ):
         self.fx_graph_reports = []
+        self.dynamo_break_reasons = dynamo_break_reasons
         if graph_names is None:
             graph_names = [f"graph{idx}" for idx in range(len(graphs))]
 
@@ -558,8 +588,20 @@ class FXReport:
             )
             self.fx_graph_reports.append(FXGraphReport(g, g_name, example_input_metadata))
 
-    def __repr__(self):
-        return f"<FXReport with {len(self.fx_graph_reports)} FXGraphReports accessible via .fx_graph_reports>"
+    def __str__(self):
+        output = f"Dynamo Graph Count: {len(self.fx_graph_reports)}\n"
+        if self.dynamo_break_reasons:
+            output += "Dynamo Break Reasons:\n"
+            for idx, reason in enumerate(self.dynamo_break_reasons):
+                output += f"  Break Reason {idx+1}:\n"
+                output += f"    Reason: {reason.reason}\n"
+                output += "    User Stack:\n"
+                for frame_summary in reason.user_stack:
+                    output += f"      {frame_summary}\n"
+        output += f"Graph information:\n"
+        for idx, graph_report in enumerate(self.fx_graph_reports):
+            output += textwrap.indent(f"{graph_report}\n", "  ")
+        return output
 
 
 def fx_report(fn: Callable, *args, compile_options: dict = None, **kwargs) -> FXReport:
@@ -606,20 +648,25 @@ def fx_report(fn: Callable, *args, compile_options: dict = None, **kwargs) -> FX
                 graph_report.write_benchmark(tmpdir, my_thunderjit, WallTime, f"{graph_name}_mythunder_benchmark.py")
     """
     graphs = []
+    break_reasons = []
 
     def helper_backend(gm, example_inputs):
         """Helper function to collect FX graphs."""
         graphs.append(copy.deepcopy(gm))
+        if gm.compile_subgraph_reason.graph_break:
+            break_reasons.append(gm.compile_subgraph_reason)
+
         from torch._inductor import compile
 
         return compile(gm, example_inputs)
 
     if compile_options is None:
         compile_options = {}
+    torch._dynamo.reset()
     compiled = torch.compile(fn, **compile_options, backend=helper_backend)
     compiled(*args, **kwargs)
 
-    return FXReport(graphs)
+    return FXReport(graphs, dynamo_break_reasons=break_reasons)
 
 
 class ThunderSplitGraphReport(FXGraphReport):
@@ -662,9 +709,6 @@ class ThunderSplitGraphReport(FXGraphReport):
         self.fusion_reports: list[ThunderFusionReport] = []
         self.fwd_trc: TraceCtx = None
         self.bwd_trc: TraceCtx = None
-
-    def __repr__(self):
-        return f"<ThunderSplitGraphReport with {len(self.fusion_reports)} ThunderFusionReport accessible via .fusion_reports>"
 
     def _create_thunder_traces(self):
         example_inputs = self.make_example_inputs()
@@ -746,7 +790,7 @@ class ThunderFusionReport:
         self.nvfusion_bsym = bsym
         self.name = name
 
-    def __repr__(self):
+    def __str__(self):
         return f"<ThunderFusionReport of bound symbol\n{self.nvfusion_bsym}>"
 
     def run_benchmark(self, compile_fn: CompileSpecificationInterface, timer_fn: TimerInterface):
@@ -886,8 +930,12 @@ class ThunderFXGraphReport(FXGraphReport):
         self.split_reason = split_reason
         self.subgraph_reports: list[ThunderSplitGraphReport] = subgraph_reports
 
-    def __repr__(self):
-        return f"<ThunderFXGraphReport with {len(self.subgraph_reports)} ThunderSplitGraphReport accessible via .subgraph_reports>"
+    def __str__(self):
+        output = f"Thunder-specific Information of {self.graph_name}:\n"
+        output += textwrap.indent(self.split_reason, "  ")
+        for report in self.subgraph_reports:
+            output += textwrap.indent(report.__str__(), "  ")
+        return output
 
 
 def analyze_thunder_splits(
@@ -996,26 +1044,120 @@ def analyze_thunder_splits(
     return report
 
 
-def get_thunder_split_reports(fn: Callable, *args, thunder_compile_kwargs: dict = None, **kwargs):
+def check_torch_compile_runnability(fn: Callable, *args, **kwargs):
+    """
+    Checks if the input callable can be successfully executed by torch.compile.
+    If not, it will try to run it in eager mode.
+    """
+    try:
+        # WAR for triton error https://github.com/pytorch/pytorch/issues/124565
+        if torch.cuda.is_available():
+            torch.empty(1, device="cuda", requires_grad=True).backward()
+        torch._dynamo.reset()
+        torch_compiled = torch.compile(fn)
+        run_forward_backward(torch_compiled, *args, **kwargs)
+    except Exception as e:
+        print(f"Failed to run the function using torch.compile with exception: {e}")
+        print(f"Trying with Torch eager...")
+        try:
+            run_forward_backward(fn, *args, **kwargs)
+        except Exception as e:
+            print(f"Failed to run the function in eager mode with exception: {e}")
+            return
+        print("The input callable can be successfully executed in eager mode.")
+    else:
+        print("The input callable can be successfully executed by torch.compile.")
+
+
+def get_thunder_fxgraph_reports(
+    fn: Callable, *args, thunder_compile_kwargs: dict = None, check_runnablility=True, **kwargs
+) -> list[ThunderFXGraphReport]:
+    """
+    Generates a list of :class:`ThunderFXGraphReport` objects for a given callable.
+
+    This function performs the following steps:
+    1. Checks if the callable can be executed with `torch.compile` or eager execution when `check_runnablility` is `True`.
+    2. Generates the dynamo segmented FX graphs and further analyzes the Thunder-split subgraphs of the FX graph.
+
+    Parameters:
+        fn: The callable to analyze.
+        *args: Arguments to pass to the callable.
+        thunder_compile_kwargs: Keyword arguments for Thunder compilation.
+        check_runnablility: Whether to check if the callable can be executed with `torch.compile` or eager execution.
+        **kwargs: Keyword arguments to pass to the callable.
+    """
+    if check_runnablility:
+        check_torch_compile_runnability(fn, *args, **kwargs)
+
     reports = fx_report(fn, *args, **kwargs)
+    print(reports)
     if thunder_compile_kwargs is None:
         thunder_compile_kwargs = {}
-    split_reports = []
-    for fx_graph_report in reports.fx_graph_reports:
-        thunder_fx_graph_report = analyze_thunder_splits(fx_graph_report, **thunder_compile_kwargs)
-        print(f"\n{thunder_fx_graph_report.graph_name}: {thunder_fx_graph_report.split_reason}\n")
-        for split_report in thunder_fx_graph_report.subgraph_reports:
-            split_reports.append(split_report)
-    return split_reports
+    thunder_fxgraph_reports = []
+    for fxgraph_report in reports.fx_graph_reports:
+        thunder_fxgraph_report = analyze_thunder_splits(fxgraph_report, **thunder_compile_kwargs)
+        print(thunder_fxgraph_report)
+        thunder_fxgraph_reports.append(thunder_fxgraph_report)
+    return thunder_fxgraph_reports
 
 
-def get_nvfusion_reports(split_reports: list[ThunderSplitGraphReport]):
-    nvfusion_reports = []
+def make_nvfusion_reports(split_reports: list[ThunderSplitGraphReport]):
+    """
+    Creates nvFusion reports for each Thunder-split report.
+    """
     for split_report in split_reports:
         split_report.create_fusion_reports()
-        for nvfusion_report in split_report.fusion_reports:
-            nvfusion_reports.append(nvfusion_report)
-    return nvfusion_reports
+
+
+# NOTE: Here we use TorchInductorSpecification (TorchInductor without TorchDynamo) to compare with Thunder. Reason: https://github.com/Lightning-AI/lightning-thunder/issues/1521
+def thunderfx_benchmark_report_from_splits(
+    thunder_fxgraph_reports: list[ThunderFXGraphReport],
+    folder_path: str | PathLike,
+    thunder_compile_kwargs: dict = None,
+    compare_fusion: bool = False,
+    rtol=0.5,
+    atol=0.0,
+):
+    """
+    A utility function that analyzes the runnability and performance benchmarks of each Thunder-split FX graph and nvFusion regions(optional).
+    It prints out the performance metrics and saves the benchmark script in `folder_path` if the difference exceeds
+    the tolerance (`rtol`, `atol` in seconds).
+    the function will create the following folder structure:
+    folder_path
+    └── graph0
+        ├── graph0_thunder_0_thunder_walltime.py
+        └── nvfusion_reports
+            └── graph0_thunder_0_nvfusion0_forward_nvfuser_kerneltime.py
+    It separates subfolders for each `graph[index]` and `nvfusion_report`.
+    The script for each FX graph is named as `graph[index]_[thunder_split_name]_[executor_name]_[timer_name].py`.
+    The script for each nvfusion region is named as `graph[index]_[thunder_split_name]_[nvfusion_name]_[forward/backward]_[executor_name]_[timer_name].py`.
+    """
+    folder_path = Path(folder_path)
+    folder_path.mkdir(exist_ok=True, parents=True)
+    if thunder_compile_kwargs is None:
+        thunder_compile_kwargs = {}
+    thunderjit = ThunderCompileSpecification(**thunder_compile_kwargs)
+    torchinductor = TorchInductorSpecification()
+
+    runnable_split_reports: list[ThunderSplitGraphReport] = []
+    for thunder_fxgraph_report in thunder_fxgraph_reports:
+        graph_folder = folder_path / thunder_fxgraph_report.graph_name
+        graph_folder.mkdir()
+        for split_report in thunder_fxgraph_report.subgraph_reports:
+            check_timing(graph_folder, split_report, torchinductor, thunderjit, WallTime, "walltime", rtol, atol)
+            check_timing(graph_folder, split_report, torchinductor, thunderjit, KernelTime, "kerneltime", rtol, atol)
+            runnable_split_reports.append(split_report)
+    if not compare_fusion:
+        return
+    make_nvfusion_reports(runnable_split_reports)
+
+    for graph_report in thunder_fxgraph_reports:
+        graph_nvfusion_folder = folder_path / graph_report.graph_name / "nvfusion_reports"
+        graph_nvfusion_folder.mkdir()
+        for split_report in graph_report.subgraph_reports:
+            for nvfusion_report in split_report.fusion_reports:
+                check_timing_bsym(graph_nvfusion_folder, nvfusion_report, WallTime, "walltime", rtol, atol)
+                check_timing_bsym(graph_nvfusion_folder, nvfusion_report, KernelTime, "kerneltime", rtol, atol)
 
 
 def thunderfx_benchmark_report(
@@ -1050,64 +1192,27 @@ def thunderfx_benchmark_report(
     Note:
     - This function may run out of memory (OOM) as it allocates random tensors when executing
     the graph module in each Report. To prevent OOM issues, users must manually free the
-    input model and arguments to free up memory for `get_nvfusion_reports`, `check_timing`,
+    input model and arguments to free up memory for `make_nvfusion_reports`, `check_timing`,
     and `check_timing_bsym`.
+    - See `thunderfx_benchmark_report_from_splits` for details on the generated folders and scripts.
 
     Here is an example:
 
     ```python
-    split_reports = get_thunder_split_reports(model, x)
+    thunder_fxgraph_reports = get_thunder_fxgraph_reports(model, x)
 
     # Frees the parameters and inputs to make room for the reports
     del model
     del x
 
-    # Running the model generates the NVFusion symbol, which requires additional memory for the input.
-    # To free up space before generating the NVFusion reports, both the model and input are deleted.
-    nvfusion_reports = get_nvfusion_reports(split_reports)
-
-    check_timing(folder_path, split_reports[0], torchcompile, thunderjit_specification, WallTime, "walltime", rtol, atol)
-    check_timing_bsym(folder_path, nvfusion_reports[0], KernelTime, "kerneltime", rtol, atol)
+    thunderfx_benchmark_report_from_splits(thunder_fxgraph_reports, folder_path, compare_fusion=True)
     ```
     """
-    try:
-        torch_compiled = torch.compile(fn)
-        torch_compiled(*args, **kwargs)
-    except Exception as e:
-        print(f"Failed to run the function using torch.compile with exception: {e}")
-        print(f"Trying with Torch eager...")
-        try:
-            run_forward_backward(fn, *args, **kwargs)
-        except Exception as e:
-            print(f"Failed to run the function with exception: {e}")
-            return
-        print("The input callable can be successfully executed.")
-    else:
-        print("The input callable can be successfully executed by torch.compile.")
-
-    if thunder_compile_kwargs is None:
-        thunder_compile_kwargs = {}
-    split_reports = get_thunder_split_reports(fn, *args, **kwargs, thunder_compile_kwargs=thunder_compile_kwargs)
-    thunderjit_specification = ThunderCompileSpecification(**thunder_compile_kwargs)
-    torchcompile = TorchCompileSpecification()
-    for split_report in split_reports:
-        try:
-            split_report.run_repro(thunderjit_specification)
-        except Exception as e:
-            print(f"Failed to run {split_report.graph_name} using Thunder with exception: {e}\n")
-            continue
-        print(f"{split_report.graph_name} can be successfully executed by Thunder\n")
-        check_timing(
-            folder_path, split_report, torchcompile, thunderjit_specification, WallTime, "walltime", rtol, atol
-        )
-        check_timing(
-            folder_path, split_report, torchcompile, thunderjit_specification, KernelTime, "kerneltime", rtol, atol
-        )
-
-    if not compare_fusion:
-        return
-    nvfusion_reports = get_nvfusion_reports(split_reports)
-
-    for nvfusion_report in nvfusion_reports:
-        check_timing_bsym(folder_path, nvfusion_report, WallTime, "walltime", rtol, atol)
-        check_timing_bsym(folder_path, nvfusion_report, KernelTime, "kerneltime", rtol, atol)
+    folder_path = Path(folder_path)
+    folder_path.mkdir(exist_ok=True, parents=True)
+    thunder_fxgraph_reports = get_thunder_fxgraph_reports(
+        fn, *args, **kwargs, thunder_compile_kwargs=thunder_compile_kwargs
+    )
+    thunderfx_benchmark_report_from_splits(
+        thunder_fxgraph_reports, folder_path, thunder_compile_kwargs, compare_fusion, rtol, atol
+    )
