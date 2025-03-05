@@ -83,7 +83,7 @@ def run_forward_backward(fn, *args, **kwargs):
     for i in inputs_requires_grad:
         i.grad = None
 
-    torch.autograd.backward(result, output_grads, inputs=inputs_requires_grad)
+    torch.autograd.backward(differentiable_tensor_result, output_grads, inputs=inputs_requires_grad)
     return result, [t.grad for t in inputs_requires_grad]
 
 
