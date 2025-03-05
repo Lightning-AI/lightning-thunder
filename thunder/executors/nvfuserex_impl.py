@@ -2698,12 +2698,31 @@ def embedding(
     fd: FusionDefinition,
     lc_to_nv_map: dict,
 ) -> Any:
-    inputs = [input, weight, padding_idx, max_norm, norm_type, scale_grad_by_freq, sparse]
-    nv_inputs = []
-    for inp in inputs:
-        nv_inp = getnv(inp, fd, lc_to_nv_map) if inp is not None else None
-        nv_inputs.append(nv_inp)
-    return fd.ops.embedding_fwd(*nv_inputs)
+    # embedding forward without renorm could be implemented as `index_select`, which is supported
+    # by nvfuser codegen
+    if max_norm is None:
+        nv_input = getnv(input, fd, lc_to_nv_map)
+        nv_weight = getnv(weight, fd, lc_to_nv_map)
+        restore_shape = None
+        # high order indices can be reshaped into an array and then restore the shape after
+        # index_select
+        if nv_input.ndim > 1:
+            restore_shape = []
+            for i in range(input.ndim):
+                restore_shape.append(nv_input.size(i))
+            restore_shape.append(nv_weight.size(weight.ndim - 1))
+            nv_input = fd.ops.reshape(nv_input, [-1])
+        ret = fd.ops.index_select(nv_weight, nv_input, 0)
+        if restore_shape is not None:
+            ret = fd.ops.reshape(ret, restore_shape)
+        return ret
+    else:
+        inputs = [input, weight, padding_idx, max_norm, norm_type, scale_grad_by_freq, sparse]
+        nv_inputs = []
+        for inp in inputs:
+            nv_inp = getnv(inp, fd, lc_to_nv_map) if inp is not None else None
+            nv_inputs.append(nv_inp)
+        return fd.ops.embedding_fwd(*nv_inputs)
 
 
 register_supported(PrimIDs.EMBEDDING, embedding, _embedding_check)
