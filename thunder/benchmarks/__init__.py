@@ -3350,11 +3350,14 @@ class OptimBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
             return (params, grads, exp_avgs, exp_avg_sqs, max_exp_avg_sqs, state_steps), {}
 
         elif self.optimizer_name == "adamax":
-           grads = [pt(grad) for grad in self.params]
-           exp_avgs = [pt(ea, requires_grad=False) for ea in self.params]
-           exp_infs = [pt(ei, requires_grad=False) for ei in self.params]
-           state_steps = [torch.tensor(0, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad) for _ in self.params]
-           return (params, grads, exp_avgs, exp_infs, state_steps), {}
+            grads = [pt(grad) for grad in self.params]
+            exp_avgs = [pt(ea, requires_grad=False) for ea in self.params]
+            exp_infs = [pt(ei, requires_grad=False) for ei in self.params]
+            state_steps = [
+                torch.tensor(0, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
+                for _ in self.params
+            ]
+            return (params, grads, exp_avgs, exp_infs, state_steps), {}
 
         elif self.optimizer_name == "adadelta":
             grads = [pt(grad) for grad in self.params]
@@ -3401,7 +3404,9 @@ class OptimBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
             grads = [pt(grad) for grad in self.params]
             exp_avgs = [pt(ev, requires_grad=False) for ev in self.params]
             exp_avg_sqs = [pt(eas, requires_grad=False) for eas in self.params]
-            mu_products = [torch.tensor(1.0, device=self.device, dtype=self.tdtype, requires_grad=False) for _ in self.params]
+            mu_products = [
+                torch.tensor(1.0, device=self.device, dtype=self.tdtype, requires_grad=False) for _ in self.params
+            ]
             state_steps = [
                 torch.tensor(0, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
                 for _ in self.params
