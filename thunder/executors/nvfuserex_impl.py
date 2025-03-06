@@ -264,8 +264,9 @@ def create_fd(
                 lc_to_nv_map[x] = nv
             elif isinstance(x, TensorProxy):
                 utils.check_type(y, tuple)
-                symbolic_shape, contiguity, stride_order, dtype = y
-                nvdtype = lcdtype_to_nvdtype(dtypes.to_dtype(dtype))
+                contiguity, stride_order = y
+                symbolic_shape = compute_symbolic_shape(x._shape, x._shape)
+                nvdtype = lcdtype_to_nvdtype(x.dtype)
                 is_cpu = x.device == cpu
                 nv = fd.define_tensor(
                     shape=symbolic_shape, contiguity=contiguity, dtype=nvdtype, stride_order=stride_order, is_cpu=is_cpu
@@ -368,6 +369,7 @@ def compute_symbolic_shape(
     return tuple(nvf_shape)
 
 
+@lru_cache(maxsize=2048)
 def compute_contiguity(
     shape: torch.Size | Sequence[int], stride: Sequence[int]
 ) -> tuple[tuple[bool, ...], tuple[int, ...]]:
@@ -423,10 +425,10 @@ def compute_tensor_descriptor(
     return compute_symbolic_shape(proxy_shape, shape), *compute_contiguity(shape, stride)
 
 
-def to_descriptors(proxy_args, args) -> tuple:
-    def to_descriptor(proxy_arg, arg):
+def to_runtime_descriptors(args) -> tuple:
+    def to_descriptor(arg):
         if isinstance(arg, Tensor):
-            return (*compute_tensor_descriptor(proxy_arg._shape, arg.shape, arg.stride()), arg.dtype)
+            return compute_contiguity(arg.shape, arg.stride())
         elif isinstance(arg, Number):
             return type(arg)
         elif isinstance(arg, tuple):
@@ -441,7 +443,7 @@ def to_descriptors(proxy_args, args) -> tuple:
 
         raise ValueError(f"unrecognized type in arguments: {type(arg)}")
 
-    return tuple(to_descriptor(proxy_arg, arg) for proxy_arg, arg in zip(proxy_args, args))
+    return tuple(to_descriptor(arg) for arg in args)
 
 
 # TODO Consider making this just a function, because it's faster to call a function than a callable class
@@ -607,7 +609,7 @@ def create_fusion_definition_wrapper(
 
     fdw = FusionDefinitionWrapper(
         get_fd,
-        partial(to_descriptors, sorted_unique_inputs),
+        to_runtime_descriptors,
         name,
         get_fd.cache_info,
         get_fd.cache_clear,
