@@ -505,22 +505,19 @@ class DesugarTensorSubclass:
                     f"{len(new_tensor_proxies)=} != {len(orig_output._tensors)=}"
                 ),
             )
-            with tracectx(self.computation_trace):
-                new_subclass = orig_output.replace()
-            new_subclass._tensors = new_tensor_proxies
-            for name, value in zip(new_subclass._tensor_attr_names, new_tensor_proxies):
-                setattr(new_subclass, name, value)
+            utils.check(
+                all(hasattr(orig_output, n) for n in orig_output._tensor_attr_names),
+                lambda: f"{orig_output} does not have its tensor components for {bsym}",
+            )
             bsyms.append(
                 prims.unflatten_tensor_subclass.bind(
-                    new_subclass._subclass_type,
-                    dict(zip(new_subclass._tensor_attr_names, new_tensor_proxies)),
-                    dict(zip(new_subclass._non_tensor_attr_names, new_subclass._non_tensors)),
-                    output=new_subclass,
+                    orig_output._subclass_type,
+                    dict(zip(orig_output._tensor_attr_names, new_tensor_proxies)),
+                    dict(zip(orig_output._non_tensor_attr_names, orig_output._non_tensors)),
+                    output=orig_output,
                 )
             )
-
-            self.swap_map[variableify(orig_output)] = new_subclass
-            self.subclass_proxy_to_flatten.add(variableify(new_subclass))
+            self.subclass_proxy_to_flatten.add(variableify(orig_output))
 
         else:
             non_none_args = [n for n in node_of_output.args[0] if n is not None]
@@ -709,7 +706,7 @@ class DesugarTensorSubclass:
             }
             self.proxy_to_strides.update(diff_of_proxy_to_strides)
 
-        updated_bsym = bsym.from_bsym_swap_proxies(self.swap_map)
+        updated_bsym = bsym.from_bsym_swap_proxies(self.swap_map, skip_output=True)
 
         # Handle return operation
         if bsym.sym.id == prims.PrimIDs.RETURN:
@@ -821,9 +818,6 @@ class DesugarTensorSubclass:
         fake_tensor_subclass = orig_output[0]
         tensor_attr_names, metadata = fake_tensor_subclass.__tensor_flatten__()
         fake_tensors = [getattr(fake_tensor_subclass, name) for name in tensor_attr_names]
-
-        # with tracectx(self.computation_trace):
-        #     proxy_of_fake_tensors = [proxy_fake_tensor(t) for t in fake_tensors]
 
         # Set attributes on the proxy
         subclass_proxy._tensor_attr_names = tensor_attr_names
@@ -989,7 +983,7 @@ def tensor_subclass_dce(trace: TraceCtx, is_bwd_trace: bool) -> TraceCtx:
         cd = get_compile_data()
         temporary_executor: TemporaryExecutor | None = None
         if cd is not None:
-            executors_list = list(filter(lambda executor: isinstance(executor, T), cd.executors_list))
+            executors_list = list(filter(lambda executor: isinstance(executor, TemporaryExecutor), cd.executors_list))
             if executors_list:
                 temporary_executor = executors_list[0]
 
