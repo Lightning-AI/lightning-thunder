@@ -1910,6 +1910,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
 
 
 class SubclassTensorProxy(TensorProxy):
+    _DEFAULT_PREFIX = "tensor_subclass"
     SUBCLASS_TYPE_ATTR: ClassVar[str] = "_subclass_type"
     _tensors: list[TensorProxy]
     _non_tensors: list[Any]
@@ -1917,6 +1918,11 @@ class SubclassTensorProxy(TensorProxy):
 
     _tensor_attr_names: list[str] | None
     _non_tensor_attr_names: list[str] | None
+
+    def get_default_prefix(self) -> str:
+        if (subclass_type := getattr(self, SubclassTensorProxy.SUBCLASS_TYPE_ATTR, None)) is None:
+            return super().get_default_prefix()
+        return subclass_type.__name__.lower()
 
     def __init__(self, *args, **kwargs):
         from thunder.core.pytree import tree_flatten
@@ -2351,3 +2357,6 @@ def proxy(x: Any, *, name: str | None = None, history: None | tuple = None) -> A
         return AnyProxy(x, name=name, history=history)
 
     return x
+
+
+PREFIXES_ALLOW_NAME_DUPLICATES: set[str] = {"tensor_subclass"}

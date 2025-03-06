@@ -480,7 +480,7 @@ def jit(
 
             prologue_traces += transform_for_execution(
                 prologue_trc,
-                executors_list=(pythonex,),
+                executors_list=(pythonex, get_executor("torch")),
                 use_del_last_used=False,
             )
             prologue_trc = prologue_traces[-1]
