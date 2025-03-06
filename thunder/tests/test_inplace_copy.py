@@ -191,3 +191,15 @@ def test_inplace_copy_of_leaf_requiring_grad_fails(executor, device, dtype):
     a = make_tensor((4, 4), device=device, dtype=tdtype, requires_grad=True)
     with pytest.raises(RuntimeError):
         jitted_fn(a)
+
+@instantiate(executors=(TorchExecutor,), dtypes=datatypes.float_math_dtypes)
+def test_inplace_copy_dtype_mismatch(executor, device, dtype):
+    def fn(x, y):
+        x.add_(y)
+
+    jitted_fn = executor.make_callable(fn)
+    tdtype = ttorch.to_torch_dtype(dtype)
+    a = make_tensor((4, 4), device=device, dtype=tdtype, requires_grad=True)
+    y = make_tensor((4, 4), device=device, dtype=torch.float32, requires_grad=False)
+    with pytest.raises(RuntimeError):
+        jitted_fn(a)

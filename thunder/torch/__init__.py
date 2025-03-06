@@ -227,6 +227,7 @@ def register_function(torchfn, thunderfn_impl):
 
 def _copy_(a, b, /):
     cd = get_compile_data()
+    b = clang.maybe_convert_to_dtype(b, a.dtype)
     return prims.copy_(b, a, grad_enabled=cd.is_grad_enabled if cd is not None else False)
 
 
