@@ -1721,7 +1721,13 @@ def clone(a: TensorProxy, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     return fd.ops.set(nva)
 
 
-register_supported(PrimIDs.CLONE, clone, _elementwise_unary_check)
+def _clone_check(a: TensorProxy, *, memory_format: torch.memory_format = torch.preserve_format) -> bool:
+    if memory_format not in (torch.preserve_format, torch.contiguous_format):
+        return False
+    return _elementwise_unary_check(a)
+
+
+register_supported(PrimIDs.CLONE, clone, _clone_check)
 
 #
 # Elementwise binary operations
