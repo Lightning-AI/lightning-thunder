@@ -3248,7 +3248,7 @@ def test_thunder_jit_parts():
         new_tr.bound_symbols = thunder.core.transform_common.canonicalize_proxies(tr.bound_symbols)
         res = str(new_tr)
         # some traces report timings, we don't want those to influcence
-        res = re.sub("took \d+ ", "", res)
+        res = re.sub(r"took \d+ ", "", res)
         return res
 
     assert clean(ce.prologue_traces[-1]) == clean(ce2.prologue_traces[-1])
