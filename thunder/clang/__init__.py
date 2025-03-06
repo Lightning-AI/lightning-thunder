@@ -2001,9 +2001,9 @@ def logical_not(a: TensorLike, /) -> TensorLike:
 
 @clangop()
 def logical_or(a: TensorLike, b: TensorLike):
-    if not utils.is_boolean_dtype(a.dtype):
+    if not utils.is_boolean_dtype(dtypes.to_dtype(a)):
         a = a != 0
-    if not utils.is_boolean_dtype(b.dtype):
+    if not utils.is_boolean_dtype(dtypes.to_dtype(b)):
         b = b != 0
     return bitwise_or(a, b)
 

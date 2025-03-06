@@ -2142,7 +2142,7 @@ def logical_or(a: TensorLike, b: TensorLike, /):
 
 
 @torchsymbol(torch.Tensor.logical_or_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
-def logical_or_(a, b, /):
+def logical_or_(a: TensorLike, b: TensorLike, /):
     return _copy_(a, logical_or(a, b))
 
 
