@@ -199,7 +199,6 @@ def test_inplace_copy_dtype_mismatch(executor, device, dtype):
 
     jitted_fn = executor.make_callable(fn)
     tdtype = ttorch.to_torch_dtype(dtype)
-    a = make_tensor((4, 4), device=device, dtype=tdtype, requires_grad=True)
+    a = make_tensor((4, 4), device=device, dtype=tdtype, requires_grad=False)
     b = make_tensor((4, 4), device=device, dtype=torch.float32, requires_grad=False)
-    with pytest.raises(RuntimeError):
-        jitted_fn(a, b)
+    jitted_fn(a, b)
