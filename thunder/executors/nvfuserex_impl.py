@@ -436,9 +436,9 @@ class FusionDefinitionWrapper:
 
     @annotate_for_profile("FusionDefinitionWrapper.__call__")
     def __call__(self, *args):
-        if self.last_used is None:
-            self.last_used = self.get_fd(self.to_descriptors(args))
-        fd = self.last_used
+        fd = self.get_fd(self.to_descriptors(args))
+        self.last_used = fd
+
         if self.store_inputs:
             self.last_inputs = args
 
