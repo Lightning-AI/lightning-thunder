@@ -98,6 +98,17 @@ class Singleton(type):
 #   creating circular dependencies.
 #
 class ProxyInterface:
+    # Require implementing classes to define a default prefix
+    _DEFAULT_PREFIX: str
+
+    @property
+    def prefix(self):
+        """Return the prefix for this proxy instance.
+
+        This must be implemented by all classes implementing this interface."""
+        msg = f"{type(self)} must implement the `prefix` property."
+        raise NotImplementedError(msg)
+
     @property
     def name(self):
         pass
