@@ -192,6 +192,7 @@ def test_inplace_copy_of_leaf_requiring_grad_fails(executor, device, dtype):
     with pytest.raises(RuntimeError):
         jitted_fn(a)
 
+
 @instantiate(executors=(TorchExecutor,), dtypes=datatypes.float_math_dtypes)
 def test_inplace_copy_dtype_mismatch(executor, device, dtype):
     def fn(x, y):
