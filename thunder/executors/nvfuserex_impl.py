@@ -463,8 +463,8 @@ class FusionDefinitionWrapper:
     enable_options: None | list[str] = None
     disable_options: None | list[str] = None
 
+    @annotate_for_profile("FusionDefinitionWrapper.__call__")
     def __call__(self, *args):
-        torch.cuda.nvtx.range_push("nvfuser_ex.__call__")
         if self.last_used is None:
             self.last_used = self.get_fd(self.to_descriptors(args))
         fd = self.last_used
@@ -490,9 +490,7 @@ class FusionDefinitionWrapper:
             )
 
         with annotate_for_profile(self.name):
-            results = fd.execute(args, **kwargs)
-            torch.cuda.nvtx.range_pop()
-            return results
+            return fd.execute(args, **kwargs)
 
     def __repr__(self):
         return f"FusionDefinitionWrapper({self.name})"
