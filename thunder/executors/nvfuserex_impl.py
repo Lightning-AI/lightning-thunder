@@ -452,16 +452,10 @@ class FusionDefinitionWrapper:
         if hasattr(fd, "_selected_device"):
             kwargs["device"] = fd._selected_device
 
-        if NVFUSER_SUPPORTS_OPTIONS:
-            kwargs["_enable_options"] = self.enable_options or []
-            kwargs["_disable_options"] = self.disable_options or []
-        elif self.enable_options or self.disable_options:
-            warnings.warn(
-                f"nv_enable_options/nv_disable_options require nvFuser version 0.2.23 and above, found version {nvfuser_version()}. These options will be ignored."
-            )
-
         with annotate_for_profile(self.name):
-            return fd.execute(args, **kwargs)
+            return fd.execute(
+                args, _enable_options=self.enable_options, _disable_options=self.disable_options, **kwargs
+            )
 
     def __repr__(self):
         return f"FusionDefinitionWrapper({self.name})"
@@ -557,9 +551,9 @@ def create_fusion_definition_wrapper(
     store_inputs_meta: None | bool = get_compile_option(
         "nv_store_fusion_inputs_meta", "Allow nvFuser to store fusion inputs metadata for repro."
     )
-    enable_options: None | list[str] = get_compile_option("nv_enable_options", "List of NVFUSER_ENABLE options to set.")
-    disable_options: None | list[str] = get_compile_option(
-        "nv_disable_options", "List of NVFUSER_DISABLE options to set."
+    enable_options: list[str] = get_compile_option("nv_enable_options", "List of NVFUSER_ENABLE options to set.") or []
+    disable_options: list[str] = (
+        get_compile_option("nv_disable_options", "List of NVFUSER_DISABLE options to set.") or []
     )
 
     tensor_indices = []
@@ -2701,3 +2695,4 @@ register_supported(ltorch.embedding, embedding, _embedding_check)
 
 # At module/class level
 NVFUSER_SUPPORTS_OPTIONS = nvfuser_version() >= LooseVersion("0.2.23")
+assert NVFUSER_SUPPORTS_OPTIONS, f"Installed version of nvFuser {nvfuser_version()} is not supported, please upgrade to 0.2.23 or later."
