@@ -117,6 +117,8 @@ class Proxy(VariableInterface, ProxyInterface):
                 prefix = "n"
             elif isinstance(self, StringProxy):
                 prefix = "s"
+            elif isinstance(self, SubclassTensorProxy):
+                prefix = "tensor_subclass"
             elif isinstance(self, TensorProxy):
                 prefix = "t"
             elif isinstance(self, CollectionProxy):
@@ -2334,3 +2336,6 @@ def proxy(x: Any, *, name: str | None = None, history: None | tuple = None) -> A
         return AnyProxy(x, name=name, history=history)
 
     return x
+
+
+PREFIXES_ALLOW_NAME_DUPLICATES: set[str] = {"tensor_subclass"}
