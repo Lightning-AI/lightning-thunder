@@ -1999,6 +1999,15 @@ def logical_not(a: TensorLike, /) -> TensorLike:
     return ~a
 
 
+@clangop()
+def logical_or(a: TensorLike, b: TensorLike):
+    if not utils.is_boolean_dtype(a.dtype):
+        a = a != 0
+    if not utils.is_boolean_dtype(b.dtype):
+        b = b != 0
+    return bitwise_or(a, b)
+
+
 @clangop(method_name="le")
 def le(a, b):
     return _elementwise_binary_wrapper(
