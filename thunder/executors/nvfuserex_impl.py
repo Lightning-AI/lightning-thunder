@@ -257,9 +257,7 @@ def create_fd(
         def add_input(x: Any, y: Any) -> Any:
             nv: Any
             if isinstance(x, NumberProxy):
-                utils.check_type(y, type)
-                python_type = y
-                nvdtype = lcdtype_to_nvdtype(python_type)
+                nvdtype = lcdtype_to_nvdtype(x.python_type)
                 nv = fd.define_scalar(nvdtype)
                 lc_to_nv_map[x] = nv
             elif isinstance(x, TensorProxy):
@@ -279,7 +277,6 @@ def create_fd(
             elif isinstance(x, TupleProxy):
                 # TODO: discuss the contract here on baked in number from a tuple
                 # TODO: validate x is a tuple of int
-                utils.check_type(y, type)
                 nv = fd.define_vector(len(x._value))
                 lc_to_nv_map[x] = nv
             elif isinstance(x, Proxy):
@@ -403,24 +400,19 @@ def compute_contiguity(
 
 
 def to_runtime_descriptors(args) -> tuple:
-    def to_descriptor(arg):
-        if isinstance(arg, Tensor):
-            return compute_contiguity(arg.shape, arg.stride())
-        elif isinstance(arg, Number):
-            return type(arg)
-        elif isinstance(arg, tuple):
-            if len(arg) != 0:
-                numbertype, _ = check_same_dtype(*arg)
-                check(
-                    numbertype == int,
-                    lambda: f"tuple in nvfuser only supports int, but found {numbertype}",
-                    exception_type=AssertionError,
-                )
-            return type(arg)
+    """
+    Converts the arguments to their runtime descriptors.
 
-        raise ValueError(f"unrecognized type in arguments: {type(arg)}")
+    Only Tensor objects are converted to runtime descriptors. Non-Tensor objects
+    are converted to None.
 
-    return tuple(to_descriptor(arg) for arg in args)
+    Args:
+        args: The arguments to convert.
+
+    Returns:
+        Tuple: The runtime descriptors of the arguments.
+    """
+    return tuple(compute_contiguity(arg.shape, arg.stride()) if isinstance(arg, Tensor) else None for arg in args)
 
 
 # TODO Consider making this just a function, because it's faster to call a function than a callable class
