@@ -402,29 +402,6 @@ def compute_contiguity(
     return tuple(tuple(x) for x in nv_compute_td(shape, stride))
 
 
-@lru_cache(maxsize=2048)
-def compute_tensor_descriptor(
-    proxy_shape: Sequence[int | NumberProxy], shape: torch.Size | Sequence[int], stride: Sequence[int]
-) -> tuple[tuple[int, ...], tuple[bool, ...], tuple[int, ...]]:
-    """
-    Computes the symbolic shape, contiguity and stride_order of a tensor using
-    nvFuser's notion. See compute_symbolic_shape and compute_contiguity for
-    more details.
-
-    This function is caching the results of compute_symbolic_shape and
-    compute_contiguity to speed up the computation.
-
-    Args:
-        shape (Union[torch.Size, Sequence[int]]): The shape of the tensor.
-        stride (Sequence[int]): The stride of the tensor.
-
-    Returns:
-        Tuple[Tuple[int, ...], Tuple[bool, ...], Tuple[int, ...]]: The symbolic
-        shape, contiguity and stride_order of the tensor.
-    """
-    return compute_symbolic_shape(proxy_shape, shape), *compute_contiguity(shape, stride)
-
-
 def to_runtime_descriptors(args) -> tuple:
     def to_descriptor(arg):
         if isinstance(arg, Tensor):
