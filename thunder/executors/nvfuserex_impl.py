@@ -257,15 +257,14 @@ def create_fd(
         def add_input(x: Any, y: Any) -> Any:
             nv: Any
             if isinstance(x, NumberProxy):
-                utils.check_type(y, type)
-                python_type = y
-                nvdtype = lcdtype_to_nvdtype(python_type)
+                nvdtype = lcdtype_to_nvdtype(x.python_type)
                 nv = fd.define_scalar(nvdtype)
                 lc_to_nv_map[x] = nv
             elif isinstance(x, TensorProxy):
                 utils.check_type(y, tuple)
-                symbolic_shape, contiguity, stride_order, dtype = y
-                nvdtype = lcdtype_to_nvdtype(dtypes.to_dtype(dtype))
+                contiguity, stride_order = y
+                symbolic_shape = compute_symbolic_shape(x._shape, x._shape)
+                nvdtype = lcdtype_to_nvdtype(x.dtype)
                 is_cpu = x.device == cpu
                 nv = fd.define_tensor(
                     shape=symbolic_shape, contiguity=contiguity, dtype=nvdtype, stride_order=stride_order, is_cpu=is_cpu
@@ -278,7 +277,6 @@ def create_fd(
             elif isinstance(x, TupleProxy):
                 # TODO: discuss the contract here on baked in number from a tuple
                 # TODO: validate x is a tuple of int
-                utils.check_type(y, type)
                 nv = fd.define_vector(len(x._value))
                 lc_to_nv_map[x] = nv
             elif isinstance(x, Proxy):
@@ -368,6 +366,7 @@ def compute_symbolic_shape(
     return tuple(nvf_shape)
 
 
+@lru_cache(maxsize=2048)
 def compute_contiguity(
     shape: torch.Size | Sequence[int], stride: Sequence[int]
 ) -> tuple[tuple[bool, ...], tuple[int, ...]]:
@@ -400,48 +399,20 @@ def compute_contiguity(
     return tuple(tuple(x) for x in nv_compute_td(shape, stride))
 
 
-@lru_cache(maxsize=2048)
-def compute_tensor_descriptor(
-    proxy_shape: Sequence[int | NumberProxy], shape: torch.Size | Sequence[int], stride: Sequence[int]
-) -> tuple[tuple[int, ...], tuple[bool, ...], tuple[int, ...]]:
+def to_runtime_descriptors(args) -> tuple:
     """
-    Computes the symbolic shape, contiguity and stride_order of a tensor using
-    nvFuser's notion. See compute_symbolic_shape and compute_contiguity for
-    more details.
+    Converts the arguments to their runtime descriptors.
 
-    This function is caching the results of compute_symbolic_shape and
-    compute_contiguity to speed up the computation.
+    Only Tensor objects are converted to runtime descriptors. Non-Tensor objects
+    are converted to None.
 
     Args:
-        shape (Union[torch.Size, Sequence[int]]): The shape of the tensor.
-        stride (Sequence[int]): The stride of the tensor.
+        args: The arguments to convert.
 
     Returns:
-        Tuple[Tuple[int, ...], Tuple[bool, ...], Tuple[int, ...]]: The symbolic
-        shape, contiguity and stride_order of the tensor.
+        Tuple: The runtime descriptors of the arguments.
     """
-    return compute_symbolic_shape(proxy_shape, shape), *compute_contiguity(shape, stride)
-
-
-def to_descriptors(proxy_args, args) -> tuple:
-    def to_descriptor(proxy_arg, arg):
-        if isinstance(arg, Tensor):
-            return (*compute_tensor_descriptor(proxy_arg._shape, arg.shape, arg.stride()), arg.dtype)
-        elif isinstance(arg, Number):
-            return type(arg)
-        elif isinstance(arg, tuple):
-            if len(arg) != 0:
-                numbertype, _ = check_same_dtype(*arg)
-                check(
-                    numbertype == int,
-                    lambda: f"tuple in nvfuser only supports int, but found {numbertype}",
-                    exception_type=AssertionError,
-                )
-            return type(arg)
-
-        raise ValueError(f"unrecognized type in arguments: {type(arg)}")
-
-    return tuple(to_descriptor(proxy_arg, arg) for proxy_arg, arg in zip(proxy_args, args))
+    return tuple(compute_contiguity(arg.shape, arg.stride()) if isinstance(arg, Tensor) else None for arg in args)
 
 
 # TODO Consider making this just a function, because it's faster to call a function than a callable class
@@ -606,7 +577,7 @@ def create_fusion_definition_wrapper(
 
     fdw = FusionDefinitionWrapper(
         get_fd,
-        partial(to_descriptors, sorted_unique_inputs),
+        to_runtime_descriptors,
         name,
         get_fd.cache_info,
         get_fd.cache_clear,
@@ -2697,12 +2668,31 @@ def embedding(
     fd: FusionDefinition,
     lc_to_nv_map: dict,
 ) -> Any:
-    inputs = [input, weight, padding_idx, max_norm, norm_type, scale_grad_by_freq, sparse]
-    nv_inputs = []
-    for inp in inputs:
-        nv_inp = getnv(inp, fd, lc_to_nv_map) if inp is not None else None
-        nv_inputs.append(nv_inp)
-    return fd.ops.embedding_fwd(*nv_inputs)
+    # embedding forward without renorm could be implemented as `index_select`, which is supported
+    # by nvfuser codegen
+    if max_norm is None:
+        nv_input = getnv(input, fd, lc_to_nv_map)
+        nv_weight = getnv(weight, fd, lc_to_nv_map)
+        restore_shape = None
+        # high order indices can be reshaped into an array and then restore the shape after
+        # index_select
+        if nv_input.ndim > 1:
+            restore_shape = []
+            for i in range(input.ndim):
+                restore_shape.append(nv_input.size(i))
+            restore_shape.append(nv_weight.size(weight.ndim - 1))
+            nv_input = fd.ops.reshape(nv_input, [-1])
+        ret = fd.ops.index_select(nv_weight, nv_input, 0)
+        if restore_shape is not None:
+            ret = fd.ops.reshape(ret, restore_shape)
+        return ret
+    else:
+        inputs = [input, weight, padding_idx, max_norm, norm_type, scale_grad_by_freq, sparse]
+        nv_inputs = []
+        for inp in inputs:
+            nv_inp = getnv(inp, fd, lc_to_nv_map) if inp is not None else None
+            nv_inputs.append(nv_inp)
+        return fd.ops.embedding_fwd(*nv_inputs)
 
 
 register_supported(PrimIDs.EMBEDDING, embedding, _embedding_check)
