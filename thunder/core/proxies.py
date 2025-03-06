@@ -6,6 +6,7 @@ from numbers import Number
 from typing import Any, ClassVar
 from collections.abc import Callable
 from collections.abc import Sequence
+from dataclasses import is_dataclass
 
 from functools import reduce, partial
 import operator
@@ -2189,6 +2190,47 @@ class TorchAutogradFunctionCtxProxy(Proxy, TorchAutogradFunctionCtxProxyInterfac
             self._const_for_backward[name] = value
 
 
+class DataclassProxy(Proxy):
+    def __init__(
+        self,
+        obj: Any,
+        /,
+        *,
+        name: str | None = None,
+        history: None | tuple = None,
+        tags: set | None = None,
+    ):
+        super().__init__(name=name, history=history, tags=tags)
+        self._obj = obj
+
+    def __repr__(self) -> str:
+        return f"<DataclassProxy '{type(self._obj).__name__}' at {id(self._obj):#x}>"
+
+    def type_string(self) -> str:
+        return f"dataclass[{type(self._obj).__name__}]"
+
+    def replace(self, **changes):
+        r"""Return a copy of the DataclassProxy object with new values for the specified fields as given to the constructor as arguments.
+        Valid keyword arguments are ``name``, ``history``.
+        Note that the copy will use the current (environment) tracectx."""
+        kwargs = dict(
+            name=self.name,
+            history=self.history,
+            tags=self.tags,
+        )
+        kwargs.update(changes)
+        return DataclassProxy(self._obj, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        # Forward attribute access to the underlying dataclass
+        if name.startswith("_"):
+            return super().__getattr__(name)
+
+        value = getattr(self._obj, name)
+        # We could potentially proxy the result here if needed
+        return value
+
+
 #
 # Helpers for creating and working with proxies
 #
@@ -2323,6 +2365,8 @@ def proxy(x: Any, *, name: str | None = None, history: None | tuple = None) -> A
         return AnyProxy(x, name=name, history=history)
     if x is ...:
         return AnyProxy(x, name=name, history=history)
+    if isinstance(x, Enum):
+        return AnyProxy(x, name=name, history=history)
 
     if isinstance(x, torch.Tensor):
         return tensorproxy(x, name=name, history=history)
@@ -2346,6 +2390,9 @@ def proxy(x: Any, *, name: str | None = None, history: None | tuple = None) -> A
         return ListProxy(x, name=name, history=history)
     if isinstance(x, dict):
         return DictProxy(x, name=name, history=history)
+
+    if is_dataclass(x):
+        return DataclassProxy(x, name=name, history=history)
 
     if isinstance(x, torch.dtype):
         return AnyProxy(x, name=name, history=history)
