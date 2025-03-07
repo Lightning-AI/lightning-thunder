@@ -806,6 +806,8 @@ class ThunderFusionReport:
     ):
         compiled_fn = compile_fn.compile(self.nvfusion_bsym)
         inputs = self.make_example_inputs()
+        if compile_fn.name == "nvfuser":
+            return compiled_fn(inputs)
         return compiled_fn(*inputs)
 
     def _get_nvfuser_code(self):
