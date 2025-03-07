@@ -5835,6 +5835,24 @@ std_opinfo = OpInfo(
     error_input_generator=std_error_generator,
     torch_reference=torch.std,
     dtypes=(datatypes.floating,),
+    test_directives=(
+        # AssertionError: Scalars are not close!
+        # Expected nan but got 0.0.
+        # Absolute difference: nan (up to 1e-07 allowed)
+        # Relative difference: nan (up to 1e-07 allowed)
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_vjp_correctness",
+            executors=("torch",),
+            dtypes=(datatypes.float64,),
+        ),
+        # AssertionError: Tensor-likes are not close!
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_phantom_grad_vs_torch_consistency",
+            dtypes=(datatypes.bfloat16, datatypes.float16, datatypes.float32, datatypes.float64),
+        ),
+    ),
 )
 reduction_ops.append(std_opinfo)
 

@@ -1761,6 +1761,24 @@ def var_backward(a, dim, correction, v, g):
     return (2 * g * (a - mean)) / normalization_scalar
 
 
+@register_augmented_forward(prims.PrimIDs.STD)
+def std_aug_fwd(a, dim, *, correction):
+    v = prims.std(a, dim, correction=correction)
+    return VJPDual((v,), (a, dim, correction, v))
+
+
+@register_backward(prims.PrimIDs.STD)
+def std_backward(a, dim, correction, s, g):
+    n_elem_reduced = a.numel() // s.numel() if a.numel() != 0 else 1
+    normalization_scalar = n_elem_reduced - correction
+    g = restore_reduced_dims(g, dim, a.shape)
+    if a.dtype != s.dtype:
+        a = prims.convert_element_type(a, s.dtype)
+    mean = prims.sum(a, dim) / n_elem_reduced
+    mean = restore_reduced_dims(mean, dim, a.shape)
+    return (g * (a - mean)) / (normalization_scalar * (s + 1e-8))
+
+
 def n_elem_reduced(a_ndim, a_shape, dims):
     dims = utils.canonicalize_dims(a_ndim, dims)
     reduction_size = 1
