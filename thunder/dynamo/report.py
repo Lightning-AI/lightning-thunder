@@ -198,7 +198,7 @@ class FXGraphReport:
         self.graph = graph
         self.graph_name = graph_name
         self.example_input_meta = example_input_meta
-        self.ops = [node.target for node in self.graph.graph.nodes if node.op in ("call_function", "call_method")]
+        self.ops = {node.target for node in self.graph.graph.nodes if node.op in ("call_function", "call_method")}
 
     def __str__(self):
         output = f"Graph Name: {self.graph_name}\n"
