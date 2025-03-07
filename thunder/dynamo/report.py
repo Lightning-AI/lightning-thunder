@@ -549,7 +549,8 @@ class FXGraphReport:
     fwd_measurement = {fwd_timing_str}
     print("fwd_measurement=", fwd_measurement)
     if hasattr(fwd_measurement, "max_allocated_memory"):
-        print(f"fwd_measurement.max_allocated_memory={{fwd_measurement.max_allocated_memory}}MB")
+        from thunder.dynamo.benchmark_utils import get_pretty_memory_str
+        print(f"fwd_measurement.max_allocated_memory={{get_pretty_memory_str(fwd_measurement.max_allocated_memory)}}")
 """
         if not forward_only:
             code_str = f"""{code_str}
@@ -560,7 +561,7 @@ class FXGraphReport:
     bwd_measurement = {bwd_timing_str}
     print("bwd_measurement=", bwd_measurement)
     if hasattr(bwd_measurement, "max_allocated_memory"):
-        print(f"bwd_measurement.max_allocated_memory={{bwd_measurement.max_allocated_memory}}MB")
+        print(f"bwd_measurement.max_allocated_memory={{get_pretty_memory_str(bwd_measurement.max_allocated_memory)}}")
 """
 
         code_str += f"test_{self.graph_name}()"

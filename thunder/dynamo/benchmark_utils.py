@@ -237,7 +237,7 @@ class TimerWithCUDAMemoryUsage:
         # ... code to measure ...
         t1 = t()  # Records final memory and time
         duration = t1 - t0  # Get elapsed time
-        memory_mb = t.max_allocated_memory  # Get peak memory usage in MB
+        memory_mb = t.max_allocated_memory  # Get peak memory usage in B
 
     Note:
         The memory tracking adds some overhead to the timing measurements.
@@ -469,7 +469,7 @@ def check_metrics(
                 memory_usage_rtol,
                 memory_usage_atol,
             )
-            if memory_ret[0]:
+            if not memory_ret[0]:
                 memory_record = True
             log_strs += memory_ret[1]
 
