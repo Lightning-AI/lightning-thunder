@@ -1935,6 +1935,21 @@ def silu(a: TensorLike, /, inplace: bool = False) -> TensorLike:
 _inplace_to_out_of_place[silu] = silu, 1
 
 
+@torchsymbol(torch.nn.functional.softplus, is_method=False)
+def softplus(a: TensorProxy, /, beta: float = 1.0, threshold: float = 20.0) -> TensorLike:
+    utils.check(
+        dtypes.is_numbertype(to_dtype(beta)),
+        lambda: f"beta must be a number type, but found to be {to_dtype(beta)}",
+    )
+    utils.check(
+        dtypes.is_numbertype(to_dtype(threshold)),
+        lambda: f"threshold must be a number type, but found to be {to_dtype(threshold)}",
+    )
+    scaled_input = a * beta
+    rhs = log1p(exp(scaled_input)) / beta
+    return where(scaled_input > threshold, a, rhs)
+
+
 @torchsymbol(torch.nn.functional.softshrink, is_method=False)
 def softshrink(a: TensorProxy, /, lambd: float = 0.5) -> TensorLike:
     utils.check(

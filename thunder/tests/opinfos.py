@@ -1773,6 +1773,25 @@ hardshrink_opinfo = OpInfo(
 elementwise_unary_ops.append(hardshrink_opinfo)
 
 
+def soft_plus_singularity_fn_producer(sample):
+    beta = sample.kwargs.get("beta", 1.0)
+    threshold = sample.kwargs.get("threshold", 20.0)
+    return lambda a: a * beta - threshold
+
+
+softplus_opinfo = OpInfo(
+    ltorch.softplus,
+    dtypes=(datatypes.floating,),
+    sample_input_generator=get_elementwise_unary_with_kwargs_generator(
+        [{}, {"beta": 0.5}, {"beta": 2.0}, {"threshold": 5.0}, {"beta": 0.5, "threshold": 10.0}]
+    ),
+    torch_reference=_elementwise_unary_torch(torch.nn.functional.softplus),
+    singularity_fn_producer=soft_plus_singularity_fn_producer,
+    test_directives=(),
+)
+elementwise_unary_ops.append(softplus_opinfo)
+
+
 softshrink_opinfo = OpInfo(
     ltorch.softshrink,
     dtypes=(datatypes.floating,),
