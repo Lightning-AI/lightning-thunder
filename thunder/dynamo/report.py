@@ -1132,10 +1132,15 @@ def thunderfx_benchmark_report_from_splits(
     """
     A utility function that analyzes the runnability and performance benchmarks of each Thunder-split FX graph and nvFusion regions(optional).
     It prints out the performance metrics and saves the benchmark script in `folder_path` if the difference exceeds
-    the tolerance (`perf_rtol`, `perf_atol` in seconds).
+    the tolerance (`perf_rtol`, `perf_atol` in seconds; `memory_usage_rtol`, `memory_usage_atol` in Bytes).
     the function will create the following folder structure:
     folder_path
     └── graph0
+        ├── failed
+        │   └── failed_graph0_thunder_1_thunder_WallTime.py
+        └── memory_issue
+            ├── graph0_thunder_0_inductor_backend_WallTimeWithMemoryUsage.py
+            └── graph0_thunder_0_thunder_WallTimeWithMemoryUsage.py
         ├── graph0_thunder_0_thunder_walltime.py
         └── nvfusion_reports
             └── graph0_thunder_0_nvfusion0_forward_nvfuser_kerneltime.py
@@ -1217,12 +1222,13 @@ def thunderfx_benchmark_report(
 
     3. For each subgraph:
     - Compares wall time and kernel time between `torch.compile` and Thunder.
-    - Reports performance metrics and saves the benchmark script in `folder_path` if the difference exceeds the tolerance (`rtol`, `atol` in seconds).
+    - Reports performance metrics and saves the benchmark script in `folder_path/graph_name/` if the difference exceeds the tolerance (`perf_rtol`, `perf_atol` in seconds)
+    - Reports memory usage and saves the benchmark script in `folder_path/graph_name/memory_issue` if the difference exceeds the tolerance (`memory_usage_rtol`, `memory_usage_atol` in Bytes).
     - Uses `math.isclose` for tolerance checks.
 
     4. If `compare_fusion` is `True`:
     - Also compares the wall time and kernel time of each nvFusion region.
-    - Saves the benchmark script when necessary, following the same criteria as above.
+    - Saves the benchmark script when necessary in `folder_path/graph_name/nvfusion_reports`, following the same criteria as above.
 
     Note:
     - This function may run out of memory (OOM) as it allocates random tensors when executing

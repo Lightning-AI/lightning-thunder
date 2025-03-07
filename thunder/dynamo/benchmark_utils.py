@@ -444,8 +444,9 @@ def check_metrics(
         except Exception as e:
             msg = f"Benchmark {timer_fn.name} on {graph_name} using {compile_fn.name} failed with exception {e}, benchmark script failed_{filename} is saved"
             stream.write(msg)
+            failed_folder = folder_path / "failed"
             report.write_benchmark(
-                folder_path, compile_fn, timer_fn, file_name=f"failed_{filename1}", extra_comment_str=msg
+                failed_folder, compile_fn, timer_fn, file_name=f"failed_{filename1}", extra_comment_str=msg
             )
             return None
 
