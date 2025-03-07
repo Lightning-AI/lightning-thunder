@@ -1961,3 +1961,28 @@ def test_backward_recomputation_decomposed_ops(device):
             "unpack_sequence",
             "unpack_trivial",
         }
+
+
+@requiresCUDA
+def test_benchmark_grad():
+    from thunder.benchmarks.utils import backward_only
+    from thunder.dynamo.report import run_forward_backward
+
+    # Workaround for "RuntimeError: Triton Error [CUDA]: an illegal memory access was encountered"
+    # https://github.com/pytorch/pytorch/issues/124565
+    torch.empty(1, device="cuda", requires_grad=True).backward()
+
+    def func(x):
+        arange = torch.arange(0, 96, 2, dtype=torch.int64, device="cuda").float()
+        return x.exp(), arange
+
+    jfunc = thunder.jit(func)
+    tfunc = torch.compile(func)
+    x = torch.randn(2, 2, device="cuda", requires_grad=True)
+    out1 = run_forward_backward(jfunc, x)
+    out2 = run_forward_backward(tfunc, x)
+    torch.testing.assert_close(out1, out2)
+
+    backward_fn, backward_setup = backward_only(tfunc, x)
+    backward_args = backward_setup()
+    backward_fn(*backward_args)
