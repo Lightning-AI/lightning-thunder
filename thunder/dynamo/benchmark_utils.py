@@ -1,5 +1,7 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
+import sys
+from pathlib import Path
 import torch
 from torch.utils.benchmark import Timer as TorchBenchmarkTimer
 from torch.profiler import profile, ProfilerActivity
@@ -7,6 +9,7 @@ from thunder.dynamo.utils import thunder_options_to_str
 from torch.utils.benchmark.utils.common import select_unit as select_time_unit
 
 if TYPE_CHECKING:
+    from typing import TextIO
     from collections.abc import Callable
     from torch.utils.benchmark.utils.common import Measurement
 
@@ -238,7 +241,7 @@ class TimerWithCUDAMemoryUsage:
 
     Note:
         The memory tracking adds some overhead to the timing measurements.
-        Memory usage is recorded in megabytes (MB).
+        Memory usage is recorded in bytes (B).
     """
 
     def __init__(self, timer=torch.utils.benchmark.utils.timer.timer):
@@ -246,8 +249,7 @@ class TimerWithCUDAMemoryUsage:
         self.timer = timer
 
     def __call__(self):
-        # Max allocated memory is recorded in MB
-        self.max_allocated_memory = torch.cuda.max_memory_allocated() / (1024 * 1024.0)
+        self.max_allocated_memory = torch.cuda.max_memory_allocated()
         torch.cuda.reset_peak_memory_stats()
         return self.timer()
 
@@ -343,7 +345,27 @@ def get_pretty_time_str(a):
     return f"{a / time_scale:.3f} {time_unit}"
 
 
-def check_threshold_log(a: float, b: float, a_name: str, b_name: str, test_name: str, timer_name: str, rtol, atol):
+def get_pretty_memory_str(value):
+    """
+    Converts memory size in bytes to human readable string with appropriate unit suffix.
+
+    Args:
+        value (float): Memory size in bytes
+
+    Returns:
+        str: Memory size with appropriate unit (B, KB, MB, GB, TB, PB)
+    """
+    suffixes = ["B", "KB", "MB", "GB", "TB", "PB"]
+    suffix_idx = 0
+
+    while suffix_idx + 1 < len(suffixes) and value >= 1024.0:
+        value /= 1024.0
+        suffix_idx += 1
+
+    return f"{value:.3f} {suffixes[suffix_idx]}"
+
+
+def check_timing(a: float, b: float, a_name: str, b_name: str, test_name: str, timer_name: str, rtol, atol):
     """
     Compare two timing measurements against a defined threshold and generate a log message.
     If not exceed the threshold, abs(a-b) <= max(rtol * max(abs(a), abs(b)), atol).
@@ -364,14 +386,12 @@ def check_threshold_log(a: float, b: float, a_name: str, b_name: str, test_name:
     a_time_str = get_pretty_time_str(a)
     b_time_str = get_pretty_time_str(b)
     if not check_threshold(a, b, rtol=rtol, atol=atol):
-        log_str = f"Benchmark {timer_name} for **{test_name}** requires investigation: {b_name}({b_time_str}) and {a_name}({a_time_str}) is not close (rtol={rtol}, atol={atol})"
-        print(log_str)
+        log_str = f"Benchmark {timer_name} for **{test_name}** requires investigation: {b_name}({b_time_str}) and {a_name}({a_time_str}) is not close (rtol={rtol}, atol={atol})\n"
         return False, log_str
     log_str = (
-        f"Benchmark {timer_name} ran successfully on **{test_name}**: {b_name}({b_time_str}) , {a_name}({a_time_str})"
+        f"Benchmark {timer_name} ran successfully on **{test_name}**: {b_name}({b_time_str}) , {a_name}({a_time_str})\n"
     )
-    print(log_str)
-    return True, None
+    return True, log_str
 
 
 def is_report_using_cuda(report):
@@ -384,33 +404,46 @@ def is_report_using_cuda(report):
     return any(tree_map(_check_tensor, report.example_input_meta))
 
 
-def check_timing(
+def check_memory_usage(m1, m2, m1_name, m2_name, test_name, rtol, atol):
+    m1_memory_str = get_pretty_memory_str(m1)
+    m2_memory_str = get_pretty_memory_str(m2)
+    if not check_threshold(m1, m2, rtol=rtol, atol=atol):
+        log_str = f"Max_allocated_memory for **{test_name}** requires investigation: {m1_name}({m1_memory_str}) and {m2_name}({m2_memory_str}) is not close (rtol={rtol}, atol={atol})\n"
+        return False, log_str
+    log_str = f"Max_allocated_memory: [{test_name}] {m1_name}({m1_memory_str}); {m2_name}({m2_memory_str})\n"
+    return True, log_str
+
+
+def check_metrics(
     folder_path,
     report,
     compile_fn1: Callable,
     compile_fn2: Callable,
     timer_fn: Callable,
-    timer_name: str,
-    rtol=0.5,
-    atol=0.0,
+    perf_rtol=0.5,
+    perf_atol=0.0,
+    memory_usage_rtol=0.5,
+    memory_usage_atol=0.0,
+    stream: TextIO = sys.stdout,
 ):
     """
-    Check the timing of graph report using two different compilation specifications with the provided timer configuration
+    Check the timing and memory usage(if using WallTimeWithMemoryUsage) of graph report using two different compilation specifications with the provided timer configuration
     and generate a benchmark script if the difference exceeds the threshold.
     """
+    folder_path = Path(folder_path)
     graph_name = report.graph_name
     if not is_report_using_cuda(report):
-        print(f"{graph_name} doesn't use CUDA, skip benchmark {timer_name}")
-        return
-    filename1 = f"{graph_name}_{compile_fn1.name}_{timer_name}.py"
-    filename2 = f"{graph_name}_{compile_fn2.name}_{timer_name}.py"
+        stream.write(f"{graph_name} doesn't use CUDA, skip benchmark {timer_fn.name}")
+        return None, None
+    filename1 = f"{graph_name}_{compile_fn1.name}_{timer_fn.name}.py"
+    filename2 = f"{graph_name}_{compile_fn2.name}_{timer_fn.name}.py"
 
     def try_and_log_benchmark(compile_fn, filename):
         try:
             return report.run_benchmark(compile_fn, timer_fn)
         except Exception as e:
-            msg = f"Benchmark {timer_name} on {graph_name} using {compile_fn.name} failed with exception {e}, benchmark script failed_{filename} is saved"
-            print(msg)
+            msg = f"Benchmark {timer_fn.name} on {graph_name} using {compile_fn.name} failed with exception {e}, benchmark script failed_{filename} is saved"
+            stream.write(msg)
             report.write_benchmark(
                 folder_path, compile_fn, timer_fn, file_name=f"failed_{filename1}", extra_comment_str=msg
             )
@@ -420,53 +453,77 @@ def check_timing(
     measure2 = try_and_log_benchmark(compile_fn2, filename2)
 
     if measure1 is None or measure2 is None:
-        return
+        return measure1, measure2
 
-    record = False
+    perf_record = False
+    memory_record = False
     log_strs = ""
     for m1, m2, name in zip(measure1, measure2, ("forward", "backward")):
-        if m1 is None:
-            assert m2 is None
-            continue
-
         if timer_fn.name == "WallTimeWithMemoryUsage":
-            print(
-                f"Max_allocated_memory: [{graph_name} {name}] {compile_fn1.name}({m1.max_allocated_memory}MB); {compile_fn2.name}({m2.max_allocated_memory}MB)"
+            memory_ret = check_memory_usage(
+                m1.max_allocated_memory,
+                m2.max_allocated_memory,
+                compile_fn1.name,
+                compile_fn2.name,
+                f"{graph_name} {name}",
+                memory_usage_rtol,
+                memory_usage_atol,
             )
+            if memory_ret[0]:
+                memory_record = True
+            log_strs += memory_ret[1]
 
-        ret = check_threshold_log(
-            m1.median, m2.median, compile_fn1.name, compile_fn2.name, f"{graph_name} {name}", timer_name, rtol, atol
+        ret = check_timing(
+            m1.median,
+            m2.median,
+            compile_fn1.name,
+            compile_fn2.name,
+            f"{graph_name} {name}",
+            timer_fn.name,
+            perf_rtol,
+            perf_atol,
         )
         if not ret[0]:
-            record = True
-            log_strs += f"{ret[1]}\n"
-    if record:
-        extra_comment = f"Benchmark results:\n{log_strs}\n"
-        report.write_benchmark(folder_path, compile_fn1, timer_fn, file_name=filename1, extra_comment_str=extra_comment)
-        report.write_benchmark(folder_path, compile_fn2, timer_fn, file_name=filename2, extra_comment_str=extra_comment)
-        print(f"The scripts are saved: {filename1}, {filename2}")
-    print("\n")
+            perf_record = True
+        log_strs += ret[1]
+
+    def save_script(folder_path, compile_fn, filename):
+        report.write_benchmark(folder_path, compile_fn, timer_fn, file_name=filename, extra_comment_str=log_strs)
+
+    stream.write(log_strs)
+    if perf_record:
+        save_script(folder_path, compile_fn1, filename1)
+        save_script(folder_path, compile_fn2, filename2)
+        stream.write(f"The scripts are saved: {filename1}, {filename2}\n")
+    if memory_record:
+        memory_issue_folder = folder_path / "memory_issue"
+        save_script(memory_issue_folder, compile_fn1, filename1)
+        save_script(memory_issue_folder, compile_fn2, filename2)
+    stream.write("\n")
+    return measure1, measure2
 
 
-def check_timing_bsym(folder_path, report, timer_fn, timer_name: str, rtol=0.5, atol=0.0):
+def check_nvfusion_timing(folder_path, report, timer_fn, rtol=0.5, atol=0.0, stream: TextIO = sys.stdout):
     """
     Check the timing of the nvfusion region report using two different compilation specifications with the provided timer configuration
     and generate a benchmark script if the difference exceeds the threshold.
     """
     graph_name = report.name
+    timer_name = timer_fn.name
     bsym_nvfuser = BoundSymbolNvfuserSpecification()
     bsym_torchcompile = BoundSymbolTorchCompileSpecification()
     measure1 = report.run_benchmark(bsym_nvfuser, timer_fn)
     measure2 = report.run_benchmark(bsym_torchcompile, timer_fn)
 
-    ret = check_threshold_log(
+    ret = check_timing(
         measure1.median, measure2.median, bsym_nvfuser.name, bsym_torchcompile.name, graph_name, timer_name, rtol, atol
     )
+    stream.write(ret[1])
     if not ret[0]:
         extra_comment = f"Benchmark results:\n{ret[1]}\n"
         filename1 = f"{graph_name}_{bsym_nvfuser.name}_{timer_name}.py"
         filename2 = f"{graph_name}_{bsym_torchcompile.name}_{timer_name}.py"
         report.write_nvfuser_benchmark(folder_path, timer_fn, file_name=filename1, extra_comment_str=extra_comment)
         report.write_inductor_benchmark(folder_path, timer_fn, file_name=filename2, extra_comment_str=extra_comment)
-        print(f"The scripts are saved: {filename1}, {filename2}")
-    print("\n")
+        stream.write(f"The scripts are saved: {filename1}, {filename2}\n")
+    stream.write("\n")

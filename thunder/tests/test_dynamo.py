@@ -1270,8 +1270,12 @@ def test_WallTime_KernelTime():
 
     WallTime.time(stmt="fd.execute(inputs)", globals={"fd": fd, "inputs": inputs})
     KernelTime.time(stmt="fd.execute(inputs)", globals={"fd": fd, "inputs": inputs})
+
     m = WallTimeWithMemoryUsage.time(stmt="fd.execute(inputs)", globals={"fd": fd, "inputs": inputs})
-    assert m.max_allocated_memory > 0
+    torch.cuda.reset_peak_memory_stats()
+    fd.execute(inputs)
+    max_mem = torch.cuda.max_memory_allocated()
+    assert max_mem == m.max_allocated_memory
 
 
 @requiresCUDA

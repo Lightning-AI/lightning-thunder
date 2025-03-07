@@ -43,8 +43,8 @@ from thunder.dynamo.benchmark_utils import (
     WallTime,
     KernelTime,
     WallTimeWithMemoryUsage,
-    check_timing,
-    check_timing_bsym,
+    check_metrics,
+    check_nvfusion_timing,
 )
 
 
@@ -52,6 +52,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from os import PathLike
     from collections.abc import Sequence
+    from typing import TextIO
 
     from torch._dynamo.output_graph import GraphCompileReason
     from thunder.dynamo.utils import ExampleInputMetaData
@@ -578,8 +579,8 @@ class FXReport:
     def __init__(
         self,
         graphs: list[torch.fx.GraphModule],
-        graph_names: list[str] = None,
-        dynamo_break_reasons: list[GraphCompileReason] = None,
+        graph_names: list[str] | None = None,
+        dynamo_break_reasons: list[GraphCompileReason] | None = None,
     ):
         self.fx_graph_reports = []
         self.dynamo_break_reasons = dynamo_break_reasons
@@ -1049,33 +1050,37 @@ def analyze_thunder_splits(
     return report
 
 
-def check_torch_compile_runnability(fn: Callable, *args, **kwargs):
+def check_torch_compile_runnability(fn: Callable, stream: TextIO = sys.stdout):
     """
     Checks if the input callable can be successfully executed by torch.compile.
     If not, it will try to run it in eager mode.
     """
-    try:
-        # WAR for triton error https://github.com/pytorch/pytorch/issues/124565
-        if torch.cuda.is_available():
-            torch.empty(1, device="cuda", requires_grad=True).backward()
-        torch._dynamo.reset()
-        torch_compiled = torch.compile(fn)
-        run_forward_backward(torch_compiled, *args, **kwargs)
-    except Exception as e:
-        print(f"Failed to run the function using torch.compile with exception: {e}")
-        print(f"Trying with Torch eager...")
+
+    def inner_fn(*args, **kwargs):
         try:
-            run_forward_backward(fn, *args, **kwargs)
+            # WAR for triton error https://github.com/pytorch/pytorch/issues/124565
+            if torch.cuda.is_available():
+                torch.empty(1, device="cuda", requires_grad=True).backward()
+            torch._dynamo.reset()
+            torch_compiled = torch.compile(fn)
+            run_forward_backward(torch_compiled, *args, **kwargs)
         except Exception as e:
-            print(f"Failed to run the function in eager mode with exception: {e}")
-            return
-        print("The input callable can be successfully executed in eager mode.")
-    else:
-        print("The input callable can be successfully executed by torch.compile.")
+            stream.write(f"Failed to run the function using torch.compile with exception: {e}")
+            stream.write(f"Trying with Torch eager...")
+            try:
+                run_forward_backward(fn, *args, **kwargs)
+            except Exception as e:
+                stream.write(f"Failed to run the function in eager mode with exception: {e}")
+                return
+            stream.write("The input callable can be successfully executed in eager mode.")
+        else:
+            stream.write("The input callable can be successfully executed by torch.compile.")
+
+    return inner_fn
 
 
 def get_thunder_fxgraph_reports(
-    fn: Callable, *args, thunder_compile_kwargs: dict = None, check_runnablility=True, **kwargs
+    fn: Callable, *args, thunder_compile_kwargs: dict = None, stream: TextIO = sys.stdout, **kwargs
 ) -> list[ThunderFXGraphReport]:
     """
     Generates a list of :class:`ThunderFXGraphReport` objects for a given callable.
@@ -1091,17 +1096,14 @@ def get_thunder_fxgraph_reports(
         check_runnablility: Whether to check if the callable can be executed with `torch.compile` or eager execution.
         **kwargs: Keyword arguments to pass to the callable.
     """
-    if check_runnablility:
-        check_torch_compile_runnability(fn, *args, **kwargs)
-
     reports = fx_report(fn, *args, **kwargs)
-    print(reports)
+    stream.write(str(reports))
     if thunder_compile_kwargs is None:
         thunder_compile_kwargs = {}
     thunder_fxgraph_reports = []
     for fxgraph_report in reports.fx_graph_reports:
         thunder_fxgraph_report = analyze_thunder_splits(fxgraph_report, **thunder_compile_kwargs)
-        print(thunder_fxgraph_report)
+        stream.write(str(thunder_fxgraph_report))
         thunder_fxgraph_reports.append(thunder_fxgraph_report)
     return thunder_fxgraph_reports
 
@@ -1120,13 +1122,16 @@ def thunderfx_benchmark_report_from_splits(
     folder_path: str | PathLike,
     thunder_compile_kwargs: dict = None,
     compare_fusion: bool = False,
-    rtol=0.5,
-    atol=0.0,
+    perf_rtol=0.5,
+    perf_atol=0.0,
+    memory_usage_rtol=0.5,
+    memory_usage_atol=0.0,
+    stream: TextIO = sys.stdout,
 ):
     """
     A utility function that analyzes the runnability and performance benchmarks of each Thunder-split FX graph and nvFusion regions(optional).
     It prints out the performance metrics and saves the benchmark script in `folder_path` if the difference exceeds
-    the tolerance (`rtol`, `atol` in seconds).
+    the tolerance (`perf_rtol`, `perf_atol` in seconds).
     the function will create the following folder structure:
     folder_path
     └── graph0
@@ -1138,7 +1143,6 @@ def thunderfx_benchmark_report_from_splits(
     The script for each nvfusion region is named as `graph[index]_[thunder_split_name]_[nvfusion_name]_[forward/backward]_[executor_name]_[timer_name].py`.
     """
     folder_path = Path(folder_path)
-    folder_path.mkdir(exist_ok=True, parents=True)
     if thunder_compile_kwargs is None:
         thunder_compile_kwargs = {}
     thunderjit = ThunderCompileSpecification(**thunder_compile_kwargs)
@@ -1147,24 +1151,43 @@ def thunderfx_benchmark_report_from_splits(
     runnable_split_reports: list[ThunderSplitGraphReport] = []
     for thunder_fxgraph_report in thunder_fxgraph_reports:
         graph_folder = folder_path / thunder_fxgraph_report.graph_name
-        graph_folder.mkdir()
         for split_report in thunder_fxgraph_report.subgraph_reports:
-            check_timing(
-                graph_folder, split_report, torchinductor, thunderjit, WallTimeWithMemoryUsage, "walltime", rtol, atol
+            _, measure_thunder = check_metrics(
+                graph_folder,
+                split_report,
+                torchinductor,
+                thunderjit,
+                WallTimeWithMemoryUsage,
+                perf_rtol,
+                perf_atol,
+                memory_usage_rtol,
+                memory_usage_atol,
+                stream,
             )
-            check_timing(graph_folder, split_report, torchinductor, thunderjit, KernelTime, "kerneltime", rtol, atol)
-            runnable_split_reports.append(split_report)
+            check_metrics(
+                graph_folder,
+                split_report,
+                torchinductor,
+                thunderjit,
+                KernelTime,
+                perf_rtol,
+                perf_atol,
+                memory_usage_rtol,
+                memory_usage_atol,
+                stream,
+            )
+            if measure_thunder is not None:
+                runnable_split_reports.append(split_report)
     if not compare_fusion:
         return
     make_nvfusion_reports(runnable_split_reports)
 
     for graph_report in thunder_fxgraph_reports:
         graph_nvfusion_folder = folder_path / graph_report.graph_name / "nvfusion_reports"
-        graph_nvfusion_folder.mkdir()
         for split_report in graph_report.subgraph_reports:
             for nvfusion_report in split_report.fusion_reports:
-                check_timing_bsym(graph_nvfusion_folder, nvfusion_report, WallTime, "walltime", rtol, atol)
-                check_timing_bsym(graph_nvfusion_folder, nvfusion_report, KernelTime, "kerneltime", rtol, atol)
+                check_nvfusion_timing(graph_nvfusion_folder, nvfusion_report, WallTime, perf_rtol, perf_atol, stream)
+                check_nvfusion_timing(graph_nvfusion_folder, nvfusion_report, KernelTime, perf_rtol, perf_atol, stream)
 
 
 def thunderfx_benchmark_report(
@@ -1172,9 +1195,13 @@ def thunderfx_benchmark_report(
     *args,
     folder_path: str | PathLike,
     thunder_compile_kwargs: dict = None,
+    check_torch_runnablility: bool = True,
+    perf_rtol=0.5,
+    perf_atol=0.0,
+    memory_usage_rtol=0.5,
+    memory_usage_atol=0.0,
     compare_fusion: bool = False,
-    rtol=0.5,
-    atol=0.0,
+    stream: TextIO = sys.stdout,
     **kwargs,
 ):
     """
@@ -1200,7 +1227,7 @@ def thunderfx_benchmark_report(
     - This function may run out of memory (OOM) as it allocates random tensors when executing
     the graph module in each Report. To prevent OOM issues, users must manually free the
     input model and arguments to free up memory for `make_nvfusion_reports`, `check_timing`,
-    and `check_timing_bsym`.
+    and `check_nvfusion_timing`.
     - See `thunderfx_benchmark_report_from_splits` for details on the generated folders and scripts.
 
     Here is an example:
@@ -1217,9 +1244,19 @@ def thunderfx_benchmark_report(
     """
     folder_path = Path(folder_path)
     folder_path.mkdir(exist_ok=True, parents=True)
+    if check_torch_runnablility:
+        check_torch_compile_runnability(fn, stream)(*args, **kwargs)
     thunder_fxgraph_reports = get_thunder_fxgraph_reports(
-        fn, *args, **kwargs, thunder_compile_kwargs=thunder_compile_kwargs
+        fn, *args, **kwargs, thunder_compile_kwargs=thunder_compile_kwargs, stream=stream
     )
     thunderfx_benchmark_report_from_splits(
-        thunder_fxgraph_reports, folder_path, thunder_compile_kwargs, compare_fusion, rtol, atol
+        thunder_fxgraph_reports,
+        folder_path,
+        thunder_compile_kwargs,
+        compare_fusion,
+        perf_rtol,
+        perf_atol,
+        memory_usage_rtol,
+        memory_usage_atol,
+        stream,
     )
