@@ -711,6 +711,8 @@ phi3_vision_cfg = {
 @requiresCUDA
 def test_hf_phi3_vision():
     # This test takes around 4045406208 bytes (~4GB) of memory.
+    # Shapes for data generated with help of the following script
+    # https://github.com/microsoft/PhiCookBook/blob/main/code/03.Finetuning/Phi-3-vision-Trainingscript.py
     from transformers import AutoModelForCausalLM
     from transformers.models.phi3 import Phi3Config
     from thunder.dynamo import thunderfx
