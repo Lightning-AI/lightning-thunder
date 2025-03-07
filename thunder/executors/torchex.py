@@ -856,8 +856,8 @@ _register_elementwise_unary_implementation(ltorch.relu, relu, checker=_elementwi
 _register_elementwise_unary_implementation(ltorch.relu6, relu6, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.selu, selu, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.silu, silu, checker=_always_executable)
-_register_elementwise_unary_implementation(ltorch.softshrink, softshrink, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.softplus, softplus, checker=_always_executable)
+_register_elementwise_unary_implementation(ltorch.softshrink, softshrink, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.tanhshrink, tanhshrink, checker=_always_executable)
 #
 # Elementwise binary operations
