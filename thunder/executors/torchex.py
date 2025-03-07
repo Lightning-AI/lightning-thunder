@@ -2440,10 +2440,26 @@ def unflatten_tensor_subclass_impl(
     return tensor_subclass_type.__tensor_unflatten__(inner_tensors, metadata, -1, -1)
 
 
+def bind_postprocess_of_unflatten_tensor_subclass(bsym: BoundSymbol) -> None:
+    from thunder.core.prims import filter_types_for_tensor_wrapper_subclass, get_nested_types
+
+    cls = bsym.args[0]
+    _inner_tensors = bsym.args[1]
+    metadata = bsym.args[2]
+
+    filtered_types: tuple[Any, ...] = (cls,)
+    if metadata:
+        types = get_nested_types(list(metadata.values()))
+        filtered_types += filter_types_for_tensor_wrapper_subclass(types)
+    new_imports = {t.__name__: t for t in filtered_types}
+    bsym._import_ctx.update(new_imports)
+
+
 unflatten_tensor_subclass = ex.register_operator(
     "unflatten_tensor_subclass",
     meta=prims.unflatten_tensor_subclass.meta,
     fn=unflatten_tensor_subclass_impl,
+    bind_postprocess=bind_postprocess_of_unflatten_tensor_subclass,
 )
 _register_implementation(
     prims.unflatten_tensor_subclass,
