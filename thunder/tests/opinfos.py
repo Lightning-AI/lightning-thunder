@@ -5800,6 +5800,45 @@ var_mean_opinfo = OpInfo(
 reduction_ops.append(var_mean_opinfo)
 
 
+def std_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # shape, dim, correction, keepdim
+    cases = (
+        ((), 0, 0, True),
+        ((5), -1, 1, False),
+        ((4, 4), 1, 0, True),
+        ((5, 1, 5), -2, 2, False),
+        ((2, 3, 4, 5), -3, 1, True),
+    )
+
+    for shape, dim, correction, keepdim in cases:
+        yield (SampleInput(make(shape), dim=dim, correction=correction, keepdim=keepdim))
+
+
+def std_error_generator(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype)
+
+    err_msg = "only tensors with up to 64 dims are supported"
+    yield (SampleInput(make([1] * 65), dim=64), RuntimeError, err_msg)
+    yield (SampleInput(make([1] * 65), dim=-1), RuntimeError, err_msg)
+
+    err_msg = "Duplicate value in list of dimensions"
+    yield (SampleInput(make((5, 5, 5, 5)), dim=(0, 0)), RuntimeError, err_msg)
+    yield (SampleInput(make((5, 5, 5, 5)), dim=(0, -4)), RuntimeError, err_msg)
+
+
+std_opinfo = OpInfo(
+    ltorch.std,
+    supports_grad=True,
+    sample_input_generator=std_sample_generator,
+    error_input_generator=std_error_generator,
+    torch_reference=torch.std,
+    dtypes=(datatypes.floating,),
+)
+reduction_ops.append(std_opinfo)
+
+
 def cumsum_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 

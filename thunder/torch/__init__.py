@@ -2934,6 +2934,27 @@ def var_mean(
     return result
 
 
+@torchsymbol(torch.std, is_method=True)
+def std(
+    a: TensorProxy,
+    /,
+    dim=None,
+    *,
+    keepdim: bool = False,
+    correction: NumberLike = 1,
+) -> TensorProxy:
+    result = _reduction(
+        a,
+        partial(prims.std, correction=correction),
+        dims=dim,
+        keepdims=keepdim,
+        dtype=None,
+        has_identity=True,
+        output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.COMPLEX_TO_FLOAT,
+    )
+    return result
+
+
 @torchsymbol(torch.argmax, is_method=True)
 def argmax(a: TensorLike, /, dim: int | None = None, keepdim: bool | None = False):
     return clang.argmax(a, dim, keepdim)
