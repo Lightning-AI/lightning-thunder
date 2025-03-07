@@ -558,6 +558,187 @@ def test_hf_llama():
     assert len(get_fusion_symbols(thunder.last_traces(jm)[-1])) == 6
 
 
+# We need to copy config here as the AutoModel doesn't work with `trust_remote_code=True`
+# for `Phi-3-vision-128k-instruct`.
+phi3_vision_cfg = {
+    "_name_or_path": "Phi-3-vision-128k-instruct",
+    "architectures": ["Phi3VForCausalLM"],
+    "attention_dropout": 0.0,
+    "auto_map": {
+        "AutoConfig": "configuration_phi3_v.Phi3VConfig",
+        "AutoModelForCausalLM": "modeling_phi3_v.Phi3VForCausalLM",
+    },
+    "bos_token_id": 1,
+    "embd_layer": {
+        "embedding_cls": "image",
+        "hd_transform_order": "sub_glb",
+        "projection_cls": "mlp",
+        "use_hd_transform": True,
+        "with_learnable_separator": True,
+    },
+    "eos_token_id": 2,
+    "hidden_act": "silu",
+    "hidden_size": 3072,
+    "img_processor": {
+        "image_dim_out": 1024,
+        "model_name": "openai/clip-vit-large-patch14-336",
+        "name": "clip_vision_model",
+        "num_img_tokens": 144,
+    },
+    "initializer_range": 0.02,
+    "intermediate_size": 8192,
+    "max_position_embeddings": 131072,
+    "model_type": "phi3_v",
+    "num_attention_heads": 32,
+    "num_hidden_layers": 32,
+    "num_key_value_heads": 32,
+    "original_max_position_embeddings": 4096,
+    "rms_norm_eps": 1e-05,
+    "rope_scaling": {
+        "long_factor": [
+            1.0299999713897705,
+            1.0499999523162842,
+            1.0499999523162842,
+            1.0799999237060547,
+            1.2299998998641968,
+            1.2299998998641968,
+            1.2999999523162842,
+            1.4499999284744263,
+            1.5999999046325684,
+            1.6499998569488525,
+            1.8999998569488525,
+            2.859999895095825,
+            3.68999981880188,
+            5.419999599456787,
+            5.489999771118164,
+            5.489999771118164,
+            9.09000015258789,
+            11.579999923706055,
+            15.65999984741211,
+            15.769999504089355,
+            15.789999961853027,
+            18.360000610351562,
+            21.989999771118164,
+            23.079999923706055,
+            30.009998321533203,
+            32.35000228881836,
+            32.590003967285156,
+            35.56000518798828,
+            39.95000457763672,
+            53.840003967285156,
+            56.20000457763672,
+            57.95000457763672,
+            59.29000473022461,
+            59.77000427246094,
+            59.920005798339844,
+            61.190006256103516,
+            61.96000671386719,
+            62.50000762939453,
+            63.3700065612793,
+            63.48000717163086,
+            63.48000717163086,
+            63.66000747680664,
+            63.850006103515625,
+            64.08000946044922,
+            64.760009765625,
+            64.80001068115234,
+            64.81001281738281,
+            64.81001281738281,
+        ],
+        "short_factor": [
+            1.05,
+            1.05,
+            1.05,
+            1.1,
+            1.1,
+            1.1,
+            1.2500000000000002,
+            1.2500000000000002,
+            1.4000000000000004,
+            1.4500000000000004,
+            1.5500000000000005,
+            1.8500000000000008,
+            1.9000000000000008,
+            2.000000000000001,
+            2.000000000000001,
+            2.000000000000001,
+            2.000000000000001,
+            2.000000000000001,
+            2.000000000000001,
+            2.000000000000001,
+            2.000000000000001,
+            2.000000000000001,
+            2.000000000000001,
+            2.000000000000001,
+            2.000000000000001,
+            2.000000000000001,
+            2.000000000000001,
+            2.000000000000001,
+            2.000000000000001,
+            2.000000000000001,
+            2.000000000000001,
+            2.000000000000001,
+            2.1000000000000005,
+            2.1000000000000005,
+            2.2,
+            2.3499999999999996,
+            2.3499999999999996,
+            2.3499999999999996,
+            2.3499999999999996,
+            2.3999999999999995,
+            2.3999999999999995,
+            2.6499999999999986,
+            2.6999999999999984,
+            2.8999999999999977,
+            2.9499999999999975,
+            3.049999999999997,
+            3.049999999999997,
+            3.049999999999997,
+        ],
+        "type": "su",
+    },
+    "rope_theta": 10000.0,
+    "sliding_window": 131072,
+    "tie_word_embeddings": False,
+    "torch_dtype": "bfloat16",
+    "transformers_version": "4.38.1",
+    "use_cache": True,
+    "vocab_size": 32064,
+    "_attn_implementation": "sdpa",
+}
+
+
+@requiresCUDA
+def test_hf_phi3_vision():
+    # This test takes around 4045406208 bytes (~4GB) of memory.
+    from transformers import AutoModelForCausalLM
+    from transformers.models.phi3 import Phi3Config
+    from thunder.dynamo import thunderfx
+
+    cfg = Phi3Config(**phi3_vision_cfg)
+    cfg.num_hidden_layers = 2
+
+    with torch.device("cuda"):
+        model = AutoModelForCausalLM.from_config(cfg, trust_remote_code=False, torch_dtype=torch.bfloat16)
+        input_ids = torch.randint(0, 200, (1, 512))
+        attention_mask = torch.zeros((1, 512), dtype=torch.int64)
+        attention_mask[0, 426:] = 1
+        pixel_values = torch.randint(0, 255, (1, 400, 356, 3), dtype=torch.uint8)
+        labels = input_ids.clone().detach()
+
+        jit_model = thunderfx(model)
+        actual = jit_model(input_ids=input_ids, attention_mask=attention_mask, pixel_values=pixel_values, labels=labels)
+
+        expected = model(input_ids=input_ids, attention_mask=attention_mask, pixel_values=pixel_values, labels=labels)
+
+        torch.testing.assert_close(actual.loss, expected.loss, rtol=1e-3, atol=1e-3)
+
+        loss_grad = torch.randn_like(expected.loss)
+        actual_grads = torch.autograd.grad(actual.loss, model.parameters(), grad_outputs=loss_grad)
+        expected_grads = torch.autograd.grad(expected.loss, model.parameters(), grad_outputs=loss_grad)
+        torch.testing.assert_close(actual_grads, expected_grads, rtol=1e-2, atol=1e-2)
+
+
 @requiresCUDA
 def test_memory_litgpt_llama3():
     from thunder.tests import litgpt_model
