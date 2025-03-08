@@ -434,6 +434,7 @@ class FusionDefinitionWrapper:
     enable_options: None | list[str] = None
     disable_options: None | list[str] = None
 
+    @annotate_for_profile("FusionDefinitionWrapper.__call__")
     def __call__(self, *args):
         fd = self.get_fd(self.to_descriptors(args))
         self.last_used = fd
@@ -451,18 +452,10 @@ class FusionDefinitionWrapper:
         if hasattr(fd, "_selected_device"):
             kwargs["device"] = fd._selected_device
 
-        if nvfuser_version() >= LooseVersion("0.2.23"):
-            # nvFuser expects empty list instead of None values.
-            kwargs["_enable_options"] = self.enable_options if self.enable_options is not None else []
-            kwargs["_disable_options"] = self.disable_options if self.disable_options is not None else []
-
-        elif self.enable_options or self.disable_options:
-            warnings.warn(
-                f"nv_enable_options/nv_disable_options require nvFuser version 0.2.23 and above, found version {nvfuser_version()}. These options will be ignored."
-            )
-
         with annotate_for_profile(self.name):
-            return fd.execute(args, **kwargs)
+            return fd.execute(
+                args, _enable_options=self.enable_options, _disable_options=self.disable_options, **kwargs
+            )
 
     def __repr__(self):
         return f"FusionDefinitionWrapper({self.name})"
@@ -558,9 +551,9 @@ def create_fusion_definition_wrapper(
     store_inputs_meta: None | bool = get_compile_option(
         "nv_store_fusion_inputs_meta", "Allow nvFuser to store fusion inputs metadata for repro."
     )
-    enable_options: None | list[str] = get_compile_option("nv_enable_options", "List of NVFUSER_ENABLE options to set.")
-    disable_options: None | list[str] = get_compile_option(
-        "nv_disable_options", "List of NVFUSER_DISABLE options to set."
+    enable_options: list[str] = get_compile_option("nv_enable_options", "List of NVFUSER_ENABLE options to set.") or []
+    disable_options: list[str] = (
+        get_compile_option("nv_disable_options", "List of NVFUSER_DISABLE options to set.") or []
     )
 
     tensor_indices = []
@@ -2698,3 +2691,10 @@ def embedding(
 
 register_supported(PrimIDs.EMBEDDING, embedding, _embedding_check)
 register_supported(ltorch.embedding, embedding, _embedding_check)
+
+
+# At module/class level
+NVFUSER_SUPPORTS_OPTIONS = nvfuser_version() >= LooseVersion("0.2.23")
+assert (
+    NVFUSER_SUPPORTS_OPTIONS
+), f"Installed version of nvFuser {nvfuser_version()} is not supported, please upgrade to 0.2.23 or later."
