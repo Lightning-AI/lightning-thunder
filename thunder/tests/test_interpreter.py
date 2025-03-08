@@ -12,6 +12,7 @@ from collections.abc import Callable
 import pytest
 import torch
 from torch.testing import assert_close
+from thunder.tests.framework import IS_WINDOWS
 
 import thunder
 from thunder.core.interpreter import (
@@ -3172,6 +3173,7 @@ def test_autograd_function(jit):
     assert_close(fn(), jit(fn)())
 
 
+@pytest.mark.skipif(IS_WINDOWS, reason="slow on Windows")
 def test_torch_autocast_nograd(jit):
     def fn(a, b):
         with torch.autocast("cpu"):

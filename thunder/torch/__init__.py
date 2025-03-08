@@ -227,6 +227,7 @@ def register_function(torchfn, thunderfn_impl):
 
 def _copy_(a, b, /):
     cd = get_compile_data()
+    b = clang.maybe_convert_to_dtype(b, a.dtype)
     return prims.copy_(b, a, grad_enabled=cd.is_grad_enabled if cd is not None else False)
 
 
@@ -473,31 +474,12 @@ def to(
     copy: bool = False,
     memory_format: None | torch.memory_format = None,
 ) -> TensorLike:
-
-    input_device = a.device
-    input_dtype = a.dtype
-    if copy and not _will_to_return_self(input_device, input_dtype, device, dtype, memory_format, copy):
-        b = prims.empty(a.shape, device=input_device, dtype=input_dtype)
-        return _copy_(b, a)
-
     device, dtype = _parse_to_device_and_dtype(
         tensor_dtype_or_device, optional_positional_dtype, device=device, dtype=dtype
     )
 
     if copy:
-        if device is not None:
-            device = to_device(device)
-            a = prims.device_put(a, device)
-        if dtype is not None:
-            dtype = to_dtype(dtype)
-            a = prims.convert_element_type(a, dtype)
-        if memory_format is not None:
-            # NOTE not sure if we need to handle torch.preserve_format explicitly
-            if memory_format == torch.channels_last:
-                a = prims.stride_order(a, (3, 0, 2, 1))
-            elif memory_format == torch.channels_last_3d:
-                a = prims.stride_order(a, (4, 0, 3, 2, 1))
-        return a
+        a = prims.clone(a)
 
     # NOTE copy == False
     # NOTE to() returns the tensor unmodified if the device and dtype requested are the same
@@ -1906,6 +1888,26 @@ def hardswish(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
 _inplace_to_out_of_place[hardswish] = hardswish, 1
 
 
+@torchsymbol(torch.nn.functional.hardtanh, is_method=False)
+def hardtanh(a: TensorProxy, /, min_val: float = -1.0, max_val: float = 1.0, inplace: bool = False) -> TensorLike:
+    utils.check(min_val < max_val, lambda: f"max_val {max_val} must be larger than min_val {min_val}")
+    out = clamp(a, min_val, max_val)
+    if inplace:
+        return _copy_(a, out)
+    return out
+
+
+_inplace_to_out_of_place[hardtanh] = hardtanh, 3
+
+
+@torchsymbol(torch.nn.functional.hardtanh_, is_method=False, tags=(prims.OpTags.IN_PLACE,))
+def hardtanh_(a: TensorProxy, /, min_val: float = -1.0, max_val: float = 1.0) -> TensorLike:
+    return _copy_(a, hardtanh(a, min_val, max_val, False))
+
+
+_inplace_to_out_of_place[hardtanh_] = hardtanh, -1
+
+
 # id=torch.selu because we ignore inplace argument in torch.nn.functional.selu
 @torchsymbol(torch.selu, torch.nn.functional.selu, id="torch.selu", is_method=False)
 def selu(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
@@ -1932,6 +1934,36 @@ def silu(a: TensorLike, /, inplace: bool = False) -> TensorLike:
 
 
 _inplace_to_out_of_place[silu] = silu, 1
+
+
+@torchsymbol(torch.nn.functional.softplus, is_method=False)
+def softplus(a: TensorProxy, /, beta: float = 1.0, threshold: float = 20.0) -> TensorLike:
+    utils.check(
+        dtypes.is_numbertype(to_dtype(beta)),
+        lambda: f"beta must be a number type, but found to be {to_dtype(beta)}",
+    )
+    utils.check(
+        dtypes.is_numbertype(to_dtype(threshold)),
+        lambda: f"threshold must be a number type, but found to be {to_dtype(threshold)}",
+    )
+    scaled_input = a * beta
+    rhs = log1p(exp(scaled_input)) / beta
+    return where(scaled_input > threshold, a, rhs)
+
+
+@torchsymbol(torch.nn.functional.softshrink, is_method=False)
+def softshrink(a: TensorProxy, /, lambd: float = 0.5) -> TensorLike:
+    utils.check(
+        not dtypes.is_complex_dtype(a.dtype),
+        lambda: f"softshrink not implemented for '{a.dtype}'",
+    )
+    utils.check(
+        lambd >= 0,
+        lambda: f"lambda must be greater or equal to 0, but found to be {lambd}'",
+    )
+    # If a is NaN, then sign(a) is NaN. To propagate NaNs,
+    # `a * 0` is used instead of `0`.
+    return where(abs(a) > lambd, a - sign(a) * lambd, a * 0)
 
 
 @torchsymbol(torch.nn.functional.tanhshrink)
@@ -5335,6 +5367,17 @@ register_method("softmax", _softmax)
 # ref: https://github.com/pytorch/pytorch/blob/8d12ba9acfa20ed7df438a8892c9bf8e6bef5775/torch/nn/modules/activation.py#L1545
 def softmax(a: TensorLike, dim: int, dtype: None | dtypeLike = None, _stacklevel: int = 3) -> TensorLike:
     return _softmax(a, dim=dim, dtype=dtype)
+
+
+@torchsymbol(torch.nn.functional.softmin, is_method=False, id="torch.nn.functional.softmin")
+def _softmin(a: TensorLike, /, dim: int, *, dtype: None | dtypeLike = None) -> TensorLike:
+    return softmax(-a, dim, dtype)
+
+
+# A wrapper to support `torch.nn.Softmin` whose `forward` passes the kwarg of `_stacklevel=5` to `torch.nn.functional.softmin`.
+# ref: https://github.com/pytorch/pytorch/blob/8d12ba9acfa20ed7df438a8892c9bf8e6bef5775/torch/nn/modules/activation.py#L1487
+def softmin(a: TensorLike, dim: int, dtype: None | dtypeLike = None, _stacklevel: int = 3) -> TensorLike:
+    return _softmin(a, dim=dim, dtype=dtype)
 
 
 def torch_device(type: DeviceLike, index: int | None = None) -> devices.Device:

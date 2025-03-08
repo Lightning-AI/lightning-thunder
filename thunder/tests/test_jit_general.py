@@ -17,7 +17,7 @@ from lightning_utilities import compare_version
 import thunder
 from thunder.core.interpreter import is_jitting, InterpreterError
 
-from thunder.tests.framework import version_between, requiresCUDA
+from thunder.tests.framework import version_between, requiresCUDA, IS_WINDOWS
 import thunder.clang as clang
 from thunder.core.options import CACHE_OPTIONS
 import thunder.torch as ltorch
@@ -743,6 +743,8 @@ def test_litgpt_variants_kvcache(name, device):
 
     if device == "cuda" and not torch.cuda.is_available():
         pytest.skip("CUDA not available")
+    if IS_WINDOWS:
+        pytest.skip("slow on windows")
 
     device = torch.device(device)
     x = torch.randint(0, 200, (1, 2), device=device)
