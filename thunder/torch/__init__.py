@@ -3800,13 +3800,22 @@ def rms_norm(
     weight: None | TensorLike = None,
     eps: None | float = None,
 ):
+    input_dtype = a.dtype
+
+    if a.dtype in (thunder.float16, thunder.bfloat16):
+        a = clang.maybe_convert_to_dtype(a, thunder.float32, enforce_safe_casting=True)
+
     if eps is None:
         eps = torch.finfo(to_torch_dtype(a.dtype)).eps
+
     reduction_dims = _check_normalized_shape_and_get_reduction_dims(a, normalized_shape, weight)
-    norm_a = mean(a * a, dim=reduction_dims, keepdim=True)
+    norm_a = mean(a * a, dim=reduction_dims, keepdim=True, dtype=None)
     a_normed = a * rsqrt(norm_a + eps)
+
     if weight is not None:
         a_normed = a_normed * weight
+
+    a_normed = clang.maybe_convert_to_dtype(a_normed, input_dtype, enforce_safe_casting=True)
     return a_normed
 
 
