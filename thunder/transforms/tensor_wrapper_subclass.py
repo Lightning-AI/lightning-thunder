@@ -717,7 +717,28 @@ class DesugarTensorSubclass:
 
         # Fast path: if not a subclass constructor and has no subclass args, return as is
         if not is_subclass_ctor and no_subclass_args:
-            return [updated_bsym]
+            if bsym == updated_bsym:
+                return [updated_bsym]
+            else:
+                # When args & kwargs of BoundSymbol are updated, we'd need to execute it.
+                # This is because for one `torchao.float8.Float8Linear` with `bias=True`,
+                # somehow there was a name collision of a tensor proxy of `t191` which is
+                # a producer of `t192`, grad_weight in the trace before tensor wrapper transforms
+                # but somehow the transform seems to use `t191` for another tensor proxy
+                # generated during bsym evaluation with torch.fx.
+                self.computation_trace.push_scope([])
+                with tracectx(self.computation_trace):
+                    new_out = updated_bsym.sym(*updated_bsym.args, **updated_bsym.kwargs)
+                self.swap_map.update(
+                    dict(
+                        zip(
+                            [variableify(a) for a in updated_bsym.flat_outs],
+                            tree_flatten(new_out)[0],
+                        )
+                    )
+                )
+                new_bsyms = self.computation_trace.pop_scope()
+                return new_bsyms
 
         # Verify we can handle this bound symbol
         utils.check(
