@@ -286,9 +286,8 @@ def test_torchao_float8_linear(executor, device, dtype, bias):
         jitted = executor.make_callable(fp8_model)
 
     if bias and dtype == thunder.core.dtypes.bfloat16 and executor == nvFuserExecutor:
-        with pytest.raises(
-            RuntimeError, match="Failed to compute the min-cut on the graph due to a path with infinite capacity"
-        ):
+        # ref: https://github.com/NVIDIA/Fuser/issues/4052
+        with pytest.raises(RuntimeError, match="INTERNAL ASSERT FAILED"):
             jitted(x)
         return
     actual = jitted(x)
@@ -297,15 +296,23 @@ def test_torchao_float8_linear(executor, device, dtype, bias):
             torch.testing.assert_close(actual, expected)
         return
 
+    if bias and executor == nvFuserExecutor and dtype == thunder.core.dtypes.bfloat16:
+        # ref: https://github.com/NVIDIA/Fuser/issues/4052
+        pass
+    else:
+        with torch.no_grad():
+            grad = torch.ones_like(actual)
+        if executor == nvFuserExecutor:
+            with pytest.raises(RuntimeError, match="`b` expected to be column-major but"):
+                actual.backward(grad)
+        else:
+            actual.backward(grad)
+
     if (dtype == thunder.core.dtypes.bfloat16 and executor != DynamoThunderExecutor) or (
         not bias and dtype == thunder.core.dtypes.bfloat16 and executor == DynamoThunderExecutor
     ):
         pytest.xfail("numerical error")
     torch.testing.assert_close(actual, expected)
-
-    with torch.no_grad():
-        grad = torch.ones_like(actual)
-    actual.backward(grad)
 
     # TODO(crcrpar): Think of how to push tensor subclasses to `thunder.jit`.
     # Currently no subgraphs go to thunder.jit.
