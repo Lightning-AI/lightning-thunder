@@ -277,7 +277,7 @@ def find_cut(
     # This is needed to avoid rematerializing random or expensive primitives.
     tags = {prims.OpTags.REDUCTION_OP, prims.OpTags.RANDOM_OP, prims.OpTags.MATMUL_OP}
     required_producer_vars += tuple(
-        chain.from_iterable((y for y in x.flat_outs) for x in producer.subsymbols if has_tags(x, tags))
+        chain.from_iterable((y for y in x.flat_proxy_outs) for x in producer.subsymbols if has_tags(x, tags))
     )
 
     # We can apply rematerialization for any pair of symbols with is_fusion=True
@@ -288,7 +288,7 @@ def find_cut(
     if producer.sym.executor != consumer.sym.executor:
         required_producer_vars += tuple(
             chain.from_iterable(
-                (y for y in x.flat_outs)
+                (y for y in x.flat_proxy_outs)
                 for x in producer.subsymbols
                 if not has_tags(x, tags) and not consumer.sym.executor.can_fuse(x)
             )
@@ -309,7 +309,7 @@ def find_cut(
         utils.find_producer_symbols(consumer_trace, consumer.output, external_consumer_inputs)
     )
     required_consumer_vars += tuple(
-        chain.from_iterable((y.name for y in x.flat_outs) for x in required_consumer_symbols)
+        chain.from_iterable((y.name for y in x.flat_proxy_outs) for x in required_consumer_symbols)
     )
 
     # TODO: Use TensorProxy properties to compute the weights
