@@ -2535,7 +2535,15 @@ def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
 
         def vjp_impl_const(symbol, *args, **kwargs):
             args, kwargs = tree_map(lambda x: x.primal if isinstance(x, VJPDual) else x, (args, kwargs))
-            primals = symbol_to_eval(symbol)(*args, **kwargs)
+            if symbol.sym.name == "synchronize":
+                # This is a *really* terrible hack to cope with non-grad-needing sharded tensors
+                # as required by LoRA.
+                from thunder.distributed.prims import all_gather
+
+                a, group = symbol.args
+                primals = all_gather(a, group, True).wait()
+            else:
+                primals = symbol_to_eval(symbol)(*args, **kwargs)
             if isinstance(primals, Sequence):
                 return tree_map(lambda x: VJPDual(x, tuple()), primals)
             return VJPDual(primals, tuple())
