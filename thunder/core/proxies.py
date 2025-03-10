@@ -14,7 +14,7 @@ import math
 
 import torch
 
-from thunder.core.compile_data import using_symbolic_values, using_jit
+from thunder.core.compile_data import using_symbolic_values, using_jit, get_cache_option, CACHE_OPTIONS
 from thunder.core.interpreter import is_jitting, ProvenanceRecord, PseudoInst
 from thunder.core.trace import (
     VariableInterface,
@@ -674,7 +674,14 @@ class NumberProxy(Proxy, NumberProxyInterface):
         self.value = value
         self.python_type = python_type
         if constraint is None:
-            constraint = CONSTRAINT.DYNAMIC
+            co: CACHE_OPTIONS = get_cache_option()
+            if co is CACHE_OPTIONS.CONSTANT_VALUES:
+                constraint = CONSTRAINT.STATIC
+            elif co is CACHE_OPTIONS.SYMBOLIC_VALUES:
+                constraint = CONSTRAINT.DYNAMIC
+            elif co not in (CACHE_OPTIONS.SAME_INPUT, CACHE_OPTIONS.NO_CACHING):
+                raise NotImplementedError(f"Unsupported cache option {co}")
+
         self.constraint = constraint
 
         Proxy.__init__(self, name, history=history, tags=tags)
