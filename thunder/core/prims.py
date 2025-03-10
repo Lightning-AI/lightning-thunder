@@ -246,6 +246,7 @@ class PrimIDs(Enum):
     SUM = auto()
     VAR = auto()
     VAR_MEAN = auto()
+    STD = auto()
     ARGMAX = auto()
     ARGMIN = auto()
     TOPK = auto()
@@ -3793,6 +3794,25 @@ def _var_mean_meta(a: TensorProxy, /, dims: Sequence[int], *, correction: Number
 
 var = make_prim(PrimIDs.VAR, "var", meta=_var_meta, tags=(OpTags.REDUCTION_OP,))
 var_mean = make_prim(PrimIDs.VAR_MEAN, "var_mean", meta=_var_mean_meta, tags=(OpTags.REDUCTION_OP,))
+
+
+def _std_meta(a: TensorProxy, /, dims: Sequence[int], *, correction: Number) -> TensorProxy:
+    utils.check_type(a, TensorProxy)
+    utils.check_type(dims, Sequence)
+    utils.check_type(correction, (Number, NumberProxy))
+
+    output_dtype = None
+    if utils.is_complex_dtype(a.dtype):
+        output_dtype = utils.corresponding_real_dtype(a.true_dtype)
+    else:
+        output_dtype = a.true_dtype
+
+    reduced: TensorProxy = _reduction_meta(a, dims)
+    return TensorProxy(like=reduced, dtype=output_dtype)
+
+
+std = make_prim(PrimIDs.STD, "std", meta=_std_meta, tags=(OpTags.REDUCTION_OP,))
+
 
 #
 # Linear algebra prims
