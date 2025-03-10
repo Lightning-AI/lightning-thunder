@@ -796,8 +796,6 @@ class ThunderFusionReport:
     def run_benchmark(self, compile_fn: CompileSpecificationInterface, timer_fn: TimerInterface):
         compiled_fn = compile_fn.compile(self.nvfusion_bsym)
         inputs = self.make_example_inputs()
-        if compile_fn.name == "nvfuser":
-            inputs = [inputs]
         return timer_fn.time("compiled_fn(*inputs)", globals={"compiled_fn": compiled_fn, "inputs": inputs})
 
     def run_repro(
@@ -806,8 +804,6 @@ class ThunderFusionReport:
     ):
         compiled_fn = compile_fn.compile(self.nvfusion_bsym)
         inputs = self.make_example_inputs()
-        if compile_fn.name == "nvfuser":
-            return compiled_fn(inputs)
         return compiled_fn(*inputs)
 
     def _get_nvfuser_code(self):

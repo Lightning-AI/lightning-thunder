@@ -140,7 +140,7 @@ class BoundSymbolNvfuserSpecification(CompileSpecificationInterface):
     # See the TODO in :class:`thunder.dynamo.report.ThunderFusionReport` for more details.
     def compile(self, nvfusion_bsym):
         fd = nvfusion_bsym._call_ctx[nvfusion_bsym.sym.name].last_used
-        return fd.execute
+        return lambda *args: fd.execute(args)
 
 
 class BoundSymbolTorchCompileSpecification(CompileSpecificationInterface):
