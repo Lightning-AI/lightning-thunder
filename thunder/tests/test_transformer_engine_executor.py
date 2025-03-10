@@ -249,3 +249,29 @@ def test_te_trace_metadata_propagation():
 
     # Verify that we have `te_linear` in the trace.
     assert any(bsym.sym.name.startswith("te_linear") for bsym in fwd_traces[-1].bound_symbols)
+
+
+@requiresCUDA
+def test_te_trace_metadata_propagation():
+    def foo(x, w):
+        return torch.nn.functional.linear(x, w)
+
+    device = "cuda"
+    x = torch.randn(64, 64, device=device, requires_grad=True)
+    w = torch.randn(64, 64, device=device, requires_grad=True)
+
+    def checker(x, w, bias):
+        if x.shape[0] < 512:
+            return False
+        return True
+
+    cfunc = thunder.jit(foo, executors=[transformer_engine_ex], te_fp8_checker_fn=checker)
+    cfunc(x, w)
+    fwd_traces = thunder.last_traces(cfunc)
+    assert not any(bsym.sym.name.startswith("te_linear") for bsym in fwd_traces[-1].bound_symbols)
+
+    # Sanity that these inputs are claimed without the custom checker.
+    cfunc = thunder.jit(foo, executors=[transformer_engine_ex])
+    cfunc(x, w)
+    fwd_traces = thunder.last_traces(cfunc)
+    assert any(bsym.sym.name.startswith("te_linear") for bsym in fwd_traces[-1].bound_symbols)
