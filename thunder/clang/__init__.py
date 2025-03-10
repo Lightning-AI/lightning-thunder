@@ -2000,7 +2000,7 @@ def logical_not(a: TensorLike, /) -> TensorLike:
 
 
 @clangop()
-def logical_or(a: TensorLike, b: TensorLike):
+def logical_or(a: TensorLike, b: TensorLike) -> TensorLike:
     if not utils.is_boolean_dtype(dtypes.to_dtype(a)):
         a = a != 0
     if not utils.is_boolean_dtype(dtypes.to_dtype(b)):
