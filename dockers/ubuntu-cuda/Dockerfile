@@ -13,18 +13,21 @@
 # limitations under the License.
 
 ARG UBUNTU_VERSION="22.04"
-ARG CUDA_VERSION="12.1.0"
+ARG CUDA_VERSION="12.8.0"
 # select devel | runtime
 ARG IMAGE_TYPE="devel"
+#12.8.0-cudnn-devel-ubuntu24.04
 
-FROM nvidia/cuda:${CUDA_VERSION}-${IMAGE_TYPE}-ubuntu${UBUNTU_VERSION}
 
-ARG CUDNN_VERSION="9.1.0.70"
-ARG CUDNN_FRONTEND_VERSION="1.5.2"
-ARG PYTHON_VERSION="3.10"
-ARG TORCH_VERSION="2.2.1"
-ARG TRITON_VERSION="2.2.0"
-ARG TORCH_INSTALL="stable"
+
+FROM nvidia/cuda:${CUDA_VERSION}-cudnn-${IMAGE_TYPE}-ubuntu${UBUNTU_VERSION}
+
+ARG CUDNN_VERSION="9.8.0.87-1"
+ARG CUDNN_FRONTEND_VERSION="1.10.0"
+ARG PYTHON_VERSION="3.12"
+ARG TORCH_VERSION="main"
+ARG TRITON_VERSION="3.1.0"
+ARG TORCH_INSTALL="nightly"
 
 SHELL ["/bin/bash", "-c"]
 # https://techoverflow.net/2019/05/18/how-to-fix-configuring-tzdata-interactive-input-when-building-docker-images/
@@ -62,7 +65,6 @@ RUN \
     add-apt-repository ppa:deadsnakes/ppa && \
     apt-get install -y \
         python${PYTHON_VERSION} \
-        python${PYTHON_VERSION}-distutils \
         python${PYTHON_VERSION}-dev \
     && \
     update-alternatives --install /usr/bin/python${PYTHON_VERSION%%.*} python${PYTHON_VERSION%%.*} /usr/bin/python${PYTHON_VERSION} 1 && \
@@ -83,22 +85,22 @@ RUN if [ "${TORCH_INSTALL}" == "source" ]; then \
         CUDNN_BASE_VER=${CUDNN_VERSION%%.*} && \
         CUDA_VERSION_M=${CUDA_VERSION%%.*} && \
         apt update -qq --fix-missing && \
-        if [ "${CUDNN_BASE_VER}" == "9" ]; then \
-            CUDNN_PACKAGE_NAME="${CUDNN_VERSION}-1" && \
-            apt upgrade -y --allow-downgrades --allow-change-held-packages && \
-            apt install -y libcudnn9-cuda-${CUDA_VERSION_M}=${CUDNN_PACKAGE_NAME} \
-                           libcudnn9-dev-cuda-${CUDA_VERSION_M}=${CUDNN_PACKAGE_NAME} \
-                           nlohmann-json3-dev ; \
-        else \
-            CUDA_VERSION_MM=${CUDA_VERSION%.*} && \
-            # There are some test failures from cuDNN 12.1, so 'upgrade' requests for 12.1 to 12.2. \
-            CUDA_VERSION_MM="${CUDA_VERSION_MM/12.1/12.2}" && \
-            CUDNN_PACKAGE_NAME="${CUDNN_VERSION}-1+cuda${CUDA_VERSION_MM}" && \
-            apt upgrade -y --allow-downgrades --allow-change-held-packages && \
-            apt install -y libcudnn8=${CUDNN_PACKAGE_NAME} \
-                           libcudnn8-dev=${CUDNN_PACKAGE_NAME} \
-                           nlohmann-json3-dev ; \
-        fi && \
+        #if [ "${CUDNN_BASE_VER}" == "9" ]; then \
+        #    CUDNN_PACKAGE_NAME="${CUDNN_VERSION}-1" && \
+        #    apt upgrade -y --allow-downgrades --allow-change-held-packages && \
+        #    apt install -y libcudnn9-cuda-${CUDA_VERSION_M}=${CUDNN_PACKAGE_NAME} \
+        #                   libcudnn9-dev-cuda-${CUDA_VERSION_M}=${CUDNN_PACKAGE_NAME} \
+        #                   nlohmann-json3-dev ; \
+        #else \
+        #    CUDA_VERSION_MM=${CUDA_VERSION%.*} && \
+        #    # There are some test failures from cuDNN 12.1, so 'upgrade' requests for 12.1 to 12.2. \
+        #    CUDA_VERSION_MM="${CUDA_VERSION_MM/12.1/12.2}" && \
+        #    CUDNN_PACKAGE_NAME="${CUDNN_VERSION}-1+cuda${CUDA_VERSION_MM}" && \
+        #    apt upgrade -y --allow-downgrades --allow-change-held-packages && \
+        #    apt install -y libcudnn8=${CUDNN_PACKAGE_NAME} \
+        #                   libcudnn8-dev=${CUDNN_PACKAGE_NAME} \
+        #                   nlohmann-json3-dev ; \
+        #fi && \
         rm -rf /root/.cache && \
         rm -rf /var/lib/apt/lists/*; \
     fi
@@ -111,29 +113,23 @@ ENV \
 ARG TORCH_INSTALL
 ENV TORCH_USE_CUDA_DSA=1
 
-RUN \
-    if [ "${TORCH_INSTALL}" == "source" ]; then \
-        # building pytorch from source
-        git clone --recursive https://github.com/pytorch/pytorch && \
-        cd pytorch && \
-        git checkout "${TORCH_VERSION}" && \
-        git submodule sync && \
-        git submodule update --init --recursive && \
-        pip install . && \
-        pip install "pytorch-triton==$(cat .ci/docker/triton_version.txt)" --index-url="https://download.pytorch.org/whl/nightly/" && \
-        cd .. && \
-        rm -rf pytorch; \
-    elif [ "${TORCH_INSTALL}" == "test" ]; then \
-        # installing pytorch from wheels
-        CUDA_VERSION_MM=${CUDA_VERSION%.*} && \
-        pip install "torch==${TORCH_VERSION}" "triton==${TRITON_VERSION}" \
-          --index-url="https://download.pytorch.org/whl/test/cu${CUDA_VERSION_MM//'.'/''}"; \
-    else \
-        # installing pytorch from wheels \
-        CUDA_VERSION_MM=${CUDA_VERSION%.*} && \
-        pip install "torch==${TORCH_VERSION}" "triton==${TRITON_VERSION}" \
-          --index-url="https://download.pytorch.org/whl/cu${CUDA_VERSION_MM//'.'/''}"; \
-    fi
+RUN  pip3 install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128
+#    if [ "${TORCH_INSTALL}" == "source" ]; then \
+#        # building pytorch from source
+#        git clone --recursive https://github.com/pytorch/pytorch && \
+#        cd pytorch && \
+#        git checkout "${TORCH_VERSION}" && \
+#        git submodule sync && \
+#        git submodule update --init --recursive && \
+#        pip install . && \
+##        pip install "pytorch-triton==$(cat .ci/docker/triton_version.txt)" --index-url="https://download.pytorch.org/whl/nightly/" && \
+#        cd .. && \
+#        rm -rf pytorch; \
+#    elif [ "${TORCH_INSTALL}" == "nightly" ]; then \
+#        # installing pytorch from wheels
+#        pip3 install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128 \
+#    fi
+
 
 ARG TORCH_INSTALL
 
@@ -142,6 +138,17 @@ RUN \
         # building nvFuser from source
         git clone https://github.com/NVIDIA/Fuser.git && \
         cd Fuser && \
+        git checkout segment_validate_speedup && \
+        git submodule update --init --recursive && \
+        pip install -r requirements.txt && \
+        python setup.py install --no-test --no-benchmark && \
+        cd .. && \
+        rm -rf Fuser ; \
+    elif [ "${TORCH_INSTALL}" == "nightly" ]; then \
+        # building nvFuser from source
+        git clone https://github.com/NVIDIA/Fuser.git && \
+        cd Fuser && \
+        git checkout segment_validate_speedup && \
         git submodule update --init --recursive && \
         pip install -r requirements.txt && \
         python setup.py install --no-test --no-benchmark && \
