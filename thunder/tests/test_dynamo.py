@@ -78,7 +78,7 @@ def test_basic(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None)
 
     # out should have grad_fn and its name should be ThunderFunctionBackward
     assert out.grad_fn is not None
-    assert out.grad_fn.name() == "ThunderOutputFunctionBackward"
+    assert out.grad_fn.name() == "ThunderFunctionBackward"
 
     # We record the GraphModules that was compiled by ThunderCompiler
     backend = compiled._backend
@@ -341,7 +341,7 @@ def test_force_skip_lazy_graph_module(executor, device: str, dtype: dtypes.dtype
 
         # out should have grad_fn and its name should be ThunderFunctionBackward
         assert out.grad_fn is not None
-        assert out.grad_fn.name() == "ThunderOutputFunctionBackward"
+        assert out.grad_fn.name() == "ThunderFunctionBackward"
 
         backend = cfunc._backend
         # We record the GraphModules that was compiled by ThunderCompiler
@@ -452,6 +452,7 @@ def test_where_nonzero_overload(executor, device: str, dtype: dtypes.dtype):
     dtypes=(dtypes.float32,),
     executors=(DynamoThunderExecutor,),
     decorators=(
+        pytest.mark.skip(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1821"),
         pytest.mark.parametrize(
             "optim",
             (
@@ -1028,7 +1029,12 @@ def test_thunderfx_last_traces():
 
 
 def test_get_example_input_tensor_metadata():
-    from thunder.dynamo.utils import _get_example_input_tensor_metadata, arg_like_tensor
+    from thunder.dynamo.utils import (
+        _get_example_input_tensor_metadata,
+        arg_like_tensor,
+        arg_like,
+        _create_random_tensor_from_tensor_metadata,
+    )
     from torch._subclasses.fake_tensor import FakeTensorMode
 
     int_tensor = torch.arange(1, 11, dtype=torch.int)
@@ -1058,6 +1064,33 @@ def test_get_example_input_tensor_metadata():
     t1_str = arg_like_tensor(meta_t1)
     p1 = r"""^torch\.testing\.make_tensor\(\(11,\), dtype=torch\.float32,\s*device='cpu',\s*requires_grad=True,\s*low=[-+]?[0-9]*\.?[0-9]+,\s*high=[-+]?[0-9]*\.?[0-9]+,\)\.as_strided\(\(2, 3\), \(4, 2\), 2\),$"""
     assert re.fullmatch(p1, t1_str), "The string does not match the expected format!"
+
+    # Tests for nested inputs
+    inputs = [
+        [
+            torch.randn((), dtype=torch.bfloat16, device="cpu", requires_grad=False),
+            torch.randn((), dtype=torch.bfloat16, device="cpu", requires_grad=False),
+        ],
+        torch.randn(24512, dtype=torch.bfloat16, device="cpu", requires_grad=False).as_strided(
+            (128, 1, 128), (192, 24576, 1), 0
+        ),
+    ]
+    str_out = arg_like(inputs)
+    out = eval(str_out)[0]
+    assert len(out) == len(inputs) and len(out[0]) == len(inputs[0])
+    assert out[0][0].shape == inputs[0][0].shape
+    assert out[0][1].shape == inputs[0][1].shape
+    assert out[1].shape == inputs[1].shape and out[1].stride() == inputs[1].stride()
+
+    # Tests for contiguous tensor with storage_offset
+    t2 = torch.randn(1024).as_strided((1, 1, 64), (576, 576, 1), storage_offset=512)
+    meta_t2 = _get_example_input_tensor_metadata(t2)
+    assert meta_t2.shape == (1, 1, 64) and meta_t2.stride() == (576, 576, 1) and meta_t2.storage_offset() == 512
+    t2_str = arg_like_tensor(meta_t2)
+    p2 = r"""^torch\.testing\.make_tensor\(\(576,\), dtype=torch\.float32,\s*device='cpu',\s*requires_grad=False,\s*low=[-+]?[0-9]*\.?[0-9]+,\s*high=[-+]?[0-9]*\.?[0-9]+,\)\.as_strided\(\(1, 1, 64\), \(576, 576, 1\), 512\),$"""
+    assert re.fullmatch(p2, t2_str), "The string does not match the expected format!"
+    t2_tensor = _create_random_tensor_from_tensor_metadata(meta_t2)
+    assert t2_tensor.shape == (1, 1, 64) and t2_tensor.stride() == (576, 576, 1) and t2_tensor.storage_offset() == 512
 
 
 def test_thunderfx_meta_tensor():
@@ -1367,8 +1400,7 @@ def test_TorchInductorSpecification(tmp_path):
     assert len(thunder_fx_graph_report.subgraph_reports) == 1  # cos
     thunder_split_report = thunder_fx_graph_report.subgraph_reports[0]
 
-    ex_inputs = thunder_split_report.make_example_inputs()
-    torchinductor = TorchInductorSpecification(ex_inputs)
+    torchinductor = TorchInductorSpecification()
     thunder_split_report.run_benchmark(torchinductor, WallTime)
     thunder_split_report.run_repro(torchinductor)
     thunder_split_report.write_benchmark(tmp_path, torchinductor, WallTime)

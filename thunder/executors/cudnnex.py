@@ -95,6 +95,7 @@ register_executor(cudnn_ex)
 
 
 from collections import OrderedDict
+from itertools import accumulate
 
 
 # Cache already built cudnn graphs to save on runtime compilation overhead
@@ -219,10 +220,17 @@ def torch_to_cudnn_dtype(lc_dtype: dtypes.dtype):
 
 
 def _compute_row_major_strides(shape):
-    strides = [1]
-    for dim in reversed(shape[:-1]):
-        strides.append(strides[-1] * dim)
-    return tuple(reversed(strides))
+    """
+    Compute contiguous strides for a row-major layout tensor of the given shape.
+
+    Args:
+        shape: The shape of the tensor.
+
+    Returns:
+        A tuple of strides for the tensor.
+    """
+    initial = 1 if shape else None
+    return tuple(accumulate(reversed(shape[1:]), lambda x, y: x * y, initial=initial))[::-1]
 
 
 # sdpa requires that the embedding dim stride be one.
