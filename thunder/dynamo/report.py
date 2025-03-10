@@ -1218,7 +1218,9 @@ def thunderfx_benchmark_report(
     )
 
 
-def save_failing_repros(reports: list[FXGraphReport], compile_fn: CompileSpecificationInterface, repros_folder: str | PathLike):
+def save_failing_repros(
+    reports: list[FXGraphReport], compile_fn: CompileSpecificationInterface, repros_folder: str | PathLike
+):
     """
     Saves the repros for the failing reports. The failing reason is saved as comment in the repro file.
     example usage:

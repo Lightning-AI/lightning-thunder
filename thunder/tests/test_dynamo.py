@@ -29,7 +29,13 @@ from thunder.tests.framework import (
     version_between,
 )
 from thunder.tests.make_tensor import make_tensor
-from thunder.dynamo.report import thunderfx_pytest_benchmark_report, fx_report, analyze_thunder_splits, save_failing_repros, get_thunder_fxgraph_reports
+from thunder.dynamo.report import (
+    thunderfx_pytest_benchmark_report,
+    fx_report,
+    analyze_thunder_splits,
+    save_failing_repros,
+    get_thunder_fxgraph_reports,
+)
 from thunder.dynamo.benchmark_utils import (
     ThunderCompileSpecification,
     TorchCompileSpecification,
