@@ -2137,12 +2137,12 @@ def logical_not_(a: TensorLike, /) -> TensorLike:
 
 
 @torchsymbol(torch.logical_xor, is_method=True)
-def logical_xor(a: TensorLike, b: TensorLike, /):
+def logical_xor(a: TensorLike, b: TensorLike, /) -> TensorLike:
     return clang.logical_xor(a, b)
 
 
 @torchsymbol(torch.Tensor.logical_xor_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
-def logical_xor_(a: TensorLike, b: TensorLike, /):
+def logical_xor_(a: TensorLike, b: TensorLike, /) -> TensorLike:
     return _copy_(a, logical_xor(a, b))
 
 
