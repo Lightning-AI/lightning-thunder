@@ -252,7 +252,7 @@ def test_te_trace_metadata_propagation():
 
 
 @requiresCUDA
-def test_te_trace_metadata_propagation():
+def test_te_custom_checker():
     def foo(x, w):
         return torch.nn.functional.linear(x, w)
 
