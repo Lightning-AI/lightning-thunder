@@ -1715,7 +1715,7 @@ def trunc(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) 
 register_supported(PrimIDs.TRUNC, trunc, _elementwise_unary_check)
 
 
-def clone(a: TensorProxy, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+def clone(a: TensorProxy, memory_format=torch.preserve_format, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
     return fd.ops.set(nva)
