@@ -5843,7 +5843,7 @@ std_opinfo = OpInfo(
         DecorateInfo(
             pytest.mark.skip,
             "test_vjp_correctness",
-            executors=("torch",),
+            executors=("torch", "nvfuser"),
             dtypes=(datatypes.float64,),
         ),
         # AssertionError: Tensor-likes are not close!
