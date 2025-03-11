@@ -3276,4 +3276,4 @@ def test_prims_pack_list():
     actual = func()
     expected = [a, b]
 
-    assert actual == expected
+    assert isinstance(actual, list) and actual == expected
