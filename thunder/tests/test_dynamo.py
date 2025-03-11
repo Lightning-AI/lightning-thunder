@@ -1411,3 +1411,40 @@ def test_TorchInductorSpecification(tmp_path):
     assert len(py_files) == 2
     for file in py_files:
         run_script(file, cmd)
+
+
+@requiresCUDA
+def test_autograd_function_fx_report(tmp_path):
+    class Sin(torch.autograd.Function):
+        @staticmethod
+        def forward(ctx, x):
+            ctx.save_for_backward(x)
+            return torch.sin(x)
+
+        @staticmethod
+        def backward(ctx, g):
+            (x,) = ctx.saved_tensors
+            return g * torch.cos(x) * 100
+
+    def func(x):
+        return torch.cos(x) + Sin.apply(x)
+
+    x = torch.ones(2, 2, device="cuda", requires_grad=True)
+    results = fx_report(func, x)
+
+    assert len(results.fx_graph_reports) == 1  # 1 Dynamo graph
+    fx_graph_report = results.fx_graph_reports[0]
+    thunder_fx_graph_report = analyze_thunder_splits(fx_graph_report)
+    assert len(thunder_fx_graph_report.subgraph_reports) == 1  # no split
+    thunder_split_report = thunder_fx_graph_report.subgraph_reports[0]
+
+    thunder_split_report.run_repro(ThunderCompileSpecification())
+    thunder_split_report.run_benchmark(ThunderCompileSpecification(), WallTime)
+    thunder_split_report.write_benchmark(tmp_path, ThunderCompileSpecification(), WallTime)
+    thunder_split_report.write_repro(tmp_path, ThunderCompileSpecification(), file_name="repro.py")
+
+    cmd = [sys.executable]
+    py_files = list(tmp_path.rglob("*.py"))
+    assert len(py_files) == 2
+    for file in py_files:
+        run_script(file, cmd)
