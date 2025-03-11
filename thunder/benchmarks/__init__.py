@@ -3534,7 +3534,7 @@ class OptimBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     def fn(self) -> Callable:
         optimizer_func = getattr(torch.optim._functional, self.optimizer_name)
 
-        return partial(optimizer_func)
+        return optimizer_func
 
 
 # TODO Add descriptions to the executors when listed, and list them alphabetically
