@@ -697,7 +697,7 @@ def _readable(
     )
     module_code = verbose_python_code.src
     submodule_names = [name for name, m in module.named_children() if hasattr(m, "graph")]
-    # For higher-order functions, the callable is a submodule, and the code string initializes the object using for example`wrap_body_0 = self.wrap_body_0`. 
+    # For higher-order functions, the callable is a submodule, and the code string initializes the object using for example`wrap_body_0 = self.wrap_body_0`.
     # Since `wrap_body_0` represents the class name of the submodule, it needs to be replaced with `wrap_body_0 = self.wrap_body_0()` to instantiate the object.
     for submodule_name in submodule_names:
         module_code = module_code.replace(f"self.{submodule_name}", f"self.{submodule_name}()")
