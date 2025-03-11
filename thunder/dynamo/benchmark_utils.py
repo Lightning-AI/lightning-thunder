@@ -227,9 +227,16 @@ class TorchProfileTimer:
             pass
 
 
+# TODO: We want to refine the extensibility to support customizing the memory timer.
+# e.g. Create a base class with an abstract method get_max_allocated(),
+# Support the peak reserved memory timer by adding a e.g. MaxReservedMemoryTimer base class.
 class TimerWithCUDAMemoryUsage:
     """
     A timer wrapper that tracks CUDA memory usage alongside timing measurements.
+
+    NOTE: `torch.cuda.max_memory_allocated()` is used to record the peak allocatedmemory usage.
+    and the memory stats is reset by `torch.cuda.reset_peak_memory_stats()` after each timer call.
+    See https://pytorch.org/docs/stable/notes/cuda.html#memory-management for more details.
 
     Example usage:
         t = TimerWithCUDAMemoryUsage(TimerInterface.time)
@@ -358,8 +365,8 @@ def get_pretty_memory_str(value):
     suffixes = ["B", "KB", "MB", "GB", "TB", "PB"]
     suffix_idx = 0
 
-    while suffix_idx + 1 < len(suffixes) and value >= 1024.0:
-        value /= 1024.0
+    while suffix_idx + 1 < len(suffixes) and value >= 1000.0:
+        value /= 1000.0
         suffix_idx += 1
 
     return f"{value:.3f} {suffixes[suffix_idx]}"
@@ -420,14 +427,14 @@ def check_metrics(
     compile_fn1: Callable,
     compile_fn2: Callable,
     timer_fn: Callable,
-    perf_rtol=0.5,
-    perf_atol=0.0,
+    time_rtol=0.5,
+    time_atol=0.0,
     memory_usage_rtol=0.5,
     memory_usage_atol=0.0,
     stream: TextIO = sys.stdout,
 ):
     """
-    Check the timing and memory usage(if using WallTimeWithMemoryUsage) of graph report using two different compilation specifications with the provided timer configuration
+    Check the timing and memory usage (if using WallTimeWithMemoryUsage) of graph report using two different compilation specifications with the provided timer configuration
     and generate a benchmark script if the difference exceeds the threshold.
     """
     folder_path = Path(folder_path)
@@ -481,8 +488,8 @@ def check_metrics(
             compile_fn2.name,
             f"{graph_name} {name}",
             timer_fn.name,
-            perf_rtol,
-            perf_atol,
+            time_rtol,
+            time_atol,
         )
         if not ret[0]:
             perf_record = True

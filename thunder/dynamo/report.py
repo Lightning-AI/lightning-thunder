@@ -1123,8 +1123,8 @@ def thunderfx_benchmark_report_from_splits(
     folder_path: str | PathLike,
     thunder_compile_kwargs: dict = None,
     compare_fusion: bool = False,
-    perf_rtol=0.5,
-    perf_atol=0.0,
+    time_rtol=0.5,
+    time_atol=0.0,
     memory_usage_rtol=0.5,
     memory_usage_atol=0.0,
     stream: TextIO = sys.stdout,
@@ -1132,7 +1132,7 @@ def thunderfx_benchmark_report_from_splits(
     """
     A utility function that analyzes the runnability and performance benchmarks of each Thunder-split FX graph and nvFusion regions(optional).
     It prints out the performance metrics and saves the benchmark script in `folder_path` if the difference exceeds
-    the tolerance (`perf_rtol`, `perf_atol` in seconds; `memory_usage_rtol`, `memory_usage_atol` in Bytes).
+    the tolerance (`time_rtol`, `time_atol` in seconds; `memory_usage_rtol`, `memory_usage_atol` in Bytes).
     the function will create the following folder structure:
     folder_path
     └── graph0
@@ -1164,8 +1164,8 @@ def thunderfx_benchmark_report_from_splits(
                 torchinductor,
                 thunderjit,
                 WallTimeWithMemoryUsage,
-                perf_rtol,
-                perf_atol,
+                time_rtol,
+                time_atol,
                 memory_usage_rtol,
                 memory_usage_atol,
                 stream,
@@ -1176,8 +1176,8 @@ def thunderfx_benchmark_report_from_splits(
                 torchinductor,
                 thunderjit,
                 KernelTime,
-                perf_rtol,
-                perf_atol,
+                time_rtol,
+                time_atol,
                 memory_usage_rtol,
                 memory_usage_atol,
                 stream,
@@ -1192,8 +1192,8 @@ def thunderfx_benchmark_report_from_splits(
         graph_nvfusion_folder = folder_path / graph_report.graph_name / "nvfusion_reports"
         for split_report in graph_report.subgraph_reports:
             for nvfusion_report in split_report.fusion_reports:
-                check_nvfusion_timing(graph_nvfusion_folder, nvfusion_report, WallTime, perf_rtol, perf_atol, stream)
-                check_nvfusion_timing(graph_nvfusion_folder, nvfusion_report, KernelTime, perf_rtol, perf_atol, stream)
+                check_nvfusion_timing(graph_nvfusion_folder, nvfusion_report, WallTime, time_rtol, time_atol, stream)
+                check_nvfusion_timing(graph_nvfusion_folder, nvfusion_report, KernelTime, time_rtol, time_atol, stream)
 
 
 def thunderfx_benchmark_report(
@@ -1202,8 +1202,8 @@ def thunderfx_benchmark_report(
     folder_path: str | PathLike,
     thunder_compile_kwargs: dict = None,
     check_torch_runnablility: bool = True,
-    perf_rtol=0.5,
-    perf_atol=0.0,
+    time_rtol=0.5,
+    time_atol=0.0,
     memory_usage_rtol=0.5,
     memory_usage_atol=0.0,
     compare_fusion: bool = False,
@@ -1222,7 +1222,7 @@ def thunderfx_benchmark_report(
 
     3. For each subgraph:
     - Compares wall time and kernel time between `torch.compile` and Thunder.
-    - Reports performance metrics and saves the benchmark script in `folder_path/graph_name/` if the difference exceeds the tolerance (`perf_rtol`, `perf_atol` in seconds)
+    - Reports performance metrics and saves the benchmark script in `folder_path/graph_name/` if the difference exceeds the tolerance (`time_rtol`, `time_atol` in seconds)
     - Reports memory usage and saves the benchmark script in `folder_path/graph_name/memory_issue` if the difference exceeds the tolerance (`memory_usage_rtol`, `memory_usage_atol` in Bytes).
     - Uses `math.isclose` for tolerance checks.
 
@@ -1261,8 +1261,8 @@ def thunderfx_benchmark_report(
         folder_path,
         thunder_compile_kwargs,
         compare_fusion,
-        perf_rtol,
-        perf_atol,
+        time_rtol,
+        time_atol,
         memory_usage_rtol,
         memory_usage_atol,
         stream,
