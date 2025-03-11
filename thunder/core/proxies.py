@@ -1875,6 +1875,96 @@ class TensorProxy(Proxy, TensorProxyInterface):
         return method(self)
 
 
+class ScaleTensorProxy(TensorProxy):
+    def __init__(
+        self,
+        name=None,
+        *,
+        a=None,
+        b=None,
+        like=None,
+        shape=None,
+        device=None,
+        dtype=None,
+        requires_grad=False,
+        grad=None,
+        prefix=None,
+        distparallel_type=None,
+        history=None,
+        tags=None,
+        thunder_fsdp_padding_size=None,
+    ):
+        super().__init__(
+            name,
+            like=like,
+            shape=shape,
+            device=device,
+            dtype=dtype,
+            requires_grad=requires_grad,
+            grad=grad,
+            prefix=prefix,
+            distparallel_type=distparallel_type,
+            history=history,
+            tags=tags,
+            thunder_fsdp_padding_size=thunder_fsdp_padding_size,
+        )
+        if like is not None:
+            self.b = like.b
+            self.a = like.a
+        else:
+            self.b = b
+            self.a = a
+
+    def type_string(self):
+        return f"ScaleTensor {self.device.device_str()} {self.dtype.shortname()}{list(self._shape)}"
+
+    def replace(self, **changes):
+        r"""Return a copy of the TensorProxy object with new values for the specified fields as given to the constructor as arguments.
+        Valid keyword arguments are ``name``, ``history``, ``shape``, ``dtype``, ``device``, ``requires_grad``, ``distparallel_type``,  ``thunder_fsdp_padding_size``.
+        ``like`` is also a valid keyword and will take metadata from the tensor proxy argument
+        in preference to the old values but overridable by keyword arguments.
+        Note that the copy will use the current (environment) tracectx."""
+
+        like = changes.get("like")
+        (
+            shape,
+            device,
+            dtype,
+            true_dtype,
+            numel,
+            ndim,
+            requires_grad,
+            grad,
+            distparallel_type,
+            thunder_fsdp_padding_size,
+        ) = _infer_tensor_properties(
+            like,
+            changes.get("shape", self._shape if like is None else None),
+            changes.get("device", self._device if like is None else None),
+            changes.get("dtype", self._dtype if like is None else None),
+            changes.get("requires_grad", self._requires_grad if like is None else None),
+            changes.get("grad", self._grad if like is None else None),
+            changes.get("distparallel_type", self._distparallel_type if like is None else None),
+            changes.get("thunder_fsdp_padding_size", self._thunder_fsdp_padding_size if like is None else None),
+        )
+        name = changes.get("name", self.name)
+        history = changes.get("history", self.history)
+        tags = changes.get("tags", self.tags)
+        return ScaleTensorProxy(
+            name=name,
+            a=self.a,
+            b=self.b,
+            tags=tags,
+            shape=shape,
+            device=device,
+            dtype=dtype,
+            requires_grad=requires_grad,
+            distparallel_type=distparallel_type,
+            thunder_fsdp_padding_size=thunder_fsdp_padding_size,
+            history=history,
+        )
+
+
 class TorchAutogradFunctionCtxProxy(Proxy, TorchAutogradFunctionCtxProxyInterface):
     def __init__(
         self,
@@ -2032,6 +2122,24 @@ def proxy(x: Any, *, name: str | None = None, history: None | tuple = None) -> A
         return AnyProxy(x, name=name, history=history)
     if x is ...:
         return AnyProxy(x, name=name, history=history)
+
+    from torch._subclasses.fake_tensor import FakeTensor
+
+    if isinstance(x, torch.Tensor) and not isinstance(x, FakeTensor) and type(x) != torch.Tensor:
+        a_t = proxy(x.a, history=history)
+        return ScaleTensorProxy(
+            name=name,
+            a=a_t,
+            b=x.b,
+            shape=tuple(a_t.shape),
+            device=a_t.device,
+            dtype=a_t.dtype,
+            requires_grad=a_t.requires_grad,
+            grad=None,
+            distparallel_type=None,
+            history=history,
+            thunder_fsdp_padding_size=None,
+        )
 
     if isinstance(x, torch.Tensor):
         return tensorproxy(x, name=name, history=history)

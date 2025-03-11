@@ -249,6 +249,7 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
         try:
             proxy_args, proxy_kwargs = get_proxy_inputs_from_node(node)
         except Exception as e:
+            raise e
             return False, SplitReason(
                 SplitReasonType.EXCEPTION_PROXY_THUNDER_OP,
                 f"Failed while creating proxy for node with name: {node.name} and target: {node.target}, see exception field",
@@ -260,6 +261,7 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
             try:
                 thunder_symbol(*proxy_args, **proxy_kwargs)
             except Exception as e:
+                raise e
                 return False, SplitReason(
                     SplitReasonType.EXCEPTION_META_THUNDER_OP,
                     f"Failed while running meta for node with name: {node.name} and target: {node.target}, see exception field",
@@ -462,9 +464,13 @@ def _get_example_input_tensor_metadata(t: torch.Tensor) -> ExampleInputMetaData:
     min_val = None
     max_val = None
     if not isinstance(t, FakeTensor) and t.device.type != "meta" and t.numel() != 0:
-        minmax: tuple[torch.Tensor, torch.Tensor] = torch.aminmax(t)
-        min_val = minmax[0].cpu().item()
-        max_val = minmax[1].cpu().item()
+        try:
+            minmax: tuple[torch.Tensor, torch.Tensor] = torch.aminmax(t)
+            min_val = minmax[0].cpu().item()
+            max_val = minmax[1].cpu().item()
+        except:
+            min_val = None
+            max_val = None
     meta_ev = ExampleInputMetaData(
         t.requires_grad,
         t.layout,
