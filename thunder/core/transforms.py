@@ -1776,7 +1776,7 @@ def std_backward(a, dim, correction, s, g):
         a = prims.convert_element_type(a, s.dtype)
     mean = prims.sum(a, dim) / n_elem_reduced
     mean = restore_reduced_dims(mean, dim, a.shape)
-    return (g * (a - mean)) / (normalization_scalar * (s + 1e-8))
+    return ((g * (a - mean)) / (normalization_scalar * s)).masked_fill(s == 0, 0)
 
 
 def n_elem_reduced(a_ndim, a_shape, dims):

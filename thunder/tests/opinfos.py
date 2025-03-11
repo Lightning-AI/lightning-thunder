@@ -5837,20 +5837,21 @@ std_opinfo = OpInfo(
     dtypes=(datatypes.floating,),
     test_directives=(
         # AssertionError: Scalars are not close!
-        # Expected nan but got 0.0.
-        # Absolute difference: nan (up to 1e-07 allowed)
-        # Relative difference: nan (up to 1e-07 allowed)
+        # Expected -0.04742737004193756 but got -0.09087551906805685.
+        # Absolute difference: 0.04344814902611929 (up to 1e-07 allowed)
+        # Relative difference: 0.9160986364561297 (up to 1e-07 allowed)
         DecorateInfo(
-            pytest.mark.skip,
+            custom_comparator(partial(assert_close, atol=1e-1, rtol=1e-1)),
             "test_vjp_correctness",
             executors=("torch", "nvfuser"),
             dtypes=(datatypes.float64,),
         ),
         # AssertionError: Tensor-likes are not close!
         DecorateInfo(
-            pytest.mark.skip,
+            custom_comparator(partial(assert_close, atol=1e-1, rtol=1e-1)),
             "test_phantom_grad_vs_torch_consistency",
             dtypes=(datatypes.bfloat16, datatypes.float16, datatypes.float32, datatypes.float64),
+            devicetypes=(devices.DeviceType.CUDA,),
         ),
     ),
 )
