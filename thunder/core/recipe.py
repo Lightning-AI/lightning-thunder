@@ -1,11 +1,12 @@
 from contextlib import contextmanager
+from enum import Enum, auto
 from typing import Any
 import warnings
 
+import torch
+
 from thunder.core.transform_common import Transform
 from thunder.extend import Executor, get_default_executors
-
-import torch
 
 
 @contextmanager
@@ -24,12 +25,40 @@ class Lookaside:
         self._replace_with = replace_with
 
 
-class Recipe:
-    # thunder.jit | torch.compile
-    compiler = "thunder.jit"
+class PluginPolicy(Enum):
+    PRE = auto()
+    POST = auto()
+ 
 
-    def __init__(self):
-        pass
+class Plugin:
+    policy: PluginPolicy = PluginPolicy.PRE
+
+    def setup_lookasides(self) -> list[Lookaside] | None:
+        return None
+
+    def setup_transforms(self) -> list[Transform] | None:
+        return None
+
+    def setup_executors(self) -> list[Executor] | None:
+        return None
+
+
+class Compiler(Enum):
+    THUNDER = auto()
+    TORCH = auto()
+
+ 
+class Recipe:
+    compiler = Compiler.THUNDER
+
+    def __init__(self, plugins: Plugin):
+        self.lookasides = []
+        self.transforms = []
+        self.executors = []
+        self.plugins = plugins
+
+    def add_plugins(self, plugins: list[Plugin]):
+        self.plugins.append(plugins)
 
     @classmethod
     def validate(cls, model):
@@ -53,7 +82,19 @@ class Recipe:
             self.validate(model)
 
         self.config = self.setup_config()
-        lookasides = self.setup_lookasides()
+
+        pre_plugins = [el for el in self.plugins if el.policy == PluginPolicy.PRE]
+        post_plugins = [el for el in self.plugins if el.policy == PluginPolicy.POST]
+
+        lookasides = []
+
+        for plugin in pre_plugins:
+            lookasides.extend(plugin.setup_lookasides())
+
+        lookasides.extend(self.setup_lookasides())
+
+        for plugin in post_plugins:
+            lookasides.extend(plugin.setup_lookasides())
 
         from thunder.core import jit_ext, interpreter
 
@@ -63,8 +104,28 @@ class Recipe:
                 jit_ext._general_jit_lookaside_map[lookaside._fn] = wrapped_replacement_fn
 
         self.lookasides = lookasides
-        self.executors = self.setup_executors()
-        self.transforms = self.setup_transforms()
+
+        transforms = []
+        for plugin in pre_plugins:
+            transforms.extend(plugin.setup_transforms())
+
+        transforms.extend(self.setup_transforms())
+
+        for plugin in post_plugins:
+            transforms.extend(plugin.setup_transforms())
+
+        self.transforms = transforms
+
+        executors = []
+        for plugin in pre_plugins:
+            executors.extend(plugin.setup_executors())
+
+        executors.executors(self.setup_executors())
+
+        for plugin in post_plugins:
+            executors.extend(plugin.setup_executors())
+
+        self.executors = executors
 
         if self.compiler == "thunder.jit":
             from thunder import jit
@@ -84,4 +145,4 @@ class Recipe:
 
 
 class DynamoRecipe(Recipe):
-    compiler = "torch.compile"
+    compiler = Compiler.TORCH

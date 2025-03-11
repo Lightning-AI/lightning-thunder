@@ -2,8 +2,6 @@ from distutils.version import LooseVersion
 from functools import partial
 import warnings
 
-import transformers
-
 import thunder
 from thunder.recipes import BaseRecipe
 
@@ -37,13 +35,15 @@ class InplaceIndexCopyTransform(thunder.Transform):
 
 
 class HFTransformers(BaseRecipe):
-    def __init__(self, reduce_overhead=True, fuser="nvfuser", show_progress=False):
-        super().__init__(reduce_overhead=reduce_overhead, fuser=fuser, show_progress=show_progress)
+    def __init__(self, fuser="nvfuser", show_progress=False):
+        super().__init__(fuser=fuser, show_progress=show_progress)
         # for kv-cache inplace ops
         self.inplace_index_copy_transform = InplaceIndexCopyTransform()
 
     @classmethod
     def validate(cls, model):
+        import transformers
+
         version = LooseVersion(transformers.__version__)
         min_version = LooseVersion("4.46.0")
         max_version = LooseVersion("4.46.3")
@@ -75,6 +75,8 @@ class HFTransformers(BaseRecipe):
         return config
 
     def setup_lookasides(self):
+        import transformers
+
         warn_lookaside = thunder.Lookaside(
             fn=transformers.modeling_utils.PreTrainedModel.warn_if_padding_and_no_attention_mask,
             replace_with=lambda *args: None,

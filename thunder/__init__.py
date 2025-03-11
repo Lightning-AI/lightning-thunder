@@ -41,7 +41,7 @@ from thunder.core.functionalization import (
     check_inplace_to_views,
     functionalize_inplace_ops,
 )
-from thunder.core.recipe import Recipe, Lookaside
+from thunder.core.recipe import Recipe, Plugin
 from thunder.common import (
     CompileData,
     CompileStats,
@@ -269,9 +269,22 @@ CacheEntry = namedtuple(
 )
 
 
-def compile(fn: Callable, recipe: Recipe | None = None):
-    if recipe is None:
+def compile(fn: Callable, recipe: Recipe | str | None = "auto", plugins: Plugin | list[Plugin] = []):
+    if isinstance(plugins, Plugin):
+        plugins = [plugins]
+
+    if recipe is None and not plugins:
         return thunder.jit(fn)
+
+    if recipe is None and plugins:
+        from thunder.recipes import BaseRecipe
+        recipe = BaseRecipe(plugins=plugins)
+
+    if recipe == "auto":
+        import thunder.recipes as recipes
+
+    if recipe is not None and plugins:
+        recipe.add_plugins(plugins)
 
     return recipe.apply(fn)
 
