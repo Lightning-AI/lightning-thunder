@@ -1816,6 +1816,7 @@ softsign_opinfo = OpInfo(
     dtypes=(datatypes.inexact,),
     sample_input_generator=elementwise_unary_generator,
     torch_reference=_elementwise_unary_torch(torch.nn.functional.softsign),
+    singularity_fn=lambda x: x,
     test_directives=(),
 )
 elementwise_unary_ops.append(softsign_opinfo)
