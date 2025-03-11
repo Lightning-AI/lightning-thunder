@@ -7970,7 +7970,7 @@ if LooseVersion(torch.__version__) >= "2.4":
             DecorateInfo(
                 pytest.mark.xfail,
                 dtypes=(datatypes.float16, datatypes.bfloat16),
-                devicetypes=(devices.DeviceType.CUDA,),
+                devicetypes=(devices.DeviceType.CUDA, devices.DeviceType.CPU),
                 active_if=LooseVersion(torch.__version__) < "2.7",
             ),
         ),
