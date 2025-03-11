@@ -702,7 +702,7 @@ def _readable(
     module_code = module_code.lstrip("\n")
     module_code = f"class {module_name}(torch.nn.Module):\n" + module_code
     module_code = _addindent(module_code, 4)
-    
+
     submodule_code_list = [""]
     for submodule_name, submodule in module.named_children():
         if hasattr(submodule, "graph"):
