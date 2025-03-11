@@ -23,6 +23,7 @@ from thunder.dynamo.utils import (
     get_split_reasons_string,
     CompilerType,
     example_input_meta_to_input,
+    recompile_graph,
 )
 
 from thunder.dynamo.repro_script_template import (
@@ -426,6 +427,7 @@ class FXGraphReport:
     ):
         torch._dynamo.reset()
         example_inputs = self.make_example_inputs()
+        recompile_graph(self.graph)
         compiled_model = compile_fn.compile(self.graph, inputs=example_inputs)
         result = run_forward_backward(compiled_model, *example_inputs)
 
@@ -493,6 +495,7 @@ class FXGraphReport:
         # to reset Dynamo's state *as if* you had started a fresh process invocation.
         torch._dynamo.reset()
         example_inputs = self.make_example_inputs()
+        recompile_graph(self.graph)
         compiled_fn = compile_fn.compile(self.graph, inputs=example_inputs)
 
         forward_only = not any(hasattr(arg, "requires_grad") and arg.requires_grad for arg in example_inputs)
@@ -1010,7 +1013,7 @@ def analyze_thunder_splits(
                         nvfusion_report.write_inductor_repro(split_folder / "nvfusion")
 
     """
-    from thunder.dynamo.utils import remove_empty_autocast, recompile_graph, get_thunder_module_names
+    from thunder.dynamo.utils import remove_empty_autocast, get_thunder_module_names
     from thunder.dynamo.splitter import _splitter
     from thunder import jit
 
