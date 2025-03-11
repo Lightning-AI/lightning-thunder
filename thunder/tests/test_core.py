@@ -3257,3 +3257,25 @@ def test_thunder_jit_parts():
 
     assert_close(pro_to_comp, pro_to_comp2)
     assert_close(pro_to_epi, pro_to_epi2)
+def test_prims_pack_list():
+
+    # Transfrom which replaces a list of arguments with a single list
+    class AddPack(thunder.core.transform_common.Transform):
+        def transform_trace_post_optimization(self, trace, **kwargs):
+            old_args = trace.bound_symbols[-1].args[0]["output"]
+            with thunder.core.trace.tracectx(trace):
+                new_args = thunder.prims.pack_list(*old_args)
+            ret = trace.bound_symbols.pop(-2)
+            ret.args[0]["output"] = new_args
+            ret.args[0]["flat_args"] = new_args
+            trace.bound_symbols.append(ret)
+            return trace
+
+    def fn(*x):
+        return [*x]
+
+    jfn = thunder.jit(fn, transforms=[AddPack(),],)
+    x = torch.randn(3, requires_grad=False)
+    out = jfn(x, x+1, x+2, x+3)  # Pass the arguments separately
+    
+    assert isinstance(out, list)
