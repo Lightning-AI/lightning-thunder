@@ -696,10 +696,13 @@ def _readable(
         include_device=include_device,
     )
     module_code = verbose_python_code.src
+    submodule_names = [name for name, m in module.named_children() if hasattr(m, "graph")]
+    for submodule_name in submodule_names:
+        module_code = module_code.replace(f"self.{submodule_name}", f"self.{submodule_name}()")
     module_code = module_code.lstrip("\n")
     module_code = f"class {module_name}(torch.nn.Module):\n" + module_code
     module_code = _addindent(module_code, 4)
-
+    
     submodule_code_list = [""]
     for submodule_name, submodule in module.named_children():
         if hasattr(submodule, "graph"):
@@ -714,7 +717,7 @@ def _readable(
                 )
             )
     submodule_code = "\n".join(submodule_code_list)
-    submodule_code = _addindent(submodule_code, 2)
+    submodule_code = _addindent(submodule_code, 4)
 
     output = module_code + submodule_code
     if print_output:
