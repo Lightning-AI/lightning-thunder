@@ -1216,3 +1216,26 @@ def thunderfx_benchmark_report(
     thunderfx_benchmark_report_from_splits(
         thunder_fxgraph_reports, folder_path, thunder_compile_kwargs, compare_fusion, rtol, atol
     )
+
+
+def save_failing_repros(
+    reports: list[FXGraphReport], compile_fn: CompileSpecificationInterface, repros_folder: str | PathLike
+):
+    """
+    Saves the repros for the failing reports. The failing reason is saved as comment in the repro file.
+    example usage:
+    ```python
+    # Gets the Dynamo FX Graph reports
+    report = fx_report(model, x)
+    # Saves the repros for the failing reports using TorchCompile
+    save_failing_repros(report.fx_graph_reports, TorchCompileSpecification(), "repros")
+    ```
+    """
+    repros_folder = Path(repros_folder)
+    repros_folder.mkdir(exist_ok=True, parents=True)
+    for report in reports:
+        try:
+            report.run_repro(compile_fn)
+        except Exception as e:
+            comment = f"Failed to run the function using {compile_fn.name} with exception: {e}"
+            report.write_repro(repros_folder, compile_fn, extra_comment_str=comment)
