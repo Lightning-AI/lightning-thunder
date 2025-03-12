@@ -14,7 +14,7 @@ from thunder.core.utils import ProxyDict, check, safe_map_flat
 from thunder.core.symbol import BoundSymbol
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
 import thunder.core.prims as prims
-from thunder.core.proxies import Proxy, variableify, unvariableify, Variable, CollectionProxy
+from thunder.core.proxies import Proxy, variableify, unvariableify, Variable, CollectionProxy, ListProxy
 import thunder.core.transforms as transforms
 from thunder.core.transform_common import dce
 from thunder.core.trace import get_tracectx
@@ -237,7 +237,7 @@ def _del_last_used(bound_symbols, flattened_final_output, *, clear_mutable_colle
         to_clear_collections = []
         if clear_mutable_collections:
             for x in to_del:
-                if isinstance(x, CollectionProxy):
+                if isinstance(x, (CollectionProxy, ListProxy)):
                     to_clear_collections.append(x)
 
         # NOTE The check for return avoids putting dels after the return statement
