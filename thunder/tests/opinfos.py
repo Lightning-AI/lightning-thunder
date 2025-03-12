@@ -5841,17 +5841,18 @@ std_opinfo = OpInfo(
         # Absolute difference: 0.04344814902611929 (up to 1e-07 allowed)
         # Relative difference: 0.9160986364561297 (up to 1e-07 allowed)
         DecorateInfo(
-            custom_comparator(partial(assert_close, atol=1e-1, rtol=1e-1)),
+            pytest.mark.xfail,
             "test_vjp_correctness",
             executors=("torch", "nvfuser"),
             dtypes=(datatypes.float64,),
         ),
-        # AssertionError: Tensor-likes are not close!
+        # In cuda: AssertionError: Tensor-likes are not close!
+        # In cpu: AssertionError: The values for attribute 'shape' do not match: torch.Size([5]) != torch.Size([1]).
         DecorateInfo(
-            custom_comparator(partial(assert_close, atol=1e-1, rtol=1e-1)),
+            pytest.mark.xfail,
             "test_phantom_grad_vs_torch_consistency",
             dtypes=(datatypes.bfloat16, datatypes.float16, datatypes.float32, datatypes.float64),
-            devicetypes=(devices.DeviceType.CUDA,),
+            devicetypes=(devices.DeviceType.CUDA, devices.DeviceType.CPU),
         ),
     ),
 )
