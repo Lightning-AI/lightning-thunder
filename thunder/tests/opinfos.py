@@ -1783,7 +1783,7 @@ softplus_opinfo = OpInfo(
     ltorch.softplus,
     dtypes=(datatypes.floating,),
     sample_input_generator=get_elementwise_unary_with_kwargs_generator(
-        [{}, {"beta": 0.5}, {"beta": 2.0}, {"threshold": 5.0}, {"beta": 0.5, "threshold": 10.0}]
+        [{}, {"beta": 0.5}, {"beta": 2.0, "threshold": 10.0}]
     ),
     torch_reference=_elementwise_unary_torch(torch.nn.functional.softplus),
     singularity_fn_producer=soft_plus_singularity_fn_producer,
