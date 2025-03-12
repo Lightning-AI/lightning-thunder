@@ -838,6 +838,7 @@ selu = _register_torch_operation("selu", module=torch.nn.functional)
 silu = _register_torch_operation("silu", module=torch.nn.functional)
 softplus = _register_torch_operation("softplus", module=torch.nn.functional)
 softshrink = _register_torch_operation("softshrink", module=torch.nn.functional)
+softsign = _register_torch_operation("softsign", module=torch.nn.functional)
 tanhshrink = _register_torch_operation("tanhshrink", module=torch.nn.functional)
 
 
@@ -858,6 +859,7 @@ _register_elementwise_unary_implementation(ltorch.selu, selu, checker=_elementwi
 _register_elementwise_unary_implementation(ltorch.silu, silu, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.softplus, softplus, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.softshrink, softshrink, checker=_always_executable)
+_register_elementwise_unary_implementation(ltorch.softsign, softsign, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.tanhshrink, tanhshrink, checker=_always_executable)
 #
 # Elementwise binary operations
