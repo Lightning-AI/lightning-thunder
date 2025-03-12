@@ -433,6 +433,7 @@ class FusionDefinitionWrapper:
     cache_clear: None | Callable = None
     last_used: None | FusionDefinition = None
     last_inputs: None | Sequence[tuple] = None
+    last_inputs_meta: None | Sequence = None
     store_inputs: bool = False
     store_inputs_meta: bool = False
     enable_options: None | list[str] = None
