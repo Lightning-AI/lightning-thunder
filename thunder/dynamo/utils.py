@@ -462,6 +462,8 @@ def _get_example_input_tensor_metadata(t: torch.Tensor) -> ExampleInputMetaData:
     min_val = None
     max_val = None
     if not isinstance(t, FakeTensor) and t.device.type != "meta" and t.numel() != 0:
+        if t.dtype in (torch.float8_e4m3fn, torch.float8_e4m3fnuz, torch.float8_e5m2, torch.float8_e5m2fnuz):
+            t = t.to(torch.flot32)
         minmax: tuple[torch.Tensor, torch.Tensor] = torch.aminmax(t)
         min_val = minmax[0].cpu().item()
         max_val = minmax[1].cpu().item()
