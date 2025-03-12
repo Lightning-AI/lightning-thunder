@@ -72,6 +72,7 @@ class CUDAGraphRunner:
         self.python_callables = {}  # fn_name -> (callable. static_input_mask (or None))
         self.trace_symbols = {}  # fn_name -> (bsyms, inputs, outputs)
         self.name_counter = 1
+        self.warmup_iters = 3
 
         # NOTE: Every invocation of CUDAGraphTransform has a single CUDAGraphRunner associated with it.
         # This should allow the runner to share a single memory pool across all graphs it constructs on a given device.
@@ -88,8 +89,8 @@ class CUDAGraphRunner:
         return x
 
     def build_cuda_graph(
-        self, fn: Callable, args: list[any], static_args_mask: tuple[bool, ...]
-    ) -> tuple[torch.cuda.CUDAGraph, Sequence[torch.Tensor | Any], Sequence[torch.Tensor | Any]]:
+        self, fn: Callable, args: list[any], static_args_mask: tuple[bool, ...], warmup_counter: int
+    ) -> tuple[torch.cuda.CUDAGraph | None, Sequence[torch.Tensor | Any], Sequence[torch.Tensor | Any], int]:
 
         static_inputs_cache = tuple(
             self.get_static_buffer(arg) if not is_static else None for arg, is_static in zip(args, static_args_mask)
@@ -114,10 +115,12 @@ class CUDAGraphRunner:
         stream.wait_stream(torch.cuda.current_stream())
         
         # Warmup
-        with torch.cuda.stream(stream):
-            for _ in range(3):
+        if warmup_counter < self.warmup_iters:
+            with torch.cuda.stream(stream):
                 static_inputs = [si if si is not None else arg for si, arg in zip(static_inputs_cache, args)]
-                fn(static_inputs)
+                del args
+                static_outputs = fn(static_inputs)
+            return None, static_inputs_cache, static_outputs, warmup_counter + 1
 
         stream.synchronize()
         torch.cuda.current_stream().wait_stream(stream)
@@ -130,9 +133,10 @@ class CUDAGraphRunner:
         graph = torch.cuda.CUDAGraph()
         static_inputs = [si if si is not None else arg for si, arg in zip(static_inputs_cache, args)]
         with torch.cuda.graph(graph, stream=stream, pool=pool):
+            del args
             static_outputs = fn(static_inputs)
 
-        return graph, static_inputs_cache, static_outputs
+        return graph, static_inputs_cache, static_outputs, warmup_counter + 1
 
     def make_static_inputs_mask(self, fn_name, *args):
         _, static_inputs_mask = self.python_callables[fn_name]
@@ -156,17 +160,18 @@ class CUDAGraphRunner:
         cache_key = self.make_cache_key(fn_name, *args_unpacked)
 
         cache_entry = self.cuda_graph_cache.get(cache_key)
-        if cache_entry is None:
-            cache_entry = self.build_cuda_graph(fn, args_unpacked, cache_key[1])
+        if cache_entry is None or (cache_entry is not None and cache_entry[3] < self.warmup_iters):
+            cache_entry = self.build_cuda_graph(fn, args_unpacked, cache_key[1], cache_entry[3] if cache_entry else 0)
             self.cuda_graph_cache[cache_key] = cache_entry
 
-        graph, static_inputs, static_outputs = cache_entry
+        graph, static_inputs, static_outputs, _ = cache_entry
 
         for static_input, arg in utils.safe_zip(static_inputs, args_unpacked):
             if static_input is not None:
                 static_input.copy_(arg)
 
-        graph.replay()
+        if graph is not None:
+            graph.replay()
         return static_outputs
 
     def make_python_callable_from_symbols(
