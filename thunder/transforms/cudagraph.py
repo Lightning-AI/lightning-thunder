@@ -99,7 +99,7 @@ class CUDAGraphRunner:
         if self.stream:
             # In the case of multiple devices and shared memory pooling, we want to use one stream/pool per device
             cur_device_index = None
-            for arg in static_inputs:
+            for arg in args:
                 if isinstance(arg, torch.Tensor):
                     cur_device_index = arg.device.index
                     break
