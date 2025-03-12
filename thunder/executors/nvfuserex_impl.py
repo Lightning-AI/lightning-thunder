@@ -243,6 +243,10 @@ def create_fd(
     # TODO Review splititng very large fusions or removing the max length restriction completely
     #   See "Very large nvFuser fusions hit max_length"
     fd = FusionDefinition(max_length=9999)
+
+    # Device may be set in one of the "factory" methods like full, iota, or uniform
+    fd._selected_device = None
+
     with fd:
         # NOTE Adding constants is disabled for the moment in favor of definining them inline
         # 0) Adds constants
@@ -447,14 +451,9 @@ class FusionDefinitionWrapper:
 
             self.last_inputs_meta = [input_to_example_input_meta(arg) for arg in args]
 
-        kwargs = {}
-        # Set device if set in one of the "factory" methods like full, iota, or uniform
-        if hasattr(fd, "_selected_device"):
-            kwargs["device"] = fd._selected_device
-
         with annotate_for_profile(self.name):
             return fd.execute(
-                args, _enable_options=self.enable_options, _disable_options=self.disable_options, **kwargs
+                args, device=fd._selected_device, _enable_options=self.enable_options, _disable_options=self.disable_options,
             )
 
     def __repr__(self):
