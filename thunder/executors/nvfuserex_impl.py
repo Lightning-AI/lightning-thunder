@@ -1001,7 +1001,7 @@ def _select_device(fd: FusionDefinition, device: None | Device):
         return
 
     utils.check(
-        not hasattr(fd, "_selected_device") or fd._selected_device == device.index,
+        fd._selected_device is None or fd._selected_device == device.index,
         lambda: f"Found multiple requested devices: {fd._selected_device} and {device.index}",
     )
 
