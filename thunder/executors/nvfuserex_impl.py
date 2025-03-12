@@ -420,7 +420,7 @@ def to_runtime_descriptors(args) -> tuple:
 
 
 # TODO Consider making this just a function, because it's faster to call a function than a callable class
-@dataclass
+@dataclass(slots=True)
 class FusionDefinitionWrapper:
     """
     A callable object wrapping a nvFuser fusion definition.
