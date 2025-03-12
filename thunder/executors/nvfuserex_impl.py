@@ -2581,9 +2581,7 @@ def scaled_dot_product_flash_attention(
     *,
     scale: None | float = None,
 ):
-    (attn_output, logsumexp, rng_state) = nv_sdpfa_fwd(
-        query, key, value, dropout_p, is_causal, scale=scale
-    )
+    (attn_output, logsumexp, rng_state) = nv_sdpfa_fwd(query, key, value, dropout_p, is_causal, scale=scale)
     return attn_output
 
 
@@ -2599,9 +2597,7 @@ def scaled_dot_product_flash_attention_grad(
     scale: None | float = None,
 ):
 
-    (attn_output, logsumexp, rng_state) = nv_sdpfa_fwd(
-        query, key, value, dropout_p, is_causal, scale=scale
-    )
+    (attn_output, logsumexp, rng_state) = nv_sdpfa_fwd(query, key, value, dropout_p, is_causal, scale=scale)
     grad_out = get_grad(attn_output)
     grad_query, grad_key, grad_val = nv_sdpfa_bwd(
         grad_out,
