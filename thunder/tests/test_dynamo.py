@@ -29,7 +29,13 @@ from thunder.tests.framework import (
     version_between,
 )
 from thunder.tests.make_tensor import make_tensor
-from thunder.dynamo.report import thunderfx_pytest_benchmark_report, fx_report, analyze_thunder_splits
+from thunder.dynamo.report import (
+    thunderfx_pytest_benchmark_report,
+    fx_report,
+    analyze_thunder_splits,
+    save_failing_repros,
+    get_thunder_fxgraph_reports,
+)
 from thunder.dynamo.benchmark_utils import (
     ThunderCompileSpecification,
     TorchCompileSpecification,
@@ -1418,3 +1424,24 @@ def test_TorchInductorSpecification(tmp_path):
     assert len(py_files) == 2
     for file in py_files:
         run_script(file, cmd)
+
+
+@requiresCUDA
+def test_save_failing_repros(tmp_path):
+    x = torch.ones(2, 2, device="cuda", requires_grad=True)
+
+    def foo(x):
+        return torch.sin(x) + torch.cos(x)
+
+    # Tests for dynamo fx graphreports
+    results = fx_report(foo, x)
+    with patch("thunder.dynamo.report.FXGraphReport.run_repro", side_effect=Exception("run_Repro raises exception")):
+        save_failing_repros(results.fx_graph_reports, TorchCompileSpecification(), tmp_path)
+    assert os.path.exists(tmp_path / "graph0.py")
+
+    # Tests for thunder split reports
+    thunder_fxgraph_reports = get_thunder_fxgraph_reports(foo, x)
+    assert len(thunder_fxgraph_reports) == 1
+    with patch("thunder.dynamo.report.FXGraphReport.run_repro", side_effect=Exception("run_Repro raises exception")):
+        save_failing_repros(thunder_fxgraph_reports[0].subgraph_reports, ThunderCompileSpecification(), tmp_path)
+    assert os.path.exists(tmp_path / "graph0_thunder_0.py")
