@@ -144,6 +144,8 @@ class unsignedinteger(exact):
 
 uint8 = unsignedinteger("uint", "ui", bytes=1, is_weak=False)
 uint8_ = unsignedinteger("uint", "ui", bytes=1, is_weak=True)
+uint64 = unsignedinteger("uint", "ui", bytes=8, is_weak=False)
+uint64_ = unsignedinteger("uint", "ui", bytes=8, is_weak=True)
 
 
 class bool_(exact):
@@ -215,6 +217,8 @@ all_dtypes = {
     bool8_,
     uint8,
     uint8_,
+    uint64,
+    uint64_,
     int8,
     int8_,
     int16,
@@ -407,6 +411,7 @@ def corresponding_complex_dtype(dtype):
 _strong_dtype_to_weak_dtype_map = {
     bool8: bool8_,
     uint8: uint8_,
+    uint64: uint64_,
     int8: int8_,
     int16: int16_,
     int32: int32_,
@@ -553,6 +558,8 @@ _thunder_to_torch_dtype_map = {
     bool8: torch.bool,
     uint8_: torch.uint8,
     uint8: torch.uint8,
+    uint64_: torch.uint64,
+    uint64: torch.uint64,
     int8_: torch.int8,
     int8: torch.int8,
     int16_: torch.int16,
@@ -612,6 +619,8 @@ _thunder_to_numpy_dtype_map = {
     bool8: np.bool_,
     uint8_: np.uint8,
     uint8: np.uint8,
+    uint64_: np.uint64,
+    uint64: np.uint64,
     int8_: np.int8,
     int8: np.int8,
     int16_: np.int16,

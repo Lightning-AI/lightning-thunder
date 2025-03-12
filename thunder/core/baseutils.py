@@ -360,6 +360,7 @@ def indent(level):
 _torch_dtype_to_str_map = {
     torch.bool: "torch.bool",
     torch.uint8: "torch.uint8",
+    torch.uint64: "torch.uint64",
     torch.int8: "torch.int8",
     torch.int16: "torch.int16",
     torch.int32: "torch.int32",

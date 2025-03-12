@@ -80,6 +80,7 @@ _lcdtype_to_nvdtype_map: dict[None | type | dtypes.dtype, DataType] = {
     dtypes.float16: DataType.Half,
     dtypes.bfloat16: DataType.BFloat16,
     dtypes.int64: DataType.Int,
+    dtypes.uint64: DataType.UInt64,
     dtypes.int32: DataType.Int32,
     dtypes.bool8: DataType.Bool,
     dtypes.complex128_: DataType.ComplexDouble,
@@ -90,6 +91,7 @@ _lcdtype_to_nvdtype_map: dict[None | type | dtypes.dtype, DataType] = {
     dtypes.bfloat16_: DataType.BFloat16,
     dtypes.int64_: DataType.Int,
     dtypes.int32_: DataType.Int32,
+    dtypes.uint64_: DataType.UInt64,
     dtypes.bool8_: DataType.Bool,
     # Number types
     complex: DataType.ComplexDouble,
@@ -2434,8 +2436,7 @@ def _scaled_dot_product_flash_attention_forward_meta(
         log_sumexp := TensorProxy(
             shape=(batch_size, num_heads, query_seq_len), dtype=dtypes.float32, device=query.device, requires_grad=False
         ),
-        philox_seed := TensorProxy(shape=(), dtype=dtypes.int64, device=cpu, requires_grad=False),
-        philox_offset := TensorProxy(shape=(), dtype=dtypes.int64, device=cpu, requires_grad=False),
+        rng_state := TensorProxy(shape=(2,), dtype=dtypes.uint64, device=query.device, requires_grad=False),
     )
 
 
@@ -2480,8 +2481,7 @@ def _scaled_dot_product_flash_attention_backward_meta(
     logsumexp: TensorLike,
     dropout_p: float,
     is_causal: bool,
-    philox_seed: TensorLike,
-    philox_offset: TensorLike,
+    rng_state: TensorLike,
     *,
     scale: None | float = None,
 ) -> tuple[TensorProxy, TensorProxy, TensorProxy]:
@@ -2506,15 +2506,14 @@ def _scaled_dot_product_flash_attention_backward(
     logsumexp: TensorProxy,
     dropout_p: float,
     is_causal: bool,
-    philox_seed: TensorProxy,
-    philox_offset: TensorProxy,
+    rng_state: TensorProxy,
     *,
     scale: None | float = None,
     fd: FusionDefinition,
     lc_to_nv_map: dict,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
 
-    inputs = [grad_out, query, key, value, out, logsumexp, dropout_p, is_causal, philox_seed, philox_offset, scale]
+    inputs = [grad_out, query, key, value, out, logsumexp, dropout_p, is_causal, rng_state, scale]
     nv_inputs = []
     for inp in inputs:
         nv_inp = getnv(inp, fd, lc_to_nv_map) if inp is not None else None
@@ -2582,7 +2581,7 @@ def scaled_dot_product_flash_attention(
     *,
     scale: None | float = None,
 ):
-    (attn_output, logsumexp, philox_seed, philox_offset) = nv_sdpfa_fwd(
+    (attn_output, logsumexp, rng_state) = nv_sdpfa_fwd(
         query, key, value, dropout_p, is_causal, scale=scale
     )
     return attn_output
@@ -2600,7 +2599,7 @@ def scaled_dot_product_flash_attention_grad(
     scale: None | float = None,
 ):
 
-    (attn_output, logsumexp, philox_seed, philox_offset) = nv_sdpfa_fwd(
+    (attn_output, logsumexp, rng_state) = nv_sdpfa_fwd(
         query, key, value, dropout_p, is_causal, scale=scale
     )
     grad_out = get_grad(attn_output)
@@ -2613,8 +2612,7 @@ def scaled_dot_product_flash_attention_grad(
         logsumexp,
         dropout_p,
         is_causal,
-        philox_seed,
-        philox_offset,
+        rng_state,
         scale=scale,
     )
     put_grads((query, key, value), (grad_query, grad_key, grad_val))

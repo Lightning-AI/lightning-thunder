@@ -263,6 +263,7 @@ def check_same_dtype(*args):
 
 b8_, b8 = dtypes.bool8_, dtypes.bool8
 u8_, u8 = dtypes.uint8_, dtypes.uint8
+u64_, u64 = dtypes.uint64_, dtypes.uint64
 i8_, i8 = dtypes.int8_, dtypes.int8
 i16_, i16 = dtypes.int16_, dtypes.int16
 i32_, i32 = dtypes.int32_, dtypes.int32
