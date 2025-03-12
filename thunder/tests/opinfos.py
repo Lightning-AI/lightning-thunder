@@ -1811,6 +1811,17 @@ softshrink_opinfo = OpInfo(
 elementwise_unary_ops.append(softshrink_opinfo)
 
 
+softsign_opinfo = OpInfo(
+    ltorch.softsign,
+    dtypes=(datatypes.inexact,),
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=_elementwise_unary_torch(torch.nn.functional.softsign),
+    singularity_fn=lambda x: x,
+    test_directives=(),
+)
+elementwise_unary_ops.append(softsign_opinfo)
+
+
 hardswish_opinfo = OpInfo(
     ltorch.hardswish,
     sample_input_generator=elementwise_unary_generator,

@@ -1966,6 +1966,11 @@ def softshrink(a: TensorProxy, /, lambd: float = 0.5) -> TensorLike:
     return where(abs(a) > lambd, a - sign(a) * lambd, a * 0)
 
 
+@torchsymbol(torch.nn.functional.softsign, is_method=False)
+def softsign(a: TensorProxy, /) -> TensorLike:
+    return a / (abs(a) + 1)
+
+
 @torchsymbol(torch.nn.functional.tanhshrink)
 def tanhshrink(a: TensorLike, /) -> TensorLike:
     return a - tanh(a)

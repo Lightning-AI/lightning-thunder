@@ -379,7 +379,6 @@ torch_auto_registered_ops = {
         torch.nn.functional.rrelu,
         torch.nn.functional.smooth_l1_loss,
         torch.nn.functional.soft_margin_loss,
-        torch.nn.functional.softsign,
         torch.nn.functional.triplet_margin_loss,
         torch.nn.functional.triplet_margin_with_distance_loss,
         torch.nn.functional.unfold,
