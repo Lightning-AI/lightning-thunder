@@ -453,7 +453,10 @@ class FusionDefinitionWrapper:
 
         with annotate_for_profile(self.name):
             return fd.execute(
-                args, device=fd._selected_device, _enable_options=self.enable_options, _disable_options=self.disable_options,
+                args,
+                device=fd._selected_device,
+                _enable_options=self.enable_options,
+                _disable_options=self.disable_options,
             )
 
     def __repr__(self):
