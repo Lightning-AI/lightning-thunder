@@ -95,8 +95,6 @@ class CUDAGraphRunner:
             self.get_static_buffer(arg) if not is_static else None for arg, is_static in zip(args, static_args_mask)
         )
 
-        static_inputs = [si if si is not None else arg for si, arg in zip(static_inputs_cache, args)]
-
         torch.cuda.synchronize()
         if self.stream:
             # In the case of multiple devices and shared memory pooling, we want to use one stream/pool per device
@@ -114,10 +112,11 @@ class CUDAGraphRunner:
             stream = torch.cuda.Stream()
             pool = self.mem_pool
         stream.wait_stream(torch.cuda.current_stream())
-
+        
         # Warmup
         with torch.cuda.stream(stream):
             for _ in range(3):
+                static_inputs = [si if si is not None else arg for si, arg in zip(static_inputs_cache, args)]
                 fn(static_inputs)
 
         stream.synchronize()
@@ -129,6 +128,7 @@ class CUDAGraphRunner:
         # This may have unintended consequences if graph capture and replay occur in different orders
         # so disabled by default.
         graph = torch.cuda.CUDAGraph()
+        static_inputs = [si if si is not None else arg for si, arg in zip(static_inputs_cache, args)]
         with torch.cuda.graph(graph, stream=stream, pool=pool):
             static_outputs = fn(static_inputs)
 
@@ -157,8 +157,7 @@ class CUDAGraphRunner:
 
         cache_entry = self.cuda_graph_cache.get(cache_key)
         if cache_entry is None:
-            static_inputs_mask = self.make_static_inputs_mask(fn_name, *args_unpacked)
-            cache_entry = self.build_cuda_graph(fn, args_unpacked, static_inputs_mask)
+            cache_entry = self.build_cuda_graph(fn, args_unpacked, cache_key[1])
             self.cuda_graph_cache[cache_key] = cache_entry
 
         graph, static_inputs, static_outputs = cache_entry
@@ -214,7 +213,7 @@ class CUDAGraphRunner:
             static_inputs_mask = tuple(static_inputs_mask)  # ensure hashability
         else:
             static_inputs_mask = tuple(
-                isinstance(i, Proxy) and ProxyTag.STATIC_MEMORY_LOCATION in i.tags for i in inputs
+                isinstance(i, Proxy) and ProxyTag.STATIC_MEMORY_LOCATION in i.tags for i in inputs[0]
             )
 
         fn_name = f"CUDAGraph{self.name_counter}"
@@ -379,8 +378,6 @@ class CUDAGraphTransform(Transform):
         elapsed_time_ns = end_time_ns - start_time_ns
         elapsed_time_ms = elapsed_time_ns // 1000000
         fused_trace.set_provenance(TraceProvenance(f"CUDAGraph fusion (took {elapsed_time_ms} milliseconds)"))
-
-        print(fused_trace)
 
         return fused_trace
 
