@@ -7,7 +7,7 @@ import torch
 
 from thunder.core.transform_common import Transform
 from thunder.core import utils, prims, vjp_utils
-from thunder.core.proxies import Proxy, ProxyTag, unvariableify
+from thunder.core.proxies import Proxy, ProxyTag, unvariableify, ListProxy
 from thunder.core.symbol import BoundSymbol, Symbol
 from thunder.core.trace import (
     TraceCtx,
@@ -242,12 +242,17 @@ class CUDAGraphTransform(Transform):
         self.outputs_from_forward = None
 
     def fuse(self, region: Region, fusion_counter: int) -> BoundSymbol:
-        inputs = [unvariableify(inp) for inp in region.inputs]
+        if isinstance(region.inputs, ListProxy):
+            inputs = [unvariableify(region.inputs)]
+        else:
+            inputs = [unvariableify(inp) for inp in region.inputs]
+
         outputs = [unvariableify(out) for out in region.outputs]
 
         from thunder.executors.passes import _del_last_used
 
-        region.bound_symbols = _del_last_used(region.bound_symbols, outputs)
+        region.bound_symbols = _del_last_used(region.bound_symbols, outputs, clear_mutable_collections=True)
+
 
         fusion_callable, fusion_name = self.cuda_graph_runner.make_cuda_graph_callable_from_symbols(
             region.bound_symbols,
@@ -327,6 +332,20 @@ class CUDAGraphTransform(Transform):
 
         producers, consumers = utils.producers_and_consumers(trace)
 
+        def _pack_and_unpack_fusion_inputs(region: Region):
+            """
+            Pack region inputs into a list and unpack the list inside the region.
+            This is needed to avoid hangig onto references when traversing stack frames.
+            """
+            all_inputs_list = [unvariableify(inp) for inp in region.inputs]
+            all_inputs_list_proxy = ListProxy(all_inputs_list)
+            pack_bsym = prims.pack_list.bind(*all_inputs_list_proxy, output=all_inputs_list_proxy)
+            region.inputs = pack_bsym.output
+            unpack_bsym = prims.unpack_list.bind(pack_bsym.output, output=all_inputs_list)
+            region.bound_symbols.insert(0, unpack_bsym)
+
+            return region, pack_bsym
+
         fusion_counter: int = 0
         fused_bsyms = []
         for bsyms in bound_symbols_groups:
@@ -339,6 +358,8 @@ class CUDAGraphTransform(Transform):
                 fused_bsyms.extend(bsyms)
             else:
                 region = Region(producers, consumers, bsyms)
+                region, pack_bsym = _pack_and_unpack_fusion_inputs(region)
+                fused_bsyms.append(pack_bsym)
                 fusion_bsym: BoundSymbol = self.fuse(region, fusion_counter)
                 fusion_counter += 1
                 fused_bsyms.append(fusion_bsym)
@@ -351,6 +372,8 @@ class CUDAGraphTransform(Transform):
         elapsed_time_ns = end_time_ns - start_time_ns
         elapsed_time_ms = elapsed_time_ns // 1000000
         fused_trace.set_provenance(TraceProvenance(f"CUDAGraph fusion (took {elapsed_time_ms} milliseconds)"))
+
+        print(fused_trace)
 
         return fused_trace
 
