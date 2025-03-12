@@ -142,7 +142,8 @@ class BoundSymbolNvfuserSpecification(CompileSpecificationInterface):
     # Returns the nvFuser callable from the nvFuser bound symbol.
     # See the TODO in :class:`thunder.dynamo.report.ThunderFusionReport` for more details.
     def compile(self, nvfusion_bsym):
-        return nvfusion_bsym._call_ctx[nvfusion_bsym.sym.name]
+        fd = nvfusion_bsym._call_ctx[nvfusion_bsym.sym.name].last_used
+        return lambda *args: fd.execute(args)
 
 
 class BoundSymbolTorchCompileSpecification(CompileSpecificationInterface):
