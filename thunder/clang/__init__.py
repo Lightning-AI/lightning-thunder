@@ -2156,9 +2156,7 @@ def topk(
 
 
 @clangop()
-def atleast_1d(
-    arg: Union[TensorLike, Sequence[TensorLike]], *args: TensorLike
-) -> Union[TensorLike, tuple[TensorLike, ...]]:
+def atleast_1d(arg: TensorLike | Sequence[TensorLike], *args: TensorLike) -> TensorLike | tuple[TensorLike, ...]:
     if not args and isinstance(arg, Sequence):
         args_ = arg
     else:
@@ -2168,17 +2166,13 @@ def atleast_1d(
     return res if len(res) > 1 else res[0]
 
 
-def _unsqueeze_atleast(
-    at_least_fn: Callable, dim: int, arg: TensorLike
-) -> TensorLike:
+def _unsqueeze_atleast(at_least_fn: Callable, dim: int, arg: TensorLike) -> TensorLike:
     arg_ = at_least_fn(arg)
     return unsqueeze(arg_, dim)
 
 
 @clangop()
-def atleast_2d(
-    arg: Union[TensorLike, Sequence[TensorLike]], *args: TensorLike
-) -> Union[TensorLike, tuple[TensorLike, ...]]:
+def atleast_2d(arg: TensorLike | Sequence[TensorLike], *args: TensorLike) -> TensorLike | tuple[TensorLike, ...]:
     if not args and isinstance(arg, Sequence):
         args_ = arg
     else:
@@ -2190,9 +2184,7 @@ def atleast_2d(
 
 
 @clangop()
-def atleast_3d(
-    arg: Union[TensorLike, Sequence[TensorLike]], *args: TensorLike
-) -> Union[TensorLike, tuple[TensorLike, ...]]:
+def atleast_3d(arg: TensorLike | Sequence[TensorLike], *args: TensorLike) -> TensorLike | tuple[TensorLike, ...]:
     if not args and isinstance(arg, Sequence):
         args_ = arg
     else:

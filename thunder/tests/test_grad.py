@@ -1380,7 +1380,9 @@ def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp):
     )
     reference_result = torch_op(*reference_args, **reference_kwargs)
     reference_result = filter_differentiable_outputs(reference_result)
-    reference_grad_result = torch.autograd.grad(reference_result, reference_tensors_requiring_grad, grads, allow_unused=True)
+    reference_grad_result = torch.autograd.grad(
+        reference_result, reference_tensors_requiring_grad, grads, allow_unused=True
+    )
 
     # Computes thunder result
     grad_op = grad(op)
@@ -1389,7 +1391,10 @@ def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp):
     if not is_self_returning(x, args):
         if not (any(g is None for g in reference_grad_result) or any(g is None for g in torch_grad_result)):
             assert_closer(
-                reference=reference_grad_result, candidate=thunder_flat_grads, competitor=torch_grad_result, comparator=comp
+                reference=reference_grad_result,
+                candidate=thunder_flat_grads,
+                competitor=torch_grad_result,
+                comparator=comp,
             )
 
 
