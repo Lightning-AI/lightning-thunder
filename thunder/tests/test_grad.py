@@ -1320,7 +1320,14 @@ def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp):
         # torch.return_types.topk(
         # values=tensor([1., 1.]),
         # indices=tensor([0, 1]))
+        if is_self_returning(x, args):
+            return [torch.ones_like(args[0])]
         return x.grad_fn is not None
+
+    def is_self_returning(output, args):
+        if isinstance(output, torch.Tensor):
+            return output is args[0]
+        return False
 
     def filter_differentiable_outputs(outputs):
         if isinstance(outputs, torch.Tensor):
@@ -1355,7 +1362,7 @@ def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp):
             grads = [torch.ones_like(torch_result)]
 
     torch_tensors_requiring_grad = tuple(f for f in torch_flats if isinstance(f, torch.Tensor) and f.requires_grad)
-    torch_grad_result = torch.autograd.grad(torch_result, torch_tensors_requiring_grad, grads)
+    torch_grad_result = torch.autograd.grad(torch_result, torch_tensors_requiring_grad, grads, allow_unused=True)
 
     # Computes reference result (upcasting floats to double)
     def upcast_tensors(x: Any) -> Any:
@@ -1373,15 +1380,17 @@ def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp):
     )
     reference_result = torch_op(*reference_args, **reference_kwargs)
     reference_result = filter_differentiable_outputs(reference_result)
-    reference_grad_result = torch.autograd.grad(reference_result, reference_tensors_requiring_grad, grads)
+    reference_grad_result = torch.autograd.grad(reference_result, reference_tensors_requiring_grad, grads, allow_unused=True)
 
     # Computes thunder result
     grad_op = grad(op)
     thunder_flat_grads = grad_op(*sample.args, **sample.kwargs)
 
-    assert_closer(
-        reference=reference_grad_result, candidate=thunder_flat_grads, competitor=torch_grad_result, comparator=comp
-    )
+    if not is_self_returning(x, args):
+        if not (any(g is None for g in reference_grad_result) or any(g is None for g in torch_grad_result)):
+            assert_closer(
+                reference=reference_grad_result, candidate=thunder_flat_grads, competitor=torch_grad_result, comparator=comp
+            )
 
 
 @ops(

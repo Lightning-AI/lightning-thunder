@@ -2156,6 +2156,54 @@ def topk(
 
 
 @clangop()
+def atleast_1d(
+    arg: Union[TensorLike, Sequence[TensorLike]], *args: TensorLike
+) -> Union[TensorLike, tuple[TensorLike, ...]]:
+    if not args and isinstance(arg, Sequence):
+        args_ = arg
+    else:
+        assert not isinstance(arg, Sequence)
+        args_ = (arg,) + args
+    res = tuple(a if a.ndim >= 1 else unsqueeze(a, 0) for a in args_)
+    return res if len(res) > 1 else res[0]
+
+
+def _unsqueeze_atleast(
+    at_least_fn: Callable, dim: int, arg: TensorLike
+) -> TensorLike:
+    arg_ = at_least_fn(arg)
+    return unsqueeze(arg_, dim)
+
+
+@clangop()
+def atleast_2d(
+    arg: Union[TensorLike, Sequence[TensorLike]], *args: TensorLike
+) -> Union[TensorLike, tuple[TensorLike, ...]]:
+    if not args and isinstance(arg, Sequence):
+        args_ = arg
+    else:
+        assert not isinstance(arg, Sequence)
+        args_ = (arg,) + args
+    unsqueeze_atleast_1d = partial(_unsqueeze_atleast, atleast_1d, 0)
+    res = tuple(a if a.ndim >= 2 else unsqueeze_atleast_1d(a) for a in args_)
+    return res if len(res) > 1 else res[0]
+
+
+@clangop()
+def atleast_3d(
+    arg: Union[TensorLike, Sequence[TensorLike]], *args: TensorLike
+) -> Union[TensorLike, tuple[TensorLike, ...]]:
+    if not args and isinstance(arg, Sequence):
+        args_ = arg
+    else:
+        assert not isinstance(arg, Sequence)
+        args_ = (arg,) + args
+    unsqueeze_atleast_2d = partial(_unsqueeze_atleast, atleast_2d, -1)
+    res = tuple(a if a.ndim >= 3 else unsqueeze_atleast_2d(a) for a in args_)
+    return res if len(res) > 1 else res[0]
+
+
+@clangop()
 def sort(
     a: TensorLike, /, dim: None | int = None, descending: bool = False, stable: bool = False, *, out=None
 ) -> (TensorProxy, TensorProxy):

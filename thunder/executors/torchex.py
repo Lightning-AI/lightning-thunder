@@ -1166,6 +1166,9 @@ var_mean = _register_torch_operation("var_mean")
 argmax = _register_torch_operation("argmax")
 argmin = _register_torch_operation("argmin")
 topk = _register_torch_operation("topk")
+atleast_1d = _register_torch_operation("atleast_1d")
+atleast_2d = _register_torch_operation("atleast_2d")
+atleast_3d = _register_torch_operation("atleast_3d")
 
 
 #
@@ -1250,6 +1253,9 @@ _register_implementation(ltorch.var_mean, var_mean, checker=_always_executable)
 _register_implementation(ltorch.argmax, argmax, checker=_always_executable)
 _register_implementation(ltorch.argmin, argmin, checker=_always_executable)
 _register_implementation(ltorch.topk, topk, checker=_always_executable, execution_transform=_topk_transform)
+_register_implementation(ltorch.atleast_1d, atleast_1d, checker=_always_executable)
+_register_implementation(ltorch.atleast_2d, atleast_2d, checker=_always_executable)
+_register_implementation(ltorch.atleast_3d, atleast_3d, checker=_always_executable)
 
 
 #

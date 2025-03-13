@@ -2951,6 +2951,27 @@ def topk(
     return clang.topk(a, k, dim, largest, sorted, out=out)
 
 
+@torchsymbol(torch.atleast_1d, is_method=True)
+def atleast_1d(
+    arg: Union[TensorLike, Sequence[TensorLike]], *args: TensorLike
+) -> Union[TensorLike, tuple[TensorLike, ...]]:
+    return clang.atleast_1d(arg, *args)
+
+
+@torchsymbol(torch.atleast_2d, is_method=True)
+def atleast_2d(
+    arg: Union[TensorLike, Sequence[TensorLike]], *args: TensorLike
+) -> Union[TensorLike, tuple[TensorLike, ...]]:
+    return clang.atleast_2d(arg, *args)
+
+
+@torchsymbol(torch.atleast_3d, is_method=True)
+def atleast_3d(
+    arg: Union[TensorLike, Sequence[TensorLike]], *args: TensorLike
+) -> Union[TensorLike, tuple[TensorLike, ...]]:
+    return clang.atleast_3d(arg, *args)
+
+
 @torchsymbol(torch.sort, is_method=True)
 def sort(
     a: TensorLike, /, dim: None | int = None, descending: bool = False, stable: bool = False, *, out=None
