@@ -1929,6 +1929,26 @@ def test_adhoc_executor_grad(executor, device, _):
     torch.testing.assert_close(actual_gr, expected_gr)
 
 
+def test_unused_first_output():
+    def forward(x):
+        _, x_2 = torch.split(x, 2)
+        return x_2
+
+    jforward = thunder.jit(forward)
+
+    x = make_tensor([4, 2], dtype=torch.bfloat16, device="cpu", requires_grad=True)
+
+    actual = jforward(x)
+    expected = forward(x)
+    torch.testing.assert_close(actual, expected)
+
+    grad_o = torch.randn_like(actual)
+
+    actual_grad = torch.autograd.grad(actual, x, grad_o)
+    expected_grad = torch.autograd.grad(expected, x, grad_o)
+    torch.testing.assert_close(actual_grad, expected_grad)
+
+
 @pytest.mark.parametrize("device", ("cuda", "cpu"))
 def test_backward_recomputation_decomposed_ops(device):
     if device == "cuda" and not torch.cuda.is_available():
