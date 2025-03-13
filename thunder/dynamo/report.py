@@ -569,7 +569,7 @@ class FXGraphReport:
         if not forward_only:
             code_str = f"""{code_str}
     # backward
-    from thunder.benchmarks.targets import backward_only
+    from thunder.benchmarks.utils import backward_only
     backward_fn, backward_setup = backward_only({COMPILED_CALLABLE_NAME}, *{INPUTS_NAME})
     backward_args = backward_setup()
     bwd_measurement = {bwd_timing_str}
