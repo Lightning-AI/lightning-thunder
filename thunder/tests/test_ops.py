@@ -324,3 +324,15 @@ def test_exponential():
 
         assert_close(a, a_ref)
         assert_close(b, b_ref)
+
+
+# https://github.com/Lightning-AI/lightning-thunder/issues/1857
+def test_max_with_int():
+    def f(x, ids):
+        x + x
+        return ids[0].max()
+
+    x = torch.rand([2, 2], requires_grad=True)
+    ids = torch.randint(0, 10, size=(1, 512))
+
+    thunder.jit(f)(x, ids)
