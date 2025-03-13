@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import textwrap
 import copy
 from itertools import chain
-
+from looseversion import LooseVersion
 
 import torch
 from thunder.core.pytree import tree_flatten
@@ -24,6 +24,7 @@ from thunder.dynamo.utils import (
     CompilerType,
     example_input_meta_to_input,
     recompile_graph,
+    has_higher_order_operator,
 )
 
 from thunder.dynamo.repro_script_template import (
@@ -197,6 +198,14 @@ class FXGraphReport:
     """
 
     def __init__(self, graph: torch.fx.GraphModule, graph_name: str, example_input_meta: list[ExampleInputMetaData]):
+        if LooseVersion(torch.__version__) < LooseVersion("2.6.0"):
+            # NOTE: PyTorch 2.6 changes the structure of GraphModule for higher order ops.
+            # In newer torch version the higher order ops are nested as submodules within the module that uses them,
+            # but in the older version they were separate sibling modules.
+            if has_higher_order_operator(graph):
+                raise RuntimeError(
+                    "The Reporting Tool for Torch higher-order operators is supported only in PyTorch version 2.6 or later."
+                )
         self.graph = graph
         self.graph_name = graph_name
         self.example_input_meta = example_input_meta

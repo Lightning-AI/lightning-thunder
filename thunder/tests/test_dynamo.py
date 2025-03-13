@@ -1463,21 +1463,28 @@ def test_autograd_function_fx_report(tmp_path):
         return torch.cos(x) + Sin.apply(x)
 
     x = torch.ones(2, 2, device="cuda", requires_grad=True)
-    results = fx_report(func, x)
 
-    assert len(results.fx_graph_reports) == 1  # 1 Dynamo graph
-    fx_graph_report = results.fx_graph_reports[0]
-    thunder_fx_graph_report = analyze_thunder_splits(fx_graph_report)
-    assert len(thunder_fx_graph_report.subgraph_reports) == 1  # no split
-    thunder_split_report = thunder_fx_graph_report.subgraph_reports[0]
+    if LooseVersion(torch.__version__) < LooseVersion("2.6.0"):
+        with pytest.raises(
+            RuntimeError,
+            match="The Reporting Tool for Torch higher-order operators is supported only in PyTorch version 2.6 or later.",
+        ):
+            results = fx_report(func, x)
+    else:
+        results = fx_report(func, x)
+        assert len(results.fx_graph_reports) == 1  # 1 Dynamo graph
+        fx_graph_report = results.fx_graph_reports[0]
+        thunder_fx_graph_report = analyze_thunder_splits(fx_graph_report)
+        assert len(thunder_fx_graph_report.subgraph_reports) == 1  # no split
+        thunder_split_report = thunder_fx_graph_report.subgraph_reports[0]
 
-    thunder_split_report.run_repro(ThunderCompileSpecification())
-    thunder_split_report.run_benchmark(ThunderCompileSpecification(), WallTime)
-    thunder_split_report.write_benchmark(tmp_path, ThunderCompileSpecification(), WallTime)
-    thunder_split_report.write_repro(tmp_path, ThunderCompileSpecification(), file_name="repro.py")
+        thunder_split_report.run_repro(ThunderCompileSpecification())
+        thunder_split_report.run_benchmark(ThunderCompileSpecification(), WallTime)
+        thunder_split_report.write_benchmark(tmp_path, ThunderCompileSpecification(), WallTime)
+        thunder_split_report.write_repro(tmp_path, ThunderCompileSpecification(), file_name="repro.py")
 
-    cmd = [sys.executable]
-    py_files = list(tmp_path.rglob("*.py"))
-    assert len(py_files) == 2
-    for file in py_files:
-        run_script(file, cmd)
+        cmd = [sys.executable]
+        py_files = list(tmp_path.rglob("*.py"))
+        assert len(py_files) == 2
+        for file in py_files:
+            run_script(file, cmd)

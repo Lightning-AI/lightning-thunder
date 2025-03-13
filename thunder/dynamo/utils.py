@@ -780,3 +780,10 @@ def get_thunder_module_names(subgraph_info: SubgraphInfo) -> list[str]:
         if isinstance(target, str) and target.startswith("thunder_"):
             thunder_module_names.append(target)
     return thunder_module_names
+
+
+def has_higher_order_operator(gm: torch.fx.GraphModule):
+    for n in gm.graph.nodes:
+        if isinstance(n.target, torch._ops.HigherOrderOperator):
+            return True
+    return False
