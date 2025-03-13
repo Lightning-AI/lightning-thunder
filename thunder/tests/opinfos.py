@@ -1707,6 +1707,16 @@ logsigmoid_opinfo = OpInfo(
 elementwise_unary_ops.append(logsigmoid_opinfo)
 
 
+mish_opinfo = OpInfo(
+    ltorch.mish,
+    dtypes=(datatypes.floating,),
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=torch.nn.functional.mish,
+    test_directives=(),
+)
+elementwise_unary_ops.append(mish_opinfo)
+
+
 relu_opinfo = OpInfo(
     ltorch.relu,
     sample_input_generator=elementwise_unary_generator,
