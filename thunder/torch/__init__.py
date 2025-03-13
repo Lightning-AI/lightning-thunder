@@ -227,6 +227,7 @@ def register_function(torchfn, thunderfn_impl):
 
 def _copy_(a, b, /):
     cd = get_compile_data()
+    b = clang.maybe_convert_to_dtype(b, a.dtype)
     return prims.copy_(b, a, grad_enabled=cd.is_grad_enabled if cd is not None else False)
 
 
@@ -1935,6 +1936,21 @@ def silu(a: TensorLike, /, inplace: bool = False) -> TensorLike:
 _inplace_to_out_of_place[silu] = silu, 1
 
 
+@torchsymbol(torch.nn.functional.softplus, is_method=False)
+def softplus(a: TensorProxy, /, beta: float = 1.0, threshold: float = 20.0) -> TensorLike:
+    utils.check(
+        dtypes.is_numbertype(to_dtype(beta)),
+        lambda: f"beta must be a number type, but found to be {to_dtype(beta)}",
+    )
+    utils.check(
+        dtypes.is_numbertype(to_dtype(threshold)),
+        lambda: f"threshold must be a number type, but found to be {to_dtype(threshold)}",
+    )
+    scaled_input = a * beta
+    rhs = log1p(exp(scaled_input)) / beta
+    return where(scaled_input > threshold, a, rhs)
+
+
 @torchsymbol(torch.nn.functional.softshrink, is_method=False)
 def softshrink(a: TensorProxy, /, lambd: float = 0.5) -> TensorLike:
     utils.check(
@@ -1948,6 +1964,11 @@ def softshrink(a: TensorProxy, /, lambd: float = 0.5) -> TensorLike:
     # If a is NaN, then sign(a) is NaN. To propagate NaNs,
     # `a * 0` is used instead of `0`.
     return where(abs(a) > lambd, a - sign(a) * lambd, a * 0)
+
+
+@torchsymbol(torch.nn.functional.softsign, is_method=False)
+def softsign(a: TensorProxy, /) -> TensorLike:
+    return a / (abs(a) + 1)
 
 
 @torchsymbol(torch.nn.functional.tanhshrink)
@@ -3805,13 +3826,22 @@ def rms_norm(
     weight: None | TensorLike = None,
     eps: None | float = None,
 ):
+    input_dtype = a.dtype
+
+    if a.dtype in (thunder.float16, thunder.bfloat16):
+        a = clang.maybe_convert_to_dtype(a, thunder.float32, enforce_safe_casting=True)
+
     if eps is None:
         eps = torch.finfo(to_torch_dtype(a.dtype)).eps
+
     reduction_dims = _check_normalized_shape_and_get_reduction_dims(a, normalized_shape, weight)
-    norm_a = mean(a * a, dim=reduction_dims, keepdim=True)
+    norm_a = mean(a * a, dim=reduction_dims, keepdim=True, dtype=None)
     a_normed = a * rsqrt(norm_a + eps)
+
     if weight is not None:
         a_normed = a_normed * weight
+
+    a_normed = clang.maybe_convert_to_dtype(a_normed, input_dtype, enforce_safe_casting=True)
     return a_normed
 
 
