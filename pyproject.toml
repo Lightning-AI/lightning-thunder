@@ -3,11 +3,51 @@ license_file = "LICENSE"
 description-file = "README.md"
 
 [build-system]
-requires = [
-    "setuptools",
-    "wheel",
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lightning-thunder"
+description = "Lightning Thunder project."
+dynamic = ["version", "readme", "dependencies", "optional-dependencies"]
+requires-python = ">=3.10, <3.13"
+license = {text = "Apache 2.0"}
+authors = [
+    {name = "Lightning-AI et al", email = "community@lightning.ai"}
+]
+keywords = ["deep learning", "AI"]
+classifiers = [
+    "Environment :: Console",
+    "Natural Language :: English",
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
 ]
 
+[project.urls]
+"Homepage" = "https://github.com/Lightning-AI/lightning-thunder"
+"Bug Tracker" = "https://github.com/Lightning-AI/lightning-thunder/issues"
+"Documentation" = "https://lightning-thunder.rtfd.io/en/latest/"
+"Source Code" = "https://github.com/Lightning-AI/lightning-thunder"
+
+[tool.setuptools.packages.find]
+exclude = ["thunder.tests", "docs"]
+namespaces = false
+
+[tool.setuptools.dynamic]
+version = {attr = "thunder.__about__.__version__"}
+readme = {file = "README.md", content-type = "text/markdown"}
+dependencies = {file = "requirements/base.txt"}
+
+[tool.setuptools.dynamic.optional-dependencies]
+# This will be populated by setup.py
 
 [tool.check-manifest]
 ignore = [
