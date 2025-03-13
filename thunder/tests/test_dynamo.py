@@ -1447,6 +1447,7 @@ def test_save_failing_repros(tmp_path):
     assert os.path.exists(tmp_path / "graph0_thunder_0.py")
 
 
+@requiresCUDA
 def test_autograd_function_fx_report(tmp_path):
     class Sin(torch.autograd.Function):
         @staticmethod
