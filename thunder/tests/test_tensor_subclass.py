@@ -266,7 +266,7 @@ def test_torchao_float8_linear(executor, device, dtype, bias):
 
     model = nn.Sequential(
         nn.Linear(in_features, out_features, bias=bias),
-        nn.GELU(approximate="tanh"),
+        nn.GELU(approximate="none"),
         nn.Linear(out_features, out_features, bias=bias),
     ).to(device=device, dtype=torch_dtype)
     fp8_model = convert_to_float8_training(model)
@@ -302,9 +302,15 @@ def test_torchao_float8_linear(executor, device, dtype, bias):
     else:
         with torch.no_grad():
             grad = torch.ones_like(actual)
-        if executor == nvFuserExecutor:
-            with pytest.raises(RuntimeError, match="`b` expected to be column-major but"):
-                actual.backward(grad)
+        if executor == nvFuserExecutor and (
+            not (not bias and (dtype == thunder.core.dtypes.float32 or dtype == thunder.core.dtypes.bfloat16))
+        ):
+            if bias and dtype == thunder.core.dtypes.float32:
+                with pytest.raises(RuntimeError, match="Expected mat1 to be Float8 matrix got Float"):
+                    actual.backward(grad)
+            else:
+                with pytest.raises(RuntimeError, match="`b` expected to be column-major but"):
+                    actual.backward(grad)
         else:
             actual.backward(grad)
 
