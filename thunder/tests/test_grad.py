@@ -1320,13 +1320,11 @@ def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp):
         # torch.return_types.topk(
         # values=tensor([1., 1.]),
         # indices=tensor([0, 1]))
-        if is_self_returning(x, args):
-            return [torch.ones_like(args[0])]
-        return x.grad_fn is not None
+        return x.grad_fn is not None or is_returning_self(x)
 
-    def is_self_returning(output, args):
-        if isinstance(output, torch.Tensor):
-            return output is args[0]
+    def is_returning_self(x):
+        if x.is_leaf and x.requires_grad:
+            return True
         return False
 
     def filter_differentiable_outputs(outputs):
@@ -1388,14 +1386,12 @@ def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp):
     grad_op = grad(op)
     thunder_flat_grads = grad_op(*sample.args, **sample.kwargs)
 
-    if not is_self_returning(x, args):
-        if not (any(g is None for g in reference_grad_result) or any(g is None for g in torch_grad_result)):
-            assert_closer(
-                reference=reference_grad_result,
-                candidate=thunder_flat_grads,
-                competitor=torch_grad_result,
-                comparator=comp,
-            )
+    assert_closer(
+        reference=reference_grad_result,
+        candidate=thunder_flat_grads,
+        competitor=torch_grad_result,
+        comparator=comp,
+    )
 
 
 @ops(
