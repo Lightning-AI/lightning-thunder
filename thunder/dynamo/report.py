@@ -10,6 +10,7 @@ import textwrap
 import copy
 from itertools import chain
 from looseversion import LooseVersion
+import black
 
 import torch
 from thunder.core.pytree import tree_flatten
@@ -65,6 +66,8 @@ if TYPE_CHECKING:
     from thunder.core.trace import TraceCtx
     from thunder.core.symbol import BoundSymbol
     from thunder.dynamo.benchmark_utils import CompileSpecificationInterface, TimerInterface
+
+format_mode = black.Mode(line_length=120)
 
 
 def run_forward_backward(fn, *args, **kwargs):
@@ -506,6 +509,7 @@ class FXGraphReport:
             code_str += textwrap.indent(check_str, "    ")
 
         code_str = f"{code_str}\n{main_code.format(graph_name=self.graph_name)}\n{comment_str}"
+        code_str = black.format_str(code_str, mode=format_mode)
 
         if file_name is None:
             file_name = f"{self.graph_name}.py"
@@ -595,8 +599,8 @@ class FXGraphReport:
         print(f"bwd_measurement.max_allocated_memory={{get_pretty_memory_str(bwd_measurement.max_allocated_memory)}}")
 """
 
-        # code_str += f"test_{self.graph_name}()"
         code_str = f"{code_str}\n{main_code.format(graph_name=self.graph_name)}\n{comment_str}"
+        code_str = black.format_str(code_str, mode=format_mode)
         if file_name is None:
             file_name = f"{self.graph_name}.py"
         with open(folder / file_name, "w") as f:
@@ -871,13 +875,14 @@ class ThunderFusionReport:
         timing_str = timing_str.replace("*inputs", "inputs")
         repro_code_str = repro_code_str.replace("fd.execute(inputs)\n", "")
         comment_str = f'"""\n{self.nvfusion_bsym}\n\n{extra_comment_str}"""'
-        code_str = f"""{comment_str}
-{timing_import_str}
+        code_str = f"""{timing_import_str}
 {repro_code_str}
 nvfuser_fn = fd.execute
 measurement = {timing_str}
 print(measurement)
+{comment_str}
 """
+        code_str = black.format_str(code_str, mode=format_mode)
         if file_name == None:
             file_name = f"{self.name}_benchmark_nvfuser.py"
         with open(folder / file_name, "w") as f:
@@ -888,11 +893,12 @@ print(measurement)
         folder.mkdir(exist_ok=True, parents=True)
         repro_code_str = self._get_nvfuser_code()
         comment_str = f'"""\n{self.nvfusion_bsym}\n"""'
+        repro_code_str = f"{repro_code_str}\n{comment_str}"
+        repro_code_str = black.format_str(repro_code_str, mode=format_mode)
 
         if file_name == None:
             file_name = f"{self.name}_repro_nvfuser.py"
         with open(folder / file_name, "w") as f:
-            print(comment_str, file=f)
             print(repro_code_str, file=f)
 
     def make_example_inputs(self):
@@ -901,10 +907,9 @@ print(measurement)
     def get_fake_inputs(self):
         return self.nvfusion_bsym._call_ctx[self.nvfusion_bsym.sym.name].last_used.fake_inputs
 
-    def _get_inductor_code(self, **kwargs):
+    def _get_inductor_code(self, extra_comment_str=""):
         python_func = create_python_callable_from_bsym(self.nvfusion_bsym)
         nvfusion_name = self.nvfusion_bsym.sym.name
-        extra_comment_str = kwargs.get("extra_comment_str") if "extra_comment_str" in kwargs else ""
 
         inputs = self.get_fake_inputs()
         inputs = "[" + "".join(arg_like(inp) for inp in inputs) + "]"
@@ -920,21 +925,23 @@ print(measurement)
         code_str = f"""{code_str}
 out = torch_compiled_callable(*inputs)
 """
+        code_str = black.format_str(code_str, mode=format_mode)
         if file_name == None:
             file_name = f"{self.name}_repro_inductor.py"
         with open(folder / file_name, "w") as f:
             f.write(code_str)
 
-    def write_inductor_benchmark(self, folder: PathLike, time_fn: TimerInterface, file_name=None, **kwargs):
+    def write_inductor_benchmark(self, folder: PathLike, time_fn: TimerInterface, file_name=None, extra_comment_str=""):
         folder = Path(folder)
         folder.mkdir(exist_ok=True, parents=True)
-        code_str = self._get_inductor_code(**kwargs)
+        code_str = self._get_inductor_code(extra_comment_str)
         timing_import_str = "\n".join(time_fn.import_str() or [])
         code_str = f"""{code_str}
 {timing_import_str}
 measurement = {time_fn.to_source("torch_compiled_callable", "inputs")}
 print(measurement)
 """
+        code_str = black.format_str(code_str, mode=format_mode)
         if file_name == None:
             file_name = f"{self.name}_benchmark_inductor.py"
         with open(folder / file_name, "w") as f:
