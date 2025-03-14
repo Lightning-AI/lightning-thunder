@@ -37,7 +37,7 @@ class ScaleTensor(torch.Tensor):
         ], {"b": self.b}
 
     @staticmethod
-    def __tensor_unflatten__(inner_tensors, meta, outer_size, outer_stride):
+    def __tensor_unflatten__(inner_tensors, meta, outer_size=None, outer_stride=None):
         a = inner_tensors["a"]
         b = meta["b"]
         return ScaleTensor(a, b, outer_size, outer_stride)
@@ -62,7 +62,8 @@ class ScaleTensor(torch.Tensor):
 
 # @torch.compile()
 def f(x, y):
-    return x * y
+    return x * y  #  * 2
+    # return torch.nn.functional.smooth_l1_loss(x, y)
 
 
 x1_inner = torch.ones(2, 4)
@@ -81,6 +82,7 @@ from numbers import Number
 from typing import TYPE_CHECKING, NamedTuple
 import time
 import warnings
+from functools import wraps
 
 import torch
 from torch.fx import Node
@@ -188,10 +190,13 @@ def get_fx_graph(trc, args_for_fx):
     def flatten_tensor(t):
         attrs, metadata = t.__tensor_flatten__()
         attrs = {name: getattr(t, name) for name in attrs}
-        result = attrs, metadata, t.shape, t.stride()
+        result = attrs, metadata  # , t.shape, t.stride()
         return result
 
+    out_spec = None
+
     def wrapped_fn(args_for_fx, args_to_flatten):
+        global out_spec
         new_args = ()
         for unflatten, arg in zip(args_to_flatten, args_for_fx):
             if unflatten:
@@ -200,32 +205,52 @@ def get_fx_graph(trc, args_for_fx):
                 new_args += (arg,)
 
         o = f(*new_args)
-        return flatten_tensor(o)
+        o = pytree.tree_map_only(ScaleTensor, flatten_tensor, o)
+        flat_o, spec = pytree.tree_flatten(o)
+        return flat_o  # flatten_tensor(o)
 
     flattened_args = tuple(flatten_tensor(arg) if isinstance(arg, ScaleTensor) else arg for arg in fake_t)
 
+    # print(fake_t)
     with (
         enable_python_dispatcher(),
         FunctionalTensorMode(pre_dispatch=False, export=False, _allow_token_discovery=True),
     ):
         g = make_fx(wrapped_fn, tracing_mode="fake")(flattened_args, args_to_flatten)
-        # g = make_fx(wrapped_fn, tracing_mode="fake")(*fake_t)
-        g.print_readable()
-        o = g(flattened_args, args_to_flatten)
-        out_t = ScaleTensor.__tensor_unflatten__(*o)
-        print(out_t)
-        # print(g._in_spec)
-        # print(g._out_spec)
+        # g = make_fx(f, tracing_mode="fake")(*fake_t)
+        # g.print_readable()
+        # o = g(flattened_args, args_to_flatten)
+        # print(pytree.tree_unflatten(o, out_spec))
+        # out_t = ScaleTensor.__tensor_unflatten__(*o)
+        # print(out_t)
+        from thunder.dynamo.utils import _checkpoint_function_converter
+        import thunder
 
-    # print(g(flattened_args, args_to_flatten))
-    # import thunder
-    # tg = thunder.jit(g)
-    # tg(flattened_args, args_to_flatten)
-    # print(thunder.last_traces(tg)[0])
-    # del g.meta
-    # from thunder import trace
-    # print(args_for_fx)
-    # trace(inline_trace=False)(g, args_for_fx, args_to_flatten)
+        _checkpoint_function_converter(g)
+        g.print_readable()
+        g.recompile()
+        # jg = thunder.jit(g)
+        # jg(flattened_args, args_to_flatten)
+        # print(thunder.last_traces(jg)[0])
+
+        del g.meta
+
+        @wraps(g)
+        def wrap(*args):
+            return g(*args)
+
+        # print(flattened_args)
+        # flattened_args = tuple(flatten_tensor(arg) if isinstance(arg, ScaleTensor) else arg for arg in args_for_fx)
+        # print(flattened_args)
+        # print(args_for_fx[0].a, args_for_fx[1].a)
+        trc = thunder.trace(rename_proxies=False)(wrap, flattened_args, args_to_flatten)
+        # print(trc)
+        aten_syms = []
+        for bsym in trc.bound_symbols:
+            if "aten" in bsym.sym.name:
+                aten_syms.append(bsym)
+        print(aten_syms)
+        return aten_syms
 
 
 class ATenTransform(Transform):
@@ -244,7 +269,8 @@ class ATenTransform(Transform):
                 # print(bsym.args, bsym.kwargs)
                 trc = trace_from_bsym_or_bsyms(bsym)
                 executable_trc = make_trace_executable(trc, *bsym.flat_args)
-                get_fx_graph(executable_trc, bsym.flat_args)
+                aten_bsyms = get_fx_graph(executable_trc, bsym.flat_args)
+                bsym.subsymbols = aten_bsyms
 
         return prologue_trace, comp_trace, epi_trc
 
@@ -257,4 +283,4 @@ jfn = thunderfx(
 )
 o = jfn(x1, x2)
 
-# print(jfn.last_traces[-1])
+print(jfn.last_traces[-1])

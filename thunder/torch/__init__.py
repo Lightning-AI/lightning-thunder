@@ -5429,6 +5429,11 @@ def _unwrap_if_dead(tensor):
 register_function(torch._C._functorch.unwrap_if_dead, _unwrap_if_dead)
 
 
+@torchsymbol(torch.ops.aten.mul.Tensor, id="aten.mul.Tensor")
+def aten_mul(x, y):
+    return clang.mul(x, y)
+
+
 @torchsymbol(
     torch.ops.higher_order.tag_activation_checkpoint,
     id="activation_checkpoint",
