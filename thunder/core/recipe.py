@@ -58,7 +58,7 @@ class Recipe:
         self.plugins = plugins
 
     def add_plugins(self, plugins: list[Plugin]):
-        self.plugins.append(plugins)
+        self.plugins.extend(plugins)
 
     @classmethod
     def validate(cls, model):
@@ -89,12 +89,12 @@ class Recipe:
         lookasides = []
 
         for plugin in pre_plugins:
-            lookasides.extend(plugin.setup_lookasides())
+            lookasides.extend(plugin.setup_lookasides() or [])
 
-        lookasides.extend(self.setup_lookasides())
+        lookasides.extend(self.setup_lookasides() or [])
 
         for plugin in post_plugins:
-            lookasides.extend(plugin.setup_lookasides())
+            lookasides.extend(plugin.setup_lookasides() or [])
 
         from thunder.core import jit_ext, interpreter
 
@@ -107,39 +107,39 @@ class Recipe:
 
         transforms = []
         for plugin in pre_plugins:
-            transforms.extend(plugin.setup_transforms())
+            transforms.extend(plugin.setup_transforms() or [])
 
-        transforms.extend(self.setup_transforms())
+        transforms.extend(self.setup_transforms() or [])
 
         for plugin in post_plugins:
-            transforms.extend(plugin.setup_transforms())
+            transforms.extend(plugin.setup_transforms() or [])
 
         self.transforms = transforms
 
         executors = []
         for plugin in pre_plugins:
-            executors.extend(plugin.setup_executors())
+            executors.extend(plugin.setup_executors() or [])
 
-        executors.executors(self.setup_executors())
+        executors.extend(self.setup_executors() or [])
 
         for plugin in post_plugins:
-            executors.extend(plugin.setup_executors())
+            executors.extend(plugin.setup_executors() or [])
 
         self.executors = executors
 
-        if self.compiler == "thunder.jit":
+        if self.compiler == Compiler.THUNDER:
             from thunder import jit
 
             thunder_model = jit(model, transforms=self.transforms, executors=self.executors, **self.config)
 
-        elif self.compiler == "torch.compile":
+        elif self.compiler == Compiler.TORCH:
             from thunder.dynamo import ThunderCompiler
 
             thunder_backend = ThunderCompiler(transforms=self.transforms, executors=self.executors, **self.config)
             thunder_model = torch.compile(model, backend=thunder_backend)
 
         else:
-            raise AttributeError(f"Compiler must be one of 'thunder.jit', 'torch.compile'. Found: {self.compiler}.")
+            raise AttributeError(f"Compiler must be one of 'Compiler.THUNDER', 'Compiler.TORCH'. Found: {self.compiler}.")
 
         return thunder_model
 

@@ -273,34 +273,34 @@ def compile(fn: Callable, recipe: Recipe | str | None = None, plugins: Plugin | 
     import thunder.recipes
     import thunder.plugins
 
-    if not isinstance(plugins, Sequence):
+    if not isinstance(plugins, list) and not isinstance(plugins, tuple):
         plugins = [plugins]
 
     plugins_ = []
-    for el in plugins:
-        if isinstance(el, str):
-            plugin = thunder.plugins.get_plugin(el)
-            if plugin is None:
-                raise ValueError(f"Plugin {el} not recognized. Available plugins are {thunder.plugins.get_plugin_names()}.")
+    for plugin in plugins:
+        if isinstance(plugin, str):
+            plugin_cls = thunder.plugins.get_plugin(plugin)
+            if plugin_cls is None:
+                raise ValueError(f"Plugin {plugin} not recognized. Available plugins are {thunder.plugins.get_plugin_names()}.")
+            plugins_.append(plugin_cls())
         else:
-            plugin = el
-        plugins_.append(plugin)
+            plugins_.append(plugin)
     plugins = plugins_
 
     if recipe is None and not plugins:
         return thunder.jit(fn)
 
     if recipe is None and plugins:
-        recipe = thunder.recipes.BaseRecipe(plugins=plugins)
+        recipe = thunder.recipes.BaseRecipe()
 
     if recipe == "auto":
         raise NotImplementedError
 
     if isinstance(recipe, str):
-        recipe_ = thunder.plugins.get_recipe(recipe)
-        if recipe_ is None:
+        recipe_cls = thunder.recipes.get_recipe(recipe)
+        if recipe_cls is None:
             raise ValueError(f"Recipe {recipe} not recognized. Available recipes are {thunder.recipes.get_recipe_names()}.")
-        recipe = recipe_
+        recipe = recipe_cls()
  
     if recipe is not None and plugins:
         recipe.add_plugins(plugins)
