@@ -2,7 +2,6 @@ import torch
 import torchvision.models as models
 
 import thunder
-from thunder.recipes import FSDP, CUDAGraph
 
 from thunder.dev_utils.benchmark import benchmark
 
@@ -17,7 +16,7 @@ def main():
 
     out = model(inp)
 
-    thunder_model = thunder.compile(model, plugins=[FSDP(...), CUDAGraph()])
+    thunder_model = thunder.compile(model, plugins=["fsdp", "reduce-overhead"])
 
     thunder_out = thunder_model(inp)
 

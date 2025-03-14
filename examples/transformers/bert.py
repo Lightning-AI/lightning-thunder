@@ -3,7 +3,6 @@ import transformers
 
 import thunder
 from thunder.recipes import HFTransformers
-from thunder.plugins import CUDAGraph
 
 from thunder.dev_utils.benchmark import benchmark
 
@@ -27,7 +26,7 @@ def main():
 
     print(f"Eager: {benchmark(model, **inp):.2f}ms")
 
-    thunder_model = thunder.compile(model, recipe=HFTransformers(fuser=fuser, show_progress=True), plugins=CUDAGraph())
+    thunder_model = thunder.compile(model, recipe=HFTransformers(fuser=fuser, show_progress=True), plugins="reduce-overhead")
     print(f"Thunder: {benchmark(thunder_model, **inp):.2f}ms")
 
     torchcompile_model = torch.compile(model, mode="reduce-overhead" if reduce_overhead else "default")

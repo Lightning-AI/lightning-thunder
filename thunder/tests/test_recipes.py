@@ -40,3 +40,19 @@ def test_recipe_basic_bert_dynamo():
     expected = bert(inp)
 
     assert_close(actual, expected)
+
+
+def test_recipe_mlp():
+    model = torch.nn.Sequential(
+        torch.nn.Linear(2048, 4096),
+        torch.nn.ReLU(),
+        torch.nn.Linear(4096, 64)
+    )
+
+    thunder_model = thunder.compile(model)
+    x = torch.randn(64, 2048)
+    y = thunder_model(x)
+
+    print(thunder_model)
+
+    print(thunder.last_traces(thunder_model)[-1])

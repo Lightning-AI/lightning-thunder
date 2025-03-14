@@ -3,7 +3,7 @@ from thunder.core.recipe import Plugin, PluginPolicy
 from thunder.transforms.cudagraph import CUDAGraphTransform
 
 
-class CUDAGraph(Plugin):
+class ReduceOverhead(Plugin):
     policy = PluginPolicy.POST
 
     def setup_transforms(self):

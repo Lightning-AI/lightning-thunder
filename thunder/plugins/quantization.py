@@ -1,7 +1,7 @@
 from thunder import Plugin
 
 
-class Linear4bit(Plugin):
+class QuantizeInt4(Plugin):
     def setup_transforms(self):
         from thunder.transforms.quantization import BitsAndBytesLinearQuant4bit
         return [BitsAndBytesLinearQuant4bit()]

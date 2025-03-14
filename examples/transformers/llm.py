@@ -32,7 +32,7 @@ def main():
 
     print(f"Eager: {benchmark_n(2, generate, model, inp):.2f}ms")
 
-    thunder_model = thunder.compile(model, recipe=HFTransformers(reduce_overhead=reduce_overhead, fuser=fuser, show_progress=True))
+    thunder_model = thunder.compile(model, recipe=HFTransformers(fuser=fuser, show_progress=True), plugins="reduce-overhead")
 
     generate(thunder_model, inp, cache="static")
     print({bsym.sym.name for bsym in thunder.last_traces(thunder_model)[-1].bound_symbols})
