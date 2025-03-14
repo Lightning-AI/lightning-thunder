@@ -2610,13 +2610,9 @@ def scaled_dot_product_flash_attention_grad(
     scale: None | float = None,
 ):
 
-<<<<<<< Updated upstream
-    (attn_output, logsumexp, rng_state) = nv_sdpfa_fwd(query, key, value, dropout_p, is_causal, scale=scale)
-=======
     (attn_output, logsumexp, philox_seed, philox_offset) = nv_sdpfa_fwd(
         query, key, value, dropout_p, is_causal, scale=scale
     )
->>>>>>> Stashed changes
     grad_out = get_grad(attn_output)
     grad_query, grad_key, grad_val = nv_sdpfa_bwd(
         grad_out,
