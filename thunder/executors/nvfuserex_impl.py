@@ -2434,7 +2434,7 @@ def _scaled_dot_product_flash_attention_forward_meta(
     philox_shape = (2,) if UPDATED_SDPA else ()
     dtype = dtypes.uint64 if UPDATED_SDPA else dtypes.int64
     device = query.device if UPDATED_SDPA else "cpu"
-    
+
     return (
         output := TensorProxy(like=query, shape=(batch_size, num_heads, query_seq_len, E)),
         log_sumexp := TensorProxy(
