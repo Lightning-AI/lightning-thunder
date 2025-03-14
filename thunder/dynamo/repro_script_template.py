@@ -4,15 +4,6 @@ CALLABLE_NAME = "model"
 COMPILED_CALLABLE_NAME = "compiled_model"
 
 pytest_benchmark_multi_exe_code_template = '''
-"""
-Environment information get from `torch.utils.collect_env.get_pretty_env_info()`:
-{torch_env}
-
-Versions of Thunder related libraries:
-{thunder_pkgs}
-
-{extra_comment_str}
-"""
 # NOTE: This script requires `pytest-benchmark==4.0.0` to be installed.
 # To execute the script, run `pytest {graph_name}_benchmark.py --benchmark-timer=torch.utils.benchmark.utils.timer.timer --benchmark-warmup=on --benchmark-group-by=param:compute_type`
 # To check the peak allocated CUDA memory, use --benchmark-json=json_file_name and look at the "max_allocated_memory_MB" field in the json file
@@ -41,6 +32,9 @@ def torch_inductor(fn, inputs):
 
 {executors}
 {executor_names}
+
+{dynamo_module}
+
 @pytest.mark.parametrize(
     "executor",
     executors,
@@ -48,8 +42,6 @@ def torch_inductor(fn, inputs):
 )
 {compute_type_decorator}
 def test_{graph_name}(benchmark, executor, compute_type):
-{dynamo_module}
-
 {inputs}
 
     model = DynamoModule()
@@ -60,6 +52,16 @@ def test_{graph_name}(benchmark, executor, compute_type):
     else:
         compiled_model = executor(model)
     {call_benchmark}
+
+"""
+Environment information get from `torch.utils.collect_env.get_pretty_env_info()`:
+{torch_env}
+
+Versions of Thunder related libraries:
+{thunder_pkgs}
+
+{extra_comment_str}
+"""
 '''
 
 
@@ -89,22 +91,29 @@ bsym = fusion_symbols[0]
 torch_compiled_callable = make_torch_compile_callable(bsym.subsymbols, bsym.flat_args, bsym.flat_outs)
 '''
 
-repro_bench_code_template = f'''
-"""
-Environment information get from `torch.utils.collect_env.get_pretty_env_info()`:
-{{torch_env}}
-
-Versions of Thunder related libraries:
-{{thunder_pkgs}}
-
-{{extra_comment_str}}
-"""
+repro_bench_code_template = f"""
 {{import_str}}
 
-def test_{{graph_name}}():
 {{dynamo_module}}
-
+def test_{{graph_name}}():
 {{inputs}}
 
     model = {FXGRAPH_CLASS_NAME}()
+"""
+
+main_code = """
+if __name__ == "__main__":
+    test_{graph_name}()
+"""
+
+comment_str_template = '''
+"""
+Environment information get from `torch.utils.collect_env.get_pretty_env_info()`:
+{torch_env}
+
+Versions of Thunder related libraries:
+{thunder_pkgs}
+
+{extra_comment_str}
+"""
 '''

@@ -1306,7 +1306,7 @@ def test_ThunderCompileSpecification():
     o1 = thunderjit1.compile(foo)(x)
     o2 = thunderjit2.compile(foo)(x)
     assert o1.equal(o2)
-    assert str1 == "thunder.jit(foo, )"
+    assert str1 == "thunder.jit(foo)"
     assert (
         str2
         == "thunder.jit(foo, executors=[thunder.extend.get_executor('torchcompile_cat'),thunder.extend.get_executor('nvfuser')],cache='constant values',langctx=None,record_history=False,)"

@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import textwrap
 import copy
 from itertools import chain
-
+import black
 
 import torch
 from thunder.core.pytree import tree_flatten
@@ -28,6 +28,8 @@ from thunder.dynamo.utils import (
 from thunder.dynamo.repro_script_template import (
     pytest_benchmark_multi_exe_code_template,
     bsym_torch_compile_repro_template,
+    main_code,
+    comment_str_template,
     FXGRAPH_CLASS_NAME,
     INPUTS_NAME,
     CALLABLE_NAME,
@@ -59,6 +61,8 @@ if TYPE_CHECKING:
     from thunder.core.trace import TraceCtx
     from thunder.core.symbol import BoundSymbol
     from thunder.dynamo.benchmark_utils import CompileSpecificationInterface, TimerInterface
+
+format_mode = black.Mode(line_length=120)
 
 
 def run_forward_backward(fn, *args, **kwargs):
@@ -222,7 +226,9 @@ class FXGraphReport:
             )
         else:
             torcheager = TorchEagerSpecification()
-            self.write_repro(folder, torcheager, f"{self.graph_name}_repro_eager.py", serialize_inputs=serialize_inputs)
+            self.write_repro(
+                folder, torcheager, file_name=f"{self.graph_name}_repro_eager.py", serialize_inputs=serialize_inputs
+            )
 
     def write_thunder_repro(self, folder, use_benchmark: bool = False, serialize_inputs: bool = False):
         thunder_compile_str = "thunder.jit"
@@ -238,7 +244,10 @@ class FXGraphReport:
             )
         else:
             self.write_repro(
-                folder, default_thunderjit, f"{self.graph_name}_repro_thunder.py", serialize_inputs=serialize_inputs
+                folder,
+                default_thunderjit,
+                file_name=f"{self.graph_name}_repro_thunder.py",
+                serialize_inputs=serialize_inputs,
             )
 
     def write_inductor_repro(self, folder, use_benchmark: bool = False, serialize_inputs: bool = False):
@@ -259,7 +268,7 @@ class FXGraphReport:
             self.write_repro(
                 folder,
                 default_torchcompile,
-                f"{self.graph_name}_repro_torchcompile.py",
+                file_name=f"{self.graph_name}_repro_torchcompile.py",
                 serialize_inputs=serialize_inputs,
             )
 
@@ -348,7 +357,7 @@ class FXGraphReport:
         has_cuda_args = any(hasattr(arg, "device") and arg.device.type == "cuda" for arg in inputs)
         has_requires_grad_args = any(hasattr(arg, "requires_grad") and arg.requires_grad for arg in inputs)
         torch_env, thunder_pkgs = get_env()
-        readable = textwrap.indent(_readable(self.graph, "DynamoModule", print_output=False), "    ")
+        readable = _readable(self.graph, "DynamoModule", print_output=False)
         # The packages that are likely to be used by the code generated from the Torch GraphModule
         torch_import_str = "\n".join([v.import_str for v in torch.fx.graph._custom_builtins.values()])
         import_str = "" if import_str == None else "\n".join(import_str)
@@ -386,10 +395,20 @@ class FXGraphReport:
             "\n".join(compile_fn.import_str() or []) if compile_fn else "",
             "\n".join(time_fn.import_str() or []) if time_fn else "",
         ]
-        return "\n".join(filter(None, import_strs))
+        return "\n".join(filter(None, import_strs)).lstrip("\n")
 
     def _get_fx_graph_class_str(self, class_name: str = FXGRAPH_CLASS_NAME):
         return _readable(self.graph, class_name, print_output=False)
+
+    def _get_comment_str(self, extra_comment_str):
+        torch_env, thunder_pkgs = get_env()
+
+        comment_str = comment_str_template.format(
+            torch_env=torch_env,
+            thunder_pkgs=thunder_pkgs,
+            extra_comment_str=extra_comment_str,
+        )
+        return comment_str
 
     def _get_repro_code(
         self,
@@ -398,24 +417,18 @@ class FXGraphReport:
         time_fn: TimerInterface,
         serialize_inputs: bool = False,
         inputs: Sequence[torch.Tensor | ExampleInputMetaData] = None,
-        **kwargs,
     ):
         from thunder.dynamo.repro_script_template import repro_bench_code_template
 
         folder = Path(folder)
-        torch_env, thunder_pkgs = get_env()
-        class_str = textwrap.indent(self._get_fx_graph_class_str(), "    ")
+        class_str = self._get_fx_graph_class_str()
         input_str = textwrap.indent(self._get_input_str(folder, inputs, serialize_inputs), "    ")
-        extra_comment_str = kwargs.get("extra_comment_str") if "extra_comment_str" in kwargs else ""
         import_str = self._get_import_code(compile_fn, time_fn)
         code_str = repro_bench_code_template.format(
-            torch_env=torch_env,
-            thunder_pkgs=thunder_pkgs,
             import_str=import_str,
             dynamo_module=class_str,
             inputs=input_str,
             graph_name=self.graph_name,
-            extra_comment_str=extra_comment_str,
         )
         return code_str
 
@@ -438,11 +451,12 @@ class FXGraphReport:
         self,
         folder: str | PathLike,
         compile_fn: CompileSpecificationInterface,
+        *,
         file_name: str = None,
         check_consistency: bool = False,
         serialize_inputs: bool = False,
         inputs: Sequence[torch.Tensor | ExampleInputMetaData] = None,
-        **kwargs,
+        extra_comment_str: str = "",
     ) -> None:
         """
         Generates a reproduction script for the FX graph module with the given compile specification and writes it to a file.
@@ -466,7 +480,8 @@ class FXGraphReport:
         folder.mkdir(exist_ok=True, parents=True)
         if inputs == None:
             inputs = self.example_input_meta
-        code_str = self._get_repro_code(folder, compile_fn, None, serialize_inputs, inputs, **kwargs)
+        code_str = self._get_repro_code(folder, compile_fn, None, serialize_inputs, inputs)
+        comment_str = self._get_comment_str(extra_comment_str)
         compile_str = compile_fn.to_source(CALLABLE_NAME)
         code_str += textwrap.indent(f"{COMPILED_CALLABLE_NAME} = {compile_str}\n", "    ")
 
@@ -478,7 +493,8 @@ class FXGraphReport:
 
             code_str += textwrap.indent(check_str, "    ")
 
-        code_str = f"{code_str}\ntest_{self.graph_name}()"
+        code_str = f"{code_str}\n{main_code.format(graph_name=self.graph_name)}\n{comment_str}"
+        code_str = black.format_str(code_str, mode=format_mode)
 
         if file_name is None:
             file_name = f"{self.graph_name}.py"
@@ -513,10 +529,11 @@ class FXGraphReport:
         folder: str | PathLike,
         compile_fn: CompileSpecificationInterface,
         time_fn: TimerInterface,
+        *,
         file_name: str = None,
         serialize_inputs: bool = False,
         inputs: Sequence[torch.Tensor | ExampleInputMetaData] = None,
-        **kwargs,
+        extra_comment_str: str = "",
     ):
         """
         Generates a benchmark reproduction script for the given compilation and timing specification and writes it to the specified file.
@@ -539,7 +556,8 @@ class FXGraphReport:
         if inputs == None:
             inputs = self.example_input_meta
         forward_only = not any(hasattr(arg, "requires_grad") and arg.requires_grad for arg in inputs)
-        code_str = self._get_repro_code(folder, compile_fn, time_fn, serialize_inputs, inputs, **kwargs)
+        code_str = self._get_repro_code(folder, compile_fn, time_fn, serialize_inputs, inputs)
+        comment_str = self._get_comment_str(extra_comment_str)
         compile_str = compile_fn.to_source(CALLABLE_NAME)
         fwd_timing_str = time_fn.to_source(COMPILED_CALLABLE_NAME, INPUTS_NAME)
         bwd_timing_str = time_fn.to_source("backward_fn", "backward_args")
@@ -564,7 +582,8 @@ class FXGraphReport:
         print(f"bwd_measurement.max_allocated_memory={{get_pretty_memory_str(bwd_measurement.max_allocated_memory)}}")
 """
 
-        code_str += f"test_{self.graph_name}()"
+        code_str = f"{code_str}\n{main_code.format(graph_name=self.graph_name)}\n{comment_str}"
+        code_str = black.format_str(code_str, mode=format_mode)
         if file_name is None:
             file_name = f"{self.graph_name}.py"
         with open(folder / file_name, "w") as f:
@@ -652,7 +671,7 @@ def fx_report(fn: Callable, *args, compile_options: dict = None, **kwargs) -> FX
                 graph_report.write_repro(
                     tmpdir, my_thunderjit, check_consistency=True, file_name=f"{graph_name}_mythunder_repro.py"
                 )
-                graph_report.write_benchmark(tmpdir, my_thunderjit, WallTime, f"{graph_name}_mythunder_benchmark.py")
+                graph_report.write_benchmark(tmpdir, my_thunderjit, WallTime, file_name=f"{graph_name}_mythunder_benchmark.py")
     """
     graphs = []
     break_reasons = []
@@ -755,7 +774,7 @@ class ThunderSplitGraphReport(FXGraphReport):
             self.write_repro(
                 folder,
                 default_thunderjit,
-                f"{self.graph_name}_repro_thunder.py",
+                file_name=f"{self.graph_name}_repro_thunder.py",
                 serialize_inputs=serialize_inputs,
                 extra_comment_str=self.split_reason,
             )
@@ -839,13 +858,14 @@ class ThunderFusionReport:
         timing_str = timing_str.replace("*inputs", "inputs")
         repro_code_str = repro_code_str.replace("fd.execute(inputs)\n", "")
         comment_str = f'"""\n{self.nvfusion_bsym}\n\n{extra_comment_str}"""'
-        code_str = f"""{comment_str}
-{timing_import_str}
+        code_str = f"""{timing_import_str}
 {repro_code_str}
 nvfuser_fn = fd.execute
 measurement = {timing_str}
 print(measurement)
+{comment_str}
 """
+        code_str = black.format_str(code_str, mode=format_mode)
         if file_name == None:
             file_name = f"{self.name}_benchmark_nvfuser.py"
         with open(folder / file_name, "w") as f:
@@ -856,11 +876,12 @@ print(measurement)
         folder.mkdir(exist_ok=True, parents=True)
         repro_code_str = self._get_nvfuser_code()
         comment_str = f'"""\n{self.nvfusion_bsym}\n"""'
+        repro_code_str = f"{repro_code_str}\n{comment_str}"
+        repro_code_str = black.format_str(repro_code_str, mode=format_mode)
 
         if file_name == None:
             file_name = f"{self.name}_repro_nvfuser.py"
         with open(folder / file_name, "w") as f:
-            print(comment_str, file=f)
             print(repro_code_str, file=f)
 
     def make_example_inputs(self):
@@ -869,10 +890,9 @@ print(measurement)
     def get_inputs_meta(self):
         return self.nvfusion_bsym._call_ctx[self.nvfusion_bsym.sym.name].last_inputs_meta
 
-    def _get_inductor_code(self, **kwargs):
+    def _get_inductor_code(self, extra_comment_str=""):
         python_func = create_python_callable_from_bsym(self.nvfusion_bsym)
         nvfusion_name = self.nvfusion_bsym.sym.name
-        extra_comment_str = kwargs.get("extra_comment_str") if "extra_comment_str" in kwargs else ""
 
         inputs = self.get_inputs_meta()
         inputs = "[" + "".join(arg_like(inp) for inp in inputs) + "]"
@@ -888,21 +908,23 @@ print(measurement)
         code_str = f"""{code_str}
 out = torch_compiled_callable(*inputs)
 """
+        code_str = black.format_str(code_str, mode=format_mode)
         if file_name == None:
             file_name = f"{self.name}_repro_inductor.py"
         with open(folder / file_name, "w") as f:
             f.write(code_str)
 
-    def write_inductor_benchmark(self, folder: PathLike, time_fn: TimerInterface, file_name=None, **kwargs):
+    def write_inductor_benchmark(self, folder: PathLike, time_fn: TimerInterface, file_name=None, extra_comment_str=""):
         folder = Path(folder)
         folder.mkdir(exist_ok=True, parents=True)
-        code_str = self._get_inductor_code(**kwargs)
+        code_str = self._get_inductor_code(extra_comment_str)
         timing_import_str = "\n".join(time_fn.import_str() or [])
         code_str = f"""{code_str}
 {timing_import_str}
 measurement = {time_fn.to_source("torch_compiled_callable", "inputs")}
 print(measurement)
 """
+        code_str = black.format_str(code_str, mode=format_mode)
         if file_name == None:
             file_name = f"{self.name}_benchmark_inductor.py"
         with open(folder / file_name, "w") as f:
