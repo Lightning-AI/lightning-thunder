@@ -178,9 +178,11 @@ class TraceCtx:
     # Methods related to name construction
     #
 
-    def add_name(self, name: str) -> None:
+    def add_name(self, name: str, *, prefix: str | None = None) -> None:
+        from thunder.core.proxies import PREFIXES_ALLOW_NAME_DUPLICATES
+
         baseutils.check(
-            name not in self.names,
+            name not in self.names or (prefix is not None and prefix in PREFIXES_ALLOW_NAME_DUPLICATES),
             lambda: f"Trying to add the name {name} to a trace, but that name is already used",
         )
         self.names.add(name)
@@ -221,7 +223,7 @@ class TraceCtx:
     #   just records the given name
     def make_name(self, name: str | None = None, *, prefix: str | None = None) -> str:
         if name is not None:
-            self.add_name(name)
+            self.add_name(name, prefix=prefix)
             return name
 
         return self._make_name(prefix=prefix)

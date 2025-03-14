@@ -8,3 +8,4 @@ thunder.transforms
 
     MaterializationTransform
     ConstantFolding
+    unroll_tensor_subclasses
