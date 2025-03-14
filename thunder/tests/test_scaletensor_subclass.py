@@ -239,12 +239,18 @@ def get_fx_graph(trc, args_for_fx):
         def wrap(*args):
             return g(*args)
 
-        # print(flattened_args)
-        # flattened_args = tuple(flatten_tensor(arg) if isinstance(arg, ScaleTensor) else arg for arg in args_for_fx)
-        # print(flattened_args)
+        print(flattened_args)
+
+        def flatten_tensor_proxy(t):
+            return {"a": t.a}, {"b": t.b}
+
+        flattened_args = tuple(
+            flatten_tensor_proxy(arg) if isinstance(arg, ScaleTensorProxy) else arg for arg in args_for_fx
+        )
+
         # print(args_for_fx[0].a, args_for_fx[1].a)
         trc = thunder.trace(rename_proxies=False)(wrap, flattened_args, args_to_flatten)
-        # print(trc)
+        print(trc)
         aten_syms = []
         for bsym in trc.bound_symbols:
             if "aten" in bsym.sym.name:
@@ -281,13 +287,6 @@ class ATenTransform(Transform):
                     for tp in filter_tensor_proxies:
                         proxys.append(prims.get_subclass_inner_tensor(tp))
                 syms = comp_trace.pop_scope()
-
-                swap_map = {
-                    variableify(trc_inp): act_inp
-                    for act_inp, trc_inp in zip(proxys, aten_bsyms[0].flat_args)
-                    if trc_inp.name != act_inp.name
-                }
-                aten_bsyms[0] = aten_bsyms[0].from_bsym_swap_proxies(swap_map)
 
                 comp_trace.push_scope([])
                 with tracectx(comp_trace):
