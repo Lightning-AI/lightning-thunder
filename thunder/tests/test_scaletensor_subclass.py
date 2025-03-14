@@ -227,7 +227,7 @@ def get_fx_graph(trc, args_for_fx):
         import thunder
 
         _checkpoint_function_converter(g)
-        g.print_readable()
+        # g.print_readable()
         g.recompile()
         # jg = thunder.jit(g)
         # jg(flattened_args, args_to_flatten)
@@ -250,28 +250,53 @@ def get_fx_graph(trc, args_for_fx):
             if "aten" in bsym.sym.name:
                 aten_syms.append(bsym)
         print(aten_syms)
-        return aten_syms
+        return aten_syms, trc.bound_symbols[-1]
 
 
 class ATenTransform(Transform):
     def transform_traces_pre_prologue(self, prologue_trace, comp_trace, epi_trc, executors_list):
         from thunder.core.pytree import tree_map, tree_flatten, tree_unflatten
-        from thunder.core.proxies import TensorProxy
+        from thunder.core.proxies import TensorProxy, ScaleTensorProxy, variableify
         from thunder.core.prims import unpack_trivial, python_return
+        import thunder.core.prims as prims
         from thunder.executors.torch_compile import make_compiled as make_torch_compile_callable
+        from thunder.core.trace import tracectx
 
         for bsym in comp_trace.bound_symbols:
             if bsym.sym in (unpack_trivial, python_return):
                 continue
 
-            filter_tensor_proxies = list(filter(lambda t: isinstance(t, TensorProxy), tree_flatten(bsym.flat_args)))
-            if all(filter_tensor_proxies):
+            filter_tensor_proxies = list(filter(lambda t: isinstance(t, ScaleTensorProxy), bsym.flat_args))
+            # print(bsym.flat_args)
+            # print(filter_tensor_proxies)
+            if len(filter_tensor_proxies) == len(bsym.flat_args):
                 # print(bsym.args, bsym.kwargs)
                 trc = trace_from_bsym_or_bsyms(bsym)
                 executable_trc = make_trace_executable(trc, *bsym.flat_args)
-                aten_bsyms = get_fx_graph(executable_trc, bsym.flat_args)
-                bsym.subsymbols = aten_bsyms
+                aten_bsyms, output = get_fx_graph(executable_trc, bsym.flat_args)
 
+                comp_trace.push_scope([])
+                with tracectx(comp_trace):
+                    proxys = []
+                    for tp in filter_tensor_proxies:
+                        proxys.append(prims.get_subclass_inner_tensor(tp))
+                syms = comp_trace.pop_scope()
+
+                swap_map = {
+                    variableify(trc_inp): act_inp
+                    for act_inp, trc_inp in zip(proxys, aten_bsyms[0].flat_args)
+                    if trc_inp.name != act_inp.name
+                }
+                aten_bsyms[0] = aten_bsyms[0].from_bsym_swap_proxies(swap_map)
+
+                comp_trace.push_scope([])
+                with tracectx(comp_trace):
+                    prims.construct_subclass(*output.flat_args)
+                    return_syms = comp_trace.pop_scope()
+
+                bsym.subsymbols = syms + aten_bsyms + return_syms
+
+        print(comp_trace)
         return prologue_trace, comp_trace, epi_trc
 
 
@@ -283,4 +308,4 @@ jfn = thunderfx(
 )
 o = jfn(x1, x2)
 
-print(jfn.last_traces[-1])
+# print(jfn.last_traces[-1])

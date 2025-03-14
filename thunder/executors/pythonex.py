@@ -380,3 +380,19 @@ ex.register_implementation(prims.sink, sink, checker=_always_executable)
 
 # TODO: Restore truediv once we find it...
 # ex.register_implementation(prims.truediv, truediv, checker=_elementwise_binary_checker)
+
+
+def _get_subclass_inner_tensor(t):
+    return t.a
+
+
+get_subclass_inner_tensor = ex.register_operator(
+    "get_subclass_inner_tensor", like=prims.get_subclass_inner_tensor, fn=_get_subclass_inner_tensor
+)
+
+
+def _construct_subclass(t, a):
+    return ScaleTensor(t, a)
+
+
+construct_subclass = ex.register_operator("construct_subclass", like=prims.construct_subclass, fn=_construct_subclass)

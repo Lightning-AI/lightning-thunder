@@ -275,6 +275,10 @@ class PrimIDs(Enum):
     #
     SINK = auto()
 
+    #
+    GET_SUBCLASS_INNER_TENSOR = auto()
+    CONSTRUCT_SUBCLASS = auto()
+
 
 class OpTags(Enum):
     # TODO -- Consider renaming this tag
@@ -4138,3 +4142,31 @@ def sink_meta(*args, **kwargs):
 
 # TODO do we want another tag to remove this after prologue is constructed?
 sink = make_prim(PrimIDs.SINK, "sink", meta=sink_meta, tags=(OpTags.DONT_DCE,))
+
+
+def subclass_inner_tensor(t):
+    return t.a
+
+
+get_subclass_inner_tensor = make_prim(
+    PrimIDs.GET_SUBCLASS_INNER_TENSOR, "get_subclass_inner_tensor", meta=subclass_inner_tensor
+)
+
+
+def construct_subclass(a, b):
+    from thunder.core.proxies import ScaleTensorProxy
+
+    return ScaleTensorProxy(
+        a=a,
+        b=a,
+        shape=tuple(a.shape),
+        device=a.device,
+        dtype=a.dtype,
+        requires_grad=a.requires_grad,
+        grad=None,
+        distparallel_type=None,
+        thunder_fsdp_padding_size=None,
+    )
+
+
+construct_subclass = make_prim(PrimIDs.CONSTRUCT_SUBCLASS, "construct_subclass", meta=construct_subclass)
