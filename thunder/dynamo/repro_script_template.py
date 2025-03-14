@@ -89,22 +89,29 @@ bsym = fusion_symbols[0]
 torch_compiled_callable = make_torch_compile_callable(bsym.subsymbols, bsym.flat_args, bsym.flat_outs)
 '''
 
-repro_bench_code_template = f'''
-"""
-Environment information get from `torch.utils.collect_env.get_pretty_env_info()`:
-{{torch_env}}
-
-Versions of Thunder related libraries:
-{{thunder_pkgs}}
-
-{{extra_comment_str}}
-"""
+repro_bench_code_template = f"""
 {{import_str}}
 
-def test_{{graph_name}}():
 {{dynamo_module}}
-
+def test_{{graph_name}}():
 {{inputs}}
 
     model = {FXGRAPH_CLASS_NAME}()
+"""
+
+main_code = """
+if __name__ == "__main__":
+    test_{graph_name}()
+"""
+
+comment_str_template = '''
+"""
+Environment information get from `torch.utils.collect_env.get_pretty_env_info()`:
+{torch_env}
+
+Versions of Thunder related libraries:
+{thunder_pkgs}
+
+{extra_comment_str}
+"""
 '''
