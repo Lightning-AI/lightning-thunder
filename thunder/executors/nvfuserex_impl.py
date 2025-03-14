@@ -2592,13 +2592,9 @@ def scaled_dot_product_flash_attention(
     *,
     scale: None | float = None,
 ):
-<<<<<<< Updated upstream
-    (attn_output, logsumexp, rng_state) = nv_sdpfa_fwd(query, key, value, dropout_p, is_causal, scale=scale)
-=======
     (attn_output, logsumexp, philox_seed, philox_offset) = nv_sdpfa_fwd(
         query, key, value, dropout_p, is_causal, scale=scale
     )
->>>>>>> Stashed changes
     return attn_output
 
 
