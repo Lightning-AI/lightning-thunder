@@ -20,7 +20,7 @@ Fast. Understandable. Extensible.
 
 **Thunder** is a source-to-source compiler for PyTorch. It makes optimizing AI models easy, augmenting them with custom kernels, fusions, quantization, distributed strategies, and more.
 
-For **end users**, Thunder comes with recipes that provide model speed-ups out of the box, for optimal utilization of last generation hardware.
+For **end users**, Thunder comes with plugins that provide model speed-ups out of the box, for optimal utilization of last generation hardware.
 
 For **performance experts**, Thunder is the most ergonomic framework for understanding, modifying, and optimizing computations through composable transformations.
 

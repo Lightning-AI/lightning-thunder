@@ -4,11 +4,10 @@ import torchvision.models as models
 import thunder
 
 
-# TODO: needs a recipe
-
-
 def main():
-    with torch.device("cuda:0"):
+    device = "cuda:0" if torch.cuda.is_available() else "cpu"
+
+    with torch.device(device):
         model = models.swin_v2_b()
         model.requires_grad_(False)
         model.eval()

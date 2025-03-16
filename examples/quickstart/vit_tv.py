@@ -7,7 +7,9 @@ from thunder.dev_utils.benchmark import benchmark
 
 
 def main():
-    with torch.device("cuda:0"):
+    device = "cuda:0" if torch.cuda.is_available() else "cpu"
+
+    with torch.device(device):
         model = models.vit_b_16()
         model.requires_grad_(False)
         model.eval()
@@ -16,7 +18,7 @@ def main():
 
     out = model(inp)
 
-    thunder_model = thunder.compile(model, plugins=["fsdp", "reduce-overhead"])
+    thunder_model = thunder.compile(model, plugins="reduce-overhead" if torch.cuda.is_available() else None)
 
     thunder_out = thunder_model(inp)
 
@@ -24,11 +26,8 @@ def main():
 
     torch.testing.assert_close(out, thunder_out)
 
-    torchcompile_model = torch.compile(model, mode="reduce-overhead")
-
     print(f"Eager: {benchmark(model, inp):.2f}ms")
     print(f"Thunder: {benchmark(thunder_model, inp):.2f}ms")
-    print(f"Torch Compile: {benchmark(torchcompile_model, inp):.2f}ms")
 
 
 if __name__ == "__main__":

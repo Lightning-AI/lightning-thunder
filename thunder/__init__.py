@@ -269,9 +269,12 @@ CacheEntry = namedtuple(
 )
 
 # TODO implement registration + "auto" recipe
-def compile(fn: Callable, recipe: Recipe | str | None = None, plugins: Plugin | list[Plugin] = []):
+def compile(fn: Callable, recipe: Recipe | str | None = None, plugins: Plugin | list[Plugin] | None = None):
     import thunder.recipes
     import thunder.plugins
+
+    if plugins is None:
+        plugins = []
 
     if not isinstance(plugins, list) and not isinstance(plugins, tuple):
         plugins = [plugins]
@@ -297,9 +300,9 @@ def compile(fn: Callable, recipe: Recipe | str | None = None, plugins: Plugin | 
         raise NotImplementedError
 
     if isinstance(recipe, str):
-        recipe_cls = thunder.recipes.get_recipe(recipe)
+        recipe_cls = thunder.recipes.get_recipe_class(recipe)
         if recipe_cls is None:
-            raise ValueError(f"Recipe {recipe} not recognized. Available recipes are {thunder.recipes.get_recipe_names()}.")
+            raise ValueError(f"Recipe {recipe} not recognized. Available recipes are {thunder.recipes.get_recipes()}.")
         recipe = recipe_cls()
  
     if recipe is not None and plugins:

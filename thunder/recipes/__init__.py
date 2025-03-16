@@ -1,20 +1,21 @@
+from typing import Any, Type
+
 from thunder.recipes.base import BaseRecipe
 from thunder.recipes.hf_transformers import HFTransformers
 
 
-names_to_recipes = {
+names_to_recipes: dict[str: Type[Any]] = {
   "default": BaseRecipe,
   "hf-transformers": HFTransformers,
 }
 
-
-def get_recipe(name):
+def get_recipe_class(name: str) -> Type[Any]:
     return names_to_recipes.get(name)
 
-def get_recipe_names():
+def get_recipes() -> list[str]:
     return list(names_to_recipes.keys())
 
-def register_recipe(name, cls):
+def register_recipe(name: str, cls: Type[Any]):
     if name == "auto":
         raise ValueError("Recipe name 'auto' is reserved.")
     names_to_recipes[name] = cls

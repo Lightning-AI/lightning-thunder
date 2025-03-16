@@ -43,13 +43,13 @@ class Plugin:
         return None
 
 
-class Compiler(Enum):
-    THUNDER = auto()
-    TORCH = auto()
+class Interpreter(Enum):
+    THUNDER_JIT = auto()
+    THUNDER_FX = auto()
 
  
 class Recipe:
-    compiler = Compiler.THUNDER
+    interpreter = Interpreter.THUNDER_JIT
 
     def __init__(self, plugins: Plugin):
         self.lookasides = []
@@ -127,22 +127,22 @@ class Recipe:
 
         self.executors = executors
 
-        if self.compiler == Compiler.THUNDER:
+        if self.interpreter == Interpreter.THUNDER_JIT:
             from thunder import jit
 
             thunder_model = jit(model, transforms=self.transforms, executors=self.executors, **self.config)
 
-        elif self.compiler == Compiler.TORCH:
+        elif self.interpreter == Interpreter.THUNDER_FX:
             from thunder.dynamo import ThunderCompiler
 
             thunder_backend = ThunderCompiler(transforms=self.transforms, executors=self.executors, **self.config)
             thunder_model = torch.compile(model, backend=thunder_backend)
 
         else:
-            raise AttributeError(f"Compiler must be one of 'Compiler.THUNDER', 'Compiler.TORCH'. Found: {self.compiler}.")
+            raise AttributeError(f"Interpreter must be one of 'Interpreter.THUNDER_JIT', 'Interpreter.THUNDER_FX'. Found: {self.interpreter}.")
 
         return thunder_model
 
 
-class DynamoRecipe(Recipe):
-    compiler = Compiler.TORCH
+class FXRecipe(Recipe):
+    interpreter = Interpreter.THUNDER_FX
