@@ -35,8 +35,8 @@ class InplaceIndexCopyTransform(thunder.Transform):
 
 
 class HFTransformers(BaseRecipe):
-    def __init__(self, fuser="nvfuser", show_progress=False):
-        super().__init__(fuser=fuser, show_progress=show_progress)
+    def __init__(self, fuser="nvfuser", show_progress=False, interpreter="thunder.jit"):
+        super().__init__(fuser=fuser, show_progress=show_progress, interpreter=interpreter)
         # for kv-cache inplace ops
         self.inplace_index_copy_transform = InplaceIndexCopyTransform()
 
@@ -75,9 +75,12 @@ class HFTransformers(BaseRecipe):
         return config
 
     def setup_lookasides(self):
+        if self.interpreter == thunder.core.recipe.Interpreter.THUNDER_FX:
+            return None
+
         import transformers
 
-        warn_lookaside = thunder.Lookaside(
+        warn_lookaside = thunder.core.recipe.Lookaside(
             fn=transformers.modeling_utils.PreTrainedModel.warn_if_padding_and_no_attention_mask,
             replace_with=lambda *args: None,
         )

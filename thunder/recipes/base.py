@@ -1,4 +1,5 @@
 from thunder import Recipe, Plugin, DebugOptions, Transform, Executor
+from thunder.core.recipe import Interpreter
 from thunder.executors.torch_compile import torch_compile_ex
 from thunder.transforms.prune_prologue_checks import PrunePrologueChecks
 
@@ -9,9 +10,10 @@ class BaseRecipe(Recipe):
     def __init__(self,
         fuser="nvfuser",
         show_progress=False,
-        plugins : Plugin | list[Plugin] = []
+        plugins: Plugin | list[Plugin] = [],
+        interpreter: Interpreter | str = Interpreter.THUNDER_JIT,
     ):
-        super().__init__(plugins=plugins)
+        super().__init__(plugins=plugins, interpreter=interpreter)
         self.fuser = fuser
         self.show_progress = show_progress
 

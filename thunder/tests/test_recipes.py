@@ -8,12 +8,36 @@ from thunder.tests.framework import version_between, IS_WINDOWS
 
 
 @pytest.mark.skipif(IS_WINDOWS, reason="slow on Windows")
+def test_default_recipe_basic_bert():
+    bert = transformers.BertForSequenceClassification(transformers.BertConfig())
+    del bert.bert.encoder.layer[1:]
+    bert.eval()
+
+    inp = torch.randint(1, 20, (1, 32))
+
+    thunder_bert = thunder.compile(bert)
+
+    actual = thunder_bert(inp)
+    expected = bert(inp)
+
+    assert_close(actual, expected)
+
+
+@pytest.mark.skipif(IS_WINDOWS, reason="slow on Windows")
 def test_recipe_basic_bert():
     bert = transformers.BertForSequenceClassification(transformers.BertConfig())
     del bert.bert.encoder.layer[1:]
     bert.eval()
 
     inp = torch.randint(1, 20, (1, 32))
+
+    expected = bert(inp)
+
+    thunder_bert = thunder.compile(bert, recipe="hf-transformers")
+
+    actual = thunder_bert(inp)
+
+    assert_close(actual, expected)
 
     from thunder.recipes import HFTransformers
 
@@ -25,16 +49,16 @@ def test_recipe_basic_bert():
     assert_close(actual, expected)
 
 
-def test_recipe_basic_bert_dynamo():
+def test_recipe_basic_bert_fx():
     bert = transformers.BertForSequenceClassification(transformers.BertConfig())
     del bert.bert.encoder.layer[1:]
     bert.eval()
 
     inp = torch.randint(1, 20, (1, 32))
 
-    from thunder.core.recipe import DynamoRecipe
+    from thunder.recipes import HFTransformers
 
-    thunder_bert = thunder.compile(bert, recipe=DynamoRecipe())
+    thunder_bert = thunder.compile(bert, recipe=HFTransformers(interpreter="thunder.fx"))
 
     actual = thunder_bert(inp)
     expected = bert(inp)

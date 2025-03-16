@@ -49,13 +49,19 @@ class Interpreter(Enum):
 
  
 class Recipe:
-    interpreter = Interpreter.THUNDER_JIT
-
-    def __init__(self, plugins: Plugin):
+    def __init__(self, plugins: Plugin, interpreter: Interpreter = Interpreter.THUNDER_JIT):
         self.lookasides = []
         self.transforms = []
         self.executors = []
         self.plugins = plugins
+        if isinstance(interpreter, str):
+            if interpreter == "thunder.jit":
+                interpreter = Interpreter.THUNDER_JIT
+            elif interpreter == "thunder.fx":
+                interpreter = Interpreter.THUNDER_FX
+            else:
+                raise ValueError(f"Invalid interpreter {interpreter}. Supported interpreters: ['thunder.jit', 'thunder.fx'].")
+        self.interpreter = interpreter
 
     def add_plugins(self, plugins: list[Plugin]):
         self.plugins.extend(plugins)
@@ -142,7 +148,3 @@ class Recipe:
             raise AttributeError(f"Interpreter must be one of 'Interpreter.THUNDER_JIT', 'Interpreter.THUNDER_FX'. Found: {self.interpreter}.")
 
         return thunder_model
-
-
-class FXRecipe(Recipe):
-    interpreter = Interpreter.THUNDER_FX
