@@ -180,7 +180,7 @@ class TELinear(TransformerEngineBaseModule):
         else:
             self.pg = None
 
-    def forward(self, inp, weight, bias, is_grad_enabled: bool = False):
+    def forward(self, inp, weight, bias, is_grad_enabled: bool = False, *, weight_requires_grad, bias_requires_grad):
         # NOTE: Backward FP8 metadata sync
         # TransformerEngine v1.6 onwards, we control the sync and update of FP8 metadata for FP8 tensors
         # tied to backward pass (i.e. the gradient tensors)
@@ -190,12 +190,19 @@ class TELinear(TransformerEngineBaseModule):
         # We consume the `is_first_fp8_module` so that the automatic sync for FP8 metadata is disabled.
         FP8GlobalStateManager.is_first_fp8_module()  # Consume first module token.
 
-        tensor_inputs = tuple(filter(lambda t: isinstance(t, torch.Tensor), (inp, weight, bias)))
+        enable_grad_inputs = (inp,)
+
+        # For PEFT scenarios, weights maybe frozen i.e. weight_requires_grad=False.
+        if weight_requires_grad:
+            enable_grad_inputs += (weight,)
+        if bias_requires_grad:
+            enable_grad_inputs += (bias,)
+
         # See [NOTE] Enable grad within context
-        # TE backward depends on `requires_grad` to compute grads.
+        # TE backward depends on `requires_grad` to compute grads but thunder wraps it's execution trace with `no_grad`,
         # so under grad mode we enable grad for input tensors
         # Ref: https://github.com/NVIDIA/TransformerEngine/blob/b957aa475bcbcf22405381d18bd7fefe4fb6b171/transformer_engine/pytorch/module/linear.py#L264
-        grad_ctx = enable_grad(*tensor_inputs) if is_grad_enabled else nullcontext()
+        grad_ctx = enable_grad(*enable_grad_inputs) if is_grad_enabled else nullcontext()
         with grad_ctx, self.prepare_forward(inp) as inp:
             assert (
                 self.fp8 or not self.primary_weights_in_fp8
@@ -310,7 +317,7 @@ def make_te_linear_meta(is_grad_enabled: bool = False):
     def _te_functional_linear_meta(
         a: TensorProxy, w: TensorProxy, bias: None | TensorProxy
     ) -> tuple[TensorProxy, AnyProxy | None]:
-        from thunder.core.dtypes import float8_e4m3fn
+        from thunder.core.dtypes import float8_e4m3fn, uint8
 
         # Input Shape : (*, Hin)
         # Output Shape : (*, Hout) where * is any number of dims including None.
@@ -323,16 +330,13 @@ def make_te_linear_meta(is_grad_enabled: bool = False):
             # It's not critical to model the exact shape and dtype of
             # saved_tensors since they are not used in Thunder's meta functions.
 
-            # https://github.com/NVIDIA/TransformerEngine/blob/7fc50f489b8184fbd93efd4e48140ad0264e362b/transformer_engine/pytorch/module/linear.py#L330C13-L337C14
+            # https://github.com/NVIDIA/TransformerEngine/blob/f2b09d2a206ebaddbec6aa7da1158a449f0457f9/transformer_engine/pytorch/module/linear.py/#L270-L274
             saved_tensors = (
-                TensorProxy(like=a, shape=a.shape),  # saved_inputmat
-                TensorProxy(like=a, shape=(a.shape[:-2] + (a.shape[-1], a.shape[-2]))),  # saved_inputmat_t
-                TensorProxy(like=a, shape=(1,)),  # scaling_fwd
+                TensorProxy(like=a, shape=a.shape, dtype=float8_e4m3fn),  # saved_inputmat
+                TensorProxy(like=w, shape=w.shape, dtype=uint8),  # fp8_weight (rowwise)
+                TensorProxy(like=w, shape=w.shape, dtype=uint8),  # fp8_weight (colwise)
                 TensorProxy(like=w, shape=w.shape),  # weight
-                TensorProxy(like=w, shape=(w.shape[1], w.shape[0]), dtype=float8_e4m3fn),  # weight_fp8
-                # fuse_wgrad_accumulation is False
-                # https://github.com/Lightning-AI/lightning-thunder/blob/40da5bd5fabc30e99883d74b70c6a7d7fd61a828/thunder/executors/transformer_engineex.py#L224
-                None,  # weight.main_grad if cpu_offloading and fuse_wgrad_accumulation else None,
+                None if bias is None else TensorProxy(like=bias, shape=bias.shape),  # bias
             )
 
             return TensorProxy(like=a, shape=output_shape), saved_tensors, ctx_dict
@@ -348,6 +352,8 @@ def _te_functional_linear_backward_impl(
     a_shape: tuple,
     w_shape: tuple,
     b_shape: tuple | None,
+    weight_requires_grad: bool,
+    bias_requires_grad: bool,
     ctx: Context,
     saved_tensors: Sequence[torch.Tensor],
     g: torch.Tensor,
@@ -363,14 +369,16 @@ def _te_functional_linear_backward_meta(
     a_shape: tuple,
     w_shape: tuple,
     b_shape: tuple | None,
+    weight_requires_grad: bool,
+    bias_requires_grad: bool,
     ctx: Context,
     saved_tensors: Sequence[TensorProxy],
     g: TensorProxy,
 ) -> [TensorProxy, TensorProxy, None | TensorProxy]:
     return (
         TensorProxy(like=g, shape=a_shape),
-        TensorProxy(like=g, shape=w_shape),
-        TensorProxy(like=g, shape=b_shape) if b_shape else None,
+        TensorProxy(like=g, shape=w_shape) if weight_requires_grad else None,
+        TensorProxy(like=g, shape=b_shape) if bias_requires_grad else None,
     )
 
 
@@ -402,7 +410,12 @@ def get_recipe_from_options_or_default_recipe():
 def _create_fp8_linear_bound_symbol(
     a: TensorProxy, w: TensorProxy, b: TensorProxy, is_grad_enabled=False
 ) -> tuple[torch.Tensor, AnyProxy | None]:
-    linear_fn = partial(TELinear(w.shape[1], w.shape[0]), is_grad_enabled=is_grad_enabled)
+    linear_fn = partial(
+        TELinear(w.shape[1], w.shape[0]),
+        is_grad_enabled=is_grad_enabled,
+        weight_requires_grad=w.requires_grad,
+        bias_requires_grad=b.requires_grad if b is not None else False,
+    )
     global LINEAR_CALLS_COUNTER
     name = f"te_linear_{LINEAR_CALLS_COUNTER}"
 
@@ -486,10 +499,18 @@ def _linear_checker(
     return all(map(is_cuda, inputs)) and check_valid_fp8_shapes(_view_input_as_2d(a)) and check_valid_fp8_shapes(w)
 
 
-def linear_forwad_rule(a, w, bias):
+def linear_forward_rule(a, w, bias):
     out, saved_tensors, ctx = _create_fp8_linear_bound_symbol(a, w, bias, is_grad_enabled=True)
     primal = out
-    saved_for_backward = (a.shape, w.shape, bias.shape if bias is not None else None, ctx, saved_tensors)
+    saved_for_backward = (
+        a.shape,
+        w.shape,
+        bias.shape if bias is not None else None,
+        w.requires_grad,
+        bias.requires_grad if bias is not None else False,
+        ctx,
+        saved_tensors,
+    )
     return primal, saved_for_backward
 
 
@@ -500,12 +521,14 @@ def _linear_transform(a: TensorProxy, w: TensorProxy, b: TensorProxy) -> torch.T
 
 @disable_caching_split_forward_and_backward
 def _linear_grad(a: TensorProxy, w: TensorProxy, b: TensorProxy) -> TensorProxy:
-    out, saved_for_backward = linear_forwad_rule(a, w, b)
+    out, saved_for_backward = linear_forward_rule(a, w, b)
+    _, _, _, weight_requires_grad, bias_requires_grad, *_ = saved_for_backward
     g = prims.get_grad(out)
     ga, gw, gb = te_functional_linear_backward(*saved_for_backward, g)
     prims.put_grad(a, ga)
-    prims.put_grad(w, gw)
-    if b is not None:
+    if weight_requires_grad:
+        prims.put_grad(w, gw)
+    if bias_requires_grad:
         prims.put_grad(b, gb)
     return out
 
