@@ -4,9 +4,10 @@ import torch
 import pytest
 
 from torch.testing import assert_close, make_tensor
-from thunder.tests.framework import version_between
+from thunder.tests.framework import version_between, IS_WINDOWS
 
 
+@pytest.mark.skipif(IS_WINDOWS, reason="slow on Windows")
 def test_recipe_basic_bert():
     bert = transformers.BertForSequenceClassification(transformers.BertConfig())
     del bert.bert.encoder.layer[1:]
