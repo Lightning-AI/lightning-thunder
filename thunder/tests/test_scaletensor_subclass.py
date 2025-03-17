@@ -57,16 +57,20 @@ class ScaleTensor(torch.Tensor):
             out_b = sum(args_b)
         except:
             out_b = 1
+
+        if isinstance(out_a, (list, tuple)):
+            return list(ScaleTensor(o, out_b) for o in out_a)
         return ScaleTensor(out_a, out_b)
 
 
 # @torch.compile()
 def f(x, y):
     return x * y  #  * 2
+    # return x.split(2)
     # return torch.nn.functional.smooth_l1_loss(x, y)
 
 
-x1_inner = torch.ones(2, 4)
+x1_inner = torch.ones(4, 4)
 x1 = ScaleTensor(x1_inner, 2)
 x2 = ScaleTensor(x1_inner, 2)
 
@@ -185,7 +189,7 @@ def get_fx_graph(trc, args_for_fx):
 
         fake_t = tree_map(materialize, args_for_fx)
 
-    args_to_flatten = (isinstance(t, ScaleTensor) for t in fake_t)
+    args_to_unflatten = tuple(isinstance(t, ScaleTensor) for t in fake_t)
 
     def flatten_tensor(t):
         attrs, metadata = t.__tensor_flatten__()
@@ -193,12 +197,11 @@ def get_fx_graph(trc, args_for_fx):
         result = attrs, metadata  # , t.shape, t.stride()
         return result
 
-    out_spec = None
+    out_spec = []
 
-    def wrapped_fn(args_for_fx, args_to_flatten):
-        global out_spec
+    def wrapped_fn(args_for_fx):
         new_args = ()
-        for unflatten, arg in zip(args_to_flatten, args_for_fx):
+        for unflatten, arg in zip(args_to_unflatten, args_for_fx):
             if unflatten:
                 new_args += (ScaleTensor.__tensor_unflatten__(*arg),)
             else:
@@ -206,57 +209,56 @@ def get_fx_graph(trc, args_for_fx):
 
         o = f(*new_args)
         o = pytree.tree_map_only(ScaleTensor, flatten_tensor, o)
-        flat_o, spec = pytree.tree_flatten(o)
+        flat_o, _ = pytree.tree_flatten(o)
+        out_spec.append(_)
         return flat_o  # flatten_tensor(o)
 
     flattened_args = tuple(flatten_tensor(arg) if isinstance(arg, ScaleTensor) else arg for arg in fake_t)
 
-    # print(fake_t)
     with (
         enable_python_dispatcher(),
         FunctionalTensorMode(pre_dispatch=False, export=False, _allow_token_discovery=True),
     ):
-        g = make_fx(wrapped_fn, tracing_mode="fake")(flattened_args, args_to_flatten)
-        # g = make_fx(f, tracing_mode="fake")(*fake_t)
-        # g.print_readable()
-        # o = g(flattened_args, args_to_flatten)
-        # print(pytree.tree_unflatten(o, out_spec))
-        # out_t = ScaleTensor.__tensor_unflatten__(*o)
-        # print(out_t)
-        from thunder.dynamo.utils import _checkpoint_function_converter
-        import thunder
+        g = make_fx(wrapped_fn, tracing_mode="fake")(flattened_args)
 
-        _checkpoint_function_converter(g)
-        # g.print_readable()
-        g.recompile()
-        # jg = thunder.jit(g)
-        # jg(flattened_args, args_to_flatten)
-        # print(thunder.last_traces(jg)[0])
+    # print(out_spec)
+    from thunder.dynamo.utils import _checkpoint_function_converter
+    import thunder
 
-        del g.meta
+    # Replaces `aten` ops with thunder equivalent
+    # and this makes the `g` traceable with thunder.
+    _checkpoint_function_converter(g)
+    g.recompile()
 
-        @wraps(g)
-        def wrap(*args):
-            return g(*args)
+    # Otherwise `trace` get's confused.
+    del g.meta
 
-        print(flattened_args)
+    @wraps(g)
+    def wrap(*args):
+        return g(*args)
 
-        def flatten_tensor_proxy(t):
-            return {"a": t.a}, {"b": t.b}
+    def flatten_tensor_proxy(t):
+        return {"a": t.a}, {"b": t.b}
 
-        flattened_args = tuple(
-            flatten_tensor_proxy(arg) if isinstance(arg, ScaleTensorProxy) else arg for arg in args_for_fx
-        )
+    flattened_args = tuple(
+        flatten_tensor_proxy(arg) if isinstance(arg, ScaleTensorProxy) else arg for arg in args_for_fx
+    )
 
-        # print(args_for_fx[0].a, args_for_fx[1].a)
-        trc = thunder.trace(rename_proxies=False)(wrap, flattened_args, args_to_flatten)
-        print(trc)
-        aten_syms = []
-        for bsym in trc.bound_symbols:
-            if "aten" in bsym.sym.name:
-                aten_syms.append(bsym)
-        print(aten_syms)
-        return aten_syms, trc.bound_symbols[-1]
+    trc = thunder.trace(rename_proxies=False)(wrap, flattened_args)
+
+    aten_syms = []
+    for bsym in trc.bound_symbols:
+        if "aten" in bsym.sym.name:
+            aten_syms.append(bsym)
+    # print(trc.bound_symbols[-1].flat_args)
+    # print()
+    flat_output = pytree.tree_unflatten(trc.bound_symbols[-1].flat_args, out_spec[0])
+    if not isinstance(flat_output, list):
+        flat_output = [
+            flat_output,
+        ]
+
+    return aten_syms, flat_output
 
 
 class ATenTransform(Transform):
@@ -273,10 +275,11 @@ class ATenTransform(Transform):
                 continue
 
             filter_tensor_proxies = list(filter(lambda t: isinstance(t, ScaleTensorProxy), bsym.flat_args))
+            tensor_proxies = list(filter(lambda t: isinstance(t, TensorProxy), bsym.flat_args))
             # print(bsym.flat_args)
             # print(filter_tensor_proxies)
-            if len(filter_tensor_proxies) == len(bsym.flat_args):
-                # print(bsym.args, bsym.kwargs)
+            if len(filter_tensor_proxies) == len(tensor_proxies):
+                print(bsym.args, bsym.kwargs)
                 trc = trace_from_bsym_or_bsyms(bsym)
                 executable_trc = make_trace_executable(trc, *bsym.flat_args)
                 aten_bsyms, output = get_fx_graph(executable_trc, bsym.flat_args)
@@ -288,12 +291,14 @@ class ATenTransform(Transform):
                         proxys.append(prims.get_subclass_inner_tensor(tp))
                 syms = comp_trace.pop_scope()
 
-                comp_trace.push_scope([])
-                with tracectx(comp_trace):
-                    prims.construct_subclass(*output.flat_args)
-                    return_syms = comp_trace.pop_scope()
+                # comp_trace.push_scope([])
+                # with tracectx(comp_trace):
+                return_bsyms = []
+                for o_proxy, o in zip(bsym.flat_outs, output):
+                    cons_bsym = prims.construct_subclass.bind(*o, output=o_proxy)
+                    return_bsyms.append(cons_bsym)
 
-                bsym.subsymbols = syms + aten_bsyms + return_syms
+                bsym.subsymbols = syms + aten_bsyms + return_bsyms
 
         print(comp_trace)
         return prologue_trace, comp_trace, epi_trc

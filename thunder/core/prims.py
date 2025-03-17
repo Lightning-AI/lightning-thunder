@@ -4156,6 +4156,9 @@ get_subclass_inner_tensor = make_prim(
 def construct_subclass(a, b):
     from thunder.core.proxies import ScaleTensorProxy
 
+    a = a["a"]
+    b = b["b"]
+    # This should call unflatten
     return ScaleTensorProxy(
         a=a,
         b=a,

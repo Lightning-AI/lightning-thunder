@@ -5434,6 +5434,65 @@ def aten_mul(x, y):
     return clang.mul(x, y)
 
 
+@torchsymbol(torch.ops.aten.split.Tensor, id="aten.split.Tensor")
+def aten_split(a: TensorProxy, size_or_sections: int | Sequence[int], /, dim=0):
+    # TODO See note in tensor_split
+    if isinstance(size_or_sections, TensorProxy):
+        raise NotImplementedError
+
+    dim = utils.canonicalize_dim(a.ndim, dim)
+
+    utils.check_type(
+        size_or_sections,
+        (int, IntegerProxy, Sequence),
+    )
+
+    # TODO: consider revising this to just call _split_indices
+    if isinstance(size_or_sections, (int, IntegerProxy)):
+        target_length = size_or_sections
+
+        # Short-circuits special-case of zero
+        if target_length == 0:
+            utils.check(
+                a.shape[dim] == 0,
+                lambda: f"When size_or_sections={size_or_sections} is zero then the length of the split dimension ({a.shape[dim]}) must also be zero",
+            )
+            return full_like(a)
+
+        last_length = a.shape[dim] % target_length
+        num_splits = a.shape[dim] // target_length
+        cur_idx = 0
+        splits = []
+
+        for _ in range(num_splits):
+            splits.append(clang.slice_in_dim(a, cur_idx, cur_idx + target_length, dim=dim))
+            cur_idx = cur_idx + target_length
+
+        # Handles tail
+        if last_length > 0:
+            splits.append(clang.slice_in_dim(a, cur_idx, a.shape[dim], dim=dim))
+
+        return splits
+
+    # NOTE: isinstance(size_or_sections, Sequence)
+    # Converts lengths to indices
+
+    s = reduce(operator.add, size_or_sections, 0)
+    utils.check(
+        s == a.shape[dim],
+        lambda: f"size_or_sections={size_or_sections} must sum to the length of the split dimension ({len(a.shape[dim])})",
+    )
+
+    # NOTE: because split requires overspecifying the lengths, the final split is ignored
+    cur = 0
+    indices = []
+    for l in size_or_sections[: len(size_or_sections) - 1]:
+        cur += l
+        indices.append(cur)
+
+    return _split_indices(a, indices, dim)
+
+
 @torchsymbol(
     torch.ops.higher_order.tag_activation_checkpoint,
     id="activation_checkpoint",
