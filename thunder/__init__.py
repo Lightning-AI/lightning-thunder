@@ -73,6 +73,7 @@ from thunder.core.proxies import (
 from thunder.core.interpreter import print_interpreter_log, print_to_log
 from thunder.core.jit_ext import thunder_general_jit
 from thunder.executors.torch_autograd import split_forward_backward, connect_to_autograd
+from thunder.transforms.tensor_wrapper_subclass import unroll_tensor_subclasses
 
 # NOTE This import is intentionally pytorch so that it thunder.torch doesn't import this
 import torch as pytorch
@@ -372,7 +373,7 @@ def jit(
         data_ptr_to_tensor_group_index = {}
         tensor_group_index_to_tensor_indices = defaultdict(list)
         for idx, t in enumerate(flat_args):
-            if pytorch.is_tensor(t) and t.layout == pytorch.strided:
+            if type(t) in {pytorch.Tensor, pytorch.nn.Parameter} and t.layout == pytorch.strided:
                 data_ptr = t.untyped_storage().data_ptr()
                 if data_ptr not in data_ptr_to_tensor_group_index:
                     data_ptr_to_tensor_group_index[data_ptr] = len(data_ptr_to_tensor_group_index)
@@ -479,7 +480,7 @@ def jit(
 
             prologue_traces += transform_for_execution(
                 prologue_trc,
-                executors_list=(pythonex,),
+                executors_list=(pythonex, get_executor("torch")),
                 use_del_last_used=False,
             )
             prologue_trc = prologue_traces[-1]
@@ -497,12 +498,14 @@ def jit(
             computation_trc = dce(computation_trc)
             computation_traces.append(computation_trc)
 
+            _unroll_tensor_subclass_applied: bool = False
             backward_trc = None
             if not cd.disable_torch_autograd_support:
                 tensor_cls = (pytorch.Tensor, TensorProxy)
                 requires_grad = any(isinstance(arg, tensor_cls) and arg.requires_grad for arg in computation_trc.args)
 
                 if requires_grad:
+                    _unroll_tensor_subclass_applied = True
                     # Currently split_forward_backward also includes
                     # transform_for_execution and various sorting of symbols,
                     # applying transform_for_execution after this would be
@@ -512,6 +515,9 @@ def jit(
                     )
                     # Note computation_trc and backward_trc have been appended to cs.last_(backward_)traces
                     # by split_forward_backward
+
+            if not _unroll_tensor_subclass_applied:
+                computation_trc, _ = unroll_tensor_subclasses(computation_trc)
 
             if backward_trc is None:
                 from thunder.executors.passes import transform_for_execution as transform_for_execution_pass

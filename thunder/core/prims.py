@@ -1,3 +1,4 @@
+from __future__ import annotations
 from enum import auto, Enum
 from numbers import Number
 from functools import reduce, wraps
@@ -5,13 +6,17 @@ import operator
 import builtins
 import math
 from types import NoneType
-from typing import Union, Type, Any, List, Dict, Tuple, Optional
+from typing import Union, Type, Any, List, Dict, Tuple, Optional, TYPE_CHECKING
 from collections.abc import Callable
 from collections.abc import Callable, Hashable, Sequence
 
 import torch
 
 from thunder.core.langctxs import LanguageContext, register_langctx, Languages, langctx
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+    from thunder.core.codeutils import ContextObject
 
 #
 # Creates and registers the torch language context
@@ -78,6 +83,7 @@ from thunder.core.proxies import (
     TupleProxy,
     AnyProxy,
     IntegerProxy,
+    SubclassTensorProxy,
 )
 import thunder.core.codeutils as codeutils
 from thunder.core.codeutils import Printable
@@ -276,6 +282,10 @@ class PrimIDs(Enum):
     COPY_ = auto()
     #
     SINK = auto()
+    # Tensor Subclasses methods
+    TENSOR_SUBCLASS_CTOR = auto()
+    FLATTEN_TENSOR_SUBCLASS = auto()
+    UNFLATTEN_TENSOR_SUBCLASS = auto()
 
 
 class OpTags(Enum):
@@ -3676,7 +3686,11 @@ transpose = make_prim(PrimIDs.TRANSPOSE, "transpose", meta=transpose_meta, tags=
 view = make_prim(PrimIDs.VIEW, "view", meta=reshape_meta, tags=(OpTags.SHAPE_OP,))
 
 
-def shallow_copy_meta(a: TensorProxy, /) -> TensorProxy:
+def shallow_copy_meta(a: TensorProxy | SubclassTensorProxy, /) -> TensorProxy:
+    if isinstance(a, SubclassTensorProxy):
+        shallow = SubclassTensorProxy(like=a)
+        shallow.copy_attributes_from(a)
+        return shallow
     return TensorProxy(like=a)
 
 
@@ -4187,3 +4201,142 @@ def sink_meta(*args, **kwargs):
 
 # TODO do we want another tag to remove this after prologue is constructed?
 sink = make_prim(PrimIDs.SINK, "sink", meta=sink_meta, tags=(OpTags.DONT_DCE,))
+
+
+def tensor_subclass_ctor_meta(
+    cls, name, shape, device, dtype, requires_grad, tensors, non_tensors
+) -> SubclassTensorProxy:
+    s = SubclassTensorProxy(
+        name,
+        subclass_type=cls,
+        shape=shape,
+        device=device,
+        dtype=dtype,
+        requires_grad=requires_grad,
+        tensors=tensors,
+        non_tensors=non_tensors,
+    )
+    return s
+
+
+def get_nested_types(collection):
+    collection = utils.sequencify(collection)
+    types_set = {type(t) for t in collection}
+
+    def check_types(coll):
+        for item in coll:
+            types_set.add(type(item))
+            # Check if the item is a nested collection
+            if baseutils.is_collection(item):
+                # If it's a dictionary, check its values
+                if isinstance(item, dict):
+                    check_types(item.values())
+                # Recursively check nested collections
+                else:
+                    check_types(item)
+
+    check_types(collection)
+    return tuple(types_set)
+
+
+def filter_types_for_tensor_wrapper_subclass(types: tuple[Any, ...]) -> tuple[Any, ...]:
+    return tuple(
+        filter(
+            lambda t: (
+                t.__module__ != "builtins"
+                and t != Number
+                # note(crcrpar): maybe `thunder.core`?
+                and not t.__module__.startswith("thunder.")
+                and not t.__module__.startswith("torch.")
+            ),
+            types,
+        )
+    )
+
+
+def bind_postprocess_of_tensor_subclass_ctor(bsym: BoundSymbol) -> None:
+    cls = bsym.args[0]
+    non_tensors = bsym.args[-1]
+
+    filtered_types: tuple[Any, ...] = (cls,)
+    if non_tensors:
+        types = get_nested_types(non_tensors)
+        filtered_types += filter_types_for_tensor_wrapper_subclass(types)
+    new_imports = {t.__name__: t for t in filtered_types}
+    bsym._import_ctx.update(new_imports)
+
+
+tensor_subclass_ctor = make_prim(
+    PrimIDs.TENSOR_SUBCLASS_CTOR,
+    "tensor_subclass_ctor",
+    meta=tensor_subclass_ctor_meta,
+    _bind_postprocess=bind_postprocess_of_tensor_subclass_ctor,
+)
+
+
+# NOTE(crcrpar): The behavior is different from PyTorch `subclass_tensor.__tensor_flatten__()`
+# that returns a list of tensor attr names and a dict of const metadata. In Thunder traces,
+# const values could be obviated and actual tensor proxies would be more useful
+# than tensor attr names.
+def flatten_tensor_subclass_meta(t: SubclassTensorProxy) -> tuple[TensorProxy, ...]:
+    tensor_attr_names, metadata = t.__tensor_flatten__()
+    tensors = tuple(getattr(t, name) for name in tensor_attr_names)
+    return tensors
+
+
+flatten_tensor_subclass = make_prim(
+    PrimIDs.FLATTEN_TENSOR_SUBCLASS,
+    "flatten_tensor_subclass",
+    meta=flatten_tensor_subclass_meta,
+)
+
+
+def bind_postprocess_of_unflatten_tensor_subclass(bsym: BoundSymbol) -> None:
+    cls = bsym.args[0]
+    inner_tensors = bsym.args[1]
+    metadata = bsym.args[2]
+
+    filtered_types: tuple[Any, ...] = (cls,)
+    if metadata:
+        types = get_nested_types(list(metadata.values()))
+        filtered_types += filter_types_for_tensor_wrapper_subclass(types)
+    new_imports = {t.__name__: t for t in filtered_types}
+    bsym._import_ctx.update(new_imports)
+
+
+def unflatten_tensor_subclass_meta(
+    tensor_subclass_type,
+    inner_tensors: dict[str, TensorProxy],
+    metadata: dict[str, Any],
+) -> SubclassTensorProxy:
+    first_tensor: TensorProxy = list(inner_tensors.values())[0]
+    a = SubclassTensorProxy(
+        shape=first_tensor.shape,
+        device=first_tensor.device,
+        dtype=first_tensor.dtype,
+        requires_grad=first_tensor.requires_grad,
+        tensors=list(inner_tensors.values()),
+        non_tensors=list(metadata.values()),
+        subclass_type=tensor_subclass_type,
+    )
+    for name, value in inner_tensors.items():
+        setattr(a, name, value)
+    for name, value in metadata.items():
+        setattr(a, name, value)
+    return a
+
+
+def unflatten_tensor_subclass_python_impl(
+    tensor_subclass_type,
+    inner_tensors: dict[str, TensorProxy],
+    metadata: dict[str, Any],
+) -> torch.Tensor:
+    return tensor_subclass_type.__tensor_unflatten__(inner_tensors, metadata, -1, -1)
+
+
+unflatten_tensor_subclass = make_prim(
+    PrimIDs.UNFLATTEN_TENSOR_SUBCLASS,
+    "unflatten_tensor_subclass",
+    meta=unflatten_tensor_subclass_meta,
+    _bind_postprocess=bind_postprocess_of_unflatten_tensor_subclass,
+)

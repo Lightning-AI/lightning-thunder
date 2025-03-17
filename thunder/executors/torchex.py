@@ -17,8 +17,10 @@ from thunder.core.dtypes import to_torch_dtype, to_dtype
 import thunder.core.devices as devices
 from thunder.core.devices import to_torch_device, to_device
 import thunder.core.prims as prims
-from thunder.core.proxies import NumberProxy, TensorProxy, FutureTensorProxy, pytype
-from thunder.core.symbol import Symbol
+from thunder.core.proxies import NumberProxy, TensorProxy, FutureTensorProxy, variableify, pytype, Proxy
+from thunder.core.pytree import tree_flatten, tree_unflatten
+from thunder.core.symbol import Symbol, BoundSymbol
+from thunder.core.trace import TraceCtx, set_tracectx, reset_tracectx, from_trace
 from thunder.distributed.prims import DistributedReduceOps
 import thunder.distributed.prims as dist_prims
 import thunder.core.utils as utils
@@ -33,7 +35,10 @@ from thunder.core.transforms import (
 )
 
 if TYPE_CHECKING:
+    from typing import Any
+    from collections.abc import Iterable
     from thunder.common import CompileData
+    from thunder.core.codeutils import ContextObject, Printable
 
 ex = OperatorExecutor("torch", version=torch.__version__)
 register_executor(ex)
@@ -451,7 +456,7 @@ def _empty_prims_transform(
 
 
 def _clone_prims_transform(a: TensorLike, **kwargs) -> TensorLike:
-    return clone(a)
+    return clone(a, memory_format=kwargs.get("memory_format", torch.preserve_format))
 
 
 def _tensor_from_sequence_prims_transform(
@@ -1414,12 +1419,43 @@ _register_implementation(prims.copy_with_setitem, copy_with_setitem_impl, checke
 #
 
 matmul = _register_torch_operation("matmul")
+_scaled_mm = _register_torch_operation("_scaled_mm")
 outer = _register_torch_operation("outer")
 
 _register_implementation(prims.matmul, matmul, checker=_always_executable)
 
 _register_implementation(ltorch.matmul, matmul, checker=_always_executable)
 _register_implementation(ltorch.outer, outer, checker=_always_executable)
+
+
+def _scaled_mm_impl(
+    a: TensorLike,
+    b: TensorLike,
+    scale_a: TensorLike,
+    scale_b: TensorLike,
+    bias: TensorLike | None = None,
+    scale_result: TensorLike | None = None,
+    out_dtype: dtypeLike | None = None,
+    use_fast_accum: bool = False,
+):
+
+    def is_row_major(mat: TensorLike) -> bool:
+        return mat.stride()[1] == 1 and mat.stride()[0] > 1
+
+    def is_column_major(mat: TensorLike) -> bool:
+        return mat.stride()[0] == 1 and mat.stride()[1] > 1
+
+    utils.check(is_row_major(a), lambda: f"`a` expected to be row-major but its stride is {a.stride()=}")
+    utils.check(is_column_major(b), lambda: f"`b` expected to be column-major but its stride is {b.stride()=}")
+    result_dtype: torch.dtype = to_torch_dtype(a.dtype if out_dtype is None else out_dtype)
+
+    return torch._scaled_mm(a, b, scale_a, scale_b, bias, scale_result, result_dtype, use_fast_accum)
+
+
+_scaled_mm_impl = ex.register_operator("_scaled_mm_impl", like=ltorch._scaled_mm, fn=_scaled_mm_impl)
+_register_implementation(ltorch._scaled_mm, _scaled_mm_impl, checker=_always_executable)
+_register_implementation(ltorch.core_aten_scaled_mm, _scaled_mm_impl, checker=_always_executable)
+
 
 #
 # Normalization operations
@@ -2277,3 +2313,156 @@ _register_implementation(prims.shape, shape, checker=_always_executable)
 
 shallow_copy = ex.register_operator("shallow_copy", meta=prims.shallow_copy, fn=lambda x: x)
 _register_implementation(prims.shallow_copy, shallow_copy, checker=_always_executable)
+
+
+def _tensor_subclass_ctor(cls, name, shape, device, dtype, requires_grad, tensors, non_tensors):
+    new_non_tensors = []
+    for a in non_tensors:
+        if isinstance(a, dtypes.dtype):
+            new_non_tensors.append(to_torch_dtype(a))
+        elif isinstance(a, devices.Device):
+            new_non_tensors.append(to_torch_device(a))
+        else:
+            new_non_tensors.append(a)
+    return cls(*tensors, *new_non_tensors)
+
+
+def _bind_postprocess_of_tensor_subclass_ctor(bsym: BoundSymbol) -> None:
+    from thunder.core.prims import get_nested_types, filter_types_for_tensor_wrapper_subclass
+
+    cls, _name, _shape, _device, _dtype, _requires_grad, _tensors, non_tensors = bsym.args
+    filtered_types = (cls,)
+    if non_tensors:
+        types = get_nested_types(non_tensors)
+        filtered_types += filter_types_for_tensor_wrapper_subclass(types)
+    new_imports = {t.__name__: t for t in filtered_types}
+    bsym._import_ctx.update(new_imports)
+
+
+def printer_of_tensor_subclass_ctor(
+    bsym: BoundSymbol,
+    out_printables: Any,
+    arg_printables: Sequence[Printable],
+    kwarg_printables: dict[str, Printable],
+) -> str | Iterable[str]:
+    from itertools import chain
+    from thunder.core import baseutils
+    from thunder.core import codeutils
+
+    baseutils.check(not kwarg_printables, lambda: f"No kwargs are supported but {kwarg_printables = }")
+
+    # NOTE(crcrpar): It's not a context but at the moment Tensor subclass is treated as `ContextObject`.
+    wrapped_cls: ContextObject | torch._C._TensorMeta = arg_printables[0]
+    if isinstance(wrapped_cls, torch._C._TensorMeta):
+        cls = wrapped_cls
+    else:
+        cls: torch._C._TensorMeta = wrapped_cls.obj
+    tensors, non_tensors = arg_printables[-2:]
+    new_non_tensors = []
+    for a in non_tensors:
+        if isinstance(a, dtypes.dtype):
+            new_non_tensors.append(dtypes.to_torch_dtype(a))
+        elif isinstance(a, devices.Device):
+            new_non_tensors.append(devices.to_torch_device(a))
+        else:
+            new_non_tensors.append(a)
+
+    arg_str = ", ".join(codeutils.prettyprint(x) for x in [*tensors, *new_non_tensors])
+    kwarg_str = ""
+
+    result_str: str
+    if bsym.output is None or (baseutils.is_collection(bsym.output) and len(bsym.output) == 0):
+        result_str = ""
+    else:
+        result_str = f"{codeutils.prettyprint(out_printables, literals_as_underscores=True)} = "
+
+    # Creates a comment describing the output
+    comment_str: str
+    if isinstance(bsym.output, Proxy):
+        comment_str = f"  # {codeutils.prettyprint(out_printables, with_type=True)}"
+    else:
+        comment_str = ""
+
+    cls_with_module = f"{cls.__name__}"
+    s = f"{result_str}{cls_with_module}({arg_str}{', ' if (len(arg_str) > 0 and len(kwarg_str) > 0) else ''}{kwarg_str}){comment_str}"
+
+    if bsym.header:
+        header_lines = (
+            bsym.header
+            if isinstance(bsym.header, Sequence) and not isinstance(bsym.header, str)
+            else bsym.header.splitlines()
+        )
+        header_lines = (f"# {line}" for line in header_lines)
+        return chain(header_lines, [s])
+
+    return s
+
+
+tensor_subclass_ctor = ex.register_operator(
+    "tensor_subclass_ctor",
+    meta=prims.tensor_subclass_ctor,
+    fn=_tensor_subclass_ctor,
+    bind_postprocess=_bind_postprocess_of_tensor_subclass_ctor,
+    python_printer=printer_of_tensor_subclass_ctor,
+)
+_register_implementation(prims.tensor_subclass_ctor, tensor_subclass_ctor, checker=_always_executable)
+
+
+def flatten_tensor_subclass_impl(t):
+    tensor_attr_names, metadata = t.__tensor_flatten__()
+    tensors = tuple(getattr(t, name) for name in tensor_attr_names)
+    return tensors
+
+
+flatten_tensor_subclass = ex.register_operator(
+    "flatten_tensor_subclass",
+    meta=prims.flatten_tensor_subclass.meta,
+    fn=flatten_tensor_subclass_impl,
+)
+_register_implementation(
+    prims.flatten_tensor_subclass,
+    flatten_tensor_subclass,
+    checker=_always_executable,
+)
+
+
+def unflatten_tensor_subclass_impl(
+    tensor_subclass_type: torch._C._TensorMeta,
+    inner_tensors: dict[str, TensorLike],
+    metadata: dict,
+):
+    for key in metadata:
+        v = metadata[key]
+        if isinstance(v, dtypes.dtype):
+            metadata[key] = to_torch_dtype(v)
+        elif isinstance(v, devices.Device):
+            metadata[key] = to_torch_device(v)
+    return tensor_subclass_type.__tensor_unflatten__(inner_tensors, metadata, -1, -1)
+
+
+def bind_postprocess_of_unflatten_tensor_subclass(bsym: BoundSymbol) -> None:
+    from thunder.core.prims import filter_types_for_tensor_wrapper_subclass, get_nested_types
+
+    cls = bsym.args[0]
+    _inner_tensors = bsym.args[1]
+    metadata = bsym.args[2]
+
+    filtered_types: tuple[Any, ...] = (cls,)
+    if metadata:
+        types = get_nested_types(list(metadata.values()))
+        filtered_types += filter_types_for_tensor_wrapper_subclass(types)
+    new_imports = {t.__name__: t for t in filtered_types}
+    bsym._import_ctx.update(new_imports)
+
+
+unflatten_tensor_subclass = ex.register_operator(
+    "unflatten_tensor_subclass",
+    meta=prims.unflatten_tensor_subclass.meta,
+    fn=unflatten_tensor_subclass_impl,
+    bind_postprocess=bind_postprocess_of_unflatten_tensor_subclass,
+)
+_register_implementation(
+    prims.unflatten_tensor_subclass,
+    unflatten_tensor_subclass,
+    checker=_always_executable,
+)
