@@ -100,7 +100,7 @@ _lcdtype_to_nvdtype_map: dict[None | type | dtypes.dtype, DataType] = {
     None: DataType.Null,
 }
 
-if nvfuser_version() > LooseVersion("0.2.26"):
+if nvfuser_version() >= LooseVersion("0.2.26"):
     _lcdtype_to_nvdtype_map.update(
         {
             dtypes.uint64: DataType.UInt64,
