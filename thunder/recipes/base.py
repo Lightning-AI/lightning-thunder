@@ -8,12 +8,12 @@ from typing import Any
 
 class BaseRecipe(Recipe):
     def __init__(self,
-        fuser="nvfuser",
         show_progress=False,
-        plugins: Plugin | list[Plugin] = [],
-        interpreter: Interpreter | str = Interpreter.THUNDER_JIT,
+        fuser="nvfuser",
+        interpreter="thunder.jit",
+        plugins=None,
     ):
-        super().__init__(plugins=plugins, interpreter=interpreter)
+        super().__init__(interpreter=interpreter, plugins=plugins)
         self.fuser = fuser
         self.show_progress = show_progress
 

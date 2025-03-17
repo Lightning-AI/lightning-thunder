@@ -35,8 +35,13 @@ class InplaceIndexCopyTransform(thunder.Transform):
 
 
 class HFTransformers(BaseRecipe):
-    def __init__(self, fuser="nvfuser", show_progress=False, interpreter="thunder.jit"):
-        super().__init__(fuser=fuser, show_progress=show_progress, interpreter=interpreter)
+    def __init__(self,
+        show_progress=False,
+        fuser="nvfuser",
+        interpreter="thunder.jit",
+        plugins=None,
+    ):
+        super().__init__(show_progress=show_progress, fuser=fuser, interpreter=interpreter, plugins=plugins)
         # for kv-cache inplace ops
         self.inplace_index_copy_transform = InplaceIndexCopyTransform()
 
