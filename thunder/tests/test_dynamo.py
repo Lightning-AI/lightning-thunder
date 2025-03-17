@@ -29,13 +29,20 @@ from thunder.tests.framework import (
     version_between,
 )
 from thunder.tests.make_tensor import make_tensor
-from thunder.dynamo.report import thunderfx_pytest_benchmark_report, fx_report, analyze_thunder_splits
+from thunder.dynamo.report import (
+    thunderfx_pytest_benchmark_report,
+    fx_report,
+    analyze_thunder_splits,
+    save_failing_repros,
+    get_thunder_fxgraph_reports,
+)
 from thunder.dynamo.benchmark_utils import (
     ThunderCompileSpecification,
     TorchCompileSpecification,
     TorchEagerSpecification,
     WallTime,
     KernelTime,
+    WallTimeWithMemoryUsage,
     BoundSymbolNvfuserSpecification,
     BoundSymbolTorchCompileSpecification,
 )
@@ -1029,7 +1036,12 @@ def test_thunderfx_last_traces():
 
 
 def test_get_example_input_tensor_metadata():
-    from thunder.dynamo.utils import _get_example_input_tensor_metadata, arg_like_tensor
+    from thunder.dynamo.utils import (
+        _get_example_input_tensor_metadata,
+        arg_like_tensor,
+        arg_like,
+        _create_random_tensor_from_tensor_metadata,
+    )
     from torch._subclasses.fake_tensor import FakeTensorMode
 
     int_tensor = torch.arange(1, 11, dtype=torch.int)
@@ -1059,6 +1071,33 @@ def test_get_example_input_tensor_metadata():
     t1_str = arg_like_tensor(meta_t1)
     p1 = r"""^torch\.testing\.make_tensor\(\(11,\), dtype=torch\.float32,\s*device='cpu',\s*requires_grad=True,\s*low=[-+]?[0-9]*\.?[0-9]+,\s*high=[-+]?[0-9]*\.?[0-9]+,\)\.as_strided\(\(2, 3\), \(4, 2\), 2\),$"""
     assert re.fullmatch(p1, t1_str), "The string does not match the expected format!"
+
+    # Tests for nested inputs
+    inputs = [
+        [
+            torch.randn((), dtype=torch.bfloat16, device="cpu", requires_grad=False),
+            torch.randn((), dtype=torch.bfloat16, device="cpu", requires_grad=False),
+        ],
+        torch.randn(24512, dtype=torch.bfloat16, device="cpu", requires_grad=False).as_strided(
+            (128, 1, 128), (192, 24576, 1), 0
+        ),
+    ]
+    str_out = arg_like(inputs)
+    out = eval(str_out)[0]
+    assert len(out) == len(inputs) and len(out[0]) == len(inputs[0])
+    assert out[0][0].shape == inputs[0][0].shape
+    assert out[0][1].shape == inputs[0][1].shape
+    assert out[1].shape == inputs[1].shape and out[1].stride() == inputs[1].stride()
+
+    # Tests for contiguous tensor with storage_offset
+    t2 = torch.randn(1024).as_strided((1, 1, 64), (576, 576, 1), storage_offset=512)
+    meta_t2 = _get_example_input_tensor_metadata(t2)
+    assert meta_t2.shape == (1, 1, 64) and meta_t2.stride() == (576, 576, 1) and meta_t2.storage_offset() == 512
+    t2_str = arg_like_tensor(meta_t2)
+    p2 = r"""^torch\.testing\.make_tensor\(\(576,\), dtype=torch\.float32,\s*device='cpu',\s*requires_grad=False,\s*low=[-+]?[0-9]*\.?[0-9]+,\s*high=[-+]?[0-9]*\.?[0-9]+,\)\.as_strided\(\(1, 1, 64\), \(576, 576, 1\), 512\),$"""
+    assert re.fullmatch(p2, t2_str), "The string does not match the expected format!"
+    t2_tensor = _create_random_tensor_from_tensor_metadata(meta_t2)
+    assert t2_tensor.shape == (1, 1, 64) and t2_tensor.stride() == (576, 576, 1) and t2_tensor.storage_offset() == 512
 
 
 def test_thunderfx_meta_tensor():
@@ -1238,6 +1277,12 @@ def test_WallTime_KernelTime():
     WallTime.time(stmt="fd.execute(inputs)", globals={"fd": fd, "inputs": inputs})
     KernelTime.time(stmt="fd.execute(inputs)", globals={"fd": fd, "inputs": inputs})
 
+    m = WallTimeWithMemoryUsage.time(stmt="fd.execute(inputs)", globals={"fd": fd, "inputs": inputs})
+    torch.cuda.reset_peak_memory_stats()
+    fd.execute(inputs)
+    max_mem = torch.cuda.max_memory_allocated()
+    assert max_mem == m.max_allocated_memory
+
 
 @requiresCUDA
 def test_ThunderCompileSpecification():
@@ -1379,3 +1424,68 @@ def test_TorchInductorSpecification(tmp_path):
     assert len(py_files) == 2
     for file in py_files:
         run_script(file, cmd)
+
+
+@requiresCUDA
+def test_save_failing_repros(tmp_path):
+    x = torch.ones(2, 2, device="cuda", requires_grad=True)
+
+    def foo(x):
+        return torch.sin(x) + torch.cos(x)
+
+    # Tests for dynamo fx graphreports
+    results = fx_report(foo, x)
+    with patch("thunder.dynamo.report.FXGraphReport.run_repro", side_effect=Exception("run_Repro raises exception")):
+        save_failing_repros(results.fx_graph_reports, TorchCompileSpecification(), tmp_path)
+    assert os.path.exists(tmp_path / "graph0.py")
+
+    # Tests for thunder split reports
+    thunder_fxgraph_reports = get_thunder_fxgraph_reports(foo, x)
+    assert len(thunder_fxgraph_reports) == 1
+    with patch("thunder.dynamo.report.FXGraphReport.run_repro", side_effect=Exception("run_Repro raises exception")):
+        save_failing_repros(thunder_fxgraph_reports[0].subgraph_reports, ThunderCompileSpecification(), tmp_path)
+    assert os.path.exists(tmp_path / "graph0_thunder_0.py")
+
+
+@requiresCUDA
+def test_autograd_function_fx_report(tmp_path):
+    class Sin(torch.autograd.Function):
+        @staticmethod
+        def forward(ctx, x):
+            ctx.save_for_backward(x)
+            return torch.sin(x)
+
+        @staticmethod
+        def backward(ctx, g):
+            (x,) = ctx.saved_tensors
+            return g * torch.cos(x) * 100
+
+    def func(x):
+        return torch.cos(x) + Sin.apply(x)
+
+    x = torch.ones(2, 2, device="cuda", requires_grad=True)
+
+    if LooseVersion(torch.__version__) < LooseVersion("2.6.0"):
+        with pytest.raises(
+            RuntimeError,
+            match="The Reporting Tool for Torch higher-order operators is supported only in PyTorch version 2.6 or later.",
+        ):
+            results = fx_report(func, x)
+    else:
+        results = fx_report(func, x)
+        assert len(results.fx_graph_reports) == 1  # 1 Dynamo graph
+        fx_graph_report = results.fx_graph_reports[0]
+        thunder_fx_graph_report = analyze_thunder_splits(fx_graph_report)
+        assert len(thunder_fx_graph_report.subgraph_reports) == 1  # no split
+        thunder_split_report = thunder_fx_graph_report.subgraph_reports[0]
+
+        thunder_split_report.run_repro(ThunderCompileSpecification())
+        thunder_split_report.run_benchmark(ThunderCompileSpecification(), WallTime)
+        thunder_split_report.write_benchmark(tmp_path, ThunderCompileSpecification(), WallTime)
+        thunder_split_report.write_repro(tmp_path, ThunderCompileSpecification(), file_name="repro.py")
+
+        cmd = [sys.executable]
+        py_files = list(tmp_path.rglob("*.py"))
+        assert len(py_files) == 2
+        for file in py_files:
+            run_script(file, cmd)
