@@ -80,7 +80,6 @@ _lcdtype_to_nvdtype_map: dict[None | type | dtypes.dtype, DataType] = {
     dtypes.float16: DataType.Half,
     dtypes.bfloat16: DataType.BFloat16,
     dtypes.int64: DataType.Int,
-    dtypes.uint64: DataType.UInt64,
     dtypes.int32: DataType.Int32,
     dtypes.bool8: DataType.Bool,
     dtypes.complex128_: DataType.ComplexDouble,
@@ -91,7 +90,6 @@ _lcdtype_to_nvdtype_map: dict[None | type | dtypes.dtype, DataType] = {
     dtypes.bfloat16_: DataType.BFloat16,
     dtypes.int64_: DataType.Int,
     dtypes.int32_: DataType.Int32,
-    dtypes.uint64_: DataType.UInt64,
     dtypes.bool8_: DataType.Bool,
     # Number types
     complex: DataType.ComplexDouble,
@@ -102,6 +100,11 @@ _lcdtype_to_nvdtype_map: dict[None | type | dtypes.dtype, DataType] = {
     None: DataType.Null,
 }
 
+if nvfuser_version() > LooseVersion("0.2.26"):
+    _lcdtype_to_nvdtype_map.update({
+        dtypes.uint64: DataType.UInt64,
+        dtypes.uint64_: DataType.UInt64,
+    })
 
 _lcfp8_to_nvfp8_map: dict[dtypes.dtype, DataType] = {
     dtypes.float8_e5m2: DataType.Float8_e5m2,
@@ -2430,7 +2433,7 @@ def _scaled_dot_product_flash_attention_forward_meta(
 
     batch_size, num_heads, query_seq_len, E = query.shape
 
-    UPDATED_SDPA = LooseVersion(torch.__version__) > LooseVersion("2.7.0")
+    UPDATED_SDPA = LooseVersion(torch.__version__) >= LooseVersion("2.7.0")
     philox_shape = (2,) if UPDATED_SDPA else ()
     dtype = dtypes.uint64 if UPDATED_SDPA else dtypes.int64
     device = query.device if UPDATED_SDPA else "cpu"
@@ -2556,7 +2559,7 @@ def _scaled_dot_product_flash_attention_check(
         return False
 
     # SDPA requires nvfuser version 0.2.27 or higher for torch 2.7.0 or higher.
-    if LooseVersion(torch.__version__) > LooseVersion("2.7.0") and nvfuser_version() < LooseVersion("0.2.27"):
+    if LooseVersion(torch.__version__) >= LooseVersion("2.7.0") and nvfuser_version() < LooseVersion("0.2.27"):
         return False
 
     enable_sdpa: None | bool = get_compile_option("nv_enable_sdpa", "Enable nvFuser flash attention SDPA.")
