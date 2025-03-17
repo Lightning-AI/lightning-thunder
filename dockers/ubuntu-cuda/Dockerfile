@@ -13,14 +13,14 @@
 # limitations under the License.
 
 ARG UBUNTU_VERSION="22.04"
-ARG CUDA_VERSION="12.1.0"
+ARG CUDA_VERSION="12.4.1"
 # select devel | runtime
 ARG IMAGE_TYPE="devel"
 
 FROM nvidia/cuda:${CUDA_VERSION}-${IMAGE_TYPE}-ubuntu${UBUNTU_VERSION}
 
-ARG CUDNN_VERSION="9.1.0.70"
-ARG CUDNN_FRONTEND_VERSION="1.5.2"
+ARG CUDNN_VERSION="9.8.0.87"
+ARG CUDNN_FRONTEND_VERSION="1.10.0"
 ARG PYTHON_VERSION="3.10"
 ARG TORCH_VERSION="2.2.1"
 ARG TRITON_VERSION="2.2.0"
@@ -83,22 +83,11 @@ RUN if [ "${TORCH_INSTALL}" == "source" ]; then \
         CUDNN_BASE_VER=${CUDNN_VERSION%%.*} && \
         CUDA_VERSION_M=${CUDA_VERSION%%.*} && \
         apt update -qq --fix-missing && \
-        if [ "${CUDNN_BASE_VER}" == "9" ]; then \
-            CUDNN_PACKAGE_NAME="${CUDNN_VERSION}-1" && \
-            apt upgrade -y --allow-downgrades --allow-change-held-packages && \
-            apt install -y libcudnn9-cuda-${CUDA_VERSION_M}=${CUDNN_PACKAGE_NAME} \
-                           libcudnn9-dev-cuda-${CUDA_VERSION_M}=${CUDNN_PACKAGE_NAME} \
-                           nlohmann-json3-dev ; \
-        else \
-            CUDA_VERSION_MM=${CUDA_VERSION%.*} && \
-            # There are some test failures from cuDNN 12.1, so 'upgrade' requests for 12.1 to 12.2. \
-            CUDA_VERSION_MM="${CUDA_VERSION_MM/12.1/12.2}" && \
-            CUDNN_PACKAGE_NAME="${CUDNN_VERSION}-1+cuda${CUDA_VERSION_MM}" && \
-            apt upgrade -y --allow-downgrades --allow-change-held-packages && \
-            apt install -y libcudnn8=${CUDNN_PACKAGE_NAME} \
-                           libcudnn8-dev=${CUDNN_PACKAGE_NAME} \
-                           nlohmann-json3-dev ; \
-        fi && \
+        CUDNN_PACKAGE_NAME="${CUDNN_VERSION}-1" && \
+        apt upgrade -y --allow-downgrades --allow-change-held-packages && \
+        apt install -y libcudnn9-cuda-${CUDA_VERSION_M}=${CUDNN_PACKAGE_NAME} \
+                       libcudnn9-dev-cuda-${CUDA_VERSION_M}=${CUDNN_PACKAGE_NAME} \
+                       nlohmann-json3-dev && \
         rm -rf /root/.cache && \
         rm -rf /var/lib/apt/lists/*; \
     fi
