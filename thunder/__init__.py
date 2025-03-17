@@ -97,7 +97,6 @@ __all__ = [
     # dtype aliases
     "bool8",
     "uint8",
-    "uint64",
     "int8",
     "int16",
     "int32",
@@ -161,7 +160,6 @@ from thunder.__about__ import *  # import all
 #
 bool8 = dtypes.bool8
 uint8 = dtypes.uint8
-uint64 = dtypes.uint64
 int8 = dtypes.int8
 int16 = dtypes.int16
 int32 = dtypes.int32
