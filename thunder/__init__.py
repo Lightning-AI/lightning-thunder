@@ -311,7 +311,6 @@ def compile(fn: Callable, recipe: Recipe | str | None = None, plugins: Plugin | 
     return recipe.apply(fn)
 
 
-# This function will replace compile() (below) before RC1
 # TODO RC1 Consider renaming compile_options to additional_compile_options
 def jit(
     fn: Callable,
@@ -1107,7 +1106,7 @@ def _grad_transform(trace):
 # TODO Test nesting of grad and grad and grad and grad
 # TODO Test nesting of a regular function + calling grad
 def grad(fn):
-    cfn = compile(fn)
+    cfn = jit(fn)
 
     @wraps(cfn)
     def _fn(*args, **kwargs):
