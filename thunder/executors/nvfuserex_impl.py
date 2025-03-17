@@ -101,10 +101,12 @@ _lcdtype_to_nvdtype_map: dict[None | type | dtypes.dtype, DataType] = {
 }
 
 if nvfuser_version() > LooseVersion("0.2.26"):
-    _lcdtype_to_nvdtype_map.update({
-        dtypes.uint64: DataType.UInt64,
-        dtypes.uint64_: DataType.UInt64,
-    })
+    _lcdtype_to_nvdtype_map.update(
+        {
+            dtypes.uint64: DataType.UInt64,
+            dtypes.uint64_: DataType.UInt64,
+        }
+    )
 
 _lcfp8_to_nvfp8_map: dict[dtypes.dtype, DataType] = {
     dtypes.float8_e5m2: DataType.Float8_e5m2,
