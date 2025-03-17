@@ -53,7 +53,7 @@ class Recipe:
         self.lookasides = []
         self.transforms = []
         self.executors = []
-        self.plugins = plugins
+        self.plugins = plugins if plugins is not None else []
         if isinstance(interpreter, str):
             if interpreter == "thunder.jit":
                 interpreter = Interpreter.THUNDER_JIT

@@ -31,7 +31,7 @@ class DDP(Plugin):
 
 class FSDP(Plugin):
     def __init__(self,
-        device: torch.device | None = None,
+        device: torch.device = "cpu",
         broadcast_from: int | None = None,
         sharding_strategy: FSDPType = FSDPType.ZERO2,
         bucketing_strategy: FSDPBucketingStrategy = FSDPBucketingStrategy.NONE,
