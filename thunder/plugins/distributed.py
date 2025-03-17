@@ -31,7 +31,7 @@ class DDP(Plugin):
 
 class FSDP(Plugin):
     def __init__(self,
-        device: torch.device = "cpu",
+        device: torch.device | None = None,
         broadcast_from: int | None = None,
         sharding_strategy: FSDPType = FSDPType.ZERO2,
         bucketing_strategy: FSDPBucketingStrategy = FSDPBucketingStrategy.NONE,
@@ -56,7 +56,7 @@ class FSDP(Plugin):
             move_state_dict_to_cpu=self.move_state_dict_to_cpu,
         )
         materialization = MaterializationTransform(
-            self.device,
+            fsdp.device,
             init=MaterializationTransform.init_from_original_module_init()
         )
 

@@ -102,12 +102,14 @@ def test_plugins_basics():
         assert ex.name in [el.name for el in cd.executors_list]
 
 
-def test_plugins_composition():
+def test_plugins_composition(monkeypatch):
     model = torch.nn.Sequential(
         torch.nn.Linear(2048, 4096),
         torch.nn.ReLU(),
         torch.nn.Linear(4096, 64)
     )
+
+    monkeypatch.setenv("LOCAL_RANK", "0")
 
     with patch("thunder.jit") as mock_jit:
         _ = thunder.compile(model, plugins="fp8")
