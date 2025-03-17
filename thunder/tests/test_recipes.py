@@ -69,11 +69,7 @@ def test_recipe_basic_bert_fx():
 
 
 def test_recipe_mlp():
-    model = torch.nn.Sequential(
-        torch.nn.Linear(2048, 4096),
-        torch.nn.ReLU(),
-        torch.nn.Linear(4096, 64)
-    )
+    model = torch.nn.Sequential(torch.nn.Linear(2048, 4096), torch.nn.ReLU(), torch.nn.Linear(4096, 64))
 
     thunder_model = thunder.compile(model)
     x = torch.randn(64, 2048)
@@ -85,11 +81,7 @@ def test_recipe_mlp():
 
 
 def test_plugins_basics():
-    model = torch.nn.Sequential(
-        torch.nn.Linear(2048, 4096),
-        torch.nn.ReLU(),
-        torch.nn.Linear(4096, 64)
-    )
+    model = torch.nn.Sequential(torch.nn.Linear(2048, 4096), torch.nn.ReLU(), torch.nn.Linear(4096, 64))
 
     from thunder import compile_data as get_compile_data
 
@@ -103,11 +95,7 @@ def test_plugins_basics():
 
 
 def test_plugins_composition(monkeypatch):
-    model = torch.nn.Sequential(
-        torch.nn.Linear(2048, 4096),
-        torch.nn.ReLU(),
-        torch.nn.Linear(4096, 64)
-    )
+    model = torch.nn.Sequential(torch.nn.Linear(2048, 4096), torch.nn.ReLU(), torch.nn.Linear(4096, 64))
 
     monkeypatch.setenv("LOCAL_RANK", "0")
 
@@ -125,6 +113,7 @@ def test_plugins_composition(monkeypatch):
             assert ex.name in [el.name for el in call_args.kwargs["executors"]]
 
         from thunder.plugins import FP8
+
         _ = thunder.compile(model, plugins=[FP8()])
         call_args = mock_jit.call_args
         assert "transformer_engine" in [el.name for el in call_args.kwargs["executors"]]
@@ -138,7 +127,7 @@ def test_plugins_composition(monkeypatch):
         call_args = mock_jit.call_args
         expected_transforms = [
             thunder.distributed.transforms.fsdp_v2.FSDPTransform,
-            thunder.transforms.materialization.MaterializationTransform
+            thunder.transforms.materialization.MaterializationTransform,
         ]
         transforms = call_args.kwargs["transforms"]
         for expected in expected_transforms:
@@ -149,7 +138,7 @@ def test_plugins_composition(monkeypatch):
         call_args = mock_jit.call_args
         expected_transforms = [
             thunder.distributed.transforms.fsdp_v2.FSDPTransform,
-            thunder.transforms.materialization.MaterializationTransform
+            thunder.transforms.materialization.MaterializationTransform,
         ]
         transforms = call_args.kwargs["transforms"]
         for expected in expected_transforms:

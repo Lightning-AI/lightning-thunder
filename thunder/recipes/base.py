@@ -7,7 +7,8 @@ from typing import Any
 
 
 class BaseRecipe(Recipe):
-    def __init__(self,
+    def __init__(
+        self,
         show_progress=False,
         fuser="nvfuser",
         interpreter="thunder.jit",

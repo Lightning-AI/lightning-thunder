@@ -2,6 +2,7 @@ from functools import partial
 
 import torch
 
+
 def benchmark_n(n, model_or_fn, /, *args, **kwargs):
     for _ in range(n):
         _ = model_or_fn(*args, **kwargs)

@@ -28,7 +28,7 @@ class Lookaside:
 class PluginPolicy(Enum):
     PRE = auto()
     POST = auto()
- 
+
 
 class Plugin:
     policy: PluginPolicy = PluginPolicy.PRE
@@ -47,7 +47,7 @@ class Interpreter(Enum):
     THUNDER_JIT = auto()
     THUNDER_FX = auto()
 
- 
+
 class Recipe:
     def __init__(self, plugins: Plugin, interpreter: Interpreter = Interpreter.THUNDER_JIT):
         self.lookasides = []
@@ -60,7 +60,9 @@ class Recipe:
             elif interpreter == "thunder.fx":
                 interpreter = Interpreter.THUNDER_FX
             else:
-                raise ValueError(f"Invalid interpreter {interpreter}. Supported interpreters: ['thunder.jit', 'thunder.fx'].")
+                raise ValueError(
+                    f"Invalid interpreter {interpreter}. Supported interpreters: ['thunder.jit', 'thunder.fx']."
+                )
         self.interpreter = interpreter
 
     def add_plugins(self, plugins: list[Plugin]):
@@ -145,6 +147,8 @@ class Recipe:
             thunder_model = torch.compile(model, backend=thunder_backend)
 
         else:
-            raise AttributeError(f"Interpreter must be one of 'Interpreter.THUNDER_JIT', 'Interpreter.THUNDER_FX'. Found: {self.interpreter}.")
+            raise AttributeError(
+                f"Interpreter must be one of 'Interpreter.THUNDER_JIT', 'Interpreter.THUNDER_FX'. Found: {self.interpreter}."
+            )
 
         return thunder_model

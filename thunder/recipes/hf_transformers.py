@@ -9,7 +9,7 @@ from thunder.recipes import BaseRecipe
 class InplaceIndexCopyTransform(thunder.Transform):
     def __init__(self):
         super().__init__()
-        self.executor = thunder.extend.OperatorExecutor('inplace_index_copy_ex')
+        self.executor = thunder.extend.OperatorExecutor("inplace_index_copy_ex")
 
         def inplace_index_copy_meta(buffer, dim, idx, val):
             return thunder.TensorProxy(like=buffer)
@@ -17,7 +17,9 @@ class InplaceIndexCopyTransform(thunder.Transform):
         def inplace_index_copy_impl(buffer, dim, idx, val):
             return buffer.index_copy_(dim, idx, val)
 
-        self.inplace_index_copy = self.executor.register_operator('inplace_index_copy', fn=inplace_index_copy_impl, meta=inplace_index_copy_meta)
+        self.inplace_index_copy = self.executor.register_operator(
+            "inplace_index_copy", fn=inplace_index_copy_impl, meta=inplace_index_copy_meta
+        )
 
     def get_executor(self):
         return self.executor
@@ -35,7 +37,8 @@ class InplaceIndexCopyTransform(thunder.Transform):
 
 
 class HFTransformers(BaseRecipe):
-    def __init__(self,
+    def __init__(
+        self,
         show_progress=False,
         fuser="nvfuser",
         interpreter="thunder.jit",
@@ -54,7 +57,9 @@ class HFTransformers(BaseRecipe):
         max_version = LooseVersion("4.46.3")
 
         if version < min_version or version > max_version:
-            warnings.warn(f"`transformers` version {version} detected. The HFTransformers recipe supports {min_version} to {max_version}.")
+            warnings.warn(
+                f"`transformers` version {version} detected. The HFTransformers recipe supports {min_version} to {max_version}."
+            )
 
         supported = [
             transformers.BertPreTrainedModel,
@@ -65,18 +70,16 @@ class HFTransformers(BaseRecipe):
         supported_str = "\n".join(f"* {el.__name__}" for el in supported)
 
         if not any(cls for cls in supported if isinstance(model, cls)):
-            warnings.warn(f"instance of {type(model).__name__} found. The HFTransformers recipe supports:\n{supported_str}")
+            warnings.warn(
+                f"instance of {type(model).__name__} found. The HFTransformers recipe supports:\n{supported_str}"
+            )
 
         if not isinstance(model, transformers.PreTrainedModel):
             raise ValueError(f"The model must be an instance of PreTrainedModel, found {type(model)}")
 
     def setup_config(self):
         config = super().setup_config()
-        config.update(
-            nv_enable_linear=True,
-            nv_enable_matmul=True,
-            nv_enable_sdpa=True
-        )
+        config.update(nv_enable_linear=True, nv_enable_matmul=True, nv_enable_sdpa=True)
         return config
 
     def setup_lookasides(self):
