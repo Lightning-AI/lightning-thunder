@@ -678,12 +678,13 @@ def _readable(
     module: torch.fx.GraphModule,
     module_name: str,
     print_output: bool = False,
+    verbose: bool = True,
     include_stride: bool = True,
     include_device: bool = True,
     colored: bool = False,
 ):
     """Modified from `torch.fx.graph_module._print_readable` (https://github.com/pytorch/pytorch/blob/3192bdeea428f2bf3a95274ee59ea41c4f8e31e9/torch/fx/graph_module.py#L297).
-    This is basically print_readable but it sets verbose=False (torch hardcodes it to True)."""
+    Note: the include_stride and include_device take effects only when verbose is True."""
     graph = module.graph
     assert graph is not None and isinstance(
         graph, torch.fx.Graph
@@ -691,7 +692,7 @@ def _readable(
 
     verbose_python_code = graph.python_code(
         root_module="self",
-        verbose=False,
+        verbose=verbose,
         include_stride=include_stride,
         include_device=include_device,
     )
@@ -713,6 +714,7 @@ def _readable(
                     submodule,
                     submodule_name,
                     print_output=False,
+                    verbose=verbose,
                     include_stride=include_stride,
                     include_device=include_device,
                     colored=colored,
@@ -787,3 +789,17 @@ def has_higher_order_operator(gm: torch.fx.GraphModule):
         if isinstance(n.target, torch._ops.HigherOrderOperator):
             return True
     return False
+
+
+def format_python_file(file_path: str) -> str:
+    from lightning_utilities.core.imports import package_available
+
+    if package_available("ruff"):
+        import subprocess
+        import sys
+
+        # Ruff often prints warnings, progress messages, and other information that we don't need in this context.
+        # Redirecting stdout and stderr to /dev/null to suppress unnecessary output.
+        subprocess.run(
+            [sys.executable, "-m", "ruff", "format", file_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
