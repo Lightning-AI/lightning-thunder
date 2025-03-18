@@ -612,7 +612,10 @@ class FSDPTest(DistributedParallelTestCase):
         config.n_layer = 1
         with torch.device("meta"):
             model = GPT(config)
+        with device:
+            model_ref = GPT(config)
         jitted = fsdp(thunder.jit(model), device=device)
+        jitted.load_original_state_dict(model_ref.state_dict())
 
         t = config.block_size
         data = torch.randint(
@@ -628,7 +631,7 @@ class FSDPTest(DistributedParallelTestCase):
         x = x.to(device=device)
         with torch.no_grad():
             result = jitted(x)
-            expected = model(x)
+            expected = model_ref(x)
         assert_close(result, expected)
 
 
