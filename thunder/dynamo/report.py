@@ -25,6 +25,8 @@ from thunder.dynamo.utils import (
     example_input_meta_to_input,
     recompile_graph,
     has_higher_order_operator,
+    input_to_example_input_meta,
+    example_input_meta_to_input,
 )
 
 from thunder.dynamo.repro_script_template import (
@@ -878,17 +880,17 @@ print(measurement)
             print(repro_code_str, file=f)
 
     def make_example_inputs(self):
-        return [example_input_meta_to_input(meta) for meta in self.get_inputs_meta()]
+        return example_input_meta_to_input(input_to_example_input_meta(self.get_fake_inputs()))
 
-    def get_inputs_meta(self):
-        return self.nvfusion_bsym._call_ctx[self.nvfusion_bsym.sym.name].last_inputs_meta
+    def get_fake_inputs(self):
+        return self.nvfusion_bsym._call_ctx[self.nvfusion_bsym.sym.name].last_used.fake_inputs
 
     def _get_inductor_code(self, **kwargs):
         python_func = create_python_callable_from_bsym(self.nvfusion_bsym)
         nvfusion_name = self.nvfusion_bsym.sym.name
         extra_comment_str = kwargs.get("extra_comment_str") if "extra_comment_str" in kwargs else ""
 
-        inputs = self.get_inputs_meta()
+        inputs = self.get_fake_inputs()
         inputs = "[" + "".join(arg_like(inp) for inp in inputs) + "]"
         inductor_code_str = bsym_torch_compile_repro_template.format(
             python_func=python_func, func_name=nvfusion_name, inputs=inputs, extra_comment_str=extra_comment_str
@@ -1033,7 +1035,7 @@ def analyze_thunder_splits(
     # Dynamo uses lazy generation of the underlying Python code, so we need to
     # force recompilation of the GraphModule before passing it to Thunder.
     recompile_graph(gm)
-    thunder_jit = partial(jit, **thunder_options, nv_store_fusion_inputs_meta=True)
+    thunder_jit = partial(jit, **thunder_options, nv_save_fake_inputs=True)
     _, subgraph_info = _splitter(gm, thunder_jit, torch.compile, _unused_sample_args=None)
 
     thunder_module_names = [f"{report.graph_name}_{name}" for name in get_thunder_module_names(subgraph_info)]
