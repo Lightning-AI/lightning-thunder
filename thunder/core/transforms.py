@@ -1855,6 +1855,7 @@ def grad_chooser_backward(primal, x, x_shape, reduced_dims, g):
     argmax_locations = x == primal_repeated
     argmax_sum = keepdim_reduction(prims.sum, argmax_locations, reduced_dims)
     out = g_repeated * argmax_locations / argmax_sum
+    out = prims.convert_element_type(out, g.dtype)
     return out
 
 
