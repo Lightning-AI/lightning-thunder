@@ -1,23 +1,41 @@
+<div align='center'>
+
+# Make your AI models Lightning fast ⚡    
+
+</div>
+
 <div align="center">
 <img alt="Thunder" src="docs/source/_static/images/LightningThunderLightModewByline.png#gh-light-mode-only" width="400px" style="max-width: 100%;">
 <img alt="Thunder" src="docs/source/_static/images/LightningThunderDarkModewByline.png#gh-dark-mode-only" width="400px" style="max-width: 100%;">
     <br/>
 <br/>
 
-**Make PyTorch models Lightning fast.**
+&nbsp;
 
-______________________________________________________________________
+<strong>Source-to-source compiler for PyTorch.</strong>    
+Fast. Understandable. Extensible.
+</div>
 
-<p align="center">
-  <a href="https://lightning.ai/">Lightning.ai</a> •
-  <a href="#performance">Performance</a> •
-  <a href="#get-started">Get started</a> •
-  <a href="#install-thunder">Install</a> •
-  <a href="#hello-world">Examples</a> •
-  <a href="#inside-thunder-a-brief-look-at-the-core-features">Inside Thunder</a> •
-  <a href="#get-involved">Get involved!</a> •
-  <a href="https://lightning-thunder.readthedocs.io/en/latest/">Documentation</a>
-</p>
+----
+
+**Thunder** is a source-to-source compiler for PyTorch. It makes optimizing AI models easy, augmenting them with custom kernels, fusions, quantization, distributed strategies, and more.
+
+For **end users**, Thunder comes with plugins that provide model speed-ups out of the box, for optimal utilization of last generation hardware.
+
+For **performance experts**, Thunder is the most ergonomic framework for understanding, modifying, and optimizing computations through composable transformations.
+
+<div align='center'>
+
+<pre>
+✅ Run PyTorch 40% faster   ✅ Quantization                ✅ Kernel fusion        
+✅ Training recipes         ✅ FP4/FP6/FP8 precision       ✅ Distributed TP/PP/DP 
+✅ Inference recipes        ✅ Ready for NVIDIA Blackwell  ✅ CUDA Graphs          
+✅ LLMs, non LLMs and more  ✅ Custom Triton kernels       ✅ Compose all the above
+</pre>
+
+</div>
+
+<div align='center'>
 
 [![license](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/Lightning-AI/lightning-thunder/blob/main/LICENSE)
 [![CI testing](https://github.com/Lightning-AI/lightning-thunder/actions/workflows/ci-testing.yml/badge.svg?event=push)](https://github.com/Lightning-AI/lightning-thunder/actions/workflows/ci-testing.yml)
@@ -27,209 +45,288 @@ ______________________________________________________________________
 
 </div>
 
-# Welcome to ⚡ Lightning Thunder
-
-**Thunder makes PyTorch models Lightning fast.**
-
-Thunder is a source-to-source compiler for PyTorch. It makes PyTorch programs faster by combining and using different hardware executors at once (for instance, [nvFuser](https://github.com/NVIDIA/Fuser), [torch.compile](https://pytorch.org/docs/stable/torch.compiler.html), [cuDNN](https://developer.nvidia.com/cudnn), and [TransformerEngine FP8](https://github.com/NVIDIA/TransformerEngine)).
-
-It supports both single and multi-GPU configurations.
-Thunder aims to be usable, understandable, and extensible.
-
-&#160;
-
-> [!Note]
-> Lightning Thunder is in alpha. Feel free to get involved, but expect a few bumps along the way.
-
-&#160;
-
-## Single-GPU performance
-
-Thunder can achieve significant speedups over standard non-compiled PyTorch code ("PyTorch eager"), through the compounding effects of optimizations and the use of best-in-class executors. The figure below shows the pretraining throughput for Llama 2 7B as implemented in [LitGPT](https://github.com/Lightning-AI/litgpt).
-
 <div align="center">
-<img alt="Thunder" src="docs/source/_static/images/training_throughput_single.png" width="800px" style="max-width: 100%;">
+  <div style="text-align: center;">
+    <a target="_blank" href="#quick-start" style="margin: 0 10px;">Quick start</a> •
+    <a target="_blank" href="#featured-examples" style="margin: 0 10px;">Examples</a> •
+    <a target="_blank" href="#features" style="margin: 0 10px;">Features</a> •
+    <a target="_blank" href="#performance" style="margin: 0 10px;">Performance</a> •
+    <!-- <a target="_blank" href="#hosting-options" style="margin: 0 10px;">Hosting</a> • -->
+    <a target="_blank" href="https://lightning.ai/docs/thunder/latest/" style="margin: 0 10px;">Docs</a>
+  </div>
 </div>
 
-As shown in the plot above, Thunder achieves a 40% speedup in training throughput compared to eager code on H100 using a combination of executors including nvFuser, torch.compile, cuDNN, and TransformerEngine FP8.
-
-&#160;
-
-## Multi-GPU performance
-
-Thunder also supports distributed strategies such as DDP and FSDP for training models on multiple GPUs. The following plot displays the normalized throughput measured for Llama 2 7B without FP8 mixed precision; support for FSDP is in progress.
+&nbsp;
 
 <div align="center">
-<img alt="Thunder" src="docs/source/_static/images/normalized_training_throughput_zero2.png" width="800px" style="max-width: 100%;">
+<a target="_blank" href="https://lightning.ai/docs/thunder/home/get-started">
+  <img src="https://pl-bolts-doc-images.s3.us-east-2.amazonaws.com/app-2/get-started-badge.svg" height="36px" alt="Get started"/>
+</a>
 </div>
 
-&#160;
+&nbsp; 
 
-## Get started
+# Quick start
 
-The easiest way to get started with Thunder, requiring no extra installations or setups, is by using our [Zero to Thunder Tutorial Studio](https://lightning.ai/lightning-ai/studios/zero-to-thunder).
-
-&#160;
-
-## Install Thunder
-
-Thunder is in alpha and the latest development is happening on the `main` branch. You can install the latest version of Thunder from the `main` branch as follows:
+Install Thunder via pip ([more options](https://lightning.ai/docs/litserve/home/install)):
 
 ```bash
-pip install git+https://github.com/Lightning-AI/lightning-thunder.git@main
+# CUDA 12.1
+pip install torch==2.5.1 torchvision==0.20.1 nvfuser-cu121-torch25 --extra-index-url https://download.pytorch.org/whl/cu121
+
+pip install lightning-thunder
 ```
 
-To achieve the best performance, you can install Thunder with the following additional dependencies:
-
-- install prerelease [nvFuser](https://github.com/NVIDIA/Fuser) built for PyTorch 2.5.1 as follows:
-
 ```bash
-# install nvFuser built for the matching stable PyTorch
-pip install --pre nvfuser-cu121-torch25
-```
+# CUDA 12.4
+pip install torch==2.5.1 torchvision==0.20.1 nvfuser-cu124-torch25
 
-- install [cudnn](https://gitlab-master.nvidia.com/cudnn/cudnn_frontend) as follows:
-
-```bash
-# install cudnn
-pip install nvidia-cudnn-frontend
+pip install lightning-thunder
 ```
 
 <details>
   <summary>Advanced install options</summary>
-    <!-- following section will be skipped from PyPI description -->
 
-&#160;
-
-### Install to tinker and contribute
-
-If you are interested in tinkering with and contributing to Thunder, we recommend cloning the Thunder repository and installing it in pip's editable mode:
-
-```bash
-git clone https://github.com/Lightning-AI/lightning-thunder.git
-cd lightning-thunder
-pip install -e .
-```
-
-&#160;
-
-### Develop and run tests
-
-After cloning the lightning-thunder repository and installing it as an editable package as explained above, ou can set up your environment for developing Thunder by installing the development requirements:
-
-```bash
-pip install -r requirements/devel.txt
-```
-
-Now you run tests:
-
-```bash
-pytest thunder/tests
-```
-
-Thunder is very thoroughly tested, so expect this to take a while.
+  ### Install additional executors
+  
+  These are optional, feel free to mix and match
+  
+  ```bash
+  # cuDNN SDPA
+  pip install nvidia-cudnn-frontend
+  
+  # Float8 support (this will compile from source, be patient)
+  pip install "transformer_engine[pytorch]"
+  ```
+  
+  ### Install Thunder bleeding edge
+  
+  ```bash
+  pip install git+https://github.com/Lightning-AI/lightning-thunder.git@main
+  ```
+  
+  ### Install Thunder for development
+  
+  ```bash
+  git clone https://github.com/Lightning-AI/lightning-thunder.git
+  cd lightning-thunder
+  pip install -e .
+  ```
 
 </details>
-<!-- end skipping PyPI description -->
 
-&#160;
+### Hello world
 
-## Hello World
-
-Below is a simple example of how Thunder allows you to compile and run PyTorch code:
+Define a function or a torch module:
 
 ```python
-import torch
+import torch.nn as nn
+
+model = nn.Sequential(
+    nn.Linear(2048, 4096),
+    nn.ReLU(),
+    nn.Linear(4096, 64)
+)
+```
+
+Optimize it with thunder:
+
+```python
 import thunder
 
+thunder_model = thunder.compile(model)
 
-def foo(a, b):
-    return a + b
+x = torch.randn(64, 2048)
 
+y = thunder_model(x)
 
-jfoo = thunder.jit(foo)
-
-a = torch.full((2, 2), 1)
-b = torch.full((2, 2), 3)
-
-result = jfoo(a, b)
-
-print(result)
-
-# prints
-# tensor(
-#  [[4, 4]
-#   [4, 4]])
+assert y == model(x)
 ```
 
-The compiled function `jfoo` takes and returns PyTorch tensors, just like the original function, so modules and functions compiled by Thunder can be used as part of larger PyTorch programs.
+## Examples
 
-&#160;
 
-## Train models
 
-Thunder is in its early stages and should not be used for production runs yet.
+### Define a server    
+This toy example with 2 models (AI compound system) shows LitServe's flexibility ([see real examples](#examples)):    
 
-However, it can already deliver outstanding performance for pretraining and finetuning LLMs supported by [LitGPT](https://github.com/Lightning-AI/lit-gpt), such as Mistral, Llama 2, Gemma, Falcon, and others.
+```python
+# server.py
+import litserve as ls
 
-Check out [the LitGPT integration](https://github.com/Lightning-AI/litgpt/tree/main/extensions/thunder) to learn about running LitGPT and Thunder together.
+# (STEP 1) - DEFINE THE API (compound AI system)
+class SimpleLitAPI(ls.LitAPI):
+    def setup(self, device):
+        # setup is called once at startup. Build a compound AI system (1+ models), connect DBs, load data, etc...
+        self.model1 = lambda x: x**2
+        self.model2 = lambda x: x**3
 
-&#160;
+    def decode_request(self, request):
+        # Convert the request payload to model input.
+        return request["input"] 
 
-## Inside Thunder: A brief look at the core features
+    def predict(self, x):
+        # Easily build compound systems. Run inference and return the output.
+        squared = self.model1(x)
+        cubed = self.model2(x)
+        output = squared + cubed
+        return {"output": output}
 
-Given a Python callable or PyTorch module, Thunder can generate an optimized program that:
+    def encode_response(self, output):
+        # Convert the model output to a response payload.
+        return {"output": output} 
 
-- Computes its forward and backward passes
-- Coalesces operations into efficient fusion regions
-- Dispatches computations to optimized kernels
-- Distributes computations optimally across machines
+# (STEP 2) - START THE SERVER
+if __name__ == "__main__":
+    # scale with advanced features (batching, GPUs, etc...)
+    server = ls.LitServer(SimpleLitAPI(), accelerator="auto", max_batch_size=1)
+    server.run(port=8000)
+```
 
-To do so, Thunder ships with:
-
-- A JIT for acquiring Python programs targeting PyTorch and custom operations
-- A multi-level intermediate representation (IR) to represent operations as a trace of a reduced operation set
-- An extensible set of transformations on the trace of a computational graph, such as `grad`, fusions, distributed (like `ddp`, `fsdp`), functional (like `vmap`, `vjp`, `jvp`)
-- A way to dispatch operations to an extensible collection of executors
-
-Thunder is written entirely in Python. Even its trace is represented as valid Python at all stages of transformation. This allows unprecedented levels of introspection and extensibility.
-
-Thunder doesn't generate code for accelerators, such as GPUs, directly. It acquires and transforms user programs so that it's possible to optimally select or generate device code using fast executors like:
-
-- [torch.compile](https://pytorch.org/get-started/pytorch-2.0/)
-- [nvFuser](https://github.com/NVIDIA/Fuser)
-- [cuDNN](https://developer.nvidia.com/cudnn)
-- [Apex](https://github.com/NVIDIA/apex)
-- [TransformerEngine](https://github.com/NVIDIA/TransformerEngine)
-- [PyTorch eager](https://github.com/pytorch/pytorch)
-- Custom CUDA kernels through [PyCUDA](https://documen.tician.de/pycuda/tutorial.html#interoperability-with-other-libraries-using-the-cuda-array-interface), [Numba](https://numba.readthedocs.io/en/stable/cuda/kernels.html), [CuPy](https://docs.cupy.dev/en/stable/user_guide/kernel.html)
-- Custom kernels written in [OpenAI Triton](https://github.com/openai/triton)
-
-Modules and functions compiled with Thunder fully interoperate with vanilla PyTorch and support PyTorch's autograd. Also, Thunder works alongside torch.compile to leverage its state-of-the-art optimizations.
-
-&#160;
-
-## Documentation
-
-[Online documentation](https://lightning-thunder.readthedocs.io/en/latest/) is available. To build documentation locally you can use
+Now run the server via the command-line
 
 ```bash
-make docs
+python server.py
+```
+    
+### Test the server
+Run the auto-generated test client:        
+```bash
+python client.py    
 ```
 
-and point your browser to the generated docs at `docs/build/index.html`.
+Or use this terminal command:
+```bash
+curl -X POST http://127.0.0.1:8000/predict -H "Content-Type: application/json" -d '{"input": 4.0}'
+```
 
-&#160;
+### LLM serving
+LitServe isn’t *just* for LLMs like vLLM or Ollama; it serves any AI model with full control over internals ([learn more](https://lightning.ai/docs/litserve/features/serve-llms)).    
+For easy LLM serving, integrate [vLLM with LitServe](https://lightning.ai/lightning-ai/studios/deploy-a-private-llama-3-2-rag-api), or use [LitGPT](https://github.com/Lightning-AI/litgpt?tab=readme-ov-file#deploy-an-llm) (built on LitServe). 
 
-## Get involved!
+```
+litgpt serve microsoft/phi-2
+```
 
-We appreciate your feedback and contributions. If you have feature requests, questions, or want to contribute code or config files, please don't hesitate to use the [GitHub Issue](https://github.com/Lightning-AI/lightning-thunder/issues) tracker.
+### Summary
+- LitAPI lets you easily build complex AI systems with one or more models ([docs](https://lightning.ai/docs/litserve/api-reference/litapi)).
+- Use the setup method for one-time tasks like connecting models, DBs, and loading data ([docs](https://lightning.ai/docs/litserve/api-reference/litapi#setup)).        
+- LitServer handles optimizations like batching, GPU autoscaling, streaming, etc... ([docs](https://lightning.ai/docs/litserve/api-reference/litserver)).
+- Self host on your own machines or use Lightning Studios for a fully managed deployment ([learn more](#hosting-options)).         
 
-We welcome all individual contributors, regardless of their level of experience or hardware. Your contributions are valuable, and we are excited to see what you can accomplish in this collaborative and supportive environment.
+[Learn how to make this server 200x faster](https://lightning.ai/docs/litserve/home/speed-up-serving-by-200x).    
 
-&#160;
+&nbsp;
 
-## License
+# Featured examples    
+Use LitServe to deploy any model or AI service: (Compound AI, Gen AI, classic ML, embeddings, LLMs, vision, audio, etc...)       
 
-Lightning Thunder is released under the [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0) license.
-See the [LICENSE](LICENSE) file for details.
+<div align='center'>
+  <div width='200px'>
+        <video src="https://github.com/user-attachments/assets/5e73549a-bc0f-47a9-9d9c-5b54389be5de" width='200px' controls></video>    
+  </div>
+</div>
+
+## Examples    
+<pre>
+<strong>Toy model:</strong>      <a target="_blank" href="#define-a-server">Hello world</a>
+<strong>LLMs:</strong>           <a target="_blank" href="https://lightning.ai/lightning-ai/studios/deploy-llama-3-2-vision-with-litserve">Llama 3.2</a>, <a target="_blank" href="https://lightning.ai/lightning-ai/studios/openai-fault-tolerant-proxy-server">LLM Proxy server</a>, <a target="_blank" href="https://lightning.ai/lightning-ai/studios/deploy-ai-agent-with-tool-use">Agent with tool use</a>
+<strong>RAG:</strong>            <a target="_blank" href="https://lightning.ai/lightning-ai/studios/deploy-a-private-llama-3-2-rag-api">vLLM RAG (Llama 3.2)</a>, <a target="_blank" href="https://lightning.ai/lightning-ai/studios/deploy-a-private-llama-3-1-rag-api">RAG API (LlamaIndex)</a>
+<strong>NLP:</strong>            <a target="_blank" href="https://lightning.ai/lightning-ai/studios/deploy-any-hugging-face-model-instantly">Hugging face</a>, <a target="_blank" href="https://lightning.ai/lightning-ai/studios/deploy-a-hugging-face-bert-model">BERT</a>, <a target="_blank" href="https://lightning.ai/lightning-ai/studios/deploy-text-embedding-api-with-litserve">Text embedding API</a>
+<strong>Multimodal:</strong>     <a target="_blank" href="https://lightning.ai/lightning-ai/studios/deploy-open-ai-clip-with-litserve">OpenAI Clip</a>, <a target="_blank" href="https://lightning.ai/lightning-ai/studios/deploy-a-multi-modal-llm-with-minicpm">MiniCPM</a>, <a target="_blank" href="https://lightning.ai/lightning-ai/studios/deploy-phi3-5-vision-api-with-litserve">Phi-3.5 Vision Instruct</a>, <a target="_blank" href="https://lightning.ai/bhimrajyadav/studios/deploy-and-chat-with-qwen2-vl-using-litserve">Qwen2-VL</a>, <a target="_blank" href="https://lightning.ai/lightning-ai/studios/deploy-a-multi-modal-llm-with-pixtral">Pixtral</a>
+<strong>Audio:</strong>          <a target="_blank" href="https://lightning.ai/lightning-ai/studios/deploy-open-ai-s-whisper-model">Whisper</a>, <a target="_blank" href="https://lightning.ai/lightning-ai/studios/deploy-an-music-generation-api-with-meta-s-audio-craft">AudioCraft</a>, <a target="_blank" href="https://lightning.ai/lightning-ai/studios/deploy-an-audio-generation-api">StableAudio</a>, <a target="_blank" href="https://lightning.ai/lightning-ai/studios/deploy-a-noise-cancellation-api-with-deepfilternet">Noise cancellation (DeepFilterNet)</a>
+<strong>Vision:</strong>         <a target="_blank" href="https://lightning.ai/lightning-ai/studios/deploy-a-private-api-for-stable-diffusion-2">Stable diffusion 2</a>, <a target="_blank" href="https://lightning.ai/lightning-ai/studios/deploy-an-image-generation-api-with-auraflow">AuraFlow</a>, <a target="_blank" href="https://lightning.ai/lightning-ai/studios/deploy-an-image-generation-api-with-flux">Flux</a>, <a target="_blank" href="https://lightning.ai/lightning-ai/studios/deploy-a-super-resolution-image-api-with-aura-sr">Image Super Resolution (Aura SR)</a>,
+                <a target="_blank" href="https://lightning.ai/bhimrajyadav/studios/deploy-background-removal-api-with-litserve">Background Removal</a>, <a target="_blank" href="https://lightning.ai/lightning-ai/studios/deploy-a-controlled-image-generation-api-controlnet">Control Stable Diffusion (ControlNet)</a>
+<strong>Speech:</strong>         <a target="_blank" href="https://lightning.ai/lightning-ai/studios/deploy-a-voice-clone-api-coqui-xtts-v2-model">Text-speech (XTTS V2)</a>, <a target="_blank" href="https://lightning.ai/bhimrajyadav/studios/deploy-a-speech-generation-api-using-parler-tts-powered-by-litserve">Parler-TTS</a>
+<strong>Classical ML:</strong>   <a target="_blank" href="https://lightning.ai/lightning-ai/studios/deploy-random-forest-with-litserve">Random forest</a>, <a target="_blank" href="https://lightning.ai/lightning-ai/studios/deploy-xgboost-with-litserve">XGBoost</a>
+<strong>Miscellaneous:</strong>  <a target="_blank" href="https://lightning.ai/lightning-ai/studios/deploy-an-media-conversion-api-with-ffmpeg">Media conversion API (ffmpeg)</a>, <a target="_blank" href="https://lightning.ai/lightning-ai/studios/deploy-both-pytorch-and-tensorflow-in-a-single-api">PyTorch + TensorFlow in one API</a>, <a target="_blank" href="https://lightning.ai/lightning-ai/studios/openai-fault-tolerant-proxy-server">LLM proxy server</a>
+</pre>
+</pre>
+
+[Browse 100+ community-built templates](https://lightning.ai/studios?section=serving)
+
+&nbsp;
+
+# Features
+State-of-the-art features:
+
+✅ [(2x)+ faster than plain FastAPI](#performance)      
+✅ [Bring your own model](https://lightning.ai/docs/litserve/features/full-control)    
+✅ [Build compound systems (1+ models)](https://lightning.ai/docs/litserve/home)    
+✅ [GPU autoscaling](https://lightning.ai/docs/litserve/features/gpu-inference)    
+✅ [Batching](https://lightning.ai/docs/litserve/features/batching)    
+✅ [Streaming](https://lightning.ai/docs/litserve/features/streaming)    
+✅ [Worker autoscaling](https://lightning.ai/docs/litserve/features/autoscaling)    
+✅ [Self-host on your machines](https://lightning.ai/docs/litserve/features/hosting-methods#host-on-your-own)    
+✅ [Host fully managed on Lightning AI](https://lightning.ai/docs/litserve/features/hosting-methods#host-on-lightning-studios)  
+✅ [Serve all models: (LLMs, vision, etc.)](https://lightning.ai/docs/litserve/examples)        
+✅ [Scale to zero (serverless)](https://lightning.ai/docs/litserve/features/streaming)    
+✅ [Supports PyTorch, JAX, TF, etc...](https://lightning.ai/docs/litserve/features/full-control)        
+✅ [OpenAPI compliant](https://www.openapis.org/)          
+✅ [Open AI compatibility](https://lightning.ai/docs/litserve/features/open-ai-spec)    
+✅ [Authentication](https://lightning.ai/docs/litserve/features/authentication)    
+✅ [Dockerization](https://lightning.ai/docs/litserve/features/dockerization-deployment)
+
+
+
+[10+ features...](https://lightning.ai/docs/litserve/features)    
+
+**Note:** We prioritize scalable, enterprise-level features over hype.   
+
+&nbsp;
+
+# Performance  
+LitServe is designed for AI workloads. Specialized multi-worker handling delivers a minimum **2x speedup over FastAPI**.    
+
+Additional features like batching and GPU autoscaling can drive performance well beyond 2x, scaling efficiently to handle more simultaneous requests than FastAPI and TorchServe.
+    
+Reproduce the full benchmarks [here](https://lightning.ai/docs/litserve/home/benchmarks) (higher is better).  
+
+<div align="center">
+  <img alt="LitServe" src="https://pl-bolts-doc-images.s3.us-east-2.amazonaws.com/app-2/ls_charts_v6.png" width="1000px" style="max-width: 100%;">
+</div> 
+
+These results are for image and text classification ML tasks. The performance relationships hold for other ML tasks (embedding, LLM serving, audio, segmentation, object detection, summarization etc...).   
+    
+***💡 Note on LLM serving:*** For high-performance LLM serving (like Ollama/vLLM), integrate [vLLM with LitServe](https://lightning.ai/lightning-ai/studios/deploy-a-private-llama-3-2-rag-api), use [LitGPT](https://github.com/Lightning-AI/litgpt?tab=readme-ov-file#deploy-an-llm), or build your custom vLLM-like server with LitServe. Optimizations like kv-caching, which can be done with LitServe, are needed to maximize LLM performance.
+
+&nbsp; 
+
+# Hosting options   
+LitServe can be hosted independently on your own machines or fully managed via Lightning Studios.
+
+Self-hosting is ideal for hackers, students, and DIY developers, while fully managed hosting is ideal for enterprise developers needing easy autoscaling, security, release management, and 99.995% uptime and observability.   
+
+&nbsp;
+
+<div align="center">
+<a target="_blank" href="https://lightning.ai/lightning-ai/studios/litserve-hello-world">
+  <img src="https://pl-bolts-doc-images.s3.us-east-2.amazonaws.com/app-2/host-on-lightning.svg" alt="Host on Lightning"/>
+</a>
+</div>
+
+&nbsp;
+
+<div align='center'>
+  
+| Feature                          | Self Managed                      | Fully Managed on Studios            |
+|----------------------------------|-----------------------------------|-------------------------------------|
+| Deployment                       | ✅ Do it yourself deployment      | ✅ One-button cloud deploy          |
+| Load balancing                   | ❌                                | ✅                                  |
+| Autoscaling                      | ❌                                | ✅                                  |
+| Scale to zero                    | ❌                                | ✅                                  |
+| Multi-machine inference          | ❌                                | ✅                                  |
+| Authentication                   | ❌                                | ✅                                  |
+| Own VPC                          | ❌                                | ✅                                  |
+| AWS, GCP                         | ❌                                | ✅                                  |
+| Use your own cloud commits       | ❌                                | ✅                                  |
+
+</div>
+
+&nbsp;
+
+# Community
+LitServe is a [community project accepting contributions](https://lightning.ai/docs/litserve/community) - Let's make the world's most advanced AI inference engine.
+
+💬 [Get help on Discord](https://discord.com/invite/XncpTy7DSt)    
+📋 [License: Apache 2.0](https://github.com/Lightning-AI/litserve/blob/main/LICENSE)    
