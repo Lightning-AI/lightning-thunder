@@ -10,6 +10,7 @@ class InplaceIndexCopyTransform(thunder.Transform):
     def __init__(self):
         super().__init__()
         self.executor = thunder.extend.OperatorExecutor("inplace_index_copy_ex")
+        thunder.extend.register_executor(self.executor)  # needed if you want to pickle traces
 
         def inplace_index_copy_meta(buffer, dim, idx, val):
             return thunder.TensorProxy(like=buffer)
