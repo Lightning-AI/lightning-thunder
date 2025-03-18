@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import textwrap
 import copy
 from itertools import chain
-
+from looseversion import LooseVersion
 
 import torch
 from thunder.core.pytree import tree_flatten
@@ -22,6 +22,10 @@ from thunder.dynamo.utils import (
     get_env,
     get_split_reasons_string,
     CompilerType,
+    example_input_meta_to_input,
+    recompile_graph,
+    has_higher_order_operator,
+    input_to_example_input_meta,
     example_input_meta_to_input,
 )
 
@@ -196,6 +200,14 @@ class FXGraphReport:
     """
 
     def __init__(self, graph: torch.fx.GraphModule, graph_name: str, example_input_meta: list[ExampleInputMetaData]):
+        if LooseVersion(torch.__version__) < LooseVersion("2.6.0"):
+            # NOTE: PyTorch 2.6 changes the structure of GraphModule for higher order ops.
+            # In newer torch version the higher order ops are nested as submodules within the module that uses them,
+            # but in the older version they were separate sibling modules.
+            if has_higher_order_operator(graph):
+                raise RuntimeError(
+                    "The Reporting Tool for Torch higher-order operators is supported only in PyTorch version 2.6 or later."
+                )
         self.graph = graph
         self.graph_name = graph_name
         self.example_input_meta = example_input_meta
@@ -426,6 +438,8 @@ class FXGraphReport:
     ):
         torch._dynamo.reset()
         example_inputs = self.make_example_inputs()
+        # To avoid the AssertionError: attribute nodes of Graph object out of sync
+        recompile_graph(self.graph)
         compiled_model = compile_fn.compile(self.graph, inputs=example_inputs)
         result = run_forward_backward(compiled_model, *example_inputs)
 
@@ -493,6 +507,8 @@ class FXGraphReport:
         # to reset Dynamo's state *as if* you had started a fresh process invocation.
         torch._dynamo.reset()
         example_inputs = self.make_example_inputs()
+        # To avoid the AssertionError: attribute nodes of Graph object out of sync
+        recompile_graph(self.graph)
         compiled_fn = compile_fn.compile(self.graph, inputs=example_inputs)
 
         forward_only = not any(hasattr(arg, "requires_grad") and arg.requires_grad for arg in example_inputs)
@@ -555,7 +571,7 @@ class FXGraphReport:
         if not forward_only:
             code_str = f"""{code_str}
     # backward
-    from thunder.benchmarks.targets import backward_only
+    from thunder.benchmarks.utils import backward_only
     backward_fn, backward_setup = backward_only({COMPILED_CALLABLE_NAME}, *{INPUTS_NAME})
     backward_args = backward_setup()
     bwd_measurement = {bwd_timing_str}
@@ -864,17 +880,17 @@ print(measurement)
             print(repro_code_str, file=f)
 
     def make_example_inputs(self):
-        return [example_input_meta_to_input(meta) for meta in self.get_inputs_meta()]
+        return example_input_meta_to_input(input_to_example_input_meta(self.get_fake_inputs()))
 
-    def get_inputs_meta(self):
-        return self.nvfusion_bsym._call_ctx[self.nvfusion_bsym.sym.name].last_inputs_meta
+    def get_fake_inputs(self):
+        return self.nvfusion_bsym._call_ctx[self.nvfusion_bsym.sym.name].last_used.fake_inputs
 
     def _get_inductor_code(self, **kwargs):
         python_func = create_python_callable_from_bsym(self.nvfusion_bsym)
         nvfusion_name = self.nvfusion_bsym.sym.name
         extra_comment_str = kwargs.get("extra_comment_str") if "extra_comment_str" in kwargs else ""
 
-        inputs = self.get_inputs_meta()
+        inputs = self.get_fake_inputs()
         inputs = "[" + "".join(arg_like(inp) for inp in inputs) + "]"
         inductor_code_str = bsym_torch_compile_repro_template.format(
             python_func=python_func, func_name=nvfusion_name, inputs=inputs, extra_comment_str=extra_comment_str
@@ -1010,7 +1026,7 @@ def analyze_thunder_splits(
                         nvfusion_report.write_inductor_repro(split_folder / "nvfusion")
 
     """
-    from thunder.dynamo.utils import remove_empty_autocast, recompile_graph, get_thunder_module_names
+    from thunder.dynamo.utils import remove_empty_autocast, get_thunder_module_names
     from thunder.dynamo.splitter import _splitter
     from thunder import jit
 
@@ -1019,7 +1035,7 @@ def analyze_thunder_splits(
     # Dynamo uses lazy generation of the underlying Python code, so we need to
     # force recompilation of the GraphModule before passing it to Thunder.
     recompile_graph(gm)
-    thunder_jit = partial(jit, **thunder_options, nv_store_fusion_inputs_meta=True)
+    thunder_jit = partial(jit, **thunder_options, nv_save_fake_inputs=True)
     _, subgraph_info = _splitter(gm, thunder_jit, torch.compile, _unused_sample_args=None)
 
     thunder_module_names = [f"{report.graph_name}_{name}" for name in get_thunder_module_names(subgraph_info)]
