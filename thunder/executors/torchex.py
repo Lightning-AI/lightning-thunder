@@ -832,11 +832,14 @@ hardswish = _register_torch_operation("hardswish", module=torch.nn.functional)
 hardtanh = _register_torch_operation("hardtanh", module=torch.nn.functional)
 leaky_relu = _register_torch_operation("leaky_relu", module=torch.nn.functional)
 logsigmoid = _register_torch_operation("logsigmoid", module=torch.nn.functional)
+mish = _register_torch_operation("mish", module=torch.nn.functional)
 relu = _register_torch_operation("relu", module=torch.nn.functional)
 relu6 = _register_torch_operation("relu6", module=torch.nn.functional)
 selu = _register_torch_operation("selu", module=torch.nn.functional)
 silu = _register_torch_operation("silu", module=torch.nn.functional)
+softplus = _register_torch_operation("softplus", module=torch.nn.functional)
 softshrink = _register_torch_operation("softshrink", module=torch.nn.functional)
+softsign = _register_torch_operation("softsign", module=torch.nn.functional)
 tanhshrink = _register_torch_operation("tanhshrink", module=torch.nn.functional)
 
 
@@ -851,13 +854,15 @@ _register_elementwise_unary_implementation(ltorch.hardshrink, hardshrink, checke
 _register_elementwise_unary_implementation(ltorch.hardswish, hardswish, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.hardtanh, hardtanh, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.leaky_relu, leaky_relu, checker=_always_executable)
+_register_elementwise_unary_implementation(ltorch.mish, mish, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.relu, relu, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.relu6, relu6, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.selu, selu, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.silu, silu, checker=_always_executable)
-_register_elementwise_unary_implementation(ltorch.tanhshrink, tanhshrink, checker=_always_executable)
+_register_elementwise_unary_implementation(ltorch.softplus, softplus, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.softshrink, softshrink, checker=_always_executable)
-
+_register_elementwise_unary_implementation(ltorch.softsign, softsign, checker=_always_executable)
+_register_elementwise_unary_implementation(ltorch.tanhshrink, tanhshrink, checker=_always_executable)
 #
 # Elementwise binary operations
 #

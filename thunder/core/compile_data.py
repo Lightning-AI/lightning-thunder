@@ -68,6 +68,8 @@ def get_compile_option(option: str, description: str, /) -> None | Any:
 # Whether or not the caching option uses symbolic values
 def get_cache_option() -> CACHE_OPTIONS:
     cd = get_compile_data()
+    if cd is None:
+        return CACHE_OPTIONS.CONSTANT_VALUES
     return cd.cache_option
 
 
