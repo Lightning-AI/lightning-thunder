@@ -1443,6 +1443,20 @@ def _log_sigmoid_grad(
 register_grad("torch.nn.functional.logsigmoid", _log_sigmoid_grad)
 
 
+def _softplus_grad(a: TensorProxy, /, beta: float = 1.0, threshold: float = 20.0):
+    from thunder.torch import sigmoid, softplus, where
+
+    fwd = softplus(a, beta, threshold)
+    g = get_grad(fwd)
+    scaled_a = a * beta
+    rhs = sigmoid(scaled_a)
+    a_grad = g * where(scaled_a > threshold, 1.0, rhs)
+    put_grad(a, a_grad)
+    return fwd
+
+
+register_grad("torch.nn.functional.softplus", _softplus_grad)
+
 #
 # Phantom grad transform helpers
 #
