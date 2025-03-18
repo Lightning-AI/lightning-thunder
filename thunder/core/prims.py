@@ -65,6 +65,7 @@ from thunder.core.symbol import Symbol, BoundSymbol, default_python_printer
 from thunder.core.proxies import (
     CONSTRAINT,
     CollectionProxy,
+    ListProxy,
     TensorProxy,
     NumberProxy,
     is_proxyable,
@@ -127,6 +128,7 @@ class PrimIDs(Enum):
     UNPACK_SUBMODULE = auto()
     UNPACK_THUNDER_MODULE = auto()
     CONSTRUCT_TUPLE = auto()
+    PACK_LIST = auto()
     PACK_BUFFER = auto()
     PACK_ATTR = auto()
     PACK_SETITEM = auto()
@@ -1170,6 +1172,53 @@ unpack_buffer = make_prim(
     meta=unpack_buffer_meta,
     python_printer=unpack_buffer_printer,
     python_impl=unpack_buffer_impl,
+)
+
+
+def pack_list_meta(*args: Any) -> Any:
+    def _proxy(x: Any):
+        if isinstance(x, Proxy):
+            return x
+        return proxy(x)
+
+    a = ListProxy([_proxy(x) for x in args])
+    return a
+
+
+def pack_list_printer(
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
+):
+    utils.check(
+        len(kwarg_printables) == 0,
+        lambda: f"Expected no kwargs for pack_list but got {kwarg_printables}",
+        exception_type=AssertionError,
+    )
+    utils.check(
+        isinstance(out_printables, ListProxy),
+        lambda: f"Expected out of type ListProxy, but got {type(out_printables)}",
+        exception_type=AssertionError,
+    )
+
+    l = out_printables.name
+    call_str = f"{codeutils.prettyprint(l)}"
+
+    parts = [f"{codeutils.prettyprint(arg, literals_as_underscores=True)}, " for arg in arg_printables]
+    final_str = call_str.strip("'") + f" = [{''.join(parts)}]"
+
+    return final_str
+
+
+def pack_list_impl(*args: Any) -> Any:
+    return list(args)
+
+
+pack_list = make_prim(
+    PrimIDs.PACK_LIST,
+    "pack_list",
+    meta=pack_list_meta,
+    python_printer=pack_list_printer,
+    python_impl=pack_list_impl,
+    tags=(OpTags.DONT_DCE,),
 )
 
 

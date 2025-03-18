@@ -483,11 +483,12 @@ def _get_example_input_tensor_metadata(t: torch.Tensor) -> ExampleInputMetaData:
 
 def _create_random_tensor_from_tensor_metadata(arg: ExampleInputMetaData) -> torch.Tensor:
     min_val, max_val = arg.min_val, arg.max_val
-    shape = arg.shape if arg.is_contiguous else arg.storage_shape
     if min_val is not None and min_val == max_val:
-        tensor = torch.full(shape, min_val, dtype=arg.dtype, device=arg.device, layout=arg.layout)
+        tensor = torch.full(arg.storage_shape, min_val, dtype=arg.dtype, device=arg.device, layout=arg.layout)
     else:
-        tensor = torch.testing.make_tensor(shape, dtype=arg.dtype, device=arg.device, low=min_val, high=max_val)
+        tensor = torch.testing.make_tensor(
+            arg.storage_shape, dtype=arg.dtype, device=arg.device, low=min_val, high=max_val
+        )
     return tensor.set_(tensor, size=arg.shape, storage_offset=arg.storage_offset(), stride=arg.stride()).requires_grad_(
         arg.requires_grad
     )
@@ -648,7 +649,7 @@ def arg_like_tensor(arg: torch.Tensor | ExampleInputMetaData):
     if isinstance(arg, torch.Tensor):
         arg = _get_example_input_tensor_metadata(arg)
     min_val, max_val = arg.min_val, arg.max_val
-    shape = arg.shape if arg.is_contiguous else arg.storage_shape
+    shape = arg.shape if arg.is_contiguous and arg.storage_offset() == 0 else arg.storage_shape
     if min_val is not None and min_val == max_val:
         meta = f"{shape}, {min_val}, dtype={arg.dtype}, device='{arg.device}', requires_grad={arg.requires_grad}, layout={arg.layout}"
         tensor_str = f"torch.full({meta})"
@@ -665,9 +666,12 @@ def arg_like(arg: Any):
     """Creates a new argument that is similar to the given arg."""
     if isinstance(arg, (torch.Tensor, ExampleInputMetaData)):
         return arg_like_tensor(arg)
-    else:
-        # Assume it's a literal that we can just print directly.
+    elif isinstance(arg, Sequence):
+        return "[" + "".join(arg_like(a) for a in arg) + "],"
+    elif isinstance(arg, (int, bool, float)):
         return f"{arg},"
+    else:
+        raise TypeError(f"Unsupported input type: {type(arg)}")
 
 
 def _readable(
@@ -692,6 +696,11 @@ def _readable(
         include_device=include_device,
     )
     module_code = verbose_python_code.src
+    submodule_names = [name for name, m in module.named_children() if hasattr(m, "graph")]
+    # For higher-order functions, the callable is a submodule, and the code string initializes the object using for example`wrap_body_0 = self.wrap_body_0`.
+    # Since `wrap_body_0` represents the class name of the submodule, it needs to be replaced with `wrap_body_0 = self.wrap_body_0()` to instantiate the object.
+    for submodule_name in submodule_names:
+        module_code = module_code.replace(f"self.{submodule_name}", f"self.{submodule_name}()")
     module_code = module_code.lstrip("\n")
     module_code = f"class {module_name}(torch.nn.Module):\n" + module_code
     module_code = _addindent(module_code, 4)
@@ -710,7 +719,7 @@ def _readable(
                 )
             )
     submodule_code = "\n".join(submodule_code_list)
-    submodule_code = _addindent(submodule_code, 2)
+    submodule_code = _addindent(submodule_code, 4)
 
     output = module_code + submodule_code
     if print_output:
@@ -719,13 +728,18 @@ def _readable(
 
 
 def get_env() -> tuple[str, str]:
-    """Retrieve detailed environment information using `torch.utils.collect_env.get_pretty_env_info()`.
+    """Retrieve detailed environment information using `torch.utils.collect_env.get_pip_packages()`.
     Additionally, include the installed versions of Thunder and NvFuser (if available via pip).
     """
 
-    from torch.utils.collect_env import run, get_pretty_env_info, get_pip_packages
+    from torch.utils.collect_env import run, get_pip_packages
 
-    torch_env = get_pretty_env_info()
+    torch_env = "CUDA devices:\n"
+    for i in range(torch.cuda.device_count()):
+        torch_env += f"  {i}: {torch.cuda.get_device_name(i)}\n"
+    torch_env += f"CUDA version: {torch.version.cuda}\n"
+    _, packages = get_pip_packages(run)
+    torch_env += packages
     _, thunder_packages = get_pip_packages(run, {"lightning-thunder", "nvfuser"})
     return torch_env, thunder_packages
 
@@ -766,3 +780,10 @@ def get_thunder_module_names(subgraph_info: SubgraphInfo) -> list[str]:
         if isinstance(target, str) and target.startswith("thunder_"):
             thunder_module_names.append(target)
     return thunder_module_names
+
+
+def has_higher_order_operator(gm: torch.fx.GraphModule):
+    for n in gm.graph.nodes:
+        if isinstance(n.target, torch._ops.HigherOrderOperator):
+            return True
+    return False

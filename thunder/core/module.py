@@ -182,7 +182,9 @@ class ThunderModule(pytorch.nn.Module):
                         b.copy_(v)
                 else:
                     with pytorch.no_grad():
-                        self._overrides_parameters[full_k] = v.to(b.device).requires_grad_(b.requires_grad)
+                        self._overrides_buffers[full_k] = v.to(device=b.device, dtype=b.dtype).requires_grad_(
+                            b.requires_grad
+                        )
             else:
                 raise NotImplementedError(f"don't know how to handle {full_k}")
             processed_names.add(full_k)

@@ -1454,6 +1454,20 @@ def _log_sigmoid_grad(
 register_grad("torch.nn.functional.logsigmoid", _log_sigmoid_grad)
 
 
+def _softplus_grad(a: TensorProxy, /, beta: float = 1.0, threshold: float = 20.0):
+    from thunder.torch import sigmoid, softplus, where
+
+    fwd = softplus(a, beta, threshold)
+    g = get_grad(fwd)
+    scaled_a = a * beta
+    rhs = sigmoid(scaled_a)
+    a_grad = g * where(scaled_a > threshold, 1.0, rhs)
+    put_grad(a, a_grad)
+    return fwd
+
+
+register_grad("torch.nn.functional.softplus", _softplus_grad)
+
 #
 # Phantom grad transform helpers
 #
@@ -1851,6 +1865,7 @@ def grad_chooser_backward(primal, x, x_shape, reduced_dims, g):
     argmax_locations = x == primal_repeated
     argmax_sum = keepdim_reduction(prims.sum, argmax_locations, reduced_dims)
     out = g_repeated * argmax_locations / argmax_sum
+    out = prims.convert_element_type(out, g.dtype)
     return out
 
 
@@ -2558,7 +2573,15 @@ def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
 
         def vjp_impl_const(symbol, *args, **kwargs):
             args, kwargs = tree_map(lambda x: x.primal if isinstance(x, VJPDual) else x, (args, kwargs))
-            primals = symbol_to_eval(symbol)(*args, **kwargs)
+            if symbol.sym.name == "synchronize":
+                # This is a *really* terrible hack to cope with non-grad-needing sharded tensors
+                # as required by LoRA.
+                from thunder.distributed.prims import all_gather
+
+                a, group = symbol.args
+                primals = all_gather(a, group, True).wait()
+            else:
+                primals = symbol_to_eval(symbol)(*args, **kwargs)
             if isinstance(primals, Sequence):
                 return tree_map(lambda x: VJPDual(x, tuple()), primals)
             return VJPDual(primals, tuple())

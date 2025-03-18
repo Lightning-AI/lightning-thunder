@@ -601,6 +601,38 @@ class FSDPTest(DistributedParallelTestCase):
         expected = jitted_ref(x)
         assert_close(result, expected)
 
+    @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
+    def test_fsdpv2_no_grad(self):
+        import re
+        from thunder.tests.litgpt_model import Config, GPT
+
+        device = torch.device("cuda", self.rank)
+        config = Config("Llama-2-7b-hf")
+        config.n_layer = 1
+        with torch.device("meta"):
+            model = GPT(config)
+        with device:
+            model_ref = GPT(config)
+        jitted = fsdp(thunder.jit(model), device=device)
+        jitted.load_original_state_dict(model_ref.state_dict())
+
+        t = config.block_size
+        data = torch.randint(
+            0,
+            100,
+            (
+                1,
+                t + 1,
+            ),
+            dtype=torch.int64,
+        )
+        x = data[:, :t]
+        x = x.to(device=device)
+        with torch.no_grad():
+            result = jitted(x)
+            expected = model_ref(x)
+        assert_close(result, expected)
+
 
 common_utils.instantiate_parametrized_tests(FSDPTest)
 

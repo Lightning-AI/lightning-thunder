@@ -184,7 +184,14 @@ def synchronize_meta(
             # Assuming that the sharding is done on the first dimension
             # See [FSDP Sharding] in distributed/__init__.py
             unsharded_shape = a.shape[0] * group.size(), *a.shape[1:]
-            return TensorProxy(shape=unsharded_shape, like=a, distparallel_type=DistParallelType.REPLICATED)
+            # NOTE: We explicitly pass the `a.requires_grad` as we want to propogate the requires grad correctly on `nn.Parameter`'s
+            # as it maybe queried later.
+            return TensorProxy(
+                shape=unsharded_shape,
+                like=a,
+                distparallel_type=DistParallelType.REPLICATED,
+                requires_grad=a.requires_grad,
+            )
         case _:
             utils.check(False, lambda: f"Proxy {a} has unexpected {a.distparallel_type=}")
 
