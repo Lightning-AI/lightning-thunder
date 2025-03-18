@@ -362,7 +362,6 @@ torch_auto_registered_ops = {
         torch.nn.functional.max_unpool1d,
         torch.nn.functional.max_unpool2d,
         torch.nn.functional.max_unpool3d,
-        torch.nn.functional.mish,
         torch.nn.functional.multi_head_attention_forward,
         torch.nn.functional.multi_margin_loss,
         torch.nn.functional.multilabel_margin_loss,
