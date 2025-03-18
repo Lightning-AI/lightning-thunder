@@ -2014,7 +2014,7 @@ def logical_xor(a: TensorLike, b: TensorLike, /) -> TensorLike:
         a = a != 0
     if not utils.is_boolean_dtype(dtypes.to_dtype(b)):
         b = b != 0
-    return a ^ b  
+    return a ^ b
 
 
 @clangop(method_name="le")
