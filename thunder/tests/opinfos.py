@@ -2234,7 +2234,7 @@ elementwise_binary_ops.append(logical_and_opinfo)
 
 logical_xor_opinfo = OpInfo(
     clang.logical_xor,
-    dtypes=(datatypes.exact, datatypes.floating, datatypes.complexfloating),
+    dtypes=(datatypes.all_dtypes),
     sample_input_generator=partial(elementwise_binary_generator, no_rhs_numbers=True),
     torch_reference=torch._refs.logical_xor,
 )
