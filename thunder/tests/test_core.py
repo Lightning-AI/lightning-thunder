@@ -3257,3 +3257,25 @@ def test_thunder_jit_parts():
 
     assert_close(pro_to_comp, pro_to_comp2)
     assert_close(pro_to_epi, pro_to_epi2)
+
+
+def test_prims_pack_list():
+    def foo():
+        pass
+
+    trace = TraceCtx(foo)
+
+    a = torch.randn(2, 2)
+    b = torch.randn(2, 2)
+
+    with tracectx(trace):
+        x = prims.unpack_trivial(a, name="x")
+        y = prims.unpack_trivial(b, name="y")
+        l = prims.pack_list(x, y)
+        prims.python_return(l)
+
+    func = trace.python_callable()
+    actual = func()
+    expected = [a, b]
+
+    assert isinstance(actual, list) and actual == expected
