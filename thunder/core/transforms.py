@@ -756,6 +756,17 @@ def _cat_prim_grad(tensors: list[TensorProxy], /, dim: int) -> TensorProxy:
 register_grad(pids.CAT, _cat_prim_grad)
 
 
+def _update_aliases_prim_grad(tensors: tuple[TensorProxy, ...]) -> tuple[TensorProxy, ...]:
+    fwd_tensors = prims.update_aliases(tensors)
+    for fwd_t, t in zip(fwd_tensors, tensors):
+        g = get_grad(fwd_t)
+        put_grad(t, g)
+    return fwd_tensors
+
+
+register_grad(pids.UPDATE_ALIASES, _update_aliases_prim_grad)
+
+
 def _reshape_prim_grad(a: TensorProxy, shape: tuple[int, ...]) -> TensorProxy:
     fwd = prims.reshape(a, shape)
 
@@ -1651,8 +1662,7 @@ backward_impls = {
     prims.PrimIDs.LOG1P: lambda x, g: g / (x + 1),
     prims.PrimIDs.LOG2: lambda x, g: g / (x * 0.6931471805599453),
     prims.PrimIDs.FMOD: lambda x, y, g: (g, -g * prims.trunc(x / y)),
-    # The copy should not be differentiable. We return None to enable the generation of the backward graph through them.
-    prims.PrimIDs.COPY_: lambda g: (None, None),
+    prims.PrimIDs.COPY_: lambda g: (g, None),
     prims.PrimIDs.CLONE: lambda g: g,
 }
 
@@ -2307,6 +2317,19 @@ def iter_bound_symbols(bound_symbols):
             yield symbol
 
 
+def get_first_proxy(proxies: list[Proxy]) -> Proxy | None:
+    """Get the first proxy from a list of proxies.
+
+    Args:
+        proxies: List of proxies
+
+    Returns:
+        Proxy: First proxy from the list
+    """
+    proxies = sequencify(proxies)
+    return next((proxy for proxy in proxies if isinstance(proxy, Proxy)), None)
+
+
 def deconstruct_forward_env_for_backward(trace, env):
     # Note [Saving the forward environment in the backward rule]
     # We cannot save the trace object in the residuals because executors may not
@@ -2318,7 +2341,7 @@ def deconstruct_forward_env_for_backward(trace, env):
     # arguments. See test_grad.py:test_torch_autograd_function for an example
     # where this is tested.
     bound_symbols = iter_bound_symbols(trace.bound_symbols)
-    saved_for_backward = tuple(env[sequencify(symbol.output)[0].name].residuals for symbol in bound_symbols)
+    saved_for_backward = tuple(env[get_first_proxy(symbol.output).name].residuals for symbol in bound_symbols)
     return saved_for_backward
 
 
@@ -2328,7 +2351,7 @@ def reconstruct_forward_env_for_backward(trace, saved_for_backward):
     reconstructed_env = {}
 
     for idx, sym in enumerate(bound_symbols):
-        k = sequencify(sym.output)[0].name
+        k = get_first_proxy(sym.output).name
         v = VJPDual(None, saved_for_backward[idx])
         reconstructed_env[k] = v
 
@@ -2745,7 +2768,7 @@ def backward_pass(forward_env, trace, init_cotangents):
         # Having a single cotangent is a common case, so we flatten it
         # Otherwise, we will need to rewrite the pullback functions
         cotangents = tree_flatten(cotangents)[0]
-        residuals = forward_env[symbol_output[0].name].residuals
+        residuals = forward_env[get_first_proxy(symbol_output).name].residuals
         if is_constant_for_vjp(symbol):
             # We can skip the pullback if all the arguments are constant
             continue

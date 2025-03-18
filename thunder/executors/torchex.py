@@ -2281,3 +2281,7 @@ _register_implementation(prims.shape, shape, checker=_always_executable)
 
 shallow_copy = ex.register_operator("shallow_copy", meta=prims.shallow_copy, fn=lambda x: x)
 _register_implementation(prims.shallow_copy, shallow_copy, checker=_always_executable)
+
+
+update_aliases = ex.register_operator("update_aliases", meta=prims.update_aliases, fn=lambda x: x)
+_register_implementation(prims.update_aliases, update_aliases, checker=_always_executable)
