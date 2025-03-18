@@ -94,6 +94,7 @@ def test_plugins_basics():
         assert ex.name in [el.name for el in cd.executors_list]
 
 
+@pytest.mark.skipif(IS_WINDOWS, reason="libuv error with PT build on windows")
 def test_plugins_composition(monkeypatch):
     model = torch.nn.Sequential(torch.nn.Linear(2048, 4096), torch.nn.ReLU(), torch.nn.Linear(4096, 64))
 
