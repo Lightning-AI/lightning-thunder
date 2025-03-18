@@ -696,6 +696,11 @@ def _readable(
         include_device=include_device,
     )
     module_code = verbose_python_code.src
+    submodule_names = [name for name, m in module.named_children() if hasattr(m, "graph")]
+    # For higher-order functions, the callable is a submodule, and the code string initializes the object using for example`wrap_body_0 = self.wrap_body_0`.
+    # Since `wrap_body_0` represents the class name of the submodule, it needs to be replaced with `wrap_body_0 = self.wrap_body_0()` to instantiate the object.
+    for submodule_name in submodule_names:
+        module_code = module_code.replace(f"self.{submodule_name}", f"self.{submodule_name}()")
     module_code = module_code.lstrip("\n")
     module_code = f"class {module_name}(torch.nn.Module):\n" + module_code
     module_code = _addindent(module_code, 4)
@@ -714,7 +719,7 @@ def _readable(
                 )
             )
     submodule_code = "\n".join(submodule_code_list)
-    submodule_code = _addindent(submodule_code, 2)
+    submodule_code = _addindent(submodule_code, 4)
 
     output = module_code + submodule_code
     if print_output:
@@ -775,3 +780,10 @@ def get_thunder_module_names(subgraph_info: SubgraphInfo) -> list[str]:
         if isinstance(target, str) and target.startswith("thunder_"):
             thunder_module_names.append(target)
     return thunder_module_names
+
+
+def has_higher_order_operator(gm: torch.fx.GraphModule):
+    for n in gm.graph.nodes:
+        if isinstance(n.target, torch._ops.HigherOrderOperator):
+            return True
+    return False
