@@ -63,7 +63,9 @@ class ThunderCompileSpecification(CompileSpecificationInterface):
 
     def to_source(self, fn_name):
         thunder_options_str = thunder_options_to_str(self.thunder_options)
-        return f"thunder.jit({fn_name}, {thunder_options_str})"
+        return (
+            f"thunder.jit({fn_name})" if not thunder_options_str else f"thunder.jit({fn_name}, {thunder_options_str})"
+        )
 
     def import_str(self):
         return ["import thunder"]

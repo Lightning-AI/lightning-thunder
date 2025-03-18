@@ -1368,6 +1368,10 @@ def _elementwise_unary_check(a: Number | TensorProxy) -> bool:
     return is_supported_tensor_or_number(a)
 
 
+def _elementwise_nnary_check(args: tuple[TensorProxy]) -> bool:
+    return are_supported_tensors_or_numbers(*args)
+
+
 # NOTE nv_abs to avoid a name conflict with the builin abs
 def nv_abs(a: Number | TensorProxy, /, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
@@ -1726,6 +1730,16 @@ def clone(a: TensorProxy, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
 
 
 register_supported(PrimIDs.CLONE, clone, _elementwise_unary_check)
+
+# update_aliases is disabled.  nvfuser does not support it.
+# TODO: Enable this once nvfuser supports it.
+# def update_aliases(aliases: tuple[TensorProxy], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+#     nvaliases = tuple(getnv(alias, fd, lc_to_nv_map) for alias in aliases)
+#     return tuple(fd.ops.set(nvalias) for nvalias in nvaliases)
+
+
+# register_supported(PrimIDs.UPDATE_ALIASES, update_aliases, _elementwise_nnary_check)
+
 
 #
 # Elementwise binary operations
@@ -2155,7 +2169,7 @@ def copy_(
     nvcopy_to = getnv(copy_to, fd, lc_to_nv_map)
     alias_output = fd.ops.set(nvcopy_from)
     fd.add_output(alias_output, alias_input=nvcopy_to)
-    return nvcopy_to
+    return alias_output
 
 
 register_supported(PrimIDs.COPY_, copy_, _copy__check)

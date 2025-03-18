@@ -41,6 +41,9 @@ from thunder.core.functionalization import (
     check_inplace_to_views,
     functionalize_inplace_ops,
 )
+from thunder.core.update_aliases import (
+    insert_alias_updates,
+)
 from thunder.core.recipe import Recipe, Plugin
 from thunder.common import (
     CompileData,
@@ -468,8 +471,12 @@ def jit(
             computation_trc = remove_context_manager_prims_from_trace(computation_trc)
             computation_traces.append(computation_trc)
 
-            orig_to_view_swap_map = check_inplace_to_views(computation_trc)
+            if not compile_options.get("skip_inplace_alias_updates", True):
+                computation_traces.append(insert_alias_updates(computation_trc))
+                computation_trc = computation_traces[-1]
+
             if not compile_options.get("skip_inplace_functionalization", False):
+                orig_to_view_swap_map = check_inplace_to_views(computation_trc)
                 alias_tensor_indices = []
                 if alias_tensor_indices_str := cache_info["alias_tensor_indices"]:
                     alias_tensor_indices: list[list[int]] = [
@@ -538,19 +545,19 @@ def jit(
             if not cd.disable_torch_autograd_support:
                 tensor_cls = (pytorch.Tensor, TensorProxy)
                 requires_grad = any(isinstance(arg, tensor_cls) and arg.requires_grad for arg in computation_trc.args)
+            else:
+                requires_grad = False
 
-                if requires_grad:
-                    # Currently split_forward_backward also includes
-                    # transform_for_execution and various sorting of symbols,
-                    # applying transform_for_execution after this would be
-                    # breaking the order of operations
-                    computation_trc, backward_trc = split_forward_backward(
-                        computation_trc, cd, cs, *computation_trc.args
-                    )
-                    # Note computation_trc and backward_trc have been appended to cs.last_(backward_)traces
-                    # by split_forward_backward
+            if requires_grad:
+                # Currently split_forward_backward also includes
+                # transform_for_execution and various sorting of symbols,
+                # applying transform_for_execution after this would be
+                # breaking the order of operations
+                computation_trc, backward_trc = split_forward_backward(computation_trc, cd, cs, *computation_trc.args)
+                # Note computation_trc and backward_trc have been appended to cs.last_(backward_)traces
+                # by split_forward_backward
 
-            if backward_trc is None:
+            if not requires_grad:
                 from thunder.executors.passes import transform_for_execution as transform_for_execution_pass
                 from thunder.executors.passes import _transform_for_operator_executor_execution
                 from thunder.distributed.utils import maybe_sort_waits
