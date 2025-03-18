@@ -601,7 +601,6 @@ class FSDPTest(DistributedParallelTestCase):
         expected = jitted_ref(x)
         assert_close(result, expected)
 
-
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
     def test_fsdpv2_no_grad(self):
         import re
