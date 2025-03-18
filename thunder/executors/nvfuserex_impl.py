@@ -100,6 +100,13 @@ _lcdtype_to_nvdtype_map: dict[None | type | dtypes.dtype, DataType] = {
     None: DataType.Null,
 }
 
+if nvfuser_version() >= LooseVersion("0.2.27"):
+    _lcdtype_to_nvdtype_map.update(
+        {
+            dtypes.uint64: DataType.UInt64,
+            dtypes.uint64_: DataType.UInt64,
+        }
+    )
 
 _lcfp8_to_nvfp8_map: dict[dtypes.dtype, DataType] = {
     dtypes.float8_e5m2: DataType.Float8_e5m2,
@@ -2424,15 +2431,19 @@ def _scaled_dot_product_flash_attention_forward_meta(
     # For non-nested tensor, cum_seq_q/k is undefined, max_q/k can be inferred from input size, and we set `return_debug_mask=False`, so `debug_attn_mask` is a 1D zero tensor.
 
     batch_size, num_heads, query_seq_len, E = query.shape
-    key_seq_len = key.shape[2]
+
+    UPDATED_SDPA = LooseVersion(torch.__version__) >= LooseVersion("2.7.0")
+    philox_shape = (2,) if UPDATED_SDPA else ()
+    dtype = dtypes.uint64 if UPDATED_SDPA else dtypes.int64
+    device = query.device if UPDATED_SDPA else "cpu"
 
     return (
         output := TensorProxy(like=query, shape=(batch_size, num_heads, query_seq_len, E)),
         log_sumexp := TensorProxy(
             shape=(batch_size, num_heads, query_seq_len), dtype=dtypes.float32, device=query.device, requires_grad=False
         ),
-        philox_seed := TensorProxy(shape=(), dtype=dtypes.int64, device=cpu, requires_grad=False),
-        philox_offset := TensorProxy(shape=(), dtype=dtypes.int64, device=cpu, requires_grad=False),
+        philox_seed := TensorProxy(shape=philox_shape, dtype=dtype, device=device, requires_grad=False),
+        philox_offset := TensorProxy(shape=(), dtype=dtype, device=device, requires_grad=False),
     )
 
 
@@ -2544,6 +2555,10 @@ def _scaled_dot_product_flash_attention_check(
 
     # fd.ops.sdpfa_fwd and fd.ops.sdpfa_bwd are adding in versions 0.2.9 and 0.2.10 respectively.
     if nvfuser_version() < LooseVersion("0.2.10"):
+        return False
+
+    # SDPA requires nvfuser version 0.2.27 or higher for torch 2.7.0 or higher.
+    if LooseVersion(torch.__version__) >= LooseVersion("2.7.0") and nvfuser_version() < LooseVersion("0.2.27"):
         return False
 
     enable_sdpa: None | bool = get_compile_option("nv_enable_sdpa", "Enable nvFuser flash attention SDPA.")
