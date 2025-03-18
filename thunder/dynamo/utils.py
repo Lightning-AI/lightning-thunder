@@ -789,3 +789,17 @@ def has_higher_order_operator(gm: torch.fx.GraphModule):
         if isinstance(n.target, torch._ops.HigherOrderOperator):
             return True
     return False
+
+
+def format_python_file(file_path: str) -> str:
+    from lightning_utilities.core.imports import package_available
+
+    if package_available("ruff"):
+        import subprocess
+        import sys
+
+        # Ruff often prints warnings, progress messages, and other information that we don't need in this context.
+        # Redirecting stdout and stderr to /dev/null to suppress unnecessary output.
+        subprocess.run(
+            [sys.executable, "-m", "ruff", "format", file_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
