@@ -2272,6 +2272,14 @@ logical_and_opinfo = OpInfo(
 )
 elementwise_binary_ops.append(logical_and_opinfo)
 
+logical_or_opinfo = OpInfo(
+    clang.logical_or,
+    dtypes=(datatypes.all_dtypes),
+    sample_input_generator=partial(elementwise_binary_generator, no_rhs_numbers=True),
+    torch_reference=torch._refs.logical_or,
+)
+elementwise_binary_ops.append(logical_or_opinfo)
+
 logical_xor_opinfo = OpInfo(
     clang.logical_xor,
     dtypes=(datatypes.all_dtypes),
