@@ -144,6 +144,8 @@ class unsignedinteger(exact):
 
 uint8 = unsignedinteger("uint", "ui", bytes=1, is_weak=False)
 uint8_ = unsignedinteger("uint", "ui", bytes=1, is_weak=True)
+uint64 = unsignedinteger("uint", "ui", bytes=8, is_weak=False)
+uint64_ = unsignedinteger("uint", "ui", bytes=8, is_weak=True)
 
 
 class bool_(exact):
@@ -407,6 +409,7 @@ def corresponding_complex_dtype(dtype):
 _strong_dtype_to_weak_dtype_map = {
     bool8: bool8_,
     uint8: uint8_,
+    uint64: uint64_,
     int8: int8_,
     int16: int16_,
     int32: int32_,
