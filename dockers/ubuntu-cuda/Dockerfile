@@ -149,7 +149,7 @@ RUN \
         # installing pytorch from wheels \
         CUDA_VERSION_MM=${CUDA_VERSION%.*} && \
         TORCH_VERSION_MM=${TORCH_VERSION%.*} && \
-        pip install --extra-index-url https://pypi.nvidia.com/ -U "nvfuser-cu${CUDA_VERSION_MM/./}-torch${TORCH_VERSION_MM/./}" ; \
+        pip install --index-url https://pypi.nvidia.com/ -U "nvfuser-cu${CUDA_VERSION_MM/./}-torch${TORCH_VERSION_MM/./}" ; \
     fi
 
 RUN \
