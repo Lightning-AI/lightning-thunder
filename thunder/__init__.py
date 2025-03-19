@@ -44,7 +44,7 @@ from thunder.core.functionalization import (
 from thunder.core.update_aliases import (
     insert_alias_updates,
 )
-from thunder.core.recipe import Recipe, Lookaside
+from thunder.core.recipe import Recipe, Plugin
 from thunder.common import (
     CompileData,
     CompileStats,
@@ -272,14 +272,51 @@ CacheEntry = namedtuple(
 )
 
 
-def compile(fn: Callable, recipe: Recipe | None = None):
-    if recipe is None:
+# TODO implement registration + "auto" recipe
+def compile(fn: Callable, recipe: Recipe | str | None = None, plugins: Plugin | list[Plugin] | None = None):
+    import thunder.recipes
+    import thunder.plugins
+
+    if plugins is None:
+        plugins = []
+
+    if not isinstance(plugins, list) and not isinstance(plugins, tuple):
+        plugins = [plugins]
+
+    plugins_ = []
+    for plugin in plugins:
+        if isinstance(plugin, str):
+            plugin_cls = thunder.plugins.get_plugin(plugin)
+            if plugin_cls is None:
+                raise ValueError(
+                    f"Plugin {plugin} not recognized. Available plugins are {thunder.plugins.get_plugin_names()}."
+                )
+            plugins_.append(plugin_cls())
+        else:
+            plugins_.append(plugin)
+    plugins = plugins_
+
+    if recipe is None and not plugins:
         return thunder.jit(fn)
+
+    if recipe is None and plugins:
+        recipe = thunder.recipes.BaseRecipe()
+
+    if recipe == "auto":
+        raise NotImplementedError
+
+    if isinstance(recipe, str):
+        recipe_cls = thunder.recipes.get_recipe_class(recipe)
+        if recipe_cls is None:
+            raise ValueError(f"Recipe {recipe} not recognized. Available recipes are {thunder.recipes.get_recipes()}.")
+        recipe = recipe_cls()
+
+    if recipe is not None and plugins:
+        recipe.add_plugins(plugins)
 
     return recipe.apply(fn)
 
 
-# This function will replace compile() (below) before RC1
 # TODO RC1 Consider renaming compile_options to additional_compile_options
 def jit(
     fn: Callable,
@@ -1079,7 +1116,7 @@ def _grad_transform(trace):
 # TODO Test nesting of grad and grad and grad and grad
 # TODO Test nesting of a regular function + calling grad
 def grad(fn):
-    cfn = compile(fn)
+    cfn = jit(fn)
 
     @wraps(cfn)
     def _fn(*args, **kwargs):
