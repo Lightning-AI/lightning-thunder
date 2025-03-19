@@ -2217,9 +2217,8 @@ floor = _make_elementwise_unary_prim(
     output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.INT_FOR_NUMBER,
 )
 
-def frexp_meta(
-    a: TensorProxy, *, out: None | TensorProxy = None
-) -> (TensorProxy, TensorProxy):
+
+def frexp_meta(a: TensorProxy, *, out: None | TensorProxy = None) -> (TensorProxy, TensorProxy):
     utils.check(
         out is None,
         lambda: "Only `out` which is None is currently supported",
@@ -2229,11 +2228,8 @@ def frexp_meta(
 
     return TensorProxy(like=a), TensorProxy(like=a)
 
-frexp = make_prim(
-    PrimIDs.FREXP,
-    "frexp",
-    meta=frexp_meta
-)
+
+frexp = make_prim(PrimIDs.FREXP, "frexp", meta=frexp_meta)
 
 isfinite = _make_elementwise_unary_prim(
     PrimIDs.ISFINITE,
