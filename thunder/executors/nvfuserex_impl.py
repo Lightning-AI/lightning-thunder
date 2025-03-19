@@ -1536,6 +1536,15 @@ def floor(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) 
 register_supported(PrimIDs.FLOOR, floor, _elementwise_unary_check)
 
 
+def frexp(a: TensorProxy, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+    nva = getnv(a, fd, lc_to_nv_map)
+
+    return fd.ops.frexp(nva)
+
+
+register_supported(PrimIDs.FREXP, frexp, _elementwise_unary_check)
+
+
 def isfinite(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
@@ -1543,6 +1552,24 @@ def isfinite(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dic
 
 
 register_supported(PrimIDs.ISFINITE, isfinite, _elementwise_unary_check)
+
+
+def isinf(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+    nva = getnv(a, fd, lc_to_nv_map)
+
+    return fd.ops.isinf(nva)
+
+
+register_supported(PrimIDs.ISINF, isinf, _elementwise_unary_check)
+
+
+def isnan(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+    nva = getnv(a, fd, lc_to_nv_map)
+
+    return fd.ops.isnan(nva)
+
+
+register_supported(PrimIDs.ISNAN, isnan, _elementwise_unary_check)
 
 
 def lgamma(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:

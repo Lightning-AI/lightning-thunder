@@ -1603,6 +1603,16 @@ def floor(a: TensorLike | Number) -> TensorLike | Number:
 
 
 @clangop()
+def frexp(a: TensorLike, *, out=None) -> tuple[TensorLike, TensorLike]:
+    utils.check(
+        dtypes.is_float_dtype(dtypes.to_dtype(a)),
+        lambda: f"frexp only supports floating-point dtypes",
+    )
+
+    return prims.frexp(a, out=out)
+
+
+@clangop()
 def isfinite(a):
     if utils.is_exact_dtype(utils.to_dtype(a)):
         return full_like(a, True, dtype=dtypes.bool8)
@@ -1612,6 +1622,11 @@ def isfinite(a):
         prim=prims.isfinite,
         type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL,
     )
+
+
+@clangop()
+def isnan(a: TensorLike) -> TensorLike:
+    return prims.ne(a, a)
 
 
 @clangop()

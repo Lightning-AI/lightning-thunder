@@ -1018,6 +1018,23 @@ def _exp_prim_grad(a: Number | TensorProxy) -> Number | TensorProxy:
 register_grad(pids.EXP, _exp_prim_grad)
 
 
+def _frexp_prim_grad(a: Number | TensorProxy, *, out=None):
+    fwd = prims.frexp(a, out=out)
+    mantissa, exponent = fwd
+
+    g_mantissa = get_grad(mantissa)
+
+    a_grad = g_mantissa / exponent.exp2()
+    a_grad = a_grad.masked_fill(~prims.isfinite(a_grad), 0.0)
+
+    put_grad(a, a_grad)
+
+    return fwd
+
+
+register_grad(pids.FREXP, _frexp_prim_grad)
+
+
 def _log_prim_grad(a: Number | TensorProxy) -> Number | TensorProxy:
     fwd = prims.log(a)
 
