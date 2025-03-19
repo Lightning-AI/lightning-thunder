@@ -13,7 +13,7 @@
 # limitations under the License.
 
 ARG UBUNTU_VERSION="22.04"
-ARG CUDA_VERSION="12.4.1"
+ARG CUDA_VERSION="12.6.3"
 # select devel | runtime
 ARG IMAGE_TYPE="devel"
 
