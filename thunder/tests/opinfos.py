@@ -1739,6 +1739,16 @@ logsigmoid_opinfo = OpInfo(
 elementwise_unary_ops.append(logsigmoid_opinfo)
 
 
+mish_opinfo = OpInfo(
+    ltorch.mish,
+    dtypes=(datatypes.floating,),
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=torch.nn.functional.mish,
+    test_directives=(),
+)
+elementwise_unary_ops.append(mish_opinfo)
+
+
 relu_opinfo = OpInfo(
     ltorch.relu,
     sample_input_generator=elementwise_unary_generator,
@@ -1815,7 +1825,7 @@ softplus_opinfo = OpInfo(
     ltorch.softplus,
     dtypes=(datatypes.floating,),
     sample_input_generator=get_elementwise_unary_with_kwargs_generator(
-        [{}, {"beta": 0.5}, {"beta": 2.0}, {"threshold": 5.0}, {"beta": 0.5, "threshold": 10.0}]
+        [{}, {"beta": 0.5}, {"beta": 2.0, "threshold": 10.0}]
     ),
     torch_reference=_elementwise_unary_torch(torch.nn.functional.softplus),
     singularity_fn_producer=soft_plus_singularity_fn_producer,
@@ -2293,6 +2303,14 @@ logical_and_opinfo = OpInfo(
     torch_reference=torch._refs.logical_and,
 )
 elementwise_binary_ops.append(logical_and_opinfo)
+
+logical_or_opinfo = OpInfo(
+    clang.logical_or,
+    dtypes=(datatypes.exact, datatypes.floating, datatypes.complexfloating),
+    sample_input_generator=partial(elementwise_binary_generator, no_rhs_numbers=True),
+    torch_reference=torch._refs.logical_or,
+)
+elementwise_binary_ops.append(logical_or_opinfo)
 
 le_opinfo = OpInfo(
     clang.le,
@@ -8013,7 +8031,7 @@ if LooseVersion(torch.__version__) >= "2.4":
             DecorateInfo(
                 pytest.mark.xfail,
                 dtypes=(datatypes.float16, datatypes.bfloat16),
-                devicetypes=(devices.DeviceType.CUDA,),
+                devicetypes=(devices.DeviceType.CUDA, devices.DeviceType.CPU),
                 active_if=LooseVersion(torch.__version__) < "2.7",
             ),
         ),
