@@ -100,6 +100,13 @@ _lcdtype_to_nvdtype_map: dict[None | type | dtypes.dtype, DataType] = {
     None: DataType.Null,
 }
 
+if nvfuser_version() >= LooseVersion("0.2.27"):
+    _lcdtype_to_nvdtype_map.update(
+        {
+            dtypes.uint64: DataType.UInt64,
+            dtypes.uint64_: DataType.UInt64,
+        }
+    )
 
 _lcfp8_to_nvfp8_map: dict[dtypes.dtype, DataType] = {
     dtypes.float8_e5m2: DataType.Float8_e5m2,
@@ -430,10 +437,11 @@ class FusionDefinitionWrapper:
     last_used: None | FusionDefinition = None
     last_inputs: None | Sequence[tuple] = None
     store_inputs: bool = False
-    store_inputs_meta: bool = False
+    save_fake_inputs: bool = False
     enable_options: None | list[str] = None
     disable_options: None | list[str] = None
 
+    @annotate_for_profile("FusionDefinitionWrapper.__call__")
     def __call__(self, *args):
         fd = self.get_fd(self.to_descriptors(args))
         self.last_used = fd
@@ -441,28 +449,17 @@ class FusionDefinitionWrapper:
         if self.store_inputs:
             self.last_inputs = args
 
-        if self.store_inputs_meta:
-            from thunder.dynamo.utils import input_to_example_input_meta
-
-            self.last_inputs_meta = [input_to_example_input_meta(arg) for arg in args]
-
         kwargs = {}
+        if self.save_fake_inputs:
+            kwargs["save_repro_inputs"] = True
         # Set device if set in one of the "factory" methods like full, iota, or uniform
         if hasattr(fd, "_selected_device"):
             kwargs["device"] = fd._selected_device
 
-        if nvfuser_version() >= LooseVersion("0.2.23"):
-            # nvFuser expects empty list instead of None values.
-            kwargs["_enable_options"] = self.enable_options if self.enable_options is not None else []
-            kwargs["_disable_options"] = self.disable_options if self.disable_options is not None else []
-
-        elif self.enable_options or self.disable_options:
-            warnings.warn(
-                f"nv_enable_options/nv_disable_options require nvFuser version 0.2.23 and above, found version {nvfuser_version()}. These options will be ignored."
-            )
-
         with annotate_for_profile(self.name):
-            return fd.execute(args, **kwargs)
+            return fd.execute(
+                args, _enable_options=self.enable_options, _disable_options=self.disable_options, **kwargs
+            )
 
     def __repr__(self):
         return f"FusionDefinitionWrapper({self.name})"
@@ -555,12 +552,12 @@ def create_fusion_definition_wrapper(
     store_inputs: None | bool = get_compile_option(
         "nv_store_fusion_inputs", "Allow nvFuser to store fusion inputs for repro."
     )
-    store_inputs_meta: None | bool = get_compile_option(
-        "nv_store_fusion_inputs_meta", "Allow nvFuser to store fusion inputs metadata for repro."
+    save_fake_inputs: None | bool = get_compile_option(
+        "nv_save_fake_inputs", "Allow nvFuser to store fake tensor inputs for repro."
     )
-    enable_options: None | list[str] = get_compile_option("nv_enable_options", "List of NVFUSER_ENABLE options to set.")
-    disable_options: None | list[str] = get_compile_option(
-        "nv_disable_options", "List of NVFUSER_DISABLE options to set."
+    enable_options: list[str] = get_compile_option("nv_enable_options", "List of NVFUSER_ENABLE options to set.") or []
+    disable_options: list[str] = (
+        get_compile_option("nv_disable_options", "List of NVFUSER_DISABLE options to set.") or []
     )
 
     tensor_indices = []
@@ -583,7 +580,7 @@ def create_fusion_definition_wrapper(
         get_fd.cache_info,
         get_fd.cache_clear,
         store_inputs=store_inputs,
-        store_inputs_meta=store_inputs_meta,
+        save_fake_inputs=save_fake_inputs,
         enable_options=enable_options,
         disable_options=disable_options,
     )
@@ -1371,6 +1368,10 @@ def _elementwise_unary_check(a: Number | TensorProxy) -> bool:
     return is_supported_tensor_or_number(a)
 
 
+def _elementwise_nnary_check(args: tuple[TensorProxy]) -> bool:
+    return are_supported_tensors_or_numbers(*args)
+
+
 # NOTE nv_abs to avoid a name conflict with the builin abs
 def nv_abs(a: Number | TensorProxy, /, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
@@ -1729,6 +1730,16 @@ def clone(a: TensorProxy, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
 
 
 register_supported(PrimIDs.CLONE, clone, _elementwise_unary_check)
+
+# update_aliases is disabled.  nvfuser does not support it.
+# TODO: Enable this once nvfuser supports it.
+# def update_aliases(aliases: tuple[TensorProxy], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+#     nvaliases = tuple(getnv(alias, fd, lc_to_nv_map) for alias in aliases)
+#     return tuple(fd.ops.set(nvalias) for nvalias in nvaliases)
+
+
+# register_supported(PrimIDs.UPDATE_ALIASES, update_aliases, _elementwise_nnary_check)
+
 
 #
 # Elementwise binary operations
@@ -2158,7 +2169,7 @@ def copy_(
     nvcopy_to = getnv(copy_to, fd, lc_to_nv_map)
     alias_output = fd.ops.set(nvcopy_from)
     fd.add_output(alias_output, alias_input=nvcopy_to)
-    return nvcopy_to
+    return alias_output
 
 
 register_supported(PrimIDs.COPY_, copy_, _copy__check)
@@ -2434,15 +2445,19 @@ def _scaled_dot_product_flash_attention_forward_meta(
     # For non-nested tensor, cum_seq_q/k is undefined, max_q/k can be inferred from input size, and we set `return_debug_mask=False`, so `debug_attn_mask` is a 1D zero tensor.
 
     batch_size, num_heads, query_seq_len, E = query.shape
-    key_seq_len = key.shape[2]
+
+    UPDATED_SDPA = LooseVersion(torch.__version__) >= LooseVersion("2.7.0")
+    philox_shape = (2,) if UPDATED_SDPA else ()
+    dtype = dtypes.uint64 if UPDATED_SDPA else dtypes.int64
+    device = query.device if UPDATED_SDPA else "cpu"
 
     return (
         output := TensorProxy(like=query, shape=(batch_size, num_heads, query_seq_len, E)),
         log_sumexp := TensorProxy(
             shape=(batch_size, num_heads, query_seq_len), dtype=dtypes.float32, device=query.device, requires_grad=False
         ),
-        philox_seed := TensorProxy(shape=(), dtype=dtypes.int64, device=cpu, requires_grad=False),
-        philox_offset := TensorProxy(shape=(), dtype=dtypes.int64, device=cpu, requires_grad=False),
+        philox_seed := TensorProxy(shape=philox_shape, dtype=dtype, device=device, requires_grad=False),
+        philox_offset := TensorProxy(shape=(), dtype=dtype, device=device, requires_grad=False),
     )
 
 
@@ -2554,6 +2569,10 @@ def _scaled_dot_product_flash_attention_check(
 
     # fd.ops.sdpfa_fwd and fd.ops.sdpfa_bwd are adding in versions 0.2.9 and 0.2.10 respectively.
     if nvfuser_version() < LooseVersion("0.2.10"):
+        return False
+
+    # SDPA requires nvfuser version 0.2.27 or higher for torch 2.7.0 or higher.
+    if LooseVersion(torch.__version__) >= LooseVersion("2.7.0") and nvfuser_version() < LooseVersion("0.2.27"):
         return False
 
     enable_sdpa: None | bool = get_compile_option("nv_enable_sdpa", "Enable nvFuser flash attention SDPA.")
@@ -2698,3 +2717,10 @@ def embedding(
 
 register_supported(PrimIDs.EMBEDDING, embedding, _embedding_check)
 register_supported(ltorch.embedding, embedding, _embedding_check)
+
+
+# At module/class level
+NVFUSER_SUPPORTS_OPTIONS = nvfuser_version() >= LooseVersion("0.2.23")
+assert (
+    NVFUSER_SUPPORTS_OPTIONS
+), f"Installed version of nvFuser {nvfuser_version()} is not supported, please upgrade to 0.2.23 or later."

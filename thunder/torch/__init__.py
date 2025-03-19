@@ -1908,6 +1908,19 @@ def hardtanh_(a: TensorProxy, /, min_val: float = -1.0, max_val: float = 1.0) ->
 _inplace_to_out_of_place[hardtanh_] = hardtanh, -1
 
 
+@torchsymbol(torch.nn.functional.mish, is_method=False)
+def mish(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
+    # ltorch.softplus isn't used here because outside of a certain range,
+    # it returns a, rather than log1p(exp(a))
+    out = a * tanh(log1p(exp(a)))
+    if inplace:
+        return _copy_(a, out)
+    return out
+
+
+_inplace_to_out_of_place[mish] = mish, 1
+
+
 # id=torch.selu because we ignore inplace argument in torch.nn.functional.selu
 @torchsymbol(torch.selu, torch.nn.functional.selu, id="torch.selu", is_method=False)
 def selu(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
@@ -1964,6 +1977,11 @@ def softshrink(a: TensorProxy, /, lambd: float = 0.5) -> TensorLike:
     # If a is NaN, then sign(a) is NaN. To propagate NaNs,
     # `a * 0` is used instead of `0`.
     return where(abs(a) > lambd, a - sign(a) * lambd, a * 0)
+
+
+@torchsymbol(torch.nn.functional.softsign, is_method=False)
+def softsign(a: TensorProxy, /) -> TensorLike:
+    return a / (abs(a) + 1)
 
 
 @torchsymbol(torch.nn.functional.tanhshrink)
@@ -2150,6 +2168,16 @@ def logical_not(a: TensorLike, /) -> TensorLike:
 @torchsymbol(torch.Tensor.logical_not_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def logical_not_(a: TensorLike, /) -> TensorLike:
     return _copy_(a, logical_not(a))
+
+
+@torchsymbol(torch.logical_or, is_method=True)
+def logical_or(a: TensorLike, b: TensorLike, /) -> TensorLike:
+    return clang.logical_or(a, b)
+
+
+@torchsymbol(torch.Tensor.logical_or_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def logical_or_(a: TensorLike, b: TensorLike, /) -> TensorLike:
+    return _copy_(a, logical_or(a, b))
 
 
 @torchsymbol(torch.le, is_method=True)
@@ -3800,13 +3828,22 @@ def rms_norm(
     weight: None | TensorLike = None,
     eps: None | float = None,
 ):
+    input_dtype = a.dtype
+
+    if a.dtype in (thunder.float16, thunder.bfloat16):
+        a = clang.maybe_convert_to_dtype(a, thunder.float32, enforce_safe_casting=True)
+
     if eps is None:
         eps = torch.finfo(to_torch_dtype(a.dtype)).eps
+
     reduction_dims = _check_normalized_shape_and_get_reduction_dims(a, normalized_shape, weight)
-    norm_a = mean(a * a, dim=reduction_dims, keepdim=True)
+    norm_a = mean(a * a, dim=reduction_dims, keepdim=True, dtype=None)
     a_normed = a * rsqrt(norm_a + eps)
+
     if weight is not None:
         a_normed = a_normed * weight
+
+    a_normed = clang.maybe_convert_to_dtype(a_normed, input_dtype, enforce_safe_casting=True)
     return a_normed
 
 
