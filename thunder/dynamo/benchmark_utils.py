@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 import sys
+import inspect
 from pathlib import Path
 import torch
 from torch.utils.benchmark import Timer as TorchBenchmarkTimer
@@ -308,7 +309,16 @@ class TorchBenchmarkTimerSpecification(TimerInterface):
     inner_timer: torch.utils.benchmark.utils.timer.Timer = torch.utils.benchmark.utils.timer.timer
     name: str = "TorchBenchmarkTimerSpecification"
 
-    def __init__(self, threshold: float = 0.1, min_run_time: float = 0.01, max_run_time: float = 10.0):
+    def __init__(
+        self,
+        threshold: float = inspect.signature(TorchBenchmarkTimer.adaptive_autorange).parameters["threshold"].default,
+        min_run_time: float = inspect.signature(TorchBenchmarkTimer.adaptive_autorange)
+        .parameters["min_run_time"]
+        .default,
+        max_run_time: float = inspect.signature(TorchBenchmarkTimer.adaptive_autorange)
+        .parameters["max_run_time"]
+        .default,
+    ):
         self.threshold = threshold
         self.min_run_time = min_run_time
         self.max_run_time = max_run_time
