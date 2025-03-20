@@ -55,7 +55,7 @@ class HFTransformers(BaseRecipe):
 
         version = LooseVersion(transformers.__version__)
         min_version = LooseVersion("4.46.0")
-        max_version = LooseVersion("4.46.3")
+        max_version = LooseVersion("5.0.0")
 
         if version < min_version or version > max_version:
             warnings.warn(

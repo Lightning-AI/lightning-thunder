@@ -7,6 +7,8 @@ from thunder.dev_utils.benchmark import benchmark_n
 
 
 def main():
+    # model_name = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
+    # model_name = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
     # model_name = "meta-llama/Llama-3.1-8B"
     model_name = "meta-llama/Llama-3.2-1B"
     # model_name = "Qwen/Qwen2.5-7B-Instruct"
@@ -21,6 +23,8 @@ def main():
         model = transformers.AutoModelForCausalLM.from_pretrained(
             model_name, torch_dtype=torch.bfloat16
         )
+        model.requires_grad_(False)
+        model.eval()
 
         inp = tokenizer(["Hello world! Here's a long story"], return_tensors='pt')
 
