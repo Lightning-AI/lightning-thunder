@@ -305,19 +305,15 @@ class TorchBenchmarkTimerSpecification(TimerInterface):
     See: :class:`torch.utils.benchmark.utils.timer.Timer` for more details.
     """
 
-    def __init__(self, name, inner_timer=torch.utils.benchmark.utils.timer.timer):
-        self.inner_timer = inner_timer
-        self.name = name
+    inner_timer: torch.utils.benchmark.utils.timer.Timer = torch.utils.benchmark.utils.timer.timer
+    name: str = "TorchBenchmarkTimerSpecification"
 
-    def time(
-        self,
-        stmt="pass",
-        setup="pass",
-        globals=None,
-        threshold: float = 0.1,
-        min_run_time: float = 0.01,
-        max_run_time: float = 10.0,
-    ) -> Measurement:
+    def __init__(self, threshold: float = 0.1, min_run_time: float = 0.01, max_run_time: float = 10.0):
+        self.threshold = threshold
+        self.min_run_time = min_run_time
+        self.max_run_time = max_run_time
+
+    def time(self, stmt="pass", setup="pass", globals=None) -> Measurement:
         """
         Measures execution time using PyTorch's :func:`torch.utils.benchmark.Timer.adaptive_autorange()`.
 
@@ -330,27 +326,37 @@ class TorchBenchmarkTimerSpecification(TimerInterface):
         Returns:
             Measurement: A benchmarking result containing execution time statistics, see :class:`torch.utils.benchmark.utils.common.Measurement`.
         """
-        t = TorchBenchmarkTimer(stmt=stmt, setup=setup, globals=globals, timer=self.inner_timer)
-        measurement = t.adaptive_autorange(threshold=threshold, min_run_time=min_run_time, max_run_time=max_run_time)
-        if hasattr(self.inner_timer, "max_allocated_memory"):
-            measurement.max_allocated_memory = self.inner_timer.max_allocated_memory
+        t = TorchBenchmarkTimer(stmt=stmt, setup=setup, globals=globals, timer=self.__class__.inner_timer)
+        measurement = t.adaptive_autorange(
+            threshold=self.threshold, min_run_time=self.min_run_time, max_run_time=self.max_run_time
+        )
+        if hasattr(self.__class__.inner_timer, "max_allocated_memory"):
+            measurement.max_allocated_memory = self.__class__.inner_timer.max_allocated_memory
         return measurement
 
     def import_str(self):
-        return [f"from thunder.dynamo.benchmark_utils import {self.name}"]
+        return [f"from thunder.dynamo.benchmark_utils import {self.__class__.name}"]
 
-    def to_source(self, fn_name, inputs_name, **kwargs):
-        time_args = ", ".join(f"{k}={v}" for k, v in kwargs.items())
-        return f'{self.name}.time("{fn_name}(*{inputs_name})", globals={{"{fn_name}":{fn_name}, "{inputs_name}": {inputs_name}}},{time_args})'
+    def __repr__(self):
+        return f"{self.__class__.name}({self.threshold}, {self.min_run_time}, {self.max_run_time})"
+
+    def to_source(self, fn_name, inputs_name):
+        return f'{self.__repr__()}.time("{fn_name}(*{inputs_name})", globals={{"{fn_name}":{fn_name}, "{inputs_name}": {inputs_name}}})'
 
 
-WallTime = TorchBenchmarkTimerSpecification("WallTime")
+class WallTime(TorchBenchmarkTimerSpecification):
+    name = "WallTime"
+    inner_timer = torch.utils.benchmark.utils.timer.timer
 
-walltime_with_memory_usage = TimerWithCUDAMemoryUsage()
-WallTimeWithMemoryUsage = TorchBenchmarkTimerSpecification("WallTimeWithMemoryUsage", walltime_with_memory_usage)
 
-torch_profile_timer = TorchProfileTimer()
-KernelTime = TorchBenchmarkTimerSpecification("KernelTime", torch_profile_timer)
+class WallTimeWithMemoryUsage(TorchBenchmarkTimerSpecification):
+    name = "WallTimeWithMemoryUsage"
+    inner_timer = TimerWithCUDAMemoryUsage()
+
+
+class KernelTime(TorchBenchmarkTimerSpecification):
+    name = "KernelTime"
+    inner_timer = TorchProfileTimer()
 
 
 def check_threshold(a, b, rtol, atol):

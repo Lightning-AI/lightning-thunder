@@ -1274,10 +1274,10 @@ def test_WallTime_KernelTime():
         torch.testing.make_tensor((2, 2), dtype=torch.float32, device="cuda:0"),
     ]
 
-    WallTime.time(stmt="fd.execute(inputs)", globals={"fd": fd, "inputs": inputs})
-    KernelTime.time(stmt="fd.execute(inputs)", globals={"fd": fd, "inputs": inputs})
+    WallTime().time(stmt="fd.execute(inputs)", globals={"fd": fd, "inputs": inputs})
+    KernelTime().time(stmt="fd.execute(inputs)", globals={"fd": fd, "inputs": inputs})
 
-    m = WallTimeWithMemoryUsage.time(stmt="fd.execute(inputs)", globals={"fd": fd, "inputs": inputs})
+    m = WallTimeWithMemoryUsage().time(stmt="fd.execute(inputs)", globals={"fd": fd, "inputs": inputs})
     torch.cuda.reset_peak_memory_stats()
     fd.execute(inputs)
     max_mem = torch.cuda.max_memory_allocated()
@@ -1381,23 +1381,18 @@ def test_reports_benchmark(tmp_path):
     thunder_split_report.write_benchmark(
         tmp_path,
         torchcompile,
-        WallTime,
+        WallTimeWithMemoryUsage(min_run_time=0.01, max_run_time=9.0, threshold=0.08),
         file_name=f"{split_name}_torchcompile.py",
-        time_args={"min_run_time": 0.01, "max_run_time": 9.0, "threshold": 0.08},
     )
-    thunder_split_report.write_benchmark(tmp_path, torcheager, WallTime, file_name=f"{split_name}_eager.py")
-    thunder_split_report.write_benchmark(tmp_path, thunderjit, WallTime, file_name=f"{split_name}_jit.py")
+    thunder_split_report.write_benchmark(tmp_path, torcheager, WallTime(), file_name=f"{split_name}_eager.py")
+    thunder_split_report.write_benchmark(tmp_path, thunderjit, WallTime(), file_name=f"{split_name}_jit.py")
     thunder_split_report.create_fusion_reports()
     assert len(thunder_split_report.fusion_reports) == 2  # fwd, bwd
     nvf = thunder_split_report.fusion_reports[0]
-    nvf.write_nvfuser_benchmark(tmp_path, WallTime)
-    nvf.write_inductor_benchmark(tmp_path, WallTime)
-    nvf.run_benchmark(
-        BoundSymbolNvfuserSpecification(),
-        WallTime,
-        time_args={"min_run_time": 0.01, "max_run_time": 5.0, "threshold": 0.08},
-    )
-    nvf.run_benchmark(BoundSymbolTorchCompileSpecification(), WallTime)
+    nvf.write_nvfuser_benchmark(tmp_path, WallTime())
+    nvf.write_inductor_benchmark(tmp_path, WallTime())
+    nvf.run_benchmark(BoundSymbolNvfuserSpecification(), WallTime(min_run_time=0.01, max_run_time=5.0, threshold=0.08))
+    nvf.run_benchmark(BoundSymbolTorchCompileSpecification(), WallTime())
 
     cmd = [sys.executable]
     py_files = list(tmp_path.rglob("*.py"))
@@ -1424,9 +1419,9 @@ def test_TorchInductorSpecification(tmp_path):
     thunder_split_report = thunder_fx_graph_report.subgraph_reports[0]
 
     torchinductor = TorchInductorSpecification()
-    thunder_split_report.run_benchmark(torchinductor, WallTime)
+    thunder_split_report.run_benchmark(torchinductor, WallTime())
     thunder_split_report.run_repro(torchinductor)
-    thunder_split_report.write_benchmark(tmp_path, torchinductor, WallTime)
+    thunder_split_report.write_benchmark(tmp_path, torchinductor, WallTime())
     thunder_split_report.write_repro(tmp_path, torchinductor, file_name="repro.py")
 
     cmd = [sys.executable]
@@ -1490,8 +1485,8 @@ def test_autograd_function_fx_report(tmp_path):
         thunder_split_report = thunder_fx_graph_report.subgraph_reports[0]
 
         thunder_split_report.run_repro(ThunderCompileSpecification())
-        thunder_split_report.run_benchmark(ThunderCompileSpecification(), WallTime)
-        thunder_split_report.write_benchmark(tmp_path, ThunderCompileSpecification(), WallTime)
+        thunder_split_report.run_benchmark(ThunderCompileSpecification(), WallTime())
+        thunder_split_report.write_benchmark(tmp_path, ThunderCompileSpecification(), WallTime())
         thunder_split_report.write_repro(tmp_path, ThunderCompileSpecification(), file_name="repro.py")
 
         cmd = [sys.executable]
