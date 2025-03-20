@@ -865,7 +865,6 @@ def test_dynamo_reproducer_2graph(executor, device: str, dtype: dtypes.dtype, us
             executors=[nvfuser_executor],
             cache="constant values",
             langctx=None,
-            record_history=False,
         )
     else:
         cfunc = thunderfx(func, executors=None)
