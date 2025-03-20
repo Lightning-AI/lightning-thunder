@@ -686,7 +686,7 @@ def fx_report(fn: Callable, *args, compile_options: dict = None, **kwargs) -> FX
                 graph_report.write_repro(
                     tmpdir, my_thunderjit, check_consistency=True, file_name=f"{graph_name}_mythunder_repro.py"
                 )
-                graph_report.write_benchmark(tmpdir, my_thunderjit, WallTime, file_name=f"{graph_name}_mythunder_benchmark.py")
+                graph_report.write_benchmark(tmpdir, my_thunderjit, WallTime(), file_name=f"{graph_name}_mythunder_benchmark.py")
     """
     graphs = []
     break_reasons = []
@@ -1199,7 +1199,7 @@ def thunderfx_benchmark_report_from_splits(
                 split_report,
                 torchinductor,
                 thunderjit,
-                WallTimeWithMemoryUsage,
+                WallTimeWithMemoryUsage(),
                 time_rtol,
                 time_atol,
                 memory_usage_rtol,
@@ -1211,7 +1211,7 @@ def thunderfx_benchmark_report_from_splits(
                 split_report,
                 torchinductor,
                 thunderjit,
-                KernelTime,
+                KernelTime(),
                 time_rtol,
                 time_atol,
                 memory_usage_rtol,
@@ -1228,8 +1228,10 @@ def thunderfx_benchmark_report_from_splits(
         graph_nvfusion_folder = folder_path / graph_report.graph_name / "nvfusion_reports"
         for split_report in graph_report.subgraph_reports:
             for nvfusion_report in split_report.fusion_reports:
-                check_nvfusion_timing(graph_nvfusion_folder, nvfusion_report, WallTime, time_rtol, time_atol, stream)
-                check_nvfusion_timing(graph_nvfusion_folder, nvfusion_report, KernelTime, time_rtol, time_atol, stream)
+                check_nvfusion_timing(graph_nvfusion_folder, nvfusion_report, WallTime(), time_rtol, time_atol, stream)
+                check_nvfusion_timing(
+                    graph_nvfusion_folder, nvfusion_report, KernelTime(), time_rtol, time_atol, stream
+                )
 
 
 def thunderfx_benchmark_report(

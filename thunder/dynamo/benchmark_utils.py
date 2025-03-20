@@ -348,7 +348,7 @@ class TorchBenchmarkTimerSpecification(TimerInterface):
         return [f"from thunder.dynamo.benchmark_utils import {self.__class__.name}"]
 
     def __repr__(self):
-        return f"{self.__class__.name}({self.threshold}, {self.min_run_time}, {self.max_run_time})"
+        return f"{self.__class__.name}(threshold={self.threshold}, min_run_time={self.min_run_time}, max_run_time={self.max_run_time})"
 
     def to_source(self, fn_name, inputs_name):
         return f'{self.__repr__()}.time("{fn_name}(*{inputs_name})", globals={{"{fn_name}":{fn_name}, "{inputs_name}": {inputs_name}}})'
