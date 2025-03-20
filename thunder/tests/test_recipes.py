@@ -5,6 +5,7 @@ import thunder
 import transformers
 import torch
 
+from thunder.extend import deregister_executor
 from torch.testing import assert_close, make_tensor
 from thunder.tests.framework import version_between, IS_WINDOWS
 
@@ -41,6 +42,8 @@ def test_recipe_basic_bert():
 
     assert_close(actual, expected)
 
+    deregister_executor("inplace_index_copy_ex")
+
     from thunder.recipes import HFTransformers
 
     thunder_bert = thunder.compile(bert, recipe=HFTransformers())
@@ -49,6 +52,8 @@ def test_recipe_basic_bert():
     expected = bert(inp)
 
     assert_close(actual, expected)
+
+    deregister_executor("inplace_index_copy_ex")
 
 
 def test_recipe_basic_bert_fx():
@@ -66,6 +71,8 @@ def test_recipe_basic_bert_fx():
     expected = bert(inp)
 
     assert_close(actual, expected)
+
+    deregister_executor("inplace_index_copy_ex")
 
 
 def test_recipe_mlp():
