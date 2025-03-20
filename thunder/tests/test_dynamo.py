@@ -1378,7 +1378,13 @@ def test_reports_benchmark(tmp_path):
     assert len(thunder_fx_graph_report.subgraph_reports) == 1  # exp
     thunder_split_report = thunder_fx_graph_report.subgraph_reports[0]
     split_name = thunder_split_report.graph_name
-    thunder_split_report.write_benchmark(tmp_path, torchcompile, WallTime, file_name=f"{split_name}_torchcompile.py")
+    thunder_split_report.write_benchmark(
+        tmp_path,
+        torchcompile,
+        WallTime,
+        file_name=f"{split_name}_torchcompile.py",
+        time_args={"min_run_time": 0.01, "max_run_time": 9.0, "threshold": 0.08},
+    )
     thunder_split_report.write_benchmark(tmp_path, torcheager, WallTime, file_name=f"{split_name}_eager.py")
     thunder_split_report.write_benchmark(tmp_path, thunderjit, WallTime, file_name=f"{split_name}_jit.py")
     thunder_split_report.create_fusion_reports()
@@ -1386,7 +1392,11 @@ def test_reports_benchmark(tmp_path):
     nvf = thunder_split_report.fusion_reports[0]
     nvf.write_nvfuser_benchmark(tmp_path, WallTime)
     nvf.write_inductor_benchmark(tmp_path, WallTime)
-    nvf.run_benchmark(BoundSymbolNvfuserSpecification(), WallTime)
+    nvf.run_benchmark(
+        BoundSymbolNvfuserSpecification(),
+        WallTime,
+        time_args={"min_run_time": 0.01, "max_run_time": 5.0, "threshold": 0.08},
+    )
     nvf.run_benchmark(BoundSymbolTorchCompileSpecification(), WallTime)
 
     cmd = [sys.executable]

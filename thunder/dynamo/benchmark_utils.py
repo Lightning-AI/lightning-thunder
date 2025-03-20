@@ -309,21 +309,29 @@ class TorchBenchmarkTimerSpecification(TimerInterface):
         self.inner_timer = inner_timer
         self.name = name
 
-    def time(self, stmt="pass", setup="pass", globals=None, min_run_time: float = 0.2) -> Measurement:
+    def time(
+        self,
+        stmt="pass",
+        setup="pass",
+        globals=None,
+        threshold: float = 0.1,
+        min_run_time: float = 0.01,
+        max_run_time: float = 10.0,
+    ) -> Measurement:
         """
-        Measures execution time using PyTorch's :func:`torch.utils.benchmark.Timer.blocked_autorange()`.
+        Measures execution time using PyTorch's :func:`torch.utils.benchmark.Timer.adaptive_autorange()`.
 
         Args:
             stmt (str, optional): Code snippet to be run in a loop and timed.
             setup (str, optional): Optional setup code. Used to define variables used in `stmt`
             globals (dict, optional): A dictionary of global variables for the executed code. Defaults to `None`.
-            min_run_time (float, optional): The minimum execution time (in seconds) to determine the number of runs. Defaults to `0.2`.
+            threshold, min_run_time, max_run_time: see :func:`torch.utils.benchmark.Timer.adaptive_autorange()` for more details.
 
         Returns:
             Measurement: A benchmarking result containing execution time statistics, see :class:`torch.utils.benchmark.utils.common.Measurement`.
         """
         t = TorchBenchmarkTimer(stmt=stmt, setup=setup, globals=globals, timer=self.inner_timer)
-        measurement = t.blocked_autorange(min_run_time=min_run_time)
+        measurement = t.adaptive_autorange(threshold=threshold, min_run_time=min_run_time, max_run_time=max_run_time)
         if hasattr(self.inner_timer, "max_allocated_memory"):
             measurement.max_allocated_memory = self.inner_timer.max_allocated_memory
         return measurement
@@ -331,8 +339,9 @@ class TorchBenchmarkTimerSpecification(TimerInterface):
     def import_str(self):
         return [f"from thunder.dynamo.benchmark_utils import {self.name}"]
 
-    def to_source(self, fn_name, inputs_name):
-        return f'{self.name}.time("{fn_name}(*{inputs_name})", globals={{"{fn_name}":{fn_name}, "{inputs_name}": {inputs_name}}})'
+    def to_source(self, fn_name, inputs_name, **kwargs):
+        time_args = ", ".join(f"{k}={v}" for k, v in kwargs.items())
+        return f'{self.name}.time("{fn_name}(*{inputs_name})", globals={{"{fn_name}":{fn_name}, "{inputs_name}": {inputs_name}}},{time_args})'
 
 
 WallTime = TorchBenchmarkTimerSpecification("WallTime")

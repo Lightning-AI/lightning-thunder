@@ -514,7 +514,9 @@ class FXGraphReport:
             print(code_str, file=f)
         format_python_file(folder / file_name)
 
-    def run_benchmark(self, compile_fn: CompileSpecificationInterface, time_fn: TimerInterface):
+    def run_benchmark(
+        self, compile_fn: CompileSpecificationInterface, time_fn: TimerInterface, time_args: dict | None = None
+    ):
         # From torch.compile docs - https://pytorch.org/docs/stable/generated/torch.compile.html
         # > Multiple compiled results can be associated with a frame up to torch._dynamo.config.cache_size_limit, which defaults to 8; at which point we will fall back to eager.
         # Ref: https://github.com/pytorch/pytorch/blob/34d726011f482b716d879bf665aef100a7c08a8d/torch/_dynamo/__init__.py#L97
@@ -528,14 +530,18 @@ class FXGraphReport:
 
         forward_only = not any(hasattr(arg, "requires_grad") and arg.requires_grad for arg in example_inputs)
         fwd_measurement = time_fn.time(
-            "compiled_fn(*example_inputs)", globals={"compiled_fn": compiled_fn, "example_inputs": example_inputs}
+            "compiled_fn(*example_inputs)",
+            globals={"compiled_fn": compiled_fn, "example_inputs": example_inputs},
+            **(time_args or {}),
         )
         bwd_measurement = None
         if not forward_only:
             backward_fn, backward_setup = backward_only(compiled_fn, *example_inputs)
             backward_args = backward_setup()
             bwd_measurement = time_fn.time(
-                "backward_fn(*backward_args)", globals={"backward_fn": backward_fn, "backward_args": backward_args}
+                "backward_fn(*backward_args)",
+                globals={"backward_fn": backward_fn, "backward_args": backward_args},
+                **(time_args or {}),
             )
         return fwd_measurement, bwd_measurement
 
@@ -549,6 +555,7 @@ class FXGraphReport:
         serialize_inputs: bool = False,
         inputs: Sequence[torch.Tensor | ExampleInputMetaData] = None,
         extra_comment_str: str = "",
+        time_args: dict | None = None,
     ):
         """
         Generates a benchmark reproduction script for the given compilation and timing specification and writes it to the specified file.
@@ -574,8 +581,8 @@ class FXGraphReport:
         code_str = self._get_repro_code(folder, compile_fn, time_fn, serialize_inputs, inputs)
         comment_str = self._get_comment_str(extra_comment_str)
         compile_str = compile_fn.to_source(CALLABLE_NAME)
-        fwd_timing_str = time_fn.to_source(COMPILED_CALLABLE_NAME, INPUTS_NAME)
-        bwd_timing_str = time_fn.to_source("backward_fn", "backward_args")
+        fwd_timing_str = time_fn.to_source(COMPILED_CALLABLE_NAME, INPUTS_NAME, **(time_args or {}))
+        bwd_timing_str = time_fn.to_source("backward_fn", "backward_args", **(time_args or {}))
         code_str = f"""{code_str}
     {COMPILED_CALLABLE_NAME} = {compile_str}
     # forward
@@ -834,10 +841,14 @@ class ThunderFusionReport:
     def __str__(self):
         return f"<ThunderFusionReport of bound symbol\n{self.nvfusion_bsym}>"
 
-    def run_benchmark(self, compile_fn: CompileSpecificationInterface, timer_fn: TimerInterface):
+    def run_benchmark(
+        self, compile_fn: CompileSpecificationInterface, timer_fn: TimerInterface, time_args: dict | None = None
+    ):
         compiled_fn = compile_fn.compile(self.nvfusion_bsym)
         inputs = self.make_example_inputs()
-        return timer_fn.time("compiled_fn(*inputs)", globals={"compiled_fn": compiled_fn, "inputs": inputs})
+        return timer_fn.time(
+            "compiled_fn(*inputs)", globals={"compiled_fn": compiled_fn, "inputs": inputs}, **(time_args or {})
+        )
 
     def run_repro(
         self,
@@ -863,13 +874,14 @@ class ThunderFusionReport:
         nvfuser_repro_code = get_repro(inputs)
         return nvfuser_repro_code
 
-    def write_nvfuser_benchmark(self, folder, time_fn: TimerInterface, file_name=None, **kwargs):
+    def write_nvfuser_benchmark(
+        self, folder, time_fn: TimerInterface, file_name=None, extra_comment_str="", time_args: dict | None = None
+    ):
         folder = Path(folder)
         folder.mkdir(exist_ok=True, parents=True)
-        extra_comment_str = kwargs.get("extra_comment_str") if "extra_comment_str" in kwargs else ""
         repro_code_str = self._get_nvfuser_code()
         timing_import_str = "\n".join(time_fn.import_str() or [])
-        timing_str = time_fn.to_source("nvfuser_fn", "inputs")
+        timing_str = time_fn.to_source("nvfuser_fn", "inputs", **(time_args or {}))
         timing_str = timing_str.replace("*inputs", "inputs")
         repro_code_str = repro_code_str.replace("fd.execute(inputs)\n", "")
         comment_str = f'"""\n{self.nvfusion_bsym}\n\n{extra_comment_str}"""'
@@ -929,14 +941,21 @@ out = torch_compiled_callable(*inputs)
             f.write(code_str)
         format_python_file(folder / file_name)
 
-    def write_inductor_benchmark(self, folder: PathLike, time_fn: TimerInterface, file_name=None, extra_comment_str=""):
+    def write_inductor_benchmark(
+        self,
+        folder: PathLike,
+        time_fn: TimerInterface,
+        file_name=None,
+        extra_comment_str="",
+        time_args: dict | None = None,
+    ):
         folder = Path(folder)
         folder.mkdir(exist_ok=True, parents=True)
         code_str = self._get_inductor_code(extra_comment_str)
         timing_import_str = "\n".join(time_fn.import_str() or [])
         code_str = f"""{code_str}
 {timing_import_str}
-measurement = {time_fn.to_source("torch_compiled_callable", "inputs")}
+measurement = {time_fn.to_source("torch_compiled_callable", "inputs", **(time_args or {}))}
 print(measurement)
 """
         if file_name == None:
