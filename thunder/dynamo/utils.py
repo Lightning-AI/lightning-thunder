@@ -803,3 +803,24 @@ def format_python_file(file_path: str) -> str:
         subprocess.run(
             [sys.executable, "-m", "ruff", "format", file_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
+
+
+def get_thunder_jit_kwargs(**kwargs) -> dict:
+    """
+    Extracts and returns the kwargs for :func:`thunder.jit` from the given keyword arguments.
+
+    """
+    from thunder import jit
+
+    thunder_jit_kwarg_names = inspect.getfullargspec(jit).kwonlyargs
+    return {k: v for k, v in kwargs.items() if k in thunder_jit_kwarg_names}
+
+
+def get_torch_compile_kwargs(**kwargs) -> dict:
+    """
+    Extracts and returns the kwargs for :func:`torch.compile` from the given keyword arguments.
+    """
+    # lightning has torch.compile wrapped in `lightning/fabric/wrappers.py`
+    torch.compile = inspect.unwrap(torch.compile)
+    torch_compile_kwarg_names = inspect.getfullargspec(torch.compile).kwonlyargs
+    return {k: v for k, v in kwargs.items() if k in torch_compile_kwarg_names}
