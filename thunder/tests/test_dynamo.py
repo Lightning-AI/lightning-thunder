@@ -865,7 +865,6 @@ def test_dynamo_reproducer_2graph(executor, device: str, dtype: dtypes.dtype, us
             executors=[nvfuser_executor],
             cache="constant values",
             langctx=None,
-            record_history=False,
         )
     else:
         cfunc = thunderfx(func, executors=None)
@@ -1161,7 +1160,7 @@ def test_fxreport(executor, device: str, dtype: dtypes.dtype, use_benchmark, tmp
 
     x = torch.randn(4, 4, device=device, requires_grad=True)
     y = torch.randn(4, 4, device=device, requires_grad=True)
-    results = fx_report(foo, x, y, compile_options={"dynamic": True})
+    results = fx_report(foo, dynamic=True)(x, y)
     for r in results.fx_graph_reports:
         r.write_eager_repro(tmp_path, use_benchmark=use_benchmark)
         r.write_thunder_repro(tmp_path, use_benchmark=use_benchmark)
@@ -1227,7 +1226,7 @@ def test_thunder_specific_reports(tmp_path):
         y = torch.sinc(x) + torch.cos(x)
         return y + 1
 
-    results = fx_report(foo, x)
+    results = fx_report(foo)(x)
     for idx, fx_graph_report in enumerate(results.fx_graph_reports):
         thunder_fx_graph_report = analyze_thunder_splits(fx_graph_report)
         thunder_fx_graph_report.write_thunder_repro(tmp_path)
@@ -1325,7 +1324,7 @@ def test_reports_repro(tmp_path):
         y = torch.sinc(x) + torch.cos(x)
         return y + 1
 
-    results = fx_report(foo, x)
+    results = fx_report(foo)(x)
     thunderjit = ThunderCompileSpecification()
     torchcompile = TorchCompileSpecification(dynamic=True)
     torcheager = TorchEagerSpecification()
@@ -1368,7 +1367,7 @@ def test_reports_benchmark(tmp_path):
         y = torch.sinc(x) + torch.cos(x)
         return y + 1
 
-    results = fx_report(foo, x)
+    results = fx_report(foo)(x)
     thunderjit = ThunderCompileSpecification()
     torchcompile = TorchCompileSpecification()
     torcheager = TorchEagerSpecification()
@@ -1406,7 +1405,7 @@ def test_TorchInductorSpecification(tmp_path):
     def foo(x):
         return torch.sinc(x) + torch.cos(x)
 
-    results = fx_report(foo, x)
+    results = fx_report(foo)(x)
     assert len(results.fx_graph_reports) == 1  # 1 Dynamo graphs
     fx_graph_report = results.fx_graph_reports[0]
     thunder_fx_graph_report = analyze_thunder_splits(fx_graph_report)
@@ -1434,13 +1433,13 @@ def test_save_failing_repros(tmp_path):
         return torch.sin(x) + torch.cos(x)
 
     # Tests for dynamo fx graphreports
-    results = fx_report(foo, x)
+    results = fx_report(foo)(x)
     with patch("thunder.dynamo.report.FXGraphReport.run_repro", side_effect=Exception("run_Repro raises exception")):
         save_failing_repros(results.fx_graph_reports, TorchCompileSpecification(), tmp_path)
     assert os.path.exists(tmp_path / "graph0.py")
 
     # Tests for thunder split reports
-    thunder_fxgraph_reports = get_thunder_fxgraph_reports(foo, x)
+    thunder_fxgraph_reports = get_thunder_fxgraph_reports(foo)(x)
     assert len(thunder_fxgraph_reports) == 1
     with patch("thunder.dynamo.report.FXGraphReport.run_repro", side_effect=Exception("run_Repro raises exception")):
         save_failing_repros(thunder_fxgraph_reports[0].subgraph_reports, ThunderCompileSpecification(), tmp_path)
@@ -1470,9 +1469,9 @@ def test_autograd_function_fx_report(tmp_path):
             RuntimeError,
             match="The Reporting Tool for Torch higher-order operators is supported only in PyTorch version 2.6 or later.",
         ):
-            results = fx_report(func, x)
+            results = fx_report(func)(x)
     else:
-        results = fx_report(func, x)
+        results = fx_report(func)(x)
         assert len(results.fx_graph_reports) == 1  # 1 Dynamo graph
         fx_graph_report = results.fx_graph_reports[0]
         thunder_fx_graph_report = analyze_thunder_splits(fx_graph_report)
