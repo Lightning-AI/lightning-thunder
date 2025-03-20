@@ -535,9 +535,7 @@ class FXGraphReport:
             backward_fn, backward_setup = backward_only(compiled_fn, *example_inputs)
             backward_args = backward_setup()
             bwd_measurement = time_fn.time(
-                "backward_fn(*backward_args)",
-                globals={"backward_fn": backward_fn, "backward_args": backward_args},
-                **(time_args or {}),
+                "backward_fn(*backward_args)", globals={"backward_fn": backward_fn, "backward_args": backward_args}
             )
         return fwd_measurement, bwd_measurement
 
