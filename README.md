@@ -10,13 +10,14 @@
 <br/>
 <br/>
 
-&nbsp;
+&#160;
 
 <strong>Source-to-source compiler for PyTorch.</strong>
 Fast. Understandable. Extensible.
+
 </div>
 
-----
+______________________________________________________________________
 
 **Thunder** makes optimizing PyTorch models easy, augmenting them with custom kernels, fusions, quantization, distributed strategies, and more.
 
@@ -27,9 +28,9 @@ For **performance experts**, Thunder is the most ergonomic framework for underst
 <div align='center'>
 
 <pre>
-✅ Run PyTorch 40% faster   ✅ Quantization                ✅ Kernel fusion        
-✅ Training recipes         ✅ FP4/FP6/FP8 precision       ✅ Distributed TP/PP/DP 
-✅ Inference recipes        ✅ Ready for NVIDIA Blackwell  ✅ CUDA Graphs          
+✅ Run PyTorch 40% faster   ✅ Quantization                ✅ Kernel fusion
+✅ Training recipes         ✅ FP4/FP6/FP8 precision       ✅ Distributed TP/PP/DP
+✅ Inference recipes        ✅ Ready for NVIDIA Blackwell  ✅ CUDA Graphs
 ✅ LLMs, non LLMs and more  ✅ Custom Triton kernels       ✅ Compose all the above
 </pre>
 
@@ -56,7 +57,7 @@ For **performance experts**, Thunder is the most ergonomic framework for underst
   </div>
 </div>
 
-&nbsp;
+&#160;
 
 <div align="center">
 <a target="_blank" href="https://lightning.ai/docs/thunder/home/get-started">
@@ -64,7 +65,7 @@ For **performance experts**, Thunder is the most ergonomic framework for underst
 </a>
 </div>
 
-&nbsp; 
+&#160;
 
 <div align="center">
 <img alt="Thunder" src="docs/source/_static/images/pretrain_perf.png" width="800px" style="max-width: 100%;">
@@ -83,42 +84,42 @@ pip install lightning-thunder
 <details>
   <summary>Advanced install options</summary>
 
-  ### Blackwell support
+### Blackwell support
 
-  For Blackwell you'll need CUDA 12.8
+For Blackwell you'll need CUDA 12.8
 
-  ```bash
-  pip install --pre torch torchvision --index-url https://download.pytorch.org/whl/nightly/cu128
-  pip install --pre nvfuser-cu128 --extra-index-url https://pypi.nvidia.com
+```bash
+pip install --pre torch torchvision --index-url https://download.pytorch.org/whl/nightly/cu128
+pip install --pre nvfuser-cu128 --extra-index-url https://pypi.nvidia.com
 
-  pip install lightning-thunder
-  ```
+pip install lightning-thunder
+```
 
-  ### Install additional executors
-  
-  These are optional, feel free to mix and match
-  
-  ```bash
-  # cuDNN SDPA
-  pip install nvidia-cudnn-frontend
-  
-  # Float8 support (this will compile from source, be patient)
-  pip install "transformer_engine[pytorch]"
-  ```
-  
-  ### Install Thunder bleeding edge
-  
-  ```bash
-  pip install git+https://github.com/Lightning-AI/lightning-thunder.git@main
-  ```
-  
-  ### Install Thunder for development
-  
-  ```bash
-  git clone https://github.com/Lightning-AI/lightning-thunder.git
-  cd lightning-thunder
-  pip install -e .
-  ```
+### Install additional executors
+
+These are optional, feel free to mix and match
+
+```bash
+# cuDNN SDPA
+pip install nvidia-cudnn-frontend
+
+# Float8 support (this will compile from source, be patient)
+pip install "transformer_engine[pytorch]"
+```
+
+### Install Thunder bleeding edge
+
+```bash
+pip install git+https://github.com/Lightning-AI/lightning-thunder.git@main
+```
+
+### Install Thunder for development
+
+```bash
+git clone https://github.com/Lightning-AI/lightning-thunder.git
+cd lightning-thunder
+pip install -e .
+```
 
 </details>
 
@@ -129,11 +130,7 @@ Define a function or a torch module:
 ```python
 import torch.nn as nn
 
-model = nn.Sequential(
-    nn.Linear(2048, 4096),
-    nn.ReLU(),
-    nn.Linear(4096, 64)
-)
+model = nn.Sequential(nn.Linear(2048, 4096), nn.ReLU(), nn.Linear(4096, 64))
 ```
 
 Optimize it with thunder:
@@ -160,7 +157,7 @@ import torch
 import litgpt
 
 with torch.device("cuda"):
-  model = litgpt.GPT.from_name("Llama-3.2-1B").to(torch.bfloat16)
+    model = litgpt.GPT.from_name("Llama-3.2-1B").to(torch.bfloat16)
 
 thunder_model = thunder.compile(model)
 
@@ -173,7 +170,6 @@ out.sum().backward()
 ### Speed up HuggingFace BERT inference
 
 ```python
-
 import thunder
 import torch
 import transformers
@@ -189,7 +185,7 @@ with torch.device("cuda"):
     model.requires_grad_(False)
     model.eval()
 
-    inp = tokenizer(["Hello world!"], return_tensors='pt')
+    inp = tokenizer(["Hello world!"], return_tensors="pt")
 
 thunder_model = thunder.compile(model, plugins="reduce-overhead")
 
@@ -215,12 +211,14 @@ with torch.device("cuda"):
     model.requires_grad_(False)
     model.eval()
 
-    inp = tokenizer(["Hello world! Here's a long story"], return_tensors='pt')
+    inp = tokenizer(["Hello world! Here's a long story"], return_tensors="pt")
 
-thunder_model = thunder.compile(model, recipe="hf-transformers", plugins="reduce-overhead")
+thunder_model = thunder.compile(
+    model, recipe="hf-transformers", plugins="reduce-overhead"
+)
 
-out = thunder_model.generate(**inp,
-    do_sample=False, cache_implementation="static", max_new_tokens=100
+out = thunder_model.generate(
+    **inp, do_sample=False, cache_implementation="static", max_new_tokens=100
 )
 print(out)
 ```
@@ -252,11 +250,11 @@ Plugins are a way to apply optimizations to a model, such as parallelism and qua
 
 Thunder comes with a few plugins included of the box, but it's easy to write new ones.
 
-* scale up with distributed strategies with DDP, FSDP, TP ()
-* optimize numerical precision with FP8, MXFP8
-* save memory with quantization
-* reduce latency with CUDAGraphs
-* debugging and profiling
+- scale up with distributed strategies with DDP, FSDP, TP ()
+- optimize numerical precision with FP8, MXFP8
+- save memory with quantization
+- reduce latency with CUDAGraphs
+- debugging and profiling
 
 ## How it works
 
@@ -264,21 +262,22 @@ Thunder works in three stages:
 
 1. ⚡️ It acquires your model by interpreting Python bytecode and producing a straight-line Python program
 
-2. ️⚡️ It transforms the computation trace to make it distributed, change precision
+1. ️⚡️ It transforms the computation trace to make it distributed, change precision
 
-3. ⚡️ It routes parts of the trace for execution
-    * fusion (`NVFuser`, `torch.compile`)
-    * specialized libraries (e.g. `cuDNN SDPA`, `TransformerEngine`)
-    * custom Triton and CUDA kernels
-    * PyTorch eager operations
+1. ⚡️ It routes parts of the trace for execution
 
-&nbsp;
+   - fusion (`NVFuser`, `torch.compile`)
+   - specialized libraries (e.g. `cuDNN SDPA`, `TransformerEngine`)
+   - custom Triton and CUDA kernels
+   - PyTorch eager operations
+
+&#160;
 
 <div align="center">
 <img alt="Thunder" src="docs/source/_static/images/how_it_works.png" width="800px" style="max-width: 100%;">
 </div>
 
-&nbsp;
+&#160;
 
 This is how the trace looks like for a simple MLP:
 
@@ -286,11 +285,7 @@ This is how the trace looks like for a simple MLP:
 import thunder
 import torch.nn as nn
 
-model = nn.Sequential(
-    nn.Linear(1024, 2048),
-    nn.ReLU(),
-    nn.Linear(2048, 256)
-)
+model = nn.Sequential(nn.Linear(1024, 2048), nn.ReLU(), nn.Linear(2048, 256))
 
 thunder_model = thunder.compile(model)
 y = thunder_model(torch.randn(4, 1024))
@@ -327,5 +322,5 @@ Thunder is fast. Here are the speed-ups obtained on a pre-training task using Li
 
 Thunder is an open source project, developed in collaboration with the community with significant contributions from NVIDIA.
 
-💬 [Get help on Discord](https://discord.com/invite/XncpTy7DSt)    
-📋 [License: Apache 2.0](https://github.com/Lightning-AI/litserve/blob/main/LICENSE)    
+💬 [Get help on Discord](https://discord.com/invite/XncpTy7DSt)
+📋 [License: Apache 2.0](https://github.com/Lightning-AI/litserve/blob/main/LICENSE)

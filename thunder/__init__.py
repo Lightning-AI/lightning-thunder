@@ -273,7 +273,9 @@ CacheEntry = namedtuple(
 
 
 # TODO implement registration + "auto" recipe
-def compile(fn: Callable, recipe: Recipe | str | None = None, plugins: Plugin | list[Plugin] | str | list[str] | None = None):
+def compile(
+    fn: Callable, recipe: Recipe | str | None = None, plugins: Plugin | list[Plugin] | str | list[str] | None = None
+):
     import thunder.recipes
     import thunder.plugins
 
