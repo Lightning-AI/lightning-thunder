@@ -13,7 +13,7 @@
 # limitations under the License.
 
 ARG UBUNTU_VERSION="22.04"
-ARG CUDA_VERSION="12.4.1"
+ARG CUDA_VERSION="12.6.3"
 # select devel | runtime
 ARG IMAGE_TYPE="devel"
 
@@ -149,7 +149,7 @@ RUN \
         # installing pytorch from wheels \
         CUDA_VERSION_MM=${CUDA_VERSION%.*} && \
         TORCH_VERSION_MM=${TORCH_VERSION%.*} && \
-        pip install -U "nvfuser-cu${CUDA_VERSION_MM/./}-torch${TORCH_VERSION_MM/./}" ; \
+        pip install --index-url https://pypi.nvidia.com/ -U "nvfuser-cu${CUDA_VERSION_MM/./}-torch${TORCH_VERSION_MM/./}" ; \
     fi
 
 RUN \
