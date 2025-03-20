@@ -328,7 +328,6 @@ class TorchBenchmarkTimerSpecification(TimerInterface):
             stmt (str, optional): Code snippet to be run in a loop and timed.
             setup (str, optional): Optional setup code. Used to define variables used in `stmt`
             globals (dict, optional): A dictionary of global variables for the executed code. Defaults to `None`.
-            threshold, min_run_time, max_run_time: see :func:`torch.utils.benchmark.Timer.adaptive_autorange()` for more details.
 
         Returns:
             Measurement: A benchmarking result containing execution time statistics, see :class:`torch.utils.benchmark.utils.common.Measurement`.
