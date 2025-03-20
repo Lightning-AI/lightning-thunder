@@ -308,16 +308,13 @@ class TorchBenchmarkTimerSpecification(TimerInterface):
 
     inner_timer: torch.utils.benchmark.utils.timer.Timer = torch.utils.benchmark.utils.timer.timer
     name: str = "TorchBenchmarkTimerSpecification"
+    _default_params = inspect.signature(TorchBenchmarkTimer.adaptive_autorange).parameters
 
     def __init__(
         self,
-        threshold: float = inspect.signature(TorchBenchmarkTimer.adaptive_autorange).parameters["threshold"].default,
-        min_run_time: float = inspect.signature(TorchBenchmarkTimer.adaptive_autorange)
-        .parameters["min_run_time"]
-        .default,
-        max_run_time: float = inspect.signature(TorchBenchmarkTimer.adaptive_autorange)
-        .parameters["max_run_time"]
-        .default,
+        threshold: float = _default_params["threshold"].default,
+        min_run_time: float = _default_params["min_run_time"].default,
+        max_run_time: float = _default_params["max_run_time"].default,
     ):
         self.threshold = threshold
         self.min_run_time = min_run_time
