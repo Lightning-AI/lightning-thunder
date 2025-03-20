@@ -129,7 +129,6 @@ def test_get_all_executors_includes_all_native_executors():
         "fa3",
         "torch",
         "cudnn_layernorm",
-        "inplace_index_copy_ex",
         "sdpa",
         "torchcompile",
         "torchcompile_cat",

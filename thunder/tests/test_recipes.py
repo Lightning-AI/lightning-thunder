@@ -42,8 +42,6 @@ def test_recipe_basic_bert():
 
     assert_close(actual, expected)
 
-    deregister_executor("inplace_index_copy_ex")
-
     from thunder.recipes import HFTransformers
 
     thunder_bert = thunder.compile(bert, recipe=HFTransformers())
@@ -53,6 +51,7 @@ def test_recipe_basic_bert():
 
     assert_close(actual, expected)
 
+    # cleanup after test
     deregister_executor("inplace_index_copy_ex")
 
 
@@ -72,6 +71,7 @@ def test_recipe_basic_bert_fx():
 
     assert_close(actual, expected)
 
+    # cleanup after test
     deregister_executor("inplace_index_copy_ex")
 
 
