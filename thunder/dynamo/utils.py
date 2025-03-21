@@ -6,10 +6,17 @@ import dataclasses
 import inspect
 import itertools
 import copy
+from pathlib import Path
+from types import NoneType
 
 import torch
 from torch.nn.modules.module import _addindent
 from torch._subclasses.fake_tensor import FakeTensor
+
+if torch.distributed.is_available():
+    from torch.distributed.tensor import DTensor
+else:
+    DTensor = NoneType  #
 
 from thunder.torch.default_torch_ops import torch_auto_registered_ops
 from thunder.torch import _torch_to_thunder_function_map
@@ -249,6 +256,7 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
         try:
             proxy_args, proxy_kwargs = get_proxy_inputs_from_node(node)
         except Exception as e:
+            raise e
             return False, SplitReason(
                 SplitReasonType.EXCEPTION_PROXY_THUNDER_OP,
                 f"Failed while creating proxy for node with name: {node.name} and target: {node.target}, see exception field",
@@ -260,6 +268,7 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
             try:
                 thunder_symbol(*proxy_args, **proxy_kwargs)
             except Exception as e:
+                raise e
                 return False, SplitReason(
                     SplitReasonType.EXCEPTION_META_THUNDER_OP,
                     f"Failed while running meta for node with name: {node.name} and target: {node.target}, see exception field",
@@ -461,7 +470,8 @@ def _get_storage_shape(t: torch.Tensor):
 def _get_example_input_tensor_metadata(t: torch.Tensor) -> ExampleInputMetaData:
     min_val = None
     max_val = None
-    if not isinstance(t, FakeTensor) and t.device.type != "meta" and t.numel() != 0:
+    # DTensor doesn't support calling aminmax.
+    if not isinstance(t, FakeTensor) and not isinstance(t, DTensor) and t.device.type != "meta" and t.numel() != 0:
         minmax: tuple[torch.Tensor, torch.Tensor] = torch.aminmax(t)
         min_val = minmax[0].cpu().item()
         max_val = minmax[1].cpu().item()

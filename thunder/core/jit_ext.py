@@ -74,6 +74,10 @@ from thunder.core.trace import TraceCtx, TraceResults
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.clang import _clang_fn_set
 from thunder.core.pytree import tree_map, tree_iter
+from thunder.torch.experimental.dtensor_torch_and_aten_ops import register_dtensor_and_aten_function
+
+# TODO: Find a better place to register these ops (mostly in thunder/torch/__init__.py but without cyclical dependency).
+register_dtensor_and_aten_function()
 
 #
 # jit_ext.py implements extensions of thunder's interpreter
@@ -259,9 +263,16 @@ class JitCtx:
 
             if p is not uvalue:
                 value.register_proxy(p)
+
+            from thunder.torch.experimental.dtensor_proxy import is_dtensor_proxy
+            from thunder.torch.experimental import dtensor_prims_and_impl
+
             # TODO: other caching modes
             co: CACHE_OPTIONS = get_cache_option()
             if co is CACHE_OPTIONS.CONSTANT_VALUES:
+                if is_dtensor_proxy(p):
+                    # Add check for mesh and layout.
+                    self.add_constraint((dtensor_prims_and_impl.check_dtensor_spec_repr, p, uvalue._spec))
                 self.add_constraint((clang.check_tensor_shape_and_metadata, p))
             elif co is CACHE_OPTIONS.SYMBOLIC_VALUES:
                 # TODO: establish guarding logic to allow non-broadcast shape change
@@ -1801,6 +1812,11 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
                 for s in a.shape:
                     if isinstance(s, Proxy):
                         unpack(s)
+
+            from thunder.torch.experimental.dtensor_prims_and_impl import handle_check_dtensor_spec_in_prologue
+
+            if handle_check_dtensor_spec_in_prologue(prim, prologue_trace, args):
+                continue
 
             prim(*args)
 

@@ -77,3 +77,5 @@ repos:
         # https://prettier.io/docs/en/options.html#print-width
         files: \.(json|yml|yaml|toml)
         args: ["--print-width=120"]
+
+exclude: "generated_dtensor_trcs/.*"

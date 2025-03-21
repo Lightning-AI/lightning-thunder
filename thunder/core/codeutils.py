@@ -152,6 +152,11 @@ def to_printable(
     if isinstance(x, ProxyInterface):
         return x
 
+    from thunder.torch.experimental.dtensor_codeutils import populate_object_ctx_for_dtensor_spec
+
+    if populate_object_ctx_for_dtensor_spec(x, object_ctx):
+        return x
+
     if dataclasses.is_dataclass(x):
         # Add `class` to the object_ctx so that we can reuse it during the trace execution.
         if isinstance(x, type):  # dataclass type
@@ -235,6 +240,11 @@ def prettyprint(
 
     if isinstance(x, ContextObject):
         return m(x.name)
+
+    from thunder.torch.experimental.dtensor_codeutils import prettyprint_dtensor_spec
+
+    if (dtensor_repr := prettyprint_dtensor_spec(x)) != "":
+        return m(dtensor_repr)
 
     if dataclasses.is_dataclass(x):
         # For a dataclass instance of class

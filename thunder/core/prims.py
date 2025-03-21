@@ -1830,7 +1830,8 @@ def _get_grad_meta(a: Number | NumberProxy | TensorProxy, /) -> Number | TensorP
     utils.check_type(a, (Number, NumberProxy, TensorProxy))
 
     if isinstance(a, TensorProxy):
-        return TensorProxy(like=a)
+        # NOTE: `a` could be a TensorProxy subclass and it's type should be preserved.
+        return type(a)(like=a)
 
     # NOTE a is a Number in this branch
     return numberproxy(pytype(a), 0)
