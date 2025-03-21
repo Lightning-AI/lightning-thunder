@@ -5856,6 +5856,65 @@ var_mean_opinfo = OpInfo(
 reduction_ops.append(var_mean_opinfo)
 
 
+def std_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # shape, dim, correction, keepdim
+    cases = (
+        ((), 0, 0, True),
+        ((5), -1, 1, False),
+        ((4, 4), 1, 0, True),
+        ((5, 1, 5), -2, 2, False),
+        ((2, 3, 4, 5), -3, 1, True),
+    )
+
+    for shape, dim, correction, keepdim in cases:
+        yield (SampleInput(make(shape), dim=dim, correction=correction, keepdim=keepdim))
+
+
+def std_error_generator(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype)
+
+    err_msg = "only tensors with up to 64 dims are supported"
+    yield (SampleInput(make([1] * 65), dim=64), RuntimeError, err_msg)
+    yield (SampleInput(make([1] * 65), dim=-1), RuntimeError, err_msg)
+
+    err_msg = "Duplicate value in list of dimensions"
+    yield (SampleInput(make((5, 5, 5, 5)), dim=(0, 0)), RuntimeError, err_msg)
+    yield (SampleInput(make((5, 5, 5, 5)), dim=(0, -4)), RuntimeError, err_msg)
+
+
+std_opinfo = OpInfo(
+    ltorch.std,
+    supports_grad=True,
+    sample_input_generator=std_sample_generator,
+    error_input_generator=std_error_generator,
+    torch_reference=torch.std,
+    dtypes=(datatypes.floating,),
+    test_directives=(
+        # AssertionError: Scalars are not close!
+        # Expected -0.04742737004193756 but got -0.09087551906805685.
+        # Absolute difference: 0.04344814902611929 (up to 1e-07 allowed)
+        # Relative difference: 0.9160986364561297 (up to 1e-07 allowed)
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_vjp_correctness",
+            executors=("torch", "nvfuser"),
+            dtypes=(datatypes.float64,),
+        ),
+        # In cuda: AssertionError: Tensor-likes are not close!
+        # In cpu: AssertionError: The values for attribute 'shape' do not match: torch.Size([5]) != torch.Size([1]).
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_phantom_grad_vs_torch_consistency",
+            dtypes=(datatypes.bfloat16, datatypes.float16, datatypes.float32, datatypes.float64),
+            devicetypes=(devices.DeviceType.CUDA, devices.DeviceType.CPU),
+        ),
+    ),
+)
+reduction_ops.append(std_opinfo)
+
+
 def cumsum_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
