@@ -13,8 +13,6 @@ _ENABLED = os.getenv("THUNDER_ANNOTATE_TRACES") in ("1", "y", "Y")
 # environment variable.
 try:
     import nvtx
-
-    _ENABLED = True
 except ImportError:
     if _ENABLED:
         msg = "Requested nvtx but the package is not available."
