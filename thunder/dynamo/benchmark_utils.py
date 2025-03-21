@@ -308,17 +308,18 @@ class TorchBenchmarkTimerSpecification(TimerInterface):
 
     inner_timer: Callable = torch.utils.benchmark.utils.timer.timer
     name: str = "TorchBenchmarkTimerSpecification"
-    _default_params = inspect.signature(TorchBenchmarkTimer.adaptive_autorange).parameters
 
     def __init__(
         self,
-        threshold: float = _default_params["threshold"].default,
-        min_run_time: float = _default_params["min_run_time"].default,
-        max_run_time: float = _default_params["max_run_time"].default,
+        threshold: float | None = None,
+        min_run_time: float | None = None,
+        max_run_time: float | None = None,
     ):
-        self.threshold = threshold
-        self.min_run_time = min_run_time
-        self.max_run_time = max_run_time
+        default_params = inspect.signature(TorchBenchmarkTimer.adaptive_autorange).parameters
+
+        self.threshold = threshold if threshold is not None else default_params["threshold"].default
+        self.min_run_time = min_run_time if min_run_time is not None else default_params["min_run_time"].default
+        self.max_run_time = max_run_time if max_run_time is not None else default_params["max_run_time"].default
 
     def time(self, stmt="pass", setup="pass", globals=None) -> Measurement:
         """
