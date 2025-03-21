@@ -306,7 +306,7 @@ class TorchBenchmarkTimerSpecification(TimerInterface):
     See: :class:`torch.utils.benchmark.utils.timer.Timer` for more details.
     """
 
-    inner_timer: torch.utils.benchmark.utils.timer.Timer = torch.utils.benchmark.utils.timer.timer
+    inner_timer: Callable = torch.utils.benchmark.utils.timer.timer
     name: str = "TorchBenchmarkTimerSpecification"
     _default_params = inspect.signature(TorchBenchmarkTimer.adaptive_autorange).parameters
 
