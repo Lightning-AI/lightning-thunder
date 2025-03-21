@@ -1320,7 +1320,12 @@ def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp):
         # torch.return_types.topk(
         # values=tensor([1., 1.]),
         # indices=tensor([0, 1]))
-        return x.grad_fn is not None
+        return x.grad_fn is not None or is_returning_self(x)
+
+    def is_returning_self(x):
+        if x.is_leaf and x.requires_grad:
+            return True
+        return False
 
     def filter_differentiable_outputs(outputs):
         if isinstance(outputs, torch.Tensor):
@@ -1355,7 +1360,7 @@ def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp):
             grads = [torch.ones_like(torch_result)]
 
     torch_tensors_requiring_grad = tuple(f for f in torch_flats if isinstance(f, torch.Tensor) and f.requires_grad)
-    torch_grad_result = torch.autograd.grad(torch_result, torch_tensors_requiring_grad, grads)
+    torch_grad_result = torch.autograd.grad(torch_result, torch_tensors_requiring_grad, grads, allow_unused=True)
 
     # Computes reference result (upcasting floats to double)
     def upcast_tensors(x: Any) -> Any:
@@ -1373,14 +1378,19 @@ def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp):
     )
     reference_result = torch_op(*reference_args, **reference_kwargs)
     reference_result = filter_differentiable_outputs(reference_result)
-    reference_grad_result = torch.autograd.grad(reference_result, reference_tensors_requiring_grad, grads)
+    reference_grad_result = torch.autograd.grad(
+        reference_result, reference_tensors_requiring_grad, grads, allow_unused=True
+    )
 
     # Computes thunder result
     grad_op = grad(op)
     thunder_flat_grads = grad_op(*sample.args, **sample.kwargs)
 
     assert_closer(
-        reference=reference_grad_result, candidate=thunder_flat_grads, competitor=torch_grad_result, comparator=comp
+        reference=reference_grad_result,
+        candidate=thunder_flat_grads,
+        competitor=torch_grad_result,
+        comparator=comp,
     )
 
 
