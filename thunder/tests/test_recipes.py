@@ -5,6 +5,7 @@ import thunder
 import transformers
 import torch
 
+from thunder.extend import deregister_executor
 from torch.testing import assert_close, make_tensor
 from thunder.tests.framework import version_between, IS_WINDOWS
 
@@ -50,6 +51,9 @@ def test_recipe_basic_bert():
 
     assert_close(actual, expected)
 
+    # cleanup after test
+    deregister_executor("inplace_index_copy_ex")
+
 
 def test_recipe_basic_bert_fx():
     bert = transformers.BertForSequenceClassification(transformers.BertConfig())
@@ -66,6 +70,9 @@ def test_recipe_basic_bert_fx():
     expected = bert(inp)
 
     assert_close(actual, expected)
+
+    # cleanup after test
+    deregister_executor("inplace_index_copy_ex")
 
 
 def test_recipe_mlp():
