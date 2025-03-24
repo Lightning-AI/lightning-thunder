@@ -158,6 +158,11 @@ class torchsymbol:
         self.is_prim = is_prim
         self.tags = tags
         self.out_of_place = out_of_place
+
+        # This flag is used to enable/disable a torchsymbol to accept
+        # TensorProxy subclass as input (eg. DTensorProxy).
+        # By default, this is `True` as we don't want general `torchsymbol`
+        # which are meant for TensorProxy to accept DTensorProxy.
         self.allow_only_tensorproxy = allow_only_tensorproxy
 
     def __call__(self, fn: Callable) -> Symbol:

@@ -271,7 +271,6 @@ class JitCtx:
             co: CACHE_OPTIONS = get_cache_option()
             if co is CACHE_OPTIONS.CONSTANT_VALUES:
                 if is_dtensor_proxy(p):
-                    # Add check for mesh and layout.
                     self.add_constraint((dtensor_prims_and_impl.check_dtensor_spec_repr, p, uvalue._spec))
                 self.add_constraint((clang.check_tensor_shape_and_metadata, p))
             elif co is CACHE_OPTIONS.SYMBOLIC_VALUES:
@@ -1813,6 +1812,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
                     if isinstance(s, Proxy):
                         unpack(s)
 
+            # Add checks for local tensor, mesh and placment of a DTensor
             from thunder.torch.experimental.dtensor_prims_and_impl import handle_check_dtensor_spec_in_prologue
 
             if handle_check_dtensor_spec_in_prologue(prim, prologue_trace, args):

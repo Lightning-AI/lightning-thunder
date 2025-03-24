@@ -16,7 +16,7 @@ from torch._subclasses.fake_tensor import FakeTensor
 if torch.distributed.is_available():
     from torch.distributed.tensor import DTensor
 else:
-    DTensor = NoneType  #
+    DTensor = NoneType
 
 from thunder.torch.default_torch_ops import torch_auto_registered_ops
 from thunder.torch import _torch_to_thunder_function_map
@@ -470,7 +470,7 @@ def _get_storage_shape(t: torch.Tensor):
 def _get_example_input_tensor_metadata(t: torch.Tensor) -> ExampleInputMetaData:
     min_val = None
     max_val = None
-    # DTensor doesn't support calling aminmax.
+    # NOTE: DTensor doesn't support calling aminmax.
     if not isinstance(t, FakeTensor) and not isinstance(t, DTensor) and t.device.type != "meta" and t.numel() != 0:
         minmax: tuple[torch.Tensor, torch.Tensor] = torch.aminmax(t)
         min_val = minmax[0].cpu().item()

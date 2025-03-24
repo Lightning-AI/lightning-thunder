@@ -1,6 +1,7 @@
 from collections.abc import Sequence
 from functools import wraps
 from itertools import chain
+from typing import Any
 
 import torch
 import torch.utils._pytree as pytree
@@ -21,12 +22,25 @@ from thunder.core.proxies import TensorProxy, NumberProxy
 from thunder.core.devices import to_torch_device
 from thunder.core.dtypes import to_torch_dtype
 from thunder.core.pytree import tree_map, tree_flatten, tree_unflatten
+from thunder import trace
+from thunder.core.transforms import eval_trace
+from thunder.executors.torch_compile import to_torch_translator
 
 from thunder.torch.experimental.dtensor_proxy import DTensorProxy
 from thunder.torch.experimental import dtensor_prims_and_impl
 
 
 def trace_from_bsym_or_bsyms(bsym_or_bsyms: BoundSymbol | Sequence[BoundSymbol]) -> TraceCtx:
+    """
+    Create a `TraceCtx` object from a single `BoundSymbol` or a sequence of `BoundSymbol` objects.
+
+    Args:
+        bsym_or_bsyms (BoundSymbol | Sequence[BoundSymbol]): A single `BoundSymbol` or a sequence of `BoundSymbol`
+            objects to create the trace from.
+
+    Returns:
+        TraceCtx: A `TraceCtx` object created from the `bsym_or_bsyms` argument.
+    """
     bsyms = list(utils.sequencify(bsym_or_bsyms))
     trace_args = bsyms[0].flat_args
     trace_name = bsyms[0].sym.name
@@ -48,11 +62,18 @@ def trace_from_bsym_or_bsyms(bsym_or_bsyms: BoundSymbol | Sequence[BoundSymbol])
     return trace
 
 
-def make_trace_executable(trace_to_convert: TraceCtx, *args_for_eval, **kwargs_for_eval):
-    from functools import wraps
-    from thunder import trace
-    from thunder.core.transforms import eval_trace
-    from thunder.executors.torch_compile import to_torch_translator
+def make_trace_executable(trace_to_convert: TraceCtx, *args_for_eval, **kwargs_for_eval) -> TraceCtx:
+    """
+    Converts a TraceCtx object into a PyTorch executable trace.
+
+    Args:
+        trace_to_convert (TraceCtx): The trace context object to be converted into an executable form.
+        *args_for_eval: Positional arguments that may be used during the evaluation of the trace.
+        **kwargs_for_eval: Keyword arguments that may be used during the evaluation of the trace.
+
+    Returns:
+        TraceCtx: A PyTorch executable `TraceCtx`.
+    """
 
     @wraps(trace_to_convert.python_callable())
     def torch_interpreted_func(*args, **kwargs):
@@ -62,7 +83,7 @@ def make_trace_executable(trace_to_convert: TraceCtx, *args_for_eval, **kwargs_f
     return torch_trace
 
 
-def get_fx_graph(trc, args_for_fx, args_for_trace):
+def get_fx_graph(trc: TraceCtx, args_for_fx: Sequence[Any], args_for_trace: Sequence[Any]):
     f = trc.python_callable(include_decorators=False)
 
     tracing_ctx = TracingContext.try_get()
