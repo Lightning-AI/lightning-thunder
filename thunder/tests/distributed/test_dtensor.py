@@ -18,34 +18,40 @@ from torch.distributed.tensor.placement_types import Placement, Shard, Replicate
     "DTensor test requires CUDA and NCCL `torch.distributed` backend",
 )
 class DTensorTest(DistributedParallelTestCase):
-    def test_dtensor(self):
+    def test_dtensor_basic_op(self):
         num_devices = self.world_size
         mesh = DeviceMesh("cuda", list(range(num_devices)))
 
         dim_size = 16
 
-        def fn(x, w):
-            return torch.mul(x, w)
+        def _helper(fn, in_dtensor, w_dtensor):
+            expected = torch.compile(fn)(in_dtensor, w_dtensor)
+            tmodel = thunderfx(fn)
+            actual = tmodel(in_dtensor, w_dtensor)
 
-        weight = distribute_tensor(torch.randn(dim_size, dim_size, requires_grad=True), mesh, [Shard(0)])
+            torch.testing.assert_close(actual, expected)
 
+            g_o = distribute_tensor(torch.ones(dim_size, dim_size), mesh, [Shard(0)])
+            expected_g = torch.autograd.grad(
+                expected,
+                (in_dtensor, w_dtensor),
+                g_o,
+            )
+            actual_g = torch.autograd.grad(actual, (in_dtensor, w_dtensor), g_o)
+
+            torch.testing.assert_close(actual_g, expected_g)
+
+        w_dtensor = distribute_tensor(torch.randn(dim_size, dim_size, requires_grad=True), mesh, [Shard(0)])
         in_dtensor = distribute_tensor(torch.randn(dim_size, dim_size, requires_grad=True), mesh, [Shard(0)])
 
-        expected = torch.compile(fn)(in_dtensor, weight)
-        tmodel = thunderfx(fn)
-        actual = tmodel(in_dtensor, weight)
+        # Verify torch API works
+        _helper(lambda x, w: torch.mul(x, w), in_dtensor, w_dtensor)
 
-        torch.testing.assert_close(actual, expected)
+        # Verify calling method works
+        _helper(lambda x, w: torch.Tensor.mul(x, w), in_dtensor, w_dtensor)
 
-        g_o = distribute_tensor(torch.ones(dim_size, dim_size), mesh, [Shard(0)])
-        expected_g = torch.autograd.grad(
-            expected,
-            (in_dtensor,),
-            g_o,
-        )
-        actual_g = torch.autograd.grad(actual, (in_dtensor,), g_o)
-
-        torch.testing.assert_close(actual_g, expected_g)
+        # Verify calling special method works
+        _helper(lambda x, w: x * w, in_dtensor, w_dtensor)
 
     def test_dtensor_unsupported(self):
         num_devices = self.world_size

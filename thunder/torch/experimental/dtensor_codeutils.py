@@ -3,13 +3,15 @@ from torch.distributed.tensor._dtensor_spec import DTensorSpec, DeviceMesh, Tens
 from torch.distributed.tensor import DeviceMesh, DTensor, Partial, Placement, Replicate, Shard
 
 
-def populate_object_ctx_for_dtensor_spec(x: Any, object_ctx: dict[str, Any]):
+def populate_object_ctx_for_dtensor_spec(x: Any, object_ctx: dict[str, Any]) -> bool:
     """
     Populate object context for DTensorSpec.
 
     ..note::
         This function will mutate the `object_ctx`
 
+    Returns:
+        bool: True if `x` is DTensorSpec (and also updates `object_ctx`) otherwise False.
     """
     if isinstance(x, DTensorSpec):
         object_ctx["DTensorSpec"] = DTensorSpec

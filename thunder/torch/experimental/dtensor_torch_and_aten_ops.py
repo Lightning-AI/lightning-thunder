@@ -6,14 +6,16 @@ from thunder.core.pytree import tree_map, tree_flatten, tree_unflatten
 from thunder import clang
 from thunder.torch.experimental.dtensor_aten_tracing_utils import trace_torch_op_to_aten_ops
 from thunder.torch.experimental.dtensor_proxy import DTensorProxy
+from thunder.torch.langctx import register_method
 
 import torch
 
 dtensor_torchsymbol = partial(torchsymbol, allow_only_tensorproxy=False)
 
 
-def register_function_for_dtensor(torch_fn, single_device_symbol, dtensor_symbol):
-    def dispatch_to_impl(*args, **kwargs):
+def dispatch_to_impl(single_device_symbol, dtensor_symbol):
+
+    def wrapper(*args, **kwargs):
         filter_tensor_proxies = list(filter(lambda t: isinstance(t, TensorProxy), tree_flatten((args, kwargs))[0]))
         # number only variant of the operator.
         if filter_tensor_proxies == []:
@@ -25,7 +27,17 @@ def register_function_for_dtensor(torch_fn, single_device_symbol, dtensor_symbol
         else:
             return single_device_symbol(*args, **kwargs)
 
-    register_function(torch_fn, dispatch_to_impl)
+    return wrapper
+
+
+def register_function_for_dtensor(torch_fn, single_device_symbol, dtensor_symbol):
+    register_function(torch_fn, dispatch_to_impl(single_device_symbol, dtensor_symbol))
+
+
+def register_method_for_dtensor(torch_fn, single_device_symbol, dtensor_symbol):
+    method_wrapper = dispatch_to_impl(single_device_symbol, dtensor_symbol)
+    register_function(torch_fn, method_wrapper)
+    register_method(torch_fn.__name__, method_wrapper)
 
 
 @dtensor_torchsymbol(torch.ops.aten.mul.Tensor, id="aten.mul.Tensor")
@@ -54,3 +66,6 @@ def dtensor_add(a: TensorLike, b: TensorLike, alpha=1) -> TensorLike:
 def register_dtensor_and_aten_function():
     register_function_for_dtensor(torch.add, ltorch.add, dtensor_add)
     register_function_for_dtensor(torch.mul, ltorch.mul, dtensor_mul)
+    # TODO: Handle method registration with a flag like torchsymbol.
+    register_method_for_dtensor(torch.Tensor.add, ltorch.add, dtensor_add)
+    register_method_for_dtensor(torch.Tensor.mul, ltorch.mul, dtensor_mul)
