@@ -21,8 +21,6 @@ def register_function_for_dtensor(torch_fn, single_device_symbol, dtensor_symbol
 
         dtensor_tensor_proxies = map(lambda t: isinstance(t, DTensorProxy), filter_tensor_proxies)
         if all(dtensor_tensor_proxies):
-            # TODO: Error on mixed torch.Tensor and DTensor
-            # https://github.com/pytorch/pytorch/blob/f522d899fb297453d0b821140bac38c1b4eef569/torch/distributed/tensor/_dispatch.py#L474-L477
             return dtensor_symbol(*args, **kwargs)
         else:
             return single_device_symbol(*args, **kwargs)

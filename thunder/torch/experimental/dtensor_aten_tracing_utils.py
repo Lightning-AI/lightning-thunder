@@ -8,11 +8,10 @@ import torch.utils._pytree as pytree
 from torch._subclasses.fake_tensor import FakeTensorMode
 from torch._guards import TracingContext, tracing
 from functorch.compile import aot_function
-from torch.distributed.tensor._dtensor_spec import DTensorSpec, DeviceMesh, TensorMeta
-from torch.distributed.tensor import DeviceMesh, DTensor, Partial, Placement, Replicate, Shard  # noqa: F401
+from torch.distributed.tensor import DTensor
 
 import thunder
-from thunder.core.symbol import BoundSymbol
+from thunder.core.symbol import BoundSymbol, Symbol
 from thunder.core.codeutils import SigInfo
 from thunder.core import prims
 from thunder.core import utils
@@ -142,12 +141,12 @@ def get_fx_graph_and_output(trc: TraceCtx, args_for_fx: Sequence[Any]) -> tuple[
     aot_output = aot_function(aot_wrapped_fn, fw_compiler=get_graph("forward"), bw_compiler=get_graph("backward"))(
         fake_t
     )
-    # `fwd_graph`
+    # Example value of `fwd_graph`
     # def forward(self, arg0_1, arg1_1):
     #   mul = torch.ops.aten.mul.Tensor(arg0_1, arg1_1);  arg0_1 = arg1_1 = None
     #   return (mul,)
 
-    # `aot_output`
+    # Example value of `aot_output`
     # DTensor(local_tensor=FakeTensor(..., device='cuda:0', size=(8, 16)), device_mesh=DeviceMesh('cuda', [0, 1]), placements=(Shard(dim=0),))
 
     flat_aot_output, _ = pytree.tree_flatten(aot_output)
@@ -163,7 +162,7 @@ def get_aten_symbols_and_output(
     _checkpoint_function_converter(aten_graph)
 
     aten_graph.recompile()
-    # `aten_graph`
+    # Example value of `aten_graph`
     # class <lambda>(torch.nn.Module):
     # def forward(self, arg0_1: "f32[8, 16]", arg1_1: "f32[8, 16]"):
     #     # No stacktrace found for following nodes
@@ -204,9 +203,20 @@ def get_aten_symbols_and_output(
     return aten_syms, proxy_out
 
 
-def decompose_into_aten_subsymbols(bsym_executable_trace, comp_trace, *args, **kwargs):
+def decompose_into_aten_subsymbols(bsym_executable_trace, comp_trace, *args, **kwargs) -> Sequence[Proxy]:
     flat_args, _ = pytree.tree_flatten((args, kwargs))
 
+    # Step 3
+    # NOTE: Setting the TracingContext is important else `aot_function` used in `get_fx_graph`
+    #       may find different FakeTensorMode.
+    with tracing(TracingContext(FakeTensorMode())):
+        aot_graph, flat_fake_output = get_fx_graph_and_output(bsym_executable_trace, flat_args)
+
+    # Step 4
+    # The order of subsymbols should be roughly
+    # 1. deconstruct DTensor
+    # 2. ATen operations on the inner tensor
+    # 3. Construct output DTensor
     with tracectx(comp_trace):
         new_args = []
         for arg in flat_args:
@@ -221,12 +231,7 @@ def decompose_into_aten_subsymbols(bsym_executable_trace, comp_trace, *args, **k
             else:
                 new_args.append(arg)
 
-    # NOTE: Setting the TracingContext is important else `aot_function` used in `get_fx_graph`
-    #       may find different FakeTensorMode.
-    with tracing(TracingContext(FakeTensorMode())):
-        aot_graph, flat_fake_output = get_fx_graph_and_output(bsym_executable_trace, flat_args)
-
-    # `aot_graph`
+    # Example value of `aot_graph`
     # class <lambda>(torch.nn.Module):
     # def forward(self, arg0_1: "f32[8, 16]", arg1_1: "f32[8, 16]"):
     #     # No stacktrace found for following nodes
@@ -235,12 +240,12 @@ def decompose_into_aten_subsymbols(bsym_executable_trace, comp_trace, *args, **k
 
     aten_bsyms, flat_proxy_output = get_aten_symbols_and_output(aot_graph, new_args)
 
-    # `aten_bsyms`
+    # Example value of `aten_bsyms`
     # [t0 = thunder.torch.experimental.dtensor_torch_and_aten_ops.aten_mul(t3, t6)  # t0: "cuda:0 f32[8, 16]"
     #   # t0 = prims.mul(t3, t6)  # t0: "cuda:0 f32[8, 16]"]
-    # `flat_fake_output`
+    # Example value of `flat_fake_output`
     # [DTensor(local_tensor=FakeTensor(..., device='cuda:0', size=(8, 16)), device_mesh=DeviceMesh('cuda', [0, 1]), placements=(Shard(dim=0),))]
-    # `proxy_output`
+    # Example value of `proxy_output`
     # [<TensorProxy(name="t0", dtype=thunder.dtypes.float32, shape=(8, 16))>]
 
     with tracectx(comp_trace):
@@ -267,6 +272,10 @@ def decompose_into_aten_subsymbols(bsym_executable_trace, comp_trace, *args, **k
 
 
 def _get_inner_tensor_proxy(*args, **kwargs):
+    """
+    Function to replace DTensorProxy with its inner local tensor.
+    """
+
     def get_local_tensor_from_dtensor(t):
         if isinstance(t, DTensorProxy):
             local_tensor = t._local_tensor
@@ -282,12 +291,18 @@ def _get_inner_tensor_proxy(*args, **kwargs):
     return tree_map(get_local_tensor_from_dtensor, (args, kwargs))
 
 
-def trace_torch_op_to_aten_ops(op, *args, **kwargs):
+def trace_torch_op_to_aten_ops(op: Symbol, *args, **kwargs):
+    # To Trace into the aten decomposition for the operations (that will be applied to DTensor),
+    # Step 1 - Create a trace using the corresponding Symbol (which works on Tensor).
+    # Step 2 - Transform the trace into a PyTorch executable trace.
+    # Step 3 - Apply PyTorch's tracing mechanism to get `FXGraph` with `aten` decomposition.
+    # Step 4 - Construct sub-symbols using the aten FXGraph.
     flat_args, _ = pytree.tree_flatten((args, kwargs))
     tensor_proxies = list(filter(lambda t: isinstance(t, TensorProxy), flat_args))
     filter_tensor_proxies = list(map(lambda t: isinstance(t, DTensorProxy), tensor_proxies))
     assert len(filter_tensor_proxies) == len(tensor_proxies), f"Expected all tensors to be DTensor but found a mix"
 
+    # Step 1
     with detached_trace():
         tensor_proxy_args, tensor_proxy_kwargs = _get_inner_tensor_proxy(*args, **kwargs)
         out = op(*tensor_proxy_args, **tensor_proxy_kwargs)
@@ -295,12 +310,12 @@ def trace_torch_op_to_aten_ops(op, *args, **kwargs):
         current_trace = get_tracectx()
         op_bsym = current_trace.bound_symbols[0]
 
-    # `op_bsym`
+    # Example value of `op_bsym`
     # t0 = ltorch.mul(t1, t3)  # t0: "cuda:0 f32[8, 16]"
     #   # t0 = prims.mul(t1, t3)  # t0: "cuda:0 f32[8, 16]"
 
     trc = trace_from_bsym_or_bsyms(op_bsym)
-    # `trc`
+    # Example value of `trc`
     # @torch.no_grad()
     # @no_autocast
     # def tmp_mul(t1, t3):
@@ -310,8 +325,9 @@ def trace_torch_op_to_aten_ops(op, *args, **kwargs):
     #     # t0 = prims.mul(t1, t3)  # t0: "cuda:0 f32[8, 16]"
     # return t0
 
+    # Step 2
     executable_trc = make_trace_executable(trc, *op_bsym.flat_args)
-    # `executable_trc`
+    # Example value of `executable_trc`
     # @torch.no_grad()
     # @no_autocast
     # def tmp_mul(t1, t3):
@@ -322,6 +338,8 @@ def trace_torch_op_to_aten_ops(op, *args, **kwargs):
     #     # t0 = prims.mul(t1, t3)  # t0: "cuda:0 f32[8, 16]"
     # return t0
 
+    # Step 3 and 4
     current_computation_trc = get_tracectx()
     aten_outs = decompose_into_aten_subsymbols(executable_trc, current_computation_trc, *args, **kwargs)
+    # The output of DTensor `aten` decomposition is same as the Tensor version.
     return tree_unflatten(aten_outs, out_spec)
