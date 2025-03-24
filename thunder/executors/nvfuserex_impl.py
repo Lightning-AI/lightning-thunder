@@ -2715,7 +2715,6 @@ def embedding(
         return fd.ops.embedding_fwd(*nv_inputs)
 
 
-register_supported(PrimIDs.EMBEDDING, embedding, _embedding_check)
 register_supported(ltorch.embedding, embedding, _embedding_check)
 
 
