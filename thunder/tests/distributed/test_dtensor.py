@@ -46,3 +46,37 @@ class DTensorTest(DistributedParallelTestCase):
         actual_g = torch.autograd.grad(actual, (in_dtensor,), g_o)
 
         torch.testing.assert_close(actual_g, expected_g)
+
+    def test_dtensor_unsupported(self):
+        num_devices = self.world_size
+        mesh = DeviceMesh("cuda", list(range(num_devices)))
+
+        dim_size = 16
+
+        def fn(x, w):
+            return torch.div(x, w)
+
+        w_dtensor = distribute_tensor(torch.randn(dim_size, dim_size, requires_grad=True), mesh, [Shard(0)])
+
+        in_dtensor = distribute_tensor(torch.randn(dim_size, dim_size, requires_grad=True), mesh, [Shard(0)])
+
+        tmodel = thunderfx(fn)
+        with pytest.raises(RuntimeError):
+            tmodel(in_dtensor, w_dtensor)
+
+    def test_dtensor_unsupported_mixed_input(self):
+        num_devices = self.world_size
+        mesh = DeviceMesh("cuda", list(range(num_devices)))
+
+        dim_size = 16
+
+        def fn(x, w):
+            return torch.div(x, w)
+
+        w = torch.randn(dim_size, dim_size, requires_grad=True)
+
+        in_dtensor = distribute_tensor(torch.randn(dim_size, dim_size, requires_grad=True), mesh, [Shard(0)])
+
+        tmodel = thunderfx(fn)
+        with pytest.raises(RuntimeError):
+            tmodel(in_dtensor, w)
