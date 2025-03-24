@@ -33,6 +33,7 @@ NON_COMPUTATION_PRIMS = (
     PrimIDs.UNPACK_LIST,
     PrimIDs.UNPACK_DICT_KEY,
     PrimIDs.CONSTRUCT_TUPLE,
+    PrimIDs.PACK_LIST,
     PrimIDs.PACK_SETITEM,
     # TODO: UNPACK_SET
     # Utility prims
