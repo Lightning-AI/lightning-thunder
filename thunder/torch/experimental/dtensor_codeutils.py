@@ -1,8 +1,16 @@
+from typing import Any
 from torch.distributed.tensor._dtensor_spec import DTensorSpec, DeviceMesh, TensorMeta
 from torch.distributed.tensor import DeviceMesh, DTensor, Partial, Placement, Replicate, Shard  # noqa: F401
 
 
-def populate_object_ctx_for_dtensor_spec(x, object_ctx):
+def populate_object_ctx_for_dtensor_spec(x: Any, object_ctx: dict[str, Any]):
+    """
+    Populate object context for DTensorSpec.
+
+    ..note::
+        This function will mutate the `object_ctx`
+
+    """
     if isinstance(x, DTensorSpec):
         object_ctx["DTensorSpec"] = DTensorSpec
         object_ctx["DeviceMesh"] = DeviceMesh

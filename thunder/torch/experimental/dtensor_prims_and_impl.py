@@ -10,7 +10,7 @@ from thunder.core.transforms import register_grad, get_grad, put_grad
 
 
 def _dtensor_inner_tensor(t):
-    # Returning the `t._local_tensor` directly might cause problem with
+    # Returning the `t._local_tensor` directly might cause problem with other downstream passes
     # (IIRC) DCE.
     return TensorProxy(like=t._local_tensor)
 

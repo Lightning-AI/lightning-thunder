@@ -11,20 +11,21 @@ from functorch.compile import aot_function
 from torch.distributed.tensor._dtensor_spec import DTensorSpec, DeviceMesh, TensorMeta
 from torch.distributed.tensor import DeviceMesh, DTensor, Partial, Placement, Replicate, Shard  # noqa: F401
 
+import thunder
 from thunder.core.symbol import BoundSymbol
 from thunder.core.codeutils import SigInfo
 from thunder.core import prims
 from thunder.core import utils
-from thunder.core.proxies import ProxyInterface
+from thunder.core.proxies import ProxyInterface, Proxy
 from thunder.core.pytree import tree_map
 from thunder.core.trace import TraceCtx, tracectx, get_tracectx, detached_trace
 from thunder.core.proxies import TensorProxy, NumberProxy
 from thunder.core.devices import to_torch_device
 from thunder.core.dtypes import to_torch_dtype
 from thunder.core.pytree import tree_map, tree_flatten, tree_unflatten
-from thunder import trace
 from thunder.core.transforms import eval_trace
 from thunder.executors.torch_compile import to_torch_translator
+from thunder.dynamo.utils import _checkpoint_function_converter
 
 from thunder.torch.experimental.dtensor_proxy import DTensorProxy
 from thunder.torch.experimental import dtensor_prims_and_impl
@@ -79,11 +80,23 @@ def make_trace_executable(trace_to_convert: TraceCtx, *args_for_eval, **kwargs_f
     def torch_interpreted_func(*args, **kwargs):
         return eval_trace(trace_to_convert, *args, **kwargs, symbol_mapper=to_torch_translator)
 
-    torch_trace = trace(inline_trace=False)(torch_interpreted_func, *args_for_eval, **kwargs_for_eval)
+    torch_trace = thunder.trace(inline_trace=False)(torch_interpreted_func, *args_for_eval, **kwargs_for_eval)
     return torch_trace
 
 
-def get_fx_graph(trc: TraceCtx, args_for_fx: Sequence[Any], args_for_trace: Sequence[Any]):
+def get_fx_graph_and_output(trc: TraceCtx, args_for_fx: Sequence[Any]) -> tuple[torch.fx.GraphModule, Sequence[Any]]:
+    """
+    Generate a Torch FX graph and the corresponding output by tracing a TraceCtx object.
+
+    Args:
+        trc (TraceCtx): Trace which will be used to generate the FX Graph
+        args_for_fx (Sequence[Any]): A sequence of input arguments to be passed during the FX tracing.
+
+    Returns:
+        tuple[torch.fx.GraphModule, Sequence[Any]]:
+            - A `torch.fx.GraphModule` object representing the traced computation graph in FX.
+            - A sequence (list or tuple) containing the flattened output(s) from evaluating the graph with the given inputs.
+    """
     f = trc.python_callable(include_decorators=False)
 
     tracing_ctx = TracingContext.try_get()
@@ -129,21 +142,26 @@ def get_fx_graph(trc: TraceCtx, args_for_fx: Sequence[Any], args_for_trace: Sequ
     aot_output = aot_function(aot_wrapped_fn, fw_compiler=get_graph("forward"), bw_compiler=get_graph("backward"))(
         fake_t
     )
+    # `fwd_graph`
+    # def forward(self, arg0_1, arg1_1):
+    #   mul = torch.ops.aten.mul.Tensor(arg0_1, arg1_1);  arg0_1 = arg1_1 = None
+    #   return (mul,)
 
-    aten_graph = fwd_graph
-    # `aten_graph`
-    # class <lambda>(torch.nn.Module):
-    # def forward(self, arg0_1: "f32[8, 16]", arg1_1: "f32[8, 16]"):
-    #     # No stacktrace found for following nodes
-    #     mul: "f32[8, 16]" = torch.ops.aten.mul.Tensor(arg0_1, arg1_1);  arg0_1 = arg1_1 = None
-    #     return (mul,)
+    # `aot_output`
+    # DTensor(local_tensor=FakeTensor(..., device='cuda:0', size=(8, 16)), device_mesh=DeviceMesh('cuda', [0, 1]), placements=(Shard(dim=0),))
 
-    from thunder.dynamo.utils import _checkpoint_function_converter
-    import thunder
+    flat_aot_output, _ = pytree.tree_flatten(aot_output)
 
+    return fwd_graph, flat_aot_output
+
+
+def get_aten_symbols_and_output(
+    aten_graph: torch.fx.GraphModule, args_for_trace: Sequence[Any]
+) -> tuple[Sequence[BoundSymbol], Sequence[Proxy]]:
     # Replaces `aten` ops with thunder equivalent
     # and this makes the `g` traceable with thunder.
     _checkpoint_function_converter(aten_graph)
+
     aten_graph.recompile()
     # `aten_graph`
     # class <lambda>(torch.nn.Module):
@@ -153,8 +171,11 @@ def get_fx_graph(trc: TraceCtx, args_for_fx: Sequence[Any], args_for_trace: Sequ
     #     return (aten_mul,)
 
     # Otherwise `thunder.trace` get's confused.
+    # `TypeError: {} is not a callable object`
     del aten_graph.meta
 
+    # Need to wrap otherwise, tracing fails with
+    # `Can't yet create a signature for a callable object, like <class 'torch.fx.graph_module.GraphModule.__new__.<locals>.GraphModuleImpl'>`
     @wraps(aten_graph)
     def wrap(*args):
         return aten_graph(*args)
@@ -167,10 +188,11 @@ def get_fx_graph(trc: TraceCtx, args_for_fx: Sequence[Any], args_for_trace: Sequ
         flatten_tensor_proxy(arg) if isinstance(arg, DTensorProxy) else arg for arg in args_for_trace
     )
 
+    # Reuse the original proxy names
     trc = thunder.trace(rename_proxies=False, inline_trace=False)(wrap, *flattened_args)
 
     aten_syms = []
-    # This seems hacky (is there a better way?)
+    # This seems hacky.
     for bsym in trc.bound_symbols:
         if "aten" in bsym.sym.name:
             aten_syms.append(bsym)
@@ -179,34 +201,39 @@ def get_fx_graph(trc: TraceCtx, args_for_fx: Sequence[Any], args_for_trace: Sequ
     assert trc.bound_symbols[-1].sym == prims.python_return
     proxy_out = trc.bound_symbols[-1].flat_args
 
-    with tracectx(trc):
-        flat_output, _ = pytree.tree_flatten(aot_output)
-
-    return aten_syms, flat_output, proxy_out
+    return aten_syms, proxy_out
 
 
 def decompose_into_aten_subsymbols(bsym_executable_trace, comp_trace, *args, **kwargs):
     flat_args, _ = pytree.tree_flatten((args, kwargs))
-    filter_tensor_proxies = list(filter(lambda t: isinstance(t, DTensorProxy), flat_args))
 
     with tracectx(comp_trace):
         new_args = []
         for arg in flat_args:
             if isinstance(arg, DTensorProxy):
                 # Add call to get `local_tensor` for input DTensors to current `comp_trace` scope
-                tp = arg
-                if not comp_trace.has_name(tp.name):
-                    comp_trace.add_name(tp.name)
-                if not comp_trace.has_name(tp._local_tensor.name):
-                    comp_trace.add_name(tp._local_tensor.name)
-                new_args.append(dtensor_prims_and_impl.get_dtensor_inner_tensor(tp))
+                tensor_proxy = arg
+                if not comp_trace.has_name(tensor_proxy.name):
+                    comp_trace.add_name(tensor_proxy.name)
+                if not comp_trace.has_name(tensor_proxy._local_tensor.name):
+                    comp_trace.add_name(tensor_proxy._local_tensor.name)
+                new_args.append(dtensor_prims_and_impl.get_dtensor_inner_tensor(tensor_proxy))
             else:
                 new_args.append(arg)
 
     # NOTE: Setting the TracingContext is important else `aot_function` used in `get_fx_graph`
     #       may find different FakeTensorMode.
     with tracing(TracingContext(FakeTensorMode())):
-        aten_bsyms, flat_fake_output, flat_proxy_output = get_fx_graph(bsym_executable_trace, flat_args, new_args)
+        aot_graph, flat_fake_output = get_fx_graph_and_output(bsym_executable_trace, flat_args)
+
+    # `aot_graph`
+    # class <lambda>(torch.nn.Module):
+    # def forward(self, arg0_1: "f32[8, 16]", arg1_1: "f32[8, 16]"):
+    #     # No stacktrace found for following nodes
+    #     mul: "f32[8, 16]" = torch.ops.aten.mul.Tensor(arg0_1, arg1_1);  arg0_1 = arg1_1 = None
+    #     return (mul,)
+
+    aten_bsyms, flat_proxy_output = get_aten_symbols_and_output(aot_graph, new_args)
 
     # `aten_bsyms`
     # [t0 = thunder.torch.experimental.dtensor_torch_and_aten_ops.aten_mul(t3, t6)  # t0: "cuda:0 f32[8, 16]"
@@ -232,7 +259,7 @@ def decompose_into_aten_subsymbols(bsym_executable_trace, comp_trace, *args, **k
         outs = []
 
         # Add `construct_dtensor` which will return the final output for the symbol to the current `comp_trace` scope.
-        for _, flat_fake_o, proxy_o in zip(bsym.flat_outs, flat_fake_output, flat_proxy_output):
+        for _, flat_fake_o, proxy_o in zip(bsym.flat_outs, flat_fake_output, flat_proxy_output, strict=True):
             o = dtensor_prims_and_impl.construct_dtensor(proxy_o, flat_fake_o._spec)
             outs.append(o)
 
