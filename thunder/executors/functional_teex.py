@@ -3,7 +3,9 @@ from thunder.core.proxies import AnyProxy, TensorProxy
 from thunder.core.prims import get_grad
 from thunder.core.transforms import put_grads
 from thunder.extend import OperatorExecutor, register_executor
-import thunder.torch as ltorch
+
+from thunder.core import prims
+
 from thunder.executors.transformer_engineex import _linear_checker
 
 import transformer_engine.pytorch as te
@@ -215,7 +217,7 @@ def _te_linear_grad_transform(a, w, bias):
 
 
 functional_te_ex.register_implementation(
-    ltorch.linear,
+    prims.linear,
     checker=_functional_te_checker,
     execution_transform=_te_linear_execution_transform,
     grad_transform=_te_linear_grad_transform,
