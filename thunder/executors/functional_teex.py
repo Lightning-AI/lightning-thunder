@@ -55,9 +55,22 @@ class FP8ExecutorState:
     def get_quantizers(cls, key: str) -> list[Float8Quantizer] | None:
         return cls.quantizers.get(key, None)
 
+    @classmethod
+    def reset_executor_state(cls):
+        cls.layer_counter = 0
+        cls.recipe = None
+        cls.states = {}
+        cls.quantizers = {}
+
+
 # TODO
-def _functional_te_checker(*args):
-    return _linear_checker(*args)
+def _functional_te_checker(a, w, /, bias):
+    # does not support bias
+    # https://github.com/NVIDIA/TransformerEngine/blob/1321b9b5dc96d67d20d6682c52116a3657f293d3/transformer_engine/pytorch/ops/basic/basic_linear.py#L46-L47
+    # https://github.com/NVIDIA/TransformerEngine/blob/1321b9b5dc96d67d20d6682c52116a3657f293d3/transformer_engine/pytorch/ops/basic/basic_linear.py#L505
+    if bias:
+        return False
+    return _linear_checker(a, w, bias)
 
 
 def _te_fp8_recipe_meta(recipe_name: str):
@@ -149,7 +162,7 @@ def _linear_fwd_impl(a, w, bias, forward_recipe_state, input_quantizer, weight_q
 _te_linear_fwd = functional_te_ex.register_operator("te_functional_fwd", meta=_linear_fwd_meta, fn=_linear_fwd_impl)
 
 
-def _te_linear_execution_transform(a, w, bias):
+def _te_linear_execution_transform(a, w, /, bias):
     recipe = _te_fp8_recipe("delayed")
 
     # can get rid of this by using a uniquie number generated here and then saved as constant(automatically?)
