@@ -65,7 +65,7 @@ class FP8ExecutorState:
 
 # TODO
 def _functional_te_checker(a, w, /, bias):
-    # does not support bias
+    # TE 2.0 functional API does not yet support bias=True
     # https://github.com/NVIDIA/TransformerEngine/blob/1321b9b5dc96d67d20d6682c52116a3657f293d3/transformer_engine/pytorch/ops/basic/basic_linear.py#L46-L47
     # https://github.com/NVIDIA/TransformerEngine/blob/1321b9b5dc96d67d20d6682c52116a3657f293d3/transformer_engine/pytorch/ops/basic/basic_linear.py#L505
     if bias:
