@@ -121,11 +121,15 @@ def _te_fp8_state_impl(layer_id, recipe, mode, num_quantizers):
 _te_fp8_state = functional_te_ex.register_operator("te_fp8_state", meta=_te_fp8_state_meta, fn=_te_fp8_state_impl)
 
 
-def _linear_fwd_meta(a: TensorProxy, w, bias, forward_recipe_state, input_quantizer, weight_quantizer):
-    # TODO if not requires_grad -> return return TensorProxy(like=a), None, None
-    if a.requires_grad:
-        return TensorProxy(like=a), TensorProxy(like=a), TensorProxy(like=w)
-    return TensorProxy(like=a), None, None
+def _linear_fwd_meta(
+    a: TensorProxy,
+    w: TensorProxy,
+    bias: TensorProxy | None,
+    forward_recipe_state: RecipeState,
+    input_quantizer: Float8Quantizer,
+    weight_quantizer: Float8Quantizer,
+):
+    return TensorProxy(like=a), TensorProxy(like=a), TensorProxy(like=w)
 
 
 def _linear_fwd_impl(a, w, bias, forward_recipe_state, input_quantizer, weight_quantizer):
