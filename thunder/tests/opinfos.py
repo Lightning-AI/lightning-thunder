@@ -1193,7 +1193,7 @@ frexp_opinfo = OpInfo(
         DecorateInfo(
             pytest.mark.skip,
             "test_phantom_grad_vs_torch_consistency",
-            executors=("nvfuser"),
+            executors=("nvfuser",),
         ),
         DecorateInfo(
             pytest.mark.skip,
