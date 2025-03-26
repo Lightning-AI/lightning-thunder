@@ -131,6 +131,11 @@ class TraceCtx:
         # We only want the forward function to be called with ctx manager.
         self._include_te_fp8_autocast = False
 
+        # Disable :func:`thunder.set_execution_callback_file`
+        # mainly for traces generated inside lookasides for custom `torch.autograd.Function`
+        # and `torch.ops.higher_order.autograd_function_apply`
+        self._force_disable_execution_callback_file = False
+
     @property
     def bound_symbols(self) -> list[BoundSymbolInterface]:
         return self._bound_symbols
@@ -497,7 +502,7 @@ class TraceCtx:
 
         # Writes the program to allow it to be edited before execution
         path: None | str = _get_execution_file()
-        if path is not None:
+        if path is not None and not self._force_disable_execution_callback_file:
             f = open(path, "w")
             f.write(self.python(**kwargs))
             f.close()
