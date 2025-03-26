@@ -1,4 +1,5 @@
 from functools import partial
+from collections.abc import Callable
 
 from thunder.torch import torchsymbol, TensorLike, register_function, TensorProxy
 import thunder.torch as ltorch
@@ -30,8 +31,13 @@ def dispatch_to_impl(single_device_symbol, dtensor_symbol):
     return wrapper
 
 
-def register_function_for_dtensor(torch_fn, single_device_symbol, dtensor_symbol):
+def register_function_for_dtensor(torch_fn, single_device_symbol, dtensor_symbol, is_method=False):
     register_function(torch_fn, dispatch_to_impl(single_device_symbol, dtensor_symbol))
+
+    if is_method:
+        method_name: str = torch_fn.__name__
+        torch_method: None | Callable = getattr(torch.Tensor, method_name, None)
+        register_method_for_dtensor(torch_method, single_device_symbol, dtensor_symbol)
 
 
 def register_method_for_dtensor(torch_fn, single_device_symbol, dtensor_symbol):
@@ -64,8 +70,5 @@ def dtensor_add(a: TensorLike, b: TensorLike, alpha=1) -> TensorLike:
 
 
 def register_dtensor_and_aten_function():
-    register_function_for_dtensor(torch.add, ltorch.add, dtensor_add)
-    register_function_for_dtensor(torch.mul, ltorch.mul, dtensor_mul)
-    # TODO: Handle method registration with a flag like torchsymbol.
-    register_method_for_dtensor(torch.Tensor.add, ltorch.add, dtensor_add)
-    register_method_for_dtensor(torch.Tensor.mul, ltorch.mul, dtensor_mul)
+    register_function_for_dtensor(torch.add, ltorch.add, dtensor_add, is_method=True)
+    register_function_for_dtensor(torch.mul, ltorch.mul, dtensor_mul, is_method=True)
