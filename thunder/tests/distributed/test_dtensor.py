@@ -7,6 +7,7 @@ if not torch.distributed.is_available():
     pytest.skip(allow_module_level=True)
 
 from thunder.dynamo import thunderfx
+import thunder
 
 from thunder.tests.distributed.helper import DistributedParallelTestCase
 from torch.distributed._tensor import DeviceMesh, Shard, distribute_tensor
@@ -26,7 +27,7 @@ class DTensorTest(DistributedParallelTestCase):
 
         def _helper(fn, in_dtensor, w_dtensor):
             expected = torch.compile(fn)(in_dtensor, w_dtensor)
-            tmodel = thunderfx(fn)
+            tmodel = thunder.jit(fn)
             actual = tmodel(in_dtensor, w_dtensor)
 
             torch.testing.assert_close(actual, expected)
@@ -66,15 +67,15 @@ class DTensorTest(DistributedParallelTestCase):
         def fn(x, w):
             return torch.div(x, w)
 
-        tmodel = thunderfx(fn)
-        with pytest.raises(RuntimeError):
+        tmodel = thunder.jit(fn)
+        with pytest.raises(AssertionError):
             tmodel(in_dtensor, w_dtensor)
 
         def fn(x, w):
             return x / w
 
-        tmodel = thunderfx(fn)
-        with pytest.raises(RuntimeError):
+        tmodel = thunder.jit(fn)
+        with pytest.raises(AssertionError):
             tmodel(in_dtensor, w_dtensor)
 
     def test_dtensor_unsupported_mixed_input(self):
@@ -90,6 +91,6 @@ class DTensorTest(DistributedParallelTestCase):
 
         in_dtensor = distribute_tensor(torch.randn(dim_size, dim_size, requires_grad=True), mesh, [Shard(0)])
 
-        tmodel = thunderfx(fn)
-        with pytest.raises(RuntimeError):
+        tmodel = thunder.jit(fn)
+        with pytest.raises(AssertionError):
             tmodel(in_dtensor, w)
