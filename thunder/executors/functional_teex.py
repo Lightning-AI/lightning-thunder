@@ -53,6 +53,7 @@ class FP8ExecutorState:
     def get_quantizers(cls, key: str) -> list[Float8Quantizer] | None:
         return cls.quantizers.get(key, None)
 
+
 # TODO
 def _functional_te_checker(*args):
     return _linear_checker(*args)
