@@ -829,8 +829,8 @@ _register_elementwise_unary_implementation(ltorch.trunc, trunc)
 _register_elementwise_unary_implementation(ltorch.real, real)
 
 
-def _frexp_transform(a: TensorProxy, *, out=None):
-    return frexp(a, out=out)
+def _frexp_transform(a: TensorProxy):
+    return frexp(a)
 
 
 _register_implementation(prims.frexp, checker=_always_executable, execution_transform=_frexp_transform)

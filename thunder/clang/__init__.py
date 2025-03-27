@@ -1603,13 +1603,13 @@ def floor(a: TensorLike | Number) -> TensorLike | Number:
 
 
 @clangop()
-def frexp(a: TensorLike, *, out=None) -> tuple[TensorLike, TensorLike]:
+def frexp(a: TensorLike, /) -> tuple[TensorLike, TensorLike]:
     utils.check(
         dtypes.is_float_dtype(dtypes.to_dtype(a)),
         lambda: f"frexp only supports floating-point dtypes",
     )
 
-    return prims.frexp(a, out=out)
+    return prims.frexp(a)
 
 
 @clangop()

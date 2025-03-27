@@ -1029,8 +1029,8 @@ def _exp_prim_grad(a: Number | TensorProxy) -> Number | TensorProxy:
 register_grad(pids.EXP, _exp_prim_grad)
 
 
-def _frexp_prim_grad(a: Number | TensorProxy, *, out=None):
-    fwd = prims.frexp(a, out=out)
+def _frexp_prim_grad(a: Number | TensorProxy):
+    fwd = prims.frexp(a)
     mantissa, exponent = fwd
 
     g_mantissa = get_grad(mantissa)

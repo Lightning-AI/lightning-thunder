@@ -1579,8 +1579,8 @@ def floor_(a):
 
 
 @torchsymbol(torch.frexp, is_method=True)
-def frexp(a: TensorLike, *, out=None) -> (TensorLike, TensorLike):
-    return clang.frexp(a, out=out)
+def frexp(a: TensorLike) -> (TensorLike, TensorLike):
+    return clang.frexp(a)
 
 
 @torchsymbol(torch.isfinite, is_method=True)

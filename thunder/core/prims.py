@@ -2218,14 +2218,8 @@ floor = _make_elementwise_unary_prim(
 )
 
 
-def frexp_meta(a: TensorProxy, *, out: None | TensorProxy = None) -> (TensorProxy, TensorProxy):
-    utils.check(
-        out is None,
-        lambda: "Only `out` which is None is currently supported",
-    )
-
+def frexp_meta(a: TensorProxy, /) -> (TensorProxy, TensorProxy):
     utils.check_type(a, TensorProxy)
-
     return TensorProxy(like=a), TensorProxy(like=a)
 
 
