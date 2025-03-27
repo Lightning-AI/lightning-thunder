@@ -1766,6 +1766,11 @@ def real(a):
     return clang.real(a)
 
 
+@torchsymbol(torch.imag, is_method=False)
+def imag(a: TensorLike) -> TensorLike:
+    return clang.imag(a)
+
+
 #
 # nn.functional elementwise unary
 #
@@ -6179,6 +6184,7 @@ _syms_returning_views: set[Symbol] = {
     transpose,
     t,
     real,
+    imag,
     unflatten,
     unfold,
     unsqueeze,

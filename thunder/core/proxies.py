@@ -1889,6 +1889,15 @@ class TensorProxy(Proxy, TensorProxyInterface):
         method = resolve_method("real", self)
         return method(self)
 
+    #
+    # Imag
+    #
+
+    @property
+    def imag(self):
+        method = resolve_method("imag", self)
+        return method(self)
+
 
 class TorchAutogradFunctionCtxProxy(Proxy, TorchAutogradFunctionCtxProxyInterface):
     _DEFAULT_PREFIX = "fc"
