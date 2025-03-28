@@ -152,6 +152,14 @@ assert torch.testing.assert_close(y, model(x))
 
 ### Speed up LLM training
 
+Install LitGPT (without updating other dependencies)
+
+```
+pip install --no-deps 'litgpt[all]'
+```
+
+and run
+
 ```python
 import thunder
 import torch
@@ -169,6 +177,14 @@ out.sum().backward()
 ```
 
 ### Speed up HuggingFace BERT inference
+
+Install Hugging Face Transformers (recommended version is `4.50.2` and above)
+
+```
+pip install -U transformers
+```
+
+and run
 
 ```python
 import thunder
@@ -188,13 +204,21 @@ with torch.device("cuda"):
 
     inp = tokenizer(["Hello world!"], return_tensors="pt")
 
-thunder_model = thunder.compile(model, plugins="reduce-overhead")
+thunder_model = thunder.compile(model)
 
 out = thunder_model(**inp)
 print(out)
 ```
 
 ### Speed up HuggingFace DeepSeek R1 distill inference
+
+Install Hugging Face Transformers (recommended version is `4.50.2` and above)
+
+```
+pip install -U transformers
+```
+
+and run
 
 ```python
 import torch
@@ -214,9 +238,7 @@ with torch.device("cuda"):
 
     inp = tokenizer(["Hello world! Here's a long story"], return_tensors="pt")
 
-thunder_model = thunder.compile(
-    model, recipe="hf-transformers", plugins="reduce-overhead"
-)
+thunder_model = thunder.compile(model)
 
 out = thunder_model.generate(
     **inp, do_sample=False, cache_implementation="static", max_new_tokens=100
@@ -240,7 +262,7 @@ with torch.device("cuda"):
 
 out = model(inp)
 
-thunder_model = thunder.compile(model, plugins="reduce-overhead")
+thunder_model = thunder.compile(model)
 
 out = thunder_model(inp)
 ```
@@ -256,6 +278,16 @@ Thunder comes with a few plugins included of the box, but it's easy to write new
 - save memory with quantization
 - reduce latency with CUDAGraphs
 - debugging and profiling
+
+For example, in order to reduce CPU overheads via CUDAGraphs you can add "reduce-overhead"
+to the `plugins=` argument of `thunder.compile`:
+
+```python
+thunder_model = thunder.compile(model, plugins="reduce-overhead")
+```
+
+This may or may not make a big difference. The point of Thunder is that you can easily
+swap optimizations in and out and explore the best combination for your setup.
 
 ## How it works
 
