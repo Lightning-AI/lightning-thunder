@@ -242,6 +242,10 @@ def _real_prim_impl(a: complex) -> float:
     return a.real
 
 
+def _imag_prim_impl(a: complex) -> float:
+    return a.imag
+
+
 def _signbit_prim_impl(a: Number) -> bool:
     return a < 0
 
@@ -267,6 +271,7 @@ py_abs = ex.register_operator("abs", like=prims.py_abs, module=builtins)
 tensor_abs = ex.register_operator("tensor_abs", like=prims.abs, fn=_tensor_abs_prim_impl)
 neg = ex.register_operator("neg", like=prims.neg, module=operator)
 real = ex.register_operator("real", like=prims.real, fn=_real_prim_impl)
+imag = ex.register_operator("imag", like=prims.imag, fn=_imag_prim_impl)
 signbit = ex.register_operator("signbit", like=prims.signbit, fn=_signbit_prim_impl)
 clear_mutable_collection = ex.register_operator(
     "clear_mutable_collection", meta=_clear_mutable_collection_meta, fn=_clear_mutable_collection_prim_impl
@@ -282,6 +287,7 @@ ex.register_implementation(prims.py_abs, py_abs, checker=_elementwise_unary_chec
 ex.register_implementation(prims.abs, tensor_abs, checker=_elementwise_unary_checker)
 ex.register_implementation(prims.neg, neg, checker=_elementwise_unary_checker)
 ex.register_implementation(prims.real, real, checker=_elementwise_unary_checker)
+ex.register_implementation(prims.imag, imag, checker=_elementwise_unary_checker)
 ex.register_implementation(prims.signbit, signbit, checker=_elementwise_unary_checker)
 
 
