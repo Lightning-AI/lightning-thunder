@@ -137,6 +137,7 @@ Optimize it with thunder:
 
 ```python
 import thunder
+import torch
 
 thunder_model = thunder.compile(model)
 
@@ -144,7 +145,7 @@ x = torch.randn(64, 2048)
 
 y = thunder_model(x)
 
-assert y == model(x)
+assert torch.equal(y, model(x))
 ```
 
 ## Examples
@@ -230,7 +231,7 @@ import thunder
 import torch
 import torchvision as tv
 
-with torch.device(device):
+with torch.device("cuda"):
     model = tv.models.vit_b_16()
     model.requires_grad_(False)
     model.eval()
