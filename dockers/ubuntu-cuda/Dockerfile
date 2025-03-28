@@ -44,8 +44,7 @@ RUN \
         ca-certificates \
         software-properties-common \
         pkg-config \
-        # cmake pinned due to https://github.com/pytorch/pytorch/pull/150158
-        cmake=3.31.2 \
+        cmake \
         ninja-build \
         git \
         wget \
