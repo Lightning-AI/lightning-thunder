@@ -176,21 +176,6 @@ out = thunder_model(inp)
 out.sum().backward()
 ```
 
-To get an idea of the speedups, just run
-
-```bash
-python examples/quickstart/hf_llm.py
-```
-
-Here what you get on a L4 machine from Lightning Studio:
-
-```bash
-Eager: 2273.22ms
-Thunder: 1254.39ms
-```
-
-81% faster! Quite the speedup ⚡️
-
 ### Speed up HuggingFace BERT inference
 
 Install Hugging Face Transformers (recommended version is `4.50.2` and above)
@@ -260,6 +245,21 @@ out = thunder_model.generate(
 )
 print(out)
 ```
+
+To get an idea of the speedups, just run
+
+```bash
+python examples/quickstart/hf_llm.py
+```
+
+Here what you get on a L4 machine from [Lightning Studio](https://lightning.ai):
+
+```bash
+Eager: 2273.22ms
+Thunder: 1254.39ms
+```
+
+81% faster 🏎️! Quite the speedup ⚡️
 
 ### Speed up Vision Transformer inference
 
