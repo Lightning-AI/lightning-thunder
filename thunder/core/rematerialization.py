@@ -540,14 +540,7 @@ def match_fw_and_bw_saved_for_bw_proxies(
     """
 
     old_saved_for_backward_fw = [*fw_trace.output[1][0], *fw_trace.output[1][1]]
-    old_saved_for_backward_bw = [None] * len(old_saved_for_backward_fw)
-    for bsym in bw_trace.bound_symbols:
-        if bsym.sym.id == PrimIDs.UNPACK_SEQUENCE and bsym.args[0].name == "C0":
-            for i, out in enumerate(bsym.flat_outs):
-                old_saved_for_backward_bw[i] = out
-        elif bsym.sym.id == PrimIDs.UNPACK_SEQUENCE and bsym.args[0].name == "C1":
-            for i, out in enumerate(bsym.flat_outs):
-                old_saved_for_backward_bw[len(fw_trace.output[1][0]) + i] = out
+    old_saved_for_backward_bw = [*bw_trace.args[0][0], *bw_trace.args[0][1]]
     assert len(old_saved_for_backward_fw) == len(old_saved_for_backward_bw)
     new_required_for_backward_bw_to_fw_map = {
         x.name: y for x, y in zip(old_saved_for_backward_bw, old_saved_for_backward_fw) if x is not None
