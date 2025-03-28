@@ -1104,6 +1104,7 @@ elementwise_unary_ops.append(exp_opinfo)
 
 exp2_opinfo = OpInfo(
     clang.exp2,
+    supports_grad=True,
     sample_input_generator=partial(elementwise_unary_generator, supports_numbers=False),
     torch_reference=_elementwise_unary_torch(torch.exp2),
     test_directives=(
@@ -2287,6 +2288,14 @@ logical_xor_opinfo = OpInfo(
     torch_reference=torch._refs.logical_xor,
 )
 elementwise_binary_ops.append(logical_xor_opinfo)
+
+ldexp_opinfo = OpInfo(
+    clang.ldexp,
+    dtypes=(datatypes.float32, datatypes.float64),
+    sample_input_generator=partial(elementwise_binary_generator, no_rhs_numbers=True),
+    torch_reference=torch.ldexp,
+)
+elementwise_binary_ops.append(ldexp_opinfo)
 
 le_opinfo = OpInfo(
     clang.le,
