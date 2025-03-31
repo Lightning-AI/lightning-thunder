@@ -306,15 +306,18 @@ class TorchBenchmarkTimerSpecification(TimerInterface):
     See: :class:`torch.utils.benchmark.utils.timer.Timer` for more details.
     """
 
-    inner_timer: Callable = torch.utils.benchmark.utils.timer.timer
-    name: str = "TorchBenchmarkTimerSpecification"
-
     def __init__(
         self,
+        name: str = "TorchBenchmarkTimerSpecification",
+        inner_timer: Callable = torch.utils.benchmark.utils.timer.timer,
+        *,
         threshold: float | None = None,
         min_run_time: float | None = None,
         max_run_time: float | None = None,
     ):
+        self.inner_timer = inner_timer
+        self.name = name
+
         default_params = inspect.signature(TorchBenchmarkTimer.adaptive_autorange).parameters
 
         self.threshold = threshold if threshold is not None else default_params["threshold"].default
@@ -350,20 +353,29 @@ class TorchBenchmarkTimerSpecification(TimerInterface):
     def to_source(self, fn_name, inputs_name):
         return f'{self.__repr__()}.time("{fn_name}(*{inputs_name})", globals={{"{fn_name}":{fn_name}, "{inputs_name}": {inputs_name}}})'
 
+    def __call__(
+        self,
+        *,
+        threshold: float | None = None,
+        min_run_time: float | None = None,
+        max_run_time: float | None = None,
+    ):
+        return self.__class__(
+            name=self.name,
+            inner_timer=self.inner_timer,
+            threshold=threshold if threshold is not None else self.threshold,
+            min_run_time=min_run_time if min_run_time is not None else self.min_run_time,
+            max_run_time=max_run_time if max_run_time is not None else self.max_run_time,
+        )
 
-class WallTime(TorchBenchmarkTimerSpecification):
-    name = "WallTime"
-    inner_timer = torch.utils.benchmark.utils.timer.timer
 
+WallTime = TorchBenchmarkTimerSpecification("WallTime")
 
-class WallTimeWithMemoryUsage(TorchBenchmarkTimerSpecification):
-    name = "WallTimeWithMemoryUsage"
-    inner_timer = TimerWithCUDAMemoryUsage()
+walltime_with_memory_usage = TimerWithCUDAMemoryUsage()
+WallTimeWithMemoryUsage = TorchBenchmarkTimerSpecification("WallTimeWithMemoryUsage", walltime_with_memory_usage)
 
-
-class KernelTime(TorchBenchmarkTimerSpecification):
-    name = "KernelTime"
-    inner_timer = TorchProfileTimer()
+torch_profile_timer = TorchProfileTimer()
+KernelTime = TorchBenchmarkTimerSpecification("KernelTime", torch_profile_timer)
 
 
 def check_threshold(a, b, rtol, atol):
