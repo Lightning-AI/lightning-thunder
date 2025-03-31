@@ -1,5 +1,3 @@
-from typing import Optional
-
 from thunder.core.proxies import TensorProxy, AnyProxy, _infer_tensor_properties
 from torch.distributed._tensor import DTensor
 from thunder.core.proxies import proxy

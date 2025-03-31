@@ -19,7 +19,7 @@ get_dtensor_inner_tensor = make_prim("get_dtensor_inner_tensor", "get_dtensor_in
 
 
 def _construct_dtensor(local_tensor_proxy, spec):
-    from thunder.torch.experimental.dtensor_proxy import DTensorProxy  # , proxy
+    from thunder.torch.experimental.dtensor_proxy import DTensorProxy
 
     spec_proxy = AnyProxy(spec)
     # spec_proxy = spec
