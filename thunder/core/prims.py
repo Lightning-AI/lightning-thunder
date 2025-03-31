@@ -2358,7 +2358,7 @@ def real_meta(a: complex | TensorProxy) -> float | TensorProxy:
     utils.check_type(a, (TensorProxy, complex))
     dtyp = dtypes.to_dtype(a, true_dtype=True)
     utils.check(
-        is_complex_dtype(dtyp),
+        dtypes.is_complex_dtype(dtyp),
         lambda: f"real expected a complex tensor or number, but receive a tensor or number with dtype {dtyp}",
     )
     output_dtype = dtypes.corresponding_real_dtype(dtyp)
@@ -2382,7 +2382,7 @@ def imag_meta(a: complex | TensorProxy) -> float | TensorProxy:
     utils.check_type(a, (TensorProxy, complex))
     dtyp = dtypes.to_dtype(a, true_dtype=True)
     utils.check(
-        is_complex_dtype(dtyp),
+        dtypes.is_complex_dtype(dtyp),
         lambda: f"imag expected a complex tensor or number, but receive a tensor or number with dtype {dtyp}",
     )
     output_dtype = dtypes.corresponding_real_dtype(dtyp)
