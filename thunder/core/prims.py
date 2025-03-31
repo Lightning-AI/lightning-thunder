@@ -2201,10 +2201,17 @@ exp = _make_elementwise_unary_prim(
     supported_input_dtypes=fp_math_dtypes,
 )
 
+
+def _exp2_number(a: Number) -> Number:
+    if hasattr(math, "exp2"):
+        return math.exp2(a)
+    return 2**a
+
+
 exp2 = _make_elementwise_unary_prim(
     PrimIDs.EXP2,
     "exp2",
-    number_fn=math.exp2,
+    number_fn=_exp2_number,
     supported_input_dtypes=fp_math_dtypes,
 )
 
