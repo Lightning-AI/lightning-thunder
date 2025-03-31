@@ -2,7 +2,7 @@ import logging
 import weakref
 from dataclasses import dataclass
 from functools import lru_cache, partial
-from typing import Callable
+from collections.abc import Callable
 
 import nvmath
 
