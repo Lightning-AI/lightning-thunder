@@ -3006,48 +3006,38 @@ def topk(
 
 
 @torchsymbol(torch.atleast_1d, is_method=True)
-def atleast_1d(
-    arg: Union[TensorLike, Sequence[TensorLike]], *args: TensorLike
-) -> Union[TensorLike, tuple[TensorLike, ...]]:
-    if not args and isinstance(arg, Sequence):
-        args_ = arg
-    else:
-        assert not isinstance(arg, Sequence)
-        args_ = (arg,) + args
-    res = tuple(a if a.ndim >= 1 else unsqueeze(a, 0) for a in args_)
+def atleast_1d(*args: Union[TensorLike, Sequence[TensorLike]]) -> Union[TensorLike, tuple[TensorLike, ...]]:
+    res = tuple(a if a.ndim >= 1 else unsqueeze(a, 0) for a in args)
     return res if len(res) > 1 else res[0]
 
 
-def _unsqueeze_atleast(at_least_fn: Callable, dim: int, arg: TensorLike) -> TensorLike:
-    arg_ = at_least_fn(arg)
-    return unsqueeze(arg_, dim)
-
-
 @torchsymbol(torch.atleast_2d, is_method=True)
-def atleast_2d(
-    arg: Union[TensorLike, Sequence[TensorLike]], *args: TensorLike
-) -> Union[TensorLike, tuple[TensorLike, ...]]:
-    if not args and isinstance(arg, Sequence):
-        args_ = arg
-    else:
-        assert not isinstance(arg, Sequence)
-        args_ = (arg,) + args
-    unsqueeze_atleast_1d = partial(_unsqueeze_atleast, atleast_1d, 0)
-    res = tuple(a if a.ndim >= 2 else unsqueeze_atleast_1d(a) for a in args_)
+def atleast_2d(*args: Union[TensorLike, Sequence[TensorLike]]) -> Union[TensorLike, tuple[TensorLike, ...]]:
+
+    def _unsqueeze_atleast(a):
+        if a.ndim == 0:
+            return a.unsqueeze(0).unsqueeze(1)
+        elif a.ndim == 1:
+            return a.unsqueeze(0)
+        return a
+
+    res = tuple(_unsqueeze_atleast(a) if isinstance(a, TensorProxy) else a for a in args)
     return res if len(res) > 1 else res[0]
 
 
 @torchsymbol(torch.atleast_3d, is_method=True)
-def atleast_3d(
-    arg: Union[TensorLike, Sequence[TensorLike]], *args: TensorLike
-) -> Union[TensorLike, tuple[TensorLike, ...]]:
-    if not args and isinstance(arg, Sequence):
-        args_ = arg
-    else:
-        assert not isinstance(arg, Sequence)
-        args_ = (arg,) + args
-    unsqueeze_atleast_2d = partial(_unsqueeze_atleast, atleast_2d, -1)
-    res = tuple(a if a.ndim >= 3 else unsqueeze_atleast_2d(a) for a in args_)
+def atleast_3d(*args: Union[TensorLike, Sequence[TensorLike]]) -> Union[TensorLike, tuple[TensorLike, ...]]:
+
+    def _unsqueeze_atleast(a):
+        if a.ndim == 0:
+            return a.reshape(1, 1, 1)
+        elif a.ndim == 1:
+            return a.reshape(1, -1, 1)
+        elif a.ndim == 2:
+            return a.unsqueeze(-1)
+        return a
+
+    res = tuple(_unsqueeze_atleast(a) if isinstance(a, TensorProxy) else a for a in args)
     return res if len(res) > 1 else res[0]
 
 
