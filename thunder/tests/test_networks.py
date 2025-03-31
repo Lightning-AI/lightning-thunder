@@ -425,7 +425,7 @@ def test_thunderfx_mistral_nemo_small():
 
 @thunder.tests.framework.requiresCUDA
 @pytest.mark.skipif(
-    compare_version("transformers", operator.ge, "4.48.2", use_base_version=True),
+    compare_version("transformers", operator.gt, "4.48.2", use_base_version=True),
     reason=f"Flaky test for transformers==4.50.2. See https://github.com/Lightning-AI/lightning-thunder/issues/1920.",
 )
 @pytest.mark.parametrize("model_id", ["Qwen/Qwen2.5-7B-Instruct", "microsoft/Phi-3-mini-128k-instruct"])
