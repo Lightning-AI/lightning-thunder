@@ -336,19 +336,19 @@ class TorchBenchmarkTimerSpecification(TimerInterface):
         Returns:
             Measurement: A benchmarking result containing execution time statistics, see :class:`torch.utils.benchmark.utils.common.Measurement`.
         """
-        t = TorchBenchmarkTimer(stmt=stmt, setup=setup, globals=globals, timer=self.__class__.inner_timer)
+        t = TorchBenchmarkTimer(stmt=stmt, setup=setup, globals=globals, timer=self.inner_timer)
         measurement = t.adaptive_autorange(
             threshold=self.threshold, min_run_time=self.min_run_time, max_run_time=self.max_run_time
         )
-        if hasattr(self.__class__.inner_timer, "max_allocated_memory"):
-            measurement.max_allocated_memory = self.__class__.inner_timer.max_allocated_memory
+        if hasattr(self.inner_timer, "max_allocated_memory"):
+            measurement.max_allocated_memory = self.inner_timer.max_allocated_memory
         return measurement
 
     def import_str(self):
-        return [f"from thunder.dynamo.benchmark_utils import {self.__class__.name}"]
+        return [f"from thunder.dynamo.benchmark_utils import {self.name}"]
 
     def __repr__(self):
-        return f"{self.__class__.name}(threshold={self.threshold}, min_run_time={self.min_run_time}, max_run_time={self.max_run_time})"
+        return f"{self.name}(threshold={self.threshold}, min_run_time={self.min_run_time}, max_run_time={self.max_run_time})"
 
     def to_source(self, fn_name, inputs_name):
         return f'{self.__repr__()}.time("{fn_name}(*{inputs_name})", globals={{"{fn_name}":{fn_name}, "{inputs_name}": {inputs_name}}})'
