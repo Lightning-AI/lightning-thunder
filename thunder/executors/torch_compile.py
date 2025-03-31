@@ -26,41 +26,6 @@ from thunder.executors.torchex import ex as pytorch_ex
 _TORCH_GREATER_EQUAL_2_3 = compare_version("torch", operator.ge, "2.3.0", use_base_version=True)
 
 
-def to_torch_translator(bsym: BoundSymbol) -> Callable:
-    """Translates a BoundSymbol to a corresponding traceable by Thunder and
-    executable by PyTorch callable.
-
-    Args:
-        bsym: The BoundSymbol to translate.
-
-    Returns:
-        A callable that can be executed by PyTorch after being traced by Thunder.
-    """
-
-    def _to_torch(*args, **kwargs) -> Any:
-        impl_info = pytorch_ex.implmap.get(bsym.sym.id)
-        torch_op = None
-        if impl_info is not None:
-            torch_op = impl_info.symbol
-            if impl_info.execution_transform is not None:
-                return impl_info.execution_transform(*args, **kwargs)
-
-        if torch_op is None:
-            torch_op = pytorch_ex.opmap.get(bsym.sym.name)
-
-        # this should be really rare, but type_as has this,
-        # ideally we would be also handling more subsymbols here
-        if torch_op is None and len(bsym.subsymbols) == 1:
-            torch_op = pytorch_ex.opmap.get(bsym.subsymbols[0].sym.name)
-
-        if torch_op is None:
-            raise RuntimeError(f"op not found for {bsym.sym.name}")
-
-        return torch_op(*args, **kwargs)
-
-    return _to_torch
-
-
 def make_compiled(
     bsyms: list[BoundSymbol], sorted_unique_inputs: list[Proxy], sorted_unique_outputs: list[Proxy]
 ) -> Callable:
