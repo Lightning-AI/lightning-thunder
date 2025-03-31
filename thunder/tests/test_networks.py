@@ -2,6 +2,7 @@ import math
 from dataclasses import dataclass
 from functools import partial
 import warnings
+import operator
 
 import pytest
 import torch
@@ -21,6 +22,7 @@ from thunder.tests.framework import (
 )
 import thunder.tests.nanogpt_model as nanogpt_model
 import thunder.tests.hf_bart_self_attn as hf_bart_self_attn
+from lightning_utilities import compare_version
 
 #
 # nanoGPT tests
@@ -422,7 +424,10 @@ def test_thunderfx_mistral_nemo_small():
 
 
 @thunder.tests.framework.requiresCUDA
-@pytest.mark.skip(reason="assertion error occurs for transformers==4.50.2")  # TODO
+@pytest.mark.skipif(
+    compare_version("transformers", operator.ge, "4.48.2", use_base_version=True),
+    reason=f"Flaky test for transformers==4.50.2. See https://github.com/Lightning-AI/lightning-thunder/issues/1920.",
+)
 @pytest.mark.parametrize("model_id", ["Qwen/Qwen2.5-7B-Instruct", "microsoft/Phi-3-mini-128k-instruct"])
 def test_hf_for_nemo(model_id):
     from thunder.dynamo import thunderfx
