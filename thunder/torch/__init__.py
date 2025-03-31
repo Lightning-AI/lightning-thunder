@@ -803,14 +803,13 @@ def randn_like(
 
 
 @torchsymbol(torch.bernoulli, is_method=True)
-def bernoulli(a: TensorLike, *, generator=None, out=None):
+def bernoulli(a: TensorLike, *, generator=None):
     # NOTE: Currently, we don't model randomness
     utils.check(
         generator is None,
         lambda: "bernoulli: generator is not None which is currently unsupported",
         NotImplementedError,
     )
-    utils.check(out is None, lambda: "bernoulli: out is not None which is currently unsupported", NotImplementedError)
     utils.check(dtypes.is_float_dtype(a.dtype), lambda: f"bernoulli only supports floating point dtypes, got {a.dtype}")
     return (uniform_like(a) < a).to(a.dtype)
 
@@ -3000,16 +2999,16 @@ def argmin(a: TensorLike, /, dim: int | None = None, keepdim: bool | None = Fals
 
 @torchsymbol(torch.topk, is_method=True)
 def topk(
-    a: TensorLike, /, k: int, dim: None | int = None, largest: bool = True, sorted: bool = True, *, out=None
+    a: TensorLike, /, k: int, dim: None | int = None, largest: bool = True, sorted: bool = True
 ) -> (TensorLike, TensorLike):
-    return clang.topk(a, k, dim, largest, sorted, out=out)
+    return clang.topk(a, k, dim, largest, sorted)
 
 
 @torchsymbol(torch.sort, is_method=True)
 def sort(
-    a: TensorLike, /, dim: None | int = None, descending: bool = False, stable: bool = False, *, out=None
+    a: TensorLike, /, dim: None | int = None, descending: bool = False, stable: bool = False
 ) -> (TensorLike, TensorLike):
-    return clang.sort(a, dim, descending, stable, out=out)
+    return clang.sort(a, dim, descending, stable)
 
 
 #
