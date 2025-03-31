@@ -2110,24 +2110,28 @@ digamma = _make_elementwise_unary_prim(
 asin = _make_elementwise_unary_prim(
     PrimIDs.ASIN,
     "asin",
+    number_fn=math.asin,
     supported_input_dtypes=fp_math_dtypes,
 )
 
 asinh = _make_elementwise_unary_prim(
     PrimIDs.ASINH,
     "asinh",
+    number_fn=math.asinh,
     supported_input_dtypes=fp_math_dtypes,
 )
 
 atan = _make_elementwise_unary_prim(
     PrimIDs.ATAN,
     "atan",
+    number_fn=math.atan,
     supported_input_dtypes=fp_math_dtypes,
 )
 
 atanh = _make_elementwise_unary_prim(
     PrimIDs.ATANH,
     "atanh",
+    number_fn=math.atanh,
     supported_input_dtypes=fp_math_dtypes,
 )
 
@@ -2153,24 +2157,28 @@ ceil = _make_elementwise_unary_prim(
 cos = _make_elementwise_unary_prim(
     PrimIDs.COS,
     "cos",
+    number_fn=math.cos,
     supported_input_dtypes=fp_math_dtypes,
 )
 
 cosh = _make_elementwise_unary_prim(
     PrimIDs.COSH,
     "cosh",
+    number_fn=math.cosh,
     supported_input_dtypes=fp_math_dtypes,
 )
 
 erf = _make_elementwise_unary_prim(
     PrimIDs.ERF,
     "erf",
+    number_fn=math.erf,
     supported_input_dtypes=fp_math_dtypes,
 )
 
 erfc = _make_elementwise_unary_prim(
     PrimIDs.ERFC,
     "erfc",
+    number_fn=math.erfc,
     supported_input_dtypes=fp_math_dtypes,
 )
 
@@ -2196,12 +2204,14 @@ exp = _make_elementwise_unary_prim(
 exp2 = _make_elementwise_unary_prim(
     PrimIDs.EXP2,
     "exp2",
+    number_fn=math.exp2,
     supported_input_dtypes=fp_math_dtypes,
 )
 
 expm1 = _make_elementwise_unary_prim(
     PrimIDs.EXPM1,
     "expm1",
+    number_fn=math.expm1,
     supported_input_dtypes=fp_math_dtypes,
 )
 
@@ -2233,24 +2243,28 @@ lgamma = _make_elementwise_unary_prim(
 log = _make_elementwise_unary_prim(
     PrimIDs.LOG,
     "log",
+    number_fn=math.log,
     supported_input_dtypes=fp_math_dtypes,
 )
 
 log10 = _make_elementwise_unary_prim(
     PrimIDs.LOG10,
     "log10",
+    number_fn=math.log10,
     supported_input_dtypes=fp_math_dtypes,
 )
 
 log1p = _make_elementwise_unary_prim(
     PrimIDs.LOG1P,
     "log1p",
+    number_fn=math.log1p,
     supported_input_dtypes=fp_math_dtypes,
 )
 
 log2 = _make_elementwise_unary_prim(
     PrimIDs.LOG2,
     "log2",
+    number_fn=math.log2,
     supported_input_dtypes=fp_math_dtypes,
 )
 
@@ -2317,30 +2331,35 @@ signbit = _make_elementwise_unary_prim(
 sin = _make_elementwise_unary_prim(
     PrimIDs.SIN,
     "sin",
+    number_fn=math.sin,
     supported_input_dtypes=fp_math_dtypes,
 )
 
 sinh = _make_elementwise_unary_prim(
     PrimIDs.SINH,
     "sinh",
+    number_fn=math.sinh,
     supported_input_dtypes=fp_math_dtypes,
 )
 
 sqrt = _make_elementwise_unary_prim(
     PrimIDs.SQRT,
     "sqrt",
+    number_fn=math.sqrt,
     supported_input_dtypes=fp_math_dtypes,
 )
 
 tan = _make_elementwise_unary_prim(
     PrimIDs.TAN,
     "tan",
+    number_fn=math.tan,
     supported_input_dtypes=fp_math_dtypes,
 )
 
 tanh = _make_elementwise_unary_prim(
     PrimIDs.TANH,
     "tanh",
+    number_fn=math.tanh,
     supported_input_dtypes=fp_math_dtypes,
 )
 
