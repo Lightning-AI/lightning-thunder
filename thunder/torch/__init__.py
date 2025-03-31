@@ -3009,21 +3009,46 @@ def topk(
 def atleast_1d(
     arg: Union[TensorLike, Sequence[TensorLike]], *args: TensorLike
 ) -> Union[TensorLike, tuple[TensorLike, ...]]:
-    return clang.atleast_1d(arg, *args)
+    if not args and isinstance(arg, Sequence):
+        args_ = arg
+    else:
+        assert not isinstance(arg, Sequence)
+        args_ = (arg,) + args
+    res = tuple(a if a.ndim >= 1 else unsqueeze(a, 0) for a in args_)
+    return res if len(res) > 1 else res[0]
+
+
+def _unsqueeze_atleast(at_least_fn: Callable, dim: int, arg: TensorLike) -> TensorLike:
+    arg_ = at_least_fn(arg)
+    return unsqueeze(arg_, dim)
 
 
 @torchsymbol(torch.atleast_2d, is_method=True)
 def atleast_2d(
     arg: Union[TensorLike, Sequence[TensorLike]], *args: TensorLike
 ) -> Union[TensorLike, tuple[TensorLike, ...]]:
-    return clang.atleast_2d(arg, *args)
+    if not args and isinstance(arg, Sequence):
+        args_ = arg
+    else:
+        assert not isinstance(arg, Sequence)
+        args_ = (arg,) + args
+    unsqueeze_atleast_1d = partial(_unsqueeze_atleast, atleast_1d, 0)
+    res = tuple(a if a.ndim >= 2 else unsqueeze_atleast_1d(a) for a in args_)
+    return res if len(res) > 1 else res[0]
 
 
 @torchsymbol(torch.atleast_3d, is_method=True)
 def atleast_3d(
     arg: Union[TensorLike, Sequence[TensorLike]], *args: TensorLike
 ) -> Union[TensorLike, tuple[TensorLike, ...]]:
-    return clang.atleast_3d(arg, *args)
+    if not args and isinstance(arg, Sequence):
+        args_ = arg
+    else:
+        assert not isinstance(arg, Sequence)
+        args_ = (arg,) + args
+    unsqueeze_atleast_2d = partial(_unsqueeze_atleast, atleast_2d, -1)
+    res = tuple(a if a.ndim >= 3 else unsqueeze_atleast_2d(a) for a in args_)
+    return res if len(res) > 1 else res[0]
 
 
 @torchsymbol(torch.sort, is_method=True)

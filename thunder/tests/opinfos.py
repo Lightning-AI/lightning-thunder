@@ -6040,9 +6040,8 @@ def atleast_1d2d3d_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
 
 atleast_1d_opinfo = OpInfo(
-    clang.atleast_1d,
+    ltorch.atleast_1d,
     supports_grad=True,
-    dtypes=(datatypes.floating, datatypes.exact, datatypes.complexfloating),
     sample_input_generator=atleast_1d2d3d_sample_generator,
     torch_reference=torch.atleast_1d,
 )
@@ -6050,9 +6049,8 @@ reduction_ops.append(atleast_1d_opinfo)
 
 
 atleast_2d_opinfo = OpInfo(
-    clang.atleast_2d,
+    ltorch.atleast_2d,
     supports_grad=True,
-    dtypes=(datatypes.floating, datatypes.exact, datatypes.complexfloating),
     sample_input_generator=atleast_1d2d3d_sample_generator,
     torch_reference=torch.atleast_2d,
 )
@@ -6060,9 +6058,8 @@ reduction_ops.append(atleast_2d_opinfo)
 
 
 atleast_3d_opinfo = OpInfo(
-    clang.atleast_3d,
+    ltorch.atleast_3d,
     supports_grad=True,
-    dtypes=(datatypes.floating, datatypes.exact, datatypes.complexfloating),
     sample_input_generator=atleast_1d2d3d_sample_generator,
     torch_reference=torch.atleast_3d,
 )

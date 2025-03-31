@@ -1360,7 +1360,7 @@ def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp):
             grads = [torch.ones_like(torch_result)]
 
     torch_tensors_requiring_grad = tuple(f for f in torch_flats if isinstance(f, torch.Tensor) and f.requires_grad)
-    torch_grad_result = torch.autograd.grad(torch_result, torch_tensors_requiring_grad, grads, allow_unused=True)
+    torch_grad_result = torch.autograd.grad(torch_result, torch_tensors_requiring_grad, grads)
 
     # Computes reference result (upcasting floats to double)
     def upcast_tensors(x: Any) -> Any:
@@ -1378,9 +1378,7 @@ def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp):
     )
     reference_result = torch_op(*reference_args, **reference_kwargs)
     reference_result = filter_differentiable_outputs(reference_result)
-    reference_grad_result = torch.autograd.grad(
-        reference_result, reference_tensors_requiring_grad, grads, allow_unused=True
-    )
+    reference_grad_result = torch.autograd.grad(reference_result, reference_tensors_requiring_grad, grads)
 
     # Computes thunder result
     grad_op = grad(op)
