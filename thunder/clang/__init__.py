@@ -1792,7 +1792,7 @@ def real(a: TensorProxy | Number):
 
 
 @clangop(method_name="imag")
-def imag(a: TensorProxy | Number) -> TensorLike:
+def imag(a: TensorProxy | Number, /) -> TensorLike:
     utils.check(
         dtypes.is_complex_dtype(dtypes.to_dtype(a)),
         lambda: f"imag is not implemented for tensors with non-complex dtypes",

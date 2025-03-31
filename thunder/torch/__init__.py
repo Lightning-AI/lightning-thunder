@@ -1761,12 +1761,12 @@ def zero_(a):
     return _copy_(a, zeros_like(a))
 
 
-@torchsymbol(torch.real, is_method=False)
+@torchsymbol(torch.real, is_method=True)
 def real(a):
     return clang.real(a)
 
 
-@torchsymbol(torch.imag, is_method=False)
+@torchsymbol(torch.imag, is_method=True)
 def imag(a: TensorLike) -> TensorLike:
     return clang.imag(a)
 
