@@ -832,11 +832,14 @@ hardswish = _register_torch_operation("hardswish", module=torch.nn.functional)
 hardtanh = _register_torch_operation("hardtanh", module=torch.nn.functional)
 leaky_relu = _register_torch_operation("leaky_relu", module=torch.nn.functional)
 logsigmoid = _register_torch_operation("logsigmoid", module=torch.nn.functional)
+mish = _register_torch_operation("mish", module=torch.nn.functional)
 relu = _register_torch_operation("relu", module=torch.nn.functional)
 relu6 = _register_torch_operation("relu6", module=torch.nn.functional)
 selu = _register_torch_operation("selu", module=torch.nn.functional)
 silu = _register_torch_operation("silu", module=torch.nn.functional)
+softplus = _register_torch_operation("softplus", module=torch.nn.functional)
 softshrink = _register_torch_operation("softshrink", module=torch.nn.functional)
+softsign = _register_torch_operation("softsign", module=torch.nn.functional)
 tanhshrink = _register_torch_operation("tanhshrink", module=torch.nn.functional)
 
 
@@ -851,13 +854,15 @@ _register_elementwise_unary_implementation(ltorch.hardshrink, hardshrink, checke
 _register_elementwise_unary_implementation(ltorch.hardswish, hardswish, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.hardtanh, hardtanh, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.leaky_relu, leaky_relu, checker=_always_executable)
+_register_elementwise_unary_implementation(ltorch.mish, mish, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.relu, relu, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.relu6, relu6, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.selu, selu, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.silu, silu, checker=_always_executable)
-_register_elementwise_unary_implementation(ltorch.tanhshrink, tanhshrink, checker=_always_executable)
+_register_elementwise_unary_implementation(ltorch.softplus, softplus, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.softshrink, softshrink, checker=_always_executable)
-
+_register_elementwise_unary_implementation(ltorch.softsign, softsign, checker=_always_executable)
+_register_elementwise_unary_implementation(ltorch.tanhshrink, tanhshrink, checker=_always_executable)
 #
 # Elementwise binary operations
 #
@@ -875,6 +880,8 @@ fmod = _register_torch_operation("fmod")
 ge = _register_torch_operation("ge")
 gt = _register_torch_operation("gt")
 logical_and = _register_torch_operation("logical_and")
+logical_or = _register_torch_operation("logical_or")
+logical_xor = _register_torch_operation("logical_xor")
 le = _register_torch_operation("le")
 lt = _register_torch_operation("lt")
 maximum = _register_torch_operation("maximum")
@@ -998,6 +1005,8 @@ _register_elementwise_binary_implementation(ltorch.fmod, fmod)
 _register_elementwise_binary_implementation(ltorch.ge, ge)
 _register_elementwise_binary_implementation(ltorch.gt, gt)
 _register_elementwise_binary_implementation(ltorch.logical_and, logical_and)
+_register_elementwise_binary_implementation(ltorch.logical_or, logical_or)
+_register_elementwise_binary_implementation(ltorch.logical_xor, logical_xor)
 _register_elementwise_binary_implementation(ltorch.le, le)
 _register_elementwise_binary_implementation(ltorch.lt, lt)
 _register_elementwise_binary_implementation(ltorch.maximum, maximum)
@@ -1166,6 +1175,9 @@ var_mean = _register_torch_operation("var_mean")
 argmax = _register_torch_operation("argmax")
 argmin = _register_torch_operation("argmin")
 topk = _register_torch_operation("topk")
+atleast_1d = _register_torch_operation("atleast_1d")
+atleast_2d = _register_torch_operation("atleast_2d")
+atleast_3d = _register_torch_operation("atleast_3d")
 
 
 #
@@ -1250,6 +1262,9 @@ _register_implementation(ltorch.var_mean, var_mean, checker=_always_executable)
 _register_implementation(ltorch.argmax, argmax, checker=_always_executable)
 _register_implementation(ltorch.argmin, argmin, checker=_always_executable)
 _register_implementation(ltorch.topk, topk, checker=_always_executable, execution_transform=_topk_transform)
+_register_implementation(ltorch.atleast_1d, atleast_1d, checker=_always_executable)
+_register_implementation(ltorch.atleast_2d, atleast_2d, checker=_always_executable)
+_register_implementation(ltorch.atleast_3d, atleast_3d, checker=_always_executable)
 
 
 #
@@ -2274,3 +2289,7 @@ _register_implementation(prims.shape, shape, checker=_always_executable)
 
 shallow_copy = ex.register_operator("shallow_copy", meta=prims.shallow_copy, fn=lambda x: x)
 _register_implementation(prims.shallow_copy, shallow_copy, checker=_always_executable)
+
+
+update_aliases = ex.register_operator("update_aliases", meta=prims.update_aliases, fn=lambda x: x)
+_register_implementation(prims.update_aliases, update_aliases, checker=_always_executable)

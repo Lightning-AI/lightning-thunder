@@ -103,6 +103,9 @@ class FSDPTransform(Transform):
         self.process_group: ProcessGroup | None = None
         self.shared_params_name: dict[str, str] = {}
         self.move_state_dict_to_cpu = move_state_dict_to_cpu
+        if self.device is None:
+            local_rank = int(os.environ["LOCAL_RANK"])
+            self.device = torch.device("cuda", local_rank)
 
     def transform_module(
         self,
@@ -117,9 +120,6 @@ class FSDPTransform(Transform):
         world_size = tdist.get_world_size(group=self.process_group)
         self.global_rank = global_rank
         self.world_size = world_size
-        if self.device is None:
-            local_rank = int(os.environ["LOCAL_RANK"])
-            self.device = torch.device("cuda", local_rank)
 
         cd = get_compile_data(thunder_model)
         # TODO: promote use_fsdp and use_ddp to public members of CompileData

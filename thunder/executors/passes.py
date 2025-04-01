@@ -1,27 +1,27 @@
-from typing import Dict, Any, List, Tuple, Optional
-from collections.abc import Callable
-from collections.abc import Sequence
+from __future__ import annotations
 from collections import deque
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from itertools import chain
-from functools import partial
+from typing import TYPE_CHECKING
 import time
 
-from thunder.core.trace import TraceCtx, from_trace, TraceProvenance, VariableInterface
-import thunder.core.dtypes as dtypes
-import thunder.core.utils as cutils
-from thunder.core.utils import ProxyDict, check, safe_map_flat
-from thunder.core.symbol import BoundSymbol
-from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
-import thunder.core.prims as prims
 from thunder.core.proxies import Proxy, variableify, unvariableify, Variable, CollectionProxy
-import thunder.core.transforms as transforms
-from thunder.core.transform_common import dce
-from thunder.core.trace import get_tracectx
+from thunder.core.pytree import tree_flatten
+from thunder.core.trace import from_trace, TraceProvenance
 from thunder.core.trace_interpreter import TraceSubstitutionProcessor
+from thunder.core.transform_common import dce
+from thunder.core.utils import ProxyDict
 from thunder.executors.pythonex import clear_mutable_collection
-
 from thunder.extend import Executor, get_always_executors, OperatorExecutor, FusionExecutor
+import thunder.core.prims as prims
+import thunder.core.utils as cutils
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from collections.abc import Sequence
+    from thunder.core.symbol import BoundSymbol
+    from thunder.core.trace import TraceCtx
+
 
 comment_symbols = {prims.PrimIDs.COMMENT, prims.PrimIDs.UNPACK_TRIVIAL}
 
@@ -42,7 +42,7 @@ def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: 
     #   with its subsymbols (which will then be processed using the above),
     # - if none of the above apply and we have a prim, raise an error
     class OpExProcessor(TraceSubstitutionProcessor):
-        def process_bsym(self, bsym):
+        def process_bsym(self, bsym: BoundSymbol) -> None:
             if bsym.sym.python_impl is not None:
                 # keep the bound symbol and use the python impl
                 self.add_processed_bsyms([bsym])
@@ -84,7 +84,7 @@ def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: 
 
             # No executor found, need to descend
             cutils.check(not bsym.sym.is_prim, lambda: f"Failed to find an executor for bound symbol {bsym=}")
-            ### OUTPUTS to map
+            # OUTPUTS to map
             self.add_unprocessed_bsyms(bsym.subsymbols[:])
 
     start_time_ns = time.perf_counter_ns()
@@ -208,7 +208,7 @@ def update_fusion_call_ctx(trace: TraceCtx) -> TraceCtx:
     return new_trace
 
 
-def _del_last_used(bound_symbols, flattened_final_output, *, clear_mutable_collections=False):
+def _del_last_used(bound_symbols, flattened_final_output, *, clear_mutable_collections=False) -> list[BoundSymbol]:
     bsyms = deque()
     # TODO Replace with ProxySet (which does not exist at the time of this writing)
     handled = ProxyDict()
