@@ -146,7 +146,7 @@ class torchsymbol:
         is_prim: bool = False,
         tags: None | list[Any] = None,
         out_of_place: Symbol | None = None,
-        allow_only_tensorproxy: bool = True,
+        allow_tensor_subclass_proxy: bool = False,
     ):
         self.torchfns = torchfns
         self.is_method = is_method or (method_name is not None)
@@ -161,14 +161,14 @@ class torchsymbol:
 
         # This flag is used to enable/disable a torchsymbol to accept
         # TensorProxy subclass as input (eg. DTensorProxy).
-        # By default, this is `True` as we don't want general `torchsymbol`
+        # By default, this is `False` as we don't want general `torchsymbol`
         # which are meant for TensorProxy to accept DTensorProxy.
-        self.allow_only_tensorproxy = allow_only_tensorproxy
+        self.allow_tensor_subclass_proxy = allow_tensor_subclass_proxy
 
     def __call__(self, fn: Callable) -> Symbol:
         _fn = langctx(Languages.TORCH)(fn)
 
-        if self.allow_only_tensorproxy:
+        if not self.allow_tensor_subclass_proxy:
 
             @wraps(_fn)
             def wrapper(*args, **kwargs):

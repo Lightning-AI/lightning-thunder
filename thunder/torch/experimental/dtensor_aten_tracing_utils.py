@@ -1,6 +1,5 @@
 from collections.abc import Sequence
 from functools import wraps
-from itertools import chain
 from typing import Any
 
 import torch
@@ -22,8 +21,8 @@ from thunder.core.proxies import TensorProxy, NumberProxy
 from thunder.core.devices import to_torch_device
 from thunder.core.dtypes import to_torch_dtype
 from thunder.core.pytree import tree_map, tree_flatten, tree_unflatten
-from thunder.core.transforms import eval_trace
-from thunder.executors.torch_compile import to_torch_translator
+from thunder.executors.passes import transform_for_execution
+from thunder.executors.torchex import ex as pytorchex
 from thunder.dynamo.utils import _checkpoint_function_converter
 
 from thunder.torch.experimental.dtensor_proxy import DTensorProxy
@@ -59,6 +58,16 @@ def trace_from_bsym_or_bsyms(bsym_or_bsyms: BoundSymbol | Sequence[BoundSymbol])
         # note(crcrpar): Give prefix `tmp` to avoid infinite recursion due to the same name
         trace._siginfo = SigInfo.from_name_and_args(f"tmp_{trace_name}", trace.args)
 
+    def add_proxy_name_to_trace(bsym):
+        for p in bsym.flat_proxy_args:
+            trace.names.add(p.name)
+
+        for p in bsym.flat_proxy_outs:
+            trace.names.add(p.name)
+
+    for bsym in bsyms:
+        add_proxy_name_to_trace(bsym)
+
     return trace
 
 
@@ -75,11 +84,8 @@ def make_trace_executable(trace_to_convert: TraceCtx, *args_for_eval, **kwargs_f
         TraceCtx: A PyTorch executable `TraceCtx`.
     """
 
-    @wraps(trace_to_convert.python_callable())
-    def torch_interpreted_func(*args, **kwargs):
-        return eval_trace(trace_to_convert, *args, **kwargs, symbol_mapper=to_torch_translator)
+    torch_trace = transform_for_execution(trace_to_convert, executors_list=(pytorchex,))
 
-    torch_trace = thunder.trace(inline_trace=False)(torch_interpreted_func, *args_for_eval, **kwargs_for_eval)
     return torch_trace
 
 

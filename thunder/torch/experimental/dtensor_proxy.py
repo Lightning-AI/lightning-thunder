@@ -8,6 +8,8 @@ import thunder.core.dtypes as dtypes
 # Inherit from TensorProxy as DTensor also supports
 # Tensor methods like __add__, __div__, sin, etc.
 class DTensorProxy(TensorProxy):
+    _DEFAULT_PREFIX = "dtensor_"
+
     def __init__(
         self,
         name=None,

@@ -11,7 +11,7 @@ from thunder.torch.langctx import register_method
 
 import torch
 
-dtensor_torchsymbol = partial(torchsymbol, allow_only_tensorproxy=False)
+dtensor_torchsymbol = partial(torchsymbol, allow_tensor_subclass_proxy=True)
 
 
 def dispatch_to_impl(single_device_symbol, dtensor_symbol):
