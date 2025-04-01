@@ -2289,10 +2289,32 @@ logical_xor_opinfo = OpInfo(
 )
 elementwise_binary_ops.append(logical_xor_opinfo)
 
+
+def ldexp_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    a = make((4, 4), **kwargs)
+    b = make((4, 4), **kwargs)
+    c = make((4, 1), **kwargs)
+
+    yield SampleInput(a, b)
+    yield SampleInput(a, c)
+
+
+def ldexp_error_generator(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype)
+    a = make((4, 4), device="cuda")
+    b = make((4, 4), device="cpu")
+
+    err_msg = "Expected all tensors to be on the same device, but found at least two devices, cuda:0 and cpu"
+    yield (SampleInput(a, b), RuntimeError, err_msg)
+
+
 ldexp_opinfo = OpInfo(
-    clang.ldexp,
+    ltorch.ldexp,
+    supports_grad=True,
     dtypes=(datatypes.float32, datatypes.float64),
-    sample_input_generator=partial(elementwise_binary_generator, no_rhs_numbers=True),
+    sample_input_generator=ldexp_sample_generator,
+    error_input_generator=ldexp_error_generator,
     torch_reference=torch.ldexp,
 )
 elementwise_binary_ops.append(ldexp_opinfo)

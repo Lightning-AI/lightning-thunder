@@ -2017,12 +2017,6 @@ def logical_xor(a: TensorLike, b: TensorLike, /) -> TensorLike:
     return a ^ b
 
 
-@clangop()
-def ldexp(a: TensorLike, b: TensorLike, /) -> TensorLike:
-    a, b = maybe_broadcast(a, b)
-    return prims.mul(a, prims.exp2(b))
-
-
 @clangop(method_name="le")
 def le(a, b):
     return _elementwise_binary_wrapper(
