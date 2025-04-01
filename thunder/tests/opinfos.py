@@ -2302,11 +2302,13 @@ def ldexp_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
 def ldexp_error_generator(op, device, dtype=torch.float32, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype)
-    a = make((4, 4), device="cuda")
-    b = make((4, 4), device="cpu")
 
-    err_msg = "Expected all tensors to be on the same device, but found at least two devices, cuda:0 and cpu"
-    yield (SampleInput(a, b), RuntimeError, err_msg)
+    if torch.cuda.is_available():
+        a = make((4, 4), device="cuda")
+        b = make((4, 4), device="cpu")
+
+        err_msg = "Expected all tensors to be on the same device, but found at least two devices, cuda and cpu"
+        yield (SampleInput(a, b), RuntimeError, err_msg)
 
 
 ldexp_opinfo = OpInfo(
