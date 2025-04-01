@@ -5835,26 +5835,6 @@ std_opinfo = OpInfo(
     error_input_generator=std_error_generator,
     torch_reference=torch.std,
     dtypes=(datatypes.floating,),
-    test_directives=(
-        # AssertionError: Scalars are not close!
-        # Expected -0.04742737004193756 but got -0.09087551906805685.
-        # Absolute difference: 0.04344814902611929 (up to 1e-07 allowed)
-        # Relative difference: 0.9160986364561297 (up to 1e-07 allowed)
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_vjp_correctness",
-            executors=("torch", "nvfuser"),
-            dtypes=(datatypes.float64,),
-        ),
-        # In cuda: AssertionError: Tensor-likes are not close!
-        # In cpu: AssertionError: The values for attribute 'shape' do not match: torch.Size([5]) != torch.Size([1]).
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_phantom_grad_vs_torch_consistency",
-            dtypes=(datatypes.bfloat16, datatypes.float16, datatypes.float32, datatypes.float64),
-            devicetypes=(devices.DeviceType.CUDA, devices.DeviceType.CPU),
-        ),
-    ),
 )
 reduction_ops.append(std_opinfo)
 

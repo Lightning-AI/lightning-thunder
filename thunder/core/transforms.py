@@ -1776,7 +1776,18 @@ def std_backward(a, dim, correction, s, g):
         a = prims.convert_element_type(a, s.dtype)
     mean = prims.sum(a, dim) / n_elem_reduced
     mean = restore_reduced_dims(mean, dim, a.shape)
-    return ((g * (a - mean)) / (normalization_scalar * s)).masked_fill(s == 0, 0)
+
+    if isinstance(dim, tuple) and len(dim) == 1:
+        dim = dim[0]
+
+    if isinstance(dim, int) and dim != 0:
+        s_unsqueezed = ltorch.unsqueeze(s, dim)
+    else:
+        s_unsqueezed = s
+
+    grad = (a - mean) / (normalization_scalar * s_unsqueezed)
+    grad = grad.masked_fill(s_unsqueezed == 0, 0)
+    return g * grad
 
 
 def n_elem_reduced(a_ndim, a_shape, dims):
