@@ -11,5 +11,5 @@ __all__ = [
     "MaterializationTransform",
     "PrunePrologueChecks",
     "ExtractionOnlyPrologueTransform",
-    "TESynchronizationTransform"
+    "TESynchronizationTransform",
 ]
