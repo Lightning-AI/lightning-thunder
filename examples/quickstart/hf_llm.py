@@ -32,18 +32,16 @@ def main():
         out = model.generate(**inp, do_sample=False, cache_implementation=cache, max_new_tokens=100)
         print(tokenizer.decode(out[0].tolist()))
 
-    print(f"Eager: {benchmark_n(2, generate, model, inp):.2f}ms")
+    print("\nGenerating with PyTorch eager:")
+    eager_time = benchmark_n(2, generate, model, inp)
 
-    thunder_model = thunder.compile(
-        model,
-        recipe="hf-transformers",
-        plugins="reduce-overhead" if torch.cuda.is_available() else None
-    )
+    thunder_model = thunder.compile(model)
 
-    generate(thunder_model, inp, cache="static")
-    print({bsym.sym.name for bsym in thunder.last_traces(thunder_model)[-1].bound_symbols})
+    print("\nGenerating with Thunder:")
+    thunder_time = benchmark_n(2, generate, thunder_model, inp, cache='static')
 
-    print(f"Thunder: {benchmark_n(2, generate, thunder_model, inp, cache='static'):.2f}ms")
+    print(f"\nEager: {eager_time:.2f}ms")
+    print(f"Thunder: {thunder_time:.2f}ms")
 
 
 if __name__ == "__main__":

@@ -25,13 +25,14 @@ def main():
 
     print(f"Eager: {benchmark(model, **inp):.2f}ms")
 
-    thunder_model = thunder.compile(
-        model,
-        recipe="hf-transformers",
-        plugins="reduce-overhead" if torch.cuda.is_available() else None
-    )
+    thunder_model = thunder.compile(model)
 
     print(f"Thunder: {benchmark(thunder_model, **inp):.2f}ms")
+
+    if torch.cuda.is_available():
+        thunder_model = thunder.compile(model, plugins="reduce-overhead")
+
+        print(f"Thunder with 'reduce-overhead': {benchmark(thunder_model, **inp):.2f}ms")
 
 
 if __name__ == "__main__":
