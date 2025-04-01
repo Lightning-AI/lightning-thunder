@@ -16,7 +16,7 @@ jobs:
       python-version: "3.10"
 
   check-schema:
-    uses: Lightning-AI/utilities/.github/workflows/check-schema.yml@b2359648d26af67d5f97fd8e00c47103c976a485
+    uses: Lightning-AI/utilities/.github/workflows/check-schema.yml@3e4e3782c2ec41ff6426a2670d69e87a17c91d26
     with:
       azure-dir: ".azure"
 
