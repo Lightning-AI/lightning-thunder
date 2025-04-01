@@ -93,10 +93,6 @@ class Device(metaclass=DeviceMeta):
         if self._devicetype is DeviceType.CUDA:
             baseutils.check_type(self._index, int)
             baseutils.check(self._index >= 0, lambda: f"Trying to create a device with invalid index {index}")
-            baseutils.check(
-                self._index < torch.cuda.device_count(),
-                lambda: f"Trying to create a CUDA device with {index=}, but there are only {torch.cuda.device_count()} CUDA devices available",
-            )
 
     @property
     def devicetype(self) -> DeviceType:

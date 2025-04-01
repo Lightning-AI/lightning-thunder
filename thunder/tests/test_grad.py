@@ -1320,7 +1320,12 @@ def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp):
         # torch.return_types.topk(
         # values=tensor([1., 1.]),
         # indices=tensor([0, 1]))
-        return x.grad_fn is not None
+        return x.grad_fn is not None or is_returning_self(x)
+
+    def is_returning_self(x):
+        if x.is_leaf and x.requires_grad:
+            return True
+        return False
 
     def filter_differentiable_outputs(outputs):
         if isinstance(outputs, torch.Tensor):
@@ -1380,7 +1385,10 @@ def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp):
     thunder_flat_grads = grad_op(*sample.args, **sample.kwargs)
 
     assert_closer(
-        reference=reference_grad_result, candidate=thunder_flat_grads, competitor=torch_grad_result, comparator=comp
+        reference=reference_grad_result,
+        candidate=thunder_flat_grads,
+        competitor=torch_grad_result,
+        comparator=comp,
     )
 
 
@@ -1956,3 +1964,28 @@ def test_backward_recomputation_decomposed_ops(device):
             "unpack_sequence",
             "unpack_trivial",
         }
+
+
+@requiresCUDA
+def test_benchmark_grad():
+    from thunder.benchmarks.utils import backward_only
+    from thunder.dynamo.report import run_forward_backward
+
+    # Workaround for "RuntimeError: Triton Error [CUDA]: an illegal memory access was encountered"
+    # https://github.com/pytorch/pytorch/issues/124565
+    torch.empty(1, device="cuda", requires_grad=True).backward()
+
+    def func(x):
+        arange = torch.arange(0, 96, 2, dtype=torch.int64, device="cuda").float()
+        return x.exp(), arange
+
+    jfunc = thunder.jit(func)
+    tfunc = torch.compile(func)
+    x = torch.randn(2, 2, device="cuda", requires_grad=True)
+    out1 = run_forward_backward(jfunc, x)
+    out2 = run_forward_backward(tfunc, x)
+    torch.testing.assert_close(out1, out2)
+
+    backward_fn, backward_setup = backward_only(tfunc, x)
+    backward_args = backward_setup()
+    backward_fn(*backward_args)
