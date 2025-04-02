@@ -2190,6 +2190,16 @@ def logical_xor_(a: TensorLike, b: TensorLike, /) -> TensorLike:
     return _copy_(a, logical_xor(a, b))
 
 
+@torchsymbol(torch.ldexp, torch.Tensor.ldexp, is_method=True)
+def ldexp(a: TensorLike, b: TensorLike, /) -> TensorLike:
+    utils.check(
+        a.device == b.device,
+        lambda: f"Expected all tensors to be on the same device, but found at least two devices, cuda and cpu",
+    )
+
+    return mul(a, exp2(b))
+
+
 @torchsymbol(torch.le, is_method=True)
 def le(a, b, /):
     return clang.le(a, b)
