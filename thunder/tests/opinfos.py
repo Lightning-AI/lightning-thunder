@@ -5356,6 +5356,7 @@ def unsqueeze_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
 unsqueeze_opinfo = OpInfo(
     clang.unsqueeze,
+    supports_grad=True,
     sample_input_generator=unsqueeze_sample_generator,
     jax_reference=jax.lax.expand_dims if JAX_AVAILABLE else None,
     test_directives=(
@@ -6016,6 +6017,53 @@ topk_opinfo = OpInfo(
     dtypes=(datatypes.signedinteger, datatypes.unsignedinteger, datatypes.floating),
 )
 reduction_ops.append(topk_opinfo)
+
+
+def atleast_1d2d3d_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, dtype=dtype, device=device, requires_grad=requires_grad)
+
+    cases = (
+        (),
+        (4,),
+        (5, 5),
+        (6, 7, 8),
+        (3, 3, 3, 3),
+    )
+
+    for c in cases:
+        yield SampleInput(make(c))
+
+    yield SampleInput(make(()), make((2,)))
+    yield SampleInput(make((2,)), make((5, 5)))
+    yield SampleInput(make(()), make((2,)), make((4, 4)))
+    yield SampleInput(make(2, 3), make(4, 5), make(6, 6, 6), make(5, 5, 5, 5))
+
+
+atleast_1d_opinfo = OpInfo(
+    ltorch.atleast_1d,
+    supports_grad=True,
+    sample_input_generator=atleast_1d2d3d_sample_generator,
+    torch_reference=torch.atleast_1d,
+)
+reduction_ops.append(atleast_1d_opinfo)
+
+
+atleast_2d_opinfo = OpInfo(
+    ltorch.atleast_2d,
+    supports_grad=True,
+    sample_input_generator=atleast_1d2d3d_sample_generator,
+    torch_reference=torch.atleast_2d,
+)
+reduction_ops.append(atleast_2d_opinfo)
+
+
+atleast_3d_opinfo = OpInfo(
+    ltorch.atleast_3d,
+    supports_grad=True,
+    sample_input_generator=atleast_1d2d3d_sample_generator,
+    torch_reference=torch.atleast_3d,
+)
+reduction_ops.append(atleast_3d_opinfo)
 
 
 opinfos.extend(reduction_ops)

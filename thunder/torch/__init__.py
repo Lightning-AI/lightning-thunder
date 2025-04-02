@@ -3004,6 +3004,42 @@ def topk(
     return clang.topk(a, k, dim, largest, sorted)
 
 
+@torchsymbol(torch.atleast_1d, is_method=True)
+def atleast_1d(*args: Union[TensorLike, Sequence[TensorLike]]) -> Union[TensorLike, tuple[TensorLike, ...]]:
+    res = tuple(a if a.ndim >= 1 else unsqueeze(a, 0) for a in args)
+    return res if len(res) > 1 else res[0]
+
+
+@torchsymbol(torch.atleast_2d, is_method=True)
+def atleast_2d(*args: Union[TensorLike, Sequence[TensorLike]]) -> Union[TensorLike, tuple[TensorLike, ...]]:
+
+    def _unsqueeze_atleast(a):
+        if a.ndim == 0:
+            return a.unsqueeze(0).unsqueeze(1)
+        elif a.ndim == 1:
+            return a.unsqueeze(0)
+        return a
+
+    res = tuple(_unsqueeze_atleast(a) if isinstance(a, TensorProxy) else a for a in args)
+    return res if len(res) > 1 else res[0]
+
+
+@torchsymbol(torch.atleast_3d, is_method=True)
+def atleast_3d(*args: Union[TensorLike, Sequence[TensorLike]]) -> Union[TensorLike, tuple[TensorLike, ...]]:
+
+    def _unsqueeze_atleast(a):
+        if a.ndim == 0:
+            return a.reshape(1, 1, 1)
+        elif a.ndim == 1:
+            return a.reshape(1, -1, 1)
+        elif a.ndim == 2:
+            return a.unsqueeze(-1)
+        return a
+
+    res = tuple(_unsqueeze_atleast(a) if isinstance(a, TensorProxy) else a for a in args)
+    return res if len(res) > 1 else res[0]
+
+
 @torchsymbol(torch.sort, is_method=True)
 def sort(
     a: TensorLike, /, dim: None | int = None, descending: bool = False, stable: bool = False
