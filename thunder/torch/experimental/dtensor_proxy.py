@@ -51,7 +51,7 @@ class DTensorProxy(TensorProxy):
             self._local_tensor = local_tensor_proxy
 
     def type_string(self):
-        return f"DTensor {self.device.device_str()} {self.dtype.shortname()}{list(self._shape)}"
+        return f"DTensor {self.device.device_str()} {self.dtype.shortname()}{list(self._shape)} mesh={self._spec._o.mesh}, placements={self._spec._o.placements}"
 
     def replace(self, **changes):
         r"""Return a copy of the TensorProxy object with new values for the specified fields as given to the constructor as arguments.
