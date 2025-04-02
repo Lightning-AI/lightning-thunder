@@ -1772,16 +1772,11 @@ def std_backward(a, dim, correction, s, g):
     n_elem_reduced = a.numel() // s.numel() if a.numel() != 0 else 1
     normalization_scalar = n_elem_reduced - correction
     g = restore_reduced_dims(g, dim, a.shape)
+    s = restore_reduced_dims(s, dim, a.shape)
     if a.dtype != s.dtype:
         a = prims.convert_element_type(a, s.dtype)
     mean = prims.sum(a, dim) / n_elem_reduced
     mean = restore_reduced_dims(mean, dim, a.shape)
-
-    if len(dim) == 1:
-        dim = dim[0]
-    if dim != 0:
-        s = s.unsqueeze(dim)
-
     grad = ((a - mean) / (normalization_scalar * s)).masked_fill(s == 0, 0)
     return g * grad
 
