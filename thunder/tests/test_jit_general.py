@@ -1,12 +1,11 @@
 from collections.abc import Iterable, Iterator, Sequence
 from functools import partial, wraps
 from itertools import product
-from contextlib import contextmanager, nullcontext
+from contextlib import nullcontext
 
 import operator
 import sys
 import dis
-import warnings
 from collections.abc import Callable
 
 import pytest
@@ -1206,13 +1205,7 @@ def test_custom_autograd_function():
     assert jitted.l1.weight.grad is not None
 
 
-@contextmanager
-def suppress_warnings():
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", message="Please use `torch.vmap`")
-        yield
-
-
+@pytest.mark.filterwarnings("ignore:Please use torch.vmap")
 def test_autograd_function_apply():
 
     # see https://github.com/Lightning-AI/lightning-thunder/issues/1248#issuecomment-2388655917
@@ -1273,7 +1266,7 @@ def test_autograd_function_apply():
     from torch.autograd.gradcheck import GradcheckError
     from torch.testing._internal.common_utils import gradcheck
 
-    with suppress_warnings(), pytest.raises(GradcheckError):
+    with pytest.raises(GradcheckError):
         gradcheck(jitted, (x,))
 
 
