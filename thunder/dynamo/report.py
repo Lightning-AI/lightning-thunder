@@ -865,10 +865,9 @@ class ThunderFusionReport:
         nvfuser_repro_code = get_repro(inputs)
         return nvfuser_repro_code
 
-    def write_nvfuser_benchmark(self, folder, time_fn: TimerInterface, file_name=None, **kwargs):
+    def write_nvfuser_benchmark(self, folder, time_fn: TimerInterface, file_name=None, extra_comment_str=""):
         folder = Path(folder)
         folder.mkdir(exist_ok=True, parents=True)
-        extra_comment_str = kwargs.get("extra_comment_str") if "extra_comment_str" in kwargs else ""
         repro_code_str = self._get_nvfuser_code()
         timing_import_str = "\n".join(time_fn.import_str() or [])
         timing_str = time_fn.to_source("nvfuser_fn", "inputs")

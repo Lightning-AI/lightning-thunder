@@ -416,3 +416,6 @@ import torch
 coverage_skip_undoc_in_source = True
 
 import thunder  # noqa: E402 # making the docs build happy
+
+# Avoid the Sphinx error when using `inspect.signature(Timer.adaptive_autorange)`
+from torch.utils.benchmark import Timer
