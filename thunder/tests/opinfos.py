@@ -1718,6 +1718,34 @@ mish_opinfo = OpInfo(
 elementwise_unary_ops.append(mish_opinfo)
 
 
+def prelu_generator(op, device, dtype, requires_grad):
+    make_arg = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    shapes = (
+        ((), ()),
+        ((11,), ()),
+        ((11,), (1,)),
+        ((4, 3), ()),
+        ((4, 3), (3,)),
+        ((4, 2, 4, 5), (1,)),
+        ((4, 2, 4, 5), (2,)),
+    )
+
+    for shape, weight in shapes:
+        yield SampleInput(make_arg(shape), make_arg(weight))
+
+
+prelu_opinfo = OpInfo(
+    ltorch.prelu,
+    dtypes=(datatypes.inexact,),
+    sample_input_generator=prelu_generator,
+    torch_reference=torch.nn.functional.prelu,
+    singularity_fn=lambda x: x,
+    test_directives=(),
+)
+elementwise_unary_ops.append(prelu_opinfo)
+
+
 relu_opinfo = OpInfo(
     ltorch.relu,
     sample_input_generator=elementwise_unary_generator,

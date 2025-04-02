@@ -1921,6 +1921,24 @@ def mish(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
 _inplace_to_out_of_place[mish] = mish, 1
 
 
+@torchsymbol(torch.nn.functional.prelu, is_method=True)
+def prelu(a: TensorProxy, /, weight: TensorProxy) -> TensorLike:
+    if weight.numel() != 1:
+        num_channels = a.shape[1] if a.ndim >= 2 else 1
+        utils.check(
+            weight.numel() == num_channels,
+            lambda: f"Mismatch of parameter numbers and input channel size. Found parameter numbers ="
+            f" {weight.numel()} and channel size = {num_channels}.",
+        )
+    utils.check(
+        weight.ndim == 0 or weight.ndim == 1,
+        lambda: f"prelu: Expected `weight` to be a scalar or 1D tensor, but got: " f"ndim = {weight.ndim}",
+    )
+    if a.ndim != 1:
+        weight = prims.broadcast_in_dim(weight, a.shape, () if weight.ndim == 0 else (0 if a.ndim == 1 else 1,))
+    return where(a > 0, a, weight * a)
+
+
 # id=torch.selu because we ignore inplace argument in torch.nn.functional.selu
 @torchsymbol(torch.selu, torch.nn.functional.selu, id="torch.selu", is_method=False)
 def selu(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
