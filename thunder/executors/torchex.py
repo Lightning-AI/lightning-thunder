@@ -1174,6 +1174,7 @@ sum = _register_torch_operation("sum")
 cumsum = _register_torch_operation("cumsum")
 var = _register_torch_operation("var")
 var_mean = _register_torch_operation("var_mean")
+std = _register_torch_operation("std")
 argmax = _register_torch_operation("argmax")
 argmin = _register_torch_operation("argmin")
 topk = _register_torch_operation("topk")
@@ -1216,6 +1217,10 @@ def _var_mean_prim_transform(a: TensorProxy, /, dims: Sequence[int], *, correcti
     return var_mean(a, dims, correction=correction)
 
 
+def _std_prim_transform(a: TensorProxy, /, dims: Sequence[int], *, correction: Number) -> TensorProxy:
+    return std(a, dims, correction=correction)
+
+
 def _cumsum_transform(a: TensorProxy, dim: int, *, dtype: None | dtypeLike = None) -> TensorProxy:
     if dtype is None:
         return cumsum(a, dim)
@@ -1249,6 +1254,7 @@ _register_implementation(prims.prod, checker=_always_executable, execution_trans
 _register_implementation(prims.sum, checker=_always_executable, execution_transform=_sum_prim_transform)
 _register_implementation(prims.var, checker=_always_executable, execution_transform=_var_prim_transform)
 _register_implementation(prims.var_mean, checker=_always_executable, execution_transform=_var_mean_prim_transform)
+_register_implementation(prims.std, checker=_always_executable, execution_transform=_std_prim_transform)
 _register_implementation(prims.argmax, checker=_always_executable, execution_transform=_argmax_transform)
 _register_implementation(prims.argmin, checker=_always_executable, execution_transform=_argmin_transform)
 _register_implementation(prims.topk, checker=_always_executable, execution_transform=_topk_transform)
@@ -1261,6 +1267,7 @@ _register_implementation(ltorch.sum, sum, checker=_always_executable)
 _register_implementation(ltorch.cumsum, checker=_always_executable, execution_transform=_cumsum_transform)
 _register_implementation(ltorch.var, var, checker=_always_executable)
 _register_implementation(ltorch.var_mean, var_mean, checker=_always_executable)
+_register_implementation(ltorch.std, std, checker=_always_executable)
 _register_implementation(ltorch.argmax, argmax, checker=_always_executable)
 _register_implementation(ltorch.argmin, argmin, checker=_always_executable)
 _register_implementation(ltorch.topk, topk, checker=_always_executable, execution_transform=_topk_transform)
