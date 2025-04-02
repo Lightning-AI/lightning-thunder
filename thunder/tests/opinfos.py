@@ -2314,7 +2314,7 @@ def ldexp_error_generator(op, device, dtype=torch.float32, **kwargs):
 ldexp_opinfo = OpInfo(
     ltorch.ldexp,
     supports_grad=True,
-    dtypes=(datatypes.float32, datatypes.float64),
+    dtypes=(datatypes.all_dtypes),
     sample_input_generator=ldexp_sample_generator,
     error_input_generator=ldexp_error_generator,
     torch_reference=torch.ldexp,
