@@ -24,6 +24,7 @@ from thunder.torch.langctx import torchctx
 from thunder.core.utils import check
 
 if TYPE_CHECKING:
+    from numbers import Number
     from thunder.core.symbol import Symbol
     import os
     from typing import Any
@@ -465,14 +466,19 @@ def _get_storage_shape(t: torch.Tensor):
     return (storage_size,)
 
 
+def _get_min_and_val(t: torch.Tensor) -> tuple[Number | None, Number | None]:
+    if isinstance(t, (FakeTensor, DTensor)) or t.device.type == "meta" or t.numel() == 0:
+        return None, None
+    if t.dtype in (torch.float8_e4m3fn, torch.float8_e4m3fnuz, torch.float8_e5m2, torch.float8_e5m2fnuz):
+        t = t.to(torch.float32)
+    minmax: tuple[torch.Tensor, torch.Tensor] = torch.aminmax(t)
+    min_val = minmax[0].cpu().item()
+    max_val = minmax[1].cpu().item()
+    return min_val, max_val
+
+
 def _get_example_input_tensor_metadata(t: torch.Tensor) -> ExampleInputMetaData:
-    min_val = None
-    max_val = None
-    # NOTE: DTensor doesn't support calling aminmax.
-    if not isinstance(t, (FakeTensor, DTensor)) and t.device.type != "meta" and t.numel() != 0:
-        minmax: tuple[torch.Tensor, torch.Tensor] = torch.aminmax(t)
-        min_val = minmax[0].cpu().item()
-        max_val = minmax[1].cpu().item()
+    min_val, max_val = _get_min_and_val(t)
     meta_ev = ExampleInputMetaData(
         t.requires_grad,
         t.layout,
