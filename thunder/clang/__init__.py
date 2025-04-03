@@ -1791,6 +1791,20 @@ def real(a: TensorProxy | Number):
     )
 
 
+@clangop(method_name="imag")
+def imag(a: TensorProxy | Number, /) -> TensorLike:
+    utils.check(
+        dtypes.is_complex_dtype(dtypes.to_dtype(a)),
+        lambda: f"imag is not implemented for tensors with non-complex dtypes",
+    )
+
+    return _elementwise_unary_wrapper(
+        a,
+        prim=prims.imag,
+        type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.COMPLEX_TO_FLOAT,
+    )
+
+
 #
 # Elementwise binary operations
 #

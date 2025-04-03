@@ -2041,6 +2041,31 @@ real_opinfo = OpInfo(
 elementwise_unary_ops.append(real_opinfo)
 
 
+def imag_error_generator(op, device, **kwargs):
+    dtypes = [torch.float32, torch.int64]
+    cases = (
+        (),
+        (5),
+        (4, 4),
+    )
+
+    err_msg = "imag is not implemented for tensors with non-complex dtypes"
+    for dtype, shape in itertools.product(dtypes, cases):
+        make = partial(make_tensor, device=device, dtype=dtype)
+        yield (SampleInput(make(shape)), RuntimeError, err_msg)
+
+
+imag_opinfo = OpInfo(
+    clang.imag,
+    dtypes=(datatypes.complexfloating,),
+    sample_input_generator=elementwise_unary_generator,
+    error_input_generator=imag_error_generator,
+    torch_reference=_elementwise_unary_torch(torch.imag),
+    test_directives=(),
+)
+elementwise_unary_ops.append(imag_opinfo)
+
+
 clone_opinfo = OpInfo(
     ltorch.clone,
     sample_input_generator=elementwise_unary_generator,
