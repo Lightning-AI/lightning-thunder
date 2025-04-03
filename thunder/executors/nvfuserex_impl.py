@@ -1327,9 +1327,11 @@ def squeeze(a: TensorProxy, /, dims: Sequence[int], *, fd: FusionDefinition, lc_
 
 register_supported(PrimIDs.SQUEEZE, squeeze, _squeeze_check)
 
+
 # TAKE is currently disabled
-# def _take_check(a: TensorProxy, /, index: TensorProxy, dim: int) -> bool:
-#     return are_supported_tensors(a, index)
+def _take_check(a: TensorProxy, /, index: TensorProxy, dim: int) -> bool:
+    return are_supported_tensors(a, index)
+
 
 # def take(a: TensorProxy, /, index: TensorProxy, dim: int, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
 #     nv_a = getnv(a, fd, lc_to_nv_map)
@@ -1338,16 +1340,21 @@ register_supported(PrimIDs.SQUEEZE, squeeze, _squeeze_check)
 #     return fd.ops.index_select(nv_a, nv_index, dim)
 # register_supported(PrimIDs.TAKE, take, _take_check)
 
+
 # TAKE_ALONG_AXIS is currently disabled
 # There was an nvFuser bug that prevented this which is now fixed; we should
 # investigate re-enabling take_along_axis.
 # # TODO Check that the nvFuser version is >= 0.0.10 when this operator was added
-# def take_along_axis(a: TensorProxy, /, index: TensorProxy, dim: int, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
-#     nv_a = getnv(a, fd, lc_to_nv_map)
-#     nv_index = getnv(index, fd, lc_to_nv_map)
+def take_along_axis(
+    a: TensorProxy, /, index: TensorProxy, dim: int, *, fd: FusionDefinition, lc_to_nv_map: dict
+) -> Any:
+    nv_a = getnv(a, fd, lc_to_nv_map)
+    nv_index = getnv(index, fd, lc_to_nv_map)
 
-#     return fd.ops.take_along_axis(nv_a, nv_index, dim)
-# register_supported(PrimIDs.TAKE_ALONG_AXIS, take_along_axis, _take_check)
+    return fd.ops.take_along_axis(nv_a, nv_index, dim)
+
+
+register_supported(PrimIDs.TAKE_ALONG_AXIS, take_along_axis, _take_check)
 
 
 def _transpose_check(a: TensorProxy, /, permutation: Sequence[int]) -> bool:
@@ -2730,6 +2737,75 @@ def embedding(
 
 register_supported(PrimIDs.EMBEDDING, embedding, _embedding_check)
 register_supported(ltorch.embedding, embedding, _embedding_check)
+
+
+def _cross_entropy_check_(
+    a: TensorLike,
+    /,
+    target: TensorLike,
+    weight: None | TensorLike,
+    ignore_index: int,
+    reduction: str,
+    label_smoothing: float,
+    *args,
+) -> bool:
+    return True
+
+
+from nvfuser.pytorch_utils import (
+    torch_dtype_to_nvfuser_dtype,
+)
+import thunder.core.dtypes as dtypes
+
+
+def cross_entropy(
+    a: TensorLike,
+    /,
+    target: TensorLike,
+    weight: None | TensorLike = None,
+    size_average: None | Any = None,
+    ignore_index: int = -100,
+    reduce: None | Any = None,
+    reduction: str = "mean",
+    label_smoothing: float = 0.0,
+    *,
+    fd: FusionDefinition,
+    lc_to_nv_map: dict,
+) -> Any:
+    print("cross_entropy")
+    nv_a = getnv(a, fd, lc_to_nv_map)
+    nv_target = getnv(target, fd, lc_to_nv_map)
+    nv_ignore_index = getnv(ignore_index, fd, lc_to_nv_map)
+    zero_scalar = fd.define_scalar(0, dtype=torch_dtype_to_nvfuser_dtype(dtypes.to_torch_dtype(a.dtype)))
+    
+    ne = fd.ops.ne(nv_target, nv_ignore_index)
+    where_0 = fd.ops.where(ne, nv_target, zero_scalar)
+    where = fd.ops.broadcast_in_dim(where_0, shape=[nv_target.shape()[-1], 1], broadcast_dims=[0])
+    gather0 = fd.ops.take_along_axis(nv_a, where, dim=1)
+    gather = fd.ops.reshape(gather0, new_shape=[nv_target.shape()[-1]])
+
+    max = fd.ops.max(nv_a, 1)
+    max2 = fd.ops.broadcast_in_dim(max, shape=[nv_target.shape()[-1], 1], broadcast_dims=[0])
+
+    sub = fd.ops.sub(nv_a, max2)
+    exp = fd.ops.exp(sub)
+
+    sum_1 = fd.ops.sum(exp, 1)
+    log = fd.ops.log(sum_1)
+
+    gather_sub = fd.ops.sub(gather, max)
+    log_softmax_post_gather = fd.ops.sub(gather_sub, log)
+
+    neg = fd.ops.neg(log_softmax_post_gather)
+    where_1 = fd.ops.where(ne, neg, zero_scalar)
+    sum_2 = fd.ops.sum(ne)
+    sum_2_cvt = fd.ops.cast(sum_2, dtype=DataType.Float)
+    sum_3 = fd.ops.sum(where_1)
+    div = fd.ops.div(sum_3, sum_2_cvt)
+    return div
+
+
+register_supported(ltorch.cross_entropy, cross_entropy, _cross_entropy_check_)
 
 
 # At module/class level
