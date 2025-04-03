@@ -1967,6 +1967,31 @@ tanhshrink_opinfo = OpInfo(
 elementwise_unary_ops.append(tanhshrink_opinfo)
 
 
+def threshold_singularity_fn_producer(sample):
+    threshold = sample.kwargs.get("threshold")
+    return lambda a: a - threshold
+
+
+threshold_opinfo = OpInfo(
+    ltorch.threshold,
+    sample_input_generator=get_elementwise_unary_with_kwargs_generator(
+        [{"threshold": 0.5, "value": 0.0}, {"threshold": 0.0, "value": 5.0}]
+    ),
+    torch_reference=torch.nn.functional.threshold,
+    dtypes=(datatypes.floating,),
+    singularity_fn_producer=threshold_singularity_fn_producer,
+    test_directives=(
+        # test_vjp_correctess compares exact derivatives to finite differences,
+        # and there are numerical issues for finite differences of (piecewise) constant functions
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_vjp_correctness",
+        ),
+    ),
+)
+elementwise_unary_ops.append(threshold_opinfo)
+
+
 round_opinfo = OpInfo(
     clang.round,
     dtypes=(datatypes.floating, datatypes.exact),

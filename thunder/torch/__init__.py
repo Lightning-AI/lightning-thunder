@@ -2013,6 +2013,29 @@ def tanhshrink(a: TensorLike, /) -> TensorLike:
 
 _inplace_to_out_of_place[tanhshrink] = tanhshrink, -1
 
+
+@torchsymbol(torch.threshold, torch.nn.functional.threshold, id="torch.threshold", is_method=False)
+def threshold(a: TensorProxy, /, threshold: float, value: float, inplace: bool = False) -> TensorLike:
+    out = where(a <= threshold, value, a)
+    if inplace:
+        return _copy_(a, out)
+    return out
+
+
+_inplace_to_out_of_place[threshold] = threshold, 3
+
+# alias to avoid conflict with keyword argument `threshold` in threshold_
+_threshold = threshold
+
+
+@torchsymbol(torch.nn.functional.threshold_, is_method=False, tags=(prims.OpTags.IN_PLACE,))
+def threshold_(a: TensorProxy, /, threshold: float, value: float) -> TensorLike:
+    return _copy_(a, _threshold(a, threshold, value, False))
+
+
+_inplace_to_out_of_place[threshold_] = threshold, -1
+
+
 #
 # Elementwise binary operations
 #
