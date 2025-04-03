@@ -1244,13 +1244,11 @@ def _argmin_transform(a: TensorProxy, /, dim: int):
 
 # NOTE This transform translates number proxies to boolean values
 # and handles dim = None
-def _topk_transform(
-    a: TensorProxy, /, k: int, dim: int | None = None, largest: Number = 1, sorted: Number = 1, *, out=None
-):
+def _topk_transform(a: TensorProxy, /, k: int, dim: int | None = None, largest: Number = 1, sorted: Number = 1):
     if dim is None:
         dim = a.ndim - 1 if a.ndim > 0 else 0
 
-    return topk(a, k, dim, bool(largest), bool(sorted), out=out)
+    return topk(a, k, dim, bool(largest), bool(sorted))
 
 
 _register_implementation(prims.amax, checker=_always_executable, execution_transform=_amax_prim_transform)
@@ -1288,14 +1286,12 @@ _register_implementation(ltorch.atleast_3d, atleast_3d, checker=_always_executab
 
 # NOTE this transform translates number proxies to boolean values
 # and handles dim = None
-def _sort_transform(
-    a: TensorProxy, /, dim: int | None = None, descending: bool = False, stable: bool = False, *, out=None
-):
+def _sort_transform(a: TensorProxy, /, dim: int | None = None, descending: bool = False, stable: bool = False):
     if dim is None:
         dim = a.ndim - 1 if a.ndim > 0 else 0
 
     # NOTE: args past `a` are passed as kwargs to avoid issues with multiple `torch.sort` overloadings
-    return sort(a, dim=dim, descending=bool(descending), stable=bool(stable), out=out)
+    return sort(a, dim=dim, descending=bool(descending), stable=bool(stable))
 
 
 _register_implementation(prims.sort, checker=_always_executable, execution_transform=_sort_transform)

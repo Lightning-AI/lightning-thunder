@@ -6532,9 +6532,6 @@ def bernoulli_error_generator(op, device, **kwargs):
         err_msg,
     )
 
-    err_msg = "bernoulli: out is not None which is currently unsupported"
-    yield (SampleInput(torch.ones(3, 3, device=device), out=torch.ones(3, 3, device=device)), RuntimeError, err_msg)
-
 
 # Helper function for `bernoulli` opinfo.
 # It always returns zero tensors, so that the consistency tests and grad tests pass.
