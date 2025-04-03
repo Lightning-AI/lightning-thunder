@@ -212,22 +212,26 @@ def thunderfx(fn: Callable, /, **kwargs) -> Callable:
     """
     import thunder
 
-    # lightning has torch.compile wrapped in `lightning/fabric/wrappers.py`
-    torch.compile = inspect.unwrap(torch.compile)
-    torch_compile_kwarg_names = inspect.getfullargspec(torch.compile).kwonlyargs
-    thunder_jit_kwarg_names = inspect.getfullargspec(thunder.jit).kwonlyargs
-    overlap = [kwarg_name for kwarg_name in thunder_jit_kwarg_names if kwarg_name in torch_compile_kwarg_names]
+    from thunder.dynamo.utils import get_thunder_jit_kwargs, get_torch_compile_kwargs
+
+    thunder_jit_kwargs = get_thunder_jit_kwargs(**kwargs)
+    torch_compile_kwargs = get_torch_compile_kwargs(**kwargs)
+
+    rest_kwargs = {k: v for k, v in kwargs.items() if k not in thunder_jit_kwargs and k not in torch_compile_kwargs}
+    check(
+        not rest_kwargs,
+        lambda: f"There are kwargs that are not supported by either thunder.jit or torch.compile: {rest_kwargs}",
+    )
+
+    overlap = [kwarg_name for kwarg_name in thunder_jit_kwargs if kwarg_name in torch_compile_kwargs]
     check(
         not overlap,
         lambda: f"There are overlapping kwargs between thunder.jit and torch.compile: {overlap}",
         ValueError,
     )
 
-    torch_compile_options = {k: v for k, v in kwargs.items() if k in torch_compile_kwarg_names}
-    thunder_options = {k: v for k, v in kwargs.items() if k not in torch_compile_kwarg_names}
-
-    backend = ThunderCompiler(**thunder_options)
-    compiled = torch.compile(fn, backend=backend, **torch_compile_options)
+    backend = ThunderCompiler(**thunder_jit_kwargs)
+    compiled = torch.compile(fn, backend=backend, **torch_compile_kwargs)
 
     # We return this object instead of just the raw `compiled` Callable so that
     # we have a place to hang the `last_*traces` properties.

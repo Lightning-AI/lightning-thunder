@@ -1,5 +1,8 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
+import sys
+import inspect
+from pathlib import Path
 import torch
 from torch.utils.benchmark import Timer as TorchBenchmarkTimer
 from torch.profiler import profile, ProfilerActivity
@@ -7,6 +10,7 @@ from thunder.dynamo.utils import thunder_options_to_str
 from torch.utils.benchmark.utils.common import select_unit as select_time_unit
 
 if TYPE_CHECKING:
+    from typing import TextIO
     from collections.abc import Callable
     from torch.utils.benchmark.utils.common import Measurement
 
@@ -60,7 +64,9 @@ class ThunderCompileSpecification(CompileSpecificationInterface):
 
     def to_source(self, fn_name):
         thunder_options_str = thunder_options_to_str(self.thunder_options)
-        return f"thunder.jit({fn_name}, {thunder_options_str})"
+        return (
+            f"thunder.jit({fn_name})" if not thunder_options_str else f"thunder.jit({fn_name}, {thunder_options_str})"
+        )
 
     def import_str(self):
         return ["import thunder"]
@@ -139,7 +145,8 @@ class BoundSymbolNvfuserSpecification(CompileSpecificationInterface):
     # Returns the nvFuser callable from the nvFuser bound symbol.
     # See the TODO in :class:`thunder.dynamo.report.ThunderFusionReport` for more details.
     def compile(self, nvfusion_bsym):
-        return nvfusion_bsym._call_ctx[nvfusion_bsym.sym.name]
+        fd = nvfusion_bsym._call_ctx[nvfusion_bsym.sym.name].last_used
+        return lambda *args: fd.execute(args)
 
 
 class BoundSymbolTorchCompileSpecification(CompileSpecificationInterface):
@@ -224,6 +231,40 @@ class TorchProfileTimer:
             pass
 
 
+# TODO: We want to refine the extensibility to support customizing the memory timer.
+# e.g. Create a base class with an abstract method get_max_allocated(),
+# Support the peak reserved memory timer by adding a e.g. MaxReservedMemoryTimer base class.
+class TimerWithCUDAMemoryUsage:
+    """
+    A timer wrapper that tracks CUDA memory usage alongside timing measurements.
+
+    NOTE: `torch.cuda.max_memory_allocated()` is used to record the peak allocatedmemory usage.
+    and the memory stats is reset by `torch.cuda.reset_peak_memory_stats()` after each timer call.
+    See https://pytorch.org/docs/stable/notes/cuda.html#memory-management for more details.
+
+    Example usage:
+        t = TimerWithCUDAMemoryUsage(TimerInterface.time)
+        t0 = t()  # Records initial memory and time
+        # ... code to measure ...
+        t1 = t()  # Records final memory and time
+        duration = t1 - t0  # Get elapsed time
+        memory_mb = t.max_allocated_memory  # Get peak memory usage in B
+
+    Note:
+        The memory tracking adds some overhead to the timing measurements.
+        Memory usage is recorded in bytes (B).
+    """
+
+    def __init__(self, timer=torch.utils.benchmark.utils.timer.timer):
+        self.max_allocated_memory = 0.0
+        self.timer = timer
+
+    def __call__(self):
+        self.max_allocated_memory = torch.cuda.max_memory_allocated()
+        torch.cuda.reset_peak_memory_stats()
+        return self.timer()
+
+
 class TimerInterface:
     """
     Defines an interface for specifying how to timing a callable and generate a statistic object.
@@ -234,8 +275,7 @@ class TimerInterface:
         - :class:`KernelTime`
     """
 
-    @staticmethod
-    def time(fn, *args, **kwargs):
+    def time(self, *args, **kwargs):
         """
         Measures the execution time of a given callable.
         Subclasses must implement this method to define a specific timing mechanism.
@@ -245,77 +285,97 @@ class TimerInterface:
         """
         raise NotImplementedError("Subclasses should implement the 'time' method if needed.")
 
-    @staticmethod
-    def to_source(*args, **kwargs) -> str:
+    def to_source(self, *args, **kwargs) -> str:
         """
         Converts the timing function into its source code representation.
         Subclasses can implement this method to define how the timing logic is represented as code.
         """
         raise NotImplementedError("Subclasses should implement the 'to_source' method if needed.")
 
-    @staticmethod
-    def import_str(*args, **kwargs):
+    def import_str(self, *args, **kwargs):
         """
         Returns the necessary import statements for the timing implementation.
         """
         return None
 
 
-class WallTime(TimerInterface):
+class TorchBenchmarkTimerSpecification(TimerInterface):
     """
-    A timing utility that measures execution time using `torch.utils.benchmark.Timer`.
-    This class implements `TimerInterface` and provides a method to measure wall-clock time
-    using PyTorch's benchmarking utilities.
+    A timing utility that measures execution time using :class:`torch.utils.benchmark.utils.timer.Timer`.
+    the inner timer is used as the custom timer in timeit.Timer to return the current time, default is :func:`torch.utils.benchmark.utils.timer.timer`.
+    See: :class:`torch.utils.benchmark.utils.timer.Timer` for more details.
     """
 
-    @staticmethod
-    def time(stmt="pass", setup="pass", globals=None, min_run_time: float = 0.2) -> Measurement:
+    def __init__(
+        self,
+        name: str = "TorchBenchmarkTimerSpecification",
+        inner_timer: Callable = torch.utils.benchmark.utils.timer.timer,
+        *,
+        threshold: float | None = None,
+        min_run_time: float | None = None,
+        max_run_time: float | None = None,
+    ):
+        self.inner_timer = inner_timer
+        self.name = name
+
+        default_params = inspect.signature(TorchBenchmarkTimer.adaptive_autorange).parameters
+
+        self.threshold = threshold if threshold is not None else default_params["threshold"].default
+        self.min_run_time = min_run_time if min_run_time is not None else default_params["min_run_time"].default
+        self.max_run_time = max_run_time if max_run_time is not None else default_params["max_run_time"].default
+
+    def time(self, stmt="pass", setup="pass", globals=None) -> Measurement:
         """
-        Measures execution time using PyTorch's :func:`torch.utils.benchmark.Timer.blocked_autorange()`.
+        Measures execution time using PyTorch's :func:`torch.utils.benchmark.Timer.adaptive_autorange()`.
 
         Args:
             stmt (str, optional): Code snippet to be run in a loop and timed.
             setup (str, optional): Optional setup code. Used to define variables used in `stmt`
             globals (dict, optional): A dictionary of global variables for the executed code. Defaults to `None`.
-            min_run_time (float, optional): The minimum execution time (in seconds) to determine the number of runs. Defaults to `0.2`.
 
         Returns:
             Measurement: A benchmarking result containing execution time statistics, see :class:`torch.utils.benchmark.utils.common.Measurement`.
         """
-        t = TorchBenchmarkTimer(stmt=stmt, setup=setup, globals=globals)
-        return t.blocked_autorange(min_run_time=min_run_time)
+        t = TorchBenchmarkTimer(stmt=stmt, setup=setup, globals=globals, timer=self.inner_timer)
+        measurement = t.adaptive_autorange(
+            threshold=self.threshold, min_run_time=self.min_run_time, max_run_time=self.max_run_time
+        )
+        if hasattr(self.inner_timer, "max_allocated_memory"):
+            measurement.max_allocated_memory = self.inner_timer.max_allocated_memory
+        return measurement
 
-    @staticmethod
-    def import_str():
-        return ["from thunder.dynamo.benchmark_utils import WallTime"]
+    def import_str(self):
+        return [f"from thunder.dynamo.benchmark_utils import {self.name}"]
 
-    @staticmethod
-    def to_source(fn_name, inputs_name):
-        return f'WallTime.time("{fn_name}(*{inputs_name})", globals={{"{fn_name}":{fn_name}, "{inputs_name}": {inputs_name}}})'
+    def __repr__(self):
+        return f"{self.name}(threshold={self.threshold}, min_run_time={self.min_run_time}, max_run_time={self.max_run_time})"
+
+    def to_source(self, fn_name, inputs_name):
+        return f'{self.__repr__()}.time("{fn_name}(*{inputs_name})", globals={{"{fn_name}":{fn_name}, "{inputs_name}": {inputs_name}}})'
+
+    def __call__(
+        self,
+        *,
+        threshold: float | None = None,
+        min_run_time: float | None = None,
+        max_run_time: float | None = None,
+    ):
+        return self.__class__(
+            name=self.name,
+            inner_timer=self.inner_timer,
+            threshold=threshold if threshold is not None else self.threshold,
+            min_run_time=min_run_time if min_run_time is not None else self.min_run_time,
+            max_run_time=max_run_time if max_run_time is not None else self.max_run_time,
+        )
 
 
-class KernelTime(TimerInterface):
-    """
-    A timing utility that measures CUDA kernel time using PyTorch's :class:`torch.utils.benchmark.Timer` with a custom time function :class:`TorchProfileTimer`.
-    """
+WallTime = TorchBenchmarkTimerSpecification("WallTime")
 
-    @staticmethod
-    def time(stmt="pass", setup="pass", globals=None, min_run_time: float = 0.2) -> Measurement:
-        """
-        Measures kernel time using PyTorch's `Timer.blocked_autorange()` with the kernel timing using :func:`torch.profiler.profile`.
-        More details see :class:`TorchProfileTimer`
-        """
-        inner_timer = TorchProfileTimer()
-        t = TorchBenchmarkTimer(stmt=stmt, setup=setup, timer=inner_timer, globals=globals)
-        return t.blocked_autorange(min_run_time=min_run_time)
+walltime_with_memory_usage = TimerWithCUDAMemoryUsage()
+WallTimeWithMemoryUsage = TorchBenchmarkTimerSpecification("WallTimeWithMemoryUsage", walltime_with_memory_usage)
 
-    @staticmethod
-    def import_str():
-        return ["from thunder.dynamo.benchmark_utils import KernelTime"]
-
-    @staticmethod
-    def to_source(fn_name, inputs_name):
-        return f'KernelTime.time("{fn_name}(*{inputs_name})", globals={{"{fn_name}":{fn_name}, "{inputs_name}": {inputs_name}}})'
+torch_profile_timer = TorchProfileTimer()
+KernelTime = TorchBenchmarkTimerSpecification("KernelTime", torch_profile_timer)
 
 
 def check_threshold(a, b, rtol, atol):
@@ -329,7 +389,27 @@ def get_pretty_time_str(a):
     return f"{a / time_scale:.3f} {time_unit}"
 
 
-def check_threshold_log(a: float, b: float, a_name: str, b_name: str, test_name: str, timer_name: str, rtol, atol):
+def get_pretty_memory_str(value):
+    """
+    Converts memory size in bytes to human readable string with appropriate unit suffix.
+
+    Args:
+        value (float): Memory size in bytes
+
+    Returns:
+        str: Memory size with appropriate unit (B, KB, MB, GB, TB, PB)
+    """
+    suffixes = ["B", "KB", "MB", "GB", "TB", "PB"]
+    suffix_idx = 0
+
+    while suffix_idx + 1 < len(suffixes) and value >= 1000.0:
+        value /= 1000.0
+        suffix_idx += 1
+
+    return f"{value:.3f} {suffixes[suffix_idx]}"
+
+
+def check_timing(a: float, b: float, a_name: str, b_name: str, test_name: str, timer_name: str, rtol, atol):
     """
     Compare two timing measurements against a defined threshold and generate a log message.
     If not exceed the threshold, abs(a-b) <= max(rtol * max(abs(a), abs(b)), atol).
@@ -350,14 +430,12 @@ def check_threshold_log(a: float, b: float, a_name: str, b_name: str, test_name:
     a_time_str = get_pretty_time_str(a)
     b_time_str = get_pretty_time_str(b)
     if not check_threshold(a, b, rtol=rtol, atol=atol):
-        log_str = f"Benchmark {timer_name} for **{test_name}** requires investigation: {b_name}({b_time_str}) and {a_name}({a_time_str}) is not close (rtol={rtol}, atol={atol})"
-        print(log_str)
+        log_str = f"Benchmark {timer_name} for **{test_name}** requires investigation: {b_name}({b_time_str}) and {a_name}({a_time_str}) is not close (rtol={rtol}, atol={atol})\n"
         return False, log_str
     log_str = (
-        f"Benchmark {timer_name} ran successfully on **{test_name}**: {b_name}({b_time_str}) , {a_name}({a_time_str})"
+        f"Benchmark {timer_name} ran successfully on **{test_name}**: {b_name}({b_time_str}) , {a_name}({a_time_str})\n"
     )
-    print(log_str)
-    return True, None
+    return True, log_str
 
 
 def is_report_using_cuda(report):
@@ -370,35 +448,49 @@ def is_report_using_cuda(report):
     return any(tree_map(_check_tensor, report.example_input_meta))
 
 
-def check_timing(
+def check_memory_usage(m1, m2, m1_name, m2_name, test_name, rtol, atol):
+    m1_memory_str = get_pretty_memory_str(m1)
+    m2_memory_str = get_pretty_memory_str(m2)
+    if not check_threshold(m1, m2, rtol=rtol, atol=atol):
+        log_str = f"Max_allocated_memory for **{test_name}** requires investigation: {m1_name}({m1_memory_str}) and {m2_name}({m2_memory_str}) is not close (rtol={rtol}, atol={atol})\n"
+        return False, log_str
+    log_str = f"Max_allocated_memory: [{test_name}] {m1_name}({m1_memory_str}); {m2_name}({m2_memory_str})\n"
+    return True, log_str
+
+
+def check_metrics(
     folder_path,
     report,
     compile_fn1: Callable,
     compile_fn2: Callable,
     timer_fn: Callable,
-    timer_name: str,
-    rtol=0.5,
-    atol=0.0,
+    time_rtol=0.5,
+    time_atol=0.0,
+    memory_usage_rtol=0.5,
+    memory_usage_atol=0.0,
+    stream: TextIO = sys.stdout,
 ):
     """
-    Check the timing of graph report using two different compilation specifications with the provided timer configuration
+    Check the timing and memory usage (if using WallTimeWithMemoryUsage) of graph report using two different compilation specifications with the provided timer configuration
     and generate a benchmark script if the difference exceeds the threshold.
     """
+    folder_path = Path(folder_path)
     graph_name = report.graph_name
     if not is_report_using_cuda(report):
-        print(f"{graph_name} doesn't use CUDA, skip benchmark {timer_name}")
-        return
-    filename1 = f"{graph_name}_{compile_fn1.name}_{timer_name}.py"
-    filename2 = f"{graph_name}_{compile_fn2.name}_{timer_name}.py"
+        stream.write(f"{graph_name} doesn't use CUDA, skip benchmark {timer_fn.name}")
+        return None, None
+    filename1 = f"{graph_name}_{compile_fn1.name}_{timer_fn.name}.py"
+    filename2 = f"{graph_name}_{compile_fn2.name}_{timer_fn.name}.py"
 
     def try_and_log_benchmark(compile_fn, filename):
         try:
             return report.run_benchmark(compile_fn, timer_fn)
         except Exception as e:
-            msg = f"Benchmark {timer_name} on {graph_name} using {compile_fn.name} failed with exception {e}, benchmark script failed_{filename} is saved"
-            print(msg)
+            msg = f"Benchmark {timer_fn.name} on {graph_name} using {compile_fn.name} failed with exception {e}, benchmark script failed_{filename} is saved"
+            stream.write(msg)
+            failed_folder = folder_path / "failed"
             report.write_benchmark(
-                folder_path, compile_fn, timer_fn, file_name=f"failed_{filename1}", extra_comment_str=msg
+                failed_folder, compile_fn, timer_fn, file_name=f"failed_{filename1}", extra_comment_str=msg
             )
             return None
 
@@ -406,47 +498,77 @@ def check_timing(
     measure2 = try_and_log_benchmark(compile_fn2, filename2)
 
     if measure1 is None or measure2 is None:
-        return
+        return measure1, measure2
 
-    record = False
+    perf_record = False
+    memory_record = False
     log_strs = ""
     for m1, m2, name in zip(measure1, measure2, ("forward", "backward")):
-        if m1 is None:
-            assert m2 is None
-            continue
-        ret = check_threshold_log(
-            m1.median, m2.median, compile_fn1.name, compile_fn2.name, f"{graph_name} {name}", timer_name, rtol, atol
+        if timer_fn.name == "WallTimeWithMemoryUsage":
+            memory_ret = check_memory_usage(
+                m1.max_allocated_memory,
+                m2.max_allocated_memory,
+                compile_fn1.name,
+                compile_fn2.name,
+                f"{graph_name} {name}",
+                memory_usage_rtol,
+                memory_usage_atol,
+            )
+            if not memory_ret[0]:
+                memory_record = True
+            log_strs += memory_ret[1]
+
+        ret = check_timing(
+            m1.median,
+            m2.median,
+            compile_fn1.name,
+            compile_fn2.name,
+            f"{graph_name} {name}",
+            timer_fn.name,
+            time_rtol,
+            time_atol,
         )
         if not ret[0]:
-            record = True
-            log_strs += f"{ret[1]}\n"
-    if record:
-        extra_comment = f"Benchmark results:\n{log_strs}\n"
-        report.write_benchmark(folder_path, compile_fn1, timer_fn, file_name=filename1, extra_comment_str=extra_comment)
-        report.write_benchmark(folder_path, compile_fn2, timer_fn, file_name=filename2, extra_comment_str=extra_comment)
-        print(f"The scripts are saved: {filename1}, {filename2}")
-    print("\n")
+            perf_record = True
+        log_strs += ret[1]
+
+    def save_script(folder_path, compile_fn, filename):
+        report.write_benchmark(folder_path, compile_fn, timer_fn, file_name=filename, extra_comment_str=log_strs)
+
+    stream.write(log_strs)
+    if perf_record:
+        save_script(folder_path, compile_fn1, filename1)
+        save_script(folder_path, compile_fn2, filename2)
+        stream.write(f"The scripts are saved: {filename1}, {filename2}\n")
+    if memory_record:
+        memory_issue_folder = folder_path / "memory_issue"
+        save_script(memory_issue_folder, compile_fn1, filename1)
+        save_script(memory_issue_folder, compile_fn2, filename2)
+    stream.write("\n")
+    return measure1, measure2
 
 
-def check_timing_bsym(folder_path, report, timer_fn, timer_name: str, rtol=0.5, atol=0.0):
+def check_nvfusion_timing(folder_path, report, timer_fn, rtol=0.5, atol=0.0, stream: TextIO = sys.stdout):
     """
     Check the timing of the nvfusion region report using two different compilation specifications with the provided timer configuration
     and generate a benchmark script if the difference exceeds the threshold.
     """
     graph_name = report.name
+    timer_name = timer_fn.name
     bsym_nvfuser = BoundSymbolNvfuserSpecification()
     bsym_torchcompile = BoundSymbolTorchCompileSpecification()
     measure1 = report.run_benchmark(bsym_nvfuser, timer_fn)
     measure2 = report.run_benchmark(bsym_torchcompile, timer_fn)
 
-    ret = check_threshold_log(
+    ret = check_timing(
         measure1.median, measure2.median, bsym_nvfuser.name, bsym_torchcompile.name, graph_name, timer_name, rtol, atol
     )
+    stream.write(ret[1])
     if not ret[0]:
         extra_comment = f"Benchmark results:\n{ret[1]}\n"
         filename1 = f"{graph_name}_{bsym_nvfuser.name}_{timer_name}.py"
         filename2 = f"{graph_name}_{bsym_torchcompile.name}_{timer_name}.py"
         report.write_nvfuser_benchmark(folder_path, timer_fn, file_name=filename1, extra_comment_str=extra_comment)
         report.write_inductor_benchmark(folder_path, timer_fn, file_name=filename2, extra_comment_str=extra_comment)
-        print(f"The scripts are saved: {filename1}, {filename2}")
-    print("\n")
+        stream.write(f"The scripts are saved: {filename1}, {filename2}\n")
+    stream.write("\n")
