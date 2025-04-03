@@ -1618,7 +1618,7 @@ register_supported(PrimIDs.REAL, real, _elementwise_unary_check)
 def imag(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
-    return fd.ops.real(nva)
+    return fd.ops.imag(nva)
 
 
 register_supported(PrimIDs.IMAG, imag, _elementwise_unary_check)
