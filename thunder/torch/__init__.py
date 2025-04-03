@@ -2021,12 +2021,12 @@ def threshold(a: TensorProxy, /, threshold: float, value: float, inplace: bool =
 _inplace_to_out_of_place[threshold] = threshold, 3
 
 # alias to avoid conflict with keyword argument `threshold` in threshold_
-threshold_fn = threshold
+_threshold = threshold
 
 
 @torchsymbol(torch.nn.functional.threshold_, is_method=False, tags=(prims.OpTags.IN_PLACE,))
 def threshold_(a: TensorProxy, /, threshold: float, value: float) -> TensorLike:
-    return _copy_(a, threshold_fn(a, threshold, value, False))
+    return _copy_(a, _threshold(a, threshold, value, False))
 
 
 _inplace_to_out_of_place[threshold_] = threshold, -1
