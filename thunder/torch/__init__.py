@@ -1943,6 +1943,24 @@ def mish(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
 _inplace_to_out_of_place[mish] = mish, 1
 
 
+@torchsymbol(torch.nn.functional.prelu, is_method=True)
+def prelu(a: TensorProxy, /, weight: TensorProxy) -> TensorLike:
+    if weight.numel() != 1:
+        num_channels = a.shape[1] if a.ndim >= 2 else 1
+        utils.check(
+            weight.numel() == num_channels,
+            lambda: f"Mismatch of parameter numbers and input channel size. Found parameter numbers ="
+            f" {weight.numel()} and channel size = {num_channels}.",
+        )
+    utils.check(
+        weight.ndim == 0 or weight.ndim == 1,
+        lambda: f"prelu: Expected `weight` to be a scalar or 1D tensor, but got: " f"ndim = {weight.ndim}",
+    )
+    if a.ndim != 1:
+        weight = prims.broadcast_in_dim(weight, a.shape, () if weight.ndim == 0 else (0 if a.ndim == 1 else 1,))
+    return where(a > 0, a, weight * a)
+
+
 # id=torch.selu because we ignore inplace argument in torch.nn.functional.selu
 @torchsymbol(torch.selu, torch.nn.functional.selu, id="torch.selu", is_method=False)
 def selu(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
@@ -2210,6 +2228,16 @@ def logical_xor(a: TensorLike, b: TensorLike, /) -> TensorLike:
 @torchsymbol(torch.Tensor.logical_xor_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def logical_xor_(a: TensorLike, b: TensorLike, /) -> TensorLike:
     return _copy_(a, logical_xor(a, b))
+
+
+@torchsymbol(torch.ldexp, torch.Tensor.ldexp, is_method=True)
+def ldexp(a: TensorLike, b: TensorLike, /) -> TensorLike:
+    utils.check(
+        a.device == b.device,
+        lambda: f"Expected all tensors to be on the same device, but found at least two devices, cuda and cpu",
+    )
+
+    return mul(a, exp2(b))
 
 
 @torchsymbol(torch.le, is_method=True)
@@ -3001,6 +3029,27 @@ def var_mean(
     result = _reduction(
         a,
         partial(prims.var_mean, correction=correction),
+        dims=dim,
+        keepdims=keepdim,
+        dtype=None,
+        has_identity=True,
+        output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.COMPLEX_TO_FLOAT,
+    )
+    return result
+
+
+@torchsymbol(torch.std, is_method=True)
+def std(
+    a: TensorProxy,
+    /,
+    dim=None,
+    *,
+    keepdim: bool = False,
+    correction: NumberLike = 1,
+) -> TensorProxy:
+    result = _reduction(
+        a,
+        partial(prims.std, correction=correction),
         dims=dim,
         keepdims=keepdim,
         dtype=None,

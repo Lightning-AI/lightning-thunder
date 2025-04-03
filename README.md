@@ -28,9 +28,9 @@ For **performance experts**, Thunder is the most ergonomic framework for underst
 <div align='center'>
 
 <pre>
-✅ Run PyTorch 40% faster   ✅ Quantization                ✅ Kernel fusion
-✅ Training recipes         ✅ FP4/FP6/FP8 precision       ✅ Distributed TP/PP/DP
-✅ Inference recipes        ✅ Ready for NVIDIA Blackwell  ✅ CUDA Graphs
+✅ Run PyTorch 40% faster   ✅ Quantization                ✅ Kernel fusion        
+✅ Training recipes         ✅ FP4/FP6/FP8 precision       ✅ Distributed TP/PP/DP 
+✅ Inference recipes        ✅ Ready for NVIDIA Blackwell  ✅ CUDA Graphs          
 ✅ LLMs, non LLMs and more  ✅ Custom Triton kernels       ✅ Compose all the above
 </pre>
 
