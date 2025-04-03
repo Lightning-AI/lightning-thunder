@@ -1460,7 +1460,7 @@ def test_save_failing_repros(tmp_path):
         def compile(self, fn, **kwargs):
             return wrapped_fn
 
-    results = fx_report(foo, x)
+    results = fx_report(foo)(x)
     save_failing_repros(
         results.fx_graph_reports, _BadCompileSpecification(), tmp_path / "consistency", check_consistency=False
     )
