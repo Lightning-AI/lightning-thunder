@@ -19,48 +19,27 @@ from transformer_engine.pytorch.fp8 import (
     RecipeState,
 )
 
-functional_te_ex = OperatorExecutor("functional_te")
+
+class StatefulExecutor(OperatorExecutor):
+    def __init__(self, name, *, version=None):
+        super().__init__(name, version=version)
+
+    def register_stateful_operator(self, base_name: str, state_class, *, meta):
+        def register_state(*args, **kwargs):
+            state = state_class()
+            name = f"{base_name}_{id(state)}"
+
+            def bind_state(bsym):
+                bsym._call_ctx = {name: state}
+
+            sym = self.register_operator(name, meta=meta, bind_postprocess=bind_state)
+            return sym(*args, *kwargs)
+
+        return register_state
+
+
+functional_te_ex = StatefulExecutor("functional_te")
 register_executor(functional_te_ex)
-
-
-class FP8ExecutorState:
-    layer_counter = 0
-    recipe: Recipe = None
-    states: dict[str, RecipeState] = {}
-    quantizers: dict[int, list[Float8Quantizer]] = {}
-
-    @classmethod
-    def make_layer_id(cls):
-        # NOTE: does not need to be a counter here, just return an unique number, can use uuids.
-        layer_id = cls.layer_counter
-        cls.layer_counter += 1
-        return layer_id
-
-    @classmethod
-    def get_current_recipe(cls, name):
-        if not cls.recipe:
-            cls.recipe = get_default_fp8_recipe()
-        return cls.recipe
-
-    # TODO needs layer index + recipe + mode + process(ddp)
-    @classmethod
-    def get_key(cls, recipe: Recipe, layer_id: int, mode: str) -> str:
-        return f"{layer_id}:{mode}:{str(recipe)}"
-
-    @classmethod
-    def get_state(cls, key: str) -> RecipeState | None:
-        return cls.states.get(key, None)
-
-    @classmethod
-    def get_quantizers(cls, key: str) -> list[Float8Quantizer] | None:
-        return cls.quantizers.get(key, None)
-
-    @classmethod
-    def reset_executor_state(cls):
-        cls.layer_counter = 0
-        cls.recipe = None
-        cls.states = {}
-        cls.quantizers = {}
 
 
 # TODO
@@ -68,86 +47,89 @@ def _functional_te_checker(a, w, /, bias):
     # TE 2.0 functional API does not yet support bias=True
     # https://github.com/NVIDIA/TransformerEngine/blob/1321b9b5dc96d67d20d6682c52116a3657f293d3/transformer_engine/pytorch/ops/basic/basic_linear.py#L46-L47
     # https://github.com/NVIDIA/TransformerEngine/blob/1321b9b5dc96d67d20d6682c52116a3657f293d3/transformer_engine/pytorch/ops/basic/basic_linear.py#L505
-    if bias:
+    if bias is not None:
         return False
     return _linear_checker(a, w, bias)
 
 
+# Assuming one recipe per machine since it's based on hw capabilities.
+functional_te_recipe = get_default_fp8_recipe()
+
+
 def _te_fp8_recipe_meta(recipe_name: str):
-    return AnyProxy(object(), prefix="r")
+    return AnyProxy(recipe_name, prefix="r")
 
 
 def _te_fp8_recipe_impl(recipe_name: str):
-    # can a trace include two different recipes? (shouldn't? design constraint consideration here)
-    return FP8ExecutorState.get_current_recipe(recipe_name)
+    return functional_te_recipe
 
 
 _te_fp8_recipe = functional_te_ex.register_operator("te_fp8_recipe", meta=_te_fp8_recipe_meta, fn=_te_fp8_recipe_impl)
 
 
-def _te_fp8_quantizers_meta(layer_id: int, recipe_state: RecipeState, num_quantizers: int):
-    return (*(AnyProxy(object(), prefix="q") for _ in range(num_quantizers)),)
+def _te_fp8_quantizers_meta(recipe_state: RecipeState, num_quantizers: int):
+    # giving num quantizers so there is no need to allocate extra things
+    return (*(AnyProxy(num_quantizers, prefix="q") for _ in range(num_quantizers)),)
 
 
-def _te_fp8_quantizers_impl(layer_id: int, recipe_state: RecipeState, num_quantizers: int):
-    # TODO verify that the recipe and mode are actually set
-    key = FP8ExecutorState.get_key(recipe_state.recipe, layer_id, recipe_state.mode)
+class TEQuantizerState:
+    def __init__(self):
+        self.quantizers = None
 
-    quantizers = FP8ExecutorState.get_quantizers(key)
+    def __call__(self, recipe_state: RecipeState, num_quantizers: int):
+        if self.quantizers:
+            return self.quantizers
+        quantizers = recipe_state.make_quantizers()
 
-    if quantizers:
+        self.quantizers = quantizers
+
         return quantizers
 
-    quantizers = recipe_state.make_quantizers()
-    FP8ExecutorState.quantizers[key] = quantizers
 
-    return quantizers
-
-
-_te_fp8_quantizers = functional_te_ex.register_operator(
-    "te_fp8_quantizers", meta=_te_fp8_quantizers_meta, fn=_te_fp8_quantizers_impl
+_te_fp8_quantizers = functional_te_ex.register_stateful_operator(
+    "te_fp8_quantizers", TEQuantizerState, meta=_te_fp8_quantizers_meta
 )
 
 
-def _te_fp8_state_meta(state_idx: int, recipe, mode: str, num_quantizers: int, /):
-    # Placeholder o
-    o = object()
-    return AnyProxy(o, prefix="s")
+def _te_fp8_state_meta(recipe, mode: str, num_quantizers: int, /):
+    # mode just to give the proxy something wihout allocating extra stuff
+    return AnyProxy(mode, prefix="s")
 
 
-def _te_fp8_state_impl(layer_id, recipe, mode, num_quantizers):
-    key = FP8ExecutorState.get_key(recipe, layer_id, mode)
-    state = FP8ExecutorState.get_state(key)
-    if state:
-        return state
+class TERecipeState:
+    def __init__(self):
+        self.state = None
 
-    # mode is needed to get the correct dtypes inside for computation(setup quantizers)
-    recipe_state = te.fp8.RecipeState.create(
-        recipe,
-        mode=mode,
-        num_quantizers=num_quantizers,
-    )
+    def __call__(self, recipe: Recipe, mode, num_quantizers):
+        if self.state:
+            return self.state
 
-    FP8ExecutorState.states[key] = recipe_state
+        # mode is needed to get the correct dtypes inside for computation(setup quantizers)
+        recipe_state = te.fp8.RecipeState.create(
+            recipe,
+            mode=mode,
+            num_quantizers=num_quantizers,
+        )
 
-    return recipe_state
+        self.state = recipe_state
+
+        return recipe_state
 
 
-_te_fp8_state = functional_te_ex.register_operator("te_fp8_state", meta=_te_fp8_state_meta, fn=_te_fp8_state_impl)
+_te_fp8_state = functional_te_ex.register_stateful_operator("te_fp8_state", TERecipeState, meta=_te_fp8_state_meta)
 
 
 def _linear_fwd_meta(
     a: TensorProxy,
     w: TensorProxy,
     bias: TensorProxy | None,
-    forward_recipe_state: RecipeState,
     input_quantizer: Float8Quantizer,
     weight_quantizer: Float8Quantizer,
 ):
     return TensorProxy(like=a), TensorProxy(like=a), TensorProxy(like=w)
 
 
-def _linear_fwd_impl(a, w, bias, forward_recipe_state, input_quantizer, weight_quantizer):
+def _linear_fwd_impl(a, w, bias, input_quantizer, weight_quantizer):
     out, gemm_a, gemm_w = BasicLinear._functional_forward(
         input=a,
         weight=w,
@@ -159,20 +141,19 @@ def _linear_fwd_impl(a, w, bias, forward_recipe_state, input_quantizer, weight_q
     return out, gemm_a, gemm_w
 
 
-_te_linear_fwd = functional_te_ex.register_operator("te_functional_fwd", meta=_linear_fwd_meta, fn=_linear_fwd_impl)
+_te_linear_fwd = functional_te_ex.register_operator(
+    "te_functional_linear_fwd", meta=_linear_fwd_meta, fn=_linear_fwd_impl
+)
 
 
 def _te_linear_execution_transform(a, w, /, bias):
     recipe = _te_fp8_recipe("delayed")
 
-    # can get rid of this by using a uniquie number generated here and then saved as constant(automatically?)
-    layer_id = FP8ExecutorState.make_layer_id()
+    forward_recipe_state = _te_fp8_state(recipe, "forward", 2)
 
-    forward_recipe_state = _te_fp8_state(layer_id, recipe, "forward", 2)
+    input_quantizer, weight_quantizer = _te_fp8_quantizers(forward_recipe_state, 2)
 
-    input_quantizer, weight_quantizer = _te_fp8_quantizers(layer_id, forward_recipe_state, 2)
-
-    out, _, _ = _te_linear_fwd(a, w, bias, forward_recipe_state, input_quantizer, weight_quantizer)
+    out, _, _ = _te_linear_fwd(a, w, bias, input_quantizer, weight_quantizer)
 
     return out
 
@@ -195,23 +176,23 @@ def _linear_bwd_impl(grad_o, a, w, input_quantizer, weight_quantizer, grad_outpu
     return grad_input, grad_weight
 
 
-_te_linear_bwd = functional_te_ex.register_operator("te_functional_bwd", meta=_linear_bwd_meta, fn=_linear_bwd_impl)
+_te_linear_bwd = functional_te_ex.register_operator(
+    "te_functional_linear_bwd", meta=_linear_bwd_meta, fn=_linear_bwd_impl
+)
 
 
 def _te_linear_grad_transform(a, w, bias):
     recipe = _te_fp8_recipe("delayed")
 
-    layer_id = FP8ExecutorState.make_layer_id()
+    forward_recipe_state = _te_fp8_state(recipe, "forward", 2)
 
-    forward_recipe_state = _te_fp8_state(layer_id, recipe, "forward", 2)
+    input_quantizer, weight_quantizer = _te_fp8_quantizers(forward_recipe_state, 2)
 
-    input_quantizer, weight_quantizer = _te_fp8_quantizers(layer_id, forward_recipe_state, 2)
+    primal, gemm_a, gemm_w = _te_linear_fwd(a, w, bias, input_quantizer, weight_quantizer)
 
-    primal, gemm_a, gemm_w = _te_linear_fwd(a, w, bias, forward_recipe_state, input_quantizer, weight_quantizer)
+    backward_recipe_state = _te_fp8_state(recipe, "backward", 1)
 
-    backward_recipe_state = _te_fp8_state(layer_id, recipe, "backward", 1)
-
-    (grad_output_quantizer,) = _te_fp8_quantizers(layer_id, backward_recipe_state, 1)
+    (grad_output_quantizer,) = _te_fp8_quantizers(backward_recipe_state, 1)
 
     grad_out = get_grad(primal)
 
@@ -242,13 +223,12 @@ def _te_fp8_sync_meta(recipe, *states, forward: bool):
 
 
 def _te_fp8_sync_impl(recipe, *states, forward: bool):
-    # TODO use the key here so that it's forward compatible with an amax history buffer in the future.
     for state in states:
         _amax_and_scale_update(state.amax_history, state.scale, get_fp8_max(recipe, forward), recipe)
     return None
 
 
-_te_fp8_syncronization = functional_te_ex.register_operator(
+_te_fp8_synchronization = functional_te_ex.register_operator(
     "te_fp8_sync",
     meta=_te_fp8_sync_meta,
     fn=_te_fp8_sync_impl,
