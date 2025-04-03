@@ -17,6 +17,7 @@ from thunder.torch.langctx import torchctx
 from thunder.core.utils import check
 
 if TYPE_CHECKING:
+    from numbers import Number
     from thunder.core.symbol import Symbol
     import os
     from typing import Any
@@ -458,13 +459,19 @@ def _get_storage_shape(t: torch.Tensor):
     return (storage_size,)
 
 
+def _get_min_and_val(t: torch.Tensor) -> tuple[Number | None, Number | None]:
+    if isinstance(t, FakeTensor) or t.device.type == "meta" or t.numel() == 0:
+        return None, None
+    if t.dtype in (torch.float8_e4m3fn, torch.float8_e4m3fnuz, torch.float8_e5m2, torch.float8_e5m2fnuz):
+        t = t.to(torch.float32)
+    minmax: tuple[torch.Tensor, torch.Tensor] = torch.aminmax(t)
+    min_val = minmax[0].cpu().item()
+    max_val = minmax[1].cpu().item()
+    return min_val, max_val
+
+
 def _get_example_input_tensor_metadata(t: torch.Tensor) -> ExampleInputMetaData:
-    min_val = None
-    max_val = None
-    if not isinstance(t, FakeTensor) and t.device.type != "meta" and t.numel() != 0:
-        minmax: tuple[torch.Tensor, torch.Tensor] = torch.aminmax(t)
-        min_val = minmax[0].cpu().item()
-        max_val = minmax[1].cpu().item()
+    min_val, max_val = _get_min_and_val(t)
     meta_ev = ExampleInputMetaData(
         t.requires_grad,
         t.layout,
@@ -678,12 +685,13 @@ def _readable(
     module: torch.fx.GraphModule,
     module_name: str,
     print_output: bool = False,
+    verbose: bool = True,
     include_stride: bool = True,
     include_device: bool = True,
     colored: bool = False,
 ):
     """Modified from `torch.fx.graph_module._print_readable` (https://github.com/pytorch/pytorch/blob/3192bdeea428f2bf3a95274ee59ea41c4f8e31e9/torch/fx/graph_module.py#L297).
-    This is basically print_readable but it sets verbose=False (torch hardcodes it to True)."""
+    Note: the include_stride and include_device take effects only when verbose is True."""
     graph = module.graph
     assert graph is not None and isinstance(
         graph, torch.fx.Graph
@@ -691,11 +699,16 @@ def _readable(
 
     verbose_python_code = graph.python_code(
         root_module="self",
-        verbose=False,
+        verbose=verbose,
         include_stride=include_stride,
         include_device=include_device,
     )
     module_code = verbose_python_code.src
+    submodule_names = [name for name, m in module.named_children() if hasattr(m, "graph")]
+    # For higher-order functions, the callable is a submodule, and the code string initializes the object using for example`wrap_body_0 = self.wrap_body_0`.
+    # Since `wrap_body_0` represents the class name of the submodule, it needs to be replaced with `wrap_body_0 = self.wrap_body_0()` to instantiate the object.
+    for submodule_name in submodule_names:
+        module_code = module_code.replace(f"self.{submodule_name}", f"self.{submodule_name}()")
     module_code = module_code.lstrip("\n")
     module_code = f"class {module_name}(torch.nn.Module):\n" + module_code
     module_code = _addindent(module_code, 4)
@@ -708,13 +721,14 @@ def _readable(
                     submodule,
                     submodule_name,
                     print_output=False,
+                    verbose=verbose,
                     include_stride=include_stride,
                     include_device=include_device,
                     colored=colored,
                 )
             )
     submodule_code = "\n".join(submodule_code_list)
-    submodule_code = _addindent(submodule_code, 2)
+    submodule_code = _addindent(submodule_code, 4)
 
     output = module_code + submodule_code
     if print_output:
@@ -775,3 +789,45 @@ def get_thunder_module_names(subgraph_info: SubgraphInfo) -> list[str]:
         if isinstance(target, str) and target.startswith("thunder_"):
             thunder_module_names.append(target)
     return thunder_module_names
+
+
+def has_higher_order_operator(gm: torch.fx.GraphModule):
+    for n in gm.graph.nodes:
+        if isinstance(n.target, torch._ops.HigherOrderOperator):
+            return True
+    return False
+
+
+def format_python_file(file_path: str) -> str:
+    from lightning_utilities.core.imports import package_available
+
+    if package_available("ruff"):
+        import subprocess
+        import sys
+
+        # Ruff often prints warnings, progress messages, and other information that we don't need in this context.
+        # Redirecting stdout and stderr to /dev/null to suppress unnecessary output.
+        subprocess.run(
+            [sys.executable, "-m", "ruff", "format", file_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+
+
+def get_thunder_jit_kwargs(**kwargs) -> dict:
+    """
+    Extracts and returns the kwargs for :func:`thunder.jit` from the given keyword arguments.
+
+    """
+    from thunder import jit
+
+    thunder_jit_kwarg_names = inspect.getfullargspec(jit).kwonlyargs
+    return {k: v for k, v in kwargs.items() if k in thunder_jit_kwarg_names}
+
+
+def get_torch_compile_kwargs(**kwargs) -> dict:
+    """
+    Extracts and returns the kwargs for :func:`torch.compile` from the given keyword arguments.
+    """
+    # lightning has torch.compile wrapped in `lightning/fabric/wrappers.py`
+    torch.compile = inspect.unwrap(torch.compile)
+    torch_compile_kwarg_names = inspect.getfullargspec(torch.compile).kwonlyargs
+    return {k: v for k, v in kwargs.items() if k in torch_compile_kwarg_names}

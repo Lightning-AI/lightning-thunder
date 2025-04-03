@@ -1908,6 +1908,37 @@ def hardtanh_(a: TensorProxy, /, min_val: float = -1.0, max_val: float = 1.0) ->
 _inplace_to_out_of_place[hardtanh_] = hardtanh, -1
 
 
+@torchsymbol(torch.nn.functional.mish, is_method=False)
+def mish(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
+    # ltorch.softplus isn't used here because outside of a certain range,
+    # it returns a, rather than log1p(exp(a))
+    out = a * tanh(log1p(exp(a)))
+    if inplace:
+        return _copy_(a, out)
+    return out
+
+
+_inplace_to_out_of_place[mish] = mish, 1
+
+
+@torchsymbol(torch.nn.functional.prelu, is_method=True)
+def prelu(a: TensorProxy, /, weight: TensorProxy) -> TensorLike:
+    if weight.numel() != 1:
+        num_channels = a.shape[1] if a.ndim >= 2 else 1
+        utils.check(
+            weight.numel() == num_channels,
+            lambda: f"Mismatch of parameter numbers and input channel size. Found parameter numbers ="
+            f" {weight.numel()} and channel size = {num_channels}.",
+        )
+    utils.check(
+        weight.ndim == 0 or weight.ndim == 1,
+        lambda: f"prelu: Expected `weight` to be a scalar or 1D tensor, but got: " f"ndim = {weight.ndim}",
+    )
+    if a.ndim != 1:
+        weight = prims.broadcast_in_dim(weight, a.shape, () if weight.ndim == 0 else (0 if a.ndim == 1 else 1,))
+    return where(a > 0, a, weight * a)
+
+
 # id=torch.selu because we ignore inplace argument in torch.nn.functional.selu
 @torchsymbol(torch.selu, torch.nn.functional.selu, id="torch.selu", is_method=False)
 def selu(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
@@ -2155,6 +2186,36 @@ def logical_not(a: TensorLike, /) -> TensorLike:
 @torchsymbol(torch.Tensor.logical_not_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def logical_not_(a: TensorLike, /) -> TensorLike:
     return _copy_(a, logical_not(a))
+
+
+@torchsymbol(torch.logical_or, is_method=True)
+def logical_or(a: TensorLike, b: TensorLike, /) -> TensorLike:
+    return clang.logical_or(a, b)
+
+
+@torchsymbol(torch.Tensor.logical_or_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def logical_or_(a: TensorLike, b: TensorLike, /) -> TensorLike:
+    return _copy_(a, logical_or(a, b))
+
+
+@torchsymbol(torch.logical_xor, is_method=True)
+def logical_xor(a: TensorLike, b: TensorLike, /) -> TensorLike:
+    return clang.logical_xor(a, b)
+
+
+@torchsymbol(torch.Tensor.logical_xor_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def logical_xor_(a: TensorLike, b: TensorLike, /) -> TensorLike:
+    return _copy_(a, logical_xor(a, b))
+
+
+@torchsymbol(torch.ldexp, torch.Tensor.ldexp, is_method=True)
+def ldexp(a: TensorLike, b: TensorLike, /) -> TensorLike:
+    utils.check(
+        a.device == b.device,
+        lambda: f"Expected all tensors to be on the same device, but found at least two devices, cuda and cpu",
+    )
+
+    return mul(a, exp2(b))
 
 
 @torchsymbol(torch.le, is_method=True)
@@ -2955,6 +3016,27 @@ def var_mean(
     return result
 
 
+@torchsymbol(torch.std, is_method=True)
+def std(
+    a: TensorProxy,
+    /,
+    dim=None,
+    *,
+    keepdim: bool = False,
+    correction: NumberLike = 1,
+) -> TensorProxy:
+    result = _reduction(
+        a,
+        partial(prims.std, correction=correction),
+        dims=dim,
+        keepdims=keepdim,
+        dtype=None,
+        has_identity=True,
+        output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.COMPLEX_TO_FLOAT,
+    )
+    return result
+
+
 @torchsymbol(torch.argmax, is_method=True)
 def argmax(a: TensorLike, /, dim: int | None = None, keepdim: bool | None = False):
     return clang.argmax(a, dim, keepdim)
@@ -2970,6 +3052,42 @@ def topk(
     a: TensorLike, /, k: int, dim: None | int = None, largest: bool = True, sorted: bool = True, *, out=None
 ) -> (TensorLike, TensorLike):
     return clang.topk(a, k, dim, largest, sorted, out=out)
+
+
+@torchsymbol(torch.atleast_1d, is_method=True)
+def atleast_1d(*args: Union[TensorLike, Sequence[TensorLike]]) -> Union[TensorLike, tuple[TensorLike, ...]]:
+    res = tuple(a if a.ndim >= 1 else unsqueeze(a, 0) for a in args)
+    return res if len(res) > 1 else res[0]
+
+
+@torchsymbol(torch.atleast_2d, is_method=True)
+def atleast_2d(*args: Union[TensorLike, Sequence[TensorLike]]) -> Union[TensorLike, tuple[TensorLike, ...]]:
+
+    def _unsqueeze_atleast(a):
+        if a.ndim == 0:
+            return a.unsqueeze(0).unsqueeze(1)
+        elif a.ndim == 1:
+            return a.unsqueeze(0)
+        return a
+
+    res = tuple(_unsqueeze_atleast(a) if isinstance(a, TensorProxy) else a for a in args)
+    return res if len(res) > 1 else res[0]
+
+
+@torchsymbol(torch.atleast_3d, is_method=True)
+def atleast_3d(*args: Union[TensorLike, Sequence[TensorLike]]) -> Union[TensorLike, tuple[TensorLike, ...]]:
+
+    def _unsqueeze_atleast(a):
+        if a.ndim == 0:
+            return a.reshape(1, 1, 1)
+        elif a.ndim == 1:
+            return a.reshape(1, -1, 1)
+        elif a.ndim == 2:
+            return a.unsqueeze(-1)
+        return a
+
+    res = tuple(_unsqueeze_atleast(a) if isinstance(a, TensorProxy) else a for a in args)
+    return res if len(res) > 1 else res[0]
 
 
 @torchsymbol(torch.sort, is_method=True)

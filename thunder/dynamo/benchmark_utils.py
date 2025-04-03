@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 import sys
+import inspect
 from pathlib import Path
 import torch
 from torch.utils.benchmark import Timer as TorchBenchmarkTimer
@@ -63,7 +64,9 @@ class ThunderCompileSpecification(CompileSpecificationInterface):
 
     def to_source(self, fn_name):
         thunder_options_str = thunder_options_to_str(self.thunder_options)
-        return f"thunder.jit({fn_name}, {thunder_options_str})"
+        return (
+            f"thunder.jit({fn_name})" if not thunder_options_str else f"thunder.jit({fn_name}, {thunder_options_str})"
+        )
 
     def import_str(self):
         return ["import thunder"]
@@ -303,25 +306,40 @@ class TorchBenchmarkTimerSpecification(TimerInterface):
     See: :class:`torch.utils.benchmark.utils.timer.Timer` for more details.
     """
 
-    def __init__(self, name, inner_timer=torch.utils.benchmark.utils.timer.timer):
+    def __init__(
+        self,
+        name: str = "TorchBenchmarkTimerSpecification",
+        inner_timer: Callable = torch.utils.benchmark.utils.timer.timer,
+        *,
+        threshold: float | None = None,
+        min_run_time: float | None = None,
+        max_run_time: float | None = None,
+    ):
         self.inner_timer = inner_timer
         self.name = name
 
-    def time(self, stmt="pass", setup="pass", globals=None, min_run_time: float = 0.2) -> Measurement:
+        default_params = inspect.signature(TorchBenchmarkTimer.adaptive_autorange).parameters
+
+        self.threshold = threshold if threshold is not None else default_params["threshold"].default
+        self.min_run_time = min_run_time if min_run_time is not None else default_params["min_run_time"].default
+        self.max_run_time = max_run_time if max_run_time is not None else default_params["max_run_time"].default
+
+    def time(self, stmt="pass", setup="pass", globals=None) -> Measurement:
         """
-        Measures execution time using PyTorch's :func:`torch.utils.benchmark.Timer.blocked_autorange()`.
+        Measures execution time using PyTorch's :func:`torch.utils.benchmark.Timer.adaptive_autorange()`.
 
         Args:
             stmt (str, optional): Code snippet to be run in a loop and timed.
             setup (str, optional): Optional setup code. Used to define variables used in `stmt`
             globals (dict, optional): A dictionary of global variables for the executed code. Defaults to `None`.
-            min_run_time (float, optional): The minimum execution time (in seconds) to determine the number of runs. Defaults to `0.2`.
 
         Returns:
             Measurement: A benchmarking result containing execution time statistics, see :class:`torch.utils.benchmark.utils.common.Measurement`.
         """
         t = TorchBenchmarkTimer(stmt=stmt, setup=setup, globals=globals, timer=self.inner_timer)
-        measurement = t.blocked_autorange(min_run_time=min_run_time)
+        measurement = t.adaptive_autorange(
+            threshold=self.threshold, min_run_time=self.min_run_time, max_run_time=self.max_run_time
+        )
         if hasattr(self.inner_timer, "max_allocated_memory"):
             measurement.max_allocated_memory = self.inner_timer.max_allocated_memory
         return measurement
@@ -329,8 +347,26 @@ class TorchBenchmarkTimerSpecification(TimerInterface):
     def import_str(self):
         return [f"from thunder.dynamo.benchmark_utils import {self.name}"]
 
+    def __repr__(self):
+        return f"{self.name}(threshold={self.threshold}, min_run_time={self.min_run_time}, max_run_time={self.max_run_time})"
+
     def to_source(self, fn_name, inputs_name):
-        return f'{self.name}.time("{fn_name}(*{inputs_name})", globals={{"{fn_name}":{fn_name}, "{inputs_name}": {inputs_name}}})'
+        return f'{self.__repr__()}.time("{fn_name}(*{inputs_name})", globals={{"{fn_name}":{fn_name}, "{inputs_name}": {inputs_name}}})'
+
+    def __call__(
+        self,
+        *,
+        threshold: float | None = None,
+        min_run_time: float | None = None,
+        max_run_time: float | None = None,
+    ):
+        return self.__class__(
+            name=self.name,
+            inner_timer=self.inner_timer,
+            threshold=threshold if threshold is not None else self.threshold,
+            min_run_time=min_run_time if min_run_time is not None else self.min_run_time,
+            max_run_time=max_run_time if max_run_time is not None else self.max_run_time,
+        )
 
 
 WallTime = TorchBenchmarkTimerSpecification("WallTime")

@@ -1529,7 +1529,11 @@ def test_import(jit):
     assert hasattr(litgpt_model, "GPT")
 
 
-def test_locals_lookaside(jit):
+@pytest.mark.skipif(
+    sys.version_info >= (3, 13),
+    reason="Python 3.10-3.12 implement locals() differently to 3.13+",
+)
+def test_locals_lookaside_pre_313(jit):
     def foo():
         try:
             # Locals starts empty
@@ -1553,6 +1557,43 @@ def test_locals_lookaside(jit):
 
             # Modifying locals does not modify localsplus
             assert locals()["a"] == 5, locals()
+            name_err = a == 5  # type: ignore (intentional)
+            raise Exception("Unreachable.")
+        except NameError as e:
+            assert "not defined" in str(e)
+
+    foo()
+    jit(foo)()
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 13),
+    reason="Python 3.10-3.12 implement locals() differently to 3.13+",
+)
+def test_locals_lookaside_313(jit):
+    def foo():
+        try:
+            # Locals starts empty
+            assert locals() == {}
+
+            # Modifications to locals are preserved
+            l = locals()
+            assert locals()["l"] is not None, locals()
+            l["a"] = 5
+
+            # The identity of locals() is the same across calls
+            assert l is not locals(), (l, locals())
+            assert "a" not in locals()
+
+            # Deletions in localsplus are deleted in locals
+            del l
+            assert not "l" in locals().keys(), locals()
+
+            # The objects stored in variables are the same as those in locals
+            b = object()
+            assert b is locals()["b"]
+
+            # Modifying locals does not modify localsplus
             name_err = a == 5  # type: ignore (intentional)
             raise Exception("Unreachable.")
         except NameError as e:
