@@ -842,6 +842,7 @@ softplus = _register_torch_operation("softplus", module=torch.nn.functional)
 softshrink = _register_torch_operation("softshrink", module=torch.nn.functional)
 softsign = _register_torch_operation("softsign", module=torch.nn.functional)
 tanhshrink = _register_torch_operation("tanhshrink", module=torch.nn.functional)
+threshold = _register_torch_operation("threshold", module=torch.nn.functional)
 
 
 def _elementwise_unary_with_inplace_checker(a: TensorProxy, /, inplace: bool = False) -> bool:
@@ -865,6 +866,7 @@ _register_elementwise_unary_implementation(ltorch.softplus, softplus, checker=_a
 _register_elementwise_unary_implementation(ltorch.softshrink, softshrink, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.softsign, softsign, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.tanhshrink, tanhshrink, checker=_always_executable)
+_register_elementwise_unary_implementation(ltorch.threshold, threshold, checker=_always_executable)
 #
 # Elementwise binary operations
 #

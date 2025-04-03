@@ -278,7 +278,6 @@ torch_auto_registered_ops = {
         torch.t_copy,
         torch.take,
         torch.tensordot,
-        torch.threshold,
         torch.tile,
         torch.trace,
         torch.transpose_copy,
