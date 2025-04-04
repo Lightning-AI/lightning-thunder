@@ -1867,6 +1867,31 @@ def relu6(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
 _inplace_to_out_of_place[relu6] = relu6, 1
 
 
+@torchsymbol(torch.rrelu, torch.nn.functional.rrelu, id="torch.rrelu", is_method=False)
+def rrelu(
+    a: TensorProxy, /, lower: float = 0.125, upper: float = 1.0 / 3, training: bool = False, inplace: bool = False
+) -> TensorLike:
+    if training:
+        noise = uniform_like(a, minval=lower, maxval=upper, dtype=a.dtype, device=a.device)
+        out = where(a <= 0, a * noise, a)
+    else:
+        out = where(a <= 0, a * (upper + lower) / 2, a)
+    if inplace:
+        return _copy_(a, out)
+    return out
+
+
+_inplace_to_out_of_place[rrelu] = rrelu, 4
+
+
+@torchsymbol(torch.nn.functional.rrelu_, is_method=False, tags=(prims.OpTags.IN_PLACE,))
+def rrelu_(a: TensorProxy, /, lower: float = 0.125, upper: float = 1.0 / 3, training: bool = False) -> TensorLike:
+    return _copy_(a, rrelu(a, lower, upper, training, False))
+
+
+_inplace_to_out_of_place[rrelu_] = rrelu, -1
+
+
 @torchsymbol(torch.nn.functional.hardshrink, is_method=False)
 def hardshrink(a: TensorProxy, /, lambd: float = 0.5) -> TensorLike:
     utils.check(
