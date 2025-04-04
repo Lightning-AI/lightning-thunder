@@ -23,11 +23,15 @@ from transformer_engine.pytorch.fp8 import (
 class StatefulExecutor(OperatorExecutor):
     def __init__(self, name, *, version=None):
         super().__init__(name, version=version)
+        self.op_counter: dict[str, int] = {}
 
     def register_stateful_operator(self, base_name: str, state_class, *, meta):
         def register_state(*args, **kwargs):
             state = state_class()
-            name = f"{base_name}_{id(state)}"
+            # Using id but can also use a counter.
+            state_id = self.op_counter.setdefault(base_name, 0)
+            name = f"{base_name}_{state_id}"
+            self.op_counter[base_name] +=1
 
             def bind_state(bsym):
                 bsym._call_ctx = {name: state}
