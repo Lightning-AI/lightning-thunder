@@ -802,6 +802,24 @@ def randn_like(
     return randn(a.shape, dtype=dtype, device=device)
 
 
+@torchsymbol(is_method=False, id="torch.normal")
+def normal(
+    mean: TensorLike,
+    std: TensorLike,
+    /,
+    *,
+    generator: None | torch.Generator = None,
+) -> TensorLike:
+    utils.check(generator is None, lambda: "generator is not None which is currently unsupported", NotImplementedError)
+    # utils.check(
+    #    std >= 0,
+    #    lambda: f"normal expects std >= 0.0, but found std {std}"
+    # )
+    device = to_device(maybe_get_default_device(mean.device))
+    dtype = to_dtype(maybe_get_default_dtype(mean.dtype))
+    return add(mul(randn(mean.shape, device=device, dtype=dtype), std), mean)
+
+
 @torchsymbol(torch.bernoulli, is_method=True)
 def bernoulli(a: TensorLike, *, generator=None, out=None):
     # NOTE: Currently, we don't model randomness

@@ -6442,6 +6442,51 @@ zeros_like_opinfo = OpInfo(
 tensor_creation_ops.append(zeros_like_opinfo)
 
 
+def torch_normal_and_zero(*args, **kwargs):
+    return ltorch.full_like(ltorch.normal(*args, **kwargs), 0)
+
+
+def normal_sample_generator(op, device, dtype, requires_grad=False, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=False)
+
+    cases = (
+        (4,),
+        (4, 5),
+        (6, 5, 4),
+    )
+
+    for shape in cases:
+        mean = make(shape)
+        std = torch.abs(make(shape))
+        yield SampleInput(mean, std)
+
+    # to ensure broadcasting
+    yield SampleInput(make((3, 1)), torch.abs(make((1, 3))))
+
+
+def normal_error_generator(op, device, dtype=torch.float32, requires_grad=False, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # mean = make((4, 4))
+    # std = -1
+    # err_msg = f"normal expects std >= 0.0, but found std -1"
+    # yield (SampleInput(mean, std), RuntimeError, err_msg)
+
+    err_msg = "generator is not None which"
+    yield (SampleInput(1, 2, generator=torch.Generator()), NotImplementedError, err_msg)
+
+
+normal_opinfo = OpInfo(
+    name="normal",
+    op=torch_normal_and_zero,
+    sample_input_generator=normal_sample_generator,
+    error_input_generator=normal_error_generator,
+    torch_reference=lambda *args, **kwargs: torch.normal(*args, **kwargs).fill_(0),
+    dtypes=(datatypes.floating, datatypes.complexfloating),
+)
+tensor_creation_ops.append(normal_opinfo)
+
+
 # Helper function for `randn` opinfo.
 # It always returns zero tensors, so that the consistency tests pass.
 def torch_randn_and_zero(*args, **kwargs):
