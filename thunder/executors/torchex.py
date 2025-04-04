@@ -839,6 +839,7 @@ mish = _register_torch_operation("mish", module=torch.nn.functional)
 prelu = _register_torch_operation("prelu", module=torch.nn.functional)
 relu = _register_torch_operation("relu", module=torch.nn.functional)
 relu6 = _register_torch_operation("relu6", module=torch.nn.functional)
+rrelu = _register_torch_operation("rrelu", module=torch.nn.functional)
 selu = _register_torch_operation("selu", module=torch.nn.functional)
 silu = _register_torch_operation("silu", module=torch.nn.functional)
 softplus = _register_torch_operation("softplus", module=torch.nn.functional)
@@ -863,6 +864,7 @@ _register_elementwise_unary_implementation(ltorch.mish, mish, checker=_elementwi
 _register_elementwise_unary_implementation(ltorch.prelu, prelu, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.relu, relu, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.relu6, relu6, checker=_elementwise_unary_with_inplace_checker)
+_register_elementwise_unary_implementation(ltorch.rrelu, rrelu, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.selu, selu, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.silu, silu, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.softplus, softplus, checker=_always_executable)
@@ -870,6 +872,8 @@ _register_elementwise_unary_implementation(ltorch.softshrink, softshrink, checke
 _register_elementwise_unary_implementation(ltorch.softsign, softsign, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.tanhshrink, tanhshrink, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.threshold, threshold, checker=_always_executable)
+
+
 #
 # Elementwise binary operations
 #

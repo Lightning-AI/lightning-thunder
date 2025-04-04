@@ -1774,6 +1774,18 @@ relu_opinfo = OpInfo(
 )
 elementwise_unary_ops.append(relu_opinfo)
 
+
+rrelu_opinfo = OpInfo(
+    ltorch.rrelu,
+    dtypes=(datatypes.inexact,),
+    sample_input_generator=get_elementwise_unary_with_kwargs_generator([{}, {"lower": 0.1, "upper": 0.8}]),
+    torch_reference=_elementwise_unary_torch(torch.nn.functional.rrelu),
+    singularity_fn=lambda x: x,
+    test_directives=(),
+)
+elementwise_unary_ops.append(rrelu_opinfo)
+
+
 relu6_opinfo = OpInfo(
     ltorch.relu6,
     sample_input_generator=elementwise_unary_generator,
