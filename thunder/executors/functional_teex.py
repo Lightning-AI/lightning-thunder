@@ -1,3 +1,6 @@
+import importlib
+import warnings
+
 from thunder.core.prims import OpTags
 from thunder.core.proxies import AnyProxy, TensorProxy
 from thunder.core.prims import get_grad
@@ -27,14 +30,13 @@ class StatefulExecutor(OperatorExecutor):
 
     def register_stateful_operator(self, base_name: str, state_class, *, meta):
         def register_state(*args, **kwargs):
-            state = state_class()
-            # Using id but can also use a counter.
+
             state_id = self.op_counter.setdefault(base_name, 0)
             name = f"{base_name}_{state_id}"
             self.op_counter[base_name] +=1
 
             def bind_state(bsym):
-                bsym._call_ctx = {name: state}
+                bsym._call_ctx = {name: state_class()}
 
             sym = self.register_operator(name, meta=meta, bind_postprocess=bind_state)
             return sym(*args, *kwargs)
