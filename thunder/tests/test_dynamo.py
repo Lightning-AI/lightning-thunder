@@ -1377,7 +1377,12 @@ def test_reports_benchmark(tmp_path):
     assert len(thunder_fx_graph_report.subgraph_reports) == 1  # exp
     thunder_split_report = thunder_fx_graph_report.subgraph_reports[0]
     split_name = thunder_split_report.graph_name
-    thunder_split_report.write_benchmark(tmp_path, torchcompile, WallTime, file_name=f"{split_name}_torchcompile.py")
+    thunder_split_report.write_benchmark(
+        tmp_path,
+        torchcompile,
+        WallTimeWithMemoryUsage(min_run_time=0.01, max_run_time=9.0, threshold=0.08),
+        file_name=f"{split_name}_torchcompile.py",
+    )
     thunder_split_report.write_benchmark(tmp_path, torcheager, WallTime, file_name=f"{split_name}_eager.py")
     thunder_split_report.write_benchmark(tmp_path, thunderjit, WallTime, file_name=f"{split_name}_jit.py")
     thunder_split_report.create_fusion_reports()
@@ -1385,7 +1390,7 @@ def test_reports_benchmark(tmp_path):
     nvf = thunder_split_report.fusion_reports[0]
     nvf.write_nvfuser_benchmark(tmp_path, WallTime)
     nvf.write_inductor_benchmark(tmp_path, WallTime)
-    nvf.run_benchmark(BoundSymbolNvfuserSpecification(), WallTime)
+    nvf.run_benchmark(BoundSymbolNvfuserSpecification(), WallTime(min_run_time=0.01, max_run_time=5.0, threshold=0.08))
     nvf.run_benchmark(BoundSymbolTorchCompileSpecification(), WallTime)
 
     cmd = [sys.executable]
@@ -1427,6 +1432,8 @@ def test_TorchInductorSpecification(tmp_path):
 
 @requiresCUDA
 def test_save_failing_repros(tmp_path):
+    from thunder.dynamo.benchmark_utils import TorchEagerSpecification
+
     x = torch.ones(2, 2, device="cuda", requires_grad=True)
 
     def foo(x):
@@ -1444,6 +1451,25 @@ def test_save_failing_repros(tmp_path):
     with patch("thunder.dynamo.report.FXGraphReport.run_repro", side_effect=Exception("run_Repro raises exception")):
         save_failing_repros(thunder_fxgraph_reports[0].subgraph_reports, ThunderCompileSpecification(), tmp_path)
     assert os.path.exists(tmp_path / "graph0_thunder_0.py")
+
+    # Tests for check_consistency
+    def wrapped_fn(x):
+        return foo(x) + 1
+
+    class _BadCompileSpecification(TorchEagerSpecification):
+        def compile(self, fn, **kwargs):
+            return wrapped_fn
+
+    results = fx_report(foo)(x)
+    save_failing_repros(
+        results.fx_graph_reports, _BadCompileSpecification(), tmp_path / "consistency", check_consistency=False
+    )
+    assert not os.path.exists(tmp_path / "consistency" / "graph0.py")
+
+    save_failing_repros(
+        results.fx_graph_reports, _BadCompileSpecification(), tmp_path / "consistency", check_consistency=True
+    )
+    assert os.path.exists(tmp_path / "consistency" / "graph0.py")
 
 
 @requiresCUDA

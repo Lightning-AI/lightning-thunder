@@ -865,10 +865,9 @@ class ThunderFusionReport:
         nvfuser_repro_code = get_repro(inputs)
         return nvfuser_repro_code
 
-    def write_nvfuser_benchmark(self, folder, time_fn: TimerInterface, file_name=None, **kwargs):
+    def write_nvfuser_benchmark(self, folder, time_fn: TimerInterface, file_name=None, extra_comment_str=""):
         folder = Path(folder)
         folder.mkdir(exist_ok=True, parents=True)
-        extra_comment_str = kwargs.get("extra_comment_str") if "extra_comment_str" in kwargs else ""
         repro_code_str = self._get_nvfuser_code()
         timing_import_str = "\n".join(time_fn.import_str() or [])
         timing_str = time_fn.to_source("nvfuser_fn", "inputs")
@@ -1335,7 +1334,11 @@ def thunderfx_benchmark_report(
 
 
 def save_failing_repros(
-    reports: list[FXGraphReport], compile_fn: CompileSpecificationInterface, repros_folder: str | PathLike
+    reports: list[FXGraphReport],
+    compile_fn: CompileSpecificationInterface,
+    repros_folder: str | PathLike,
+    *,
+    check_consistency: bool = False,
 ):
     """
     Saves the repros for the failing reports. The failing reason is saved as comment in the repro file.
@@ -1351,7 +1354,7 @@ def save_failing_repros(
     repros_folder.mkdir(exist_ok=True, parents=True)
     for report in reports:
         try:
-            report.run_repro(compile_fn)
+            report.run_repro(compile_fn, check_consistency)
         except Exception as e:
             comment = f"Failed to run the function using {compile_fn.name} with exception: {e}"
             report.write_repro(repros_folder, compile_fn, extra_comment_str=comment)
