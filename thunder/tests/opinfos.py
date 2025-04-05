@@ -6467,9 +6467,15 @@ def normal_sample_generator(op, device, dtype, requires_grad=False, **kwargs):
 def normal_error_generator(op, device, dtype=torch.float32, requires_grad=False, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
-    # mean = make((4, 4))
-    # std = -1
-    # err_msg = f"normal expects std >= 0.0, but found std -1"
+    mean = make((4, 4))
+    std = -1
+    err_msg = f"normal expects std >= 0.0, but found std -1"
+    yield (SampleInput(mean, std), RuntimeError, err_msg)
+
+    # Fails in nvfuser executor
+    # Failed: DID NOT RAISE <class 'RuntimeError'>
+    # std = -torch.abs(make((4, 4)))
+    # err_msg = "normal expects all elements of std >= 0.0"
     # yield (SampleInput(mean, std), RuntimeError, err_msg)
 
     err_msg = "generator is not None which"

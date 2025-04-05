@@ -1690,7 +1690,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
         raise NotImplementedError
 
     def __bool__(self):
-        raise NotImplementedError
+        return bool(self.shape)
 
     #
     # Elementwise binary operators
