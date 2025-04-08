@@ -8371,6 +8371,44 @@ batch_norm_opinfo = OpInfo(
 nn_ops.append(batch_norm_opinfo)
 
 
+def local_response_norm_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    # shape, size, {alpha, beta, k}
+    cases = (
+        ((1, 1, 1), 1, {}),
+        ((3, 3, 3), 3, {}),
+        ((3, 3, 3, 3), 1, {}),
+        ((3, 3, 3), 1, {"alpha": 0.01, "beta": 0.8, "k": 1.5}),
+        ((2, 5, 3, 2), 2, {"k": 1.2}),
+        ((3, 5, 512), 1, {"alpha": 0.001, "beta": 1.2, "k": 1.5}),
+    )
+
+    for shape, size, kwargs in cases:
+        sample = SampleInput(make(shape), size, **kwargs)
+        if dtype == torch.bfloat16 or dtype == torch.float16:
+            sample.set_comparator(TorchTensorComp(atol=1e-1, rtol=1e-1))
+
+        yield sample
+
+
+local_response_norm_opinfo = OpInfo(
+    ltorch.local_response_norm,
+    sample_input_generator=local_response_norm_sample_generator,
+    torch_reference=torch.nn.functional.local_response_norm,
+    dtypes=(datatypes.floating,),
+    test_directives=(
+        # PyTorch does not support b/float16 on CPU
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16, datatypes.bfloat16),
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+    ),
+)
+nn_ops.append(local_response_norm_opinfo)
+
+
 def softmax_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
@@ -8399,7 +8437,7 @@ def softmax_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
         # Defines a custom comparator for when the output is bfloat16
         # TODO These are very loose tolerances, but observered differences can be up to 0.019 in absolute difference
-        #   and .02 in relativle difference
+        #   and .02 in relative difference
         bfloat16_comp = TorchTensorComp(atol=1e-1, rtol=1e-1)
 
         for (shape, dim), dtype_option in itertools.product(cases, supported_float_dtypes):

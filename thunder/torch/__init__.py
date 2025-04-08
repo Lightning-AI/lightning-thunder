@@ -4120,6 +4120,36 @@ def batch_norm(
     return result
 
 
+@torchsymbol(torch.nn.functional.local_response_norm)
+def local_response_norm(
+    a: TensorLike,
+    /,
+    size: int,
+    alpha: NumberLike = 0.0001,
+    beta: NumberLike = 0.75,
+    k: NumberLike = 1.0,
+) -> TensorLike:
+    dim = a.ndim
+    utils.check(dim >= 3, lambda: f"Expected 3D or higher dimensionality input (got {dim} dimensions)")
+
+    if a.numel == 0:
+        return a
+
+    div = a.mul(a)
+    if dim == 3:
+        div = div.unsqueeze(1)
+        div = pad(div, (0, 0, size // 2, (size - 1) // 2))
+        div = avg_pool2d(div, (size, 1), stride=1).squeeze(1)
+    else:
+        sizes = a.size()
+        div = div.view(sizes[0], 1, sizes[1], sizes[2], -1)
+        div = pad(div, (0, 0, 0, 0, size // 2, (size - 1) // 2))
+        div = avg_pool3d(div, (size, 1, 1), stride=1).squeeze(1)
+        div = div.view(sizes)
+    div = div.mul(alpha).add(k).pow(beta)
+    return a / div
+
+
 #
 # NN Operations
 #
