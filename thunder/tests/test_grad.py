@@ -75,6 +75,7 @@ vjp_op_force = {
     "mse_loss",
     "adaptive_avg_pool2d",
     "max_pool2d",
+    "local_response_norm",
 }
 
 
