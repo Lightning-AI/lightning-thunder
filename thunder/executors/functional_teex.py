@@ -11,16 +11,19 @@ from thunder.core import prims
 
 from thunder.executors.transformer_engineex import _linear_checker
 
-import transformer_engine.pytorch as te
-from transformer_engine.pytorch.tensor.float8_tensor import Float8Quantizer
-from transformer_engine.pytorch.ops import BasicLinear
-from transformer_engine.pytorch.fp8 import (
-    _amax_and_scale_update,
-    get_fp8_max,
-    get_default_fp8_recipe,
-    Recipe,
-    RecipeState,
-)
+if importlib.util.find_spec("transformer_engine"):
+    import transformer_engine.pytorch as te
+    from transformer_engine.pytorch.tensor.float8_tensor import Float8Quantizer
+    from transformer_engine.pytorch.ops import BasicLinear
+    from transformer_engine.pytorch.fp8 import (
+        _amax_and_scale_update,
+        get_fp8_max,
+        get_default_fp8_recipe,
+        Recipe,
+        RecipeState,
+    )
+else:
+    warnings.warn("transformer_engine module not found!")
 
 
 class StatefulExecutor(OperatorExecutor):
