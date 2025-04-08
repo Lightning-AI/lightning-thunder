@@ -33,10 +33,9 @@ class StatefulExecutor(OperatorExecutor):
 
     def register_stateful_operator(self, base_name: str, state_class, *, meta):
         def register_state(*args, **kwargs):
-
             state_id = self.op_counter.setdefault(base_name, 0)
             name = f"{base_name}_{state_id}"
-            self.op_counter[base_name] +=1
+            self.op_counter[base_name] += 1
 
             def bind_state(bsym):
                 bsym._call_ctx = {name: state_class()}
@@ -77,8 +76,8 @@ _te_fp8_recipe = functional_te_ex.register_operator("te_fp8_recipe", meta=_te_fp
 
 
 def _te_fp8_quantizers_meta(recipe_state: RecipeState, num_quantizers: int):
-    # giving num quantizers so there is no need to allocate extra things
-    return (*(AnyProxy(num_quantizers, prefix="q") for _ in range(num_quantizers)),)
+    # num quantizers can be taken from recipe state, to propagate that information however there needs to be a RecipeStateProxy
+    return (*(AnyProxy(None, prefix="q") for _ in range(num_quantizers)),)
 
 
 class TEQuantizerState:
@@ -102,7 +101,7 @@ _te_fp8_quantizers = functional_te_ex.register_stateful_operator(
 
 def _te_fp8_state_meta(recipe, mode: str, num_quantizers: int, /):
     # mode just to give the proxy something wihout allocating extra stuff
-    return AnyProxy(mode, prefix="s")
+    return AnyProxy(None, prefix="s")
 
 
 class TERecipeState:
@@ -135,7 +134,8 @@ def _linear_fwd_meta(
     input_quantizer: Float8Quantizer,
     weight_quantizer: Float8Quantizer,
 ):
-    return TensorProxy(like=a), TensorProxy(like=a), TensorProxy(like=w)
+    out_shape = (*a.shape[:-1], w.shape[0])
+    return TensorProxy(like=a, shape=out_shape), TensorProxy(like=a), TensorProxy(like=w)
 
 
 def _linear_fwd_impl(a, w, bias, input_quantizer, weight_quantizer):
@@ -147,6 +147,7 @@ def _linear_fwd_impl(a, w, bias, input_quantizer, weight_quantizer):
         weight_quantizer=weight_quantizer,
         output_quantizer=None,  # return out in original dtype (w.dtype)
     )
+
     return out, gemm_a, gemm_w
 
 
