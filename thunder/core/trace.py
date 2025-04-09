@@ -55,10 +55,6 @@ class TraceCtx:
     Args:
         fn: Callable to represent.
 
-    Keyword Args:
-        prologue: Prologue trace that verifies metadata of args and kwargs with real values.
-        is_prologue:
-
     Attributes:
         fn (Callable | None): Callable to represent. It's either a callable
             written with pytorch functions or :class:`~torch.nn.Module`.
@@ -76,11 +72,8 @@ class TraceCtx:
 
     """
 
-    def __init__(self, fn: None | Callable = None, *, prologue: TraceCtx | None = None, is_prologue: bool = False):
+    def __init__(self, fn: None | Callable = None):
         self.fn: None | Callable = fn
-
-        self._prologue = prologue
-        self._is_prologue: bool = is_prologue
 
         self.args = None
         self.kwargs = {}
@@ -144,14 +137,6 @@ class TraceCtx:
     @property
     def tags(self):
         return self._tags
-
-    @property
-    def prologue(self):
-        return self._prologue
-
-    @property
-    def is_prologue(self):
-        return self._is_prologue
 
     #
     # Methods related to the trace's signature
@@ -531,7 +516,7 @@ class TraceCtx:
 # Constructs a new trace by shallow copying parts of an existing trace
 # NOTE Bound symbols and provenance are not copied
 def from_trace(trace: TraceCtx) -> TraceCtx:
-    t = TraceCtx(trace.fn, prologue=trace.prologue)
+    t = TraceCtx(trace.fn)
     t.args = trace.args
     t.kwargs = trace.kwargs
 

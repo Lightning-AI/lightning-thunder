@@ -75,6 +75,7 @@ vjp_op_force = {
     "mse_loss",
     "adaptive_avg_pool2d",
     "max_pool2d",
+    "local_response_norm",
 }
 
 
@@ -1320,7 +1321,12 @@ def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp):
         # torch.return_types.topk(
         # values=tensor([1., 1.]),
         # indices=tensor([0, 1]))
-        return x.grad_fn is not None
+        return x.grad_fn is not None or is_returning_self(x)
+
+    def is_returning_self(x):
+        if x.is_leaf and x.requires_grad:
+            return True
+        return False
 
     def filter_differentiable_outputs(outputs):
         if isinstance(outputs, torch.Tensor):
@@ -1380,7 +1386,10 @@ def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp):
     thunder_flat_grads = grad_op(*sample.args, **sample.kwargs)
 
     assert_closer(
-        reference=reference_grad_result, candidate=thunder_flat_grads, competitor=torch_grad_result, comparator=comp
+        reference=reference_grad_result,
+        candidate=thunder_flat_grads,
+        competitor=torch_grad_result,
+        comparator=comp,
     )
 
 

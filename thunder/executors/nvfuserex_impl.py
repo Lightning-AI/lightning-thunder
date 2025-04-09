@@ -432,6 +432,7 @@ class FusionDefinitionWrapper:
     get_fd: Callable[[tuple[type | tuple[tuple[int, ...], tuple[bool, ...], tuple[int, ...]], ...]], FusionDefinition]
     to_descriptors: Callable
     name: str
+    use_cache: bool
     cache_info: None | Callable = None
     cache_clear: None | Callable = None
     last_used: None | FusionDefinition = None
@@ -443,8 +444,9 @@ class FusionDefinitionWrapper:
 
     @annotate_for_profile("FusionDefinitionWrapper.__call__")
     def __call__(self, *args):
-        fd = self.get_fd(self.to_descriptors(args))
-        self.last_used = fd
+        if self.use_cache or self.last_used is None:
+            self.last_used = self.get_fd(self.to_descriptors(args))
+        fd = self.last_used
 
         if self.store_inputs:
             self.last_inputs = args
@@ -559,6 +561,7 @@ def create_fusion_definition_wrapper(
     disable_options: list[str] = (
         get_compile_option("nv_disable_options", "List of NVFUSER_DISABLE options to set.") or []
     )
+    skip_cache: bool = get_compile_option("nv_skip_cache", "Skip cache for nvFuser fusions.") or False
 
     tensor_indices = []
     for idx, x in enumerate(sorted_unique_inputs):
@@ -577,6 +580,7 @@ def create_fusion_definition_wrapper(
         get_fd,
         to_runtime_descriptors,
         name,
+        not skip_cache,
         get_fd.cache_info,
         get_fd.cache_clear,
         store_inputs=store_inputs,
@@ -1621,6 +1625,15 @@ def real(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -
 
 
 register_supported(PrimIDs.REAL, real, _elementwise_unary_check)
+
+
+def imag(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+    nva = getnv(a, fd, lc_to_nv_map)
+
+    return fd.ops.imag(nva)
+
+
+register_supported(PrimIDs.IMAG, imag, _elementwise_unary_check)
 
 
 def reciprocal(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
