@@ -73,7 +73,7 @@ For **performance experts**, Thunder is the most ergonomic framework for underst
 
 # Quick start
 
-Install Thunder via pip ([more options](https://lightning.ai/docs/litserve/home/install)):
+Install Thunder via pip ([more options](https://lightning.ai/docs/thunder/latest/fundamentals/installation.html)):
 
 ```bash
 pip install torch==2.6.0 torchvision==0.21 nvfuser-cu124-torch26
