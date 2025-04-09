@@ -727,6 +727,7 @@ tan = _register_torch_operation("tan")
 tanh = _register_torch_operation("tanh")
 trunc = _register_torch_operation("trunc")
 real = _register_torch_operation("real")
+imag = _register_torch_operation("imag")
 
 
 def _elementwise_unary_checker(a: Number | TensorLike) -> bool:
@@ -781,6 +782,7 @@ _register_elementwise_unary_implementation(prims.tan, tan)
 _register_elementwise_unary_implementation(prims.tanh, tanh)
 _register_elementwise_unary_implementation(prims.trunc, trunc)
 _register_elementwise_unary_implementation(prims.real, real)
+_register_elementwise_unary_implementation(prims.imag, imag)
 
 _register_elementwise_unary_implementation(ltorch.abs, torch_abs)
 _register_elementwise_unary_implementation(ltorch.acos, acos)
@@ -822,6 +824,7 @@ _register_elementwise_unary_implementation(ltorch.tan, tan)
 _register_elementwise_unary_implementation(ltorch.tanh, tanh)
 _register_elementwise_unary_implementation(ltorch.trunc, trunc)
 _register_elementwise_unary_implementation(ltorch.real, real)
+_register_elementwise_unary_implementation(ltorch.imag, imag)
 
 # nn.functional elementwise unary
 celu = _register_torch_operation("celu", module=torch.nn.functional)
@@ -836,12 +839,14 @@ mish = _register_torch_operation("mish", module=torch.nn.functional)
 prelu = _register_torch_operation("prelu", module=torch.nn.functional)
 relu = _register_torch_operation("relu", module=torch.nn.functional)
 relu6 = _register_torch_operation("relu6", module=torch.nn.functional)
+rrelu = _register_torch_operation("rrelu", module=torch.nn.functional)
 selu = _register_torch_operation("selu", module=torch.nn.functional)
 silu = _register_torch_operation("silu", module=torch.nn.functional)
 softplus = _register_torch_operation("softplus", module=torch.nn.functional)
 softshrink = _register_torch_operation("softshrink", module=torch.nn.functional)
 softsign = _register_torch_operation("softsign", module=torch.nn.functional)
 tanhshrink = _register_torch_operation("tanhshrink", module=torch.nn.functional)
+threshold = _register_torch_operation("threshold", module=torch.nn.functional)
 
 
 def _elementwise_unary_with_inplace_checker(a: TensorProxy, /, inplace: bool = False) -> bool:
@@ -859,12 +864,16 @@ _register_elementwise_unary_implementation(ltorch.mish, mish, checker=_elementwi
 _register_elementwise_unary_implementation(ltorch.prelu, prelu, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.relu, relu, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.relu6, relu6, checker=_elementwise_unary_with_inplace_checker)
+_register_elementwise_unary_implementation(ltorch.rrelu, rrelu, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.selu, selu, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.silu, silu, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.softplus, softplus, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.softshrink, softshrink, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.softsign, softsign, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.tanhshrink, tanhshrink, checker=_always_executable)
+_register_elementwise_unary_implementation(ltorch.threshold, threshold, checker=_always_executable)
+
+
 #
 # Elementwise binary operations
 #
@@ -1241,13 +1250,11 @@ def _argmin_transform(a: TensorProxy, /, dim: int):
 
 # NOTE This transform translates number proxies to boolean values
 # and handles dim = None
-def _topk_transform(
-    a: TensorProxy, /, k: int, dim: int | None = None, largest: Number = 1, sorted: Number = 1, *, out=None
-):
+def _topk_transform(a: TensorProxy, /, k: int, dim: int | None = None, largest: Number = 1, sorted: Number = 1):
     if dim is None:
         dim = a.ndim - 1 if a.ndim > 0 else 0
 
-    return topk(a, k, dim, bool(largest), bool(sorted), out=out)
+    return topk(a, k, dim, bool(largest), bool(sorted))
 
 
 _register_implementation(prims.amax, checker=_always_executable, execution_transform=_amax_prim_transform)
@@ -1285,14 +1292,12 @@ _register_implementation(ltorch.atleast_3d, atleast_3d, checker=_always_executab
 
 # NOTE this transform translates number proxies to boolean values
 # and handles dim = None
-def _sort_transform(
-    a: TensorProxy, /, dim: int | None = None, descending: bool = False, stable: bool = False, *, out=None
-):
+def _sort_transform(a: TensorProxy, /, dim: int | None = None, descending: bool = False, stable: bool = False):
     if dim is None:
         dim = a.ndim - 1 if a.ndim > 0 else 0
 
     # NOTE: args past `a` are passed as kwargs to avoid issues with multiple `torch.sort` overloadings
-    return sort(a, dim=dim, descending=bool(descending), stable=bool(stable), out=out)
+    return sort(a, dim=dim, descending=bool(descending), stable=bool(stable))
 
 
 _register_implementation(prims.sort, checker=_always_executable, execution_transform=_sort_transform)

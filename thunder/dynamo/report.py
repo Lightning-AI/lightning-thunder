@@ -1334,7 +1334,11 @@ def thunderfx_benchmark_report(
 
 
 def save_failing_repros(
-    reports: list[FXGraphReport], compile_fn: CompileSpecificationInterface, repros_folder: str | PathLike
+    reports: list[FXGraphReport],
+    compile_fn: CompileSpecificationInterface,
+    repros_folder: str | PathLike,
+    *,
+    check_consistency: bool = False,
 ):
     """
     Saves the repros for the failing reports. The failing reason is saved as comment in the repro file.
@@ -1350,7 +1354,7 @@ def save_failing_repros(
     repros_folder.mkdir(exist_ok=True, parents=True)
     for report in reports:
         try:
-            report.run_repro(compile_fn)
+            report.run_repro(compile_fn, check_consistency)
         except Exception as e:
             comment = f"Failed to run the function using {compile_fn.name} with exception: {e}"
             report.write_repro(repros_folder, compile_fn, extra_comment_str=comment)

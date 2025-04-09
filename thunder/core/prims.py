@@ -216,6 +216,7 @@ class PrimIDs(Enum):
     TANH = auto()
     TRUNC = auto()
     REAL = auto()
+    IMAG = auto()
     # Elementwise binary prims
     ADD = auto()
     ATAN2 = auto()
@@ -2386,7 +2387,8 @@ def real_meta(a: complex | TensorProxy) -> float | TensorProxy:
     utils.check_type(a, (TensorProxy, complex))
     dtyp = dtypes.to_dtype(a, true_dtype=True)
     utils.check(
-        dtyp, lambda: f"real expected a complex tensor or number, but receive a tensor or number with dtype {dtyp}"
+        dtypes.is_complex_dtype(dtyp),
+        lambda: f"real expected a complex tensor or number, but receive a tensor or number with dtype {dtyp}",
     )
     output_dtype = dtypes.corresponding_real_dtype(dtyp)
 
@@ -2403,6 +2405,30 @@ real = make_prim(
     "real",
     meta=real_meta,
 )
+
+
+def imag_meta(a: complex | TensorProxy) -> float | TensorProxy:
+    utils.check_type(a, (TensorProxy, complex))
+    dtyp = dtypes.to_dtype(a, true_dtype=True)
+    utils.check(
+        dtypes.is_complex_dtype(dtyp),
+        lambda: f"imag expected a complex tensor or number, but receive a tensor or number with dtype {dtyp}",
+    )
+    output_dtype = dtypes.corresponding_real_dtype(dtyp)
+
+    if isinstance(a, complex):
+        result = utils.get_numberlike_value(a).imag
+        return numberproxy(float, result)
+
+    return TensorProxy(like=a, dtype=output_dtype)
+
+
+imag = make_prim(
+    PrimIDs.IMAG,
+    "imag",
+    meta=imag_meta,
+)
+
 
 #
 # Elementwise binary prims
@@ -3648,14 +3674,7 @@ def scatter_meta(a: TensorProxy, /, index: TensorProxy, src: TensorProxy | Numbe
 scatter = make_prim(PrimIDs.SCATTER, "scatter", meta=scatter_meta)
 
 
-def topk_meta(
-    a: TensorProxy, /, k: int, dim: int, largest: Number, sorted: Number, *, out: None | TensorProxy
-) -> (TensorProxy, TensorProxy):
-    utils.check(
-        out is None,
-        lambda: "Only `out` which is None is currently supported",
-    )
-
+def topk_meta(a: TensorProxy, /, k: int, dim: int, largest: Number, sorted: Number) -> (TensorProxy, TensorProxy):
     utils.check_type(a, TensorProxy)
     utils.check_type(k, (int, IntegerProxy))
     utils.check_type(dim, (int, IntegerProxy))
@@ -3675,14 +3694,7 @@ def topk_meta(
 topk = make_prim(PrimIDs.TOPK, "topk", meta=topk_meta, tags=(OpTags.REDUCTION_OP,))
 
 
-def sort_meta(
-    a: TensorProxy, /, dim: int, descending: Number, sorted: Number, *, out: None | TensorProxy
-) -> (TensorProxy, TensorProxy):
-    utils.check(
-        out is None,
-        lambda: "Only `out` which is None is currently supported",
-    )
-
+def sort_meta(a: TensorProxy, /, dim: int, descending: Number, sorted: Number) -> (TensorProxy, TensorProxy):
     utils.check_type(a, TensorProxy)
     utils.check_type(dim, (int, IntegerProxy))
     utils.check(pytype(descending) is bool, lambda: f"Expected {descending=} to be a boolean type")

@@ -1215,10 +1215,8 @@ def _sum_prim_grad(a: TensorProxy, /, dims: Sequence[int]) -> TensorProxy:
 register_grad(pids.SUM, _sum_prim_grad)
 
 
-def _topk_prim_grad(
-    a: TensorProxy, /, k: int, dim: None | int = None, largest: bool = True, sorted: bool = True, *, out=None
-):
-    fwd = prims.topk(a, k, dim, largest, sorted, out=out)
+def _topk_prim_grad(a: TensorProxy, /, k: int, dim: None | int = None, largest: bool = True, sorted: bool = True):
+    fwd = prims.topk(a, k, dim, largest, sorted)
     val, idx = fwd
 
     val_grad = get_grad(val)
@@ -1236,10 +1234,10 @@ register_grad(pids.TOPK, _topk_prim_grad)
 
 
 def _sort_prim_grad(
-    a: TensorProxy, /, dim: None | int = None, descending: bool = False, stable: bool = False, *, out=None
+    a: TensorProxy, /, dim: None | int = None, descending: bool = False, stable: bool = False
 ) -> (TensorProxy, TensorProxy):
     dim = -1 if dim is None else dim
-    sorted_a, sort_idx = prims.sort(a, dim, descending, stable, out=out)
+    sorted_a, sort_idx = prims.sort(a, dim, descending, stable)
 
     sorted_a_grad = get_grad(sorted_a)
 

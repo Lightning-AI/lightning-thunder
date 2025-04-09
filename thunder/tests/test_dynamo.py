@@ -1432,6 +1432,8 @@ def test_TorchInductorSpecification(tmp_path):
 
 @requiresCUDA
 def test_save_failing_repros(tmp_path):
+    from thunder.dynamo.benchmark_utils import TorchEagerSpecification
+
     x = torch.ones(2, 2, device="cuda", requires_grad=True)
 
     def foo(x):
@@ -1449,6 +1451,25 @@ def test_save_failing_repros(tmp_path):
     with patch("thunder.dynamo.report.FXGraphReport.run_repro", side_effect=Exception("run_Repro raises exception")):
         save_failing_repros(thunder_fxgraph_reports[0].subgraph_reports, ThunderCompileSpecification(), tmp_path)
     assert os.path.exists(tmp_path / "graph0_thunder_0.py")
+
+    # Tests for check_consistency
+    def wrapped_fn(x):
+        return foo(x) + 1
+
+    class _BadCompileSpecification(TorchEagerSpecification):
+        def compile(self, fn, **kwargs):
+            return wrapped_fn
+
+    results = fx_report(foo)(x)
+    save_failing_repros(
+        results.fx_graph_reports, _BadCompileSpecification(), tmp_path / "consistency", check_consistency=False
+    )
+    assert not os.path.exists(tmp_path / "consistency" / "graph0.py")
+
+    save_failing_repros(
+        results.fx_graph_reports, _BadCompileSpecification(), tmp_path / "consistency", check_consistency=True
+    )
+    assert os.path.exists(tmp_path / "consistency" / "graph0.py")
 
 
 @requiresCUDA
