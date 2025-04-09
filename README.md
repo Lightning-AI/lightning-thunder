@@ -59,11 +59,13 @@ For **performance experts**, Thunder is the most ergonomic framework for underst
 
 &#160;
 
+<!--
 <div align="center">
 <a target="_blank" href="https://lightning.ai/docs/thunder/home/get-started">
   <img src="https://pl-bolts-doc-images.s3.us-east-2.amazonaws.com/app-2/get-started-badge.svg" height="36px" alt="Get started"/>
 </a>
 </div>
+-->
 
 &#160;
 
