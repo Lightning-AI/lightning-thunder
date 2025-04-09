@@ -247,6 +247,10 @@ def register_function(torchfn, thunderfn_impl):
     _torch_to_thunder_function_map[torchfn] = thunderfn_impl
 
 
+def maybe_get_torch_to_thunder_symbol(torchfn):
+    return _torch_to_thunder_function_map.get(torchfn, None)
+
+
 def _copy_(a, b, /):
     cd = get_compile_data()
     b = clang.maybe_convert_to_dtype(b, a.dtype)

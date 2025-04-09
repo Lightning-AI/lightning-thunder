@@ -71,7 +71,7 @@ import thunder.core.prims as prims
 from thunder.core.options import CACHE_OPTIONS, SHARP_EDGES_OPTIONS, DebugOptions
 from thunder.core.symbol import Symbol
 from thunder.core.trace import TraceCtx, TraceResults
-from thunder.torch import _torch_to_thunder_function_map
+from thunder.torch import _torch_to_thunder_function_map, maybe_get_torch_to_thunder_symbol
 from thunder.clang import _clang_fn_set
 from thunder.core.pytree import tree_map, tree_iter
 from thunder.torch.experimental.dtensor_torch_and_aten_ops import register_dtensor_and_aten_function
@@ -384,14 +384,6 @@ def record_source_loc_in_symbol_header(fn):
         return fn(*args, **kwargs)
 
     return wrapper
-
-
-_general_jit_lookaside_map.update(
-    {
-        k: ensure_recursive_proxies(interpreter_needs_wrap(record_source_loc_in_symbol_header(v)))
-        for k, v in _torch_to_thunder_function_map.items()
-    }
-)
 
 
 def register_general_jit_lookaside(diverted_fn):
@@ -1166,6 +1158,10 @@ def general_jit_lookaside(fn, *args, **kwargs) -> None | Callable:
             # NOTE clang operations are not symbols, but we still prevent their internals from being jitted
             recursively_proxy(*args, **kwargs)
             lookaside = interpreter_needs_wrap(record_source_loc_in_symbol_header(fn))
+        elif (torch_lookaside := maybe_get_torch_to_thunder_symbol(fn)) is not None:
+            lookaside = ensure_recursive_proxies(
+                interpreter_needs_wrap(record_source_loc_in_symbol_header(torch_lookaside))
+            )
         elif (general_jit_lookaside := _general_jit_lookaside_map.get(fn, None)) is not None:
             lookaside = general_jit_lookaside
         else:
