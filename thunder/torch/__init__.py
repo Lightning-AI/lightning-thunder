@@ -4828,7 +4828,7 @@ def embedding(
     if max_norm is not None:
         # See https://github.com/Lightning-AI/lightning-thunder/issues/1699
         raise NotImplementedError(
-            "max_norm argument is currently not support. Please create an issue detailing your use case."
+            "max_norm argument is currently not supported. Please create an issue detailing your use case."
         )
 
     if padding_idx is not None:
