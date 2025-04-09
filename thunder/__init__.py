@@ -206,7 +206,7 @@ if nvfuser_executor:
 
 if torchcompile_cat_executor and pytorch._dynamo.is_inductor_supported():
     add_default_executor(torchcompile_xentropy_executor)
-    #add_default_executor(torchcompile_cat_executor)
+    # add_default_executor(torchcompile_cat_executor)
 
 if sdpa_executor:
     add_default_executor(sdpa_executor)
