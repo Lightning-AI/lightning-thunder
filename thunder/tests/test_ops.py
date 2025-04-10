@@ -336,3 +336,19 @@ def test_max_with_int():
     ids = torch.randint(0, 10, size=(1, 512))
 
     thunder.jit(f)(x, ids)
+
+
+def test_ltorch_cumsum_result_dtype_for_int_input():
+
+    def f(a):
+        return torch.cumsum(a, dim=0)
+
+    x = torch.randint(0, 128, (4,), dtype=torch.int32)
+    jitted = thunder.jit(f)
+    out = jitted(x)
+    # runtime check
+    assert out.dtype is torch.int64
+
+    trc = thunder.last_traces(jitted)[0]
+    bsym_of_cumsum = trc.bound_symbols[1]
+    assert bsym_of_cumsum.output.dtype is dtypes.int64
