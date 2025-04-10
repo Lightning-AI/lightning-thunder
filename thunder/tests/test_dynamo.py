@@ -1526,7 +1526,7 @@ def test_aot_compiler():
         # so that operation will be given to inductor.
         x = x.exp()
         torch._dynamo.graph_break()
-        y = torch.sin(x) + torch.cos(x)
+        y = torch.sinc(x) + torch.cos(x)
         return y + 1
 
     torch.compiler.reset()

@@ -340,7 +340,6 @@ class _AOTThunderCompiler:
         self.gm_to_profiling_info = {}
         self.compiled_fn = None
 
-    # optimized_fn is a callable, gm -> compiled_gm
     def compile_gm(self, profiling_info, compile_strategy):
         import copy
 
@@ -387,13 +386,16 @@ class _AOTThunderCompiler:
             cur_gm = remove_empty_autocast(gm)
             recompile_graph(cur_gm)
             split_module, subgraph_info = _splitter(cur_gm, jit, torch.compile, example_inputs)
-            subgm_to_example_inputs = {
-                subgm: example_inputs
-                for subgm, example_inputs in zip(
-                    subgraph_info.submodule_to_compiled_functions.keys(),
+            subgm_to_example_inputs = dict(
+                zip(
+                    [
+                        k
+                        for k, v in subgraph_info.submodule_to_compiled_functions.items()
+                        if v.compiler == CompilerType.THUNDER
+                    ],
                     subgraph_info.thunder_compiled_fns_example_inputs,
                 )
-            }
+            )
             profiling_info = ProfilingInfo(
                 original_gm=gm,
                 original_split_gm=subgraph_info.original_split_graph_module,
@@ -415,7 +417,7 @@ class _AOTThunderCompiler:
                     cur_compiled_gm = self.gm_to_compiled_gm[gm]
                 except KeyError:
                     raise RuntimeError(
-                        f"graph module not found in gm_to_compiled_gm, indicates the graph module is regenerated between the last profiling and the currrent execution, please profile again"
+                        "Graph module not found in gm_to_compiled_gm. This likely indicates that the graph module was regenerated between the last profiling and the current execution. Please re-run the profiling step"
                     )
                 print(f"compiled_gm: {id(cur_compiled_gm)}")
                 # print(cur_compiled_gm.__repr__())
