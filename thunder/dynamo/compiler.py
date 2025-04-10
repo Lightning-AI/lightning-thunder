@@ -25,6 +25,10 @@ if TYPE_CHECKING:
     from thunder.core.transform_common import Transform
     from os import PathLike
     from collections.abc import Callable
+    from typing import List
+
+    CompilerFn = Callable[[torch.fx.GraphModule, list[torch.Tensor]], (Callable, str)]
+    CompilerStrategy = Callable[[torch.fx.GraphModule, list[torch.Tensor]], CompilerFn]
 
 
 _DEFAULT_THUNDER_FUSION_TYPE = "dataflow"
@@ -48,6 +52,18 @@ def _add_prologue_pruning(options: dict):
         transforms = []
     transforms.append(ExtractionOnlyPrologueTransform())
     options["transforms"] = transforms
+
+
+def _torch_inductor_compile(gm, example_inputs) -> torch.nn.GraphModule:
+    class InductorModuleWrapper(torch.nn.Module):
+        def __init__(self, optimized_callable):
+            super().__init__()
+            self.optimized_callable = optimized_callable
+
+        def forward(self, *args):
+            return self.optimized_callable(*args)
+
+    return InductorModuleWrapper(torch._inductor.compile(gm, example_inputs)), "inductor"
 
 
 class ThunderCompiler:
@@ -284,3 +300,146 @@ def thunderfx(fn: Callable, /, **kwargs) -> Callable:
 
     c = CompiledObject(backend, compiled)
     return c
+
+
+from thunder.dynamo.benchmark_utils import TorchInductorSpecification, WallTime
+from thunder.dynamo.utils import input_to_example_input_meta
+
+
+def default_compile_strategy(gm, example_inputs) -> CompilerFn:
+    from thunder.dynamo.report import FXGraphReport
+
+    example_input_metadata = input_to_example_input_meta(example_inputs)
+    report = FXGraphReport(gm, "gm", example_input_metadata)
+    thunderjit = ThunderCompileSpecification()
+    torchinductor = TorchInductorSpecification()
+    m1 = report.run_benchmark(thunderjit, WallTime, reset_torch_dynamo=False)
+    m2 = report.run_benchmark(torchinductor, WallTime, reset_torch_dynamo=False)
+    if sum(m.median for m in m1 if m is not None) > sum(m.median for m in m2 if m is not None):
+        print("use torch.compile")
+        return _torch_inductor_compile
+    else:
+        print("use thunder.jit")
+        from thunder import jit
+
+        return lambda *args: (jit(args[0]), "thunder")
+
+
+from thunder.dynamo.utils import (
+    ProfilingInfo,
+    update_node_and_submodule,
+    example_input_meta_to_input,
+    _get_example_inputs_from_placeholder,
+)
+
+
+class _AOTThunderCompiler:
+    def __init__(self):
+        self._profiling = True
+        self.gm_to_compiled_gm = {}
+        self.gm_to_profiling_info = {}
+        self.compiled_fn = None
+
+    # optimized_fn is a callable, gm -> compiled_gm
+    def compile_gm(self, profiling_info, compile_strategy):
+        import copy
+
+        original_split_gm = profiling_info.original_split_gm.split_graph_module
+        split_gm = copy.deepcopy(original_split_gm)
+        for node in split_gm.graph.nodes:
+            if not node.name.startswith("submod"):
+                continue
+            if profiling_info.original_split_gm.is_thunder_supported_partition(node):
+                graph_module = getattr(split_gm, node.name)
+                original_gm = getattr(original_split_gm, node.name)
+                example_inputs_metadata = profiling_info.subgm_to_example_inputs[original_gm]
+                example_inputs = example_input_meta_to_input(example_inputs_metadata)
+                optimizer = compile_strategy(graph_module, example_inputs)
+                optimized_module, compiler_name = optimizer(graph_module, example_inputs)
+                # Update the node name from "submod_*" to the optimizer specifed name for more user-friendly names
+                update_node_and_submodule(split_gm, node, node.name.replace("submod", compiler_name), optimized_module)
+                # print(split_gm.__repr__())
+            else:  # For inductor
+                graph_module = getattr(split_gm, node.name)
+                placeholders = list(n for n in graph_module.graph.nodes if n.op == "placeholder")
+                example_inputs = list(
+                    map(partial(_get_example_inputs_from_placeholder, only_metadata=False), placeholders)
+                )
+                jit_fn, compiler_name = _torch_inductor_compile(graph_module, example_inputs)
+                # Update the node name from "submod_*" to "inductor_*" for more user-friendly names
+                update_node_and_submodule(split_gm, node, node.name.replace("submod", "inductor"), jit_fn)
+
+        recompile_graph(split_gm)
+        print(split_gm.__repr__())
+        print(original_split_gm.__repr__())
+        return split_gm
+
+    def compile_graph_modules(self, compile_strategy=default_compile_strategy):
+        for key, info in self.gm_to_profiling_info.items():
+            compiled_gm = self.compile_gm(info, compile_strategy)
+            self.gm_to_compiled_gm[key] = compiled_gm
+
+    def backend(self, gm, example_inputs) -> callable:
+        from thunder import jit
+
+        print(id(gm))
+        if self._profiling:
+            cur_gm = remove_empty_autocast(gm)
+            recompile_graph(cur_gm)
+            split_module, subgraph_info = _splitter(cur_gm, jit, torch.compile, example_inputs)
+            subgm_to_example_inputs = {
+                subgm: example_inputs
+                for subgm, example_inputs in zip(
+                    subgraph_info.submodule_to_compiled_functions.keys(),
+                    subgraph_info.thunder_compiled_fns_example_inputs,
+                )
+            }
+            profiling_info = ProfilingInfo(
+                original_gm=gm,
+                original_split_gm=subgraph_info.original_split_graph_module,
+                subgm_to_example_inputs=subgm_to_example_inputs,
+                split_reasons=subgraph_info.split_reasons,
+                called_times=0,
+            )
+            self.gm_to_profiling_info[gm] = profiling_info
+            self.gm_to_compiled_gm[gm] = split_module
+
+        def fn(*args):
+            if self._profiling:
+                print("profiling: ", id(gm))
+                self.gm_to_profiling_info[gm].called_times += 1
+                return gm(*args)
+            else:
+                print("Executing optimized module: ", id(gm))
+                try:
+                    cur_compiled_gm = self.gm_to_compiled_gm[gm]
+                except KeyError:
+                    raise RuntimeError(
+                        f"graph module not found in gm_to_compiled_gm, indicates the graph module is regenerated between the last profiling and the currrent execution, please profile again"
+                    )
+                print(f"compiled_gm: {id(cur_compiled_gm)}")
+                # print(cur_compiled_gm.__repr__())
+                return cur_compiled_gm(*args)
+
+        return fn
+
+    def torch_compile(self, fn):
+        self.compiled_fn = torch.compile(fn, backend=self.backend)
+
+
+def thunder_profiling(fn, *args, **kwargs):
+    aot_compiler = _AOTThunderCompiler()
+    aot_compiler.torch_compile(fn)
+    aot_compiler.compiled_fn(*args, **kwargs)
+    return aot_compiler
+
+
+def utilize_profiling(aot_context, compile_strategy: CompilerStrategy = default_compile_strategy):
+    aot_context.compile_graph_modules(compile_strategy)
+
+
+def thunder_run(aot_context, *args, **kwargs):
+    aot_context._profiling = False
+    res = aot_context.compiled_fn(*args, **kwargs)
+    # print("-----" * 10)
+    return res

@@ -940,7 +940,7 @@ def test_deepcopy_graph_module():
     import thunder
 
     _, subgraph_info = thunder.dynamo.splitter._splitter(gm, thunder.jit, thunder.jit, [])
-    original_split_gm = subgraph_info.original_split_graph_module
+    original_split_gm = subgraph_info.original_split_graph_module.split_graph_module
     assert original_split_gm.graph.find_nodes(op="output")
     for subm in original_split_gm.children():
         assert subm.graph.find_nodes(op="output")
@@ -1514,3 +1514,22 @@ def test_autograd_function_fx_report(tmp_path):
         assert len(py_files) == 2
         for file in py_files:
             run_script(file, cmd)
+
+
+def test_aot_compiler():
+    from thunder.dynamo.compiler import thunder_profiling, utilize_profiling, thunder_run
+
+    x = torch.ones(2, 2, device="cuda", requires_grad=True)
+
+    def foo(x):
+        # torch.sinc has automatic fallback registered,
+        # so that operation will be given to inductor.
+        x = x.exp()
+        torch._dynamo.graph_break()
+        y = torch.sin(x) + torch.cos(x)
+        return y + 1
+
+    torch.compiler.reset()
+    aot_context = thunder_profiling(foo, x)
+    utilize_profiling(aot_context)
+    thunder_run(aot_context, x)

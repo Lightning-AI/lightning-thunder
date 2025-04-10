@@ -136,6 +136,24 @@ class SubgraphInfo:
     split_reasons: list | None = None
 
 
+class _ThunderSplitGraphModule:
+    def __init__(self, split_graph_module, supported_partitions):
+        self.split_graph_module = split_graph_module
+        self.supported_indexes: set[int] = supported_partitions
+
+    def is_thunder_supported_partition(self, node: torch.fx.Node) -> bool:
+        return node.name.startswith("submod") and int(node.name.replace("submod_", "")) in self.supported_indexes
+
+
+@dataclasses.dataclass()
+class ProfilingInfo:
+    original_gm: torch.fx.GraphModule
+    original_split_gm: _ThunderSplitGraphModule
+    subgm_to_example_inputs: dict[torch.fx.GraphModule, list[ExampleInputMetaData]]
+    split_reasons: list
+    called_times: int
+
+
 def _concrete_value(vals: torch.Size | Sequence):
     """
     Get the concrete value from the input `vals` if it contains `torch.SymInt`.
