@@ -4126,6 +4126,7 @@ def batch_norm(
 @torchsymbol(torch.nn.functional.instance_norm)
 def instance_norm(
     a: TensorLike,
+    /,
     running_mean: None | TensorLike = None,
     running_var: None | TensorLike = None,
     weight: None | TensorLike = None,
