@@ -3016,6 +3016,9 @@ def cumsum(a: TensorLike, dim: int, *, dtype: None | dtypeLike = None) -> Tensor
     # check the input dimension
     utils.canonicalize_dim(a.ndim, dim)
     if dtype is None:
+        # ref: https://github.com/pytorch/pytorch/blob/78fe079c/torch/_refs/__init__.py#L2301-L2315
+        if a.dtype in dtypes.integer_dtypes:
+            return TensorProxy(like=a, dtype=dtypes.int64)
         return TensorProxy(like=a)
     else:
         return TensorProxy(like=a, dtype=to_dtype(dtype))
