@@ -8325,13 +8325,14 @@ def batch_norm_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # input_shape, kwargs
     # TODO: implement running_mean and running_var
     cases = (
-        ((3, 4), {"momentum": 0.2, "eps": 0.5}),
         ((3, 3, 3), {"momentum": 0.2}),
         ((3, 3, 3), {"momentum": -1.2}),
         ((3, 3, 5, 6), {"momentum": 0.0}),
         ((3, 2, 3, 4), {"momentum": -1.0, "eps": 0.5}),
         ((3, 2, 3, 4, 12), {"momentum": -1.0, "eps": 0.5}),
     )
+    if op.name != "instance_norm":
+        cases.append(((3, 4), {"momentum": 0.2, "eps": 0.5}))
 
     make_arg = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=False)
@@ -8369,6 +8370,24 @@ batch_norm_opinfo = OpInfo(
     ),
 )
 nn_ops.append(batch_norm_opinfo)
+
+
+instance_norm_opinfo = OpInfo(
+    ltorch.instance_norm,
+    sample_input_generator=batch_norm_sample_generator,
+    torch_reference=torch.nn.functional.instance_norm,
+    dtypes=(datatypes.floating,),
+    test_directives=(
+        # PyTorch does not support float16 on CPU
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16,),
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+    ),
+)
+nn_ops.append(instance_norm_opinfo)
 
 
 def local_response_norm_sample_generator(op, device, dtype, requires_grad, **kwargs):
