@@ -219,7 +219,7 @@ def connect_to_autograd(
 
 def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stats, /, *flat_args):
     from thunder.core.rematerialization import rematerialize_all_gather, rematerialize_forward_and_backward
-    from thunder.core.transforms import forward_and_backward_from_trace
+    from thunder.transforms.autodiff import forward_and_backward_from_trace
     from thunder.distributed.transforms import FSDPCommBucketing
     from thunder.distributed.utils import sort_data_parallel_syncs, sort_waits, sort_communication_ops
     from thunder.executors.passes import del_last_used, transform_for_execution
@@ -289,11 +289,11 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     # Some of the optimization passes change proxies in the trace and
     # any change in the forward trace must be reflected in the backward
     # trace.
-    original_bw_saved_tensors_for_backward = bw_trace.args[0][0]
+    original_bw_saved_tensors_for_backward = bw_trace.args[0].collection()[0].collection()
     new_fw_saved_tensors_for_backward = get_saved_for_backward_tensors(fw_extrace)
 
     # saved meta data (this could also contain proxies)
-    original_bw_saved_meta_for_backward = bw_trace.args[0][1]
+    original_bw_saved_meta_for_backward = bw_trace.args[0].collection()[1].collection()
     new_fw_saved_meta_for_backward = fw_extrace.output[1][1]
 
     saved_tensors_swap_map = {
@@ -316,7 +316,7 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     assert bw_trace.bound_symbols[0].sym.id == PrimIDs.UNPACK_TRIVIAL
     assert bw_trace.bound_symbols[0].kwargs["name"] == "saved_for_backward"
     assert bw_trace.bound_symbols[4].sym.id == PrimIDs.UNPACK_SEQUENCE
-    assert bw_trace.bound_symbols[4].args[0].name == "C0"
+    assert bw_trace.bound_symbols[4].args[0].name == "C0", bw_trace.bound_symbols[4]
     assert bw_trace.bound_symbols[5].sym.id == PrimIDs.UNPACK_SEQUENCE
     assert bw_trace.bound_symbols[5].args[0].name == "C1"
     new_bsyms[4] = new_bsyms[4].from_bsym_swap_proxies(
@@ -361,9 +361,11 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     )
     bw_traces.append(bw_extrace)
 
-    fw_extrace, bw_extrace = rematerialize_forward_and_backward(fw_extrace, bw_extrace)
-    fw_traces.append(fw_extrace)
-    bw_traces.append(bw_extrace)
+    # TODO: reenable!
+    if 0:
+        fw_extrace, bw_extrace = rematerialize_forward_and_backward(fw_extrace, bw_extrace)
+        fw_traces.append(fw_extrace)
+        bw_traces.append(bw_extrace)
 
     # We need to sort the waits in forward and backward trace to overlap
     # computation with communication
