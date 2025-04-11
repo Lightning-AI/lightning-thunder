@@ -1,5 +1,6 @@
 from functools import reduce, partial
 
+import thunder
 import thunder.core.prims as prims
 from thunder.core.proxies import TensorProxy, variableify, unvariableify
 from thunder.core.trace import from_trace, tracectx, TraceCtx as Trace, TraceProvenance
@@ -42,12 +43,14 @@ def _involves_viewed_args(bsym, viewed):
     return any(isinstance(p, TensorProxy) and variableify(p) in viewed for p in bsym.flat_proxy_args)
 
 
-def insert_alias_updates(computation_trace: Trace) -> Trace:
+def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[list[int]]) -> Trace:
     swap_map = dict()
     bsyms = []
 
     # First pass: identify views, their originals, and operands involved in inplace ops
-    view_groups = []
+    # elements of computation_trace.args maybe aliases of each other, so we initialize view_groups with those
+    args = computation_trace.args
+    view_groups = [{variableify(args[idx]) for idx in group} for group in alias_tensor_indices]
     inplace_inputs = set()
     for bsym in computation_trace.bound_symbols:
         if _is_inplace_op(bsym) or _is_view_creation_op(bsym):
@@ -60,7 +63,6 @@ def insert_alias_updates(computation_trace: Trace) -> Trace:
             for group in view_groups:
                 if in_tensor in group:
                     group.update(out_tensors)
-                    group.add(in_tensor)
                     break
             else:
                 view_groups.append(out_tensors.union({in_tensor}))
