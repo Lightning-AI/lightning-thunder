@@ -6,10 +6,17 @@ import dataclasses
 import inspect
 import itertools
 import copy
+from pathlib import Path
+from types import NoneType
 
 import torch
 from torch.nn.modules.module import _addindent
 from torch._subclasses.fake_tensor import FakeTensor
+
+if torch.distributed.is_available():
+    from torch.distributed.tensor import DTensor
+else:
+    DTensor = NoneType
 
 from thunder.torch.default_torch_ops import torch_auto_registered_ops
 from thunder.torch import _torch_to_thunder_function_map
@@ -460,7 +467,7 @@ def _get_storage_shape(t: torch.Tensor):
 
 
 def _get_min_and_val(t: torch.Tensor) -> tuple[Number | None, Number | None]:
-    if isinstance(t, FakeTensor) or t.device.type == "meta" or t.numel() == 0:
+    if isinstance(t, (FakeTensor, DTensor)) or t.device.type == "meta" or t.numel() == 0:
         return None, None
     if t.dtype in (torch.float8_e4m3fn, torch.float8_e4m3fnuz, torch.float8_e5m2, torch.float8_e5m2fnuz):
         t = t.to(torch.float32)
