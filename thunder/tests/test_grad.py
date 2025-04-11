@@ -46,6 +46,7 @@ op_skip = {
     "embedding",
     "index_put",
     "batch_norm",
+    "instance_norm",
     "type_as",
 }
 
@@ -480,7 +481,7 @@ def test_vjp_correctness_type_as_manual(op, device, dtype, executor, comp):
 
 
 @ops(
-    (get_opinfo("batch_norm"),),
+    (get_opinfo("batch_norm"), get_opinfo("instance_norm")),
     supported_dtypes=(dtypes.float64,),
 )
 def test_vjp_correctness_batch_norm_manual(op, device, dtype, executor, comp):

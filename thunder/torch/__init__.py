@@ -1058,7 +1058,7 @@ def permute(a: TensorLike, /, *dims: int) -> TensorLike:
 def repeat(a: TensorLike, /, *repeats: int) -> TensorLike:
     repeats = utils.extract_shape_from_varargs(repeats)
     utils.check_valid_shape(repeats)
-    utils.check(a.ndim <= len(repeats), f"Expected {a.ndim=} <= {len(repeats)=}")
+    utils.check(a.ndim <= len(repeats), lambda: f"Expected {a.ndim=} <= {len(repeats)=}")
 
     repeats = tuple(repeats)
     new_dims = len(repeats) - a.ndim
@@ -4121,6 +4121,38 @@ def batch_norm(
 
     result = _native_batch_norm(a, weight, bias, running_mean, running_var, training, momentum, eps)
     return result
+
+
+@torchsymbol(torch.nn.functional.instance_norm)
+def instance_norm(
+    a: TensorLike,
+    /,
+    running_mean: None | TensorLike = None,
+    running_var: None | TensorLike = None,
+    weight: None | TensorLike = None,
+    bias: None | TensorLike = None,
+    use_input_stats: bool = True,
+    momentum: NumberLike = 0.1,
+    eps: NumberLike = 1e-5,
+) -> TensorLike:
+    org_shape = a.shape
+    b = org_shape[0]
+    c = org_shape[1]
+    if running_mean is not None:
+        running_mean = repeat(running_mean, b)
+    if running_var is not None:
+        running_var = repeat(running_var, b)
+    if weight is not None:
+        weight = repeat(weight, b)
+    if bias is not None:
+        bias = repeat(bias, b)
+
+    shape = (1, b * c) + org_shape[2:]
+    a = a.reshape(shape)
+
+    out = batch_norm(a, running_mean, running_var, weight, bias, use_input_stats, momentum, eps)
+
+    return out.reshape(org_shape)
 
 
 @torchsymbol(torch.nn.functional.local_response_norm)
