@@ -8332,7 +8332,7 @@ def batch_norm_sample_generator(op, device, dtype, requires_grad, **kwargs):
         ((3, 2, 3, 4, 12), {"momentum": -1.0, "eps": 0.5}),
     )
     if op.name != "instance_norm":
-        cases.append(((3, 4), {"momentum": 0.2, "eps": 0.5}))
+        cases += (((3, 4), {"momentum": 0.2, "eps": 0.5}),)
 
     make_arg = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=False)
