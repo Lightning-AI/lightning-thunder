@@ -560,6 +560,52 @@ def test_hf_llama():
 
 
 @requiresCUDA
+def test_hf_phi3_vision():
+    # This test takes around 4045406208 bytes (~4GB) of memory.
+    # Shapes for data generated with help of the following script
+    # https://github.com/microsoft/PhiCookBook/blob/main/code/03.Finetuning/Phi-3-vision-Trainingscript.py
+    from transformers import AutoModelForCausalLM, AutoConfig
+    from thunder.dynamo import thunderfx
+    from thunder.tests.framework import assert_closer
+
+    cfg = AutoConfig.from_pretrained("microsoft/Phi-3-vision-128k-instruct", trust_remote_code=True)
+    cfg.num_hidden_layers = 2
+
+    with torch.device("cuda"):
+        model = AutoModelForCausalLM.from_config(cfg, trust_remote_code=True, torch_dtype=torch.bfloat16)
+        input_ids = torch.randint(0, 200, (1, 512))
+        attention_mask = torch.zeros((1, 512), dtype=torch.int64)
+        attention_mask[0, 426:] = 1
+        pixel_values = torch.randint(0, 255, (1, 400, 356, 3), dtype=torch.uint8)
+        labels = input_ids.clone().detach()
+
+        jit_model = thunderfx(model, fusion_type="consecutive")
+        thunder_result = jit_model(
+            input_ids=input_ids, attention_mask=attention_mask, pixel_values=pixel_values, labels=labels
+        )
+
+        eager_result = model(
+            input_ids=input_ids, attention_mask=attention_mask, pixel_values=pixel_values, labels=labels
+        )
+        double_precision_model = model.to(torch.double)
+        reference_result = double_precision_model(
+            input_ids=input_ids, attention_mask=attention_mask, pixel_values=pixel_values, labels=labels
+        )
+        assert_closer(
+            reference=(reference_result.loss,),
+            candidate=(thunder_result.loss,),
+            competitor=(eager_result.loss,),
+            comparator=torch.testing.assert_close,
+        )
+
+        loss_grad = torch.randn_like(eager_result.loss)
+        thunder_grads = torch.autograd.grad(thunder_result.loss, model.parameters(), grad_outputs=loss_grad)
+        eager_grads = torch.autograd.grad(eager_result.loss, model.parameters(), grad_outputs=loss_grad)
+        # double_precision_grads = torch.autograd.grad(double_precision_model.loss, double_precision_model.parameters(), grad_outputs=loss_grad.to(torch.double))
+        # assert_closer(reference=double_precision_grads, candidate=thunder_grads, competitor=eager_grads, comparator=torch.testing.assert_close)
+
+
+@requiresCUDA
 def test_memory_litgpt_llama3():
     from thunder.tests import litgpt_model
 
