@@ -1134,17 +1134,10 @@ def get_thunder_fxgraph_reports(fn: Callable, stream: TextIO = sys.stdout, **com
     Returns:
         A function that takes *args, **kwargs and returns a list of ThunderFXGraphReport objects.
     """
-    from thunder.dynamo.utils import get_thunder_jit_kwargs, get_torch_compile_kwargs
+    from thunder.dynamo.utils import get_torch_compile_kwargs
 
-    thunder_jit_kwargs = get_thunder_jit_kwargs(**compile_kwargs)
     torch_compile_kwargs = get_torch_compile_kwargs(**compile_kwargs)
-    rest_kwargs = {
-        k: v for k, v in compile_kwargs.items() if k not in thunder_jit_kwargs and k not in torch_compile_kwargs
-    }
-    check(
-        not rest_kwargs,
-        lambda: f"There are kwargs that are not supported by either thunder.jit or torch.compile: {rest_kwargs}",
-    )
+    thunder_jit_kwargs = {k: v for k, v in compile_kwargs.items() if k not in torch_compile_kwargs}
 
     def inner_fn(*args, **kwargs):
         reports = fx_report(fn, **torch_compile_kwargs)(*args, **kwargs)
@@ -1304,15 +1297,8 @@ def thunderfx_benchmark_report(
 
     folder_path = Path(folder_path)
     folder_path.mkdir(exist_ok=True, parents=True)
-    thunder_jit_kwargs = get_thunder_jit_kwargs(**compile_kwargs)
     torch_compile_kwargs = get_torch_compile_kwargs(**compile_kwargs)
-    rest_kwargs = {
-        k: v for k, v in compile_kwargs.items() if k not in thunder_jit_kwargs and k not in torch_compile_kwargs
-    }
-    check(
-        not rest_kwargs,
-        lambda: f"There are compile_kwargs that are not supported by either thunder.jit or torch.compile: {rest_kwargs}",
-    )
+    thunder_jit_kwargs = {k: v for k, v in compile_kwargs.items() if k not in torch_compile_kwargs}
 
     def inner_fn(*args, **kwargs):
         if check_torch_runnablility:
