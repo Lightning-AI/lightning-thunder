@@ -473,13 +473,12 @@ def jit(
             computation_trc = remove_context_manager_prims_from_trace(computation_trc)
             computation_traces.append(computation_trc)
 
-            alias_tensor_indices = []
-            if alias_tensor_indices_str := cache_info["alias_tensor_indices"]:
-                alias_tensor_indices: list[list[int]] = [
-                    [int(i) for i in s.split(",")] for s in alias_tensor_indices_str.split("-")
-                ]
-
             if not compile_options.get("skip_inplace_alias_updates", True):
+                alias_tensor_indices = []
+                if alias_tensor_indices_str := cache_info["alias_tensor_indices"]:
+                    alias_tensor_indices: list[list[int]] = [
+                        [int(i) for i in s.split(",")] for s in alias_tensor_indices_str.split("-")
+                    ]
                 computation_traces.append(insert_alias_updates(computation_trc, alias_tensor_indices))
                 computation_trc = computation_traces[-1]
 

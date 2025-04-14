@@ -1,9 +1,17 @@
 from functools import reduce, partial
 
 import thunder
+from thunder.core.functionalization import replace_args_with_alias_map
 import thunder.core.prims as prims
 from thunder.core.proxies import TensorProxy, variableify, unvariableify
 from thunder.core.trace import from_trace, tracectx, TraceCtx as Trace, TraceProvenance
+
+
+def _update_swap_map(swap_map, old_alias, new_alias):
+    while old_alias in swap_map:
+        old_alias = variableify(swap_map[old_alias])
+    swap_map[old_alias] = new_alias
+    return swap_map
 
 
 def _get_update_bsym(group, swap_map, new_aliases):
@@ -11,7 +19,7 @@ def _get_update_bsym(group, swap_map, new_aliases):
     update_aliases_bsym = prims.update_aliases.bind(aliases, output=new_aliases)
     update_aliases_bsym = update_aliases_bsym.from_bsym_swap_proxies(swap_map)
     for new_alias, old_alias in zip(new_aliases, group):
-        swap_map[old_alias] = new_alias
+        swap_map = _update_swap_map(swap_map, old_alias, new_alias)
     return update_aliases_bsym, swap_map
 
 
@@ -47,10 +55,12 @@ def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[li
     swap_map = dict()
     bsyms = []
 
-    # First pass: identify views, their originals, and operands involved in inplace ops
-    # elements of computation_trace.args maybe aliases of each other, so we initialize view_groups with those
-    args = computation_trace.args
-    view_groups = [{variableify(args[idx]) for idx in group} for group in alias_tensor_indices]
+    # First pass: identify inputs which are views of each other and swap them out with a default,
+    # reshaping if necessary.
+    computation_trace, _ = replace_args_with_alias_map(computation_trace, alias_tensor_indices)
+
+    # Second pass: identify views, their originals, and operands involved in inplace ops
+    view_groups = []
     inplace_inputs = set()
     for bsym in computation_trace.bound_symbols:
         if _is_inplace_op(bsym) or _is_view_creation_op(bsym):
@@ -72,12 +82,12 @@ def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[li
     viewed = set(reduce(set.union, view_groups, set()))
     encountered = set()
 
+    # Third pass: insert alias updates
     for bsym in computation_trace.bound_symbols:
         if _is_inplace_op(bsym) or _is_view_creation_op(bsym) or _involves_viewed_args(bsym, viewed):
-            in_tensors = map(variableify, filter(lambda p: isinstance(p, TensorProxy), bsym.flat_proxy_args))
+            in_tensors = list(map(variableify, filter(lambda p: isinstance(p, TensorProxy), bsym.flat_proxy_args)))
             if _is_inplace_op(bsym) and in_tensors:
-                in_tensor = list(in_tensors)[0]
-                in_tensors = {in_tensor}
+                in_tensors = {in_tensors[0]}
             else:
                 in_tensors = set(in_tensors)
             out_tensors = set(map(variableify, filter(lambda p: isinstance(p, TensorProxy), bsym.flat_proxy_outs)))
@@ -97,7 +107,7 @@ def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[li
             bsyms.append(new_bsym)
             if _is_inplace_op(bsym) and len(out_tensors) == 1 and len(in_tensors) == 1:
                 #  This relies on these being one element sets (ltorch.setitem_ yields no outs).
-                swap_map[in_tensors.pop()] = unvariableify(out_tensors.pop())
+                swap_map = _update_swap_map(swap_map, in_tensors.pop(), unvariableify(out_tensors.pop()))
 
         else:
             bsyms.append(bsym.from_bsym_swap_proxies(swap_map))

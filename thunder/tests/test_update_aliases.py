@@ -286,7 +286,6 @@ def test_inplace_to_alias_func_args(executor, device, dtype):
 
     res_of_a, a_out = jitted_f(a, a)
     ref_res_of_a, ref_a_out = f(a_ref, a_ref)
-    print(thunder.last_traces(jitted_f)[-1])
 
     fds = get_fusions(thunder.last_traces(jitted_f)[-1])
     for _, fd in fds:
