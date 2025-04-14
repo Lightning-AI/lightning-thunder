@@ -5098,7 +5098,7 @@ def _interpolate_scale_factor_helper(
     scale_factor: Sequence[float] | float,
     mode: str = "nearest",
 ) -> TensorLike:
-    assert (mode == "nearest" or mode == "nearest-exact")
+    assert mode == "nearest" or mode == "nearest-exact"
 
     # a is assumed to be at least 3D.
     batch, channels, *spatial_dims = a.shape
@@ -5149,7 +5149,7 @@ def _interpolate_scale_factor_helper(
         # dimenions corresponding to batches and channels.
         curr_dim = 2 + (len(spatial_dims) - k - 1)
 
-        exact = (mode == 'nearest-exact')
+        exact = mode == "nearest-exact"
         if output_dim <= input_dim:
             if output_dim <= input_dim // 2:
                 # scale_factor <= 1 (i.e. output_dim <= input_dim) implies simple slice
