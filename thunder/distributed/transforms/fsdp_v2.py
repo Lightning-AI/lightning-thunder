@@ -380,6 +380,7 @@ class FSDPTransform(Transform):
                 # skipping the swapping this assumes we don't return sharded params, but that should be OK
                 new_computation_trace.bound_symbols.append(bsym.from_bsym())
                 continue
+            # replace param by synced_param
             new_computation_trace.bound_symbols.append(bsym.from_bsym_swap_proxies(proxies_to_replace))
 
         new_computation_trace.set_provenance(TraceProvenance("fsdp pass"))
