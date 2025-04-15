@@ -378,6 +378,9 @@ class FSDPTransform(Transform):
             if bsym.sym == prims.python_return:
                 # we need to preserve flat_args
                 # skipping the swapping this assumes we don't return sharded params, but that should be OK
+                assert not any(
+                    (variableify(o) in proxies_to_replace) for o in bsym.args[0]["output"] if isinstance(o, TensorProxy)
+                )
                 new_computation_trace.bound_symbols.append(bsym.from_bsym())
                 continue
             # replace param by synced_param
