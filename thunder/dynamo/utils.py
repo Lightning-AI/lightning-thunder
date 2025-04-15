@@ -146,11 +146,9 @@ class _ThunderSplitGraphModule:
 
 
 @dataclasses.dataclass()
-class ProfilingInfo:
-    original_gm: torch.fx.GraphModule
-    original_split_gm: _ThunderSplitGraphModule
-    subgm_to_example_inputs: dict[torch.fx.GraphModule, list[ExampleInputMetaData]]
-    split_reasons: list
+class ProfileStats:
+    gm: torch.fx.GraphModule
+    example_inputs: list[ExampleInputMetaData]
     called_times: int
 
 

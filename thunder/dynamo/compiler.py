@@ -326,122 +326,186 @@ def default_compile_strategy(gm, example_inputs) -> CompilerFn:
 
 
 from thunder.dynamo.utils import (
-    ProfilingInfo,
+    ProfileStats,
     update_node_and_submodule,
-    example_input_meta_to_input,
     _get_example_inputs_from_placeholder,
 )
 
 
-class _AOTThunderCompiler:
-    def __init__(self):
-        self._profiling = True
-        self.gm_to_compiled_gm = {}
-        self.gm_to_profiling_info = {}
-        self.compiled_fn = None
+class ThunderAoTOptimizer:
+    # Helper class that just keeps some data about the AoT optimization process
+    # We could use better statistics than what's in this example!
 
-    def compile_gm(self, profiling_info, compile_strategy):
-        import copy
+    def __init__(
+        self,
+    ):
+        self.is_profiling = True
+        self.dispatch_map: dict = {}  # gm_id -> callable
+        self.id_to_gm_map: dict = {}
+        self.gm_to_profile_stats = {}
 
-        original_split_gm = profiling_info.original_split_gm.split_graph_module
-        split_gm = copy.deepcopy(original_split_gm)
-        for node in split_gm.graph.nodes:
-            if not node.name.startswith("submod"):
-                continue
-            if profiling_info.original_split_gm.is_thunder_supported_partition(node):
-                graph_module = getattr(split_gm, node.name)
-                original_gm = getattr(original_split_gm, node.name)
-                example_inputs_metadata = profiling_info.subgm_to_example_inputs[original_gm]
-                example_inputs = example_input_meta_to_input(example_inputs_metadata)
-                optimizer = compile_strategy(graph_module, example_inputs)
-                optimized_module, compiler_name = optimizer(graph_module, example_inputs)
-                # Update the node name from "submod_*" to the optimizer specifed name for more user-friendly names
-                update_node_and_submodule(split_gm, node, node.name.replace("submod", compiler_name), optimized_module)
-                # print(split_gm.__repr__())
-            else:  # For inductor
-                graph_module = getattr(split_gm, node.name)
-                placeholders = list(n for n in graph_module.graph.nodes if n.op == "placeholder")
-                example_inputs = list(
-                    map(partial(_get_example_inputs_from_placeholder, only_metadata=False), placeholders)
-                )
-                jit_fn, compiler_name = _torch_inductor_compile(graph_module, example_inputs)
-                # Update the node name from "submod_*" to "inductor_*" for more user-friendly names
-                update_node_and_submodule(split_gm, node, node.name.replace("submod", "inductor"), jit_fn)
 
-        recompile_graph(split_gm)
-        print(split_gm.__repr__())
-        print(original_split_gm.__repr__())
-        return split_gm
+import copy
+from thunder import jit
 
-    def compile_graph_modules(self, compile_strategy=default_compile_strategy):
-        for key, info in self.gm_to_profiling_info.items():
-            compiled_gm = self.compile_gm(info, compile_strategy)
-            self.gm_to_compiled_gm[key] = compiled_gm
 
-    def backend(self, gm, example_inputs) -> callable:
-        from thunder import jit
+def thunder_profile(fn):
+    torch.compiler.reset()
+    tao: ThunderAoTOptimizer = ThunderAoTOptimizer()
 
-        print(id(gm))
-        if self._profiling:
-            cur_gm = remove_empty_autocast(gm)
-            recompile_graph(cur_gm)
-            split_module, subgraph_info = _splitter(cur_gm, jit, torch.compile, example_inputs)
-            subgm_to_example_inputs = dict(
-                zip(
-                    [
-                        k
-                        for k, v in subgraph_info.submodule_to_compiled_functions.items()
-                        if v.compiler == CompilerType.THUNDER
-                    ],
-                    subgraph_info.thunder_compiled_fns_example_inputs,
-                )
-            )
-            profiling_info = ProfilingInfo(
-                original_gm=gm,
-                original_split_gm=subgraph_info.original_split_graph_module,
-                subgm_to_example_inputs=subgm_to_example_inputs,
-                split_reasons=subgraph_info.split_reasons,
-                called_times=0,
-            )
-            self.gm_to_profiling_info[gm] = profiling_info
-            self.gm_to_compiled_gm[gm] = split_module
+    def record_stats_jit(gm, *args):
+        print("profiling compile: ", id(gm))
+        placeholders = list(n for n in gm.graph.nodes if n.op == "placeholder")
+        example_input_metadata = list(
+            map(partial(_get_example_inputs_from_placeholder, only_metadata=True), placeholders)
+        )
+        profile_stats = ProfileStats(gm=copy.deepcopy(gm), example_inputs=example_input_metadata, called_times=0)
+        tao.gm_to_profile_stats[gm] = profile_stats
 
-        def fn(*args):
-            if self._profiling:
-                print("profiling: ", id(gm))
-                self.gm_to_profiling_info[gm].called_times += 1
+    def dispatching_backend(gm, *args):
+        if tao.is_profiling:
+            idx: int = id(gm)
+            # the information needs to be recorded during torch jit compilation.
+            # when compiling is over the input information is removed
+            record_stats_jit(gm, *args)
+
+            def record_stats_execution(*args):
+                # Records statistics about the FX Graph
+                # In this example, just appends the args and separately records the gm,
+                #   but we should probably record the graph, the # of times the graph has
+                #   been called, and the metadata of the args, and not record redundant
+                #   input metadata
+                # tao.stats[idx].append(args)
+                print("profiling execution: ", id(gm))
+                tao.id_to_gm_map[idx] = gm
+                tao.gm_to_profile_stats[gm].called_times += 1
                 return gm(*args)
-            else:
-                print("Executing optimized module: ", id(gm))
-                try:
-                    cur_compiled_gm = self.gm_to_compiled_gm[gm]
-                except KeyError:
-                    raise RuntimeError(
-                        "Graph module not found in gm_to_compiled_gm. This likely indicates that the graph module was regenerated between the last profiling and the current execution. Please re-run the profiling step"
-                    )
-                print(f"compiled_gm: {id(cur_compiled_gm)}")
-                # print(cur_compiled_gm.__repr__())
-                return cur_compiled_gm(*args)
 
-        return fn
+            # record the gm and the callable
+            tao.dispatch_map[idx] = record_stats_execution
 
-    def torch_compile(self, fn):
-        self.compiled_fn = torch.compile(fn, backend=self.backend)
+            def _dispatch(*args):
+                return tao.dispatch_map[idx](*args)
+
+            return _dispatch
+
+        # NOTE When not in profiling mode, this just returns the gm for eager
+        #   execution
+        return gm
+
+    cfn = torch.compile(fn, backend=dispatching_backend)
+
+    # Wraps the torch compiled callable so we can invalidate the profiling
+    #   callable for UX clarity
+    def profiling_callable(*args, **kwargs):
+        if tao.is_profiling:
+            return cfn(*args, **kwargs)
+
+        raise AssertionError(f"No longer profiling")
+
+    profiling_callable._compiled_fn = cfn
+    profiling_callable._tao = tao
+    return profiling_callable
 
 
-def thunder_profiling(fn, *args, **kwargs):
-    aot_compiler = _AOTThunderCompiler()
-    aot_compiler.torch_compile(fn)
-    aot_compiler.compiled_fn(*args, **kwargs)
-    return aot_compiler
+def default_filter(fn) -> set[int]:
+    # Default filtering function placeholder
+    # Takes the FX graph statistics, and returns a subset of
+    # FX graphs to optimize
+    # TODO The statistics should be an attribute of the profiling fn passed to this
+
+    # Currently this just returns every FX Graph index, but the proposal suggests
+    #   that we should start by filtering FX Graphs that include symbolic values
+    #   in their args
+    from torch._inductor.utils import is_symbolic
+
+    id_to_gm = fn._tao.id_to_gm_map
+
+    choosen = set()
+    for idx, gm in id_to_gm.items():
+        dynamic = False
+        placeholders = [n for n in gm.graph.nodes if n.op == "placeholder"]
+        for placeholder in placeholders:
+            example_value = placeholder.meta.get("example_value", None)
+            if example_value is None:
+                continue
+
+            if is_symbolic(example_value):
+                dynamic = True
+                break
+        if not dynamic:
+            choosen.add(idx)
+    return choosen
 
 
-def utilize_profiling(aot_context, compile_strategy: CompilerStrategy = default_compile_strategy):
-    aot_context.compile_graph_modules(compile_strategy)
+def default_optimizer(gm, stats):
+    # Default optimizing function placeholder
+    # Takes a gm and its statistics, and returns a (possibly optimized) callable
+
+    # Currently this just ignores the statistics and doesn't optimize anything
+    # This is where the gm could be benchmarked with different executors, and
+    #   a callable generated that uses the fastest executor
+    # The real magic goes here!
+    import copy
+
+    cur_gm = remove_empty_autocast(stats.gm)
+    recompile_graph(cur_gm)
+    _, subgraph_info = _splitter(cur_gm, jit, torch.compile, _unused_sample_args=None)
+
+    thunder_split_gm = subgraph_info.original_split_graph_module
+    split_gm = copy.deepcopy(thunder_split_gm.split_graph_module)
+    for node in split_gm.graph.nodes:
+        if not node.name.startswith("submod"):
+            continue
+        graph_module = getattr(split_gm, node.name)
+        placeholders = [n for n in graph_module.graph.nodes if n.op == "placeholder"]
+        example_inputs = [_get_example_inputs_from_placeholder(p, only_metadata=False) for p in placeholders]
+        if thunder_split_gm.is_thunder_supported_partition(node):
+            compiler_fn = default_compile_strategy(graph_module, example_inputs)
+            optimized_module, compiler_name = compiler_fn(graph_module, example_inputs)
+            # Update the node name from "submod_*" to the optimizer specifed name for more user-friendly names
+            update_node_and_submodule(split_gm, node, node.name.replace("submod", compiler_name), optimized_module)
+            # print(split_gm.__repr__())
+        else:  # For inductor
+            optimized_module, compiler_name = _torch_inductor_compile(graph_module, example_inputs)
+            # Update the node name from "submod_*" to "inductor_*" for more user-friendly names
+            update_node_and_submodule(split_gm, node, node.name.replace("submod", "inductor"), optimized_module)
+
+    recompile_graph(split_gm)
+    print(split_gm.__repr__())
+    print(thunder_split_gm.split_graph_module.__repr__())
+    return split_gm
 
 
-def thunder_run(aot_context, *args, **kwargs):
-    aot_context._profiling = False
-    res = aot_context.compiled_fn(*args, **kwargs)
-    # print("-----" * 10)
-    return res
+def thunder_optimize(
+    profiling_callable,
+    *,
+    gm_filter=default_filter,
+    optimizer=default_optimizer,
+):
+    # NOTE Assumes fn is a "profiling_callable" as returned from thunder_profile
+
+    # Resets the dispatch table so that no more profiling occurs
+
+    # 1) Filters the FX graphs based on their statistics
+    indices_to_optimize: set[int] = gm_filter(profiling_callable)
+
+    # 2) Replaces the FX graphs that are to be optimized with the optimized
+    #      callables, and other graphs with the graph modules
+    tao = profiling_callable._tao
+    dispatch_map = tao.dispatch_map
+    id_to_gm_map = tao.id_to_gm_map
+    for idx, call in dispatch_map.items():
+        if idx in indices_to_optimize:
+            gm = id_to_gm_map[idx]
+            # dispatch_map[idx] = optimizer(gm, stats[idx])
+            profile_stats = tao.gm_to_profile_stats[gm]
+            dispatch_map[idx] = optimizer(gm, profile_stats)
+        else:
+            dispatch_map[idx] = gm
+
+    # 3) Marks the profiling period as over
+    tao.is_profiling = False
+
+    # 4) Returns the actual torch.compile'd callable to minimize calling latency
+    return profiling_callable._compiled_fn

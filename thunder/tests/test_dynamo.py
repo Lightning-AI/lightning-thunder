@@ -1516,8 +1516,9 @@ def test_autograd_function_fx_report(tmp_path):
             run_script(file, cmd)
 
 
+@requiresCUDA
 def test_aot_compiler():
-    from thunder.dynamo.compiler import thunder_profiling, utilize_profiling, thunder_run
+    from thunder.dynamo.compiler import thunder_profile, thunder_optimize
 
     x = torch.ones(2, 2, device="cuda", requires_grad=True)
 
@@ -1529,7 +1530,7 @@ def test_aot_compiler():
         y = torch.sinc(x) + torch.cos(x)
         return y + 1
 
-    torch.compiler.reset()
-    aot_context = thunder_profiling(foo, x)
-    utilize_profiling(aot_context)
-    thunder_run(aot_context, x)
+    pfoo = thunder_profile(foo)
+    pfoo(x)
+    optfoo = thunder_optimize(pfoo)
+    optfoo(x)
