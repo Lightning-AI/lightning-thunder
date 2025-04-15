@@ -1,5 +1,3 @@
-from collections.abc import Callable
-
 import pytest
 import torch.testing
 

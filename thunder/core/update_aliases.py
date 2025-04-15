@@ -1,6 +1,5 @@
 from functools import reduce, partial
 
-import thunder
 from thunder.core.functionalization import replace_args_with_alias_map
 import thunder.core.prims as prims
 from thunder.core.proxies import TensorProxy, variableify, unvariableify
