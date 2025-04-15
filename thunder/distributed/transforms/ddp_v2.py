@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from thunder.core import devices
 from thunder.core import prims
 from thunder.core import utils
-from thunder.core.proxies import DistParallelType, variableify
+from thunder.core.proxies import DistParallelType, TensorProxy, variableify
 from thunder.core.trace import from_trace
 from thunder.core.trace import tracectx
 from thunder.core.trace import TraceProvenance
