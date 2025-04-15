@@ -53,7 +53,7 @@ def aten_mul(a, b):
 
 @dtensor_torchsymbol(torch.mul, id="dtensor.torch.mul")
 def dtensor_mul(a: TensorLike, b: TensorLike) -> TensorLike:
-    return trace_torch_op_to_aten_ops(ltorch.mul, a, b)
+    return trace_torch_op_to_aten_ops(torch.mul, a, b)
 
 
 @dtensor_torchsymbol(torch.ops.aten.add.Tensor, id="aten.add.Tensor")
@@ -66,7 +66,7 @@ def aten_add(a, b, alpha=1):
 
 @dtensor_torchsymbol(torch.add, id="dtensor.torch.add")
 def dtensor_add(a: TensorLike, b: TensorLike, alpha=1) -> TensorLike:
-    return trace_torch_op_to_aten_ops(ltorch.add, a, b, alpha=alpha)
+    return trace_torch_op_to_aten_ops(torch.add, a, b, alpha=alpha)
 
 
 def register_dtensor_and_aten_function():
