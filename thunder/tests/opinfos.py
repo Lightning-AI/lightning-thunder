@@ -9361,6 +9361,7 @@ def interpolate_sample_generator(op, device, dtype, requires_grad, **kwargs):
             a_shape = b + c + spatial_dims
 
             yield SampleInput(make(a_shape), size=size)
+            yield SampleInput(make(a_shape), size=size, mode="nearest-exact")
 
     # Test scale/scale_factor passed as a scalar
     yield SampleInput(make(1, 1, 5, 5), scale_factor=0.5)

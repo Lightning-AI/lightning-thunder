@@ -5098,7 +5098,10 @@ def _interpolate_scale_factor_helper(
     scale_factor: Sequence[float] | float,
     mode: str = "nearest",
 ) -> TensorLike:
-    assert mode == "nearest" or mode == "nearest-exact"
+    if mode not in ("nearest", "nearest-exact"):
+        raise ValueError(
+            f"_interpolate_scale_factor_helper expected mode to be 'nearest' or 'nearest-exact', but got {mode}"
+        )
 
     # a is assumed to be at least 3D.
     batch, channels, *spatial_dims = a.shape
@@ -5119,7 +5122,15 @@ def _interpolate_scale_factor_helper(
         )
 
     # perform nearest up/down-sampling
-    def nearest_sampler(t, input_dim, output_dim, *, scale, dim, exact):
+    def nearest_sampler(
+        t: TensorLike,
+        input_dim: int,
+        output_dim: int,
+        *,
+        scale: float,
+        dim: int,
+        exact: bool,
+    ) -> TensorLike:
         # It is expected that output_dim = int(input_dim * scale).
         # Indices [0, ..., output_dim - 1] are mapped to [0, ..., input_dim - 1]
         # with the rule i -> int(i * scale) or i -> round((i + 0.5) * scale - 0.5),
@@ -5149,7 +5160,7 @@ def _interpolate_scale_factor_helper(
         # dimenions corresponding to batches and channels.
         curr_dim = 2 + (len(spatial_dims) - k - 1)
 
-        exact = mode == "nearest-exact"
+        exact: bool = mode == "nearest-exact"
         if output_dim <= input_dim:
             if output_dim <= input_dim // 2:
                 # scale_factor <= 1 (i.e. output_dim <= input_dim) implies simple slice
