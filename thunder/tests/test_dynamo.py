@@ -1013,6 +1013,17 @@ def test_thunderfx():
     trc = last_traces(thunder_compiled_fns[-1])[-1]
     assert any(bsym.sym.id == "nvtx_range_push" for bsym in trc.bound_symbols)
 
+    def fn(x, w):
+        return x @ w
+
+    x = torch.randn(4, 4, device="cuda", requires_grad=True)
+    w = torch.randn(4, 4, device="cuda", requires_grad=True)
+    # Tests the compile_options in thunder.jit
+    cfn = thunderfx(fn, nv_enable_matmul=True)
+    cfn(x, w)
+    trc = cfn.last_traces[-1]
+    assert any(bsym.sym.name == "nvFusion0" for bsym in trc.bound_symbols)
+
 
 def test_thunderfx_last_traces():
     def foo(x):
