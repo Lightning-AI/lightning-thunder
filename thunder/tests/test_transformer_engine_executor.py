@@ -249,3 +249,25 @@ def test_te_trace_metadata_propagation():
 
     # Verify that we have `te_linear` in the trace.
     assert any(bsym.sym.name.startswith("te_linear") for bsym in fwd_traces[-1].bound_symbols)
+
+
+def test_te_grad_computation_with_intermediate():
+    # Test for issue - https://github.com/Lightning-AI/lightning-thunder/issues/1966
+    def fn(x, w):
+        # Due to autocast, trace becomes something like this
+        # t4 = prims.convert_element_type(x, dtypes.bfloat16)  # t4: "cuda:0 bf16[32, 32]"
+        # t5 = prims.convert_element_type(w, dtypes.bfloat16)  # t5: "cuda:0 bf16[32, 32]"
+        # t6 = prims.linear(t4, t5, None)  # t6: "cuda:0 bf16[32, 32]"
+        with torch.autocast("cuda", torch.bfloat16):
+            return torch.nn.functional.linear(x, w)
+
+    with torch.device("cuda"):
+        x = torch.randn(32, 32, requires_grad=True)
+        w = torch.randn(32, 32, requires_grad=True)
+
+        tfn = thunder.jit(fn, executors=(transformer_engine_ex,))
+
+        o = tfn(x, w)
+        o.sum().backward()
+
+        assert w.grad is not None
