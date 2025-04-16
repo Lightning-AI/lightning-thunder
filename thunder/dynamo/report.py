@@ -865,10 +865,9 @@ class ThunderFusionReport:
         nvfuser_repro_code = get_repro(inputs)
         return nvfuser_repro_code
 
-    def write_nvfuser_benchmark(self, folder, time_fn: TimerInterface, file_name=None, **kwargs):
+    def write_nvfuser_benchmark(self, folder, time_fn: TimerInterface, file_name=None, extra_comment_str=""):
         folder = Path(folder)
         folder.mkdir(exist_ok=True, parents=True)
-        extra_comment_str = kwargs.get("extra_comment_str") if "extra_comment_str" in kwargs else ""
         repro_code_str = self._get_nvfuser_code()
         timing_import_str = "\n".join(time_fn.import_str() or [])
         timing_str = time_fn.to_source("nvfuser_fn", "inputs")
@@ -1135,17 +1134,10 @@ def get_thunder_fxgraph_reports(fn: Callable, stream: TextIO = sys.stdout, **com
     Returns:
         A function that takes *args, **kwargs and returns a list of ThunderFXGraphReport objects.
     """
-    from thunder.dynamo.utils import get_thunder_jit_kwargs, get_torch_compile_kwargs
+    from thunder.dynamo.utils import get_torch_compile_kwargs
 
-    thunder_jit_kwargs = get_thunder_jit_kwargs(**compile_kwargs)
     torch_compile_kwargs = get_torch_compile_kwargs(**compile_kwargs)
-    rest_kwargs = {
-        k: v for k, v in compile_kwargs.items() if k not in thunder_jit_kwargs and k not in torch_compile_kwargs
-    }
-    check(
-        not rest_kwargs,
-        lambda: f"There are kwargs that are not supported by either thunder.jit or torch.compile: {rest_kwargs}",
-    )
+    thunder_jit_kwargs = {k: v for k, v in compile_kwargs.items() if k not in torch_compile_kwargs}
 
     def inner_fn(*args, **kwargs):
         reports = fx_report(fn, **torch_compile_kwargs)(*args, **kwargs)
@@ -1305,15 +1297,8 @@ def thunderfx_benchmark_report(
 
     folder_path = Path(folder_path)
     folder_path.mkdir(exist_ok=True, parents=True)
-    thunder_jit_kwargs = get_thunder_jit_kwargs(**compile_kwargs)
     torch_compile_kwargs = get_torch_compile_kwargs(**compile_kwargs)
-    rest_kwargs = {
-        k: v for k, v in compile_kwargs.items() if k not in thunder_jit_kwargs and k not in torch_compile_kwargs
-    }
-    check(
-        not rest_kwargs,
-        lambda: f"There are compile_kwargs that are not supported by either thunder.jit or torch.compile: {rest_kwargs}",
-    )
+    thunder_jit_kwargs = {k: v for k, v in compile_kwargs.items() if k not in torch_compile_kwargs}
 
     def inner_fn(*args, **kwargs):
         if check_torch_runnablility:
@@ -1335,7 +1320,11 @@ def thunderfx_benchmark_report(
 
 
 def save_failing_repros(
-    reports: list[FXGraphReport], compile_fn: CompileSpecificationInterface, repros_folder: str | PathLike
+    reports: list[FXGraphReport],
+    compile_fn: CompileSpecificationInterface,
+    repros_folder: str | PathLike,
+    *,
+    check_consistency: bool = False,
 ):
     """
     Saves the repros for the failing reports. The failing reason is saved as comment in the repro file.
@@ -1351,7 +1340,7 @@ def save_failing_repros(
     repros_folder.mkdir(exist_ok=True, parents=True)
     for report in reports:
         try:
-            report.run_repro(compile_fn)
+            report.run_repro(compile_fn, check_consistency)
         except Exception as e:
             comment = f"Failed to run the function using {compile_fn.name} with exception: {e}"
             report.write_repro(repros_folder, compile_fn, extra_comment_str=comment)

@@ -1,4 +1,4 @@
-ipython[all] ~=8.33.0
+ipython[all] ~=8.34.0
 numpy
 liger-kernel == 0.4.0
 cuda-python
