@@ -251,6 +251,7 @@ class PrimIDs(Enum):
     VAR = auto()
     VAR_MEAN = auto()
     STD = auto()
+    STD_MEAN = auto()
     ARGMAX = auto()
     ARGMIN = auto()
     TOPK = auto()
@@ -3911,6 +3912,29 @@ def _std_meta(a: TensorProxy, /, dims: Sequence[int], *, correction: Number) -> 
 
 
 std = make_prim(PrimIDs.STD, "std", meta=_std_meta, tags=(OpTags.REDUCTION_OP,))
+
+
+def _std_mean_meta(a: TensorProxy, /, dims: Sequence[int], *, correction: Number) -> TensorProxy:
+    utils.check_type(a, TensorProxy)
+    utils.check_type(dims, Sequence)
+    utils.check_type(correction, (Number, NumberProxy))
+
+    output_dtype = None
+    if utils.is_complex_dtype(a.dtype):
+        output_dtype = utils.corresponding_real_dtype(a.true_dtype)
+    else:
+        output_dtype = a.true_dtype
+
+    std_result: TensorProxy = _reduction_meta(a, dims)
+    mean_result: TensorProxy = _reduction_meta(a, dims)
+
+    std: TensorProxy = TensorProxy(like=std_result, dtype=output_dtype)
+    mean: TensorProxy = TensorProxy(like=mean_result, dtype=a.true_dtype)
+
+    return (std, mean)
+
+
+std_mean = make_prim(PrimIDs.STD_MEAN, "std_mean", meta=_std_mean_meta, tags=(OpTags.REDUCTION_OP,))
 
 
 #

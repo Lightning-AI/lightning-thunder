@@ -5982,6 +5982,17 @@ std_opinfo = OpInfo(
 reduction_ops.append(std_opinfo)
 
 
+std_mean_opinfo = OpInfo(
+    ltorch.std_mean,
+    supports_grad=True,
+    sample_input_generator=std_sample_generator,
+    error_input_generator=std_error_generator,
+    torch_reference=torch.std_mean,
+    dtypes=(datatypes.floating,),
+)
+reduction_ops.append(std_mean_opinfo)
+
+
 def cumsum_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 

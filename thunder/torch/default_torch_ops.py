@@ -268,7 +268,6 @@ torch_auto_registered_ops = {
         torch.square,
         torch.squeeze_copy,
         torch.sspaddmm,
-        torch.std_mean,
         torch.stft,
         torch.subtract,
         torch.svd,

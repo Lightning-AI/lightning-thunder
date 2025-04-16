@@ -1289,6 +1289,38 @@ def _var_mean_prim_grad(a: TensorProxy, /, dims: Sequence[int], *, correction: N
 register_grad(pids.VAR_MEAN, _var_mean_prim_grad)
 
 
+def _std_mean_prim_grad(a: TensorProxy, /, dims: Sequence[int], *, correction: Number) -> TensorProxy:
+    s, m = prims.std_mean(a, dims, correction=correction)
+
+    gs = get_grad(s)
+    gm = get_grad(m)
+
+    n_elem_reduced = a.numel() // m.numel() if a.numel() != 0 else 1
+
+    # computes mean bwd
+    mean_scale = 1.0 / n_elem_reduced
+    mean_grad = mean_scale * restore_reduced_dims(gm, dims, a.shape)
+
+    # computes std bwd
+    normalization_scalar = n_elem_reduced - correction
+    restored_gs = restore_reduced_dims(gs, dims, a.shape)
+    mean_mdtype = prims.convert_element_type(m, m.dtype)
+    restored_mean = restore_reduced_dims(mean_mdtype, dims, a.shape)
+    std_sdtype = prims.convert_element_type(s, s.dtype)
+    restored_std = restore_reduced_dims(s, dims, a.shape)
+
+    std_grad = ((restored_gs * (a - restored_mean)) / (normalization_scalar * restored_std)).masked_fill(
+        restored_std == 0, 0
+    )
+
+    put_grad(a, mean_grad + std_grad)
+
+    return s, m
+
+
+register_grad(pids.STD_MEAN, _std_mean_prim_grad)
+
+
 #
 # Linear algebra operator grads
 #
