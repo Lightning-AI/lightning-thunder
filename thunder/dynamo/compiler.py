@@ -30,7 +30,6 @@ if TYPE_CHECKING:
     from thunder.core.transform_common import Transform
     from os import PathLike
     from collections.abc import Callable
-    from typing import List
 
 
 _DEFAULT_THUNDER_FUSION_TYPE = "dataflow"
