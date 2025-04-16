@@ -1587,9 +1587,10 @@ def isfinite(a):
     return clang.isfinite(a)
 
 
-# TODO: add complex number support
 @torchsymbol(torch.isinf, is_method=True)
 def isinf(a: TensorLike) -> TensorLike:
+    if utils.is_complex_dtype(a.dtype):
+        return logical_or(isinf(real(a)), isinf(imag(a)))
     if utils.is_float_dtype(a.dtype):
         return clang.abs(a) == float("inf")
     return zeros_like(a, dtype=dtypes.bool8)

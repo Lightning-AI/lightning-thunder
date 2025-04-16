@@ -1185,7 +1185,6 @@ frexp_opinfo = OpInfo(
     test_directives=(
         # AssertionError: Scalars are not close!
         # fails for larger tensors
-        # TODO: add ldexp; using it in grad function might fix this issue
         DecorateInfo(
             pytest.mark.skip,
             "test_vjp_correctness",
@@ -1200,6 +1199,12 @@ frexp_opinfo = OpInfo(
             pytest.mark.skip,
             "test_phantom_grad_vs_torch_consistency",
             dtypes=(datatypes.bfloat16, datatypes.float16),
+        ),
+        # RuntimeError:  INTERNAL ASSERT FAILED at "/workspace/Fuser/csrc/runtime/executor_utils.cpp":491
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_vjp_correctness",
+            executors=("nvfuser",),
         ),
     ),
 )
@@ -1222,7 +1227,7 @@ elementwise_unary_ops.append(isfinite_opinfo)
 
 isinf_opinfo = OpInfo(
     ltorch.isinf,
-    dtypes=(datatypes.floating, datatypes.exact),
+    dtypes=(datatypes.all_dtypes),
     sample_input_generator=elementwise_unary_generator,
     torch_reference=_elementwise_unary_torch(torch.isinf),
 )
@@ -1230,7 +1235,7 @@ elementwise_unary_ops.append(isinf_opinfo)
 
 isnan_opinfo = OpInfo(
     clang.isnan,
-    dtypes=(datatypes.floating, datatypes.exact, datatypes.complexfloating),
+    dtypes=(datatypes.all_dtypes),
     sample_input_generator=elementwise_unary_generator,
     torch_reference=_elementwise_unary_torch(torch.isnan),
 )
