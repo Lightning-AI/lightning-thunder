@@ -7,7 +7,11 @@ from thunder.core.trace import from_trace, tracectx, TraceCtx as Trace, TracePro
 
 
 def _update_swap_map(swap_map, old_alias, new_alias):
+    visited = set()
     while old_alias in swap_map:
+        if old_alias in visited:
+            raise ValueError(f"Cycle detected in swap map for aliases updates: {old_alias}")
+        visited.add(old_alias)
         old_alias = variableify(swap_map[old_alias])
     swap_map[old_alias] = new_alias
     return swap_map
