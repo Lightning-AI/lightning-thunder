@@ -2292,12 +2292,26 @@ def lt_(a, b, /):
 
 @torchsymbol(torch.maximum, is_method=True)
 def maximum(a: TensorProxy, b: TensorProxy) -> TensorProxy:
-    return clang.maximum(a, b)
+    result = clang.maximum(a, b)
+
+    if a.ndim == 0 ^ b.ndim == 0:
+        return result
+
+    result_dtype = a.dtype if b.ndim == 0 else b.dtype
+    result = clang.maybe_convert_to_dtype(result, result_dtype)
+    return result
 
 
 @torchsymbol(torch.minimum, is_method=True)
 def minimum(a: TensorProxy, b: TensorProxy) -> TensorProxy:
-    return clang.minimum(a, b)
+    result = clang.minimum(a, b)
+
+    if a.ndim == 0 ^ b.ndim == 0:
+        return result
+
+    result_dtype = a.dtype if b.ndim == 0 else b.dtype
+    result = clang.maybe_convert_to_dtype(result, result_dtype)
+    return result
 
 
 # NOTE This is just an alias for proxies to find operation defined for the modulus
