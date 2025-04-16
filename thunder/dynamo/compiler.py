@@ -384,7 +384,11 @@ def thunder_optimize(
         if idx in indices_to_optimize:
             gm = id_to_gm_map[idx]
             profile_stats = tao.id_to_profile_stats[idx]
-            dispatch_map[idx] = optimizer(gm, profile_stats)
+            try:
+                dispatch_map[idx] = optimizer(gm, profile_stats)
+            except NotImplementedError:
+                # Executes the gm eagerly if the optimizer can't optimize it
+                dispatch_map[idx] = gm
         else:
             dispatch_map[idx] = id_to_gm_map[idx]
 

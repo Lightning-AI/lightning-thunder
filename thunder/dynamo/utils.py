@@ -864,25 +864,45 @@ def get_torch_compile_kwargs(**kwargs) -> dict:
 
 def default_compile_strategy(gm, example_inputs) -> CompilerFn:
     """
-    Default compile strategy for each Thunder-supported subgraph that selects the best compiler
-    (Thunder or Inductor) based on benchmark results. This function benchmarks both compilers
-    on the given graph module and returns the compiler function that demonstrated better performance.
+    Default compile strategy for each Thunder-supported subgraph that selects the optimal compiler
+    (Thunder, Inductor, or eager) based on benchmark results. This function benchmarks each compiler
+    on the given graph module and returns the compiled version that demonstrates the best performance,
+    along with the name of the selected compiler.
     """
     from thunder.dynamo.report import FXGraphReport
-    from thunder.dynamo.benchmark_utils import ThunderCompileSpecification, TorchInductorSpecification, WallTime
+    from thunder.dynamo.benchmark_utils import (
+        ThunderCompileSpecification,
+        TorchInductorSpecification,
+        TorchEagerSpecification,
+        WallTime,
+    )
 
     example_input_metadata = input_to_example_input_meta(example_inputs)
     report = FXGraphReport(gm, "gm", example_input_metadata)
     thunderjit = ThunderCompileSpecification()
     torchinductor = TorchInductorSpecification()
-    m1 = report.run_benchmark(thunderjit, WallTime, reset_torch_dynamo=False)
-    m2 = report.run_benchmark(torchinductor, WallTime, reset_torch_dynamo=False)
-    if sum(m.median for m in m1 if m is not None) > sum(m.median for m in m2 if m is not None):
-        return _torch_inductor_compile
-    else:
+    torcheager = TorchEagerSpecification()
+
+    def get_timing(compile_fn, timer_fn):
+        try:
+            measurement = report.run_benchmark(compile_fn, timer_fn, reset_torch_dynamo=False)
+        except Exception:
+            return float("inf")
+        return sum(m.median for m in measurement if m is not None)
+
+    thunder_time = get_timing(thunderjit, WallTime)
+    inductor_time = get_timing(torchinductor, WallTime)
+    eager_time = get_timing(torcheager, WallTime)
+
+    # Choose the fastest backend
+    if thunder_time <= inductor_time and thunder_time <= eager_time:
         from thunder import jit
 
-        return lambda *args: (jit(args[0]), "thunder")
+        return jit(gm), "thunder"
+    elif inductor_time <= thunder_time and inductor_time <= eager_time:
+        return _torch_inductor_compile(gm, example_inputs), "inductor"
+    else:
+        return gm, "eager"
 
 
 def _torch_inductor_compile(gm, example_inputs) -> torch.nn.GraphModule:
@@ -894,7 +914,7 @@ def _torch_inductor_compile(gm, example_inputs) -> torch.nn.GraphModule:
         def forward(self, *args):
             return self.optimized_callable(*args)
 
-    return InductorModuleWrapper(torch._inductor.compile(gm, example_inputs)), "inductor"
+    return InductorModuleWrapper(torch._inductor.compile(gm, example_inputs))
 
 
 class ThunderAoTOptimizer:
@@ -916,37 +936,38 @@ class ThunderAoTOptimizer:
         self.id_to_profile_stats = {}
 
 
-def default_filter(fn: Callable) -> set[int]:
+def has_symbolic_input(gm: torch.fx.GraphModule) -> bool:
+    from torch._inductor.utils import is_symbolic
+
+    placeholders = [n for n in gm.graph.nodes if n.op == "placeholder"]
+    for placeholder in placeholders:
+        example_value = placeholder.meta.get("example_value", None)
+        if example_value is not None and is_symbolic(example_value):
+            return True
+    return False
+
+
+def default_filter(fn: Callable, cutoff: int = 2) -> set[int]:
     """
     Default filter function that selects which FX graphs to optimize based on profiling data.
 
     This function examines the FX graphs collected during profiling and selects only those
-    with static shapes (non-symbolic inputs) for optimization.
+    that have been called at least 'cutoff' times for optimization.
 
     Args:
         fn: The profiling callable containing collected statistics
+        cutoff: Minimum number of times a graph must be called to be selected for optimization (default: 2)
 
     Returns:
         A set of graph IDs that should be optimized
     """
-    from torch._inductor.utils import is_symbolic
-
-    id_to_gm = fn._tao.id_to_gm_map
-
     choosen = set()
-    for idx, gm in id_to_gm.items():
-        dynamic = False
-        placeholders = [n for n in gm.graph.nodes if n.op == "placeholder"]
-        for placeholder in placeholders:
-            example_value = placeholder.meta.get("example_value", None)
-            if example_value is None:
-                continue
-
-            if is_symbolic(example_value):
-                dynamic = True
-                break
-        if not dynamic:
+    id_to_profile_stats = fn._tao.id_to_profile_stats
+    for idx, stats in id_to_profile_stats.items():
+        total_calls = sum(stats.input_meta_to_called_times.values())
+        if total_calls >= cutoff:
             choosen.add(idx)
+
     return choosen
 
 
@@ -955,10 +976,11 @@ def default_optimizer(gm: torch.fx.GraphModule, stats: ProfileStats) -> Callable
     Default optimizer function that optimizes a GraphModule based on profiling statistics.
 
     This function:
-    1. Splits the GraphModule into Thunder-supported and unsupported partitions
-    2. Compiles unsupported partitions using PyTorch's Inductor backend
-    3. For supported partitions, selects the best compiler (Thunder or Inductor) based on benchmark results
-    4. Returns the optimized composite GraphModule with all partitions compiled
+    1. Checks if the GraphModule has symbolic inputs and raises NotImplementedError if it does
+    2. Splits the GraphModule into Thunder-supported and unsupported partitions
+    3. Compiles unsupported partitions using PyTorch's Inductor backend
+    4. For supported partitions, selects the best compiler (Thunder or Inductor) based on benchmark results
+    5. Returns the optimized composite GraphModule with all partitions compiled
 
     Args:
         gm: The GraphModule to optimize
@@ -969,6 +991,9 @@ def default_optimizer(gm: torch.fx.GraphModule, stats: ProfileStats) -> Callable
     """
     from thunder import jit
     from thunder.dynamo.splitter import _splitter
+
+    if has_symbolic_input(stats.gm):
+        raise NotImplementedError("Optimizing graph module with symbolic inputs is not supported yet.")
 
     cur_gm = remove_empty_autocast(stats.gm)
     recompile_graph(cur_gm)
@@ -983,12 +1008,11 @@ def default_optimizer(gm: torch.fx.GraphModule, stats: ProfileStats) -> Callable
         placeholders = [n for n in graph_module.graph.nodes if n.op == "placeholder"]
         example_inputs = [_get_example_inputs_from_placeholder(p, only_metadata=False) for p in placeholders]
         if thunder_split_gm.is_thunder_supported_partition(node):
-            compiler_fn = default_compile_strategy(graph_module, example_inputs)
-            optimized_module, compiler_name = compiler_fn(graph_module, example_inputs)
+            optimized_module, compiler_name = default_compile_strategy(graph_module, example_inputs)
             # Update the node name from "submod_*" to the optimizer specifed name for more user-friendly names
             update_node_and_submodule(split_gm, node, node.name.replace("submod", compiler_name), optimized_module)
         else:  # For inductor
-            optimized_module, compiler_name = _torch_inductor_compile(graph_module, example_inputs)
+            optimized_module = _torch_inductor_compile(graph_module, example_inputs)
             # Update the node name from "submod_*" to "inductor_*" for more user-friendly names
             update_node_and_submodule(split_gm, node, node.name.replace("submod", "inductor"), optimized_module)
 
