@@ -6,6 +6,7 @@ import dataclasses
 import inspect
 import itertools
 import copy
+from collections import defaultdict
 
 import torch
 from torch.nn.modules.module import _addindent
@@ -22,6 +23,9 @@ if TYPE_CHECKING:
     import os
     from typing import Any
     from collections.abc import Sequence
+
+    CompilerFn = Callable[[torch.fx.GraphModule, list[torch.Tensor]], (Callable, str)]
+    CompilerStrategy = Callable[[torch.fx.GraphModule, list[torch.Tensor]], CompilerFn]
 
 auto_register_ops = set(itertools.chain(*torch_auto_registered_ops.values()))
 
@@ -96,8 +100,8 @@ class ExampleInputMetaData:
     strides: list[int]
     is_contiguous: bool
     _storage_offset: int
-    min_val: int | None = None
-    max_val: int | None = None
+    min_val: int | None = dataclasses.field(default=None, compare=False, hash=False)
+    max_val: int | None = dataclasses.field(default=None, compare=False, hash=False)
 
     def stride(self) -> list[int]:
         return self.strides
@@ -147,9 +151,18 @@ class _ThunderSplitGraphModule:
 
 @dataclasses.dataclass()
 class ProfileStats:
+    """
+    A dataclass that stores profiling statistics for a GraphModule.
+
+    Attributes:
+        gm: The GraphModule being profiled.
+        input_meta_to_called_times: A dictionary mapping input metadata to the number of times the input has been called.
+    """
+
     gm: torch.fx.GraphModule
-    example_inputs: list[ExampleInputMetaData]
-    called_times: int
+    input_meta_to_called_times: dict[tuple[ExampleInputMetaData, Number], int] = dataclasses.field(
+        default_factory=lambda: defaultdict(int)
+    )
 
 
 def _concrete_value(vals: torch.Size | Sequence):
@@ -523,7 +536,7 @@ def example_input_meta_to_input(meta):
     elif isinstance(meta, (int, bool, float)):
         return meta
     elif isinstance(meta, Sequence):
-        return [example_input_meta_to_input(i) for i in meta]
+        return tuple(example_input_meta_to_input(i) for i in meta)
     else:
         raise TypeError(f"Unsupported input type: {type(meta)}")
 
@@ -536,7 +549,7 @@ def input_to_example_input_meta(input):
     elif isinstance(input, torch.types.py_sym_types):
         return input.node.hint
     elif isinstance(input, Sequence):
-        return [input_to_example_input_meta(i) for i in input]
+        return tuple(input_to_example_input_meta(i) for i in input)
     else:
         raise TypeError(f"Unsupported input type: {type(input)}")
 
@@ -847,3 +860,137 @@ def get_torch_compile_kwargs(**kwargs) -> dict:
     torch.compile = inspect.unwrap(torch.compile)
     torch_compile_kwarg_names = inspect.getfullargspec(torch.compile).kwonlyargs
     return {k: v for k, v in kwargs.items() if k in torch_compile_kwarg_names}
+
+
+def default_compile_strategy(gm, example_inputs) -> CompilerFn:
+    """
+    Default compile strategy for each Thunder-supported subgraph that selects the best compiler
+    (Thunder or Inductor) based on benchmark results. This function benchmarks both compilers
+    on the given graph module and returns the compiler function that demonstrated better performance.
+    """
+    from thunder.dynamo.report import FXGraphReport
+    from thunder.dynamo.benchmark_utils import ThunderCompileSpecification, TorchInductorSpecification, WallTime
+
+    example_input_metadata = input_to_example_input_meta(example_inputs)
+    report = FXGraphReport(gm, "gm", example_input_metadata)
+    thunderjit = ThunderCompileSpecification()
+    torchinductor = TorchInductorSpecification()
+    m1 = report.run_benchmark(thunderjit, WallTime, reset_torch_dynamo=False)
+    m2 = report.run_benchmark(torchinductor, WallTime, reset_torch_dynamo=False)
+    if sum(m.median for m in m1 if m is not None) > sum(m.median for m in m2 if m is not None):
+        return _torch_inductor_compile
+    else:
+        from thunder import jit
+
+        return lambda *args: (jit(args[0]), "thunder")
+
+
+def _torch_inductor_compile(gm, example_inputs) -> torch.nn.GraphModule:
+    class InductorModuleWrapper(torch.nn.Module):
+        def __init__(self, optimized_callable):
+            super().__init__()
+            self.optimized_callable = optimized_callable
+
+        def forward(self, *args):
+            return self.optimized_callable(*args)
+
+    return InductorModuleWrapper(torch._inductor.compile(gm, example_inputs)), "inductor"
+
+
+class ThunderAoTOptimizer:
+    """
+    Helper class that keeps track of profiling data used by the Ahead-of-Time (AoT) optimization process.
+
+    This class maintains mappings between graph module IDs and their corresponding:
+    - dispatch functions (dispatch_map)
+    - original graph modules (id_to_gm_map)
+    - profiling statistics (id_to_profile_stats)
+
+    It also tracks whether profiling is currently active via the is_profiling flag.
+    """
+
+    def __init__(self):
+        self.is_profiling = True
+        self.dispatch_map: dict = {}
+        self.id_to_gm_map: dict = {}
+        self.id_to_profile_stats = {}
+
+
+def default_filter(fn: Callable) -> set[int]:
+    """
+    Default filter function that selects which FX graphs to optimize based on profiling data.
+
+    This function examines the FX graphs collected during profiling and selects only those
+    with static shapes (non-symbolic inputs) for optimization.
+
+    Args:
+        fn: The profiling callable containing collected statistics
+
+    Returns:
+        A set of graph IDs that should be optimized
+    """
+    from torch._inductor.utils import is_symbolic
+
+    id_to_gm = fn._tao.id_to_gm_map
+
+    choosen = set()
+    for idx, gm in id_to_gm.items():
+        dynamic = False
+        placeholders = [n for n in gm.graph.nodes if n.op == "placeholder"]
+        for placeholder in placeholders:
+            example_value = placeholder.meta.get("example_value", None)
+            if example_value is None:
+                continue
+
+            if is_symbolic(example_value):
+                dynamic = True
+                break
+        if not dynamic:
+            choosen.add(idx)
+    return choosen
+
+
+def default_optimizer(gm: torch.fx.GraphModule, stats: ProfileStats) -> Callable:
+    """
+    Default optimizer function that optimizes a GraphModule based on profiling statistics.
+
+    This function:
+    1. Splits the GraphModule into Thunder-supported and unsupported partitions
+    2. Compiles unsupported partitions using PyTorch's Inductor backend
+    3. For supported partitions, selects the best compiler (Thunder or Inductor) based on benchmark results
+    4. Returns the optimized composite GraphModule with all partitions compiled
+
+    Args:
+        gm: The GraphModule to optimize
+        stats: ProfileStats object containing profiling information for the GraphModule
+
+    Returns:
+        The optimized GraphModule
+    """
+    from thunder import jit
+    from thunder.dynamo.splitter import _splitter
+
+    cur_gm = remove_empty_autocast(stats.gm)
+    recompile_graph(cur_gm)
+    _, subgraph_info = _splitter(cur_gm, jit, torch.compile, _unused_sample_args=None)
+
+    thunder_split_gm = subgraph_info.original_split_graph_module
+    split_gm = copy.deepcopy(thunder_split_gm.split_graph_module)
+    for node in split_gm.graph.nodes:
+        if not node.name.startswith("submod"):
+            continue
+        graph_module = getattr(split_gm, node.name)
+        placeholders = [n for n in graph_module.graph.nodes if n.op == "placeholder"]
+        example_inputs = [_get_example_inputs_from_placeholder(p, only_metadata=False) for p in placeholders]
+        if thunder_split_gm.is_thunder_supported_partition(node):
+            compiler_fn = default_compile_strategy(graph_module, example_inputs)
+            optimized_module, compiler_name = compiler_fn(graph_module, example_inputs)
+            # Update the node name from "submod_*" to the optimizer specifed name for more user-friendly names
+            update_node_and_submodule(split_gm, node, node.name.replace("submod", compiler_name), optimized_module)
+        else:  # For inductor
+            optimized_module, compiler_name = _torch_inductor_compile(graph_module, example_inputs)
+            # Update the node name from "submod_*" to "inductor_*" for more user-friendly names
+            update_node_and_submodule(split_gm, node, node.name.replace("submod", "inductor"), optimized_module)
+
+    recompile_graph(split_gm)
+    return split_gm

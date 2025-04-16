@@ -3,8 +3,8 @@ from functools import partial
 from looseversion import LooseVersion
 from typing import TYPE_CHECKING
 import warnings
-import inspect
 from pathlib import Path
+import copy
 
 import torch
 
@@ -14,6 +14,11 @@ from thunder.dynamo.utils import (
     CompilerType,
     get_split_reasons_string,
     thunder_options_to_str,
+    ProfileStats,
+    ThunderAoTOptimizer,
+    default_filter,
+    default_optimizer,
+    input_to_example_input_meta,
 )
 from thunder.dynamo.splitter import _splitter
 from thunder.core.utils import check
@@ -26,9 +31,6 @@ if TYPE_CHECKING:
     from os import PathLike
     from collections.abc import Callable
     from typing import List
-
-    CompilerFn = Callable[[torch.fx.GraphModule, list[torch.Tensor]], (Callable, str)]
-    CompilerStrategy = Callable[[torch.fx.GraphModule, list[torch.Tensor]], CompilerFn]
 
 
 _DEFAULT_THUNDER_FUSION_TYPE = "dataflow"
@@ -52,18 +54,6 @@ def _add_prologue_pruning(options: dict):
         transforms = []
     transforms.append(ExtractionOnlyPrologueTransform())
     options["transforms"] = transforms
-
-
-def _torch_inductor_compile(gm, example_inputs) -> torch.nn.GraphModule:
-    class InductorModuleWrapper(torch.nn.Module):
-        def __init__(self, optimized_callable):
-            super().__init__()
-            self.optimized_callable = optimized_callable
-
-        def forward(self, *args):
-            return self.optimized_callable(*args)
-
-    return InductorModuleWrapper(torch._inductor.compile(gm, example_inputs)), "inductor"
 
 
 class ThunderCompiler:
@@ -302,95 +292,40 @@ def thunderfx(fn: Callable, /, **kwargs) -> Callable:
     return c
 
 
-from thunder.dynamo.benchmark_utils import TorchInductorSpecification, WallTime
-from thunder.dynamo.utils import input_to_example_input_meta
-
-
-def default_compile_strategy(gm, example_inputs) -> CompilerFn:
-    from thunder.dynamo.report import FXGraphReport
-
-    example_input_metadata = input_to_example_input_meta(example_inputs)
-    report = FXGraphReport(gm, "gm", example_input_metadata)
-    thunderjit = ThunderCompileSpecification()
-    torchinductor = TorchInductorSpecification()
-    m1 = report.run_benchmark(thunderjit, WallTime, reset_torch_dynamo=False)
-    m2 = report.run_benchmark(torchinductor, WallTime, reset_torch_dynamo=False)
-    if sum(m.median for m in m1 if m is not None) > sum(m.median for m in m2 if m is not None):
-        print("use torch.compile")
-        return _torch_inductor_compile
-    else:
-        print("use thunder.jit")
-        from thunder import jit
-
-        return lambda *args: (jit(args[0]), "thunder")
-
-
-from thunder.dynamo.utils import (
-    ProfileStats,
-    update_node_and_submodule,
-    _get_example_inputs_from_placeholder,
-)
-
-
-class ThunderAoTOptimizer:
-    # Helper class that just keeps some data about the AoT optimization process
-    # We could use better statistics than what's in this example!
-
-    def __init__(
-        self,
-    ):
-        self.is_profiling = True
-        self.dispatch_map: dict = {}  # gm_id -> callable
-        self.id_to_gm_map: dict = {}
-        self.gm_to_profile_stats = {}
-
-
-import copy
-from thunder import jit
-
-
 def thunder_profile(fn):
+    """
+    This function returns a profiling callable that wraps the torch compiled function and profiling
+    statistics. The statistics are stored in a :class:`thunder.dynamo.utils.ProfileStats` object,
+    which can be accessed through the `_tao.id_to_profile_stats` attribute of the returned callable.
+
+    For an example, see :func:`thunder.dynamo.compiler.thunder_optimize`
+    """
     torch.compiler.reset()
     tao: ThunderAoTOptimizer = ThunderAoTOptimizer()
-
-    def record_stats_jit(gm, *args):
-        print("profiling compile: ", id(gm))
-        placeholders = list(n for n in gm.graph.nodes if n.op == "placeholder")
-        example_input_metadata = list(
-            map(partial(_get_example_inputs_from_placeholder, only_metadata=True), placeholders)
-        )
-        profile_stats = ProfileStats(gm=copy.deepcopy(gm), example_inputs=example_input_metadata, called_times=0)
-        tao.gm_to_profile_stats[gm] = profile_stats
 
     def dispatching_backend(gm, *args):
         if tao.is_profiling:
             idx: int = id(gm)
-            # the information needs to be recorded during torch jit compilation.
-            # when compiling is over the input information is removed
-            record_stats_jit(gm, *args)
+            # The gm needs to be recorded during Torch JIT compilation,
+            # because input information is discarded once compilation is complete.
+            # We need this input information to infer the input range for each subgraph in the splitter.
+            profile_stats = ProfileStats(gm=copy.deepcopy(gm))
+            tao.id_to_profile_stats[idx] = profile_stats
+            tao.id_to_gm_map[idx] = gm
 
-            def record_stats_execution(*args):
-                # Records statistics about the FX Graph
-                # In this example, just appends the args and separately records the gm,
-                #   but we should probably record the graph, the # of times the graph has
-                #   been called, and the metadata of the args, and not record redundant
-                #   input metadata
-                # tao.stats[idx].append(args)
-                print("profiling execution: ", id(gm))
-                tao.id_to_gm_map[idx] = gm
-                tao.gm_to_profile_stats[gm].called_times += 1
+            def record_stats(*args):
+                input_meta = input_to_example_input_meta(args)
+                tao.id_to_profile_stats[idx].input_meta_to_called_times[input_meta] += 1
                 return gm(*args)
 
-            # record the gm and the callable
-            tao.dispatch_map[idx] = record_stats_execution
+            tao.dispatch_map[idx] = record_stats
 
             def _dispatch(*args):
                 return tao.dispatch_map[idx](*args)
 
             return _dispatch
 
-        # NOTE When not in profiling mode, this just returns the gm for eager
-        #   execution
+        # NOTE When not in profiling mode, this just returns the gm for eager execution
         return gm
 
     cfn = torch.compile(fn, backend=dispatching_backend)
@@ -408,84 +343,35 @@ def thunder_profile(fn):
     return profiling_callable
 
 
-def default_filter(fn) -> set[int]:
-    # Default filtering function placeholder
-    # Takes the FX graph statistics, and returns a subset of
-    # FX graphs to optimize
-    # TODO The statistics should be an attribute of the profiling fn passed to this
-
-    # Currently this just returns every FX Graph index, but the proposal suggests
-    #   that we should start by filtering FX Graphs that include symbolic values
-    #   in their args
-    from torch._inductor.utils import is_symbolic
-
-    id_to_gm = fn._tao.id_to_gm_map
-
-    choosen = set()
-    for idx, gm in id_to_gm.items():
-        dynamic = False
-        placeholders = [n for n in gm.graph.nodes if n.op == "placeholder"]
-        for placeholder in placeholders:
-            example_value = placeholder.meta.get("example_value", None)
-            if example_value is None:
-                continue
-
-            if is_symbolic(example_value):
-                dynamic = True
-                break
-        if not dynamic:
-            choosen.add(idx)
-    return choosen
-
-
-def default_optimizer(gm, stats):
-    # Default optimizing function placeholder
-    # Takes a gm and its statistics, and returns a (possibly optimized) callable
-
-    # Currently this just ignores the statistics and doesn't optimize anything
-    # This is where the gm could be benchmarked with different executors, and
-    #   a callable generated that uses the fastest executor
-    # The real magic goes here!
-    import copy
-
-    cur_gm = remove_empty_autocast(stats.gm)
-    recompile_graph(cur_gm)
-    _, subgraph_info = _splitter(cur_gm, jit, torch.compile, _unused_sample_args=None)
-
-    thunder_split_gm = subgraph_info.original_split_graph_module
-    split_gm = copy.deepcopy(thunder_split_gm.split_graph_module)
-    for node in split_gm.graph.nodes:
-        if not node.name.startswith("submod"):
-            continue
-        graph_module = getattr(split_gm, node.name)
-        placeholders = [n for n in graph_module.graph.nodes if n.op == "placeholder"]
-        example_inputs = [_get_example_inputs_from_placeholder(p, only_metadata=False) for p in placeholders]
-        if thunder_split_gm.is_thunder_supported_partition(node):
-            compiler_fn = default_compile_strategy(graph_module, example_inputs)
-            optimized_module, compiler_name = compiler_fn(graph_module, example_inputs)
-            # Update the node name from "submod_*" to the optimizer specifed name for more user-friendly names
-            update_node_and_submodule(split_gm, node, node.name.replace("submod", compiler_name), optimized_module)
-            # print(split_gm.__repr__())
-        else:  # For inductor
-            optimized_module, compiler_name = _torch_inductor_compile(graph_module, example_inputs)
-            # Update the node name from "submod_*" to "inductor_*" for more user-friendly names
-            update_node_and_submodule(split_gm, node, node.name.replace("submod", "inductor"), optimized_module)
-
-    recompile_graph(split_gm)
-    print(split_gm.__repr__())
-    print(thunder_split_gm.split_graph_module.__repr__())
-    return split_gm
-
-
 def thunder_optimize(
     profiling_callable,
     *,
     gm_filter=default_filter,
     optimizer=default_optimizer,
 ):
-    # NOTE Assumes fn is a "profiling_callable" as returned from thunder_profile
+    """
+    Optimizes the given profiling callable based on the statistics collected during profiling.
 
-    # Resets the dispatch table so that no more profiling occurs
+    Args:
+        profiling_callable: The callable returned by :func:`thunder.dynamo.compiler.thunder_profile`
+        gm_filter: Function that selects which graph modules to optimize
+        optimizer: Function that performs the actual optimization on each graph module
+
+    Returns:
+        The torch compiled function
+
+    Example:
+        >>> import torch
+        >>> from thunder.dynamo import thunder_profile
+        >>> def foo(x):
+        ...     return x + 1
+        >>> x = torch.randn(2, 2)
+        >>> pfoo = thunder_profile(foo)
+        >>> pfoo(x)  # Profile with first input
+        >>> stats = pfoo._tao.id_to_profile_stats  # Access collected statistics
+        >>> optfoo = thunder_optimize(pfoo)
+        >>> optfoo(x)  # Optimized with first input
+    """
 
     # 1) Filters the FX graphs based on their statistics
     indices_to_optimize: set[int] = gm_filter(profiling_callable)
@@ -498,11 +384,10 @@ def thunder_optimize(
     for idx, call in dispatch_map.items():
         if idx in indices_to_optimize:
             gm = id_to_gm_map[idx]
-            # dispatch_map[idx] = optimizer(gm, stats[idx])
-            profile_stats = tao.gm_to_profile_stats[gm]
+            profile_stats = tao.id_to_profile_stats[idx]
             dispatch_map[idx] = optimizer(gm, profile_stats)
         else:
-            dispatch_map[idx] = gm
+            dispatch_map[idx] = id_to_gm_map[idx]
 
     # 3) Marks the profiling period as over
     tao.is_profiling = False
