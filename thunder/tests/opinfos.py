@@ -1180,16 +1180,9 @@ frexp_opinfo = OpInfo(
     clang.frexp,
     supports_grad=True,
     dtypes=(datatypes.floating,),
-    sample_input_generator=elementwise_unary_generator,
+    sample_input_generator=partial(elementwise_unary_generator, small=True),
     torch_reference=_elementwise_unary_torch(torch.frexp),
     test_directives=(
-        # AssertionError: Scalars are not close!
-        # fails for larger tensors
-        DecorateInfo(
-            pytest.mark.skip,
-            "test_vjp_correctness",
-            dtypes=(datatypes.float64,),
-        ),
         DecorateInfo(
             pytest.mark.skip,
             "test_phantom_grad_vs_torch_consistency",
@@ -1199,12 +1192,6 @@ frexp_opinfo = OpInfo(
             pytest.mark.skip,
             "test_phantom_grad_vs_torch_consistency",
             dtypes=(datatypes.bfloat16, datatypes.float16),
-        ),
-        # RuntimeError:  INTERNAL ASSERT FAILED at "/workspace/Fuser/csrc/runtime/executor_utils.cpp":491
-        DecorateInfo(
-            pytest.mark.skip,
-            "test_vjp_correctness",
-            executors=("nvfuser",),
         ),
     ),
 )

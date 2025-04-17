@@ -2239,7 +2239,7 @@ floor = _make_elementwise_unary_prim(
 
 def frexp_meta(a: TensorProxy, /) -> (TensorProxy, TensorProxy):
     utils.check_type(a, TensorProxy)
-    return TensorProxy(like=a), TensorProxy(like=a)
+    return TensorProxy(like=a), TensorProxy(like=a, dtype=dtypes.int32)
 
 
 frexp = make_prim(PrimIDs.FREXP, "frexp", meta=frexp_meta)
