@@ -2164,9 +2164,18 @@ def elementwise_binary_generator(
         d = number(**kwargs)
         yield SampleInput(c, d)
 
-    if not no_scalar_tensors:
+    if not no_weak_dtypes:
+        tdtype = datatypes._torch_to_thunder_dtype_map[dtype]
+        weak_dtype_table = {
+            datatypes.signedinteger: torch.int64,
+            datatypes.unsignedinteger: torch.uint8,
+            datatypes.floating: torch.float32,
+            datatypes.complexfloating: torch.complex64,
+            datatypes.bool_: torch.bool,
+        }
+
         e = make((4, 4), **kwargs)
-        f = make((), **kwargs, dtype=torch.float32)
+        f = make((), **kwargs, dtype=weak_dtype_table[type(tdtype)])
         yield SampleInput(e, f)
 
 
