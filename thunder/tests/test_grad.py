@@ -1404,7 +1404,7 @@ def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp):
     supported_dtypes=dtypes.float_math_dtypes,
 )
 def test_phantom_grad_vs_torch_consistency(op, device: str, dtype: dtypes.dtype, executor, comp):
-    if dtypes.is_complex_dtype(dtype):
+    if dtypes.is_complex_dtype(dtype) and not op.instantiate_complex_tests:
         pytest.skip("Skipping complex operator tests in CI for speed")
     if torch.device(device).type == "cuda" and dtype is dtypes.bfloat16 and not torch.cuda.is_bf16_supported():
         pytest.skip("Your CUDA device does not support bfloat16")
