@@ -24,9 +24,6 @@ if TYPE_CHECKING:
     from typing import Any
     from collections.abc import Sequence
 
-    CompilerFn = Callable[[torch.fx.GraphModule, list[torch.Tensor]], (Callable, str)]
-    CompilerStrategy = Callable[[torch.fx.GraphModule, list[torch.Tensor]], CompilerFn]
-
 auto_register_ops = set(itertools.chain(*torch_auto_registered_ops.values()))
 
 
@@ -862,7 +859,7 @@ def get_torch_compile_kwargs(**kwargs) -> dict:
     return {k: v for k, v in kwargs.items() if k in torch_compile_kwarg_names}
 
 
-def default_compile_strategy(gm, example_inputs) -> CompilerFn:
+def default_compile_strategy(gm, example_inputs) -> tuple[torch.fx.GraphModule, str]:
     """
     Default compile strategy for each Thunder-supported subgraph that selects the optimal compiler
     (Thunder, Inductor, or eager) based on benchmark results. This function benchmarks each compiler
