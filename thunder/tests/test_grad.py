@@ -46,6 +46,7 @@ op_skip = {
     "embedding",
     "index_put",
     "batch_norm",
+    "instance_norm",
     "type_as",
 }
 
@@ -75,6 +76,7 @@ vjp_op_force = {
     "mse_loss",
     "adaptive_avg_pool2d",
     "max_pool2d",
+    "local_response_norm",
 }
 
 
@@ -479,7 +481,7 @@ def test_vjp_correctness_type_as_manual(op, device, dtype, executor, comp):
 
 
 @ops(
-    (get_opinfo("batch_norm"),),
+    (get_opinfo("batch_norm"), get_opinfo("instance_norm")),
     supported_dtypes=(dtypes.float64,),
 )
 def test_vjp_correctness_batch_norm_manual(op, device, dtype, executor, comp):
@@ -715,7 +717,12 @@ def test_vjp_correctness_einsum_manual(op, device, dtype, executor, comp):
 # TODO Extend requires_grad so that tensors produced from thunder.jit functions requires_grad
 #   and have their autograd functions set properly
 # Tests that we track the requires_grad property properly
-@instantiate(dtypes=(dtypes.float32,))
+@instantiate(
+    dtypes=(dtypes.float32,),
+    # TODO Reenable this test when we track the requires_grad consistently for all operators
+    # See https://github.com/Lightning-AI/lightning-thunder/issues/1768
+    decorators=(pytest.mark.xfail(strict=True, reason="Requires_grad propagation is not implemented"),),
+)
 def test_requires_grad(executor, device, dtype):
     import thunder.torch as ltorch
 

@@ -940,7 +940,7 @@ def test_deepcopy_graph_module():
     import thunder
 
     _, subgraph_info = thunder.dynamo.splitter._splitter(gm, thunder.jit, thunder.jit, [])
-    original_split_gm = subgraph_info.original_split_graph_module
+    original_split_gm = subgraph_info.original_split_graph_module.split_graph_module
     assert original_split_gm.graph.find_nodes(op="output")
     for subm in original_split_gm.children():
         assert subm.graph.find_nodes(op="output")
@@ -1012,6 +1012,17 @@ def test_thunderfx():
     assert len(thunder_compiled_fns) == 1
     trc = last_traces(thunder_compiled_fns[-1])[-1]
     assert any(bsym.sym.id == "nvtx_range_push" for bsym in trc.bound_symbols)
+
+    def fn(x, w):
+        return x @ w
+
+    x = torch.randn(4, 4, device="cuda", requires_grad=True)
+    w = torch.randn(4, 4, device="cuda", requires_grad=True)
+    # Tests the compile_options in thunder.jit
+    cfn = thunderfx(fn, nv_enable_matmul=True)
+    cfn(x, w)
+    trc = cfn.last_traces[-1]
+    assert any(bsym.sym.name == "nvFusion0" for bsym in trc.bound_symbols)
 
 
 def test_thunderfx_last_traces():
@@ -1432,6 +1443,8 @@ def test_TorchInductorSpecification(tmp_path):
 
 @requiresCUDA
 def test_save_failing_repros(tmp_path):
+    from thunder.dynamo.benchmark_utils import TorchEagerSpecification
+
     x = torch.ones(2, 2, device="cuda", requires_grad=True)
 
     def foo(x):
@@ -1449,6 +1462,25 @@ def test_save_failing_repros(tmp_path):
     with patch("thunder.dynamo.report.FXGraphReport.run_repro", side_effect=Exception("run_Repro raises exception")):
         save_failing_repros(thunder_fxgraph_reports[0].subgraph_reports, ThunderCompileSpecification(), tmp_path)
     assert os.path.exists(tmp_path / "graph0_thunder_0.py")
+
+    # Tests for check_consistency
+    def wrapped_fn(x):
+        return foo(x) + 1
+
+    class _BadCompileSpecification(TorchEagerSpecification):
+        def compile(self, fn, **kwargs):
+            return wrapped_fn
+
+    results = fx_report(foo)(x)
+    save_failing_repros(
+        results.fx_graph_reports, _BadCompileSpecification(), tmp_path / "consistency", check_consistency=False
+    )
+    assert not os.path.exists(tmp_path / "consistency" / "graph0.py")
+
+    save_failing_repros(
+        results.fx_graph_reports, _BadCompileSpecification(), tmp_path / "consistency", check_consistency=True
+    )
+    assert os.path.exists(tmp_path / "consistency" / "graph0.py")
 
 
 @requiresCUDA
@@ -1493,3 +1525,54 @@ def test_autograd_function_fx_report(tmp_path):
         assert len(py_files) == 2
         for file in py_files:
             run_script(file, cmd)
+
+
+@requiresCUDA
+def test_aot_optimize():
+    from thunder.dynamo import thunder_profile, thunder_optimize
+
+    def foo(x):
+        # torch.sinc has automatic fallback registered,
+        # so that operation will be given to inductor.
+        x = x.exp()
+        torch._dynamo.graph_break()
+        y = torch.sinc(x) + torch.cos(x)
+        return y + 1
+
+    x = torch.ones(2, 2, device="cuda", requires_grad=True)
+    y = torch.ones(4, 4, device="cuda", requires_grad=True)
+    z = torch.ones(8, 4, device="cuda", requires_grad=True)
+    pfoo = thunder_profile(foo)
+    pfoo(x)
+    # 2 graphs because of the graph break
+    assert len(pfoo._tao.id_to_profile_stats) == 2
+    # 2 more dynamic graphs
+    pfoo(y)
+    assert len(pfoo._tao.id_to_profile_stats) == 4
+    # uses the dynamic graphs instead of the static ones
+    pfoo(x)
+    pfoo(z)
+    pfoo(x)
+    pfoo(y)
+
+    stats = list(pfoo._tao.id_to_profile_stats.values())
+    # the last two are the dymamic graphs' stats
+    # input x,y are called 2 times, z is called 1 time for the dynamic graphs
+    input_meta_dict = stats[-1].input_meta_to_called_times
+    for k, v in input_meta_dict.items():
+        if k[-1].shape == (2, 2):
+            assert v == 2
+        elif k[-1].shape == (4, 4):
+            assert v == 2
+        elif k[-1].shape == (8, 4):
+            assert v == 1
+        else:
+            assert False
+
+    # filters the dynamic graphs, only the static ones are optimized
+    optfoo = thunder_optimize(pfoo)
+    # fallbacks to eager for the dynamic graphs
+    optfoo(x)
+
+    with pytest.raises(AssertionError, match="No longer profiling"):
+        pfoo(x)

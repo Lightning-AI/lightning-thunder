@@ -823,14 +823,13 @@ def normal(
 
 
 @torchsymbol(torch.bernoulli, is_method=True)
-def bernoulli(a: TensorLike, *, generator=None, out=None):
+def bernoulli(a: TensorLike, *, generator=None):
     # NOTE: Currently, we don't model randomness
     utils.check(
         generator is None,
         lambda: "bernoulli: generator is not None which is currently unsupported",
         NotImplementedError,
     )
-    utils.check(out is None, lambda: "bernoulli: out is not None which is currently unsupported", NotImplementedError)
     utils.check(dtypes.is_float_dtype(a.dtype), lambda: f"bernoulli only supports floating point dtypes, got {a.dtype}")
     return (uniform_like(a) < a).to(a.dtype)
 
@@ -1079,7 +1078,7 @@ def permute(a: TensorLike, /, *dims: int) -> TensorLike:
 def repeat(a: TensorLike, /, *repeats: int) -> TensorLike:
     repeats = utils.extract_shape_from_varargs(repeats)
     utils.check_valid_shape(repeats)
-    utils.check(a.ndim <= len(repeats), f"Expected {a.ndim=} <= {len(repeats)=}")
+    utils.check(a.ndim <= len(repeats), lambda: f"Expected {a.ndim=} <= {len(repeats)=}")
 
     repeats = tuple(repeats)
     new_dims = len(repeats) - a.ndim
@@ -1781,9 +1780,14 @@ def zero_(a):
     return _copy_(a, zeros_like(a))
 
 
-@torchsymbol(torch.real, is_method=False)
+@torchsymbol(torch.real, is_method=True)
 def real(a):
     return clang.real(a)
+
+
+@torchsymbol(torch.imag, is_method=True)
+def imag(a: TensorLike) -> TensorLike:
+    return clang.imag(a)
 
 
 #
@@ -1881,6 +1885,31 @@ def relu6(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
 
 
 _inplace_to_out_of_place[relu6] = relu6, 1
+
+
+@torchsymbol(torch.rrelu, torch.nn.functional.rrelu, id="torch.rrelu", is_method=False)
+def rrelu(
+    a: TensorProxy, /, lower: float = 0.125, upper: float = 1.0 / 3, training: bool = False, inplace: bool = False
+) -> TensorLike:
+    if training:
+        noise = uniform_like(a, minval=lower, maxval=upper, dtype=a.dtype, device=a.device)
+        out = where(a <= 0, a * noise, a)
+    else:
+        out = where(a <= 0, a * (upper + lower) / 2, a)
+    if inplace:
+        return _copy_(a, out)
+    return out
+
+
+_inplace_to_out_of_place[rrelu] = rrelu, 4
+
+
+@torchsymbol(torch.nn.functional.rrelu_, is_method=False, tags=(prims.OpTags.IN_PLACE,))
+def rrelu_(a: TensorProxy, /, lower: float = 0.125, upper: float = 1.0 / 3, training: bool = False) -> TensorLike:
+    return _copy_(a, rrelu(a, lower, upper, training, False))
+
+
+_inplace_to_out_of_place[rrelu_] = rrelu, -1
 
 
 @torchsymbol(torch.nn.functional.hardshrink, is_method=False)
@@ -2028,6 +2057,29 @@ def tanhshrink(a: TensorLike, /) -> TensorLike:
 
 
 _inplace_to_out_of_place[tanhshrink] = tanhshrink, -1
+
+
+@torchsymbol(torch.threshold, torch.nn.functional.threshold, id="torch.threshold", is_method=False)
+def threshold(a: TensorProxy, /, threshold: float, value: float, inplace: bool = False) -> TensorLike:
+    out = where(a <= threshold, value, a)
+    if inplace:
+        return _copy_(a, out)
+    return out
+
+
+_inplace_to_out_of_place[threshold] = threshold, 3
+
+# alias to avoid conflict with keyword argument `threshold` in threshold_
+_threshold = threshold
+
+
+@torchsymbol(torch.nn.functional.threshold_, is_method=False, tags=(prims.OpTags.IN_PLACE,))
+def threshold_(a: TensorProxy, /, threshold: float, value: float) -> TensorLike:
+    return _copy_(a, _threshold(a, threshold, value, False))
+
+
+_inplace_to_out_of_place[threshold_] = threshold, -1
+
 
 #
 # Elementwise binary operations
@@ -2984,6 +3036,9 @@ def cumsum(a: TensorLike, dim: int, *, dtype: None | dtypeLike = None) -> Tensor
     # check the input dimension
     utils.canonicalize_dim(a.ndim, dim)
     if dtype is None:
+        # ref: https://github.com/pytorch/pytorch/blob/78fe079c/torch/_refs/__init__.py#L2301-L2315
+        if a.dtype in dtypes.integer_dtypes:
+            return TensorProxy(like=a, dtype=dtypes.int64)
         return TensorProxy(like=a)
     else:
         return TensorProxy(like=a, dtype=to_dtype(dtype))
@@ -3069,9 +3124,9 @@ def argmin(a: TensorLike, /, dim: int | None = None, keepdim: bool | None = Fals
 
 @torchsymbol(torch.topk, is_method=True)
 def topk(
-    a: TensorLike, /, k: int, dim: None | int = None, largest: bool = True, sorted: bool = True, *, out=None
+    a: TensorLike, /, k: int, dim: None | int = None, largest: bool = True, sorted: bool = True
 ) -> (TensorLike, TensorLike):
-    return clang.topk(a, k, dim, largest, sorted, out=out)
+    return clang.topk(a, k, dim, largest, sorted)
 
 
 @torchsymbol(torch.atleast_1d, is_method=True)
@@ -3112,9 +3167,9 @@ def atleast_3d(*args: Union[TensorLike, Sequence[TensorLike]]) -> Union[TensorLi
 
 @torchsymbol(torch.sort, is_method=True)
 def sort(
-    a: TensorLike, /, dim: None | int = None, descending: bool = False, stable: bool = False, *, out=None
+    a: TensorLike, /, dim: None | int = None, descending: bool = False, stable: bool = False
 ) -> (TensorLike, TensorLike):
-    return clang.sort(a, dim, descending, stable, out=out)
+    return clang.sort(a, dim, descending, stable)
 
 
 #
@@ -4086,6 +4141,68 @@ def batch_norm(
 
     result = _native_batch_norm(a, weight, bias, running_mean, running_var, training, momentum, eps)
     return result
+
+
+@torchsymbol(torch.nn.functional.instance_norm)
+def instance_norm(
+    a: TensorLike,
+    /,
+    running_mean: None | TensorLike = None,
+    running_var: None | TensorLike = None,
+    weight: None | TensorLike = None,
+    bias: None | TensorLike = None,
+    use_input_stats: bool = True,
+    momentum: NumberLike = 0.1,
+    eps: NumberLike = 1e-5,
+) -> TensorLike:
+    org_shape = a.shape
+    b = org_shape[0]
+    c = org_shape[1]
+    if running_mean is not None:
+        running_mean = repeat(running_mean, b)
+    if running_var is not None:
+        running_var = repeat(running_var, b)
+    if weight is not None:
+        weight = repeat(weight, b)
+    if bias is not None:
+        bias = repeat(bias, b)
+
+    shape = (1, b * c) + org_shape[2:]
+    a = a.reshape(shape)
+
+    out = batch_norm(a, running_mean, running_var, weight, bias, use_input_stats, momentum, eps)
+
+    return out.reshape(org_shape)
+
+
+@torchsymbol(torch.nn.functional.local_response_norm)
+def local_response_norm(
+    a: TensorLike,
+    /,
+    size: int,
+    alpha: NumberLike = 0.0001,
+    beta: NumberLike = 0.75,
+    k: NumberLike = 1.0,
+) -> TensorLike:
+    dim = a.ndim
+    utils.check(dim >= 3, lambda: f"Expected 3D or higher dimensionality input (got {dim} dimensions)")
+
+    if a.numel == 0:
+        return a
+
+    div = a.mul(a)
+    if dim == 3:
+        div = div.unsqueeze(1)
+        div = pad(div, (0, 0, size // 2, (size - 1) // 2))
+        div = avg_pool2d(div, (size, 1), stride=1).squeeze(1)
+    else:
+        sizes = a.size()
+        div = div.view(sizes[0], 1, sizes[1], sizes[2], -1)
+        div = pad(div, (0, 0, 0, 0, size // 2, (size - 1) // 2))
+        div = avg_pool3d(div, (size, 1, 1), stride=1).squeeze(1)
+        div = div.view(sizes)
+    div = div.mul(alpha).add(k).pow(beta)
+    return a / div
 
 
 #
@@ -6317,6 +6434,7 @@ _syms_returning_views: set[Symbol] = {
     transpose,
     t,
     real,
+    imag,
     unflatten,
     unfold,
     unsqueeze,

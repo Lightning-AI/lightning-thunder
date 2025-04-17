@@ -515,13 +515,16 @@ class FXGraphReport:
             print(code_str, file=f)
         format_python_file(folder / file_name)
 
-    def run_benchmark(self, compile_fn: CompileSpecificationInterface, time_fn: TimerInterface):
+    def run_benchmark(
+        self, compile_fn: CompileSpecificationInterface, time_fn: TimerInterface, *, reset_torch_dynamo=True
+    ):
         # From torch.compile docs - https://pytorch.org/docs/stable/generated/torch.compile.html
         # > Multiple compiled results can be associated with a frame up to torch._dynamo.config.cache_size_limit, which defaults to 8; at which point we will fall back to eager.
         # Ref: https://github.com/pytorch/pytorch/blob/34d726011f482b716d879bf665aef100a7c08a8d/torch/_dynamo/__init__.py#L97
-        # > reset function clears all compile caches and restore initial state.  This function is intended
-        # to reset Dynamo's state *as if* you had started a fresh process invocation.
-        torch._dynamo.reset()
+        # > reset function clears all compile caches and restore initial state.
+        # Sets the `reset_torch_dynamo` to True when you need to reset Dynamo's state *as if* you had started a fresh process invocation.
+        if reset_torch_dynamo:
+            torch._dynamo.reset()
         example_inputs = self.make_example_inputs()
         # To avoid the AssertionError: attribute nodes of Graph object out of sync
         recompile_graph(self.graph)
@@ -1134,17 +1137,10 @@ def get_thunder_fxgraph_reports(fn: Callable, stream: TextIO = sys.stdout, **com
     Returns:
         A function that takes *args, **kwargs and returns a list of ThunderFXGraphReport objects.
     """
-    from thunder.dynamo.utils import get_thunder_jit_kwargs, get_torch_compile_kwargs
+    from thunder.dynamo.utils import get_torch_compile_kwargs
 
-    thunder_jit_kwargs = get_thunder_jit_kwargs(**compile_kwargs)
     torch_compile_kwargs = get_torch_compile_kwargs(**compile_kwargs)
-    rest_kwargs = {
-        k: v for k, v in compile_kwargs.items() if k not in thunder_jit_kwargs and k not in torch_compile_kwargs
-    }
-    check(
-        not rest_kwargs,
-        lambda: f"There are kwargs that are not supported by either thunder.jit or torch.compile: {rest_kwargs}",
-    )
+    thunder_jit_kwargs = {k: v for k, v in compile_kwargs.items() if k not in torch_compile_kwargs}
 
     def inner_fn(*args, **kwargs):
         reports = fx_report(fn, **torch_compile_kwargs)(*args, **kwargs)
@@ -1304,15 +1300,8 @@ def thunderfx_benchmark_report(
 
     folder_path = Path(folder_path)
     folder_path.mkdir(exist_ok=True, parents=True)
-    thunder_jit_kwargs = get_thunder_jit_kwargs(**compile_kwargs)
     torch_compile_kwargs = get_torch_compile_kwargs(**compile_kwargs)
-    rest_kwargs = {
-        k: v for k, v in compile_kwargs.items() if k not in thunder_jit_kwargs and k not in torch_compile_kwargs
-    }
-    check(
-        not rest_kwargs,
-        lambda: f"There are compile_kwargs that are not supported by either thunder.jit or torch.compile: {rest_kwargs}",
-    )
+    thunder_jit_kwargs = {k: v for k, v in compile_kwargs.items() if k not in torch_compile_kwargs}
 
     def inner_fn(*args, **kwargs):
         if check_torch_runnablility:
@@ -1334,7 +1323,11 @@ def thunderfx_benchmark_report(
 
 
 def save_failing_repros(
-    reports: list[FXGraphReport], compile_fn: CompileSpecificationInterface, repros_folder: str | PathLike
+    reports: list[FXGraphReport],
+    compile_fn: CompileSpecificationInterface,
+    repros_folder: str | PathLike,
+    *,
+    check_consistency: bool = False,
 ):
     """
     Saves the repros for the failing reports. The failing reason is saved as comment in the repro file.
@@ -1350,7 +1343,7 @@ def save_failing_repros(
     repros_folder.mkdir(exist_ok=True, parents=True)
     for report in reports:
         try:
-            report.run_repro(compile_fn)
+            report.run_repro(compile_fn, check_consistency)
         except Exception as e:
             comment = f"Failed to run the function using {compile_fn.name} with exception: {e}"
             report.write_repro(repros_folder, compile_fn, extra_comment_str=comment)

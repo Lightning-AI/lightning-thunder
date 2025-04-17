@@ -357,16 +357,16 @@ class FSDPTransform(Transform):
                     a0, shape, _, *a2pp = bsym.args
                     bsym.args = (a0, shape, thunder_device_str, *a2pp)
 
-        proxies_to_replace = {id(bsym.args[0]): bsym.output for bsym in new_scope}
+        proxies_to_replace = {variableify(bsym.args[0]): bsym.output for bsym in new_scope}
 
         # See NOTE: Shared Parameters in Trace
         for param_name, base_param in self.shared_params_name.items():
             param_proxy = param_name_to_comp_trc_proxy[param_name]
             base_param_proxy = param_name_to_comp_trc_proxy[base_param]
-            allgather_base_param_proxy = proxies_to_replace[id(base_param_proxy)]
+            allgather_base_param_proxy = proxies_to_replace[variableify(base_param_proxy)]
             # Update `proxies_to_replace` so we replace all usage of `param_proxy`
             # with the output of `AllGather` on `base_param_proxy`.
-            proxies_to_replace[id(param_proxy)] = allgather_base_param_proxy
+            proxies_to_replace[variableify(param_proxy)] = allgather_base_param_proxy
 
         new_computation_trace = from_trace(computation_trace)
         for idx, bsym in enumerate(computation_trace.bound_symbols):
@@ -375,8 +375,16 @@ class FSDPTransform(Transform):
             new_computation_trace.bound_symbols.append(bsym.from_bsym())
         new_computation_trace.bound_symbols += new_scope
         for bsym in computation_trace.bound_symbols[idx:]:
-            new_args = tuple(proxies_to_replace.get(id(a), a) for a in bsym.args)
-            new_computation_trace.bound_symbols.append(bsym.from_bsym(args=new_args))
+            if bsym.sym == prims.python_return:
+                # we need to preserve flat_args
+                # skipping the swapping this assumes we don't return sharded params, but that should be OK
+                assert not any(
+                    (variableify(o) in proxies_to_replace) for o in bsym.args[0]["output"] if isinstance(o, TensorProxy)
+                )
+                new_computation_trace.bound_symbols.append(bsym.from_bsym())
+                continue
+            # replace param by synced_param
+            new_computation_trace.bound_symbols.append(bsym.from_bsym_swap_proxies(proxies_to_replace))
 
         new_computation_trace.set_provenance(TraceProvenance("fsdp pass"))
         if unsharded_to_padding:
