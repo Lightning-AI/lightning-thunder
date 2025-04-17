@@ -65,6 +65,7 @@ from thunder.core.symbol import Symbol, BoundSymbol, default_python_printer
 from thunder.core.proxies import (
     CONSTRAINT,
     CollectionProxy,
+    ListProxy,
     TensorProxy,
     NumberProxy,
     is_proxyable,
@@ -127,6 +128,7 @@ class PrimIDs(Enum):
     UNPACK_SUBMODULE = auto()
     UNPACK_THUNDER_MODULE = auto()
     CONSTRUCT_TUPLE = auto()
+    PACK_LIST = auto()
     PACK_BUFFER = auto()
     PACK_ATTR = auto()
     PACK_SETITEM = auto()
@@ -155,6 +157,7 @@ class PrimIDs(Enum):
     EMPTY = auto()
     TENSOR_FROM_SEQUENCE = auto()
     CLONE = auto()
+    UPDATE_ALIASES = auto()
     # Probability distribution-related ops
     MULTINOMIAL = auto()
     GET_AND_UPDATE_RNG_STATE = auto()
@@ -213,6 +216,7 @@ class PrimIDs(Enum):
     TANH = auto()
     TRUNC = auto()
     REAL = auto()
+    IMAG = auto()
     # Elementwise binary prims
     ADD = auto()
     ATAN2 = auto()
@@ -246,6 +250,7 @@ class PrimIDs(Enum):
     SUM = auto()
     VAR = auto()
     VAR_MEAN = auto()
+    STD = auto()
     ARGMAX = auto()
     ARGMIN = auto()
     TOPK = auto()
@@ -1172,6 +1177,53 @@ unpack_buffer = make_prim(
 )
 
 
+def pack_list_meta(*args: Any) -> Any:
+    def _proxy(x: Any):
+        if isinstance(x, Proxy):
+            return x
+        return proxy(x)
+
+    a = ListProxy([_proxy(x) for x in args])
+    return a
+
+
+def pack_list_printer(
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
+):
+    utils.check(
+        len(kwarg_printables) == 0,
+        lambda: f"Expected no kwargs for pack_list but got {kwarg_printables}",
+        exception_type=AssertionError,
+    )
+    utils.check(
+        isinstance(out_printables, ListProxy),
+        lambda: f"Expected out of type ListProxy, but got {type(out_printables)}",
+        exception_type=AssertionError,
+    )
+
+    l = out_printables.name
+    call_str = f"{codeutils.prettyprint(l)}"
+
+    parts = [f"{codeutils.prettyprint(arg, literals_as_underscores=True)}, " for arg in arg_printables]
+    final_str = call_str.strip("'") + f" = [{''.join(parts)}]"
+
+    return final_str
+
+
+def pack_list_impl(*args: Any) -> Any:
+    return list(args)
+
+
+pack_list = make_prim(
+    PrimIDs.PACK_LIST,
+    "pack_list",
+    meta=pack_list_meta,
+    python_printer=pack_list_printer,
+    python_impl=pack_list_impl,
+    tags=(OpTags.DONT_DCE,),
+)
+
+
 # NOTE PACK_BUFFER is intended only to be bound to directly, and not called
 def pack_buffer_meta(o: Any, key: Any, value: Any) -> Any:
     raise NotImplementedError
@@ -2060,24 +2112,28 @@ digamma = _make_elementwise_unary_prim(
 asin = _make_elementwise_unary_prim(
     PrimIDs.ASIN,
     "asin",
+    number_fn=math.asin,
     supported_input_dtypes=fp_math_dtypes,
 )
 
 asinh = _make_elementwise_unary_prim(
     PrimIDs.ASINH,
     "asinh",
+    number_fn=math.asinh,
     supported_input_dtypes=fp_math_dtypes,
 )
 
 atan = _make_elementwise_unary_prim(
     PrimIDs.ATAN,
     "atan",
+    number_fn=math.atan,
     supported_input_dtypes=fp_math_dtypes,
 )
 
 atanh = _make_elementwise_unary_prim(
     PrimIDs.ATANH,
     "atanh",
+    number_fn=math.atanh,
     supported_input_dtypes=fp_math_dtypes,
 )
 
@@ -2103,24 +2159,28 @@ ceil = _make_elementwise_unary_prim(
 cos = _make_elementwise_unary_prim(
     PrimIDs.COS,
     "cos",
+    number_fn=math.cos,
     supported_input_dtypes=fp_math_dtypes,
 )
 
 cosh = _make_elementwise_unary_prim(
     PrimIDs.COSH,
     "cosh",
+    number_fn=math.cosh,
     supported_input_dtypes=fp_math_dtypes,
 )
 
 erf = _make_elementwise_unary_prim(
     PrimIDs.ERF,
     "erf",
+    number_fn=math.erf,
     supported_input_dtypes=fp_math_dtypes,
 )
 
 erfc = _make_elementwise_unary_prim(
     PrimIDs.ERFC,
     "erfc",
+    number_fn=math.erfc,
     supported_input_dtypes=fp_math_dtypes,
 )
 
@@ -2143,15 +2203,24 @@ exp = _make_elementwise_unary_prim(
     supported_input_dtypes=fp_math_dtypes,
 )
 
+
+def _exp2_number(a: Number) -> Number:
+    if hasattr(math, "exp2"):
+        return math.exp2(a)
+    return 2**a
+
+
 exp2 = _make_elementwise_unary_prim(
     PrimIDs.EXP2,
     "exp2",
+    number_fn=_exp2_number,
     supported_input_dtypes=fp_math_dtypes,
 )
 
 expm1 = _make_elementwise_unary_prim(
     PrimIDs.EXPM1,
     "expm1",
+    number_fn=math.expm1,
     supported_input_dtypes=fp_math_dtypes,
 )
 
@@ -2183,24 +2252,28 @@ lgamma = _make_elementwise_unary_prim(
 log = _make_elementwise_unary_prim(
     PrimIDs.LOG,
     "log",
+    number_fn=math.log,
     supported_input_dtypes=fp_math_dtypes,
 )
 
 log10 = _make_elementwise_unary_prim(
     PrimIDs.LOG10,
     "log10",
+    number_fn=math.log10,
     supported_input_dtypes=fp_math_dtypes,
 )
 
 log1p = _make_elementwise_unary_prim(
     PrimIDs.LOG1P,
     "log1p",
+    number_fn=math.log1p,
     supported_input_dtypes=fp_math_dtypes,
 )
 
 log2 = _make_elementwise_unary_prim(
     PrimIDs.LOG2,
     "log2",
+    number_fn=math.log2,
     supported_input_dtypes=fp_math_dtypes,
 )
 
@@ -2267,30 +2340,35 @@ signbit = _make_elementwise_unary_prim(
 sin = _make_elementwise_unary_prim(
     PrimIDs.SIN,
     "sin",
+    number_fn=math.sin,
     supported_input_dtypes=fp_math_dtypes,
 )
 
 sinh = _make_elementwise_unary_prim(
     PrimIDs.SINH,
     "sinh",
+    number_fn=math.sinh,
     supported_input_dtypes=fp_math_dtypes,
 )
 
 sqrt = _make_elementwise_unary_prim(
     PrimIDs.SQRT,
     "sqrt",
+    number_fn=math.sqrt,
     supported_input_dtypes=fp_math_dtypes,
 )
 
 tan = _make_elementwise_unary_prim(
     PrimIDs.TAN,
     "tan",
+    number_fn=math.tan,
     supported_input_dtypes=fp_math_dtypes,
 )
 
 tanh = _make_elementwise_unary_prim(
     PrimIDs.TANH,
     "tanh",
+    number_fn=math.tanh,
     supported_input_dtypes=fp_math_dtypes,
 )
 
@@ -2308,7 +2386,8 @@ def real_meta(a: complex | TensorProxy) -> float | TensorProxy:
     utils.check_type(a, (TensorProxy, complex))
     dtyp = dtypes.to_dtype(a, true_dtype=True)
     utils.check(
-        dtyp, lambda: f"real expected a complex tensor or number, but receive a tensor or number with dtype {dtyp}"
+        dtypes.is_complex_dtype(dtyp),
+        lambda: f"real expected a complex tensor or number, but receive a tensor or number with dtype {dtyp}",
     )
     output_dtype = dtypes.corresponding_real_dtype(dtyp)
 
@@ -2325,6 +2404,30 @@ real = make_prim(
     "real",
     meta=real_meta,
 )
+
+
+def imag_meta(a: complex | TensorProxy) -> float | TensorProxy:
+    utils.check_type(a, (TensorProxy, complex))
+    dtyp = dtypes.to_dtype(a, true_dtype=True)
+    utils.check(
+        dtypes.is_complex_dtype(dtyp),
+        lambda: f"imag expected a complex tensor or number, but receive a tensor or number with dtype {dtyp}",
+    )
+    output_dtype = dtypes.corresponding_real_dtype(dtyp)
+
+    if isinstance(a, complex):
+        result = utils.get_numberlike_value(a).imag
+        return numberproxy(float, result)
+
+    return TensorProxy(like=a, dtype=output_dtype)
+
+
+imag = make_prim(
+    PrimIDs.IMAG,
+    "imag",
+    meta=imag_meta,
+)
+
 
 #
 # Elementwise binary prims
@@ -2963,6 +3066,17 @@ def _clone_meta(a: TensorProxy, **kwargs) -> TensorProxy:
 clone = make_prim(PrimIDs.CLONE, "clone", meta=_clone_meta)
 
 
+def _update_aliases_meta(aliases: tuple[TensorProxy], /) -> tuple[TensorProxy]:
+    return tuple(TensorProxy(like=a, requires_grad=a.requires_grad) for a in aliases)
+
+
+update_aliases = make_prim(
+    PrimIDs.UPDATE_ALIASES,
+    "update_aliases",
+    meta=_update_aliases_meta,
+)
+
+
 # Prim to construct a Tensor from sequence/nested sequence of Numbers.
 def _tensor_from_sequence_meta(
     seq: Sequence[Number | Sequence], *, dtype: None | dtypes.dtype, device: devices.Device
@@ -3559,14 +3673,7 @@ def scatter_meta(a: TensorProxy, /, index: TensorProxy, src: TensorProxy | Numbe
 scatter = make_prim(PrimIDs.SCATTER, "scatter", meta=scatter_meta)
 
 
-def topk_meta(
-    a: TensorProxy, /, k: int, dim: int, largest: Number, sorted: Number, *, out: None | TensorProxy
-) -> (TensorProxy, TensorProxy):
-    utils.check(
-        out is None,
-        lambda: "Only `out` which is None is currently supported",
-    )
-
+def topk_meta(a: TensorProxy, /, k: int, dim: int, largest: Number, sorted: Number) -> (TensorProxy, TensorProxy):
     utils.check_type(a, TensorProxy)
     utils.check_type(k, (int, IntegerProxy))
     utils.check_type(dim, (int, IntegerProxy))
@@ -3586,14 +3693,7 @@ def topk_meta(
 topk = make_prim(PrimIDs.TOPK, "topk", meta=topk_meta, tags=(OpTags.REDUCTION_OP,))
 
 
-def sort_meta(
-    a: TensorProxy, /, dim: int, descending: Number, sorted: Number, *, out: None | TensorProxy
-) -> (TensorProxy, TensorProxy):
-    utils.check(
-        out is None,
-        lambda: "Only `out` which is None is currently supported",
-    )
-
+def sort_meta(a: TensorProxy, /, dim: int, descending: Number, sorted: Number) -> (TensorProxy, TensorProxy):
     utils.check_type(a, TensorProxy)
     utils.check_type(dim, (int, IntegerProxy))
     utils.check(pytype(descending) is bool, lambda: f"Expected {descending=} to be a boolean type")
@@ -3793,6 +3893,25 @@ def _var_mean_meta(a: TensorProxy, /, dims: Sequence[int], *, correction: Number
 
 var = make_prim(PrimIDs.VAR, "var", meta=_var_meta, tags=(OpTags.REDUCTION_OP,))
 var_mean = make_prim(PrimIDs.VAR_MEAN, "var_mean", meta=_var_mean_meta, tags=(OpTags.REDUCTION_OP,))
+
+
+def _std_meta(a: TensorProxy, /, dims: Sequence[int], *, correction: Number) -> TensorProxy:
+    utils.check_type(a, TensorProxy)
+    utils.check_type(dims, Sequence)
+    utils.check_type(correction, (Number, NumberProxy))
+
+    output_dtype = None
+    if utils.is_complex_dtype(a.dtype):
+        output_dtype = utils.corresponding_real_dtype(a.true_dtype)
+    else:
+        output_dtype = a.true_dtype
+
+    reduced: TensorProxy = _reduction_meta(a, dims)
+    return TensorProxy(like=reduced, dtype=output_dtype)
+
+
+std = make_prim(PrimIDs.STD, "std", meta=_std_meta, tags=(OpTags.REDUCTION_OP,))
+
 
 #
 # Linear algebra prims

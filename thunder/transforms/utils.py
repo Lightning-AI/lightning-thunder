@@ -39,7 +39,7 @@ def add_trace_output(trace, output, subindex: int | None = None):
 
 
 def trace_with_replaced_proxy_metadata(trace: TraceCtx, proxy_replacement_metadata) -> TraceCtx:
-    t = TraceCtx(trace.fn, prologue=trace.prologue)
+    t = TraceCtx(trace.fn)
 
     proxymap: dict[str, thunder.Proxy] = {}
 

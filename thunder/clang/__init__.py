@@ -1791,6 +1791,20 @@ def real(a: TensorProxy | Number):
     )
 
 
+@clangop(method_name="imag")
+def imag(a: TensorProxy | Number, /) -> TensorLike:
+    utils.check(
+        dtypes.is_complex_dtype(dtypes.to_dtype(a)),
+        lambda: f"imag is not implemented for tensors with non-complex dtypes",
+    )
+
+    return _elementwise_unary_wrapper(
+        a,
+        prim=prims.imag,
+        type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.COMPLEX_TO_FLOAT,
+    )
+
+
 #
 # Elementwise binary operations
 #
@@ -1999,6 +2013,24 @@ def logical_not(a: TensorLike, /) -> TensorLike:
     return ~a
 
 
+@clangop()
+def logical_or(a: TensorLike, b: TensorLike) -> TensorLike:
+    if not utils.is_boolean_dtype(dtypes.to_dtype(a)):
+        a = a != 0
+    if not utils.is_boolean_dtype(dtypes.to_dtype(b)):
+        b = b != 0
+    return bitwise_or(a, b)
+
+
+@clangop()
+def logical_xor(a: TensorLike, b: TensorLike, /) -> TensorLike:
+    if not utils.is_boolean_dtype(dtypes.to_dtype(a)):
+        a = a != 0
+    if not utils.is_boolean_dtype(dtypes.to_dtype(b)):
+        b = b != 0
+    return a ^ b
+
+
 @clangop(method_name="le")
 def le(a, b):
     return _elementwise_binary_wrapper(
@@ -2146,21 +2178,21 @@ def argmin(a: TensorProxy, /, dim: int | None = None, keepdim: bool | None = Fal
 
 @clangop()
 def topk(
-    a: TensorLike, /, k: int, dim: int | None = None, largest: bool = True, sorted: bool = True, *, out=None
+    a: TensorLike, /, k: int, dim: int | None = None, largest: bool = True, sorted: bool = True
 ) -> tuple[TensorProxy, TensorProxy]:
     if dim is None:
         dim = a.ndim - 1 if a.ndim > 0 else 0
     dim = utils.canonicalize_dim(a.ndim, dim)
 
-    return prims.topk(a, k, dim, bool(largest), bool(sorted), out=out)
+    return prims.topk(a, k, dim, bool(largest), bool(sorted))
 
 
 @clangop()
 def sort(
-    a: TensorLike, /, dim: None | int = None, descending: bool = False, stable: bool = False, *, out=None
+    a: TensorLike, /, dim: None | int = None, descending: bool = False, stable: bool = False
 ) -> (TensorProxy, TensorProxy):
     if dim is None:
         dim = a.ndim - 1 if a.ndim > 0 else 0
     dim = utils.canonicalize_dim(a.ndim, dim)
 
-    return prims.sort(a, dim, descending, stable, out=out)
+    return prims.sort(a, dim, descending, stable)
