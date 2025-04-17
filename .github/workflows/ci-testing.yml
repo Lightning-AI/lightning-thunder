@@ -33,6 +33,7 @@ jobs:
         include:
           - { os: "ubuntu-22.04", python-version: "3.11", requires: "latest" }
           - { os: "ubuntu-22.04", python-version: "3.12", requires: "latest" }
+          - { os: "ubuntu-22.04", python-version: "3.13", requires: "latest" }
         exclude:
           - { os: "windows-2022", suite: "ops" }
           - { os: "windows-2022", suite: "grads" }
@@ -134,7 +135,7 @@ jobs:
               -n 4 --durations=250
 
       - name: Testing interpreter
-        if: matrix.python-version == '3.11' || matrix.python-version == '3.12'
+        if: matrix.python-version == '3.11' || matrix.python-version == '3.12' || matrix.python-version == '3.13'
         run: |
           python -m pytest \
             thunder/tests/test_interpreter.py \

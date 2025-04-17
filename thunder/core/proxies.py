@@ -14,7 +14,7 @@ import math
 
 import torch
 
-from thunder.core.compile_data import using_symbolic_values, using_jit
+from thunder.core.compile_data import using_symbolic_values, using_jit, get_cache_option, CACHE_OPTIONS
 from thunder.core.interpreter import is_jitting, ProvenanceRecord, PseudoInst
 from thunder.core.trace import (
     VariableInterface,
@@ -92,6 +92,9 @@ class ProxyTag(TagBase):
 # TODO Document this class
 # TODO Support multiple histories
 class Proxy(VariableInterface, ProxyInterface):
+    # Default prefix for the class
+    _DEFAULT_PREFIX = "p"
+
     def __init__(
         self,
         name: str | None = None,
@@ -100,39 +103,7 @@ class Proxy(VariableInterface, ProxyInterface):
         history: None | tuple = None,
         tags: set | None = None,
     ):
-        # Determines the prefix
-        if prefix is None:
-            if isinstance(self, FloatProxy):
-                prefix = "f"
-            elif isinstance(self, ComplexProxy):
-                prefix = "c"
-            elif isinstance(self, IntegerProxy):
-                if self.python_type is int:
-                    prefix = "i"
-                elif self.python_type is bool:
-                    prefix = "b"
-                else:
-                    baseutils.check(False, lambda x=self: f"Unexpected python type for IntegerProxy {x.python_type}")
-            elif isinstance(self, NumberProxy):
-                prefix = "n"
-            elif isinstance(self, StringProxy):
-                prefix = "s"
-            elif isinstance(self, TensorProxy):
-                prefix = "t"
-            elif isinstance(self, CollectionProxy):
-                prefix = "C"
-            elif isinstance(self, TupleProxy):
-                prefix = "tup"
-            elif isinstance(self, ListProxy):
-                prefix = "lst"
-            elif isinstance(self, DictProxy):
-                prefix = "d"
-            elif isinstance(self, TorchAutogradFunctionCtxProxy):
-                prefix = "fc"
-            else:
-                prefix = "p"
-
-        self._name = make_proxy_name(name=name, prefix=prefix)
+        self._name = make_proxy_name(name=name, prefix=prefix if prefix is not None else self.get_default_prefix())
         self._has_weak_name: bool = name is None
         self.history = history
         self._tags = set(tags) if tags is not None else set()
@@ -144,6 +115,13 @@ class Proxy(VariableInterface, ProxyInterface):
     @property
     def name(self) -> str:
         return self._name
+
+    @property
+    def prefix(self) -> str:
+        return self.get_default_prefix()
+
+    def get_default_prefix(self) -> str:
+        return self.__class__._DEFAULT_PREFIX
 
     def replace(self, **changes):
         r"""Return a copy of the Proxy object with new values for the specified fields as given to the constructor as arguments.
@@ -393,6 +371,8 @@ class Proxy(VariableInterface, ProxyInterface):
 # Unlike many other proxies, this does not mimic the type of the object it wraps
 # TODO RC1 Rename ._o to ._value for consistency
 class AnyProxy(Proxy):
+    _DEFAULT_PREFIX = "any"
+
     def __init__(
         self,
         o: Any,
@@ -424,6 +404,8 @@ class AnyProxy(Proxy):
 
 
 class StringProxy(Proxy, str):
+    _DEFAULT_PREFIX = "s"
+
     def __new__(cls, s: str, /, *, name: str | None = None, history: None | tuple = None, tags: set | None = None):
         return str.__new__(cls, s)
 
@@ -470,6 +452,8 @@ class StringProxy(Proxy, str):
 # The following class is DEPRECATED, and is only preserved her for experimental feature development
 #   that relies upon it.
 class CollectionProxy(Proxy):
+    _DEFAULT_PREFIX = "C"
+
     def __init__(self, coll: Any, *, name: str | None = None, tags: set | None = None):
         Proxy.__init__(self, name=name, tags=tags)
         self.coll = coll
@@ -482,6 +466,8 @@ class CollectionProxy(Proxy):
 
 
 class TupleProxy(Proxy, tuple):
+    _DEFAULT_PREFIX = "tup"
+
     def __new__(cls, tup: tuple, *, name: None | str = None, history: None | tuple = None, tags: set | None = None):
         return tuple.__new__(cls, tup)
 
@@ -521,6 +507,8 @@ class TupleProxy(Proxy, tuple):
 
 
 class ListProxy(Proxy, list):
+    _DEFAULT_PREFIX = "lst"
+
     def __new__(cls, lst: list, *, name: None | str = None, history: None | tuple = None, tags: set | None = None):
         l = list.__new__(cls, lst)
 
@@ -582,6 +570,8 @@ class ListProxy(Proxy, list):
 
 
 class DictProxy(Proxy, dict):
+    _DEFAULT_PREFIX = "d"
+
     def __new__(cls, d: dict, *, name: None | str = None, history: None | tuple = None, tags: set | None = None):
         nd = dict.__new__(cls, d)
         dict.update(nd, d)
@@ -661,6 +651,8 @@ class CONSTRAINT(Enum):
 # NOTE NumberProxies are NOT Numbers
 # TODO Maybe NumberProxies should be Numbers?
 class NumberProxy(Proxy, NumberProxyInterface):
+    _DEFAULT_PREFIX = "n"
+
     def __init__(
         self,
         name: str | None = None,
@@ -674,7 +666,14 @@ class NumberProxy(Proxy, NumberProxyInterface):
         self.value = value
         self.python_type = python_type
         if constraint is None:
-            constraint = CONSTRAINT.DYNAMIC
+            co: CACHE_OPTIONS = get_cache_option()
+            if co is CACHE_OPTIONS.CONSTANT_VALUES:
+                constraint = CONSTRAINT.STATIC
+            elif co is CACHE_OPTIONS.SYMBOLIC_VALUES:
+                constraint = CONSTRAINT.DYNAMIC
+            elif co not in (CACHE_OPTIONS.SAME_INPUT, CACHE_OPTIONS.NO_CACHING):
+                raise NotImplementedError(f"Unsupported cache option {co}")
+
         self.constraint = constraint
 
         Proxy.__init__(self, name, history=history, tags=tags)
@@ -1072,6 +1071,8 @@ def pytype(x: Proxy) -> type | None:
 
 # TODO RC1 Update Proxy number inits to be value, /, *, name, history
 class ComplexProxy(NumberProxy):
+    _DEFAULT_PREFIX = "c"
+
     def __init__(
         self,
         name=None,
@@ -1108,6 +1109,10 @@ class ComplexProxy(NumberProxy):
 # TODO Review dtype conversions
 # TODO Review -9999 as the marker value for unknown values
 class IntegerProxy(NumberProxy):
+    # NOTE(crcrpar): This wouldn't be used but the class variable is required by ProxyInterface
+    # Default prefix will be determined in __init__ based on python_type
+    _DEFAULT_PREFIX = "i"
+
     def __init__(
         self,
         name: str | None = None,
@@ -1151,9 +1156,15 @@ class IntegerProxy(NumberProxy):
     def __index__(self):
         return self.value
 
+    @property
+    def prefix(self) -> str:
+        return "b" if self.python_type is bool else self.__class__._DEFAULT_PREFIX
+
 
 # TODO Review dtype conversions
 class FloatProxy(NumberProxy):
+    _DEFAULT_PREFIX = "f"
+
     def __init__(
         self,
         name=None,
@@ -1291,6 +1302,8 @@ def _infer_tensor_properties(
 
 # NOTE A FutureTensorProxy is intentionally NOT a subclass of TensorProxy
 class FutureTensorProxy(Proxy, TensorProxyInterface):
+    _DEFAULT_PREFIX = "ft"
+
     def __init__(
         self,
         name: str | None = None,
@@ -1413,6 +1426,8 @@ class FutureTensorProxy(Proxy, TensorProxyInterface):
 
 # TODO RC1 Review dunders -- any remaining?
 class TensorProxy(Proxy, TensorProxyInterface):
+    _DEFAULT_PREFIX = "t"
+
     def __init__(
         self,
         name: str | None = None,
@@ -1501,7 +1516,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
     # > In addition to bypassing any instance attributes in the
     # > interest of correctness, implicit special method lookup
     # > generally also bypasses the __getattribute__() method
-    # > even of the object’s metaclass
+    # > even of the object's metaclass
     # Ref: https://docs.python.org/3/reference/datamodel.html#special-method-lookup
     def __len__(self):
         fn = resolve_method("len", self)
@@ -1874,8 +1889,19 @@ class TensorProxy(Proxy, TensorProxyInterface):
         method = resolve_method("real", self)
         return method(self)
 
+    #
+    # Imag
+    #
+
+    @property
+    def imag(self):
+        method = resolve_method("imag", self)
+        return method(self)
+
 
 class TorchAutogradFunctionCtxProxy(Proxy, TorchAutogradFunctionCtxProxyInterface):
+    _DEFAULT_PREFIX = "fc"
+
     def __init__(
         self,
         ctx: torch.autograd.function.FunctionCtx,
