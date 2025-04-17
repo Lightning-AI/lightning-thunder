@@ -3,6 +3,7 @@ from thunder.dev_utils.check_trace import check_trace
 import torch
 import pytest
 
+
 def test_missing_symbol():
     def fn(a, b):
         c = a + b
