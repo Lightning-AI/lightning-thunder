@@ -2146,7 +2146,7 @@ def elementwise_binary_prims_generator(op, device, dtype, requires_grad, **kwarg
 
 # TODO Extend this generator
 def elementwise_binary_generator(
-    op, device, dtype, requires_grad, *, no_rhs_numbers: bool = False, no_scalar_tensors: bool = False, **kwargs
+    op, device, dtype, requires_grad, *, no_rhs_numbers: bool = False, no_weak_dtypes: bool = False, **kwargs
 ):
     yield from elementwise_binary_prims_generator(op, device, dtype, requires_grad, **kwargs)
 
