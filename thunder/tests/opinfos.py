@@ -2077,6 +2077,7 @@ real_opinfo = OpInfo(
     clang.real,
     sample_input_generator=elementwise_unary_generator,
     torch_reference=_elementwise_unary_torch(torch.real),
+    instantiate_complex_tests=True,
     test_directives=(),
 )
 elementwise_unary_ops.append(real_opinfo)
