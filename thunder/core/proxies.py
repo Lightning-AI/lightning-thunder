@@ -1281,9 +1281,9 @@ def _infer_tensor_properties(
             lambda: f"{_thunder_fsdp_padding_size=} expected to be > 0 or `None`",
         )
 
-    # NOTE for simplicity functions that want to reason about weak dtypes should explicitly request
-    #   the true_dtype property
-    _true_dtype = _dtype
+    # NOTE for simplicity functions that want to reason about weak dtypes should explicitly request 
+    # the true_dtype property. When the tensor is a scalar tensor, we treat it as having a weak dtype.
+    _true_dtype = _true_dtype = _dtype if len(_shape) > 0 else dtypes.to_weak_dtype(_dtype)
     _dtype = dtypes.to_strong_dtype(_dtype)
 
     return (
