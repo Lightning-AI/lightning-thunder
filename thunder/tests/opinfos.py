@@ -1176,6 +1176,27 @@ floor_opinfo = OpInfo(
 )
 elementwise_unary_ops.append(floor_opinfo)
 
+frexp_opinfo = OpInfo(
+    clang.frexp,
+    supports_grad=True,
+    dtypes=(datatypes.floating,),
+    sample_input_generator=partial(elementwise_unary_generator, small=True),
+    torch_reference=_elementwise_unary_torch(torch.frexp),
+    test_directives=(
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_phantom_grad_vs_torch_consistency",
+            executors=("nvfuser",),
+        ),
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_phantom_grad_vs_torch_consistency",
+            dtypes=(datatypes.bfloat16, datatypes.float16),
+        ),
+    ),
+)
+elementwise_unary_ops.append(frexp_opinfo)
+
 isfinite_opinfo = OpInfo(
     clang.isfinite,
     sample_input_generator=elementwise_unary_generator,
@@ -1190,6 +1211,22 @@ isfinite_opinfo = OpInfo(
     ),
 )
 elementwise_unary_ops.append(isfinite_opinfo)
+
+isinf_opinfo = OpInfo(
+    ltorch.isinf,
+    dtypes=(datatypes.all_dtypes),
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=_elementwise_unary_torch(torch.isinf),
+)
+elementwise_unary_ops.append(isinf_opinfo)
+
+isnan_opinfo = OpInfo(
+    clang.isnan,
+    dtypes=(datatypes.all_dtypes),
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=_elementwise_unary_torch(torch.isnan),
+)
+elementwise_unary_ops.append(isnan_opinfo)
 
 # TODO The domain of rsqrt should be (0, math.inf), but too small values of rsqrt
 #   can cause numerical issues in lower precision (like float16 overflowing)
