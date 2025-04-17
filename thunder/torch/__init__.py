@@ -813,8 +813,8 @@ def normal(
     utils.check(generator is None, lambda: "generator is not None which is currently unsupported", NotImplementedError)
 
     if isinstance(std, TensorLike):
-        utils.check(prims.ge(std, 0.0), lambda: f"normal expects all elements of std >= 0.0")
-    elif isinstance(std, Number):
+        utils.check((std >= 0.0).all(), lambda: f"normal expects all elements of std >= 0.0")
+    if isinstance(std, Number):
         utils.check(std >= 0, lambda: f"normal expects std >= 0.0, but found std {std}")
 
     device = to_device(maybe_get_default_device(mean.device))
