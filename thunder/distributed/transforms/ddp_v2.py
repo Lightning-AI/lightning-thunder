@@ -75,14 +75,17 @@ class DDPTransform(Transform):
             if self.broadcast_from is not None:
                 for pn, _ in submodule.named_parameters(recurse=False, prefix=module_name):
                     tdist.broadcast(
-                        model.get_parameter(pn), src=self.broadcast_from, group=process_group, async_op=False
+                        model.get_parameter(pn), group_src=self.broadcast_from, group=process_group, async_op=False
                     )
                 for pn, _ in submodule.named_buffers(recurse=False, prefix=module_name):
-                    tdist.broadcast(model.get_buffer(pn), src=self.broadcast_from, group=process_group, async_op=False)
+                    tdist.broadcast(
+                        model.get_buffer(pn), group_src=self.broadcast_from, group=process_group, async_op=False
+                    )
 
-            for pn, p in submodule.named_parameters(recurse=False, prefix=module_name):
+            for pn, _ in submodule.named_parameters(recurse=False, prefix=module_name):
                 # If there are shared params in the original user Module, we reuse the sharded copy created from the original parameter below.
                 # This way we re-create parameter sharing in thunder's copy of the Module.
+                p = model.get_parameter(pn)
                 if p in shared_params:
                     # Shared param names : current param - base param
                     shared_params_name[pn] = shared_params[p]["param_name"]
@@ -153,7 +156,9 @@ class DDPTransform(Transform):
                         # we will produce a new trace with syncs before using the weights
                         # then, the backward sync will be automatically handled by thunder (inserting all_reduce for the gradients)
                         # then, syncs will be removed from the forward pass (as expected, since they are not needed)
-                        synchronized_parameters.append(dist_prims.synchronize(comp_inp_p, self.process_group))
+                        synchronized_parameters.append(
+                            dist_prims.synchronize(comp_inp_p, self.process_group, DistParallelType.REPLICATED)
+                        )
         new_scope = computation_trace.pop_scope()
         # map of param -> synced param
         proxies_to_replace = {variableify(bsym.args[0]): bsym.output for bsym in new_scope}
