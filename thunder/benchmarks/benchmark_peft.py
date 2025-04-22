@@ -66,7 +66,7 @@ def collate_fn(batch):
 
 
 def make_dummy_dataset(
-    tokenizer, seq_len: int, mbs: int, gbs: int, n: int = 100, seq_lengths: Optional[List[int]] = None
+    tokenizer, seq_len: int, mbs: int, gbs: int, n: int = 100, seq_lengths: list[int] | None = None
 ) -> Dataset:
     """Create a dummy dataset for training."""
     data = {
@@ -110,7 +110,7 @@ def make_dummy_dataset(
 def load_model(
     model_name: str,
     attn_implementation: str = "sdpa",
-    fixed_num_hidden_layers: Optional[int] = None,
+    fixed_num_hidden_layers: int | None = None,
     trust_remote_code: bool = False,
     verbose: bool = False,
 ) -> torch.nn.Module:
@@ -623,7 +623,7 @@ def main(args: argparse.Namespace):
 def print_training_summary(
     args: argparse.Namespace,
     total_time: float,
-    iteration_times: List[float],
+    iteration_times: list[float],
     max_allocated_memory: float,
     total_tokens: int,
     gbs: int,
