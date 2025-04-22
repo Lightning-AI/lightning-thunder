@@ -60,6 +60,19 @@ def convert_version2nightly(about_file: str = "thunder/__about__.py") -> None:
         fo.writelines(lines)
 
 
+def _load_readme_description(path_dir: str, homepage: str, version: str) -> str:
+    """Load readme as decribtion."""
+    path_readme = os.path.join(path_dir, "README.md")
+    with open(path_readme, encoding="utf-8") as fp:
+        text = fp.read()
+    # https://github.com/Lightning-AI/lightning-thunder/raw/master/docs/source/_static/images/lightning_module/pt_to_pl.png
+    github_source_url = os.path.join(homepage, "raw", version)
+    # replace relative repository path to absolute link to the release
+    #  do not replace all "docs" as in the readme we replace some other sources with particular path to docs
+    text = text.replace("docs/source/_static/", f"{os.path.join(github_source_url, 'docs/source/_static/')}")
+    return text
+
+
 if _CONVERT_VERSION:
     convert_version2nightly()
 
@@ -68,6 +81,12 @@ about = _load_py_module("__about__.py")
 setup(
     version=about.__version__,
     packages=find_packages(exclude=["thunder/tests", "docs"]),
+    long_description=_load_readme_description(
+        path_dir=_PATH_ROOT,
+        homepage=about.__homepage__,
+        version=about.__version__,
+    ),
+    long_description_content_type="text/markdown",
     install_requires=_load_requirements(_PATH_REQUIRES, file_name="base.txt"),
     include_package_data=True,
     zip_safe=False,
