@@ -289,6 +289,15 @@ def test_setitem(requires_grad):
         fn, torch.randn(5, requires_grad=requires_grad), torch.tensor(2.0, requires_grad=requires_grad)
     )
 
+    def bcast_fn(a, value):
+        a = clone_if_requires_grad(a)
+        a[..., :3] = value
+        return a * 2
+
+    _test_forward_and_backward(
+        bcast_fn, torch.randn(5, 3, 5, requires_grad=requires_grad), torch.randn(1, 3, requires_grad=requires_grad)
+    )
+
     # set value: tensor of same rank
     _test_forward_and_backward(
         fn, torch.randn(5, requires_grad=requires_grad), torch.tensor([1.0, 2.0, 3.0], requires_grad=requires_grad)
