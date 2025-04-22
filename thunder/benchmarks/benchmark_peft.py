@@ -330,12 +330,6 @@ def parse_args():
         help="Attention implementation to use",
     )
     parser.add_argument(
-        "--thunderfx-report-output-path",
-        type=str,
-        default=None,
-        help="Path to save the ThunderFX report",
-    )
-    parser.add_argument(
         "--gradient-checkpointing",
         action="store_true",
         default=False,
