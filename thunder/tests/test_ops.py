@@ -53,7 +53,7 @@ def snippet_torch_consistency(op: OpInfo, torch_op, sample: SampleInput, comp: C
 # TODO Remove the atol and rtol defaults and rely on the given comparator to set them
 @ops(tuple(op for op in opinfos if op.torch_reference is not None))
 def test_core_vs_torch_consistency(op, device: str, dtype: dtypes.dtype, executor, comp):
-    if dtypes.is_complex_dtype(dtype):
+    if dtypes.is_complex_dtype(dtype) and not op.instantiate_complex_tests:
         pytest.skip("Skipping complex operator tests in CI for speed")
     if (
         torch.device(device).type == "cuda"
@@ -124,7 +124,7 @@ def snippet_jax_consistency(op, jax_op, sample, comp):
 @ops(tuple(op for op in opinfos if op.jax_reference is not None))
 @requiresJAX
 def test_core_vs_jax_consistency(op, device: str, dtype: dtypes.dtype, executor, comp):
-    if dtypes.is_complex_dtype(dtype):
+    if dtypes.is_complex_dtype(dtype) and not op.instantiate_complex_tests:
         pytest.skip("Skipping complex operator tests in CI for speed")
     if dtype is dtypes.complex32:
         pytest.skip("jax doesn't support complex32!")
