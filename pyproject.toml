@@ -13,21 +13,18 @@ description = "Lightning Thunder is a source-to-source compiler for PyTorch, ena
 authors = [
     { name = "Lightning AI", email = "support@lightning.ai" },
 ]
-license = { file = "LICENSE" }
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 readme = "README.md"
 requires-python = ">=3.10, <3.14"
 keywords = ["deep learning", "AI", "compiler"]
 classifiers=[
     "Environment :: Console",
     "Natural Language :: English",
-    # How mature is this project? Common values are
-    #   3 - Alpha, 4 - Beta, 5 - Production/Stable
     "Development Status :: 3 - Alpha",
-    # Indicate who your project is intended for
     "Intended Audience :: Developers",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Scientific/Engineering :: Information Analysis",
-    "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
