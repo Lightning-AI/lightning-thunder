@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING
 
 from thunder import Transform
 from thunder.core import prims
-from thunder.core.proxies import Proxy, Variable, unvariableify
+from thunder.core.proxies import Proxy, Variable, unvariableify, variableify
 from thunder.core.trace import from_trace, tracectx, TraceProvenance, TraceTag
 from thunder.core.transforms import (
     _update_forward_with_new_saved_for_backward,
@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from thunder.core.symbol import BoundSymbolRHS, BoundSymbol
     from thunder.core.proxies import TensorProxy
 
-from thunder.executors.functional_teex import _te_fp8_synchronization
+from thunder.executors.functional_teex import _te_fp8_amax_and_scale_update
 
 
 class TESynchronizationTransform(Transform):
