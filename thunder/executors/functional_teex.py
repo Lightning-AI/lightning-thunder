@@ -172,7 +172,7 @@ def _linear_fwd_meta(
 
 
 def _linear_fwd_impl(a, w, bias, input_quantizer: Float8Quantizer, weight_quantizer: Float8Quantizer):
-    out, out_a, out_w = BasicLinear._functional_forward(
+    out, quantized_a, quantized_w = BasicLinear._functional_forward(
         input=a,
         weight=w,
         with_quantized_compute=True,
@@ -180,7 +180,7 @@ def _linear_fwd_impl(a, w, bias, input_quantizer: Float8Quantizer, weight_quanti
         weight_quantizer=weight_quantizer,
         output_quantizer=None,  # return out in original dtype (w.dtype)
     )
-    return out, out_a, out_w
+    return out, quantized_a, quantized_w
 
 
 _te_linear_fwd = functional_te_ex.register_operator(
