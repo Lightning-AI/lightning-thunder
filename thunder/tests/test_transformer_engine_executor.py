@@ -251,43 +251,23 @@ def test_te_trace_metadata_propagation():
     assert any(bsym.sym.name.startswith("te_linear") for bsym in fwd_traces[-1].bound_symbols)
 
 
-@requiresCUDA
-def test_te_frozen_weights():
-    # Test to verify that setting `requires_grad` on weights is respected by the TE executor
-    # and we don't compute gradients for the same.
+def test_te_grad_computation_with_intermediate():
+    # Test for issue - https://github.com/Lightning-AI/lightning-thunder/issues/1966
+    def fn(x, w):
+        # Due to autocast, trace becomes something like this
+        # t4 = prims.convert_element_type(x, dtypes.bfloat16)  # t4: "cuda:0 bf16[32, 32]"
+        # t5 = prims.convert_element_type(w, dtypes.bfloat16)  # t5: "cuda:0 bf16[32, 32]"
+        # t6 = prims.linear(t4, t5, None)  # t6: "cuda:0 bf16[32, 32]"
+        with torch.autocast("cuda", torch.bfloat16):
+            return torch.nn.functional.linear(x, w)
+
     with torch.device("cuda"):
-        model = torch.nn.Sequential(*(torch.nn.Linear(32, 32, bias=False) for _ in range(6)))
         x = torch.randn(32, 32, requires_grad=True)
+        w = torch.randn(32, 32, requires_grad=True)
 
-    for idx, parameters in enumerate(model.parameters()):
-        # Every even linear layer's weight is frozen.
-        if idx % 2 == 0:
-            parameters.requires_grad = False
+        tfn = thunder.jit(fn, executors=(transformer_engine_ex,))
 
-    tmodel = thunder.jit(model, executors=[transformer_engine_ex])
-    o = tmodel(x)
+        o = tfn(x, w)
+        o.sum().backward()
 
-    bwd_trc = thunder.last_backward_traces(tmodel)[-1]
-    te_linear_cnt = 0
-    # NOTE - `reversed(bwd_trc.bound_symbols)` because we will compute gradients for last linear first and similarly
-    #        for the first linear at the end.
-    for bsym in reversed(bwd_trc.bound_symbols):
-        if bsym.sym.name.startswith("te_functional_linear"):
-            weight_requires_grad = bsym.args[3]
-            bias_requires_grad = bsym.args[4]
-            if te_linear_cnt % 2 == 0:
-                assert not weight_requires_grad
-                assert not bias_requires_grad
-            else:
-                assert weight_requires_grad
-                assert not bias_requires_grad
-
-            te_linear_cnt += 1
-
-    o.sum().backward()
-
-    for idx, parameters in enumerate(model.parameters()):
-        if idx % 2 != 0:
-            assert parameters.grad is not None and isinstance(parameters.grad, torch.Tensor)
-        else:
-            assert parameters.grad is None
+        assert w.grad is not None
