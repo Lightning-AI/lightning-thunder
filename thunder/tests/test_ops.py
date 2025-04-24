@@ -377,3 +377,21 @@ def test_ltorch_cumsum_result_dtype_for_int_input():
     trc = thunder.last_traces(jitted)[0]
     bsym_of_cumsum = trc.bound_symbols[1]
     assert bsym_of_cumsum.output.dtype is dtypes.int64
+
+
+def test_ltorch_maximum_result_dtype_for_scalar_tensors():
+    def foo(a, b):
+        return torch.maximum(a, b)
+
+    x = torch.rand(2, 2, dtype=torch.bfloat16)
+    y = torch.tensor(0.12345)
+
+    jfoo = thunder.jit(foo)
+    out = jfoo(x, y)
+
+    assert out.dtype == torch.bfloat16
+
+    trc = thunder.last_traces(jfoo)[-1]
+
+    bsym = trc.bound_symbols[2]
+    assert bsym.output.dtype is dtypes.bfloat16
