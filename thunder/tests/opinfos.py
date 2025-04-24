@@ -2170,9 +2170,19 @@ def elementwise_binary_generator(
         # it back to torch dtype before use.
         base_tdtype = type(datatypes._torch_to_thunder_dtype_map[dtype])
 
+        weak_dtype_table = {
+            datatypes.signedinteger: torch.int64,
+            datatypes.unsignedinteger: torch.uint8,
+            datatypes.floating: torch.float32,
+            datatypes.complexfloating: torch.complex64,
+            datatypes.bool_: torch.bool,
+        }
         e = make((4, 4), **kwargs)
-        f = make((), **kwargs, dtype=to_torch_dtype[base_tdtype])
-        yield SampleInput(e, f)
+        f = make((), **kwargs, dtype=weak_dtype_table[base_tdtype])
+
+        sample = SampleInput(e, f)
+
+        yield sample
 
 
 # TODO: update dtypes with Thunder dtypes (when they exist)
