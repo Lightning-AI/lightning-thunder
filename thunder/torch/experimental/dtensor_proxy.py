@@ -43,8 +43,8 @@ class DTensorProxy(TensorProxy):
             thunder_fsdp_padding_size=thunder_fsdp_padding_size,
         )
         if like is not None:
-            self._spec = like._spec
-            self._local_tensor = like._local_tensor
+            self._spec = like._spec if spec is None else spec
+            self._local_tensor = like._local_tensor if local_tensor_proxy is None else local_tensor_proxy
         else:
             assert isinstance(spec, AnyProxy)
             self._spec = spec
