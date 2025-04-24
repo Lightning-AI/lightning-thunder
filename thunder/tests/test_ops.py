@@ -53,7 +53,7 @@ def snippet_torch_consistency(op: OpInfo, torch_op, sample: SampleInput, comp: C
 # TODO Remove the atol and rtol defaults and rely on the given comparator to set them
 @ops(tuple(op for op in opinfos if op.torch_reference is not None))
 def test_core_vs_torch_consistency(op, device: str, dtype: dtypes.dtype, executor, comp):
-    if dtypes.is_complex_dtype(dtype):
+    if dtypes.is_complex_dtype(dtype) and not op.instantiate_complex_tests:
         pytest.skip("Skipping complex operator tests in CI for speed")
     if (
         torch.device(device).type == "cuda"
@@ -124,7 +124,7 @@ def snippet_jax_consistency(op, jax_op, sample, comp):
 @ops(tuple(op for op in opinfos if op.jax_reference is not None))
 @requiresJAX
 def test_core_vs_jax_consistency(op, device: str, dtype: dtypes.dtype, executor, comp):
-    if dtypes.is_complex_dtype(dtype):
+    if dtypes.is_complex_dtype(dtype) and not op.instantiate_complex_tests:
         pytest.skip("Skipping complex operator tests in CI for speed")
     if dtype is dtypes.complex32:
         pytest.skip("jax doesn't support complex32!")
@@ -289,6 +289,15 @@ def test_setitem(requires_grad):
         fn, torch.randn(5, requires_grad=requires_grad), torch.tensor(2.0, requires_grad=requires_grad)
     )
 
+    def bcast_fn(a, value):
+        a = clone_if_requires_grad(a)
+        a[..., :3] = value
+        return a * 2
+
+    _test_forward_and_backward(
+        bcast_fn, torch.randn(5, 3, 5, requires_grad=requires_grad), torch.randn(1, 3, requires_grad=requires_grad)
+    )
+
     # set value: tensor of same rank
     _test_forward_and_backward(
         fn, torch.randn(5, requires_grad=requires_grad), torch.tensor([1.0, 2.0, 3.0], requires_grad=requires_grad)
@@ -336,3 +345,19 @@ def test_max_with_int():
     ids = torch.randint(0, 10, size=(1, 512))
 
     thunder.jit(f)(x, ids)
+
+
+def test_ltorch_cumsum_result_dtype_for_int_input():
+
+    def f(a):
+        return torch.cumsum(a, dim=0)
+
+    x = torch.randint(0, 128, (4,), dtype=torch.int32)
+    jitted = thunder.jit(f)
+    out = jitted(x)
+    # runtime check
+    assert out.dtype is torch.int64
+
+    trc = thunder.last_traces(jitted)[0]
+    bsym_of_cumsum = trc.bound_symbols[1]
+    assert bsym_of_cumsum.output.dtype is dtypes.int64

@@ -349,6 +349,7 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     set_saved_for_backward_tensors(fw_extrace, new_fw_out)
 
     bw_trace.bound_symbols = new_bsyms
+    bw_trace.args = ((new_bsyms[4].output, new_bsyms[5].output), bw_trace.args[1])
 
     if getattr(compile_data.fn, "use_fsdp", False):
         bw_trace = _fsdp_comm_bucketing.apply_bucketing_to_backward_trace(bw_trace)

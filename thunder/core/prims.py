@@ -2501,18 +2501,15 @@ def _elementwise_binary_meta_factory(
             tensor = a if (isinstance(a, TensorProxy) and not utils.is_cpu_scalar_tensor(a)) else b
         else:
             tensor = a if isinstance(a, TensorProxy) else b
-        requires_grad = (isinstance(a, TensorProxy) and a.requires_grad) or (
-            isinstance(b, TensorProxy) and b.requires_grad
-        )
 
         if output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.SAME:
             # NOTE that this is not just like=tensor, because one tensor could have a weak dtype
             #   and the other a strong dtype, and these are the "same"
-            return TensorProxy(like=tensor, dtype=dtype, requires_grad=requires_grad)
+            return TensorProxy(like=tensor, dtype=dtype)
         if output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.ALWAYS_BOOL:
-            return TensorProxy(like=tensor, dtype=dtypes.bool8, requires_grad=requires_grad)
+            return TensorProxy(like=tensor, dtype=dtypes.bool8)
         if output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.COMPLEX_TO_FLOAT and dtypes.is_complex_dtype(dtype):
-            return TensorProxy(like=tensor, dtype=dtypes.corresponding_real_dtype(dtype), requires_grad=requires_grad)
+            return TensorProxy(like=tensor, dtype=dtypes.corresponding_real_dtype(dtype))
 
         raise AssertionError(f"Unknown {output_dtype_kind=}")
 
@@ -2770,11 +2767,7 @@ def _lerp_meta(start: TensorProxy, end: TensorProxy, weight: Number | TensorProx
     utils.check_same_shape(start, end, weight)
     utils.check_same_device(start, end, weight)
 
-    requires_grad = (
-        start.requires_grad or end.requires_grad or (isinstance(weight, TensorProxy) and weight.requires_grad)
-    )
-
-    return TensorProxy(like=start, dtype=dtype, requires_grad=requires_grad)
+    return TensorProxy(like=start, dtype=dtype)
 
 
 lerp = make_prim(
@@ -2832,8 +2825,7 @@ def _where_meta(pred: Number | TensorProxy, a: Number | TensorProxy, b: Number |
     shapes = tuple(x.shape for x in (pred, a, b) if isinstance(x, TensorProxy))
     resultshape = shapes[0]
 
-    requires_grad = (isinstance(a, TensorProxy) and a.requires_grad) or (isinstance(b, TensorProxy) and b.requires_grad)
-    return TensorProxy(shape=resultshape, device=resultdevice, dtype=dtype, requires_grad=requires_grad)
+    return TensorProxy(shape=resultshape, device=resultdevice, dtype=dtype)
 
 
 where = make_prim(
@@ -2879,10 +2871,6 @@ exogenous_like = make_prim(
 )
 
 
-# TODO Review always setting requires_grad=False
-#   Logically these tensors are constructed intermediate to a trace, so there's no mechanism for a user to
-#   extract their grad, but we could support compiling forward and backward and accessing grad attributes
-#   in the future
 def _full_meta(
     shape: tuple[int, ...], fill_value: Number, *, device: devices.Device, dtype: dtypes.dtype
 ) -> TensorProxy:
@@ -2898,7 +2886,7 @@ def _full_meta(
 
     utils.check_type(shape, tuple)
     utils.check_valid_shape(shape)
-    return TensorProxy(shape=shape, device=device, dtype=dtype, requires_grad=False)
+    return TensorProxy(shape=shape, device=device, dtype=dtype)
 
 
 full = make_prim(
@@ -2924,17 +2912,13 @@ def _iota_meta(
 
     shape = () if length == 0 else (length,)
 
-    return TensorProxy(shape=shape, device=device, dtype=dtype, requires_grad=False)
+    return TensorProxy(shape=shape, device=device, dtype=dtype)
 
 
 iota = make_prim(PrimIDs.IOTA, "iota", meta=_iota_meta)
 
 
 # TODO Should the uniform prim include minval maxval or always be [0, 1)?
-# TODO Review always setting requires_grad=False
-#   Logically these tensors are constructed intermediate to a trace, so there's no mechanism for a user to
-#   extract their grad, but we could support compiling forward and backward and accessing grad attributes
-#   in the future
 def _uniform_meta(
     shape: Sequence[int], minval: Number, maxval: Number, *, device: devices.Device, dtype: dtypes.dtype
 ) -> TensorProxy:
@@ -2944,7 +2928,7 @@ def _uniform_meta(
     utils.check_type(device, devices.Device)
     utils.check_type(dtype, dtypes.dtype)
 
-    return TensorProxy(shape=shape, device=device, dtype=dtype, requires_grad=False)
+    return TensorProxy(shape=shape, device=device, dtype=dtype)
 
 
 uniform = make_prim(
@@ -3017,7 +3001,7 @@ def _uniform_philox_meta(
     utils.check_same_shape(shape, seed, offset)
     utils.check_same_device(device, seed, offset)
 
-    return TensorProxy(shape=shape, device=device, dtype=dtype, requires_grad=False)
+    return TensorProxy(shape=shape, device=device, dtype=dtype)
 
 
 uniform_philox = make_prim(
@@ -3037,7 +3021,7 @@ def _randn_meta(
     utils.check_type(dtype, dtypes.dtype)
     utils.check_type(shape, tuple)
     utils.check_valid_shape(shape)
-    return TensorProxy(shape=shape, device=device, dtype=dtype, requires_grad=False)
+    return TensorProxy(shape=shape, device=device, dtype=dtype)
 
 
 randn = make_prim(PrimIDs.RANDN, "randn", meta=_randn_meta)
@@ -3053,7 +3037,7 @@ def _empty_meta(
     utils.check_type(dtype, dtypes.dtype)
     utils.check_type(shape, tuple)
     utils.check_valid_shape(shape)
-    return TensorProxy(shape=shape, device=device, dtype=dtype, requires_grad=False)
+    return TensorProxy(shape=shape, device=device, dtype=dtype)
 
 
 empty = make_prim(PrimIDs.EMPTY, "empty", meta=_empty_meta)
@@ -3061,7 +3045,7 @@ empty = make_prim(PrimIDs.EMPTY, "empty", meta=_empty_meta)
 
 # TODO(crcrpar): Cover `memory_format` kwarg
 def _clone_meta(a: TensorProxy, **kwargs) -> TensorProxy:
-    return TensorProxy(like=a, requires_grad=a.requires_grad)
+    return TensorProxy(like=a)
 
 
 clone = make_prim(PrimIDs.CLONE, "clone", meta=_clone_meta)
@@ -3145,9 +3129,7 @@ def _tensor_from_sequence_meta(
         # NOTE: In future, we should rely on something like [thunder/torch].get_default_dtype.
         dtype = inferred_dtype if inferred_dtype is not None else float
 
-    # We set `requires_grad` to False as this tensor will show up only in trace and
-    # user won't have access to it. See also, the note on _full_meta.
-    return TensorProxy(shape=shape, device=device, dtype=dtype, requires_grad=False)
+    return TensorProxy(shape=shape, device=device, dtype=dtype)
 
 
 # Prim to construct a Tensor from sequence/nested sequence of Numbers.
@@ -3196,7 +3178,7 @@ def _multinomial_meta(
 
     shape = (*input.shape[:-1], num_samples)
 
-    return TensorProxy(shape=shape, device=input.device, dtype=dtypes.int64, requires_grad=False)
+    return TensorProxy(shape=shape, device=input.device, dtype=dtypes.int64)
 
 
 multinomial = make_prim(
@@ -3285,8 +3267,7 @@ def cat_meta(tensors: list[TensorProxy], /, dim: int) -> TensorProxy:
             )
         shape[dim] = shape[dim] + ai.shape[dim]
 
-    requires_grad = any(list([t.requires_grad for t in tensors]))
-    return TensorProxy(like=tensors[0], shape=shape, requires_grad=requires_grad)
+    return TensorProxy(like=tensors[0], shape=shape)
 
 
 cat = make_prim(
@@ -3977,8 +3958,7 @@ def linear_meta(a: TensorProxy, w: TensorProxy, bias: None | TensorProxy) -> Ten
 
     out_shape = batch_dims + (out_length,)
 
-    requires_grad = any((a.requires_grad, w.requires_grad, False if bias is None else bias.requires_grad))
-    return TensorProxy(shape=out_shape, device=a.device, dtype=dtype, requires_grad=requires_grad)
+    return TensorProxy(shape=out_shape, device=a.device, dtype=dtype)
 
 
 linear = make_prim(
@@ -4224,12 +4204,11 @@ embedding = make_prim(PrimIDs.EMBEDDING, "embedding", meta=embedding_meta)
 
 # TODO Update this so it's not a prim
 # TODO Add annotations
-# TODO Review requires_grad=False -- what about double backward?
 # TODO Once we have fusible index_put we can implement it using primitives
 # For now we just use the PyTorch implementation
 def embedding_backward_meta(grad, indices, num_weights, padding_idx, scale_grad_by_freq, sparse):
     shape = (num_weights, grad.shape[-1])
-    return TensorProxy(shape=shape, device=grad.device, dtype=grad.dtype, requires_grad=False)
+    return TensorProxy(shape=shape, device=grad.device, dtype=grad.dtype)
 
 
 embedding_backward = make_prim(PrimIDs.EMBEDDING_BACKWARD, "embedding_backward", meta=embedding_backward_meta)
