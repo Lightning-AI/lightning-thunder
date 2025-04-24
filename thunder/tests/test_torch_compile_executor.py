@@ -134,11 +134,13 @@ def test_torch_compile_xentropy_loss():
     from transformers.loss.loss_utils import ForCausalLMLoss
 
     logits = torch.randn(1, 2, 6, device="cuda", requires_grad=True)
+    logits = logits[..., :-1, :].contiguous()
     labels = torch.randint(0, 6, (1, 2), device="cuda")
+    shift_labels = labels[..., 1:].contiguous()
     vocab_size = 6
 
     closs_fn = thunder.jit(ForCausalLMLoss, executors=[torch_compile_xentropy_ex])
-    _ = closs_fn(logits, labels, vocab_size, ignore_index=-1)
+    _ = closs_fn(logits, labels, vocab_size, ignore_index=-1, shift_labels=shift_labels)
     forward_trace = thunder.last_traces(closs_fn)[-1].python()
 
     # make a single torch.compile region

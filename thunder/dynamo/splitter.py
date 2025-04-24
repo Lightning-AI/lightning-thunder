@@ -18,6 +18,7 @@ from thunder.dynamo.utils import (
     recompile_graph,
     checkpoint_converter,
     _get_example_inputs_from_placeholder,
+    _ThunderSplitGraphModule,
 )
 
 if TYPE_CHECKING:
@@ -198,7 +199,7 @@ def _splitter(
 
     return split_gm, SubgraphInfo(
         gm,
-        original_split_gm,
+        _ThunderSplitGraphModule(original_split_gm, supported_partitions),
         split_gm,
         thunder_compiled_fns,
         example_input_metadatas,

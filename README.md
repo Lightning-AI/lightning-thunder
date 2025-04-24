@@ -28,9 +28,9 @@ For **performance experts**, Thunder is the most ergonomic framework for underst
 <div align='center'>
 
 <pre>
-✅ Run PyTorch 40% faster   ✅ Quantization                ✅ Kernel fusion
-✅ Training recipes         ✅ FP4/FP6/FP8 precision       ✅ Distributed TP/PP/DP
-✅ Inference recipes        ✅ Ready for NVIDIA Blackwell  ✅ CUDA Graphs
+✅ Run PyTorch 40% faster   ✅ Quantization                ✅ Kernel fusion        
+✅ Training recipes         ✅ FP4/FP6/FP8 precision       ✅ Distributed TP/PP/DP 
+✅ Inference recipes        ✅ Ready for NVIDIA Blackwell  ✅ CUDA Graphs          
 ✅ LLMs, non LLMs and more  ✅ Custom Triton kernels       ✅ Compose all the above
 </pre>
 
@@ -59,11 +59,13 @@ For **performance experts**, Thunder is the most ergonomic framework for underst
 
 &#160;
 
+<!--
 <div align="center">
 <a target="_blank" href="https://lightning.ai/docs/thunder/home/get-started">
   <img src="https://pl-bolts-doc-images.s3.us-east-2.amazonaws.com/app-2/get-started-badge.svg" height="36px" alt="Get started"/>
 </a>
 </div>
+-->
 
 &#160;
 
@@ -73,7 +75,7 @@ For **performance experts**, Thunder is the most ergonomic framework for underst
 
 # Quick start
 
-Install Thunder via pip ([more options](https://lightning.ai/docs/litserve/home/install)):
+Install Thunder via pip ([more options](https://lightning.ai/docs/thunder/latest/fundamentals/installation.html)):
 
 ```bash
 pip install torch==2.6.0 torchvision==0.21 nvfuser-cu124-torch26
@@ -137,6 +139,7 @@ Optimize it with thunder:
 
 ```python
 import thunder
+import torch
 
 thunder_model = thunder.compile(model)
 
@@ -144,12 +147,20 @@ x = torch.randn(64, 2048)
 
 y = thunder_model(x)
 
-assert y == model(x)
+assert torch.testing.assert_close(y, model(x))
 ```
 
 ## Examples
 
 ### Speed up LLM training
+
+Install LitGPT (without updating other dependencies)
+
+```
+pip install --no-deps 'litgpt[all]'
+```
+
+and run
 
 ```python
 import thunder
@@ -169,6 +180,14 @@ out.sum().backward()
 
 ### Speed up HuggingFace BERT inference
 
+Install Hugging Face Transformers (recommended version is `4.50.2` and above)
+
+```
+pip install -U transformers
+```
+
+and run
+
 ```python
 import thunder
 import torch
@@ -187,13 +206,21 @@ with torch.device("cuda"):
 
     inp = tokenizer(["Hello world!"], return_tensors="pt")
 
-thunder_model = thunder.compile(model, plugins="reduce-overhead")
+thunder_model = thunder.compile(model)
 
 out = thunder_model(**inp)
 print(out)
 ```
 
 ### Speed up HuggingFace DeepSeek R1 distill inference
+
+Install Hugging Face Transformers (recommended version is `4.50.2` and above)
+
+```
+pip install -U transformers
+```
+
+and run
 
 ```python
 import torch
@@ -213,15 +240,28 @@ with torch.device("cuda"):
 
     inp = tokenizer(["Hello world! Here's a long story"], return_tensors="pt")
 
-thunder_model = thunder.compile(
-    model, recipe="hf-transformers", plugins="reduce-overhead"
-)
+thunder_model = thunder.compile(model)
 
 out = thunder_model.generate(
     **inp, do_sample=False, cache_implementation="static", max_new_tokens=100
 )
 print(out)
 ```
+
+To get an idea of the speedups, just run
+
+```bash
+python examples/quickstart/hf_llm.py
+```
+
+Here what you get on a L4 machine from [Lightning Studio](https://lightning.ai):
+
+```bash
+Eager: 2273.22ms
+Thunder: 1254.39ms
+```
+
+81% faster 🏎️! Quite the speedup ⚡️
 
 ### Speed up Vision Transformer inference
 
@@ -230,7 +270,7 @@ import thunder
 import torch
 import torchvision as tv
 
-with torch.device(device):
+with torch.device("cuda"):
     model = tv.models.vit_b_16()
     model.requires_grad_(False)
     model.eval()
@@ -239,7 +279,7 @@ with torch.device(device):
 
 out = model(inp)
 
-thunder_model = thunder.compile(model, plugins="reduce-overhead")
+thunder_model = thunder.compile(model)
 
 out = thunder_model(inp)
 ```
@@ -255,6 +295,16 @@ Thunder comes with a few plugins included of the box, but it's easy to write new
 - save memory with quantization
 - reduce latency with CUDAGraphs
 - debugging and profiling
+
+For example, in order to reduce CPU overheads via CUDAGraphs you can add "reduce-overhead"
+to the `plugins=` argument of `thunder.compile`:
+
+```python
+thunder_model = thunder.compile(model, plugins="reduce-overhead")
+```
+
+This may or may not make a big difference. The point of Thunder is that you can easily
+swap optimizations in and out and explore the best combination for your setup.
 
 ## How it works
 
