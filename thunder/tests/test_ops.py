@@ -44,6 +44,11 @@ def snippet_torch_consistency(op: OpInfo, torch_op, sample: SampleInput, comp: C
     if isinstance(thunder_result, Exception):
         raise thunder_result
 
+    # No need for testing accuracy of bool dtype
+    if torch_result.dtype is torch.bool:
+        comp(thunder_result, torch_result)
+        return
+
     def upcast_tensors(x):
         if isinstance(x, torch.Tensor) and torch.is_floating_point(x):
             return x.to(torch.double)
