@@ -12,7 +12,14 @@ import thunder.core.utils as utils
 from thunder.core.prims import make_prim, _make_elementwise_binary_prim
 
 from thunder.core.proxies import DistParallelType, FutureTensorProxy, pytype, TensorProxy, AnyProxy
-from thunder.core.transforms import register_augmented_forward, register_backward
+from thunder.core.transforms import (
+    register_augmented_forward,
+    register_backward,
+    register_grad,
+    put_grad,
+    put_grads,
+    get_grad,
+)
 from thunder.distributed import get_skip_data_parallel_grad_sync
 from thunder.executors.torchex import ex as pytorchex
 from thunder.executors.pythonex import ex as pythonex
@@ -80,6 +87,20 @@ dtensor_mul_prim = make_prim("dtensor_mul_prim", "dtensor_mul_prim", meta=dtenso
 dtensor_mul_prim_impl = pytorchex.register_operator("dtensor_mul_prim", like=dtensor_mul_prim, fn=torch.mul)
 
 pytorchex.register_implementation(dtensor_mul_prim, dtensor_mul_prim_impl)
+
+
+def _dtensor_mul_prim_grad(a: TensorLike, b: TensorLike) -> TensorLike:
+    fwd = dtensor_mul_prim(a, b)
+
+    g = get_grad(fwd)
+    a_grad = dtensor_mul_prim(b, g)
+    b_grad = dtensor_mul_prim(a, g)
+    put_grads((a, b), (a_grad, b_grad))
+
+    return fwd
+
+
+register_grad(dtensor_mul_prim, _dtensor_mul_prim_grad)
 
 
 @dtensor_torchsymbol(torch.mul, id="dtensor.torch.mul")
