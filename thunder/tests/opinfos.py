@@ -2171,18 +2171,20 @@ def elementwise_binary_generator(
         yield SampleInput(c, d)
 
     if not no_weak_dtypes:
-        # Need to take a dtype that is different from the one of the not-scalar tensor,
-        # this generalizes the dtype to one of the base thunder dtypes and then converts
-        # it back to torch dtype before use.
+
+        # Test tensor x scalar tensor with a different dtype
+        # We first convert the dtype to its base and then use
+        # the table to get the reference dtype.
         base_tdtype = type(datatypes._torch_to_thunder_dtype_map[dtype])
 
         weak_dtype_table = {
             datatypes.signedinteger: torch.int64,
             datatypes.unsignedinteger: torch.uint8,
-            datatypes.floating: torch.float32,
+            datatypes.floating: torch.float64,
             datatypes.complexfloating: torch.complex64,
-            datatypes.bool_: torch.bool,
+            datatypes.bool_: torch.int64,
         }
+
         e = make((4, 4), **kwargs)
         f = make((), **kwargs, dtype=weak_dtype_table[base_tdtype])
 
