@@ -18,6 +18,7 @@ from thunder.tests.framework import (
     _all_test_executors,
     version_between,
     BITSANDBYTES_AVAILABLE,
+    has_enough_device_memory,
 )
 import thunder.tests.nanogpt_model as nanogpt_model
 import thunder.tests.hf_bart_self_attn as hf_bart_self_attn
@@ -560,49 +561,41 @@ def test_hf_llama():
 
 
 @requiresCUDA
+@pytest.mark.skipif(
+    not has_enough_device_memory(3600000000),
+    reason="This test requires at least 3.6GB of memory",
+)
 def test_hf_phi3_vision():
-    # This test takes around 4045406208 bytes (~4GB) of memory.
+    # This test takes around 3597163520 bytes (~3.59GB) of memory.
     # Shapes for data generated with help of the following script
     # https://github.com/microsoft/PhiCookBook/blob/main/code/03.Finetuning/Phi-3-vision-Trainingscript.py
     from transformers import AutoModelForCausalLM, AutoConfig
     from thunder.dynamo import thunderfx
-    from thunder.tests.framework import assert_closer
 
+    # trust_remote_code=True is required else you get the following error:
+    # ValueError: Loading microsoft/Phi-3-vision-128k-instruct requires you to execute the configuration file in that repo on your local machine.
     cfg = AutoConfig.from_pretrained("microsoft/Phi-3-vision-128k-instruct", trust_remote_code=True)
-    cfg.num_hidden_layers = 2
+    cfg.num_hidden_layers = 1
 
     with torch.device("cuda"):
         model = AutoModelForCausalLM.from_config(cfg, trust_remote_code=True, torch_dtype=torch.bfloat16)
-        input_ids = torch.randint(0, 200, (1, 512))
-        attention_mask = torch.zeros((1, 512), dtype=torch.int64)
-        attention_mask[0, 426:] = 1
-        pixel_values = torch.randint(0, 255, (1, 400, 356, 3), dtype=torch.uint8)
+        input_ids = torch.randint(0, 100, (1, 256))
+        pixel_values = torch.randint(0, 254, (1, 256, 256, 3), dtype=torch.uint8)
         labels = input_ids.clone().detach()
 
         jit_model = thunderfx(model, fusion_type="consecutive")
-        thunder_result = jit_model(
-            input_ids=input_ids, attention_mask=attention_mask, pixel_values=pixel_values, labels=labels
-        )
-
-        eager_result = model(
-            input_ids=input_ids, attention_mask=attention_mask, pixel_values=pixel_values, labels=labels
-        )
-        double_precision_model = model.to(torch.double)
-        reference_result = double_precision_model(
-            input_ids=input_ids, attention_mask=attention_mask, pixel_values=pixel_values, labels=labels
-        )
-        assert_closer(
-            reference=(reference_result.loss,),
-            candidate=(thunder_result.loss,),
-            competitor=(eager_result.loss,),
-            comparator=torch.testing.assert_close,
-        )
+        thunder_result = jit_model(input_ids=input_ids, pixel_values=pixel_values, labels=labels)
+        eager_result = model(input_ids=input_ids, pixel_values=pixel_values, labels=labels)
+        torch.testing.assert_close(eager_result.loss, thunder_result.loss, atol=1e-2, rtol=1e-2)
 
         loss_grad = torch.randn_like(eager_result.loss)
-        thunder_grads = torch.autograd.grad(thunder_result.loss, model.parameters(), grad_outputs=loss_grad)
-        eager_grads = torch.autograd.grad(eager_result.loss, model.parameters(), grad_outputs=loss_grad)
-        # double_precision_grads = torch.autograd.grad(double_precision_model.loss, double_precision_model.parameters(), grad_outputs=loss_grad.to(torch.double))
-        # assert_closer(reference=double_precision_grads, candidate=thunder_grads, competitor=eager_grads, comparator=torch.testing.assert_close)
+        thunder_grads = torch.autograd.grad(
+            thunder_result.loss, model.parameters(), grad_outputs=loss_grad, allow_unused=True
+        )
+        eager_grads = torch.autograd.grad(
+            eager_result.loss, model.parameters(), grad_outputs=loss_grad, allow_unused=True
+        )
+        torch.testing.assert_close(eager_grads, thunder_grads, atol=1e-2, rtol=1e-2)
 
 
 @requiresCUDA

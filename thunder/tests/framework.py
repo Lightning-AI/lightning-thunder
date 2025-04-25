@@ -630,3 +630,23 @@ def set_default_dtype_ctx(dtype):
         yield
     finally:
         torch.set_default_dtype(saved_dtype)
+
+
+def has_enough_device_memory(required_memory_bytes: int, cuda_device_id: int = 0) -> bool:
+    """
+    Check if the specified CUDA device has sufficient total memory for a given requirement.
+
+    Args:
+        required_memory_bytes: Amount of memory needed in bytes
+        cuda_device_id (int, optional): The ID of the CUDA device to check. Defaults to 0.
+
+    Returns:
+        bool: True if the device has sufficient total memory, False otherwise
+    """
+    if not torch.cuda.is_available():
+        return False
+
+    # Get total available memory
+    total_memory = torch.cuda.get_device_properties(cuda_device_id).total_memory
+
+    return total_memory > required_memory_bytes
