@@ -347,6 +347,7 @@ class OpInfo:
         singularity_fn=None,
         singularity_fn_producer=None,
         test_torch_compile_executor=False,
+        instantiate_complex_tests=False,
     ):
         self.op = op
 
@@ -387,6 +388,7 @@ class OpInfo:
             (lambda _: singularity_fn) if singularity_fn_producer is None else singularity_fn_producer
         )
         self.test_torch_compile_executor = test_torch_compile_executor
+        self.instantiate_complex_tests = instantiate_complex_tests
 
     def __call__(self, *args, **kwargs):
         """Calls the function variant of the operator."""
@@ -575,6 +577,7 @@ is_complex_opinfo = OpInfo(
     sample_input_generator=elementwise_unary_generator,
     torch_reference=_elementwise_unary_torch(torch.is_complex),
     dtypes=(datatypes.all_dtypes),
+    instantiate_complex_tests=True,
 )
 
 tensor_properties.append(is_complex_opinfo)
@@ -1601,6 +1604,7 @@ neg_opinfo = OpInfo(
     dtypes=set(datatypes.all_dtypes) - set(datatypes.boolean_dtypes),
     sample_input_generator=elementwise_unary_generator,
     torch_reference=_elementwise_unary_torch(torch.neg),
+    instantiate_complex_tests=True,
 )
 elementwise_unary_ops.append(neg_opinfo)
 
@@ -1773,6 +1777,18 @@ relu_opinfo = OpInfo(
     ),
 )
 elementwise_unary_ops.append(relu_opinfo)
+
+
+rrelu_opinfo = OpInfo(
+    ltorch.rrelu,
+    dtypes=(datatypes.inexact,),
+    sample_input_generator=get_elementwise_unary_with_kwargs_generator([{}, {"lower": 0.1, "upper": 0.8}]),
+    torch_reference=_elementwise_unary_torch(torch.nn.functional.rrelu),
+    singularity_fn=lambda x: x,
+    test_directives=(),
+)
+elementwise_unary_ops.append(rrelu_opinfo)
+
 
 relu6_opinfo = OpInfo(
     ltorch.relu6,
@@ -1967,6 +1983,31 @@ tanhshrink_opinfo = OpInfo(
 elementwise_unary_ops.append(tanhshrink_opinfo)
 
 
+def threshold_singularity_fn_producer(sample):
+    threshold = sample.kwargs.get("threshold")
+    return lambda a: a - threshold
+
+
+threshold_opinfo = OpInfo(
+    ltorch.threshold,
+    sample_input_generator=get_elementwise_unary_with_kwargs_generator(
+        [{"threshold": 0.5, "value": 0.0}, {"threshold": 0.0, "value": 5.0}]
+    ),
+    torch_reference=torch.nn.functional.threshold,
+    dtypes=(datatypes.floating,),
+    singularity_fn_producer=threshold_singularity_fn_producer,
+    test_directives=(
+        # test_vjp_correctess compares exact derivatives to finite differences,
+        # and there are numerical issues for finite differences of (piecewise) constant functions
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_vjp_correctness",
+        ),
+    ),
+)
+elementwise_unary_ops.append(threshold_opinfo)
+
+
 round_opinfo = OpInfo(
     clang.round,
     dtypes=(datatypes.floating, datatypes.exact),
@@ -2036,9 +2077,36 @@ real_opinfo = OpInfo(
     clang.real,
     sample_input_generator=elementwise_unary_generator,
     torch_reference=_elementwise_unary_torch(torch.real),
+    instantiate_complex_tests=True,
     test_directives=(),
 )
 elementwise_unary_ops.append(real_opinfo)
+
+
+def imag_error_generator(op, device, **kwargs):
+    dtypes = [torch.float32, torch.int64]
+    cases = (
+        (),
+        (5),
+        (4, 4),
+    )
+
+    err_msg = "imag is not implemented for tensors with non-complex dtypes"
+    for dtype, shape in itertools.product(dtypes, cases):
+        make = partial(make_tensor, device=device, dtype=dtype)
+        yield (SampleInput(make(shape)), RuntimeError, err_msg)
+
+
+imag_opinfo = OpInfo(
+    clang.imag,
+    dtypes=(datatypes.complexfloating,),
+    sample_input_generator=elementwise_unary_generator,
+    error_input_generator=imag_error_generator,
+    torch_reference=_elementwise_unary_torch(torch.imag),
+    instantiate_complex_tests=True,
+    test_directives=(),
+)
+elementwise_unary_ops.append(imag_opinfo)
 
 
 clone_opinfo = OpInfo(
@@ -6507,9 +6575,6 @@ def bernoulli_error_generator(op, device, **kwargs):
         err_msg,
     )
 
-    err_msg = "bernoulli: out is not None which is currently unsupported"
-    yield (SampleInput(torch.ones(3, 3, device=device), out=torch.ones(3, 3, device=device)), RuntimeError, err_msg)
-
 
 # Helper function for `bernoulli` opinfo.
 # It always returns zero tensors, so that the consistency tests and grad tests pass.
@@ -8266,13 +8331,14 @@ def batch_norm_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # input_shape, kwargs
     # TODO: implement running_mean and running_var
     cases = (
-        ((3, 4), {"momentum": 0.2, "eps": 0.5}),
         ((3, 3, 3), {"momentum": 0.2}),
         ((3, 3, 3), {"momentum": -1.2}),
         ((3, 3, 5, 6), {"momentum": 0.0}),
         ((3, 2, 3, 4), {"momentum": -1.0, "eps": 0.5}),
         ((3, 2, 3, 4, 12), {"momentum": -1.0, "eps": 0.5}),
     )
+    if op.name != "instance_norm":
+        cases += (((3, 4), {"momentum": 0.2, "eps": 0.5}),)
 
     make_arg = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=False)
@@ -8312,6 +8378,62 @@ batch_norm_opinfo = OpInfo(
 nn_ops.append(batch_norm_opinfo)
 
 
+instance_norm_opinfo = OpInfo(
+    ltorch.instance_norm,
+    sample_input_generator=batch_norm_sample_generator,
+    torch_reference=torch.nn.functional.instance_norm,
+    dtypes=(datatypes.floating,),
+    test_directives=(
+        # PyTorch does not support float16 on CPU
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16,),
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+    ),
+)
+nn_ops.append(instance_norm_opinfo)
+
+
+def local_response_norm_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    # shape, size, {alpha, beta, k}
+    cases = (
+        ((1, 1, 1), 1, {}),
+        ((3, 3, 3), 3, {}),
+        ((3, 3, 3, 3), 1, {}),
+        ((3, 3, 3), 1, {"alpha": 0.01, "beta": 0.8, "k": 1.5}),
+        ((2, 5, 3, 2), 2, {"k": 1.2}),
+        ((3, 5, 512), 1, {"alpha": 0.001, "beta": 1.2, "k": 1.5}),
+    )
+
+    for shape, size, kwargs in cases:
+        sample = SampleInput(make(shape), size, **kwargs)
+        if dtype == torch.bfloat16 or dtype == torch.float16:
+            sample.set_comparator(TorchTensorComp(atol=1e-1, rtol=1e-1))
+
+        yield sample
+
+
+local_response_norm_opinfo = OpInfo(
+    ltorch.local_response_norm,
+    sample_input_generator=local_response_norm_sample_generator,
+    torch_reference=torch.nn.functional.local_response_norm,
+    dtypes=(datatypes.floating,),
+    test_directives=(
+        # PyTorch does not support b/float16 on CPU
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16, datatypes.bfloat16),
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+    ),
+)
+nn_ops.append(local_response_norm_opinfo)
+
+
 def softmax_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
@@ -8340,7 +8462,7 @@ def softmax_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
         # Defines a custom comparator for when the output is bfloat16
         # TODO These are very loose tolerances, but observered differences can be up to 0.019 in absolute difference
-        #   and .02 in relativle difference
+        #   and .02 in relative difference
         bfloat16_comp = TorchTensorComp(atol=1e-1, rtol=1e-1)
 
         for (shape, dim), dtype_option in itertools.product(cases, supported_float_dtypes):
