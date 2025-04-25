@@ -19,6 +19,7 @@ xlsxwriter # thunder/benchmarks/test_benchmark_litgpt.py
 jsonargparse # thunder/benchmarks/benchmark_litgpt.py
 bitsandbytes==0.42.0  # fixed version!
 transformers==4.50.3 # for test_networks.py
+flash-attn
 
 # Installs JAX on Linux and MacOS
 jaxlib; sys_platform == 'linux' or sys_platform == 'darwin'  # required for jax, see https://github.com/google/jax#installation
