@@ -230,7 +230,7 @@ def thunderfx(fn: Callable, /, **kwargs) -> Callable:
     # we have a place to hang the `last_*traces` properties.
     class CompiledObject:
         def __init__(self, be, func: Callable):
-            self._backend = backend
+            self._backend = be
             self._func = func
 
         def __call__(self, *args, **kwargs):
