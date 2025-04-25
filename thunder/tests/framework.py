@@ -650,3 +650,19 @@ def has_enough_device_memory(required_memory_bytes: int, cuda_device_id: int = 0
     total_memory = torch.cuda.get_device_properties(cuda_device_id).total_memory
 
     return total_memory > required_memory_bytes
+
+
+def requiresDeviceMemory(required_memory_bytes: int, cuda_device_id: int = 0):
+
+    def decorator(fn):
+        @wraps(fn)
+        def _fn(*args, **kwargs):
+            if not has_enough_device_memory(required_memory_bytes, cuda_device_id):
+                pytest.skip(
+                    f"Requires {required_memory_bytes} bytes of memory on device {cuda_device_id} but only {torch.cuda.get_device_properties(cuda_device_id).total_memory} bytes are available"
+                )
+            return fn(*args, **kwargs)
+
+        return _fn
+
+    return decorator

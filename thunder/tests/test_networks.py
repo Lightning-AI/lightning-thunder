@@ -18,7 +18,7 @@ from thunder.tests.framework import (
     _all_test_executors,
     version_between,
     BITSANDBYTES_AVAILABLE,
-    has_enough_device_memory,
+    requiresDeviceMemory,
 )
 import thunder.tests.nanogpt_model as nanogpt_model
 import thunder.tests.hf_bart_self_attn as hf_bart_self_attn
@@ -561,10 +561,7 @@ def test_hf_llama():
 
 
 @requiresCUDA
-@pytest.mark.skipif(
-    not has_enough_device_memory(3600000000),
-    reason="This test requires at least 3.6GB of memory",
-)
+@requiresDeviceMemory(required_memory_bytes=3.6 * 1024 * 1024 * 1024)
 def test_hf_phi3_vision():
     # This test takes around 3597163520 bytes (~3.59GB) of memory.
     # Shapes for data generated with help of the following script
