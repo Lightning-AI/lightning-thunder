@@ -1191,7 +1191,7 @@ frexp_opinfo = OpInfo(
         # AssertionError: Scalars are not close!
         DecorateInfo(
             pytest.mark.skip,
-            "test_phantom_grad_vs_torch_consistency",
+            "test_vjp_correctness",
             executors=("nvfuser",),
             dtypes=(datatypes.float64,),
         ),
