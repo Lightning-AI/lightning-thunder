@@ -1215,10 +1215,8 @@ def _sum_prim_grad(a: TensorProxy, /, dims: Sequence[int]) -> TensorProxy:
 register_grad(pids.SUM, _sum_prim_grad)
 
 
-def _topk_prim_grad(
-    a: TensorProxy, /, k: int, dim: None | int = None, largest: bool = True, sorted: bool = True, *, out=None
-):
-    fwd = prims.topk(a, k, dim, largest, sorted, out=out)
+def _topk_prim_grad(a: TensorProxy, /, k: int, dim: None | int = None, largest: bool = True, sorted: bool = True):
+    fwd = prims.topk(a, k, dim, largest, sorted)
     val, idx = fwd
 
     val_grad = get_grad(val)
@@ -1236,10 +1234,10 @@ register_grad(pids.TOPK, _topk_prim_grad)
 
 
 def _sort_prim_grad(
-    a: TensorProxy, /, dim: None | int = None, descending: bool = False, stable: bool = False, *, out=None
+    a: TensorProxy, /, dim: None | int = None, descending: bool = False, stable: bool = False
 ) -> (TensorProxy, TensorProxy):
     dim = -1 if dim is None else dim
-    sorted_a, sort_idx = prims.sort(a, dim, descending, stable, out=out)
+    sorted_a, sort_idx = prims.sort(a, dim, descending, stable)
 
     sorted_a_grad = get_grad(sorted_a)
 
@@ -1427,9 +1425,9 @@ def _copy_with_setitem_grad(a: TensorProxy, index, value: Number | TensorProxy):
 
     if isinstance(value, TensorProxy):
         value_grad = g[index]
-        expanded_dims = value_grad.ndim - value.ndim
-        if expanded_dims > 0:
-            value_grad = prims.sum(value_grad, tuple(range(expanded_dims)))
+        # NOTE: `value` could be broadcasted.
+        if not utils.same_shape(value_grad.shape, value.shape):
+            value_grad = sum_to(value_grad, value.shape)
         put_grad(value, value_grad)
 
     return fwd
@@ -1783,6 +1781,26 @@ def var_backward(a, dim, correction, v, g):
     mean = prims.sum(a, dim) / n_elem_reduced
     mean = restore_reduced_dims(mean, dim, a.shape)
     return (2 * g * (a - mean)) / normalization_scalar
+
+
+@register_augmented_forward(prims.PrimIDs.STD)
+def std_aug_fwd(a, dim, *, correction):
+    v = prims.std(a, dim, correction=correction)
+    return VJPDual((v,), (a, dim, correction, v))
+
+
+@register_backward(prims.PrimIDs.STD)
+def std_backward(a, dim, correction, s, g):
+    n_elem_reduced = a.numel() // s.numel() if a.numel() != 0 else 1
+    normalization_scalar = n_elem_reduced - correction
+    g = restore_reduced_dims(g, dim, a.shape)
+    s = restore_reduced_dims(s, dim, a.shape)
+    if a.dtype != s.dtype:
+        a = prims.convert_element_type(a, s.dtype)
+    mean = prims.sum(a, dim) / n_elem_reduced
+    mean = restore_reduced_dims(mean, dim, a.shape)
+    grad = ((a - mean) / (normalization_scalar * s)).masked_fill(s == 0, 0)
+    return g * grad
 
 
 def n_elem_reduced(a_ndim, a_shape, dims):

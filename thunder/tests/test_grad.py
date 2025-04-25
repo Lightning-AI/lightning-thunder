@@ -46,6 +46,7 @@ op_skip = {
     "embedding",
     "index_put",
     "batch_norm",
+    "instance_norm",
     "type_as",
 }
 
@@ -75,6 +76,7 @@ vjp_op_force = {
     "mse_loss",
     "adaptive_avg_pool2d",
     "max_pool2d",
+    "local_response_norm",
 }
 
 
@@ -479,7 +481,7 @@ def test_vjp_correctness_type_as_manual(op, device, dtype, executor, comp):
 
 
 @ops(
-    (get_opinfo("batch_norm"),),
+    (get_opinfo("batch_norm"), get_opinfo("instance_norm")),
     supported_dtypes=(dtypes.float64,),
 )
 def test_vjp_correctness_batch_norm_manual(op, device, dtype, executor, comp):
@@ -715,7 +717,12 @@ def test_vjp_correctness_einsum_manual(op, device, dtype, executor, comp):
 # TODO Extend requires_grad so that tensors produced from thunder.jit functions requires_grad
 #   and have their autograd functions set properly
 # Tests that we track the requires_grad property properly
-@instantiate(dtypes=(dtypes.float32,))
+@instantiate(
+    dtypes=(dtypes.float32,),
+    # TODO Reenable this test when we track the requires_grad consistently for all operators
+    # See https://github.com/Lightning-AI/lightning-thunder/issues/1768
+    decorators=(pytest.mark.xfail(strict=True, reason="Requires_grad propagation is not implemented"),),
+)
 def test_requires_grad(executor, device, dtype):
     import thunder.torch as ltorch
 
@@ -1320,7 +1327,12 @@ def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp):
         # torch.return_types.topk(
         # values=tensor([1., 1.]),
         # indices=tensor([0, 1]))
-        return x.grad_fn is not None
+        return x.grad_fn is not None or is_returning_self(x)
+
+    def is_returning_self(x):
+        if x.is_leaf and x.requires_grad:
+            return True
+        return False
 
     def filter_differentiable_outputs(outputs):
         if isinstance(outputs, torch.Tensor):
@@ -1380,7 +1392,10 @@ def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp):
     thunder_flat_grads = grad_op(*sample.args, **sample.kwargs)
 
     assert_closer(
-        reference=reference_grad_result, candidate=thunder_flat_grads, competitor=torch_grad_result, comparator=comp
+        reference=reference_grad_result,
+        candidate=thunder_flat_grads,
+        competitor=torch_grad_result,
+        comparator=comp,
     )
 
 
@@ -1389,7 +1404,7 @@ def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp):
     supported_dtypes=dtypes.float_math_dtypes,
 )
 def test_phantom_grad_vs_torch_consistency(op, device: str, dtype: dtypes.dtype, executor, comp):
-    if dtypes.is_complex_dtype(dtype):
+    if dtypes.is_complex_dtype(dtype) and not op.instantiate_complex_tests:
         pytest.skip("Skipping complex operator tests in CI for speed")
     if torch.device(device).type == "cuda" and dtype is dtypes.bfloat16 and not torch.cuda.is_bf16_supported():
         pytest.skip("Your CUDA device does not support bfloat16")
