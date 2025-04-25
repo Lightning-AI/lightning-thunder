@@ -2462,6 +2462,82 @@ class NanoGPTLayerNormBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return layernorm_module
 
 
+class LitGPTRMSNormBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    _args = (
+        BenchmarkArg(
+            name="config",
+            description="The LitGPT config (str, LitGPTConfig) to use. See the litgpt_model.py for details.",
+        ),
+        BenchmarkArg(
+            name="batchdims",
+            description="The shape (Sequence[int]) of input batch dimensions. Default is (16,).",
+        ),
+        BenchmarkArg(
+            name="device",
+            description="A device (str) to run on. Default is 'cuda'.",
+        ),
+        BenchmarkArg(
+            name="dtype",
+            description="The dtype (thunder.dtypes.dtype, torch.dtype, or str) of the input and model. Default is thunder.float32.",
+        ),
+        BenchmarkArg(
+            name="requires_grad",
+            description="Whether the model parameters require grad. Default is True.",
+        ),
+    )
+
+    @classmethod
+    @property
+    def name(cls) -> str:
+        return "litgpt-rmsnorm"
+
+    @classmethod
+    @property
+    def description(cls) -> str:
+        return "LitGPT's rms norm operation."
+
+    @classmethod
+    @property
+    def args(cls) -> tuple[BenchmarkArg, ...]:
+        return cls._args
+
+    def __init__(
+        self,
+        config: str,
+        batchdims: Sequence[int] = (16,),
+        device: str = "cuda",
+        dtype: dtypes.dtype = thunder.float32,
+        requires_grad: bool = True,
+        use_apex: bool = False,
+    ) -> None:
+        from litgpt.config import Config as LitGPTConfig
+
+        super().__init__()
+
+        self.config = LitGPTConfig.from_name(config) if not isinstance(config, LitGPTConfig) else config
+        self.batchdims = batchdims
+        self.device = device
+        self.dtype = dtype
+        self.requires_grad: bool = requires_grad
+        self.tdtype: torch.dtype = ltorch.to_torch_dtype(self.dtype)
+        self.devices: list[str] = [device]
+        self.use_apex = use_apex
+
+    def make_batch(self) -> tuple[list, dict]:
+        make = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
+        shape = self.batchdims + (self.config.n_embd,)
+
+        return (make(shape),), {}
+
+    def fn(self) -> Callable:
+        return torch.nn.RMSNorm(
+            normalized_shape=self.config.n_embd,
+            eps=self.config.norm_eps,
+            device=self.device,
+            dtype=self.dtype,
+        )
+
+
 class NanoGPTEmbeddingBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     _args = (
         BenchmarkArg(
