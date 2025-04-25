@@ -561,13 +561,19 @@ def test_hf_llama():
 
 
 @requiresCUDA
-@requiresDeviceMemory(required_memory_bytes=3.6 * 1024 * 1024 * 1024)
-def test_hf_phi3_vision():
+@requiresDeviceMemory(required_memory_bytes=int(3.6 * 1024 * 1024 * 1024))
+@pytest.mark.parametrize("attn_implementation", [None, "sdpa"])
+def test_hf_phi3_vision(attn_implementation):
     # This test takes around 3597163520 bytes (~3.59GB) of memory.
     # Shapes for data generated with help of the following script
     # https://github.com/microsoft/PhiCookBook/blob/main/code/03.Finetuning/Phi-3-vision-Trainingscript.py
     from transformers import AutoModelForCausalLM, AutoConfig
     from thunder.dynamo import thunderfx
+
+    if attn_implementation is None:
+        # Flash Attention is the default implementation.
+        # Skip if flash_attn is not installed.
+        pytest.importorskip("flash_attn", reason="Flash Attention")
 
     # trust_remote_code=True is required else you get the following error:
     # ValueError: Loading microsoft/Phi-3-vision-128k-instruct requires you to execute the configuration file in that repo on your local machine.
@@ -575,7 +581,9 @@ def test_hf_phi3_vision():
     cfg.num_hidden_layers = 1
 
     with torch.device("cuda"):
-        model = AutoModelForCausalLM.from_config(cfg, trust_remote_code=True, torch_dtype=torch.bfloat16)
+        model = AutoModelForCausalLM.from_config(
+            cfg, trust_remote_code=True, torch_dtype=torch.bfloat16, attn_implementation=attn_implementation
+        )
         input_ids = torch.randint(0, 100, (1, 256))
         pixel_values = torch.randint(0, 254, (1, 256, 256, 3), dtype=torch.uint8)
         labels = input_ids.clone().detach()
