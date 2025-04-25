@@ -91,6 +91,7 @@ def check_inplace_to_views(computation_trace: Trace) -> dict[VariableInterface, 
                         f"supported. It's unclear if the output of "
                         f"{tuple(s.id for s in ltorch._syms_that_may_return_views)} is "
                         f"a copy, a view, or the input itself, as per https://pytorch.org/docs/stable/tensor_view.html"
+                        f"\n`thunder.jit(..., skip_inplace_alias_updates=False, skip_inplace_functionalization=True)` might work."
                     ),
                     NotImplementedError,
                 )
@@ -100,8 +101,10 @@ def check_inplace_to_views(computation_trace: Trace) -> dict[VariableInterface, 
         check(
             orig_tensor.numel == in_tensor.numel,
             lambda: (
-                f"in-place op of `{bsym.sym.id}` to `{in_tensor}`, a view tensor of "
-                f"`{orig_tensor}` is not supported because {in_tensor.numel} != {orig_tensor.numel}"
+                f"in-place functionalization failed with in-place op of `{bsym.sym.id}` to `{in_tensor}`, a view tensor of "
+                f"`{orig_tensor}` is not supported because they have different number of elements "
+                f"{in_tensor.numel} != {orig_tensor.numel}."
+                f"\n`thunder.jit(..., skip_inplace_alias_updates=False, skip_inplace_functionalization=True)` might work."
             ),
             NotImplementedError,
         )
