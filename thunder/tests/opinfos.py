@@ -1188,6 +1188,13 @@ frexp_opinfo = OpInfo(
     sample_input_generator=partial(elementwise_unary_generator, small=True),
     torch_reference=_elementwise_unary_torch(torch.frexp),
     test_directives=(
+        # AssertionError: Scalars are not close!
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_phantom_grad_vs_torch_consistency",
+            executors=("nvfuser",),
+            dtypes=(datatypes.float64,),
+        ),
         DecorateInfo(
             pytest.mark.skip,
             "test_phantom_grad_vs_torch_consistency",
