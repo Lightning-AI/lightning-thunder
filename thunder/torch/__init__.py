@@ -1038,11 +1038,9 @@ def pad(a: TensorProxy, /, pad: tuple[int, ...], mode: str | None = "constant", 
     if value is None:
         value = 0
     a_typ = to_dtype(a, true_dtype=True)
-    # Note that this can be unsafe. This can happen, for example, if `a` is an
-    # integer tensor and `value` is a float. It can also be more subtle, where
-    # `a` is a lower-precision float than `value`.
-    if a_typ is not to_dtype(value, true_dtype=True):
-        warnings.warn("`value` and Tensor input are of different types. This " "may create numeric issues.")
+    # Note that when value is a float but the tensor is of dtype integer, it will be truncated.
+    # Similarly, a float value is cast to lower precision.
+    # Questionable or not, we do follow PyTorch behaviour here.
     v2 = clang.maybe_convert_to_dtype(value, a_typ)
 
     return clang.pad(a, v2, pad_config)
