@@ -196,6 +196,7 @@ class PrimIDs(Enum):
     EXP2 = auto()
     EXPM1 = auto()
     FLOOR = auto()
+    FREXP = auto()
     ISFINITE = auto()
     LGAMMA = auto()
     LOG = auto()
@@ -2234,6 +2235,14 @@ floor = _make_elementwise_unary_prim(
     supported_input_dtypes=ceil_floor_math_dtypes,
     output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.INT_FOR_NUMBER,
 )
+
+
+def frexp_meta(a: TensorProxy, /) -> (TensorProxy, TensorProxy):
+    utils.check_type(a, TensorProxy)
+    return TensorProxy(like=a), TensorProxy(like=a, dtype=dtypes.int32)
+
+
+frexp = make_prim(PrimIDs.FREXP, "frexp", meta=frexp_meta)
 
 isfinite = _make_elementwise_unary_prim(
     PrimIDs.ISFINITE,
