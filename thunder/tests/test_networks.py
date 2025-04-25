@@ -583,6 +583,8 @@ def test_hf_phi3_vision():
         pixel_values = torch.randint(0, 254, (1, 256, 256, 3), dtype=torch.uint8)
         labels = input_ids.clone().detach()
 
+        # Using default fusion_type can lead to invalid trace
+        # See https://github.com/Lightning-AI/lightning-thunder/issues/1858
         jit_model = thunderfx(model, fusion_type="consecutive")
         thunder_result = jit_model(input_ids=input_ids, pixel_values=pixel_values, labels=labels)
         eager_result = model(input_ids=input_ids, pixel_values=pixel_values, labels=labels)
