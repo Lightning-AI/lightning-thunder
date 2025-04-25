@@ -1442,9 +1442,9 @@ def _copy_with_setitem_grad(a: TensorProxy, index, value: Number | TensorProxy):
 
     if isinstance(value, TensorProxy):
         value_grad = g[index]
-        expanded_dims = value_grad.ndim - value.ndim
-        if expanded_dims > 0:
-            value_grad = prims.sum(value_grad, tuple(range(expanded_dims)))
+        # NOTE: `value` could be broadcasted.
+        if not utils.same_shape(value_grad.shape, value.shape):
+            value_grad = sum_to(value_grad, value.shape)
         put_grad(value, value_grad)
 
     return fwd

@@ -347,6 +347,7 @@ class OpInfo:
         singularity_fn=None,
         singularity_fn_producer=None,
         test_torch_compile_executor=False,
+        instantiate_complex_tests=False,
     ):
         self.op = op
 
@@ -387,6 +388,7 @@ class OpInfo:
             (lambda _: singularity_fn) if singularity_fn_producer is None else singularity_fn_producer
         )
         self.test_torch_compile_executor = test_torch_compile_executor
+        self.instantiate_complex_tests = instantiate_complex_tests
 
     def __call__(self, *args, **kwargs):
         """Calls the function variant of the operator."""
@@ -575,6 +577,7 @@ is_complex_opinfo = OpInfo(
     sample_input_generator=elementwise_unary_generator,
     torch_reference=_elementwise_unary_torch(torch.is_complex),
     dtypes=(datatypes.all_dtypes),
+    instantiate_complex_tests=True,
 )
 
 tensor_properties.append(is_complex_opinfo)
@@ -1635,6 +1638,7 @@ neg_opinfo = OpInfo(
     dtypes=set(datatypes.all_dtypes) - set(datatypes.boolean_dtypes),
     sample_input_generator=elementwise_unary_generator,
     torch_reference=_elementwise_unary_torch(torch.neg),
+    instantiate_complex_tests=True,
 )
 elementwise_unary_ops.append(neg_opinfo)
 
@@ -2107,6 +2111,7 @@ real_opinfo = OpInfo(
     clang.real,
     sample_input_generator=elementwise_unary_generator,
     torch_reference=_elementwise_unary_torch(torch.real),
+    instantiate_complex_tests=True,
     test_directives=(),
 )
 elementwise_unary_ops.append(real_opinfo)
@@ -2132,6 +2137,7 @@ imag_opinfo = OpInfo(
     sample_input_generator=elementwise_unary_generator,
     error_input_generator=imag_error_generator,
     torch_reference=_elementwise_unary_torch(torch.imag),
+    instantiate_complex_tests=True,
     test_directives=(),
 )
 elementwise_unary_ops.append(imag_opinfo)
