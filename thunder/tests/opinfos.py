@@ -1176,6 +1176,8 @@ floor_opinfo = OpInfo(
 )
 elementwise_unary_ops.append(floor_opinfo)
 
+# TODO: test_vjp_correctness fails for float64 inputs of larger shapes
+# https://github.com/Lightning-AI/lightning-thunder/issues/1991
 frexp_opinfo = OpInfo(
     clang.frexp,
     supports_grad=True,
@@ -1183,11 +1185,6 @@ frexp_opinfo = OpInfo(
     sample_input_generator=partial(elementwise_unary_generator, small=True),
     torch_reference=_elementwise_unary_torch(torch.frexp),
     test_directives=(
-        DecorateInfo(
-            pytest.mark.skip,
-            "test_phantom_grad_vs_torch_consistency",
-            executors=("nvfuser",),
-        ),
         DecorateInfo(
             pytest.mark.skip,
             "test_phantom_grad_vs_torch_consistency",
