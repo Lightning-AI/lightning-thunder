@@ -1938,12 +1938,21 @@ class LlamaMLPBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
             name="requires_grad",
             description="Whether the model parameters require grad. Default is True.",
         ),
+        BenchmarkArg(
+            name="name",
+            description="The name of the mlp variant to benchmark.",
+        ),
     )
 
     @classmethod
     @property
     def name(cls) -> str:
         return "litgpt-llamamlp"
+
+    @classmethod
+    @property
+    def description(cls) -> str:
+        return "Benchmark mlp variants."
 
     @classmethod
     @property
@@ -1957,6 +1966,7 @@ class LlamaMLPBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         device: str = "cuda",
         dtype: dtypes.dtype = thunder.bfloat16,
         requires_grad: bool = True,
+        name: str = "LLaMAMLP",
     ) -> None:
         from litgpt.config import Config as LitGPTConfig
 
@@ -1967,6 +1977,7 @@ class LlamaMLPBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         self.device = device
         self.dtype = dtype
         self.requires_grad: bool = requires_grad
+        self.name: str = name
 
         # Performs torch dtype conversions
         self.tdtype: torch.dtype = ltorch.to_torch_dtype(self.dtype)
@@ -1981,9 +1992,20 @@ class LlamaMLPBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return (make(shape),), {}
 
     def fn(self) -> Callable:
-        from litgpt.model import LLaMAMLP
+        from litgpt.model import GemmaMLP, GptNeoxMLP, LLaMAMLP, LLaMAMoE
 
-        module = LLaMAMLP(self.config).to(device=self.device, dtype=self.tdtype).requires_grad_(self.requires_grad)
+        mlp_variant = {
+            "GemmaMLP": GemmaMLP,
+            "GptNeoxMLP": GptNeoxMLP,
+            "LLaMAMLP": LLaMAMLP,
+            "LLaMAMoE": LLaMAMoE,
+        }
+
+        module = (
+            mlp_variant[self.name](self.config)
+            .to(device=self.device, dtype=self.tdtype)
+            .requires_grad_(self.requires_grad)
+        )
         return module
 
 
