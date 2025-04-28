@@ -24,7 +24,7 @@ class DebugTransform(thunder.core.transforms.Transform):
     """
     A transform for debugging purposes.
 
-    This class allows pre- and post-execution callbacks to be applied around bousdsymbols of a trace.
+    This transform applies pre- and post-execution callbacks around bound symbols of a trace.
 
     Args:
         pre_callback: An optional callable that is executed before each bound symbol is processed.
