@@ -21,6 +21,19 @@ def create_debug_boundsymbol(name: str, bsym: BoundSymbol, call_ctx: Callable, p
 
 
 class DebugTransform(thunder.core.transforms.Transform):
+    """
+    A transform for debugging purposes.
+
+    This class allows pre- and post-execution callbacks to be applied around bousdsymbols of a trace.
+    
+    Args:
+        pre_callback: An optional callable that is executed before each bound symbol is processed.
+            It should have the signature ``(BoundSymbol, *args, **kwargs)`` and return a string. If :obj:`None`, no
+            pre-execution callback is used.
+        post_callback: An optional callable that is executed after each bound symbol is processed.
+            It should have the signature ``(BoundSymbol, output, *args, **kwargs)`` and return a string. If :obj:`None`, no
+            post-execution callback is used.
+    """
     def __init__(
         self,
         *,
