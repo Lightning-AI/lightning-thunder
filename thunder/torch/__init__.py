@@ -795,7 +795,7 @@ def randint(
     device = to_device(maybe_get_default_device(device))
     dtype = to_dtype(maybe_get_default_dtype(dtype))
     shape = tuple(utils.extract_shape_from_varargs(shape))
-    return clang.randint(low, high, shape, device=device, dtype=dtype)
+    return prims.randint(low, high, shape, device=device, dtype=dtype)
 
 
 @torchsymbol(torch.randn)
