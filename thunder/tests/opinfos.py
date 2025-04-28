@@ -6516,6 +6516,10 @@ def torch_randn_and_zero(*args, **kwargs):
     return ltorch.full_like(ltorch.randn(*args, **kwargs), 0)
 
 
+def torch_rand_and_zero(*args, **kwargs):
+    return ltorch.full_like(ltorch.rand(*args, **kwargs), 0)
+
+
 def randn_error_generator(op, device, **kwargs):
     err_msg = "requires_grad=True is not yet supported"
     yield (SampleInput(1, 2, requires_grad=True), NotImplementedError, err_msg)
@@ -6536,6 +6540,16 @@ randn_opinfo = OpInfo(
     dtypes=(datatypes.floating, datatypes.complexfloating),
 )
 tensor_creation_ops.append(randn_opinfo)
+
+rand_opinfo = OpInfo(
+    name="rand",
+    op=torch_rand_and_zero,
+    sample_input_generator=varargs_tensor_creation_op_sample_generator,
+    error_input_generator=randn_error_generator,  # Does not depend on the distribution
+    torch_reference=lambda *args, **kwargs: torch.rand(*args, **kwargs).fill_(0),
+    dtypes=(datatypes.floating, datatypes.complexfloating),
+)
+tensor_creation_ops.append(rand_opinfo)
 
 
 # Helper function for `randn_like` opinfo.
