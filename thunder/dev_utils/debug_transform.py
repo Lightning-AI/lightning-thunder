@@ -14,7 +14,7 @@ def create_debug_boundsymbol(name: str, bsym: BoundSymbol, call_ctx: Callable, p
 
     debug_sym = Symbol(name, lambda *_, **__: None, is_prim=True, _bind_postprocess=bind_postprocess)
     if pass_result:
-        debug_bsym = debug_sym.bind(*bsym.args, output=None, result=bsym.output, **bsym.kwargs)
+        debug_bsym = debug_sym.bind(bsym.output, *bsym.args, output=None, **bsym.kwargs)
     else:
         debug_bsym = debug_sym.bind(*bsym.args, output=None, **bsym.kwargs)
     return debug_bsym
@@ -58,8 +58,8 @@ class DebugTransform(thunder.core.transforms.Transform):
 
             if self.post_callback is not None:
 
-                def _post_call_ctx(post_debug_bsym, bsym, *args, **kwargs):
-                    out = self.post_callback(bsym, *args, **kwargs)
+                def _post_call_ctx(post_debug_bsym, bsym, output, *args, **kwargs):
+                    out = self.post_callback(bsym, output, *args, **kwargs)
                     thunder.core.utils.check_type(out, str)
                     post_debug_bsym.header = out
 
