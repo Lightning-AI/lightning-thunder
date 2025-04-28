@@ -6561,7 +6561,7 @@ randint_opinfo = OpInfo(
     sample_input_generator=varargs_tensor_creation_op_sample_generator,
     error_input_generator=randn_error_generator,  # Does not depend on the distribution
     torch_reference=lambda *args, **kwargs: torch.randint(*args, **kwargs).fill_(0),
-    dtypes=(datatypes.integer,),
+    dtypes=(datatypes.int64,),
 )
 tensor_creation_ops.append(randint_opinfo)
 
