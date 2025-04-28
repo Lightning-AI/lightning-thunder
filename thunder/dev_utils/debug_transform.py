@@ -31,7 +31,7 @@ class DebugTransform(thunder.core.transforms.Transform):
             It should have the signature ``(BoundSymbol, *args, **kwargs)`` and return a string. If :obj:`None`, no
             pre-execution callback is used.
         post_callback: An optional callable that is executed after each bound symbol is processed.
-            It should have the signature ``(BoundSymbol, output, *args, **kwargs)`` and return a string. If :obj:`None`, no
+            It should have the signature ``(BoundSymbol, output, /, *args, **kwargs)`` and return a string. If :obj:`None`, no
             post-execution callback is used.
     """
 
