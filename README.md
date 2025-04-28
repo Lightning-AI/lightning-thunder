@@ -49,8 +49,7 @@ For **performance experts**, Thunder is the most ergonomic framework for underst
 <div align="center">
   <div style="text-align: center;">
     <a target="_blank" href="#quick-start" style="margin: 0 10px;">Quick start</a> •
-    <a target="_blank" href="#featured-examples" style="margin: 0 10px;">Examples</a> •
-    <a target="_blank" href="#features" style="margin: 0 10px;">Features</a> •
+    <a target="_blank" href="#examples" style="margin: 0 10px;">Examples</a> •
     <a target="_blank" href="#performance" style="margin: 0 10px;">Performance</a> •
     <!-- <a target="_blank" href="#hosting-options" style="margin: 0 10px;">Hosting</a> • -->
     <a target="_blank" href="https://lightning.ai/docs/thunder/latest/" style="margin: 0 10px;">Docs</a>
