@@ -8,16 +8,19 @@ from thunder.core.symbol import Symbol, BoundSymbol
 from thunder.dev_utils.utils import NON_COMPUTATION_PRIMS
 
 
-def create_debug_boundsymbol(name: str, bsym: BoundSymbol, call_ctx: Callable):
+def create_debug_boundsymbol(name: str, bsym: BoundSymbol, call_ctx: Callable, pass_result: bool = False):
     def bind_postprocess(debug_bsym):
         debug_bsym._call_ctx = {name: partial(call_ctx, debug_bsym, bsym)}
 
     debug_sym = Symbol(name, lambda *_, **__: None, is_prim=True, _bind_postprocess=bind_postprocess)
-    debug_bsym = debug_sym.bind(*bsym.args, output=None, **bsym.kwargs)
+    if pass_result:
+        debug_bsym = debug_sym.bind(*bsym.args, output=None, result=bsym.output, **bsym.kwargs)
+    else:
+        debug_bsym = debug_sym.bind(*bsym.args, output=None, **bsym.kwargs)
     return debug_bsym
 
 
-class _DebugTransform(thunder.core.transforms.Transform):
+class DebugTransform(thunder.core.transforms.Transform):
     def __init__(
         self,
         *,
@@ -61,7 +64,7 @@ class _DebugTransform(thunder.core.transforms.Transform):
                     post_debug_bsym.header = out
 
                 post_debug_name = f"debug_post_{sym_name}{debug_counter}"
-                post_debug_bsym = create_debug_boundsymbol(post_debug_name, bsym, _post_call_ctx)
+                post_debug_bsym = create_debug_boundsymbol(post_debug_name, bsym, _post_call_ctx, pass_result=True)
                 new_bsyms.append(post_debug_bsym)
 
             debug_counter += 1
@@ -94,5 +97,5 @@ def debug_execution_trace(cfn, pre_callback: Callable | None = None, post_callba
         raise RuntimeError(
             "debug_execution_trace: Both `pre_callback` and `post_callback` were None, expected atleast one of them to not be None."
         )
-    _debug_transform = _DebugTransform(pre_callback=pre_callback, post_callback=post_callback)
+    _debug_transform = DebugTransform(pre_callback=pre_callback, post_callback=post_callback)
     return thunder.core.transforms.add_transform(cfn, transform=_debug_transform)
