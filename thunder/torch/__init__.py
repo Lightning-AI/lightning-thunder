@@ -771,6 +771,33 @@ def rand(
     return clang.uniform(shape, 0, 1, device=device, dtype=dtype)
 
 
+@torchsymbol(torch.randint)
+def randint(
+    high,
+    *shape,
+    low: int = 0,
+    generator: None | torch.Generator = None,
+    out: TensorLike = None,
+    dtype: None | dtypeLike = None,
+    layout: torch.layout = torch.strided,
+    device: None | DeviceLike = None,
+    requires_grad: bool = False,
+):
+    utils.check(
+        not requires_grad, lambda: "requires_grad=True is not yet supported within thunder.jit", NotImplementedError
+    )
+    utils.check(layout == torch.strided, lambda: "Only torch.strided layout is supported", NotImplementedError)
+
+    # NOTE: Currently, we don't model randomness
+    utils.check(generator is None, lambda: "generator is not None which is currently unsupported", NotImplementedError)
+    utils.check(out is None, lambda: "out is not None which is currently unsupported", NotImplementedError)
+
+    device = to_device(maybe_get_default_device(device))
+    dtype = to_dtype(maybe_get_default_dtype(dtype))
+    shape = tuple(utils.extract_shape_from_varargs(shape))
+    return clang.randint(low, high, shape, device=device, dtype=dtype)
+
+
 @torchsymbol(torch.randn)
 def randn(
     *shape,

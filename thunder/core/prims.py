@@ -153,6 +153,7 @@ class PrimIDs(Enum):
     IOTA = auto()
     UNIFORM = auto()
     UNIFORM_PHILOX = auto()
+    RANDINT = auto()
     RANDN = auto()
     EMPTY = auto()
     TENSOR_FROM_SEQUENCE = auto()
@@ -3024,6 +3025,27 @@ def _randn_meta(
 
 
 randn = make_prim(PrimIDs.RANDN, "randn", meta=_randn_meta)
+
+
+def _randint_meta(
+    low: int,
+    high: int,
+    shape: tuple[int, ...],
+    *,
+    device: devices.Device,
+    dtype: dtypes.dtype,
+):
+    utils.check_type(low, int)
+    utils.check_type(high, int)
+    utils.check(low < high, lambda: f"`low` must be less than `high` but {low=}, {high=}")
+    utils.check_type(device, devices.Device)
+    utils.check_type(dtype, dtypes.dtype)
+    utils.check_type(shape, tuple)
+    utils.check_valid_shape(shape)
+    return TensorProxy(shape=shape, device=device, dtype=dtype)
+
+
+randintn = make_prim(PrimIDs.RANDINT, "randint", meta=_randint_meta)
 
 
 def _empty_meta(
