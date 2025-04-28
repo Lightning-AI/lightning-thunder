@@ -1192,7 +1192,7 @@ frexp_opinfo = OpInfo(
         DecorateInfo(
             pytest.mark.skip,
             "test_vjp_correctness",
-            executors=("nvfuser",),
+            executors=("torch", "nvfuser"),
             dtypes=(datatypes.float64,),
         ),
         DecorateInfo(
