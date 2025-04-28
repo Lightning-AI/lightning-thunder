@@ -23,7 +23,7 @@ from thunder.benchmarks import (
     LitGPTCausalSelfAttentionBenchmark,
     LitGPTSDPABenchmark,
     LitGPTSwigluBenchmark,
-    LlamaMLPBenchmark,
+    LitGPTMLPBenchmark,
     NanoGPTBenchmark,
     NanoGPTCrossEntropyBenchmark,
     LitGPTGeluBenchmark,
@@ -510,8 +510,8 @@ def get_configs_for_llamamlp():
     ["GemmaMLP", "GptNeoxMLP", "LLaMAMLP", "LLaMAMoE"],
     ids=["GemmaMLP", "GptNeoxMLP", "LLaMAMLP", "LLaMAMoE"],
 )
-def test_llama2_mlp_7b(benchmark, executor: Callable, bs: int, compute_type: ComputeType, config: str, name: str):
-    bench: Benchmark = LlamaMLPBenchmark(
+def test_litgpt_mlp(benchmark, executor: Callable, bs: int, compute_type: ComputeType, config: str, name: str):
+    bench: Benchmark = LitGPTMLPBenchmark(
         config=config,
         batchdims=(bs,),
         device="cuda:0",

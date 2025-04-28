@@ -1916,7 +1916,7 @@ class NanoGPTMLPBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return gpt_mlp
 
 
-class LlamaMLPBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+class LitGPTMLPBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     _args = (
         BenchmarkArg(
             name="config",
