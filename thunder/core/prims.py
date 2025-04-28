@@ -3045,7 +3045,7 @@ def _randint_meta(
     return TensorProxy(shape=shape, device=device, dtype=dtype)
 
 
-randintn = make_prim(PrimIDs.RANDINT, "randint", meta=_randint_meta)
+randint = make_prim(PrimIDs.RANDINT, "randint", meta=_randint_meta)
 
 
 def _empty_meta(
