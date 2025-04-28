@@ -134,7 +134,7 @@ RUN \
         cd Fuser && \
         git submodule update --init --recursive && \
         pip install -r requirements.txt && \
-        pip install -v --no-build-isolation --config-settings --build_option="--no-test" --build_option="--no-benchmark" -e . && \
+        pip install -v --no-build-isolation --config-settings --build_option="--no-test" --config-settings --build_option="--no-benchmark" -e . && \
         cd .. && \
         rm -rf Fuser ; \
     elif [ "${TORCH_INSTALL}" == "test" ]; then \
@@ -143,7 +143,7 @@ RUN \
         cd Fuser && \
         git submodule update --init --recursive && \
         pip install -r requirements.txt && \
-        pip install -v --no-build-isolation --config-settings --build_option="--no-test" --build_option="--no-benchmark" -e . && \
+        pip install -v --no-build-isolation --config-settings --build_option="--no-test" --config-settings --build_option="--no-benchmark" -e . && \
         cd .. && \
         rm -rf Fuser ; \
     else \
