@@ -53,6 +53,6 @@ def test_debug_option():
         jfn(a, b)
 
     # broken with less nice error
-    jfn = thunder.jit(fn, transforms=(BrokenTransform(),))
-    with pytest.raises(UnboundLocalError, match="cannot access local"):
+    jfn = thunder.jit(fn, transforms=(BrokenTransform(),), executors=())
+    with pytest.raises(UnboundLocalError, match="cannot access local|referenced before assignment"):
         jfn(a, b)
