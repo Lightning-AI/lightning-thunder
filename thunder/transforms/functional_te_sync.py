@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 from thunder import Transform
 from thunder.core import prims
 from thunder.core.proxies import Proxy, Variable, unvariableify, variableify
-from thunder.core.trace import from_trace, tracectx, TraceProvenance, TraceTag
+from thunder.core.trace import from_trace, TraceProvenance, TraceTag
 from thunder.core.transforms import (
     _update_forward_with_new_saved_for_backward,
     _update_backward_with_new_saved_for_backward,
