@@ -1,7 +1,7 @@
 Additional executors
 ####################
 
-nvFuser and Pytorch are not the only executors available in Thunder today. Additional executors can be added to *thunder* prior to compilation through a registration mechanism, which makes it easy to have specialized executors perform certain operations more efficiently.
+nvFuser and Pytorch are not the only executors available in Thunder today. Additional executors can be added to Thunder prior to compilation through a registration mechanism, which makes it easy to have specialized executors perform certain operations more efficiently.
 
 This section contains a list of all executors supported by PyTorch beyond nvFuser and PyTorch.
 
