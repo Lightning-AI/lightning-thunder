@@ -773,8 +773,8 @@ def rand(
 
 @torchsymbol(torch.randint)
 def randint(
-    low,
-    high,
+    low: int,
+    high: int,
     *shape,
     generator: None | torch.Generator = None,
     out: TensorLike = None,

@@ -6463,12 +6463,13 @@ def fixed_value_tensor_creation_op_sample_generator_with_bounds(op, device, dtyp
 
     bounds = (
         (0, 2),
+        (2,), # we want to support the case when low is not given, like PyTorchß
     )
 
     for shape in cases:
         for bound in bounds:
-            print(SampleInput(*bound, shape, device=device, dtype=dtype))
             yield SampleInput(*bound, shape, device=device, dtype=dtype)
+
 
 def fixed_value_tensor_creation_op_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # shape
@@ -6507,10 +6508,9 @@ def varargs_tensor_creation_op_sample_generator(*args, **kwargs):
     yield from fixed_value_tensor_creation_op_sample_generator(*args, **kwargs)
     yield from vargs_shape_sample_generator(*args, **kwargs)
 
+
 def varargs_tensor_creation_op_sample_generator_with_bounds(*args, **kwargs):
     yield from fixed_value_tensor_creation_op_sample_generator_with_bounds(*args, **kwargs)
-    yield from vargs_shape_sample_generator(*args, **kwargs)
-
 
 
 ones_opinfo = OpInfo(
