@@ -709,6 +709,7 @@ def _convert_pytorchfunc_to_thundertrace(
         return wrapped_func_result, None
 
     trace = TraceCtx()
+    trace._force_disable_execution_callback_file = True
     bsyms = active_jit_ctx.computation_trace.pop_scope()
     trace.bound_symbols.extend(bsyms)
     func_result = unwrap(wrapped_func_result)
@@ -784,6 +785,7 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
         ctx_proxy.saved_tensors,
     )
     trace_of_augmented_fwd = TraceCtx()
+    trace_of_augmented_fwd._force_disable_execution_callback_file = True
     trace_of_augmented_fwd.bound_symbols.extend(trace_of_fwd.bound_symbols[:-1])
     with tracectx(trace_of_augmented_fwd):
         prims.python_return(augmented_bsym_output)
@@ -812,6 +814,7 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     trace_of_backward.bound_symbols = bwd_unpack_bsyms + trace_of_backward.bound_symbols
 
     bwd_trace_impl = TraceCtx()
+    bwd_trace_impl._force_disable_execution_callback_file = True
     bwd_trace_impl.bound_symbols.extend(trace_of_backward.bound_symbols)
     bwd_trace_impl._siginfo = SigInfo.from_name_and_args(
         "backward_impl",
@@ -897,6 +900,7 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
     )
 
     trace_of_forward = from_trace(aug_fwd_trace)
+    trace_of_forward._force_disable_execution_callback_file = True
     for bsym in aug_fwd_trace.bound_symbols:
         if bsym.sym.id == prims.PrimIDs.RETURN:
             continue
