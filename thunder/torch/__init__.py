@@ -787,7 +787,7 @@ def randint(
     utils.check(layout == torch.strided, lambda: "Only torch.strided layout is supported", NotImplementedError)
 
     device = to_device(maybe_get_default_device(device))
-    dtype  = to_dtype(maybe_get_default_dtype(dtype))
+    dtype = to_dtype(maybe_get_default_dtype(dtype))
 
     # dispatch our two overloads:
     if len(args) == 2 and isinstance(args[1], (tuple, list)):

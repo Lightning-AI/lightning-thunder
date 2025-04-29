@@ -6463,7 +6463,7 @@ def fixed_value_tensor_creation_op_sample_generator_with_bounds(op, device, dtyp
 
     bounds = (
         (0, 2),
-        (2,), # we want to support the case when low is not given, like PyTorch
+        (2,),  # we want to support the case when low is not given, like PyTorch
     )
 
     for shape in cases:
