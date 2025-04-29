@@ -146,6 +146,11 @@ def interpret_trace_to_trace(trace, *args, symbol_mapper=None, with_env=False, *
             return v
         return swap_map.get(variableify(v), v)
 
+    def unwrap_vjpdual(v):
+        if isinstance(v, VJPDual):
+            return v.primal
+        return v
+
     new_trace = from_trace(trace)
     with tracectx(new_trace):
         swap_map = {}
@@ -158,8 +163,13 @@ def interpret_trace_to_trace(trace, *args, symbol_mapper=None, with_env=False, *
         safe_map_flat(write, list(trace.kwargs.values()), list(kwargs.values()))
 
         for bsym in trace.bound_symbols:
+            if bsym.sym == prims.python_return:
+                args = tree_map(lambda x: unwrap_vjpdual(read(x)), bsym.args)
+                new_trace.bound_symbols.append(bsym.from_bsym(args=args).from_bsym_swap_proxies(swap_map))
+                continue
+
             if bsym.sym.id in trace_interpreter_skip_list:
-                new_trace.bound_symbols.append(bsym.from_bsym())
+                new_trace.bound_symbols.append(bsym.from_bsym_swap_proxies(swap_map))
                 continue
             args = tree_map(read, bsym.args)
             kwargs = tree_map(read, bsym.kwargs)
