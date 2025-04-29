@@ -3853,7 +3853,7 @@ def _matrix_chain_order(a: Sequence[TensorLike], /) -> TensorLike:
                 if q < m[i][j]:
                     m[i][j] = q
                     s[i][j] = k
-    return TensorProxy(like=s)
+    return s
 
 
 def _matrix_chain_multiplication(
