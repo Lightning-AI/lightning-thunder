@@ -201,6 +201,20 @@ def test_core_vs_numpy_consistency(op: OpInfo, device: str, dtype: dtypes.dtype,
             return result
 
 
+def test_interpolate_nearest_vs_nearest_exact():
+    t0 = torch.tensor([[[1, 2, 3], [4, 5, 6]], [[1, 2, 3], [4, 5, 6]]], dtype=torch.float16)
+    def foo(mode):
+        t1 = torch.nn.functional.interpolate(
+            t0,
+            scale_factor=1.5,
+            mode=mode,
+        )
+        return t1
+
+    tfoo = thunder.jit(foo)
+    assert not torch.equal(tfoo("nearest"), tfoo("nearest-exact"))
+
+
 def test_notimplemented_interpolate_align():
     def foo():
         t0 = torch.randn((22, 288, 15, 20), dtype=torch.float16)
@@ -237,6 +251,23 @@ def test_notimplemented_interpolate_antialias():
     with pytest.raises(NotImplementedError, match="not yet support"):
         tfoo = thunder.jit(foo)
         tfoo()
+
+
+def test_notimplemented_interpolate_modes():
+    def foo(mode):
+        t0 = torch.randn((22, 288, 15, 20), dtype=torch.float16)
+        t1 = torch.nn.functional.interpolate(
+            t0,
+            scale_factor=2.0,
+            mode=mode,
+        )
+        return t1
+
+    tfoo = thunder.jit(foo)
+    for mode in ["linear", "bilinear", "bicubic", "trilinear", "area"]:
+        match = f"only modes 'nearest' and 'nearest-exact' are supported at the moment, but got mode='{mode}'"
+        with pytest.raises(NotImplementedError, match=match):
+            tfoo(mode)
 
 
 @pytest.mark.parametrize("requires_grad", (True, False))

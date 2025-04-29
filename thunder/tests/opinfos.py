@@ -9422,6 +9422,11 @@ def interpolate_error_generator(op, device, dtype=torch.float32, **kwargs):
         RuntimeError,
         f"scale_factor(.*?) is expected to be (.*?) a sequence of strictly positive floating point numbers",
     )
+    yield (
+        SampleInput(make(1, 1, 1, 1), mode="bilinear"),
+        RuntimeError,
+        f"only modes 'nearest' and 'nearest-exact' are supported at the moment, but got mode=(.*?)",
+    )
 
 
 interpolate_opinfo = OpInfo(
