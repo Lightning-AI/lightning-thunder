@@ -3837,6 +3837,7 @@ def outer(a: TensorLike, b: TensorLike, /) -> TensorLike:
 
 def _matrix_chain_order(a: Sequence[TensorLike], /):
     import torch
+
     n = len(a)
     p = []
     for i in range(n):
@@ -3878,7 +3879,7 @@ def multi_dot(_a: Sequence[TensorLike], *, out: TensorLike | None = None) -> Ten
     utils.check(out is None, lambda: "multi_dot(): Non-None out is not supported", NotImplementedError)
     utils.check(
         not any(utils.check_types(a.shape, (int, NumberProxy)) for a in _a),
-        lambda: f"multi_dot(): does not support dynamic shapes"
+        lambda: f"multi_dot(): does not support dynamic shapes",
     )
 
     n = len(_a)
