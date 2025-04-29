@@ -6876,25 +6876,27 @@ matmul_opinfo = OpInfo(
 )
 linear_algebra_ops.append(matmul_opinfo)
 
+
 def multi_dot_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
     # shapes
     cases = [
-        [(2), (2,3)],
-        [(1, 2), (2,3)],
-        [(2, 3), (3,2), (2, 2)],
-        [(2, 3), (3,10), (10, 4), (4,2)],
+        [(2), (2, 3)],
+        [(1, 2), (2, 3)],
+        [(2, 3), (3, 2), (2, 2)],
+        [(2, 3), (3, 10), (10, 4), (4, 2)],
     ]
 
     for shapes in cases:
         yield SampleInput([make(s) for s in shapes])
 
+
 multi_dot_opinfo = OpInfo(
     ltorch.multi_dot,
     sample_input_generator=multi_dot_sample_generator,
     torch_reference=torch.linalg.multi_dot,
-    dtypes=(datatypes.floating, ),
+    dtypes=(datatypes.floating,),
 )
 linear_algebra_ops.append(multi_dot_opinfo)
 

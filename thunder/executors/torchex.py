@@ -1494,9 +1494,7 @@ adaptive_avg_pool2d = _register_torch_operation("adaptive_avg_pool2d", module=to
 adaptive_avg_pool2d_backward = _register_torch_operation(
     "torch.ops.aten._adaptive_avg_pool2d_backward", like=ltorch.adaptive_avg_pool2d_backward
 )
-multi_dot= _register_torch_operation(
-    "torch.linalg.multi_dot", like=ltorch.multi_dot
-)
+multi_dot = _register_torch_operation("torch.linalg.multi_dot", like=ltorch.multi_dot)
 
 
 def _max_pool_with_indices_helper(

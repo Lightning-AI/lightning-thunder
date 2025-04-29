@@ -3834,6 +3834,7 @@ def outer(a: TensorLike, b: TensorLike, /) -> TensorLike:
 
     return a[:, None] * b[None, :]
 
+
 def _matrix_chain_order(a: Sequence[TensorLike], /) -> TensorLike:
     n = len(a)
     p = []
@@ -3843,18 +3844,21 @@ def _matrix_chain_order(a: Sequence[TensorLike], /) -> TensorLike:
     m = [[0] * n for _ in range(n)]
     s = [[0] * n for _ in range(n)]
     for l in range(1, n):
-        for i in range(n-l):
+        for i in range(n - l):
             j = i + l
             m[i][j] = float("inf")
             for k in range(i, j):
-                q = m[i][k] + m[k+1][j] + p[i]*p[k+1]*p[j+1]
+                q = m[i][k] + m[k + 1][j] + p[i] * p[k + 1] * p[j + 1]
 
                 if q < m[i][j]:
                     m[i][j] = q
                     s[i][j] = k
     return TensorProxy(like=s)
 
-def _matrix_chain_multiplication(a: Sequence[TensorLike], /, s: TensorLike, i: int | IntegerProxy, j: int | IntegerProxy) -> TensorLike:
+
+def _matrix_chain_multiplication(
+    a: Sequence[TensorLike], /, s: TensorLike, i: int | IntegerProxy, j: int | IntegerProxy
+) -> TensorLike:
     if i == j:
         return a[i]
     else:
@@ -3863,7 +3867,9 @@ def _matrix_chain_multiplication(a: Sequence[TensorLike], /, s: TensorLike, i: i
         right = _matrix_chain_multiplication(a, s, k + 1, j)
         return matmul(left, right)
 
-@torchsymbol(torch.linalg.multi_dot,
+
+@torchsymbol(
+    torch.linalg.multi_dot,
     "torch.linalg.multi_dot",
     id="torch.linalg.multi_dot",
 )
@@ -3880,11 +3886,8 @@ def multi_dot(_a: Sequence[TensorLike], *, out: TensorLike | None = None) -> Ten
     a = [0] * n
     out_shape = []
 
-    # check first tensor 
-    utils.check(
-        1 <= _a[0].dim() <= 2,
-        lambda: f"multi_dot(): the first tensor must be 1D or 2D but got {a[0].dim()}D"
-    )
+    # check first tensor
+    utils.check(1 <= _a[0].dim() <= 2, lambda: f"multi_dot(): the first tensor must be 1D or 2D but got {a[0].dim()}D")
     if _a[0].dim() == 1:
         a[0] = unsqueeze(_a[0], 0)
     else:
@@ -3893,25 +3896,21 @@ def multi_dot(_a: Sequence[TensorLike], *, out: TensorLike | None = None) -> Ten
 
     # check last tensor
     utils.check(
-        1 <= _a[n-1].dim() <= 2,
-        lambda: f"multi_dot(): the last tensor must be 1D or 2D but got {a[n-1].dim()}D"
+        1 <= _a[n - 1].dim() <= 2, lambda: f"multi_dot(): the last tensor must be 1D or 2D but got {a[n-1].dim()}D"
     )
-    if _a[n-1].dim() == 1:
-        a[n-1] = unsqueeze(_a[n-1], -1)
+    if _a[n - 1].dim() == 1:
+        a[n - 1] = unsqueeze(_a[n - 1], -1)
     else:
-        a[n-1] = _a[n-1]
-        out_shape.append(_a[n-1].size(1))
+        a[n - 1] = _a[n - 1]
+        out_shape.append(_a[n - 1].size(1))
 
     # check middle tensor
-    for i in range(1, n-1):
+    for i in range(1, n - 1):
         utils.check_type(_a[i], TensorProxy)
-        utils.check(
-            _a[i].dim() == 2,
-            lambda: f"multi_dot(): tensor {i} must be 1D or 2D but got {_a[i].dim()}D"
-        )
+        utils.check(_a[i].dim() == 2, lambda: f"multi_dot(): tensor {i} must be 1D or 2D but got {_a[i].dim()}D")
         a[i] = _a[i]
 
-    # check if all tensors have the same device and dtype 
+    # check if all tensors have the same device and dtype
 
     if n == 2:
         return matmul(a[0], a[1]).view(out_shape)
@@ -3932,8 +3931,9 @@ def multi_dot(_a: Sequence[TensorLike], *, out: TensorLike | None = None) -> Ten
 
     order = _matrix_chain_order(a)
     i = 0
-    j = n-1
+    j = n - 1
     return _matrix_chain_multiplication(a, order, i, j).view(out_shape)
+
 
 #
 # Normalization operations
