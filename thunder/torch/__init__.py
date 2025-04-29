@@ -785,7 +785,8 @@ def randint(
         not requires_grad, lambda: "requires_grad=True is not yet supported within thunder.jit", NotImplementedError
     )
     utils.check(layout == torch.strided, lambda: "Only torch.strided layout is supported", NotImplementedError)
-
+    utils.check(generator is None, lambda: "generator is not None which is currently unsupported", NotImplementedError)
+    utils.check(out is None, lambda: "out is not None which is currently unsupported", NotImplementedError)
     device = to_device(maybe_get_default_device(device))
     dtype = to_dtype(maybe_get_default_dtype(dtype))
 
