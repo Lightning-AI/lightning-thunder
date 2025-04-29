@@ -2856,7 +2856,7 @@ def backward_pass(forward_env, trace, init_cotangents):
                         put_grad(symbol.args[i], result.get(k, None))
             continue
 
-        if not isinstance(result, Sequence):
+        if not isinstance(result, tuple):
             result = (result,)
 
         def is_differentiable(arg):

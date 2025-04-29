@@ -666,7 +666,6 @@ torch_auto_registered_ops = {
         torch.linalg.matrix_norm,
         torch.linalg.matrix_power,
         torch.linalg.matrix_rank,
-        torch.linalg.multi_dot,
         torch.linalg.norm,
         torch.linalg.pinv,
         torch.linalg.qr,
