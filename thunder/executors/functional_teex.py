@@ -301,8 +301,7 @@ def _te_fp8_amax_and_scale_update_impl(recipe: Recipe, states: tuple[RecipeState
         return (*tokens,)
 
     for state in states:
-        # print("UPDATING", id(state), "WITH RECIPE", id(recipe))
-        _amax_and_scale_update(state.amax_history, state.scale, get_fp8_max(recipe, state.mode), recipe)
+        _amax_and_scale_update(state.amax_history, state.scale, get_fp8_max(recipe, state.mode == "forward"), recipe)
     return (*tokens,)
 
 
