@@ -745,6 +745,65 @@ def uniform_philox(
     return clang.uniform_philox(shape, minval, maxval, device=device, dtype=dtype, seed=seed, offset=offset)
 
 
+@torchsymbol(torch.rand)
+def rand(
+    *shape,
+    generator: None | torch.Generator = None,
+    dtype: None | dtypeLike = None,
+    device: None | DeviceLike = None,
+    layout: torch.layout = torch.strided,
+    requires_grad: bool = False,
+    pin_memory: bool = False,
+    out: TensorLike = None,
+):
+    utils.check(
+        not requires_grad, lambda: "requires_grad=True is not yet supported within thunder.jit", NotImplementedError
+    )
+    utils.check(layout == torch.strided, lambda: "Only torch.strided layout is supported", NotImplementedError)
+    utils.check(not pin_memory, lambda: "pin_memory=True is not supported within thunder.jit", NotImplementedError)
+    # NOTE: Currently, we don't model randomness
+    utils.check(generator is None, lambda: "generator is not None which is currently unsupported", NotImplementedError)
+    utils.check(out is None, lambda: "out is not None which is currently unsupported", NotImplementedError)
+
+    device = to_device(maybe_get_default_device(device))
+    dtype = to_dtype(maybe_get_default_dtype(dtype))
+    shape = tuple(utils.extract_shape_from_varargs(shape))
+    return clang.uniform(shape, 0, 1, device=device, dtype=dtype)
+
+
+@torchsymbol(torch.randint)
+def randint(
+    *args,
+    generator: None | torch.Generator = None,
+    out: TensorLike = None,
+    dtype: None | dtypeLike = None,
+    layout: torch.layout = torch.strided,
+    device: None | DeviceLike = None,
+    requires_grad: bool = False,
+):
+    utils.check(
+        not requires_grad, lambda: "requires_grad=True is not yet supported within thunder.jit", NotImplementedError
+    )
+    utils.check(layout == torch.strided, lambda: "Only torch.strided layout is supported", NotImplementedError)
+    utils.check(generator is None, lambda: "generator is not None which is currently unsupported", NotImplementedError)
+    utils.check(out is None, lambda: "out is not None which is currently unsupported", NotImplementedError)
+    device = to_device(maybe_get_default_device(device))
+    dtype = to_dtype(maybe_get_default_dtype(dtype))
+
+    # dispatch our two overloads:
+    if len(args) == 2 and isinstance(args[1], (tuple, list)):
+        # torch.randint(high, size)
+        low, shape_arg = 0, args[1]
+        high = args[0]
+        shape = tuple(shape_arg)
+    else:
+        # torch.randint(low, high, *size)
+        low, high, *rest = args
+        shape = tuple(utils.extract_shape_from_varargs(rest))
+
+    return prims.randint(low, high, shape, device=device, dtype=dtype)
+
+
 @torchsymbol(torch.randn)
 def randn(
     *shape,
@@ -1038,11 +1097,9 @@ def pad(a: TensorProxy, /, pad: tuple[int, ...], mode: str | None = "constant", 
     if value is None:
         value = 0
     a_typ = to_dtype(a, true_dtype=True)
-    # Note that this can be unsafe. This can happen, for example, if `a` is an
-    # integer tensor and `value` is a float. It can also be more subtle, where
-    # `a` is a lower-precision float than `value`.
-    if a_typ is not to_dtype(value, true_dtype=True):
-        warnings.warn("`value` and Tensor input are of different types. This " "may create numeric issues.")
+    # Note that when value is a float but the tensor is of dtype integer, it will be truncated.
+    # Similarly, a float value is cast to lower precision.
+    # Questionable or not, we do follow PyTorch behaviour here.
     v2 = clang.maybe_convert_to_dtype(value, a_typ)
 
     return clang.pad(a, v2, pad_config)
@@ -1577,9 +1634,28 @@ def floor_(a):
     return _copy_(a, floor(a))
 
 
+@torchsymbol(torch.frexp, is_method=True)
+def frexp(a: TensorLike) -> (TensorLike, TensorLike):
+    return clang.frexp(a)
+
+
 @torchsymbol(torch.isfinite, is_method=True)
 def isfinite(a):
     return clang.isfinite(a)
+
+
+@torchsymbol(torch.isinf, is_method=True)
+def isinf(a: TensorLike) -> TensorLike:
+    if utils.is_complex_dtype(a.dtype):
+        return logical_or(isinf(real(a)), isinf(imag(a)))
+    if utils.is_float_dtype(a.dtype):
+        return clang.abs(a) == float("inf")
+    return zeros_like(a, dtype=dtypes.bool8)
+
+
+@torchsymbol(torch.isnan, is_method=True)
+def isnan(a: TensorLike) -> TensorLike:
+    return clang.isnan(a)
 
 
 @torchsymbol(torch.lgamma, is_method=True)

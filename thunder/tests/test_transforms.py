@@ -252,7 +252,7 @@ def test_debug_transform():
     def pre_callback(bsym, *args, **kwargs):
         return f"Pre - {bsym.sym.name}"
 
-    def post_callback(bsym, *args, **kwargs):
+    def post_callback(bsym, output, *args, **kwargs):
         return f"Post - {bsym.sym.name}"
 
     jfn = debug_execution_trace(thunder.jit(fn), pre_callback=pre_callback, post_callback=post_callback)

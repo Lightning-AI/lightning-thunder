@@ -1179,6 +1179,31 @@ floor_opinfo = OpInfo(
 )
 elementwise_unary_ops.append(floor_opinfo)
 
+# TODO: test_vjp_correctness fails for float64 inputs of larger shapes
+# https://github.com/Lightning-AI/lightning-thunder/issues/1991
+frexp_opinfo = OpInfo(
+    clang.frexp,
+    supports_grad=True,
+    dtypes=(datatypes.floating,),
+    sample_input_generator=partial(elementwise_unary_generator, small=True),
+    torch_reference=_elementwise_unary_torch(torch.frexp),
+    test_directives=(
+        # AssertionError: Scalars are not close!
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_vjp_correctness",
+            executors=("torch", "nvfuser"),
+            dtypes=(datatypes.float64,),
+        ),
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_phantom_grad_vs_torch_consistency",
+            dtypes=(datatypes.bfloat16, datatypes.float16),
+        ),
+    ),
+)
+elementwise_unary_ops.append(frexp_opinfo)
+
 isfinite_opinfo = OpInfo(
     clang.isfinite,
     sample_input_generator=elementwise_unary_generator,
@@ -1193,6 +1218,22 @@ isfinite_opinfo = OpInfo(
     ),
 )
 elementwise_unary_ops.append(isfinite_opinfo)
+
+isinf_opinfo = OpInfo(
+    ltorch.isinf,
+    dtypes=(datatypes.all_dtypes),
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=_elementwise_unary_torch(torch.isinf),
+)
+elementwise_unary_ops.append(isinf_opinfo)
+
+isnan_opinfo = OpInfo(
+    clang.isnan,
+    dtypes=(datatypes.all_dtypes),
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=_elementwise_unary_torch(torch.isnan),
+)
+elementwise_unary_ops.append(isnan_opinfo)
 
 # TODO The domain of rsqrt should be (0, math.inf), but too small values of rsqrt
 #   can cause numerical issues in lower precision (like float16 overflowing)
@@ -6474,6 +6515,27 @@ empty_opinfo = OpInfo(
 tensor_creation_ops.append(empty_opinfo)
 
 
+def fixed_value_tensor_creation_op_sample_generator_with_bounds(op, device, dtype, requires_grad, **kwargs):
+    # shape
+    cases = (
+        (4, 4),
+        (8, 1, 6),
+        (8, 7, 5, 1),
+        [
+            4,
+        ],  # Using `list[int]` should also work.
+    )
+
+    bounds = (
+        (0, 2),
+        (2,),  # we want to support the case when low is not given, like PyTorch
+    )
+
+    for shape in cases:
+        for bound in bounds:
+            yield SampleInput(*bound, shape, device=device, dtype=dtype)
+
+
 def fixed_value_tensor_creation_op_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # shape
     cases = (
@@ -6512,6 +6574,10 @@ def varargs_tensor_creation_op_sample_generator(*args, **kwargs):
     yield from vargs_shape_sample_generator(*args, **kwargs)
 
 
+def varargs_tensor_creation_op_sample_generator_with_bounds(*args, **kwargs):
+    yield from fixed_value_tensor_creation_op_sample_generator_with_bounds(*args, **kwargs)
+
+
 ones_opinfo = OpInfo(
     ltorch.ones,
     sample_input_generator=varargs_tensor_creation_op_sample_generator,
@@ -6540,6 +6606,14 @@ def torch_randn_and_zero(*args, **kwargs):
     return ltorch.full_like(ltorch.randn(*args, **kwargs), 0)
 
 
+def torch_rand_and_zero(*args, **kwargs):
+    return ltorch.full_like(ltorch.rand(*args, **kwargs), 0)
+
+
+def torch_randint_and_zero(*args, **kwargs):
+    return ltorch.full_like(ltorch.randint(*args, **kwargs), 0)
+
+
 def randn_error_generator(op, device, **kwargs):
     err_msg = "requires_grad=True is not yet supported"
     yield (SampleInput(1, 2, requires_grad=True), NotImplementedError, err_msg)
@@ -6560,6 +6634,26 @@ randn_opinfo = OpInfo(
     dtypes=(datatypes.floating, datatypes.complexfloating),
 )
 tensor_creation_ops.append(randn_opinfo)
+
+rand_opinfo = OpInfo(
+    name="rand",
+    op=torch_rand_and_zero,
+    sample_input_generator=varargs_tensor_creation_op_sample_generator,
+    error_input_generator=randn_error_generator,  # Does not depend on the distribution
+    torch_reference=lambda *args, **kwargs: torch.rand(*args, **kwargs).fill_(0),
+    dtypes=(datatypes.floating, datatypes.complexfloating),
+)
+tensor_creation_ops.append(rand_opinfo)
+
+randint_opinfo = OpInfo(
+    name="randint",
+    op=torch_randint_and_zero,
+    sample_input_generator=varargs_tensor_creation_op_sample_generator_with_bounds,
+    error_input_generator=randn_error_generator,  # Does not depend on the distribution
+    torch_reference=lambda *args, **kwargs: torch.randint(*args, **kwargs).fill_(0),
+    dtypes=(datatypes.int64,),
+)
+tensor_creation_ops.append(randint_opinfo)
 
 
 # Helper function for `randn_like` opinfo.
