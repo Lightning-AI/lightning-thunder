@@ -1494,6 +1494,9 @@ adaptive_avg_pool2d = _register_torch_operation("adaptive_avg_pool2d", module=to
 adaptive_avg_pool2d_backward = _register_torch_operation(
     "torch.ops.aten._adaptive_avg_pool2d_backward", like=ltorch.adaptive_avg_pool2d_backward
 )
+multi_dot= _register_torch_operation(
+    "torch.linalg.multi_dot", like=ltorch.multi_dot
+)
 
 
 def _max_pool_with_indices_helper(
@@ -1909,6 +1912,7 @@ pad_prim_impl = ex.register_operator("torch_pad_prim_impl", meta=prims.pad.meta,
 _register_implementation(prims.pad, pad_prim_impl, checker=_always_executable)
 _register_implementation(ltorch._softmax, checker=_always_executable, execution_transform=_softmax_transform)
 _register_implementation(ltorch.scaled_dot_product_attention, scaled_dot_product_attention, checker=_always_executable)
+_register_implementation(ltorch.multi_dot, multi_dot, checker=_always_executable)
 
 
 # Probability Distribution ops
