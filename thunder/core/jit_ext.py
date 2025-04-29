@@ -1,6 +1,6 @@
 from __future__ import annotations
 import math
-from typing import Any
+from typing import Any, TYPE_CHECKING
 import collections
 from collections.abc import Callable, Sequence
 import dataclasses
@@ -74,6 +74,9 @@ from thunder.core.trace import TraceCtx, TraceResults
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.clang import _clang_fn_set
 from thunder.core.pytree import tree_map, tree_iter
+
+if TYPE_CHECKING:
+    from thunder.core.symbol import BoundSymbol
 
 #
 # jit_ext.py implements extensions of thunder's interpreter
@@ -722,6 +725,19 @@ def _convert_pytorchfunc_to_thundertrace(
         func_result = tree_map(lambda t: out_to_shallow_copy.get(variableify(t), t), func_result)
     with tracectx(trace):
         prims.python_return(func_result)
+
+    bsym: BoundSymbol
+    new_bsyms: list[BoundSymbol] = []
+    for bsym in trace.bound_symbols:
+        should_skip = False
+        for o in filter(lambda o: isinstance(o, TensorProxy), bsym.flat_proxy_outs):
+            var_o = variableify(o)
+            for var_a in [variableify(a) for a in bsym.flat_proxy_args if isinstance(a, TensorProxy)]:
+                if var_o == var_a:
+                    should_skip = True
+        if not should_skip:
+            new_bsyms.append(bsym)
+    trace.bound_symbols = new_bsyms
     return trace, sequencify(wrapped_func_result)[0].provenance
 
 
