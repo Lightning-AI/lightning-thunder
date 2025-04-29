@@ -745,6 +745,65 @@ def uniform_philox(
     return clang.uniform_philox(shape, minval, maxval, device=device, dtype=dtype, seed=seed, offset=offset)
 
 
+@torchsymbol(torch.rand)
+def rand(
+    *shape,
+    generator: None | torch.Generator = None,
+    dtype: None | dtypeLike = None,
+    device: None | DeviceLike = None,
+    layout: torch.layout = torch.strided,
+    requires_grad: bool = False,
+    pin_memory: bool = False,
+    out: TensorLike = None,
+):
+    utils.check(
+        not requires_grad, lambda: "requires_grad=True is not yet supported within thunder.jit", NotImplementedError
+    )
+    utils.check(layout == torch.strided, lambda: "Only torch.strided layout is supported", NotImplementedError)
+    utils.check(not pin_memory, lambda: "pin_memory=True is not supported within thunder.jit", NotImplementedError)
+    # NOTE: Currently, we don't model randomness
+    utils.check(generator is None, lambda: "generator is not None which is currently unsupported", NotImplementedError)
+    utils.check(out is None, lambda: "out is not None which is currently unsupported", NotImplementedError)
+
+    device = to_device(maybe_get_default_device(device))
+    dtype = to_dtype(maybe_get_default_dtype(dtype))
+    shape = tuple(utils.extract_shape_from_varargs(shape))
+    return clang.uniform(shape, 0, 1, device=device, dtype=dtype)
+
+
+@torchsymbol(torch.randint)
+def randint(
+    *args,
+    generator: None | torch.Generator = None,
+    out: TensorLike = None,
+    dtype: None | dtypeLike = None,
+    layout: torch.layout = torch.strided,
+    device: None | DeviceLike = None,
+    requires_grad: bool = False,
+):
+    utils.check(
+        not requires_grad, lambda: "requires_grad=True is not yet supported within thunder.jit", NotImplementedError
+    )
+    utils.check(layout == torch.strided, lambda: "Only torch.strided layout is supported", NotImplementedError)
+    utils.check(generator is None, lambda: "generator is not None which is currently unsupported", NotImplementedError)
+    utils.check(out is None, lambda: "out is not None which is currently unsupported", NotImplementedError)
+    device = to_device(maybe_get_default_device(device))
+    dtype = to_dtype(maybe_get_default_dtype(dtype))
+
+    # dispatch our two overloads:
+    if len(args) == 2 and isinstance(args[1], (tuple, list)):
+        # torch.randint(high, size)
+        low, shape_arg = 0, args[1]
+        high = args[0]
+        shape = tuple(shape_arg)
+    else:
+        # torch.randint(low, high, *size)
+        low, high, *rest = args
+        shape = tuple(utils.extract_shape_from_varargs(rest))
+
+    return prims.randint(low, high, shape, device=device, dtype=dtype)
+
+
 @torchsymbol(torch.randn)
 def randn(
     *shape,
@@ -1038,11 +1097,9 @@ def pad(a: TensorProxy, /, pad: tuple[int, ...], mode: str | None = "constant", 
     if value is None:
         value = 0
     a_typ = to_dtype(a, true_dtype=True)
-    # Note that this can be unsafe. This can happen, for example, if `a` is an
-    # integer tensor and `value` is a float. It can also be more subtle, where
-    # `a` is a lower-precision float than `value`.
-    if a_typ is not to_dtype(value, true_dtype=True):
-        warnings.warn("`value` and Tensor input are of different types. This " "may create numeric issues.")
+    # Note that when value is a float but the tensor is of dtype integer, it will be truncated.
+    # Similarly, a float value is cast to lower precision.
+    # Questionable or not, we do follow PyTorch behaviour here.
     v2 = clang.maybe_convert_to_dtype(value, a_typ)
 
     return clang.pad(a, v2, pad_config)
@@ -1577,9 +1634,28 @@ def floor_(a):
     return _copy_(a, floor(a))
 
 
+@torchsymbol(torch.frexp, is_method=True)
+def frexp(a: TensorLike) -> (TensorLike, TensorLike):
+    return clang.frexp(a)
+
+
 @torchsymbol(torch.isfinite, is_method=True)
 def isfinite(a):
     return clang.isfinite(a)
+
+
+@torchsymbol(torch.isinf, is_method=True)
+def isinf(a: TensorLike) -> TensorLike:
+    if utils.is_complex_dtype(a.dtype):
+        return logical_or(isinf(real(a)), isinf(imag(a)))
+    if utils.is_float_dtype(a.dtype):
+        return clang.abs(a) == float("inf")
+    return zeros_like(a, dtype=dtypes.bool8)
+
+
+@torchsymbol(torch.isnan, is_method=True)
+def isnan(a: TensorLike) -> TensorLike:
+    return clang.isnan(a)
 
 
 @torchsymbol(torch.lgamma, is_method=True)
@@ -3835,6 +3911,110 @@ def outer(a: TensorLike, b: TensorLike, /) -> TensorLike:
     )
 
     return a[:, None] * b[None, :]
+
+
+def _matrix_chain_order(a: Sequence[TensorLike], /):
+    import torch
+
+    n = len(a)
+    p = []
+    for i in range(n):
+        p.append(a[i].size(0))
+    p.append(a[n - 1].size(1))
+    m = torch.zeros(n, n, dtype=torch.int64)
+    s = torch.zeros(n, n, dtype=torch.int64)
+    for l in range(1, n):
+        for i in range(n - l):
+            j = i + l
+            m[i][j] = torch.iinfo(torch.int64).max
+            for k in range(i, j):
+                q = m[i][k] + m[k + 1][j] + p[i] * p[k + 1] * p[j + 1]
+
+                if q < m[i][j]:
+                    m[i][j] = q
+                    s[i][j] = k
+    return s
+
+
+def _matrix_chain_multiplication(
+    a: Sequence[TensorLike], /, s: TensorLike, i: int | IntegerProxy, j: int | IntegerProxy
+) -> TensorLike:
+    if i == j:
+        return a[i]
+    else:
+        k = s[i][j]
+        left = _matrix_chain_multiplication(a, s, i, k)
+        right = _matrix_chain_multiplication(a, s, k + 1, j)
+        return matmul(left, right)
+
+
+@torchsymbol(
+    torch.linalg.multi_dot,
+    "torch.linalg.multi_dot",
+    id="torch.linalg.multi_dot",
+)
+def multi_dot(_a: Sequence[TensorLike], *, out: TensorLike | None = None) -> TensorLike:
+    utils.check(out is None, lambda: "multi_dot(): Non-None out is not supported", NotImplementedError)
+    utils.check(
+        not any(utils.check_types(a.shape, (int, NumberProxy)) for a in _a),
+        lambda: f"multi_dot(): does not support dynamic shapes",
+    )
+
+    n = len(_a)
+    utils.check(
+        n >= 2,
+        lambda: f"multi_dot(): expected at least 2 tensors, but got {a}",
+    )
+
+    utils.check_type(_a[0], TensorProxy)
+    a = [0] * n
+    out_shape = []
+
+    # check first tensor
+    utils.check(1 <= _a[0].dim() <= 2, lambda: f"multi_dot(): the first tensor must be 1D or 2D but got {a[0].dim()}D")
+    if _a[0].dim() == 1:
+        a[0] = unsqueeze(_a[0], 0)
+    else:
+        a[0] = _a[0]
+        out_shape.append(_a[0].size(0))
+
+    # check last tensor
+    utils.check(
+        1 <= _a[n - 1].dim() <= 2, lambda: f"multi_dot(): the last tensor must be 1D or 2D but got {a[n-1].dim()}D"
+    )
+    if _a[n - 1].dim() == 1:
+        a[n - 1] = unsqueeze(_a[n - 1], -1)
+    else:
+        a[n - 1] = _a[n - 1]
+        out_shape.append(_a[n - 1].size(1))
+
+    # check middle tensor
+    for i in range(1, n - 1):
+        utils.check_type(_a[i], TensorProxy)
+        utils.check(_a[i].dim() == 2, lambda: f"multi_dot(): tensor {i} must be 1D or 2D but got {_a[i].dim()}D")
+        a[i] = _a[i]
+
+    if n == 2:
+        return matmul(a[0], a[1]).view(out_shape)
+
+    if n == 3:
+        t0 = a[0].size(0)
+        t1 = a[1].size(0)
+        t2 = a[2].size(0)
+        t3 = a[2].size(1)
+
+        cost_1 = (t0 * t2) * (t1 + t3)
+        cost_2 = (t1 * t3) * (t0 + t2)
+
+        if cost_1 > cost_2:
+            return matmul(a[0], matmul(a[1], a[2])).view(out_shape)
+        else:
+            return matmul(matmul(a[0], a[1]), a[2]).view(out_shape)
+
+    order = _matrix_chain_order(a)
+    i = 0
+    j = n - 1
+    return _matrix_chain_multiplication(a, order, i, j).view(out_shape)
 
 
 #

@@ -197,4 +197,5 @@ class DebugOptions:
         return "\n".join(repr)
 
 
+DebugOptions.register_option("check_traces", bool, False, doc="Check traces for consistency")
 DebugOptions._set_docstring()
