@@ -773,9 +773,7 @@ def rand(
 
 @torchsymbol(torch.randint)
 def randint(
-    low: int,
-    high: int,
-    *shape,
+    *args,
     generator: None | torch.Generator = None,
     out: TensorLike = None,
     dtype: None | dtypeLike = None,
@@ -788,13 +786,20 @@ def randint(
     )
     utils.check(layout == torch.strided, lambda: "Only torch.strided layout is supported", NotImplementedError)
 
-    # NOTE: Currently, we don't model randomness
-    utils.check(generator is None, lambda: "generator is not None which is currently unsupported", NotImplementedError)
-    utils.check(out is None, lambda: "out is not None which is currently unsupported", NotImplementedError)
-
     device = to_device(maybe_get_default_device(device))
-    dtype = to_dtype(maybe_get_default_dtype(dtype))
-    shape = tuple(utils.extract_shape_from_varargs(shape))
+    dtype  = to_dtype(maybe_get_default_dtype(dtype))
+
+    # dispatch our two overloads:
+    if len(args) == 2 and isinstance(args[1], (tuple, list)):
+        # torch.randint(high, size)
+        low, shape_arg = 0, args[1]
+        high = args[0]
+        shape = tuple(shape_arg)
+    else:
+        # torch.randint(low, high, *size)
+        low, high, *rest = args
+        shape = tuple(utils.extract_shape_from_varargs(rest))
+
     return prims.randint(low, high, shape, device=device, dtype=dtype)
 
 

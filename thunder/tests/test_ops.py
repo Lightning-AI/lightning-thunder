@@ -54,8 +54,6 @@ def snippet_torch_consistency(op: OpInfo, torch_op, sample: SampleInput, comp: C
 # TODO Remove the atol and rtol defaults and rely on the given comparator to set them
 @ops(tuple(op for op in opinfos if op.torch_reference is not None))
 def test_core_vs_torch_consistency(op, device: str, dtype: dtypes.dtype, executor, comp):
-    if op.name != "randint":
-        pytest.skip("Skipping randint operator test in CI for speed")
     if dtypes.is_complex_dtype(dtype) and not op.instantiate_complex_tests:
         pytest.skip("Skipping complex operator tests in CI for speed")
     if (
