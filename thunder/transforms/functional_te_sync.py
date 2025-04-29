@@ -40,7 +40,7 @@ class TESynchronizationTransform(Transform):
         for bsym in computation_trace.bound_symbols:
             # Keep only one recipe for the whole trace
             if "get_te_fp8_recipe" in bsym.sym.name:
-                # Store the first occurance
+                # Store the first occurrence
                 if not self.fp8_recipe:
                     self.fp8_recipe = bsym
                 else:

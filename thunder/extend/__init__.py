@@ -290,7 +290,7 @@ class StatefulExecutor(OperatorExecutor):
             sym = self.register_operator(name, meta=meta, bind_postprocess=bind_state)
 
             self.state_count += 1
-            return sym(*args, *kwargs)
+            return sym(*args, **kwargs)
 
         return register_state
 
