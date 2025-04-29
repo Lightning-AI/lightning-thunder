@@ -187,6 +187,7 @@ tensor_from_sequence = _register_torch_operation("tensor")
 zeros = _register_torch_operation("zeros")
 zeros_like = _register_torch_operation("zeros_like")
 rand = _register_torch_operation("rand")
+randint = _register_torch_operation("randint")
 randn = _register_torch_operation("randn")
 empty = _register_torch_operation("empty")
 einsum = _register_torch_operation("einsum")
@@ -429,6 +430,19 @@ def _zeros_like_transform(
     return zeros_like(a, device=torch_device, dtype=torch_dtype)
 
 
+def _randint_prims_transform(
+    low: int,
+    high: int,
+    shape: tuple[int, ...],
+    *,
+    device: devices.Device,
+    dtype: dtypes.dtype,
+) -> TensorLike:
+    torch_device: torch.device = to_torch_device(device)
+    torch_dtype: torch.dtype = to_torch_dtype(dtype)
+    return randint(low, high, shape, device=torch_device, dtype=torch_dtype)
+
+
 def _randn_prims_transform(
     shape: tuple[int, ...],
     *,
@@ -494,6 +508,7 @@ _register_implementation(
     prims.uniform_philox, checker=_uniform_philox_prim_checker, execution_transform=_uniform_philox_prim_transform
 )
 _register_implementation(prims.get_and_update_rng_state, get_and_update_rng_state_impl, checker=_always_executable)
+_register_implementation(prims.randint, checker=_always_executable, execution_transform=_randint_prims_transform)
 _register_implementation(prims.randn, checker=_always_executable, execution_transform=_randn_prims_transform)
 _register_implementation(prims.empty, checker=_always_executable, execution_transform=_empty_prims_transform)
 _register_implementation(prims.clone, checker=_always_executable, execution_transform=_clone_prims_transform)
