@@ -1186,7 +1186,11 @@ def general_jit_lookaside(fn, *args, **kwargs) -> None | Callable:
                     has_tensor_arg = True
                     break
 
-        if is_opaque(fn) and (torch_module_name := is_from_torch(fn)) and has_tensor_arg:
+        torch_module_name = is_from_torch(fn)
+
+        # we want to also catch factory functions, which do not have tensor args,
+        # so we use the qualname to catch them.
+        if is_opaque(fn) and torch_module_name and (has_tensor_arg or fn.__qualname__.startswith("_VariableFunction")):
             if torch_module_name.startswith("torch._C"):
                 return lookaside
 

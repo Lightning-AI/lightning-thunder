@@ -462,10 +462,23 @@ def jit(
         return_none_instead_of_grads = is_fsdp_enabled and cache_info["no_grad_sync"]
 
         with compile_data_and_stats(cd, cs):
-            prologue_traces = [prologue_trc]
+            if cd.debug_options.check_traces:
+                from thunder.dev_utils.check_trace import CheckedListOfTraces as TraceList
+            else:
+                TraceList = list
+
+            prologue_traces = TraceList()
+            computation_traces = TraceList()
+            epilogue_traces = TraceList()
+            backward_traces = TraceList()
+
             cs.last_prologue_traces = prologue_traces
-            computation_traces = [computation_trc]
             cs.last_traces = computation_traces
+            cs.last_epilogue_traces = epilogue_traces
+            cs.last_backward_traces = backward_traces
+            prologue_traces.append(prologue_trc)
+            computation_traces.append(computation_trc)
+            epilogue_traces.append(epilogue_trc)
 
             computation_trc = wrap_return_value_together_with_arguments(computation_trc)
             computation_traces.append(computation_trc)
@@ -492,9 +505,6 @@ def jit(
                     )
                 )
                 computation_trc = computation_traces[-1]
-
-            epilogue_traces = [epilogue_trc]
-            cs.last_epilogue_traces = epilogue_traces
 
             cs.last_trace_tracing_stop = time.perf_counter_ns()
 
@@ -537,8 +547,6 @@ def jit(
 
             cs.last_prologue_transformation_stop = time.perf_counter_ns()
             cs.last_prologue = pro
-            backward_traces = []
-            cs.last_backward_traces = backward_traces
 
             computation_trc = dce(computation_trc)
             computation_traces.append(computation_trc)
