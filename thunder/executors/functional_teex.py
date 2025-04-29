@@ -106,7 +106,9 @@ class TERecipeState:
         return recipe_state
 
 
-_get_te_fp8_state = functional_te_ex.register_stateful_operator("get_te_fp8_state", TERecipeState, meta=_get_te_fp8_state_meta)
+_get_te_fp8_state = functional_te_ex.register_stateful_operator(
+    "get_te_fp8_state", TERecipeState, meta=_get_te_fp8_state_meta
+)
 
 
 def _linear_fwd_meta(
