@@ -2192,7 +2192,9 @@ def elementwise_binary_prims_generator(op, device, dtype, requires_grad, **kwarg
 
 
 # TODO Extend this generator
-def elementwise_binary_generator(op, device, dtype, requires_grad, *, no_rhs_numbers: bool = False, **kwargs):
+def elementwise_binary_generator(
+    op, device, dtype, requires_grad, *, no_rhs_numbers: bool = False, no_weak_dtypes: bool = False, **kwargs
+):
     yield from elementwise_binary_prims_generator(op, device, dtype, requires_grad, **kwargs)
 
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
@@ -2208,6 +2210,28 @@ def elementwise_binary_generator(op, device, dtype, requires_grad, *, no_rhs_num
         c = make((2, 2), **kwargs)
         d = number(**kwargs)
         yield SampleInput(c, d)
+
+    if not no_weak_dtypes:
+
+        # Test tensor x scalar tensor with a different dtype
+        # We first convert the dtype to its base and then use
+        # the table to get the reference dtype.
+        base_tdtype = type(datatypes._torch_to_thunder_dtype_map[dtype])
+
+        weak_dtype_table = {
+            datatypes.signedinteger: torch.int64,
+            datatypes.unsignedinteger: torch.uint8,
+            datatypes.floating: torch.float64,
+            datatypes.complexfloating: torch.complex64,
+            datatypes.bool_: torch.int64,
+        }
+
+        e = make((4, 4), **kwargs)
+        f = make((), **kwargs, dtype=weak_dtype_table[base_tdtype])
+
+        sample = SampleInput(e, f)
+
+        yield sample
 
 
 # TODO: update dtypes with Thunder dtypes (when they exist)
