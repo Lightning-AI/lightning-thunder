@@ -6471,7 +6471,6 @@ def fixed_value_tensor_creation_op_sample_generator_with_bounds(op, device, dtyp
             yield SampleInput(*bound, shape, device=device, dtype=dtype)
 
 
-
 def fixed_value_tensor_creation_op_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # shape
     cases = (
@@ -6508,7 +6507,6 @@ def fixed_value_like_tensor_creation_op_sample_generator(op, device, dtype, requ
 def varargs_tensor_creation_op_sample_generator(*args, **kwargs):
     yield from fixed_value_tensor_creation_op_sample_generator(*args, **kwargs)
     yield from vargs_shape_sample_generator(*args, **kwargs)
-
 
 
 def varargs_tensor_creation_op_sample_generator_with_bounds(*args, **kwargs):
