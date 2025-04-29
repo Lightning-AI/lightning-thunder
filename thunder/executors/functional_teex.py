@@ -1,14 +1,10 @@
-from enum import auto, Enum
 import importlib
 import warnings
 
-from thunder.core.symbol import Symbol
-
 from thunder.core.prims import get_grad, put_grad
-from thunder.core.proxies import AnyProxy, TensorProxy, IntegerProxy
-from thunder.core.vjp_utils import disable_caching_split_forward_and_backward
+from thunder.core.proxies import AnyProxy, TensorProxy
 
-from thunder.extend import OperatorExecutor, register_executor
+from thunder.extend import StatefulExecutor, register_executor
 from thunder.executors.transformer_engineex import _linear_checker
 
 import thunder.torch as ltorch
@@ -28,32 +24,6 @@ else:
     warnings.warn("transformer_engine module not found!")
 
 
-class StatefulExecutor(OperatorExecutor):
-    def __init__(self, name, *, version=None):
-        super().__init__(name, version=version)
-        self.state_count: int = 0
-
-    def register_stateful_operator(self, base_name: str, state_class, *, meta):
-        def register_state(*args, **kwargs):
-            state_id = self.state_count
-            name = f"{base_name}_{state_id}"
-
-            def bind_state(bsym):
-                bsym._call_ctx = {name: state_class()}
-
-            sym = self.register_operator(name, meta=meta, bind_postprocess=bind_state)
-
-            self.state_count += 1
-            return sym(*args, *kwargs)
-
-        return register_state
-
-    def get_grad_transform(self, sym: Symbol):
-        grad_transform = super().get_grad_transform(sym)
-        # Always disable cache for stateful grad transform
-        return disable_caching_split_forward_and_backward(grad_transform)
-
-
 functional_te_ex = StatefulExecutor("functional_te")
 register_executor(functional_te_ex)
 
@@ -66,28 +36,6 @@ def _te_fp8_recipe_meta() -> AnyProxy:
     return AnyProxy(None, prefix="r")
 
 
-# TODO add new recipe types.
-class TE_RECIPE_TYPE(Enum):
-    DELAYED = auto()
-    MXFP8 = auto()
-
-
-def _te_get_recipe_type_meta(recipe: AnyProxy):
-    return IntegerProxy()
-
-
-def _te_get_recipe_type_impl(recipe: Recipe):
-    if recipe.delayed():
-        return TE_RECIPE_TYPE.DELAYED
-    if recipe.mxfp8():
-        return TE_RECIPE_TYPE.MXFP8
-
-
-_te_get_recipe_type = functional_te_ex.register_operator(
-    "te_get_recipe_type", meta=_te_get_recipe_type_meta, fn=_te_get_recipe_type_impl
-)
-
-
 class TERecipe:
     def __init__(self):
         self.fp8_recipe = None
@@ -98,9 +46,10 @@ class TERecipe:
         if not FP8GlobalStateManager.FP8_RECIPE:
             if not self.fp8_recipe:
                 self.fp8_recipe = FP8GlobalStateManager.get_fp8_recipe()
+
             return self.fp8_recipe
-        recipe = FP8GlobalStateManager.get_fp8_recipe()
-        return recipe
+
+        return FP8GlobalStateManager.get_fp8_recipe()
 
 
 _get_te_fp8_recipe = functional_te_ex.register_stateful_operator(
@@ -128,12 +77,12 @@ class TEQuantizerState:
         return quantizers
 
 
-_te_fp8_quantizers = functional_te_ex.register_stateful_operator(
+_get_te_fp8_quantizers = functional_te_ex.register_stateful_operator(
     "get_te_fp8_quantizers", TEQuantizerState, meta=_get_te_fp8_quantizers_meta
 )
 
 
-def _te_fp8_state_meta(recipe: AnyProxy, mode: str, num_quantizers: int, /):
+def _get_te_fp8_state_meta(recipe: AnyProxy, mode: str, num_quantizers: int, /):
     return AnyProxy(None, prefix="s")
 
 
@@ -157,7 +106,7 @@ class TERecipeState:
         return recipe_state
 
 
-_te_fp8_state = functional_te_ex.register_stateful_operator("te_fp8_state", TERecipeState, meta=_te_fp8_state_meta)
+_get_te_fp8_state = functional_te_ex.register_stateful_operator("get_te_fp8_state", TERecipeState, meta=_get_te_fp8_state_meta)
 
 
 def _linear_fwd_meta(
@@ -191,9 +140,9 @@ _te_linear_fwd = functional_te_ex.register_operator(
 def _te_linear_execution_transform(a, w, /, bias):
     recipe = _get_te_fp8_recipe()
 
-    forward_recipe_state = _te_fp8_state(recipe, "forward", 2)
+    forward_recipe_state = _get_te_fp8_state(recipe, "forward", 2)
 
-    input_quantizer, weight_quantizer = _te_fp8_quantizers(forward_recipe_state, 2)
+    input_quantizer, weight_quantizer = _get_te_fp8_quantizers(forward_recipe_state, 2)
 
     out, _, _ = _te_linear_fwd(a, w, bias, input_quantizer, weight_quantizer)
 
@@ -234,12 +183,11 @@ _te_linear_bwd = functional_te_ex.register_operator(
 def _te_linear_grad_transform(a, w, bias):
     recipe = _get_te_fp8_recipe()
 
-    forward_recipe_state = _te_fp8_state(recipe, "forward", 2)
+    forward_recipe_state = _get_te_fp8_state(recipe, "forward", 2)
 
-    input_quantizer, weight_quantizer = _te_fp8_quantizers(forward_recipe_state, 2)
+    input_quantizer, weight_quantizer = _get_te_fp8_quantizers(forward_recipe_state, 2)
 
-    # TODO rename gemm_a/w
-    primal, _, _ = _te_linear_fwd(a, w, bias, input_quantizer, weight_quantizer)
+    primal, quantized_a, quantized_w = _te_linear_fwd(a, w, bias, input_quantizer, weight_quantizer)
 
     (primal,) = _te_fp8_amax_and_scale_update(
         recipe,
@@ -249,14 +197,14 @@ def _te_linear_grad_transform(a, w, bias):
 
     grad_out = get_grad(primal)
 
-    backward_recipe_state = _te_fp8_state(recipe, "backward", 1)
+    backward_recipe_state = _get_te_fp8_state(recipe, "backward", 1)
 
-    (grad_output_quantizer,) = _te_fp8_quantizers(backward_recipe_state, 1)
+    (grad_output_quantizer,) = _get_te_fp8_quantizers(backward_recipe_state, 1)
 
     grad_a, grad_w = _te_linear_bwd(
         grad_out,
-        a,
-        w,
+        quantized_a,
+        quantized_w,
         input_quantizer,
         weight_quantizer,
         grad_output_quantizer,
