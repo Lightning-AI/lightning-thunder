@@ -221,6 +221,7 @@ def test_core_vs_numpy_consistency(op: OpInfo, device: str, dtype: dtypes.dtype,
 
 def test_interpolate_nearest_vs_nearest_exact():
     t0 = torch.tensor([[[1, 2, 3], [4, 5, 6]], [[1, 2, 3], [4, 5, 6]]], dtype=torch.float16)
+
     def foo(mode):
         t1 = torch.nn.functional.interpolate(
             t0,
