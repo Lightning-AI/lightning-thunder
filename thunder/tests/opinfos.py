@@ -6450,6 +6450,26 @@ empty_opinfo = OpInfo(
 tensor_creation_ops.append(empty_opinfo)
 
 
+def fixed_value_tensor_creation_op_sample_generator_with_bounds(op, device, dtype, requires_grad, **kwargs):
+    # shape
+    cases = (
+        (4, 4),
+        (8, 1, 6),
+        (8, 7, 5, 1),
+        [
+            4,
+        ],  # Using `list[int]` should also work.
+    )
+
+    bounds = (
+        (0, 2),
+    )
+
+    for shape in cases:
+        for bound in bounds:
+            print(SampleInput(*bound, shape, device=device, dtype=dtype))
+            yield SampleInput(*bound, shape, device=device, dtype=dtype)
+
 def fixed_value_tensor_creation_op_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # shape
     cases = (
@@ -6486,6 +6506,11 @@ def fixed_value_like_tensor_creation_op_sample_generator(op, device, dtype, requ
 def varargs_tensor_creation_op_sample_generator(*args, **kwargs):
     yield from fixed_value_tensor_creation_op_sample_generator(*args, **kwargs)
     yield from vargs_shape_sample_generator(*args, **kwargs)
+
+def varargs_tensor_creation_op_sample_generator_with_bounds(*args, **kwargs):
+    yield from fixed_value_tensor_creation_op_sample_generator_with_bounds(*args, **kwargs)
+    yield from vargs_shape_sample_generator(*args, **kwargs)
+
 
 
 ones_opinfo = OpInfo(
@@ -6558,7 +6583,7 @@ tensor_creation_ops.append(rand_opinfo)
 randint_opinfo = OpInfo(
     name="randint",
     op=torch_randint_and_zero,
-    sample_input_generator=varargs_tensor_creation_op_sample_generator,
+    sample_input_generator=varargs_tensor_creation_op_sample_generator_with_bounds,
     error_input_generator=randn_error_generator,  # Does not depend on the distribution
     torch_reference=lambda *args, **kwargs: torch.randint(*args, **kwargs).fill_(0),
     dtypes=(datatypes.int64,),

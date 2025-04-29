@@ -773,9 +773,9 @@ def rand(
 
 @torchsymbol(torch.randint)
 def randint(
+    low,
     high,
     *shape,
-    low: int = 0,
     generator: None | torch.Generator = None,
     out: TensorLike = None,
     dtype: None | dtypeLike = None,

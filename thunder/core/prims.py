@@ -3035,6 +3035,9 @@ def _randint_meta(
     device: devices.Device,
     dtype: dtypes.dtype,
 ):
+    print("low", low)
+    print("high", high)
+    print("shape", shape)
     utils.check_type(low, int)
     utils.check_type(high, int)
     utils.check(low < high, lambda: f"`low` must be less than `high` but {low=}, {high=}")
