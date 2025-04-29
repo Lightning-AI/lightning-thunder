@@ -1910,7 +1910,6 @@ pad_prim_impl = ex.register_operator("torch_pad_prim_impl", meta=prims.pad.meta,
 _register_implementation(prims.pad, pad_prim_impl, checker=_always_executable)
 _register_implementation(ltorch._softmax, checker=_always_executable, execution_transform=_softmax_transform)
 _register_implementation(ltorch.scaled_dot_product_attention, scaled_dot_product_attention, checker=_always_executable)
-_register_implementation(ltorch.multi_dot, multi_dot, checker=_always_executable)
 
 
 # Probability Distribution ops

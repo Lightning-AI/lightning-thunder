@@ -3835,18 +3835,19 @@ def outer(a: TensorLike, b: TensorLike, /) -> TensorLike:
     return a[:, None] * b[None, :]
 
 
-def _matrix_chain_order(a: Sequence[TensorLike], /) -> TensorLike:
+def _matrix_chain_order(a: Sequence[TensorLike], /):
+    import torch
     n = len(a)
     p = []
     for i in range(n):
         p.append(a[i].size(0))
     p.append(a[n - 1].size(1))
-    m = [[0] * n for _ in range(n)]
-    s = [[0] * n for _ in range(n)]
+    m = torch.zeros(n, n, dtype=torch.int64)
+    s = torch.zeros(n, n, dtype=torch.int64)
     for l in range(1, n):
         for i in range(n - l):
             j = i + l
-            m[i][j] = float("inf")
+            m[i][j] = torch.iinfo(torch.int64).max
             for k in range(i, j):
                 q = m[i][k] + m[k + 1][j] + p[i] * p[k + 1] * p[j + 1]
 
@@ -3875,6 +3876,10 @@ def _matrix_chain_multiplication(
 )
 def multi_dot(_a: Sequence[TensorLike], *, out: TensorLike | None = None) -> TensorLike:
     utils.check(out is None, lambda: "multi_dot(): Non-None out is not supported", NotImplementedError)
+    utils.check(
+        not any(utils.check_types(a.shape, (int, NumberProxy)) for a in _a),
+        lambda: f"multi_dot(): does not support dynamic shapes"
+    )
 
     n = len(_a)
     utils.check(
@@ -3909,8 +3914,6 @@ def multi_dot(_a: Sequence[TensorLike], *, out: TensorLike | None = None) -> Ten
         utils.check_type(_a[i], TensorProxy)
         utils.check(_a[i].dim() == 2, lambda: f"multi_dot(): tensor {i} must be 1D or 2D but got {_a[i].dim()}D")
         a[i] = _a[i]
-
-    # check if all tensors have the same device and dtype
 
     if n == 2:
         return matmul(a[0], a[1]).view(out_shape)
