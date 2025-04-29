@@ -134,7 +134,7 @@ import torch.nn as nn
 model = nn.Sequential(nn.Linear(2048, 4096), nn.ReLU(), nn.Linear(4096, 64))
 ```
 
-Optimize it with thunder:
+Optimize it with Thunder:
 
 ```python
 import thunder
