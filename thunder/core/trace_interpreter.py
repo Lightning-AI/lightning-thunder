@@ -164,11 +164,16 @@ def interpret_trace_to_trace(trace, *args, symbol_mapper=None, with_env=False, *
 
         for bsym in trace.bound_symbols:
             if bsym.sym == prims.python_return:
+                # For return we need to read the args and swap because it may
+                # include inputs that need replacing.
+                # However, we need to unwrap VJP dual for recording in the symbols.
+                # This is in particular needed for the flat_inputs the autograd transform.
                 args = tree_map(lambda x: unwrap_vjpdual(read(x)), bsym.args)
                 new_trace.bound_symbols.append(bsym.from_bsym(args=args).from_bsym_swap_proxies(swap_map))
                 continue
 
             if bsym.sym.id in trace_interpreter_skip_list:
+                # swap proxies, also for UNPACK symbols if inputs are replaced
                 new_trace.bound_symbols.append(bsym.from_bsym_swap_proxies(swap_map))
                 continue
             args = tree_map(read, bsym.args)
