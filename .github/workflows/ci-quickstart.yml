@@ -22,7 +22,7 @@ defaults:
 jobs:
   launcher:
     runs-on: "ubuntu-22.04"
-    timeout-minutes: 55
+    #timeout-minutes: 55
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
