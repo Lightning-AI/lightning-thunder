@@ -18,7 +18,7 @@ defaults:
     shell: bash
 
 jobs:
-  pytester:
+  launcher:
     runs-on: "ubuntu-22.04"
     timeout-minutes: 55
     steps:
