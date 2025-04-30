@@ -9,7 +9,7 @@ def main():
     print("Creating studio...")
     s = Studio("thunder-quickstarts", "oss-thunder", org="lightning-ai", create_ok=True)
     print("Uploading package and scripts...")
-    s.upload_folder("dist")
+    s.upload_folder("dist", remote_path="dist")
     s.upload_folder("examples/quickstart", remote_path="quickstart")
 
     print("Starting studio...")
