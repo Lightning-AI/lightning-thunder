@@ -14,7 +14,7 @@ def main():
 
     print("Starting studio...")
     s.start()
-    print("Installing Thunder plus extra...")
+    print("Installing Thunder and other requirements...")
     s.run("pip install lightning-thunder transformers -f dist/ -U")
 
     ls_quickstart = glob.glob("examples/quickstart/*.py")
