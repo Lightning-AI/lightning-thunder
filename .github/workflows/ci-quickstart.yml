@@ -29,8 +29,8 @@ jobs:
 
       - name: Build package
         run: |
-          pip install -U setuptools wheel
-          python setup.py sdist bdist_wheel
+          pip install -U build
+          python -m build --sdist --wheel --outdir dist/
           ls -l dist/
 
       - name: Run scripts in jobs
