@@ -1179,6 +1179,31 @@ floor_opinfo = OpInfo(
 )
 elementwise_unary_ops.append(floor_opinfo)
 
+# TODO: test_vjp_correctness fails for float64 inputs of larger shapes
+# https://github.com/Lightning-AI/lightning-thunder/issues/1991
+frexp_opinfo = OpInfo(
+    clang.frexp,
+    supports_grad=True,
+    dtypes=(datatypes.floating,),
+    sample_input_generator=partial(elementwise_unary_generator, small=True),
+    torch_reference=_elementwise_unary_torch(torch.frexp),
+    test_directives=(
+        # AssertionError: Scalars are not close!
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_vjp_correctness",
+            executors=("torch", "nvfuser"),
+            dtypes=(datatypes.float64,),
+        ),
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_phantom_grad_vs_torch_consistency",
+            dtypes=(datatypes.bfloat16, datatypes.float16),
+        ),
+    ),
+)
+elementwise_unary_ops.append(frexp_opinfo)
+
 isfinite_opinfo = OpInfo(
     clang.isfinite,
     sample_input_generator=elementwise_unary_generator,
@@ -1193,6 +1218,22 @@ isfinite_opinfo = OpInfo(
     ),
 )
 elementwise_unary_ops.append(isfinite_opinfo)
+
+isinf_opinfo = OpInfo(
+    ltorch.isinf,
+    dtypes=(datatypes.all_dtypes),
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=_elementwise_unary_torch(torch.isinf),
+)
+elementwise_unary_ops.append(isinf_opinfo)
+
+isnan_opinfo = OpInfo(
+    clang.isnan,
+    dtypes=(datatypes.all_dtypes),
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=_elementwise_unary_torch(torch.isnan),
+)
+elementwise_unary_ops.append(isnan_opinfo)
 
 # TODO The domain of rsqrt should be (0, math.inf), but too small values of rsqrt
 #   can cause numerical issues in lower precision (like float16 overflowing)
@@ -2151,7 +2192,9 @@ def elementwise_binary_prims_generator(op, device, dtype, requires_grad, **kwarg
 
 
 # TODO Extend this generator
-def elementwise_binary_generator(op, device, dtype, requires_grad, *, no_rhs_numbers: bool = False, **kwargs):
+def elementwise_binary_generator(
+    op, device, dtype, requires_grad, *, no_rhs_numbers: bool = False, no_weak_dtypes: bool = False, **kwargs
+):
     yield from elementwise_binary_prims_generator(op, device, dtype, requires_grad, **kwargs)
 
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
@@ -2167,6 +2210,28 @@ def elementwise_binary_generator(op, device, dtype, requires_grad, *, no_rhs_num
         c = make((2, 2), **kwargs)
         d = number(**kwargs)
         yield SampleInput(c, d)
+
+    if not no_weak_dtypes:
+
+        # Test tensor x scalar tensor with a different dtype
+        # We first convert the dtype to its base and then use
+        # the table to get the reference dtype.
+        base_tdtype = type(datatypes._torch_to_thunder_dtype_map[dtype])
+
+        weak_dtype_table = {
+            datatypes.signedinteger: torch.int64,
+            datatypes.unsignedinteger: torch.uint8,
+            datatypes.floating: torch.float64,
+            datatypes.complexfloating: torch.complex64,
+            datatypes.bool_: torch.int64,
+        }
+
+        e = make((4, 4), **kwargs)
+        f = make((), **kwargs, dtype=weak_dtype_table[base_tdtype])
+
+        sample = SampleInput(e, f)
+
+        yield sample
 
 
 # TODO: update dtypes with Thunder dtypes (when they exist)
@@ -6928,6 +6993,30 @@ matmul_opinfo = OpInfo(
     ),
 )
 linear_algebra_ops.append(matmul_opinfo)
+
+
+def multi_dot_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # shapes
+    cases = [
+        [(2), (2, 3)],
+        [(1, 2), (2, 3)],
+        [(2, 3), (3, 2), (2, 2)],
+        [(2, 3), (3, 10), (10, 4), (4, 2)],
+    ]
+
+    for shapes in cases:
+        yield SampleInput([make(s) for s in shapes])
+
+
+multi_dot_opinfo = OpInfo(
+    ltorch.multi_dot,
+    sample_input_generator=multi_dot_sample_generator,
+    torch_reference=torch.linalg.multi_dot,
+    dtypes=(datatypes.floating,),
+)
+linear_algebra_ops.append(multi_dot_opinfo)
 
 
 def einsum_sample_generator(op, device, dtype, requires_grad, **kwargs):

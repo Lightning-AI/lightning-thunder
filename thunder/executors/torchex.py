@@ -718,7 +718,10 @@ exp = _register_torch_operation("exp")
 exp2 = _register_torch_operation("exp2")
 expm1 = _register_torch_operation("expm1")
 floor = _register_torch_operation("floor")
+frexp = _register_torch_operation("frexp")
 isfinite = _register_torch_operation("isfinite")
+isinf = _register_torch_operation("isinf")
+isnan = _register_torch_operation("isnan")
 lgamma = _register_torch_operation("lgamma")
 log = _register_torch_operation("log")
 log10 = _register_torch_operation("log10")
@@ -820,6 +823,8 @@ _register_elementwise_unary_implementation(ltorch.exp2, exp2)
 _register_elementwise_unary_implementation(ltorch.expm1, expm1)
 _register_elementwise_unary_implementation(ltorch.floor, floor)
 _register_elementwise_unary_implementation(ltorch.isfinite, isfinite)
+_register_elementwise_unary_implementation(ltorch.isinf, isinf)
+_register_elementwise_unary_implementation(ltorch.isnan, isnan)
 _register_elementwise_unary_implementation(ltorch.lgamma, lgamma)
 _register_elementwise_unary_implementation(ltorch.log, log)
 _register_elementwise_unary_implementation(ltorch.log10, log10)
@@ -841,6 +846,16 @@ _register_elementwise_unary_implementation(ltorch.tanh, tanh)
 _register_elementwise_unary_implementation(ltorch.trunc, trunc)
 _register_elementwise_unary_implementation(ltorch.real, real)
 _register_elementwise_unary_implementation(ltorch.imag, imag)
+
+
+def _frexp_transform(a: TensorProxy):
+    return frexp(a)
+
+
+_register_implementation(prims.frexp, checker=_always_executable, execution_transform=_frexp_transform)
+
+_register_implementation(ltorch.frexp, checker=_always_executable, execution_transform=_frexp_transform)
+
 
 # nn.functional elementwise unary
 celu = _register_torch_operation("celu", module=torch.nn.functional)
@@ -1510,6 +1525,7 @@ adaptive_avg_pool2d = _register_torch_operation("adaptive_avg_pool2d", module=to
 adaptive_avg_pool2d_backward = _register_torch_operation(
     "torch.ops.aten._adaptive_avg_pool2d_backward", like=ltorch.adaptive_avg_pool2d_backward
 )
+multi_dot = _register_torch_operation("torch.linalg.multi_dot", like=ltorch.multi_dot)
 
 
 def _max_pool_with_indices_helper(
