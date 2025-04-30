@@ -66,13 +66,15 @@ def examine(fn: Callable, *args, show_call_stack: bool | int = False, **kwargs):
             f"examine: expected `fn` to be a callable instead received {type(fn)}. Use `examine(fn, *args, **kwargs)` to test `fn(*args, **kwargs)`"
         )
         return
-    elif hasattr(fn, "_lc_cd"): # `fn` has been jitted with Thunder
+    elif hasattr(fn, "_lc_cd"):  # `fn` has been jitted with Thunder
         compile_data = getattr(fn, "_lc_cd", None)
-        if hasattr(compile_data, "fn"): # get original, non-jitted function for use with `examine`
+        if hasattr(compile_data, "fn"):  # get original, non-jitted function for use with `examine`
             original_fn = getattr(compile_data, "fn", None)
             fn = original_fn
-        else: # should not reach
-            print("examine: expected `fn` to have not been compiled. Please use `examine` with original, non-jitted function.")
+        else:  # should not reach
+            print(
+                "examine: expected `fn` to have not been compiled. Please use `examine` with original, non-jitted function."
+            )
 
     with CollectFunctionsUsed(collected_ops):
         try:
