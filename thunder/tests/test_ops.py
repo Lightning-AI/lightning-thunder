@@ -230,8 +230,18 @@ def test_interpolate_nearest_vs_nearest_exact():
         )
         return t1
 
+    def bar(mode):
+        t1 = torch.nn.functional.interpolate(
+            t0,
+            size=4,
+            mode=mode,
+        )
+        return t1
+
     tfoo = thunder.jit(foo)
     assert not torch.equal(tfoo("nearest"), tfoo("nearest-exact"))
+    tbar = thunder.jit(bar)
+    assert not torch.equal(tbar("nearest"), tbar("nearest-exact"))
 
 
 def test_notimplemented_interpolate_align():

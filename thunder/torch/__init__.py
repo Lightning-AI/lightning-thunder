@@ -5388,7 +5388,7 @@ def _interpolate_size_helper(
 
     scale_factor = tuple(output_size / input_size for output_size, input_size in zip(size, spatial_dims))
 
-    return _interpolate_scale_factor_helper(a, scale_factor)
+    return _interpolate_scale_factor_helper(a, scale_factor, mode)
 
 
 # TODO Implement additional modes and parameters
