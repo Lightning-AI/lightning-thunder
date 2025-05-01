@@ -4,6 +4,7 @@ from contextvars import ContextVar
 from contextlib import contextmanager
 import pathlib
 from typing import Optional, Any, Tuple, Type, Dict, List, Union
+from enum import Enum
 from collections.abc import Callable
 from collections.abc import Sequence, Hashable
 import string
@@ -188,6 +189,8 @@ class TraceCtx:
                 self.obj_name_ctr += 1
                 if obj is None:
                     name = f"_object_{name}"
+                elif isinstance(obj, Enum):
+                    name = f"_{baseutils.print_type(type(obj), with_quotes=False)}_{obj.name}"
                 else:
                     name = f"_{baseutils.print_type(type(obj), with_quotes=False)}_{name}"
             else:
