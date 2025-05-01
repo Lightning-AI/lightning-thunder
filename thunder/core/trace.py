@@ -190,7 +190,8 @@ class TraceCtx:
                 if obj is None:
                     name = f"_object_{name}"
                 elif isinstance(obj, Enum):
-                    name = f"_{baseutils.print_type(type(obj), with_quotes=False)}_{obj.name}"
+                    # even though it should be unique, we need to do the counter suffix for technical problems
+                    name = f"_{baseutils.print_type(type(obj), with_quotes=False)}_{obj.name}_{name}"
                 else:
                     name = f"_{baseutils.print_type(type(obj), with_quotes=False)}_{name}"
             else:
