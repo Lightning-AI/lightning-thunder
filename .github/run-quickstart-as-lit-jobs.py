@@ -25,7 +25,7 @@ def main():
     jobs = [
         Job.run(
             name=f"ci-{timestamp}_{script}",
-            command=f"python quickstart/{os.path.basename(script)}",
+            command=f"pip list && python quickstart/{os.path.basename(script)}",
             studio=s,
             machine=Machine.L40S,
             interruptible=True,
