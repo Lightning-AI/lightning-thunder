@@ -126,24 +126,24 @@ RUN \
     fi
 
 ARG TORCH_INSTALL
+ENV NVFUSER_BUILD_NO_TEST=1
+ENV NVFUSER_BUILD_NO_BENCHMARK=1
 
 RUN \
     if [ "${TORCH_INSTALL}" == "source" ]; then \
         # building nvFuser from source
-        git clone https://github.com/NVIDIA/Fuser.git && \
+        git clone --recursive https://github.com/NVIDIA/Fuser.git && \
         cd Fuser && \
-        git submodule update --init --recursive && \
         pip install -r requirements.txt && \
-        python setup.py install --no-test --no-benchmark && \
+        pip install -v --no-build-isolation python/ && \
         cd .. && \
         rm -rf Fuser ; \
     elif [ "${TORCH_INSTALL}" == "test" ]; then \
         # building nvFuser from source
-        git clone https://github.com/NVIDIA/Fuser.git && \
+        git clone --recursive https://github.com/NVIDIA/Fuser.git && \
         cd Fuser && \
-        git submodule update --init --recursive && \
         pip install -r requirements.txt && \
-        python setup.py install --no-test --no-benchmark && \
+        pip install -v --no-build-isolation python/ && \
         cd .. && \
         rm -rf Fuser ; \
     else \

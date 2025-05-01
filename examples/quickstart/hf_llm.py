@@ -25,6 +25,8 @@ def main():
         )
         model.requires_grad_(False)
         model.eval()
+        # apparently, Transformers 4.51.3 does not instantiate models on the default device
+        model.to(device)
 
         inp = tokenizer(["Hello world! Here's a long story"], return_tensors='pt')
 

@@ -100,8 +100,9 @@ def check_inplace_to_views(computation_trace: Trace) -> dict[VariableInterface, 
         check(
             orig_tensor.numel == in_tensor.numel,
             lambda: (
-                f"in-place op of `{bsym.sym.id}` to `{in_tensor}`, a view tensor of "
-                f"`{orig_tensor}` is not supported because {in_tensor.numel} != {orig_tensor.numel}"
+                "Thunder does not yet support in-place operations of Tensors that are views of a "
+                f"larger Tensor (such as slices). Please modify usage of `{bsym.sym.id}` "
+                f"({bsym.source_filename}:{bsym.source_positions.lineno})."
             ),
             NotImplementedError,
         )
