@@ -2890,13 +2890,13 @@ def cross_entropy_bwd(
     neg_gradients = fd.ops.neg(nv_g)
     neg_gradients_mod = fd.ops.div(neg_gradients, nv_valid_indices)
 
-    ne = fd.ops.ne(nv_target, nv_ignore_index)
-    new_target = fd.ops.where(ne, neg_gradients_mod, zero)
-    new_target_bcast = fd.ops.broadcast_in_dim(new_target, shape=nv_a.shape(), broadcast_dims=[new_target.ndim - 1])
-
     target_bcast = fd.ops.broadcast_in_dim(nv_target, shape=nv_a.shape(), broadcast_dims=[nv_target.ndim - 1])
     mask = fd.ops.eq(iotas_bcast, target_bcast)
-    scattered_vals = fd.ops.where(mask, neg_gradients_mod, zero)
+    neg_gradients_mod_bcast = fd.ops.broadcast_in_dim(neg_gradients_mod, shape=nv_a.shape(), broadcast_dims=[])
+    scattered_vals = fd.ops.where(mask, neg_gradients_mod_bcast, zero)
+
+    ne = fd.ops.ne(target_bcast, nv_ignore_index)
+    new_target_bcast = fd.ops.where(ne, neg_gradients_mod_bcast, zero)
 
     # build the softmax
     nv_a_max_bcast = fd.ops.broadcast_in_dim(nv_a_max, shape=nv_a.shape(), broadcast_dims=[nv_a_max.ndim - 1])
