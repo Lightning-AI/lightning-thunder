@@ -13,6 +13,8 @@ def main():
         model = ViTForImageClassification.from_pretrained("google/vit-base-patch16-224", attn_implementation="sdpa", torch_dtype=torch.float32)
         model.requires_grad_(False)
         model.eval()
+        # apparently, Transformers 4.51.3 does not instantiate models on the default device
+        model.to(device)
 
         inp = torch.randn(128, 3, 224, 224)
 
