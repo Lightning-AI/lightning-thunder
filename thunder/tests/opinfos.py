@@ -9509,6 +9509,7 @@ def interpolate_sample_generator(op, device, dtype, requires_grad, **kwargs):
             a_shape = b + c + spatial_dims
 
             yield SampleInput(make(a_shape), size=size)
+            yield SampleInput(make(a_shape), size=size, mode="nearest-exact")
 
     # Test scale/scale_factor passed as a scalar
     yield SampleInput(make(1, 1, 5, 5), scale_factor=0.5)
@@ -9568,6 +9569,11 @@ def interpolate_error_generator(op, device, dtype=torch.float32, **kwargs):
         SampleInput(make(1, 1, 1, 1), scale_factor=(2.0, 2)),
         RuntimeError,
         f"scale_factor(.*?) is expected to be (.*?) a sequence of strictly positive floating point numbers",
+    )
+    yield (
+        SampleInput(make(1, 1, 1, 1), mode="bilinear"),
+        RuntimeError,
+        f"only modes 'nearest' and 'nearest-exact' are supported at the moment, but got mode=(.*?)",
     )
 
 

@@ -5278,7 +5278,10 @@ def _interpolate_scale_factor_helper(
     scale_factor: Sequence[float] | float,
     mode: str = "nearest",
 ) -> TensorLike:
-    assert mode == "nearest"
+    if mode not in ("nearest", "nearest-exact"):
+        raise ValueError(
+            f"_interpolate_scale_factor_helper expected mode to be 'nearest' or 'nearest-exact', but got {mode}"
+        )
 
     # a is assumed to be at least 3D.
     batch, channels, *spatial_dims = a.shape
@@ -5299,13 +5302,23 @@ def _interpolate_scale_factor_helper(
         )
 
     # perform nearest up/down-sampling
-    def nearest_sampler(t, input_dim, output_dim, *, scale, dim):
+    def nearest_sampler(
+        t: TensorLike,
+        input_dim: int,
+        output_dim: int,
+        *,
+        scale: float,
+        dim: int,
+        exact: bool,
+    ) -> TensorLike:
         # It is expected that output_dim = int(input_dim * scale).
         # Indices [0, ..., output_dim - 1] are mapped to [0, ..., input_dim - 1]
-        # with the rule i -> int(i * scale)
+        # with the rule i -> int(i * scale) or i -> round((i + 0.5) * scale - 0.5),
+        # corresponding to modes 'nearest' or 'nearest-exact', respectively.
         # Values at these indices is the result.
+        # References https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/native/UpSample.h
         selected_idx = arange(0, output_dim, device=a.device)
-        selected_idx = to(selected_idx * scale, selected_idx.dtype)
+        selected_idx = to((selected_idx + exact * 0.5) * scale, selected_idx.dtype)
         return clang.take(t, selected_idx, dim=dim)
 
     def dim_expander(t, dim, n_repeats):
@@ -5327,6 +5340,7 @@ def _interpolate_scale_factor_helper(
         # dimenions corresponding to batches and channels.
         curr_dim = 2 + (len(spatial_dims) - k - 1)
 
+        exact: bool = mode == "nearest-exact"
         if output_dim <= input_dim:
             if output_dim <= input_dim // 2:
                 # scale_factor <= 1 (i.e. output_dim <= input_dim) implies simple slice
@@ -5336,7 +5350,7 @@ def _interpolate_scale_factor_helper(
                 a = clang.slice_in_dim(a, 0, end, stride=stride, dim=curr_dim)
             else:
                 # In this case slice will not do and explicit downsample is needed.
-                a = nearest_sampler(a, input_dim, output_dim, scale=1.0 / scale, dim=curr_dim)
+                a = nearest_sampler(a, input_dim, output_dim, scale=1.0 / scale, dim=curr_dim, exact=exact)
         else:
             if output_dim % input_dim == 0:
                 # In this case we can just expand dim.
@@ -5344,7 +5358,7 @@ def _interpolate_scale_factor_helper(
                 a = dim_expander(a, curr_dim, n_repeats)
             else:
                 # In this case expand will not cut it and explicit upsampling is needed.
-                a = nearest_sampler(a, input_dim, output_dim, scale=1.0 / scale, dim=curr_dim)
+                a = nearest_sampler(a, input_dim, output_dim, scale=1.0 / scale, dim=curr_dim, exact=exact)
 
     output_shape = [batch, channels] + res_output_spatial_dims[::-1]
     return reshape(a, output_shape)
@@ -5374,7 +5388,7 @@ def _interpolate_size_helper(
 
     scale_factor = tuple(output_size / input_size for output_size, input_size in zip(size, spatial_dims))
 
-    return _interpolate_scale_factor_helper(a, scale_factor)
+    return _interpolate_scale_factor_helper(a, scale_factor, mode)
 
 
 # TODO Implement additional modes and parameters
@@ -5390,8 +5404,8 @@ def interpolate(
     antialias: bool = False,
 ) -> TensorLike:
     utils.check(
-        mode == "nearest",
-        lambda: f"only mode='nearest' is supported at the moment, but got {mode=}",
+        (mode == "nearest" or mode == "nearest-exact"),
+        lambda: f"only modes 'nearest' and 'nearest-exact' are supported at the moment, but got {mode=}",
         exception_type=NotImplementedError,
     )
 
