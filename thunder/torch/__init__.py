@@ -3913,7 +3913,7 @@ def outer(a: TensorLike, b: TensorLike, /) -> TensorLike:
     return a[:, None] * b[None, :]
 
 
-def _matrix_chain_order(a: Sequence[TensorLike], /):
+def _matrix_chain_order(a: Sequence[TensorLike], /) -> TensorLike:
     import torch
 
     n = len(a)
@@ -3953,46 +3953,49 @@ def _matrix_chain_multiplication(
     "torch.linalg.multi_dot",
     id="torch.linalg.multi_dot",
 )
-def multi_dot(_a: Sequence[TensorLike], *, out: TensorLike | None = None) -> TensorLike:
+def multi_dot(tensors: Sequence[TensorLike], *, out: TensorLike | None = None) -> TensorLike:
     utils.check(out is None, lambda: "multi_dot(): Non-None out is not supported", NotImplementedError)
     utils.check(
-        not any(utils.check_types(a.shape, (int, NumberProxy)) for a in _a),
+        not any(any(isinstance(i, NumberProxy) for i in tensor.shape) for tensor in tensors),
         lambda: f"multi_dot(): does not support dynamic shapes",
     )
 
-    n = len(_a)
+    n = len(tensors)
     utils.check(
         n >= 2,
-        lambda: f"multi_dot(): expected at least 2 tensors, but got {a}",
+        lambda: f"multi_dot(): expected at least 2 tensors, but got {n}",
     )
 
-    utils.check_type(_a[0], TensorProxy)
     a = [0] * n
     out_shape = []
 
     # check first tensor
-    utils.check(1 <= _a[0].dim() <= 2, lambda: f"multi_dot(): the first tensor must be 1D or 2D but got {a[0].dim()}D")
-    if _a[0].dim() == 1:
-        a[0] = unsqueeze(_a[0], 0)
+    utils.check_type(tensors[0], TensorProxy)
+    utils.check(
+        1 <= tensors[0].dim() <= 2, lambda: f"multi_dot(): the first tensor must be 1D or 2D but got {a[0].dim()}D"
+    )
+    if tensors[0].dim() == 1:
+        a[0] = unsqueeze(tensors[0], 0)
     else:
-        a[0] = _a[0]
-        out_shape.append(_a[0].size(0))
+        a[0] = tensors[0]
+        out_shape.append(tensors[0].size(0))
 
     # check last tensor
+    utils.check_type(tensors[-1], TensorProxy)
     utils.check(
-        1 <= _a[n - 1].dim() <= 2, lambda: f"multi_dot(): the last tensor must be 1D or 2D but got {a[n-1].dim()}D"
+        1 <= tensors[n - 1].dim() <= 2, lambda: f"multi_dot(): the last tensor must be 1D or 2D but got {a[n-1].dim()}D"
     )
-    if _a[n - 1].dim() == 1:
-        a[n - 1] = unsqueeze(_a[n - 1], -1)
+    if tensors[n - 1].dim() == 1:
+        a[n - 1] = unsqueeze(tensors[n - 1], -1)
     else:
-        a[n - 1] = _a[n - 1]
-        out_shape.append(_a[n - 1].size(1))
+        a[n - 1] = tensors[n - 1]
+        out_shape.append(tensors[n - 1].size(1))
 
     # check middle tensor
     for i in range(1, n - 1):
-        utils.check_type(_a[i], TensorProxy)
-        utils.check(_a[i].dim() == 2, lambda: f"multi_dot(): tensor {i} must be 1D or 2D but got {_a[i].dim()}D")
-        a[i] = _a[i]
+        utils.check_type(tensors[i], TensorProxy)
+        utils.check(tensors[i].dim() == 2, lambda: f"multi_dot(): tensor {i} must be 2D but got {tensors[i].dim()}D")
+        a[i] = tensors[i]
 
     if n == 2:
         return matmul(a[0], a[1]).view(out_shape)
@@ -5278,7 +5281,10 @@ def _interpolate_scale_factor_helper(
     scale_factor: Sequence[float] | float,
     mode: str = "nearest",
 ) -> TensorLike:
-    assert mode == "nearest"
+    if mode not in ("nearest", "nearest-exact"):
+        raise ValueError(
+            f"_interpolate_scale_factor_helper expected mode to be 'nearest' or 'nearest-exact', but got {mode}"
+        )
 
     # a is assumed to be at least 3D.
     batch, channels, *spatial_dims = a.shape
@@ -5299,13 +5305,23 @@ def _interpolate_scale_factor_helper(
         )
 
     # perform nearest up/down-sampling
-    def nearest_sampler(t, input_dim, output_dim, *, scale, dim):
+    def nearest_sampler(
+        t: TensorLike,
+        input_dim: int,
+        output_dim: int,
+        *,
+        scale: float,
+        dim: int,
+        exact: bool,
+    ) -> TensorLike:
         # It is expected that output_dim = int(input_dim * scale).
         # Indices [0, ..., output_dim - 1] are mapped to [0, ..., input_dim - 1]
-        # with the rule i -> int(i * scale)
+        # with the rule i -> int(i * scale) or i -> round((i + 0.5) * scale - 0.5),
+        # corresponding to modes 'nearest' or 'nearest-exact', respectively.
         # Values at these indices is the result.
+        # References https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/native/UpSample.h
         selected_idx = arange(0, output_dim, device=a.device)
-        selected_idx = to(selected_idx * scale, selected_idx.dtype)
+        selected_idx = to((selected_idx + exact * 0.5) * scale, selected_idx.dtype)
         return clang.take(t, selected_idx, dim=dim)
 
     def dim_expander(t, dim, n_repeats):
@@ -5327,6 +5343,7 @@ def _interpolate_scale_factor_helper(
         # dimenions corresponding to batches and channels.
         curr_dim = 2 + (len(spatial_dims) - k - 1)
 
+        exact: bool = mode == "nearest-exact"
         if output_dim <= input_dim:
             if output_dim <= input_dim // 2:
                 # scale_factor <= 1 (i.e. output_dim <= input_dim) implies simple slice
@@ -5336,7 +5353,7 @@ def _interpolate_scale_factor_helper(
                 a = clang.slice_in_dim(a, 0, end, stride=stride, dim=curr_dim)
             else:
                 # In this case slice will not do and explicit downsample is needed.
-                a = nearest_sampler(a, input_dim, output_dim, scale=1.0 / scale, dim=curr_dim)
+                a = nearest_sampler(a, input_dim, output_dim, scale=1.0 / scale, dim=curr_dim, exact=exact)
         else:
             if output_dim % input_dim == 0:
                 # In this case we can just expand dim.
@@ -5344,7 +5361,7 @@ def _interpolate_scale_factor_helper(
                 a = dim_expander(a, curr_dim, n_repeats)
             else:
                 # In this case expand will not cut it and explicit upsampling is needed.
-                a = nearest_sampler(a, input_dim, output_dim, scale=1.0 / scale, dim=curr_dim)
+                a = nearest_sampler(a, input_dim, output_dim, scale=1.0 / scale, dim=curr_dim, exact=exact)
 
     output_shape = [batch, channels] + res_output_spatial_dims[::-1]
     return reshape(a, output_shape)
@@ -5374,7 +5391,7 @@ def _interpolate_size_helper(
 
     scale_factor = tuple(output_size / input_size for output_size, input_size in zip(size, spatial_dims))
 
-    return _interpolate_scale_factor_helper(a, scale_factor)
+    return _interpolate_scale_factor_helper(a, scale_factor, mode)
 
 
 # TODO Implement additional modes and parameters
@@ -5390,8 +5407,8 @@ def interpolate(
     antialias: bool = False,
 ) -> TensorLike:
     utils.check(
-        mode == "nearest",
-        lambda: f"only mode='nearest' is supported at the moment, but got {mode=}",
+        (mode == "nearest" or mode == "nearest-exact"),
+        lambda: f"only modes 'nearest' and 'nearest-exact' are supported at the moment, but got {mode=}",
         exception_type=NotImplementedError,
     )
 

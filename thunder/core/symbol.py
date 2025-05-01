@@ -473,6 +473,8 @@ class BoundSymbol(BoundSymbolInterface):
                 if isinstance(fa, Proxy):
                     vfa = variableify(fa)
                     while vfa in swap_map:
+                        if swap_map[vfa] is fa:
+                            break
                         baseutils.check(
                             vfa not in visited, lambda: f"Detected a cycle while swapping; the cycle includes {visited}"
                         )
