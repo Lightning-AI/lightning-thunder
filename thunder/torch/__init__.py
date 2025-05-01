@@ -3913,7 +3913,7 @@ def outer(a: TensorLike, b: TensorLike, /) -> TensorLike:
     return a[:, None] * b[None, :]
 
 
-def _matrix_chain_order(a: Sequence[TensorLike], /):
+def _matrix_chain_order(a: Sequence[TensorLike], /) -> TensorLike:
     import torch
 
     n = len(a)
@@ -3953,46 +3953,49 @@ def _matrix_chain_multiplication(
     "torch.linalg.multi_dot",
     id="torch.linalg.multi_dot",
 )
-def multi_dot(_a: Sequence[TensorLike], *, out: TensorLike | None = None) -> TensorLike:
+def multi_dot(tensors: Sequence[TensorLike], *, out: TensorLike | None = None) -> TensorLike:
     utils.check(out is None, lambda: "multi_dot(): Non-None out is not supported", NotImplementedError)
     utils.check(
-        not any(utils.check_types(a.shape, (int, NumberProxy)) for a in _a),
+        not any(any(isinstance(i, NumberProxy) for i in tensor.shape) for tensor in tensors),
         lambda: f"multi_dot(): does not support dynamic shapes",
     )
 
-    n = len(_a)
+    n = len(tensors)
     utils.check(
         n >= 2,
-        lambda: f"multi_dot(): expected at least 2 tensors, but got {a}",
+        lambda: f"multi_dot(): expected at least 2 tensors, but got {n}",
     )
 
-    utils.check_type(_a[0], TensorProxy)
     a = [0] * n
     out_shape = []
 
     # check first tensor
-    utils.check(1 <= _a[0].dim() <= 2, lambda: f"multi_dot(): the first tensor must be 1D or 2D but got {a[0].dim()}D")
-    if _a[0].dim() == 1:
-        a[0] = unsqueeze(_a[0], 0)
+    utils.check_type(tensors[0], TensorProxy)
+    utils.check(
+        1 <= tensors[0].dim() <= 2, lambda: f"multi_dot(): the first tensor must be 1D or 2D but got {a[0].dim()}D"
+    )
+    if tensors[0].dim() == 1:
+        a[0] = unsqueeze(tensors[0], 0)
     else:
-        a[0] = _a[0]
-        out_shape.append(_a[0].size(0))
+        a[0] = tensors[0]
+        out_shape.append(tensors[0].size(0))
 
     # check last tensor
+    utils.check_type(tensors[-1], TensorProxy)
     utils.check(
-        1 <= _a[n - 1].dim() <= 2, lambda: f"multi_dot(): the last tensor must be 1D or 2D but got {a[n-1].dim()}D"
+        1 <= tensors[n - 1].dim() <= 2, lambda: f"multi_dot(): the last tensor must be 1D or 2D but got {a[n-1].dim()}D"
     )
-    if _a[n - 1].dim() == 1:
-        a[n - 1] = unsqueeze(_a[n - 1], -1)
+    if tensors[n - 1].dim() == 1:
+        a[n - 1] = unsqueeze(tensors[n - 1], -1)
     else:
-        a[n - 1] = _a[n - 1]
-        out_shape.append(_a[n - 1].size(1))
+        a[n - 1] = tensors[n - 1]
+        out_shape.append(tensors[n - 1].size(1))
 
     # check middle tensor
     for i in range(1, n - 1):
-        utils.check_type(_a[i], TensorProxy)
-        utils.check(_a[i].dim() == 2, lambda: f"multi_dot(): tensor {i} must be 1D or 2D but got {_a[i].dim()}D")
-        a[i] = _a[i]
+        utils.check_type(tensors[i], TensorProxy)
+        utils.check(tensors[i].dim() == 2, lambda: f"multi_dot(): tensor {i} must be 2D but got {tensors[i].dim()}D")
+        a[i] = tensors[i]
 
     if n == 2:
         return matmul(a[0], a[1]).view(out_shape)
