@@ -11,12 +11,11 @@ def main():
     print("Uploading package and scripts...")
     s.upload_folder("dist", remote_path="dist")
     s.upload_folder("examples/quickstart", remote_path="quickstart")
-    s.upload_file("requirements/quickstart.txt")
 
     print("Starting studio...")
     s.start()
     print("Installing Thunder and other requirements...")
-    s.run("pip install lightning-thunder -f dist/ -U -r quickstart.txt")
+    s.run("pip install lightning-thunder -f dist/ -U -r quickstart/requirements.txt")
 
     ls_quickstart = glob.glob("examples/quickstart/*.py")
     print("Found quickstart scripts:", ls_quickstart)
