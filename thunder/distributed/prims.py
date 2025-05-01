@@ -384,7 +384,7 @@ def synchronize_augmented_forward_rule(
             # Assuming that the input is a replicated tensor, so no need to do anything
             # in the forward pass
             return a, (
-                a.distparallel_type,
+                distparallel_type,
                 group,
             )
         case DistParallelType.FULLY_SHARDED:
@@ -394,11 +394,11 @@ def synchronize_augmented_forward_rule(
             # passes would reorder the wait operation to be closer to the actual
             # usage of the tensor.
             return all_gather(a, group, True).wait(), (
-                a.distparallel_type,
+                distparallel_type,
                 group,
             )
         case _:
-            utils.check(False, lambda: f"Proxy {a} has unexpected {a.distparallel_type=}")
+            utils.check(False, lambda: f"unexpected {distparallel_type=}")
 
 
 @register_backward(PrimIDs.SYNCHRONIZE)
