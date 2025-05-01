@@ -8,6 +8,7 @@ on:
       - ".github/workflows/ci-quickstart.yml"
       - ".github/run-quickstart-as-lit-jobs.py"
       - "examples/quickstart/*"
+      - "requirements/quickstart.txt"
   workflow_dispatch: {}
   schedule:
     - cron: "0 0 * * *" # every midnight
