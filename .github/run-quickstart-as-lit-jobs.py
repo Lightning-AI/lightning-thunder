@@ -39,15 +39,20 @@ def main():
     print("Waiting for jobs to finish...")
     failures = {}
     for i, job in enumerate(jobs):
-        print(f"Waiting for {i}/{len(jobs)}: {job.name}")
         job.wait()
-        if job.status == Status.Completed:
-            print(f"Job '{job.name}' finished: {job.status}")
-        else:
-            failures[job.name] = job.status
-            print(f"Job '{job.name}' {job.status}:\n{job.logs}")
+        print(f"[{job.status}]\t {job.name}")
+        if job.status != Status.Completed:
+            failures[job.name] = job.logs
 
-    assert len(failures) == 0, f"Some jobs failed: {failures}"
+    print("Showing logs of failed jobs...")
+    separator = "=" * 80
+    for name, logs in failures.items():
+        offset = "=" * (80 - 5 - 2 - len(name))
+        print(f"{separator}\n===== {name} {offset}\n{separator}")
+        print(logs)
+        print(separator + "\n" * 5)
+
+    assert not failures
 
     # print("Cleaning up...")
     # s.delete()
