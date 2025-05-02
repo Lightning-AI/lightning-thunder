@@ -127,6 +127,7 @@ def _linear_fwd_impl(a, w, bias, input_quantizer: Float8Quantizer, weight_quanti
     out, quantized_a, quantized_w = BasicLinear._functional_forward(
         input=a,
         weight=w,
+        bias=bias,
         with_quantized_compute=True,
         input_quantizer=input_quantizer,
         weight_quantizer=weight_quantizer,
@@ -222,11 +223,11 @@ def _te_linear_grad_transform(a, w, bias):
     put_grad(a, grad_a)
     put_grad(w, grad_w)
 
-    if bias:
-        if primal.ndim > 1:
-            grad_bias = ltorch.sum(primal, tuple(range(primal.ndim - 1)))
+    if bias is not None:
+        if grad_out.ndim > 1:
+            grad_bias = ltorch.sum(grad_out, tuple(range(grad_out.ndim - 1)))
         else:
-            grad_bias = primal
+            grad_bias = grad_out
         put_grad(bias, grad_bias)
 
     return primal
