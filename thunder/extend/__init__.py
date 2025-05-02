@@ -296,8 +296,10 @@ class StatefulExecutor(OperatorExecutor):
 
     def get_grad_transform(self, sym: Symbol):
         grad_transform = super().get_grad_transform(sym)
-        # Always disable cache for stateful grad transform
-        return disable_caching_split_forward_and_backward(grad_transform)
+        if grad_transform:
+            # Always disable cache for stateful grad transform
+            return disable_caching_split_forward_and_backward(grad_transform)
+        return grad_transform
 
 
 class TemporaryExecutor(OperatorExecutor):
