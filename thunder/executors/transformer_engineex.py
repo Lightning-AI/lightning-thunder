@@ -332,7 +332,10 @@ def make_te_linear_meta(is_grad_enabled: bool = False):
 
             # It's not critical to model the exact shape and dtype of
             # saved_tensors since they are not used in Thunder's meta functions.
-            saved_tensors = tuple(TensorProxy(like=a, shape=a.shape) for _ in range(_get_num_saved_tensors(get_recipe_from_options_or_default_recipe())))
+            saved_tensors = tuple(
+                TensorProxy(like=a, shape=a.shape)
+                for _ in range(_get_num_saved_tensors(get_recipe_from_options_or_default_recipe()))
+            )
 
             return TensorProxy(like=a, shape=output_shape), saved_tensors, ctx_dict
         return TensorProxy(like=a, shape=output_shape), None, None
