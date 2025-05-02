@@ -439,3 +439,57 @@ def test_ltorch_maximum_result_dtype_for_scalar_tensors():
 
     bsym = trc.bound_symbols[2]
     assert bsym.output.dtype is dtypes.bfloat16
+
+
+def test_multi_dot_optimization():
+    def fn(tensors):
+        return torch.linalg.multi_dot(tensors)
+
+    # three matrices
+
+    a = torch.randn(10, 100)
+    b = torch.randn(100, 10)
+    c = torch.randn(10, 100)
+
+    jfn = thunder.jit(fn)
+    out = jfn([a, b, c])
+    trc = thunder.last_traces(jfn)[-1]
+
+    # make sure that there is no (100 x 100) intermediates
+    for bsym in trc.bound_symbols:
+        if bsym.sym.id == "matmul":
+            for flat_out in bsym.flat_outs:
+                assert flat_out.shape != (100, 100)
+
+    out2 = jfn([a.T, b.T, c.T])
+    trc2 = thunder.last_traces(jfn)[-1]
+
+    # make sure that there is no (100 x 100) intermediates
+    for bsym in trc2.bound_symbols:
+        if bsym.sym.id == "matmul":
+            for flat_out in bsym.flat_outs:
+                assert flat_out.shape != (100, 100)
+
+    # five matrices
+
+    d = torch.randn(100, 10)
+    e = torch.randn(10, 100)
+
+    jfn = thunder.jit(fn)
+    out = jfn([a, b, c, d, e])
+    trc = thunder.last_traces(jfn)[-1]
+
+    # make sure that there is no (100 x 100) intermediates
+    for bsym in trc.bound_symbols:
+        if bsym.sym.id == "matmul":
+            for flat_out in bsym.flat_outs:
+                assert flat_out.shape != (100, 100)
+
+    out2 = jfn([a.T, b.T, c.T, d.T, e.T])
+    trc2 = thunder.last_traces(jfn)[-1]
+
+    # make sure that there is no (100 x 100) intermediates
+    for bsym in trc2.bound_symbols:
+        if bsym.sym.id == "matmul":
+            for flat_out in bsym.flat_outs:
+                assert flat_out.shape != (100, 100)
