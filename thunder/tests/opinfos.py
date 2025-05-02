@@ -8316,7 +8316,6 @@ nn_ops.append(layer_norm_opinfo)
 
 def rms_norm_reference_generator(op, device, dtype, requires_grad, **kwargs):
     for sample_inputs in layer_norm_reference_generator(op, device, dtype, requires_grad, **kwargs):
-        print(sample_inputs.args)
         if len(sample_inputs.args) > 3:  # positional bias
             sample_inputs.args = sample_inputs.args[:3] + sample_inputs.args[4:]
         sample_inputs.kwargs.pop("bias", None)
@@ -8325,7 +8324,6 @@ def rms_norm_reference_generator(op, device, dtype, requires_grad, **kwargs):
 
 def rms_norm_sample_generator(op, device, dtype, requires_grad, **kwargs):
     for sample_inputs in layer_norm_sample_generator(op, device, dtype, requires_grad, **kwargs):
-        print(sample_inputs.args)
         if len(sample_inputs.args) > 3:  # positional bias
             sample_inputs.args = sample_inputs.args[:3] + sample_inputs.args[4:]
         sample_inputs.kwargs.pop("bias", None)
@@ -8334,7 +8332,6 @@ def rms_norm_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
 def rms_norm_error_generator(op, device, **kwargs):
     for sample_inputs, exc_type, msg in layer_norm_error_generator(op, device, **kwargs):
-        print(sample_inputs.args)
         if len(sample_inputs.args) > 3:  # positional bias
             sample_inputs.args = sample_inputs.args[:3] + sample_inputs.args[4:]
         sample_inputs.kwargs.pop("bias", None)
