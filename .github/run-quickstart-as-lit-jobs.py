@@ -23,8 +23,8 @@ def main():
 
     print("Running quickstart scripts...")
     timestamp = datetime.now().strftime("%Y-%m-%d|%H:%M:%S")
-    jobs = {os.path.basename(script):
-        Job.run(
+    jobs = {
+        os.path.basename(script): Job.run(
             name=f"ci-{timestamp}_{script}",
             command=f"pip list && python quickstart/{os.path.basename(script)}",
             studio=s,

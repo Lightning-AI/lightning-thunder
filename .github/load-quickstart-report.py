@@ -9,7 +9,7 @@ from lightning_sdk import Studio, Job, Machine, Status
 
 def main(report_path: str = "quickstart_report.json"):
     """Load and print the quickstart report."""
-    with open(report_path, "r") as fp:
+    with open(report_path) as fp:
         report = json.load(fp)
 
     print("Quickstart report:")
