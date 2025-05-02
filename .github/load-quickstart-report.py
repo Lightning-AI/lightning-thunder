@@ -1,10 +1,5 @@
 import json
 import sys
-from datetime import datetime
-import glob
-import os.path
-
-from lightning_sdk import Studio, Job, Machine, Status
 
 
 def main(report_path: str = "quickstart_report.json"):
