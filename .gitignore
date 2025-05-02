@@ -148,3 +148,5 @@ benchmarks/traces
 # come CI artifacts
 notebooks/all.txt
 notebooks/ci.txt
+
+quickstart_report.json

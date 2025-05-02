@@ -46,6 +46,7 @@ jobs:
 
       - name: Load report
         if: always()
+        id: load-report
         run: |
           report=$(python .github/load-quickstart-report.py)
           echo "REPORT<<EOF" >> $GITHUB_ENV
@@ -53,7 +54,7 @@ jobs:
           echo "EOF" >> $GITHUB_ENV
 
       - uses: act10ns/slack@v2
-        if: always()
+        if: always() && steps.load-report.conclusion == 'success'
         with:
           webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
           status: ${{ job.status }}
