@@ -15,7 +15,7 @@ def main(report_path: str = "quickstart_report.json"):
     # print("Quickstart report:")
     for name, status in report.items():
         status_icon = "✅" if status == "completed" else "❌"
-        print(f"{status_icon}: {name}")
+        print(f"{status_icon} {name}")
 
 
 if __name__ == "__main__":
