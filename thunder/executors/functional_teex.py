@@ -1,6 +1,7 @@
 import importlib
 import warnings
 
+from thunder.core.prims import linear as linear_prim
 from thunder.core.prims import get_grad, put_grad
 from thunder.core.proxies import AnyProxy, TensorProxy
 
@@ -232,7 +233,7 @@ def _te_linear_grad_transform(a, w, bias):
 
 
 functional_te_ex.register_implementation(
-    ltorch.linear,
+    linear_prim,
     checker=_functional_te_checker,
     execution_transform=_te_linear_execution_transform,
     grad_transform=_te_linear_grad_transform,
