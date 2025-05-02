@@ -44,9 +44,19 @@ jobs:
           pip install lightning_sdk -U -q
           python .github/run-quickstart-as-lit-jobs.py
 
+      - name: Load report
+        if: always()
+        run: |
+          report=$(python .github/load-quickstart-report.py)
+          echo "REPORT<<EOF" >> $GITHUB_ENV
+          echo "$report" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
       - uses: act10ns/slack@v2
         if: always()
         with:
           webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
           status: ${{ job.status }}
-          steps: ${{ toJson(steps) }}
+          message: |
+            *Quickstart CI* - ${{ job.status }}
+            ${{ env.REPORT }}
