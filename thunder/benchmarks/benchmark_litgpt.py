@@ -580,6 +580,15 @@ class Benchmark_litGPT:
             model = torch.compile(model)
         elif "thunder" in self.compile:
             executors = list(thunder.get_default_executors())
+            transforms = []
+
+            if "functional_te" in self.compile:
+                from thunder.executors.functional_teex import functional_te_ex
+                from thunder.transforms import TransformerEngineTransform
+
+                executors.insert(0, functional_te_ex)
+                transforms.insert(0, TransformerEngineTransform())
+
             if "inductor_cat" in self.compile:
                 from thunder.executors.torch_compile import torch_compile_cat_ex as torch_compile_ex
 
@@ -601,7 +610,7 @@ class Benchmark_litGPT:
 
                     dynamo_config.cache_size_limit = 64
 
-                self.backend = ThunderCompiler(executors=executors)
+                self.backend = ThunderCompiler(executors=executors, transforms=transforms)
                 # Because Lightning Fabric is imported in this script it monkey patches the torch.compile function
                 # https://github.com/Lightning-AI/pytorch-lightning/blob/828fd998961f6a60f92c35254bb94d6e049ad069/src/lightning/fabric/wrappers.py#L421
                 # using __wrapped__ to access the original torch.compile function did not work
@@ -610,7 +619,7 @@ class Benchmark_litGPT:
             else:
                 jit_options = {}
                 jit_options["fp8_shard_intermediate_activation"] = self.fp8_shard_intermediate_activation
-                model = thunder.jit(model, executors=executors, **jit_options)
+                model = thunder.jit(model, executors=executors, transforms=transforms, **jit_options)
 
         elif self.compile != "eager":
             raise ValueError(f"Invalid compile option: {self.compile}")
