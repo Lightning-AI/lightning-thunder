@@ -745,6 +745,65 @@ def uniform_philox(
     return clang.uniform_philox(shape, minval, maxval, device=device, dtype=dtype, seed=seed, offset=offset)
 
 
+@torchsymbol(torch.rand)
+def rand(
+    *shape,
+    generator: None | torch.Generator = None,
+    dtype: None | dtypeLike = None,
+    device: None | DeviceLike = None,
+    layout: torch.layout = torch.strided,
+    requires_grad: bool = False,
+    pin_memory: bool = False,
+    out: TensorLike = None,
+):
+    utils.check(
+        not requires_grad, lambda: "requires_grad=True is not yet supported within thunder.jit", NotImplementedError
+    )
+    utils.check(layout == torch.strided, lambda: "Only torch.strided layout is supported", NotImplementedError)
+    utils.check(not pin_memory, lambda: "pin_memory=True is not supported within thunder.jit", NotImplementedError)
+    # NOTE: Currently, we don't model randomness
+    utils.check(generator is None, lambda: "generator is not None which is currently unsupported", NotImplementedError)
+    utils.check(out is None, lambda: "out is not None which is currently unsupported", NotImplementedError)
+
+    device = to_device(maybe_get_default_device(device))
+    dtype = to_dtype(maybe_get_default_dtype(dtype))
+    shape = tuple(utils.extract_shape_from_varargs(shape))
+    return clang.uniform(shape, 0, 1, device=device, dtype=dtype)
+
+
+@torchsymbol(torch.randint)
+def randint(
+    *args,
+    generator: None | torch.Generator = None,
+    out: TensorLike = None,
+    dtype: None | dtypeLike = None,
+    layout: torch.layout = torch.strided,
+    device: None | DeviceLike = None,
+    requires_grad: bool = False,
+):
+    utils.check(
+        not requires_grad, lambda: "requires_grad=True is not yet supported within thunder.jit", NotImplementedError
+    )
+    utils.check(layout == torch.strided, lambda: "Only torch.strided layout is supported", NotImplementedError)
+    utils.check(generator is None, lambda: "generator is not None which is currently unsupported", NotImplementedError)
+    utils.check(out is None, lambda: "out is not None which is currently unsupported", NotImplementedError)
+    device = to_device(maybe_get_default_device(device))
+    dtype = to_dtype(maybe_get_default_dtype(dtype))
+
+    # dispatch our two overloads:
+    if len(args) == 2 and isinstance(args[1], (tuple, list)):
+        # torch.randint(high, size)
+        low, shape_arg = 0, args[1]
+        high = args[0]
+        shape = tuple(shape_arg)
+    else:
+        # torch.randint(low, high, *size)
+        low, high, *rest = args
+        shape = tuple(utils.extract_shape_from_varargs(rest))
+
+    return prims.randint(low, high, shape, device=device, dtype=dtype)
+
+
 @torchsymbol(torch.randn)
 def randn(
     *shape,
@@ -1038,11 +1097,9 @@ def pad(a: TensorProxy, /, pad: tuple[int, ...], mode: str | None = "constant", 
     if value is None:
         value = 0
     a_typ = to_dtype(a, true_dtype=True)
-    # Note that this can be unsafe. This can happen, for example, if `a` is an
-    # integer tensor and `value` is a float. It can also be more subtle, where
-    # `a` is a lower-precision float than `value`.
-    if a_typ is not to_dtype(value, true_dtype=True):
-        warnings.warn("`value` and Tensor input are of different types. This " "may create numeric issues.")
+    # Note that when value is a float but the tensor is of dtype integer, it will be truncated.
+    # Similarly, a float value is cast to lower precision.
+    # Questionable or not, we do follow PyTorch behaviour here.
     v2 = clang.maybe_convert_to_dtype(value, a_typ)
 
     return clang.pad(a, v2, pad_config)
@@ -1058,7 +1115,7 @@ def permute(a: TensorLike, /, *dims: int) -> TensorLike:
 def repeat(a: TensorLike, /, *repeats: int) -> TensorLike:
     repeats = utils.extract_shape_from_varargs(repeats)
     utils.check_valid_shape(repeats)
-    utils.check(a.ndim <= len(repeats), f"Expected {a.ndim=} <= {len(repeats)=}")
+    utils.check(a.ndim <= len(repeats), lambda: f"Expected {a.ndim=} <= {len(repeats)=}")
 
     repeats = tuple(repeats)
     new_dims = len(repeats) - a.ndim
@@ -1577,9 +1634,28 @@ def floor_(a):
     return _copy_(a, floor(a))
 
 
+@torchsymbol(torch.frexp, is_method=True)
+def frexp(a: TensorLike) -> (TensorLike, TensorLike):
+    return clang.frexp(a)
+
+
 @torchsymbol(torch.isfinite, is_method=True)
 def isfinite(a):
     return clang.isfinite(a)
+
+
+@torchsymbol(torch.isinf, is_method=True)
+def isinf(a: TensorLike) -> TensorLike:
+    if utils.is_complex_dtype(a.dtype):
+        return logical_or(isinf(real(a)), isinf(imag(a)))
+    if utils.is_float_dtype(a.dtype):
+        return clang.abs(a) == float("inf")
+    return zeros_like(a, dtype=dtypes.bool8)
+
+
+@torchsymbol(torch.isnan, is_method=True)
+def isnan(a: TensorLike) -> TensorLike:
+    return clang.isnan(a)
 
 
 @torchsymbol(torch.lgamma, is_method=True)
@@ -3837,6 +3913,113 @@ def outer(a: TensorLike, b: TensorLike, /) -> TensorLike:
     return a[:, None] * b[None, :]
 
 
+def _matrix_chain_order(a: Sequence[TensorLike], /) -> TensorLike:
+    import torch
+
+    n = len(a)
+    p = []
+    for i in range(n):
+        p.append(a[i].size(0))
+    p.append(a[n - 1].size(1))
+    m = torch.zeros(n, n, dtype=torch.int64)
+    s = torch.zeros(n, n, dtype=torch.int64)
+    for l in range(1, n):
+        for i in range(n - l):
+            j = i + l
+            m[i][j] = torch.iinfo(torch.int64).max
+            for k in range(i, j):
+                q = m[i][k] + m[k + 1][j] + p[i] * p[k + 1] * p[j + 1]
+
+                if q < m[i][j]:
+                    m[i][j] = q
+                    s[i][j] = k
+    return s
+
+
+def _matrix_chain_multiplication(
+    a: Sequence[TensorLike], /, s: TensorLike, i: int | IntegerProxy, j: int | IntegerProxy
+) -> TensorLike:
+    if i == j:
+        return a[i]
+    else:
+        k = s[i][j]
+        left = _matrix_chain_multiplication(a, s, i, k)
+        right = _matrix_chain_multiplication(a, s, k + 1, j)
+        return matmul(left, right)
+
+
+@torchsymbol(
+    torch.linalg.multi_dot,
+    "torch.linalg.multi_dot",
+    id="torch.linalg.multi_dot",
+)
+def multi_dot(tensors: Sequence[TensorLike], *, out: TensorLike | None = None) -> TensorLike:
+    utils.check(out is None, lambda: "multi_dot(): Non-None out is not supported", NotImplementedError)
+    utils.check(
+        not any(any(isinstance(i, NumberProxy) for i in tensor.shape) for tensor in tensors),
+        lambda: f"multi_dot(): does not support dynamic shapes",
+    )
+
+    n = len(tensors)
+    utils.check(
+        n >= 2,
+        lambda: f"multi_dot(): expected at least 2 tensors, but got {n}",
+    )
+
+    a = [0] * n
+    out_shape = []
+
+    # check first tensor
+    utils.check_type(tensors[0], TensorProxy)
+    utils.check(
+        1 <= tensors[0].dim() <= 2, lambda: f"multi_dot(): the first tensor must be 1D or 2D but got {a[0].dim()}D"
+    )
+    if tensors[0].dim() == 1:
+        a[0] = unsqueeze(tensors[0], 0)
+    else:
+        a[0] = tensors[0]
+        out_shape.append(tensors[0].size(0))
+
+    # check last tensor
+    utils.check_type(tensors[-1], TensorProxy)
+    utils.check(
+        1 <= tensors[n - 1].dim() <= 2, lambda: f"multi_dot(): the last tensor must be 1D or 2D but got {a[n-1].dim()}D"
+    )
+    if tensors[n - 1].dim() == 1:
+        a[n - 1] = unsqueeze(tensors[n - 1], -1)
+    else:
+        a[n - 1] = tensors[n - 1]
+        out_shape.append(tensors[n - 1].size(1))
+
+    # check middle tensor
+    for i in range(1, n - 1):
+        utils.check_type(tensors[i], TensorProxy)
+        utils.check(tensors[i].dim() == 2, lambda: f"multi_dot(): tensor {i} must be 2D but got {tensors[i].dim()}D")
+        a[i] = tensors[i]
+
+    if n == 2:
+        return matmul(a[0], a[1]).view(out_shape)
+
+    if n == 3:
+        t0 = a[0].size(0)
+        t1 = a[1].size(0)
+        t2 = a[2].size(0)
+        t3 = a[2].size(1)
+
+        cost_1 = (t0 * t2) * (t1 + t3)
+        cost_2 = (t1 * t3) * (t0 + t2)
+
+        if cost_1 > cost_2:
+            return matmul(a[0], matmul(a[1], a[2])).view(out_shape)
+        else:
+            return matmul(matmul(a[0], a[1]), a[2]).view(out_shape)
+
+    order = _matrix_chain_order(a)
+    i = 0
+    j = n - 1
+    return _matrix_chain_multiplication(a, order, i, j).view(out_shape)
+
+
 #
 # Normalization operations
 #
@@ -4121,6 +4304,38 @@ def batch_norm(
 
     result = _native_batch_norm(a, weight, bias, running_mean, running_var, training, momentum, eps)
     return result
+
+
+@torchsymbol(torch.nn.functional.instance_norm)
+def instance_norm(
+    a: TensorLike,
+    /,
+    running_mean: None | TensorLike = None,
+    running_var: None | TensorLike = None,
+    weight: None | TensorLike = None,
+    bias: None | TensorLike = None,
+    use_input_stats: bool = True,
+    momentum: NumberLike = 0.1,
+    eps: NumberLike = 1e-5,
+) -> TensorLike:
+    org_shape = a.shape
+    b = org_shape[0]
+    c = org_shape[1]
+    if running_mean is not None:
+        running_mean = repeat(running_mean, b)
+    if running_var is not None:
+        running_var = repeat(running_var, b)
+    if weight is not None:
+        weight = repeat(weight, b)
+    if bias is not None:
+        bias = repeat(bias, b)
+
+    shape = (1, b * c) + org_shape[2:]
+    a = a.reshape(shape)
+
+    out = batch_norm(a, running_mean, running_var, weight, bias, use_input_stats, momentum, eps)
+
+    return out.reshape(org_shape)
 
 
 @torchsymbol(torch.nn.functional.local_response_norm)
@@ -5066,7 +5281,10 @@ def _interpolate_scale_factor_helper(
     scale_factor: Sequence[float] | float,
     mode: str = "nearest",
 ) -> TensorLike:
-    assert mode == "nearest"
+    if mode not in ("nearest", "nearest-exact"):
+        raise ValueError(
+            f"_interpolate_scale_factor_helper expected mode to be 'nearest' or 'nearest-exact', but got {mode}"
+        )
 
     # a is assumed to be at least 3D.
     batch, channels, *spatial_dims = a.shape
@@ -5087,13 +5305,23 @@ def _interpolate_scale_factor_helper(
         )
 
     # perform nearest up/down-sampling
-    def nearest_sampler(t, input_dim, output_dim, *, scale, dim):
+    def nearest_sampler(
+        t: TensorLike,
+        input_dim: int,
+        output_dim: int,
+        *,
+        scale: float,
+        dim: int,
+        exact: bool,
+    ) -> TensorLike:
         # It is expected that output_dim = int(input_dim * scale).
         # Indices [0, ..., output_dim - 1] are mapped to [0, ..., input_dim - 1]
-        # with the rule i -> int(i * scale)
+        # with the rule i -> int(i * scale) or i -> round((i + 0.5) * scale - 0.5),
+        # corresponding to modes 'nearest' or 'nearest-exact', respectively.
         # Values at these indices is the result.
+        # References https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/native/UpSample.h
         selected_idx = arange(0, output_dim, device=a.device)
-        selected_idx = to(selected_idx * scale, selected_idx.dtype)
+        selected_idx = to((selected_idx + exact * 0.5) * scale, selected_idx.dtype)
         return clang.take(t, selected_idx, dim=dim)
 
     def dim_expander(t, dim, n_repeats):
@@ -5115,6 +5343,7 @@ def _interpolate_scale_factor_helper(
         # dimenions corresponding to batches and channels.
         curr_dim = 2 + (len(spatial_dims) - k - 1)
 
+        exact: bool = mode == "nearest-exact"
         if output_dim <= input_dim:
             if output_dim <= input_dim // 2:
                 # scale_factor <= 1 (i.e. output_dim <= input_dim) implies simple slice
@@ -5124,7 +5353,7 @@ def _interpolate_scale_factor_helper(
                 a = clang.slice_in_dim(a, 0, end, stride=stride, dim=curr_dim)
             else:
                 # In this case slice will not do and explicit downsample is needed.
-                a = nearest_sampler(a, input_dim, output_dim, scale=1.0 / scale, dim=curr_dim)
+                a = nearest_sampler(a, input_dim, output_dim, scale=1.0 / scale, dim=curr_dim, exact=exact)
         else:
             if output_dim % input_dim == 0:
                 # In this case we can just expand dim.
@@ -5132,7 +5361,7 @@ def _interpolate_scale_factor_helper(
                 a = dim_expander(a, curr_dim, n_repeats)
             else:
                 # In this case expand will not cut it and explicit upsampling is needed.
-                a = nearest_sampler(a, input_dim, output_dim, scale=1.0 / scale, dim=curr_dim)
+                a = nearest_sampler(a, input_dim, output_dim, scale=1.0 / scale, dim=curr_dim, exact=exact)
 
     output_shape = [batch, channels] + res_output_spatial_dims[::-1]
     return reshape(a, output_shape)
@@ -5162,7 +5391,7 @@ def _interpolate_size_helper(
 
     scale_factor = tuple(output_size / input_size for output_size, input_size in zip(size, spatial_dims))
 
-    return _interpolate_scale_factor_helper(a, scale_factor)
+    return _interpolate_scale_factor_helper(a, scale_factor, mode)
 
 
 # TODO Implement additional modes and parameters
@@ -5178,8 +5407,8 @@ def interpolate(
     antialias: bool = False,
 ) -> TensorLike:
     utils.check(
-        mode == "nearest",
-        lambda: f"only mode='nearest' is supported at the moment, but got {mode=}",
+        (mode == "nearest" or mode == "nearest-exact"),
+        lambda: f"only modes 'nearest' and 'nearest-exact' are supported at the moment, but got {mode=}",
         exception_type=NotImplementedError,
     )
 

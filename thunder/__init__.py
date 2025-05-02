@@ -461,10 +461,23 @@ def jit(
         return_none_instead_of_grads = is_fsdp_enabled and cache_info["no_grad_sync"]
 
         with compile_data_and_stats(cd, cs):
-            prologue_traces = [prologue_trc]
+            if cd.debug_options.check_traces:
+                from thunder.dev_utils.check_trace import CheckedListOfTraces as TraceList
+            else:
+                TraceList = list
+
+            prologue_traces = TraceList()
+            computation_traces = TraceList()
+            epilogue_traces = TraceList()
+            backward_traces = TraceList()
+
             cs.last_prologue_traces = prologue_traces
-            computation_traces = [computation_trc]
             cs.last_traces = computation_traces
+            cs.last_epilogue_traces = epilogue_traces
+            cs.last_backward_traces = backward_traces
+            prologue_traces.append(prologue_trc)
+            computation_traces.append(computation_trc)
+            epilogue_traces.append(epilogue_trc)
 
             computation_trc = wrap_return_value_together_with_arguments(computation_trc)
             computation_traces.append(computation_trc)
@@ -472,17 +485,17 @@ def jit(
             computation_trc = remove_context_manager_prims_from_trace(computation_trc)
             computation_traces.append(computation_trc)
 
+            alias_tensor_indices_str = cache_info.get("alias_tensor_indices", "")
+            alias_tensor_indices: list[list[int]] = [
+                [int(i) for i in s.split(",")] for s in alias_tensor_indices_str.split("-") if s != ""
+            ]
+
             if not compile_options.get("skip_inplace_alias_updates", True):
-                computation_traces.append(insert_alias_updates(computation_trc))
+                computation_traces.append(insert_alias_updates(computation_trc, alias_tensor_indices))
                 computation_trc = computation_traces[-1]
 
             if not compile_options.get("skip_inplace_functionalization", False):
                 orig_to_view_swap_map = check_inplace_to_views(computation_trc)
-                alias_tensor_indices = []
-                if alias_tensor_indices_str := cache_info["alias_tensor_indices"]:
-                    alias_tensor_indices: list[list[int]] = [
-                        [int(i) for i in s.split(",")] for s in alias_tensor_indices_str.split("-")
-                    ]
                 computation_traces.extend(
                     functionalize_inplace_ops(
                         computation_trace=computation_trc,
@@ -491,9 +504,6 @@ def jit(
                     )
                 )
                 computation_trc = computation_traces[-1]
-
-            epilogue_traces = [epilogue_trc]
-            cs.last_epilogue_traces = epilogue_traces
 
             cs.last_trace_tracing_stop = time.perf_counter_ns()
 
@@ -536,8 +546,6 @@ def jit(
 
             cs.last_prologue_transformation_stop = time.perf_counter_ns()
             cs.last_prologue = pro
-            backward_traces = []
-            cs.last_backward_traces = backward_traces
 
             computation_trc = dce(computation_trc)
             computation_traces.append(computation_trc)
@@ -655,10 +663,13 @@ def jit(
         cache_info["is_autocast_enabled"] = is_autocast_enabled
 
         # NOTE(crcrpar): If a callable is free from in-place ops whose operand is args and/or their views
-        # alaises wouldn't matter, thus it'd be better to nullify this entry in such cases.
+        # aliases wouldn't matter, thus it'd be better to nullify this entry in such cases.
         # It however would require the functionalized computation trace to interact with `cache_info`,
         # which seems to break the consistency of cache_info, leading to a failure in cache_info check.
-        cache_info["alias_tensor_indices"] = _alias_tensor_of_args_kwargs(*args, **kwargs)
+        if not compile_options.get("skip_inplace_alias_updates", True) or not compile_options.get(
+            "skip_inplace_functionalization", False
+        ):
+            cache_info["alias_tensor_indices"] = _alias_tensor_of_args_kwargs(*args, **kwargs)
 
         # Store the `is_grad_enabled` state of PyTorch. This is used by vjp transform
         # to treat certain Symbols as constant.
