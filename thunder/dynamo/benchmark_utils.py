@@ -504,6 +504,9 @@ def check_metrics(
     memory_record = False
     log_strs = ""
     for m1, m2, name in zip(measure1, measure2, ("forward", "backward")):
+        if m1 is None:
+            assert m2 is None
+            continue
         if timer_fn.name == "WallTimeWithMemoryUsage":
             memory_ret = check_memory_usage(
                 m1.max_allocated_memory,
