@@ -12,7 +12,7 @@ def main(report_path: str = "quickstart_report.json"):
     with open(report_path) as fp:
         report = json.load(fp)
 
-    print("Quickstart report:")
+    # print("Quickstart report:")
     for name, status in report.items():
         status_icon = "✅" if status == "completed" else "❌"
         print(f"{status_icon}: {name}")

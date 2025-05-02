@@ -59,5 +59,5 @@ jobs:
           webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
           status: ${{ job.status }}
           message: |
-            *Quickstart CI* - ${{ job.status }}
+            *Quickstart CI* - [${{ job.status }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
             ${{ env.REPORT }}
