@@ -43,3 +43,10 @@ jobs:
         run: |
           pip install lightning_sdk -U -q
           python .github/run-quickstart-as-lit-jobs.py
+
+      - uses: act10ns/slack@v2
+        if: always()
+        with:
+          webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
+          status: ${{ job.status }}
+          steps: ${{ toJson(steps) }}
