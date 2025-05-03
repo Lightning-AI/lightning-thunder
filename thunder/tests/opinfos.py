@@ -5318,13 +5318,6 @@ take_opinfo = OpInfo(
     supports_grad=True,
     sample_input_generator=take_sample_generator,
     torch_reference=torch_index_select_wrapper,
-    test_directives=(
-        DecorateInfo(
-            pytest.mark.xfail,
-            executors=("nvfuser",),
-            active_if=nvfuser_version < "0.0.3",
-        ),
-    ),
 )
 shape_ops.append(take_opinfo)
 
