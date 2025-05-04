@@ -4,7 +4,7 @@ nbsphinx ~=0.9.7
 ipython[all] ~=8.36.0
 pandoc ==2.4
 docutils >=0.16
-sphinxcontrib-fulltoc @ https://github.com/t-vi/sphinx-contrib-fulltoc/archive/master.zip
+sphinxcontrib-fulltoc @ git+https://github.com/t-vi/sphinx-contrib-fulltoc@master
 sphinxcontrib-mockautodoc
 
 sphinx-autodoc-typehints ==1.23.0
