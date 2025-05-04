@@ -14,7 +14,7 @@ from thunder.core.proxies import variableify
 from thunder.core.pytree import tree_flatten
 from thunder.core.pytree import tree_unflatten
 from thunder.core.trace import from_trace
-from thunder.core.trace import TraceProvenance
+from thunder.core.trace import TraceProvenance, TraceTag
 from thunder.core.transforms import visitor_transform
 from thunder.core.transforms import VISIT_TYPE
 from thunder.core import utils
@@ -141,9 +141,15 @@ class BatchAllReduceVisitor:
     gradient_buckets: GradBuckets
     prims_to_filter: set[prims.PrimIDs, dist_prims.PrimIDs]
     has_replaced_return: bool = False
+    producers: ProxyDict = None
 
     def __call__(self, bsym: BoundSymbol) -> None:
         sym: Symbol = bsym.sym
+        if sym == dist_prims.wait:
+            # only filter weights for us
+            if self.producers[bsym.args[0]].sym.id in self.prims_to_filter:
+                return VISIT_TYPE.REPLACE
+            return VISIT_TYPE.INSERT_AFTER
 
         if sym.id in self.prims_to_filter:
             return VISIT_TYPE.REPLACE
@@ -230,6 +236,7 @@ def optimize_allreduce_in_ddp_backward(
         backward_trace_output_spec=backward_trace_output_spec,
         gradient_buckets=gradient_buckets,
         prims_to_filter={dist_prims.PrimIDs.ALL_REDUCE, dist_prims.PrimIDs.WAIT},
+        producers=producers,
     )
     updated_bwd_trace = visitor_transform(
         backward_trace,
@@ -303,4 +310,6 @@ def apply_bucketing_to_grad_allreduce(trace: TraceCtx) -> TraceCtx:
     if len(grad_before_after_allreduce._dict) == 0:
         return trace
 
+    if TraceTag.AUGMENTED_FORWARD in trace.tags:
+        return trace
     return optimize_allreduce_in_ddp_backward(trace, compile_data=compile_data)
