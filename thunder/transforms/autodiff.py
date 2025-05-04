@@ -247,6 +247,12 @@ def split_into_forward_and_backward(joint_trace):
             grad_outs[output_pos[bsym.args[0].name]] = bsym.output
             continue
 
+        if bsym.sym == prims.copy_ and bsym.args[1].name in forward_proxy_names:
+            # todo: should we also handle ltorch.copy_ ?
+            forward_part_bsyms.insert(0, bsym.from_bsym())
+            forward_proxy_names.update(a.name for a in bsym.flat_proxy_args)
+            continue
+
         backward_part_bsyms.insert(0, bsym.from_bsym())
 
     # collect needed computation
