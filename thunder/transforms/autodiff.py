@@ -159,6 +159,10 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                             grad_inps = [grad_inps]
 
                         flat_inps = args
+                        # for autograd_function_apply, skip the function args
+                        # TODO: fix the returned gradients to include two None...
+                        if bsym.sym == thunder.torch.autograd_function_apply:
+                            flat_inps = args[2:]
                         # there may be non-gradient requiring additional args (todo: maybe only support this for non-tensor ones?)
                         assert len(grad_inps) <= len(flat_inps)
                         for i, gi in zip(flat_inps, grad_inps):
@@ -308,7 +312,7 @@ def split_into_forward_and_backward(joint_trace):
     backward_trace.bound_symbols += backward_part_bsyms
 
     with thunder.core.trace.tracectx(backward_trace):
-        prims.python_return(return_bsym.args[0]["grad_flat_args"])
+        prims.python_return(tuple(return_bsym.args[0]["grad_flat_args"]))
 
     return forward_trace, backward_trace
 
