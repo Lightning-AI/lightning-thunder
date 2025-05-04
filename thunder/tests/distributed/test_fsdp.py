@@ -637,6 +637,55 @@ class FSDPTest(DistributedParallelTestCase):
 common_utils.instantiate_parametrized_tests(FSDPTest)
 
 
+@unittest.skipUnless(
+    torch.cuda.is_available() and torch.distributed.is_available() and torch.distributed.is_nccl_available(),
+    "FSDP test requires CUDA and NCCL `torch.distributed` backend",
+)
+class FSDPDDPHybridTest(DistributedParallelTestCase):
+    @property
+    def world_size(self) -> int:
+        return min(torch.cuda.device_count(), 4)
+
+    @pytest.mark.skipif(torch.cuda.device_count() < 4, reason="Requires 4 devices")
+    def test_fsdp_ddp_hybrid(self):
+        import torch, thunder
+        import torch.distributed
+        from torch.testing import assert_close
+        from thunder.distributed.transforms.fsdp_v2 import FSDPTransform
+        from thunder.distributed.transforms.ddp_v2 import DDPTransform
+
+        torch.manual_seed(1337)
+
+        mesh = torch.distributed.device_mesh.init_device_mesh("cuda", (2, 2), mesh_dim_names=("ddp", "fsdp"))
+        global_rank = mesh.get_rank()
+        fsdp_rank = mesh.get_local_rank("fsdp")
+
+        with torch.device("cuda"):
+            m = torch.nn.Sequential(torch.nn.Linear(256, 256), torch.nn.ReLU(), torch.nn.Linear(256, 256))
+            inp = torch.randn(4, 256)
+
+        jm = thunder.jit(
+            m,
+            transforms=[
+                FSDPTransform(process_group=mesh["fsdp"].get_group()),
+                DDPTransform(mesh["ddp"].get_group(), broadcast_from=0, bucket_size_in_mb=25.0),
+            ],
+        )
+
+        res = jm(inp)
+        go = torch.randn_like(res)
+        grads = torch.autograd.grad(res, jm.parameters(), go)
+        ref = m(inp)
+        ref_grads = torch.autograd.grad(ref, m.parameters(), go)
+        assert_close(res, ref)
+        for g, rg in zip(grads, ref_grads):
+            slice_size = rg.size(0) // 2
+            assert_close(g, rg[slice_size * fsdp_rank : slice_size * (fsdp_rank + 1)])
+
+
+common_utils.instantiate_parametrized_tests(FSDPDDPHybridTest)
+
+
 def _test_native_fsdp_helper(input_data):
     init_method, world_size, rank, executor, device, dtype, kwargs = input_data
     bucketing_strategy = kwargs["fsdp_bucketing_strategy"]
