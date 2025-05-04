@@ -5,5 +5,7 @@ numpy
 networkx >= 3.3
 optree >=0.12.1
 opt_einsum >= 3.3.0
-mpmath <1.4.0  # todo: teporarl pin for `NameError: name '_C' is not defined`
-dill >=0.3.8 # Support for 3.12
+# todo: teporarl pin for `NameError: name '_C' is not defined`
+mpmath <1.4.0
+# Support for 3.12
+dill >=0.3.8

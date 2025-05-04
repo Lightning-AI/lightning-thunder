@@ -47,8 +47,8 @@ class ThunderModule(pytorch.nn.Module):
         self._forward_fn = compiled_model_call
 
         # overrides for parameters and buffers (see get_buffer/get_parameter)
-        # we populate these here for performance reasons (sam as module cache),
-        # a single dict lookup is cheaper than traversin the module
+        # we populate these here for performance reasons (same as module cache),
+        # a single dict lookup is cheaper than traversing the module
         # hierarchy, see https://github.com/Lightning-AI/lightning-thunder/issues/396#issuecomment-2113231498
         self._overrides_parameters = dict(self._model.named_parameters())
         self._overrides_buffers = dict(self._model.named_buffers())
@@ -198,7 +198,7 @@ class ThunderModule(pytorch.nn.Module):
             prefix: a prefix for the keys.
             keep_vars: do not detach
 
-        Note that this is similar but rather more rudimentary than the original state_dict (e.g. no hook suport yet).
+        Note that this is similar but rather more rudimentary than PyTorch's state_dict (e.g. no hook support yet).
         """
         if destination is None:
             destination = collections.OrderedDict()
@@ -234,7 +234,7 @@ class ThunderModule(pytorch.nn.Module):
         prefix: str = "",
         keep_vars: bool = False,
     ) -> dict[str, Any]:
-        """Returns the state dict of the transformed :class:`ThunderModule` with reverse transform applied.
+        """Returns the state dict of the transformed :class:`ThunderModule` with the reverse transform applied.
 
         For example, :func:`ThunderModule.state_dict` returns a state dict of sharded tensors if
         a model is :func:`thunder.distributed.fsdp` applied while :func:`ThunderModule.original_state_dict`
@@ -272,7 +272,7 @@ class ThunderModule(pytorch.nn.Module):
             strict: error on missing / unused state dict members
             assign: assign the state dict tensors instead of copying the data
 
-        This is similar much more simple than the original load_state_dict.
+        This is much simpler than PyTorch's `load_state_dict`.
         (Regarding hooks, customization etc.)
         """
         # non-persistent buffer overrides?

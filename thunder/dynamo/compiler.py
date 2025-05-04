@@ -28,6 +28,7 @@ from thunder.transforms.extraction_only_prologue_transform import ExtractionOnly
 if TYPE_CHECKING:
     from thunder.dynamo.utils import SubgraphInfo
     from thunder.core.transform_common import Transform
+    from thunder.core.trace import TraceCtx as Trace
     from os import PathLike
     from collections.abc import Callable
 
@@ -229,7 +230,7 @@ def thunderfx(fn: Callable, /, **kwargs) -> Callable:
     # we have a place to hang the `last_*traces` properties.
     class CompiledObject:
         def __init__(self, be, func: Callable):
-            self._backend = backend
+            self._backend = be
             self._func = func
 
         def __call__(self, *args, **kwargs):

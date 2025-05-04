@@ -1,15 +1,15 @@
 coverage ~=7.6.8
-pytest ==8.1.1
+pytest ==8.3.5
 pytest-benchmark ==5.1.0
 pytest-timeout ==2.3.1
-pytest-cov ==6.0.0
+pytest-cov ==6.1.1
 pytest-xdist ==3.6.1
 pytest-random-order ==1.1.1
 pytest-timestamper ==0.0.10
 graphviz ==0.20.3
 fdm ==0.5.0
 expecttest ==0.3.0  # for test_ddp.py
-hypothesis ~=6.130.6  # for test_ddp.py
+hypothesis ~=6.131.9  # for test_ddp.py
 numpy
 einops  # for test_einops.py
 litgpt==0.4.11  # for the model definition in tests and benchmarks

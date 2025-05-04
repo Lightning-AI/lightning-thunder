@@ -43,7 +43,7 @@ The first trace is a record of the Pytorch operations called while tracing the f
 - The objects referenced by the program are live Python objects, which can be directly inspected
 - Portions of the program are easy to extract and analyze separately
 
-Now let's look at a slightly more complicated function that has more opportunities for optimization and will highlight what *thunder*'s optimization passes do::
+Now let's look at a slightly more complicated function that has more opportunities for optimization and will highlight what Thunder's optimization passes do::
 
   import thunder
   import torch

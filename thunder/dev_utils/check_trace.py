@@ -29,3 +29,14 @@ def check_trace(trace):
             assert known_proxies.get(o.name, o) is o, f"proxy name collision {a.name} in {bsym}"
             known_proxies[o.name] = o
         check_subsymbols(bsym)
+
+
+class CheckedListOfTraces(list):
+    def append(self, trace):
+        check_trace(trace)
+        super().append(trace)
+
+    def extend(self, traces):
+        for tr in traces:
+            check_trace(tr)
+        super().extend(traces)

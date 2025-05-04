@@ -753,15 +753,16 @@ class ThunderSplitGraphReport(FXGraphReport):
         self.split_reason = split_reason
 
         self.fusion_reports: list[ThunderFusionReport] = []
-        self.fwd_trc: TraceCtx = None
-        self.bwd_trc: TraceCtx = None
+        self.fwd_trc: TraceCtx | None = None
+        self.bwd_trc: TraceCtx | None = None
 
     def _create_thunder_traces(self):
         example_inputs = self.make_example_inputs()
         # Executes to get the trace
-        run_forward_backward(self.compiled_fn, *example_inputs)
+        _, grads = run_forward_backward(self.compiled_fn, *example_inputs)
         self.fwd_trc = last_traces(self.compiled_fn)[-1]
-        self.bwd_trc = last_backward_traces(self.compiled_fn)[-1]
+        if grads and (backward_traces := last_backward_traces(self.compiled_fn)):
+            self.bwd_trc = backward_traces[-1]
 
     def create_fusion_reports(self):
         """
@@ -769,7 +770,11 @@ class ThunderSplitGraphReport(FXGraphReport):
         and generate the :class:`ThunderFusionReport` instance based on it.
         """
         self._create_thunder_traces()
+
         for trace, prefix in [(self.fwd_trc, "forward"), (self.bwd_trc, "backward")]:
+            # `self.bwd_trc` can be None.
+            if trace is None:
+                continue
             for bsym in trace.bound_symbols:
                 if bsym.sym.is_fusion and "nvFusion" in bsym.sym.name:
                     self.fusion_reports.append(ThunderFusionReport(bsym, f"{self.graph_name}_{bsym.sym.name}_{prefix}"))
