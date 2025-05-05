@@ -7,6 +7,7 @@ import torch
 from torch.utils.benchmark import Timer as TorchBenchmarkTimer
 from torch.profiler import profile, ProfilerActivity
 from thunder.dynamo.utils import thunder_options_to_str
+from thunder.core.utils import check
 from torch.utils.benchmark.utils.common import select_unit as select_time_unit
 
 if TYPE_CHECKING:
@@ -504,8 +505,11 @@ def check_metrics(
     memory_record = False
     log_strs = ""
     for m1, m2, name in zip(measure1, measure2, ("forward", "backward")):
+        check(
+            (m1 is None) == (m2 is None),
+            f"{name} measurement for the two compilation methods should either both be None or both not None, but got {m1} and {m2}",
+        )
         if m1 is None:
-            assert m2 is None
             continue
         if timer_fn.name == "WallTimeWithMemoryUsage":
             memory_ret = check_memory_usage(
