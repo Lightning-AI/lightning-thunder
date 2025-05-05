@@ -13,18 +13,22 @@ from transformer_engine.common import recipe
 import transformer_engine.pytorch as te
 
 # FP8 is supported on compute arch 8.9 onwards.
+# MXFP8 is supported on compute arch 10.0 onwards.
 # Skip the tests if current hardware is not supported.
-is_supported, msg = te.fp8.check_fp8_support()
-if not is_supported:
-    pytest.skip(msg, allow_module_level=True)
+is_fp8_supported, msg_fp8 = te.fp8.check_fp8_support()
+is_mxfp8_supported, msg_mxfp8 = te.fp8.check_mxfp8_support()
+if not is_fp8_supported:
+    pytest.skip(msg_fp8, allow_module_level=True)
 
-hybrid_fp8_recipe = recipe.DelayedScaling(fp8_format=recipe.Format.HYBRID)
+hybrid_fp8_delayed_scaling_recipe = recipe.DelayedScaling()
+mxfp8_e4m3_recipe = recipe.MXFP8BlockScaling()
 
 # `None` is used to test the default recipe.
-recipes = (None, hybrid_fp8_recipe)
+recipes = (None, hybrid_fp8_delayed_scaling_recipe, mxfp8_e4m3_recipe)
 
 
 @requiresCUDA
+@pytest.mark.skipif(not is_mxfp8_supported, reason=msg_mxfp8)
 @pytest.mark.parametrize("fp8_recipe", recipes)
 def test_te_linear_forward_backward(fp8_recipe):
     # Test Description:
@@ -79,6 +83,7 @@ def test_te_linear_forward_backward(fp8_recipe):
 
 
 @requiresCUDA
+@pytest.mark.skipif(not is_mxfp8_supported, reason=msg_mxfp8)
 @pytest.mark.parametrize("fp8_recipe", recipes)
 def test_te_linear_forward_backward_multiple_iteration(fp8_recipe):
     # Test Description:
@@ -150,6 +155,7 @@ def test_te_linear_forward_backward_multiple_iteration(fp8_recipe):
 
 
 @requiresCUDA
+@pytest.mark.skipif(not is_mxfp8_supported, reason=msg_mxfp8)
 def test_te_linear_invalid_inputs():
     def assert_not_transformed(x, w):
         def fn(x, w):
@@ -174,6 +180,7 @@ def test_te_linear_invalid_inputs():
 
 
 @requiresCUDA
+@pytest.mark.skipif(not is_mxfp8_supported, reason=msg_mxfp8)
 def test_te_with_autocast():
     from thunder.transforms.autocast import autocast
 
@@ -197,6 +204,7 @@ def test_te_with_autocast():
 
 
 # NOTE: strict=False as it passes on Blackwell.
+@pytest.mark.skipif(not is_mxfp8_supported, reason=msg_mxfp8)
 @pytest.mark.xfail(strict=False, raises=(RuntimeError, TypeError), reason="Retain graph is not supported by TE")
 @requiresCUDA
 def test_te_with_retain_graph():
@@ -220,6 +228,7 @@ def test_te_with_retain_graph():
 
 
 @requiresCUDA
+@pytest.mark.skipif(not is_mxfp8_supported, reason=msg_mxfp8)
 def test_te_trace_metadata_propagation():
     # This test is to verify that we correctly propagate metadata `_include_te_fp8_autocast` on
     # trace using `from_trace`. `_include_te_fp8_autocast` is used to enable wrapping forward trace with `fp8_autocast`.
@@ -251,6 +260,7 @@ def test_te_trace_metadata_propagation():
     assert any(bsym.sym.name.startswith("te_linear") for bsym in fwd_traces[-1].bound_symbols)
 
 
+@pytest.mark.skipif(not is_mxfp8_supported, reason=msg_mxfp8)
 def test_te_grad_computation_with_intermediate():
     # Test for issue - https://github.com/Lightning-AI/lightning-thunder/issues/1966
     def fn(x, w):
