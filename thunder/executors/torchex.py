@@ -41,7 +41,6 @@ add_always_executor(ex)
 
 # Common annotations
 TensorLike = TensorProxy
-FutureTensorLike = FutureTensorProxy
 DeviceLike = str | devices.Device | torch.device
 dtypeLike = dtypes.dtype | torch.dtype
 
