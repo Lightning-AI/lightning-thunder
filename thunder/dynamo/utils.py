@@ -254,6 +254,7 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
     from thunder.core.trace import TraceCtx
     from thunder.core.compile_data import compile_data_and_stats
     from thunder.common import CompileData, CompileStats
+    from thunder.core.transforms import value_and_grad
 
     # This is required for verifying `_enter_autocast`
     # which pushes state onto `CompileData.autocast_stack`.
@@ -285,8 +286,9 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
         # We need to be under trace context to generate proxies.
         with thunder.core.trace.tracectx(TraceCtx()):
             try:
-                thunder_symbol(*proxy_args, **proxy_kwargs)
+                value_and_grad(thunder_symbol)(*proxy_args, **proxy_kwargs)
             except Exception as e:
+                print(f"DEBUG: {e}")
                 return False, SplitReason(
                     SplitReasonType.EXCEPTION_META_THUNDER_OP,
                     f"Failed while running meta for node with name: {node.name} and target: {node.target}, see exception field",
