@@ -48,6 +48,12 @@ from thunder.core.transforms import (
     put_grads,
 )
 
+from nvfuser.pytorch_utils import (
+    torch_dtype_to_nvfuser_dtype,
+)
+
+import thunder.core.dtypes as dtypes
+
 from thunder.executors.utils import (
     Region,
     _input_dtype_check_fused_scaled_dot_product_attention,
@@ -2741,21 +2747,41 @@ def _cross_entropy_check_(
     /,
     target: TensorLike,
     weight: None | TensorLike,
+    size_average: None | Any,
     ignore_index: int,
+    reduce: None | Any,
     reduction: str,
     label_smoothing: float,
     *args,
 ) -> bool:
+    if nvfuser_version() < LooseVersion("0.2.10"):
+        return False
+
+    if a.shape[-2] != target.shape[-1]:
+        return False
+
+    # input must be cast to float32
+    # since we use fmax which only supports float32
+    if dtypes.to_torch_dtype(a.dtype) != torch.float32:
+        return False
+
+    # We only optimize for the following cases
+    if reduction != "mean":
+        return False
+
+    if ignore_index >= 0:
+        return False
+
+    if (weight, size_average, reduce) != (None, None, None):
+        return False
+
+    if label_smoothing != 0.0:
+        return False
+
     return True
 
 
-from nvfuser.pytorch_utils import (
-    torch_dtype_to_nvfuser_dtype,
-)
-import thunder.core.dtypes as dtypes
-
-
-def cross_entropy(
+def cross_entropy_fwd(
     a: TensorLike,
     /,
     target: TensorLike,
@@ -2769,7 +2795,6 @@ def cross_entropy(
     fd: FusionDefinition,
     lc_to_nv_map: dict,
 ) -> Any:
-    print("cross_entropy")
     nv_a = getnv(a, fd, lc_to_nv_map)
     nv_target = getnv(target, fd, lc_to_nv_map)
     nv_ignore_index = getnv(ignore_index, fd, lc_to_nv_map)
@@ -2802,7 +2827,7 @@ def cross_entropy(
     return div, max, log, sum_2_cvt
 
 
-def cross_entropy_fwd__meta(
+def cross_entropy_fwd_meta(
     a: TensorLike,
     /,
     target: TensorLike,
@@ -2814,16 +2839,12 @@ def cross_entropy_fwd__meta(
     label_smoothing: float = 0.0,
 ) -> tuple[TensorProxy, TensorProxy]:
     losses: TensorProxy
-    if reduction == "none":
-        losses = TensorProxy(like=a)
-    elif reduction == "mean":
-        losses = TensorProxy(like=a, shape=())
-    elif reduction == "sum":
+    if reduction == "mean":
         losses = TensorProxy(like=a, shape=())
     else:
         check(
             False,
-            lambda: f"cross entropy expected reduction to be 'none', 'mean', or 'sum', but was given {reduction}",
+            lambda: f"cross entropy expected reduction to be  'mean' but was given {reduction}",
         )
 
     max_log_sum_exp: TensorProxy = TensorProxy(like=target, shape=target.shape, dtype=dtypes.float32)
@@ -2832,13 +2853,13 @@ def cross_entropy_fwd__meta(
     return losses, a_max, max_log_sum_exp, num_valid_indices
 
 
-nv_cross_entropy = ex.register_operator(
-    "nv_cross_entropy",
-    meta=cross_entropy_fwd__meta,
-    fn=cross_entropy,
+nv_cross_entropy_fwd = ex.register_operator(
+    "nv_cross_entropy_fwd",
+    meta=cross_entropy_fwd_meta,
+    fn=cross_entropy_fwd,
     tags=[prims.OpTags.RANDOM_OP],
 )
-register_supported(nv_cross_entropy.id, cross_entropy, None)
+register_supported(nv_cross_entropy_fwd.id, cross_entropy_fwd, None)
 
 
 def cross_entropy_bwd_meta(
@@ -2870,7 +2891,6 @@ def cross_entropy_bwd(
     fd: FusionDefinition,
     lc_to_nv_map: dict,
 ) -> Any:
-    print("cross_entropy_bwd")
     nv_a = getnv(a, fd, lc_to_nv_map)
     nv_target = getnv(target, fd, lc_to_nv_map)
     nv_ignore_index = getnv(ignore_index, fd, lc_to_nv_map)
@@ -2932,11 +2952,9 @@ def cross_entropy_transform(
     reduction: str = "mean",
     label_smoothing: float = 0.0,
 ) -> Any:
-    print("gets here")
-    result, _, _, _ = nv_cross_entropy(
+    result, _, _, _ = nv_cross_entropy_fwd(
         a, target, weight, size_average, ignore_index, reduce, reduction, label_smoothing
     )
-    print("result", result)
     return result
 
 
@@ -2952,7 +2970,7 @@ def cross_entropy_grad(
     label_smoothing: float = 0.0,
 ) -> Any:
 
-    fwd, max, log_sum_exp, valid_indices = nv_cross_entropy(
+    fwd, max, log_sum_exp, valid_indices = nv_cross_entropy_fwd(
         a, target, weight, size_average, ignore_index, reduce, reduction, label_smoothing
     )
 
