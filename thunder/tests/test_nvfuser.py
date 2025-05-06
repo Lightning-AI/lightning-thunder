@@ -1085,7 +1085,7 @@ def test_sdpa(
 )
 def test_cross_entropy(executor, device: str, thunder_dtype: dtypes.dtype, ignore_index):
     def cross_entropy_fn(logits, labels, ignore_index):
-        return torch.nn.functional.cross_entropy(logits, labels)
+        return torch.nn.functional.cross_entropy(logits, labels, ignore_index=ignore_index)
 
     torch.manual_seed(0)
     dtype = ltorch.to_torch_dtype(thunder_dtype)
@@ -1093,6 +1093,7 @@ def test_cross_entropy(executor, device: str, thunder_dtype: dtypes.dtype, ignor
     sequence_length, vocab_size = 8192, 32064
     logits = make_tensor((sequence_length, vocab_size), device=device, dtype=dtype, requires_grad=True)
     labels = torch.randint(0, sequence_length, (sequence_length,), requires_grad=False, device=device)
+    labels[10:128] = ignore_index  # Set labels to the ignore index
 
     inputs = [logits, labels]
 
