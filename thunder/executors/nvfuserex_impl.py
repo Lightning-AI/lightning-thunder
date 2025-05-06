@@ -1331,7 +1331,6 @@ register_supported(PrimIDs.SQUEEZE, squeeze, _squeeze_check)
 # def _take_check(a: TensorProxy, /, index: TensorProxy, dim: int) -> bool:
 #     return are_supported_tensors(a, index)
 
-
 # def take(a: TensorProxy, /, index: TensorProxy, dim: int, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
 #     nv_a = getnv(a, fd, lc_to_nv_map)
 #     nv_index = getnv(index, fd, lc_to_nv_map)
