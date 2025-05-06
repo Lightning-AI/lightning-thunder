@@ -3,7 +3,6 @@ from .materialization import MaterializationTransform
 from .qlora import LORATransform
 from .prune_prologue_checks import PrunePrologueChecks
 from .extraction_only_prologue_transform import ExtractionOnlyPrologueTransform
-from .functional_te_transform import TransformerEngineTransform
 
 __all__ = [
     "ConstantFolding",
@@ -11,5 +10,4 @@ __all__ = [
     "MaterializationTransform",
     "PrunePrologueChecks",
     "ExtractionOnlyPrologueTransform",
-    "TransformerEngineTransform",
 ]

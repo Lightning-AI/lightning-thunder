@@ -1,28 +1,42 @@
-import importlib
-import warnings
-
 from thunder.core.prims import linear as linear_prim
 from thunder.core.prims import get_grad, put_grad
 from thunder.core.proxies import AnyProxy, TensorProxy
-
 from thunder.extend import StatefulExecutor, register_executor
 from thunder.executors.transformer_engineex import _linear_checker
-
 import thunder.torch as ltorch
 
-if importlib.util.find_spec("transformer_engine"):
-    import transformer_engine.pytorch as te
-    from transformer_engine.pytorch.tensor.float8_tensor import Float8Quantizer
-    from transformer_engine.pytorch.ops import BasicLinear
-    from transformer_engine.pytorch.fp8 import (
-        _amax_and_scale_update,
-        get_fp8_max,
-        Recipe,
-        RecipeState,
-        FP8GlobalStateManager,
-    )
-else:
-    warnings.warn("transformer_engine module not found!")
+
+import transformer_engine.pytorch as te
+from transformer_engine.pytorch.tensor.float8_tensor import Float8Quantizer
+from transformer_engine.pytorch.ops import BasicLinear
+from transformer_engine.pytorch.fp8 import (
+    _amax_and_scale_update,
+    get_fp8_max,
+    Recipe,
+    RecipeState,
+    FP8GlobalStateManager,
+)
+
+import time
+from typing import TYPE_CHECKING
+
+from thunder import Transform
+from thunder.core import prims
+from thunder.core.proxies import Proxy, Variable, unvariableify, variableify
+from thunder.core.trace import from_trace, TraceProvenance, TraceTag
+from thunder.core.transforms import (
+    _update_forward_with_new_saved_for_backward,
+    _update_backward_with_new_saved_for_backward,
+)
+from thunder.core.transform_common import cse_single_bsym
+from thunder.executors.passes import del_last_used
+
+
+if TYPE_CHECKING:
+    from thunder.core.trace import VariableInterface
+    from thunder.core.symbol import BoundSymbolRHS, BoundSymbol
+    from thunder.core.proxies import TensorProxy
+
 
 
 functional_te_ex = StatefulExecutor("functional_te")
@@ -262,3 +276,93 @@ _te_fp8_amax_and_scale_update = functional_te_ex.register_operator(
     meta=_te_fp8_amax_and_scale_update_meta,
     fn=_te_fp8_amax_and_scale_update_impl,
 )
+
+class TransformerEngineTransform(Transform):
+    """
+    A transform to pair up with the functional TrasnformerEngine executor.
+
+    With the assumption of one recipe per trace, this transform removes recipe duplicates from the trace and updates all the symbols.
+
+    TODO: this transform can also be used to gather all the amax and scale update calls for delayed scaling recipe.
+    """
+
+    def __init__(self):
+        self.fp8_recipe = None
+        self.swap_map: dict[VariableInterface, TensorProxy] = {}
+        self.rhs_to_bsym_map: dict[BoundSymbolRHS, BoundSymbol] = {}
+        self.redundant_map: dict[Variable, Proxy] = {}
+        self.new_saved_for_backward = None
+
+    def transform_trace_post_optimization(self, computation_trace, **kwargs):
+        """
+        Finds and replaces TE executor recipe calls and replaces them with one.
+
+        This function may be called twice, once with the forward trace and once with the backward trace.
+        It will save the first occurance of a recipe from the trace and use it to replce all the others.
+
+        Args:
+            computation_trace: Trace to perform the replacement on.
+        """
+
+        if "functional_te" not in map(lambda x: x.name, kwargs["executors_list"]):
+            return computation_trace
+
+        start_time_ns = time.perf_counter_ns()
+
+        new_trace = from_trace(computation_trace)
+        new_bsyms = []
+
+        for bsym in computation_trace.bound_symbols:
+            # Remove all the delete since they will be outdated after the proxy update.
+            if bsym.sym.id == prims.PrimIDs.DEL:
+                continue
+
+            # Save the first occurrence of a recipe symbol and map any later ones in the redundant_map
+            if "get_te_fp8_recipe" in bsym.sym.name:
+                # Store the first occurrence
+                if not self.fp8_recipe:
+                    self.fp8_recipe = bsym
+                else:
+                    vsrc = variableify(bsym.output)
+                    self.redundant_map[vsrc] = self.fp8_recipe.output
+                    continue
+
+            if bsym.sym.is_fusion:
+                new_bsym = bsym.from_bsym_swap_proxies(self.redundant_map)
+            else:
+                new_bsym = cse_single_bsym(self.redundant_map, self.rhs_to_bsym_map, bsym)
+
+            # cse_single_bsym might return None if the input bsym is a duplicate.
+            if new_bsym:
+                new_bsyms.append(new_bsym)
+
+        # Couldn't find any TE recipe in the trace
+        if not self.fp8_recipe:
+            return computation_trace
+
+        new_trace.bound_symbols = new_bsyms
+
+        if self.new_saved_for_backward:
+            _update_backward_with_new_saved_for_backward(new_trace, self.new_saved_for_backward)
+
+        # If the trace has been generated by Thunder autograd then we also need to remove extra recipies from the return statement
+        if TraceTag.AUGMENTED_FORWARD in computation_trace.tags:
+            return_bsym = new_trace.bound_symbols[-1]
+            assert return_bsym.sym.id == prims.PrimIDs.RETURN
+            _, (saved_for_backward, env) = return_bsym.args
+            unique_env = {Variable(x) for x in env}
+            self.new_saved_for_backward = (*saved_for_backward, *(unvariableify(x) for x in unique_env))
+
+            _update_forward_with_new_saved_for_backward(new_trace, self.new_saved_for_backward)
+
+        sync_trace = del_last_used(new_trace)
+
+        end_time_ns = time.perf_counter_ns()
+        elapsed_time_ns = end_time_ns - start_time_ns
+        elapsed_time_millis = elapsed_time_ns // 1000000
+
+        sync_trace.set_provenance(
+            TraceProvenance(f"TransformerEngine Synchronization transform (took {elapsed_time_millis} milliseconds)")
+        )
+
+        return sync_trace
