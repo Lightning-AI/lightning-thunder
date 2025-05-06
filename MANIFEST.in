@@ -1,6 +1,3 @@
-# Manifest syntax https://docs.python.org/2/distutils/sourcedist.html
-graft wheelhouse
-
 recursive-exclude __pycache__  *.py[cod] *.orig
 
 # Include the README and CHANGELOG
@@ -11,7 +8,6 @@ recursive-include pl_sandbox *.md
 include LICENSE
 
 # Exclude build configs
-exclude *.sh
 exclude *.toml
 exclude *.svg
 exclude *.yml
@@ -34,7 +30,6 @@ exclude Makefile
 
 prune .git
 prune .github
-prune .circleci
 prune notebook*
 prune temp*
 prune test*

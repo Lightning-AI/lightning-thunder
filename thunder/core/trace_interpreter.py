@@ -146,6 +146,11 @@ def interpret_trace_to_trace(trace, *args, symbol_mapper=None, with_env=False, *
             return v
         return swap_map.get(variableify(v), v)
 
+    def unwrap_vjpdual(v):
+        if isinstance(v, VJPDual):
+            return v.primal
+        return v
+
     new_trace = from_trace(trace)
     with tracectx(new_trace):
         swap_map = {}
@@ -158,8 +163,18 @@ def interpret_trace_to_trace(trace, *args, symbol_mapper=None, with_env=False, *
         safe_map_flat(write, list(trace.kwargs.values()), list(kwargs.values()))
 
         for bsym in trace.bound_symbols:
+            if bsym.sym == prims.python_return:
+                # For return we need to read the args and swap because it may
+                # include inputs that need replacing.
+                # However, we need to unwrap VJP dual for recording in the symbols.
+                # This is in particular needed for the flat_inputs the autograd transform.
+                args = tree_map(lambda x: unwrap_vjpdual(read(x)), bsym.args)
+                new_trace.bound_symbols.append(bsym.from_bsym(args=args).from_bsym_swap_proxies(swap_map))
+                continue
+
             if bsym.sym.id in trace_interpreter_skip_list:
-                new_trace.bound_symbols.append(bsym.from_bsym())
+                # swap proxies, also for UNPACK symbols if inputs are replaced
+                new_trace.bound_symbols.append(bsym.from_bsym_swap_proxies(swap_map))
                 continue
             args = tree_map(read, bsym.args)
             kwargs = tree_map(read, bsym.kwargs)
