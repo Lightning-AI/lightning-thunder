@@ -593,7 +593,10 @@ class Benchmark_litGPT:
 
             if "transformerengine_v2" in self.compile:
 
-                from thunder.executors.transformer_engine_v2ex import transformer_engine_v2_ex, TransformerEngineTransform
+                from thunder.executors.transformer_engine_v2ex import (
+                    transformer_engine_v2_ex,
+                    TransformerEngineTransform,
+                )
 
                 executors.insert(0, transformer_engine_v2_ex)
                 transforms.insert(0, TransformerEngineTransform())
