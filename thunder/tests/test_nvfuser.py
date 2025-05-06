@@ -1076,10 +1076,6 @@ def test_sdpa(
     devicetypes=(devices.DeviceType.CUDA,),
     executors=(nvFuserExecutor,),
     decorators=(
-        pytest.mark.skipif(
-            torch.cuda.is_available() and torch.cuda.get_device_capability(0)[0] < 9,
-            reason="Requires CUDA compute capability >= 9.0",
-        ),
         pytest.mark.parametrize("ignore_index", [-100, -10]),
     ),
 )

@@ -2824,30 +2824,38 @@ def cross_entropy_fwd(
     nv_a = getnv(a, fd, lc_to_nv_map)
     nv_target = getnv(target, fd, lc_to_nv_map)
     nv_ignore_index = getnv(ignore_index, fd, lc_to_nv_map)
+
     zero_scalar = fd.define_scalar(0, dtype=torch_dtype_to_nvfuser_dtype(dtypes.to_torch_dtype(a.dtype)))
 
+    # modify the labels to account for ignore index and then do a 
+    # gather/ take_along_axis on the input tensor
     ne = fd.ops.ne(nv_target, nv_ignore_index)
     where_0 = fd.ops.where(ne, nv_target, zero_scalar)
     where = fd.ops.broadcast_in_dim(where_0, shape=[nv_target.shape()[-1], 1], broadcast_dims=[0])
     gather0 = fd.ops.take_along_axis(nv_a, where, dim=1)
     gather = fd.ops.reshape(gather0, new_shape=[nv_target.shape()[-1]])
 
+    # compute log (sum(exp(A - max(A, dim=1), dim=1))
     max = fd.ops.max(nv_a, 1)
     max2 = fd.ops.broadcast_in_dim(max, shape=[nv_target.shape()[-1], 1], broadcast_dims=[0])
-
     sub = fd.ops.sub(nv_a, max2)
     exp = fd.ops.exp(sub)
-
     sum_1 = fd.ops.sum(exp, 1)
     log = fd.ops.log(sum_1)
 
+    # compute S = POST_GATHER(A) - max(A, dim=1) - log(sum(exp(A - max(A, dim=1), dim=1))
     gather_sub = fd.ops.sub(gather, max)
     log_softmax_post_gather = fd.ops.sub(gather_sub, log)
 
+    # set the values for ignore index to 0
     neg = fd.ops.neg(log_softmax_post_gather)
     where_1 = fd.ops.where(ne, neg, zero_scalar)
+
+    # sum_2_cvt computes the number of valid indices
     sum_2 = fd.ops.sum(ne)
     sum_2_cvt = fd.ops.cast(sum_2, dtype=DataType.Float)
+
+    # compute the mean
     sum_3 = fd.ops.sum(where_1)
     div = fd.ops.div(sum_3, sum_2_cvt)
     return div, max, log, sum_2_cvt
