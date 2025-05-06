@@ -1,25 +1,13 @@
+from enum import Enum, auto
+import time
+from typing import TYPE_CHECKING
+
 from thunder.core.prims import linear as linear_prim
 from thunder.core.prims import get_grad, put_grad
 from thunder.core.proxies import AnyProxy, TensorProxy
 from thunder.extend import StatefulExecutor, register_executor
 from thunder.executors.transformer_engineex import _linear_checker
 import thunder.torch as ltorch
-
-
-import transformer_engine.pytorch as te
-from transformer_engine.pytorch.tensor.float8_tensor import Float8Quantizer
-from transformer_engine.pytorch.ops import BasicLinear
-from transformer_engine.pytorch.fp8 import (
-    _amax_and_scale_update,
-    get_fp8_max,
-    Recipe,
-    RecipeState,
-    FP8GlobalStateManager,
-)
-
-import time
-from typing import TYPE_CHECKING
-
 from thunder import Transform
 from thunder.core import prims
 from thunder.core.proxies import Proxy, Variable, unvariableify, variableify
@@ -31,15 +19,45 @@ from thunder.core.transforms import (
 from thunder.core.transform_common import cse_single_bsym
 from thunder.executors.passes import del_last_used
 
-
 if TYPE_CHECKING:
     from thunder.core.trace import VariableInterface
     from thunder.core.symbol import BoundSymbolRHS, BoundSymbol
     from thunder.core.proxies import TensorProxy
 
+import transformer_engine.pytorch as te
+from transformer_engine.pytorch.tensor.float8_tensor import Float8Quantizer
+from transformer_engine.pytorch.ops import BasicLinear
+from transformer_engine.pytorch.fp8 import (
+    _amax_and_scale_update,
+    get_default_fp8_recipe,
+    get_fp8_max,
+    Recipe,
+    RecipeState,
+    FP8GlobalStateManager,
+)
+
 
 functional_te_ex = StatefulExecutor("functional_te")
 register_executor(functional_te_ex)
+
+
+class RecipeType(Enum):
+    DELAYED = auto()
+    MXFP8 = auto()
+    FP8_CURRENT_SCALING = auto()
+    FP8_BLOCK_SCALING = auto()
+
+
+def get_fp8_recipe_type(recipe: Recipe) -> RecipeType | None:
+    if recipe.delayed():
+        return RecipeType.DELAYED
+    if recipe.mxfp8():
+        return RecipeType.MXFP8
+    if recipe.float8_current_scaling():
+        return RecipeType.FP8_CURRENT_SCALING
+    if recipe.float8_block_scaling():
+        return RecipeType.FP8_BLOCK_SCALING
+    return None
 
 
 def _te_fp8_recipe_meta() -> AnyProxy:
@@ -55,7 +73,7 @@ class TERecipe:
         # use the default recipe.
         if not FP8GlobalStateManager.FP8_RECIPE:
             if not self.fp8_recipe:
-                self.fp8_recipe = FP8GlobalStateManager.get_fp8_recipe()
+                self.fp8_recipe = get_default_fp8_recipe()
 
             return self.fp8_recipe
 
@@ -76,13 +94,15 @@ def _get_te_fp8_quantizers_meta(recipe_state: RecipeState, num_quantizers: int):
 class TEQuantizerState:
     def __init__(self):
         self.quantizers = None
+        self.parent_recipe_state: None | RecipeState = None
 
     def __call__(self, recipe_state: RecipeState, num_quantizers: int) -> list[Float8Quantizer]:
-        if self.quantizers:
+        if self.quantizers and self.parent_recipe_state is recipe_state:
             return self.quantizers
         quantizers = recipe_state.make_quantizers()
 
         self.quantizers = quantizers
+        self.parent_recipe_state = recipe_state
 
         return quantizers
 
@@ -98,10 +118,14 @@ def _get_te_fp8_state_meta(recipe: AnyProxy, mode: str, num_quantizers: int, /):
 
 class TERecipeState:
     def __init__(self):
+        self.parent_recipe_type: None | RecipeType = None
         self.state = None
 
     def __call__(self, recipe: Recipe, mode: str, num_quantizers: int) -> RecipeState:
-        if self.state:
+        recipe_type = get_fp8_recipe_type(recipe)
+
+        # If the recipe type changes, then a new state is needed.
+        if self.state and self.parent_recipe_type == recipe_type:
             return self.state
 
         # mode is needed to get the correct dtypes inside for computation(setup quantizers)
@@ -112,6 +136,7 @@ class TERecipeState:
         )
 
         self.state = recipe_state
+        self.parent_recipe_type = recipe_type
 
         return recipe_state
 
@@ -258,11 +283,12 @@ def _te_fp8_amax_and_scale_update_meta(recipe: AnyProxy, *, states: tuple[AnyPro
 
 # TODO can gather and scatter be made explicit here for ddp
 def _te_fp8_amax_and_scale_update_impl(recipe: Recipe, states: tuple[RecipeState], tokens: tuple[TensorProxy] | None):
-    if recipe.mxfp8():
-        return (*tokens,)
+    if recipe.delayed():
+        for state in states:
+            _amax_and_scale_update(
+                state.amax_history, state.scale, get_fp8_max(recipe, state.mode == "forward"), recipe
+            )
 
-    for state in states:
-        _amax_and_scale_update(state.amax_history, state.scale, get_fp8_max(recipe, state.mode == "forward"), recipe)
     return (*tokens,)
 
 

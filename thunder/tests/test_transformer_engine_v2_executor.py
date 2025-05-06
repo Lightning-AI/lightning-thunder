@@ -5,7 +5,9 @@ from torch.testing import assert_close
 import thunder
 from thunder.tests.framework import requiresCUDA
 
-transformer_engine_module = pytest.importorskip("transformer_engine", reason="transformer_engine was not found, skipping the tests.")
+transformer_engine_module = pytest.importorskip(
+    "transformer_engine", reason="transformer_engine was not found, skipping the tests."
+)
 
 from thunder.executors.transformer_engine_v2ex import transformer_engine_v2_ex, TransformerEngineTransform
 from transformer_engine.common import recipe
@@ -140,6 +142,90 @@ def test_te_linear_forward_backward_multiple_iteration(fp8_recipe):
 
     def thunder_model(x):
         with te.fp8_autocast(fp8_recipe=fp8_recipe):
+            return cfn(x, w1, w2, b1, b2)
+
+    train_model(thunder_model, thunder_sgd_optimizer)
+
+    # Verify that the weights and biases converge to same value after few iterations.
+    assert_close(w1, te_linear1.weight)
+    assert_close(w2, te_linear2.weight)
+    assert_close(b1, te_linear1.bias)
+    assert_close(b2, te_linear2.bias)
+
+
+@requiresCUDA
+def test_te_linear_forward_backward_multiple_iteration_multiple_recipes():
+    # This test is used to verify parity with TE library when it comes to changing recipes during runtime, regardless if that is the intended use or not.
+
+    from transformer_engine.pytorch.fp8 import DelayedScaling, MXFP8BlockScaling
+
+    recipes = [DelayedScaling()]
+    supports_mxfp8, _ = te.fp8.check_mxfp8_support()
+
+    if supports_mxfp8:
+        recipes += [MXFP8BlockScaling()]
+
+    if len(recipes) < 2:
+        pytest.skip("platform does not support two different recipes")
+
+    dtype = torch.bfloat16
+    device = "cuda"
+    # Running more iterations leads to `nan` for both eager and thunder
+    # with BlockScaling.
+    # Potentially because we are training on dummy data and task
+    iterations = 3
+
+    # TE inputs
+    input_shape = (768, 4096)
+    te_linear1 = te.Linear(4096, 4096, params_dtype=dtype)
+    te_linear2 = te.Linear(4096, 2048, params_dtype=dtype)
+
+    def clone_params(*params):
+        return tuple(param.detach().clone() for param in params)
+
+    # Parameters for thunder to optimize
+    w1, w2, b1, b2 = clone_params(te_linear1.weight, te_linear2.weight, te_linear1.bias, te_linear2.bias)
+
+    target_value = torch.tensor(42, dtype=dtype, device=device)
+
+    inputs = tuple(torch.rand(*input_shape, device=device, dtype=dtype) for _ in range(iterations))
+
+    def train_model(model, optimizer):
+        # Run for `iterations`.
+        for iter_n in range(iterations):
+            te_recipe = recipes[iter_n % 2]
+            x = inputs[iter_n]
+            result = model(x, te_recipe)
+            loss = torch.nn.functional.mse_loss(result.sum(), target_value)
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
+
+    from transformer_engine.pytorch.fp8 import FP8GlobalStateManager
+
+    def te_model(x, fp8_recipe):
+        # Enable autocasting for the forward pass
+        with te.fp8_autocast(fp8_recipe=fp8_recipe):
+            print("TE", id(FP8GlobalStateManager.FP8_RECIPE))
+            return te_linear2(te_linear1(x))
+
+    te_sgd_optimizer = torch.optim.SGD(list(te_linear1.parameters()) + list(te_linear2.parameters()))
+
+    train_model(te_model, te_sgd_optimizer)
+
+    def fn(x, w1, w2, b1, b2):
+        o = torch.nn.functional.linear(x, w1, b1)
+        return torch.nn.functional.linear(o, w2, b2)
+
+    cfn = thunder.jit(fn, executors=[transformer_engine_v2_ex], transforms=[TransformerEngineTransform()])
+
+    # Enable grad on thunder params.
+    list(map(lambda t: t.requires_grad_(True), (w1, w2, b1, b2)))
+    thunder_sgd_optimizer = torch.optim.SGD([w1, w2, b1, b2])
+
+    def thunder_model(x, fp8_recipe):
+        with te.fp8_autocast(fp8_recipe=fp8_recipe):
+            print("FUN TE", id(FP8GlobalStateManager.FP8_RECIPE))
             return cfn(x, w1, w2, b1, b2)
 
     train_model(thunder_model, thunder_sgd_optimizer)
