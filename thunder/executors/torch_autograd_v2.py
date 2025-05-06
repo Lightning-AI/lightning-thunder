@@ -2,7 +2,7 @@ import thunder
 
 import thunder.core.prims as prims
 from thunder.core.prims import get_grad
-from thunder.core.transforms import augmented_forward_pass, backward_pass
+from thunder.core.transforms import augmented_forward_pass, backward_pass, dce
 from thunder.core.pytree import tree_map
 import thunder.torch as ltorch
 
@@ -25,10 +25,13 @@ def grad_transform_on_trace(ff_trace, /, *args, **kwargs):
             result.update({"grad_flat_args": backward_result})
         return result
 
-    return thunder.trace(use_dce=False)(joint_forward_and_backward, *args, **kwargs)
+    #  the new check_trace was failing with weird errors of unknown variables
+    #  dce eliminates that
+    return thunder.trace(use_dce=True)(joint_forward_and_backward, *args, **kwargs)
 
 
 def split_forward_backward(joint_trace):
+    # !!!
     if "grad_flat_args" not in joint_trace.output:
         return joint_trace, None
 
@@ -49,8 +52,6 @@ def split_forward_backward(joint_trace):
     # for inplace, we need to update this (or have flat args be the right thing?...)
     forward_proxy_names.update(a.name for a in return_bsym.args[0]["flat_args"] if isinstance(a, thunder.Proxy))
 
-    # print(joint_trace)
-
     for bsym in reversed(joint_trace.bound_symbols):
         if bsym.sym == prims.python_return:
             continue
@@ -66,6 +67,7 @@ def split_forward_backward(joint_trace):
             grad_outs[output_pos[bsym.args[0].name]] = bsym.output
             continue
 
+        # !!!
         if (bsym.sym == prims.copy_ or bsym.sym.name == "copy_") and bsym.args[1].name in forward_proxy_names:
             # todo: should we also handle ltorch.copy_ ?
             forward_part_bsyms.insert(0, bsym.from_bsym())
@@ -127,7 +129,7 @@ def split_forward_backward(joint_trace):
     backward_trace.bound_symbols += backward_part_bsyms
 
     with thunder.core.trace.tracectx(backward_trace):
-        prims.python_return(return_bsym.args[0]["grad_flat_args"])
+        prims.python_return(tuple(return_bsym.args[0]["grad_flat_args"]))
 
     # !!! args are CollectionProxies, which is not the case in the current implementation
     # !!! also, this is gross
