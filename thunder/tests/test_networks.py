@@ -422,7 +422,6 @@ def test_thunderfx_mistral_nemo_small():
 
 
 @thunder.tests.framework.requiresCUDA
-@pytest.mark.skip(reason="assertion error occurs for transformers==4.50.2")  # TODO
 @pytest.mark.parametrize("model_id", ["Qwen/Qwen2.5-7B-Instruct", "microsoft/Phi-3-mini-128k-instruct"])
 def test_hf_for_nemo(model_id):
     from thunder.dynamo import thunderfx
