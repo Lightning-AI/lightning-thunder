@@ -1348,13 +1348,11 @@ register_supported(PrimIDs.SQUEEZE, squeeze, _squeeze_check)
 # There was an nvFuser bug that prevented this which is now fixed; we should
 # investigate re-enabling take_along_axis.
 # # TODO Check that the nvFuser version is >= 0.0.10 when this operator was added
-# def take_along_axis(a: TensorProxy, /, index: TensorProxy, dim: int, *, fd: FusionDefinition, lc_to_nv_map: dict
-# ) -> Any:
+# def take_along_axis(a: TensorProxy, /, index: TensorProxy, dim: int, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
 #     nv_a = getnv(a, fd, lc_to_nv_map)
 #     nv_index = getnv(index, fd, lc_to_nv_map)
+
 #     return fd.ops.take_along_axis(nv_a, nv_index, dim)
-
-
 # register_supported(PrimIDs.TAKE_ALONG_AXIS, take_along_axis, _take_check)
 
 
