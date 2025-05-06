@@ -1348,12 +1348,10 @@ register_supported(PrimIDs.SQUEEZE, squeeze, _squeeze_check)
 # There was an nvFuser bug that prevented this which is now fixed; we should
 # investigate re-enabling take_along_axis.
 # # TODO Check that the nvFuser version is >= 0.0.10 when this operator was added
-# def take_along_axis(
-#     a: TensorProxy, /, index: TensorProxy, dim: int, *, fd: FusionDefinition, lc_to_nv_map: dict
+# def take_along_axis(a: TensorProxy, /, index: TensorProxy, dim: int, *, fd: FusionDefinition, lc_to_nv_map: dict
 # ) -> Any:
 #     nv_a = getnv(a, fd, lc_to_nv_map)
 #     nv_index = getnv(index, fd, lc_to_nv_map)
-#
 #     return fd.ops.take_along_axis(nv_a, nv_index, dim)
 
 
@@ -2910,7 +2908,9 @@ def cross_entropy_bwd(
     zero = fd.define_scalar(0, dtype=DataType.Int)
     one = fd.define_scalar(1, dtype=DataType.Int)
 
-    # scatter the gradients (negative) - this is backward of nll loss
+    # scatter the gradients (negative) - this is backward of nll los    # Fill based on mask
+    mask = tensor > 0
+    tensor.masked_fill_(mask, value)s
     iotas = fd.ops.iota(nv_a.shape()[-1], zero, one, dtype=DataType.Int)
     iotas_bcast = fd.ops.broadcast_in_dim(iotas, shape=nv_a.shape(), broadcast_dims=[nv_a.ndim - 1])
     neg_gradients = fd.ops.neg(nv_g)
