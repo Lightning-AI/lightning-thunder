@@ -2909,6 +2909,8 @@ def cross_entropy_bwd(
 
     zero = fd.define_scalar(0, dtype=DataType.Int)
     one = fd.define_scalar(1, dtype=DataType.Int)
+
+    # scatter the gradients (negative) - this is backward of nll loss
     iotas = fd.ops.iota(nv_a.shape()[-1], zero, one, dtype=DataType.Int)
     iotas_bcast = fd.ops.broadcast_in_dim(iotas, shape=nv_a.shape(), broadcast_dims=[nv_a.ndim - 1])
     neg_gradients = fd.ops.neg(nv_g)
@@ -2931,9 +2933,8 @@ def cross_entropy_bwd(
     log_softmax = fd.ops.sub(input_minus_max, nv_max_log_sum_exp_bcast)
     recomputed_softmax = fd.ops.exp(log_softmax)
 
-    softmax_mul_grad_sum = fd.ops.mul(recomputed_softmax, new_target_bcast)
-
     # this should be gradient - softmax * gradient_sum
+    softmax_mul_grad_sum = fd.ops.mul(recomputed_softmax, new_target_bcast)
     difference = fd.ops.sub(scattered_vals, softmax_mul_grad_sum)
 
     return difference
