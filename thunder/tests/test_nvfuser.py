@@ -1108,7 +1108,7 @@ def test_cross_entropy(executor, device: str, thunder_dtype: dtypes.dtype, ignor
     assert len(fwd_fusion) == 1
     assert len(bwd_fusion) == 1
 
-    assert "nv_cross_entropy" in fwd_fusion[-1][-1].name
+    assert "nv_cross_entropy_fwd" in fwd_fusion[-1][-1].name
     assert "nv_cross_entropy_bwd" in bwd_fusion[-1][-1].name
 
     ref_inputs = [inp.clone().detach() for inp in inputs]
