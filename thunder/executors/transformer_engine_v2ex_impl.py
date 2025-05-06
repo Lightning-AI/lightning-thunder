@@ -38,13 +38,8 @@ if TYPE_CHECKING:
     from thunder.core.proxies import TensorProxy
 
 
-
 functional_te_ex = StatefulExecutor("functional_te")
 register_executor(functional_te_ex)
-
-
-def _functional_te_checker(a, w, /, bias):
-    return _linear_checker(a, w, bias)
 
 
 def _te_fp8_recipe_meta() -> AnyProxy:
@@ -249,7 +244,7 @@ def _te_linear_grad_transform(a, w, bias):
 
 functional_te_ex.register_implementation(
     linear_prim,
-    checker=_functional_te_checker,
+    checker=_linear_checker,
     execution_transform=_te_linear_execution_transform,
     grad_transform=_te_linear_grad_transform,
 )
@@ -276,6 +271,7 @@ _te_fp8_amax_and_scale_update = functional_te_ex.register_operator(
     meta=_te_fp8_amax_and_scale_update_meta,
     fn=_te_fp8_amax_and_scale_update_impl,
 )
+
 
 class TransformerEngineTransform(Transform):
     """
