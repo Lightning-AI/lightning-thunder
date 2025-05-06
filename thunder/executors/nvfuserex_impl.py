@@ -1327,7 +1327,6 @@ def squeeze(a: TensorProxy, /, dims: Sequence[int], *, fd: FusionDefinition, lc_
 
 register_supported(PrimIDs.SQUEEZE, squeeze, _squeeze_check)
 
-
 # TAKE is currently disabled
 # def _take_check(a: TensorProxy, /, index: TensorProxy, dim: int) -> bool:
 #     return are_supported_tensors(a, index)
@@ -1339,7 +1338,6 @@ register_supported(PrimIDs.SQUEEZE, squeeze, _squeeze_check)
 
 #     return fd.ops.index_select(nv_a, nv_index, dim)
 # register_supported(PrimIDs.TAKE, take, _take_check)
-
 
 # TAKE_ALONG_AXIS is currently disabled
 # There was an nvFuser bug that prevented this which is now fixed; we should
