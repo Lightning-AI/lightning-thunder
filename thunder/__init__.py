@@ -550,34 +550,73 @@ def jit(
             else:
                 requires_grad = False
 
+            from thunder.executors.passes import _transform_for_operator_executor_execution
+            from thunder.distributed.utils import maybe_sort_waits
+
+            # !!! This will be behind a flag eventually, but for ease of development it is left off.
             if requires_grad:
-                # Currently split_forward_backward also includes
-                # transform_for_execution and various sorting of symbols,
-                # applying transform_for_execution after this would be
-                # breaking the order of operations
-                computation_trc, backward_trc = split_forward_backward(computation_trc, cd, cs, *computation_trc.args)
-                # Note computation_trc and backward_trc have been appended to cs.last_(backward_)traces
-                # by split_forward_backward
+                from thunder.executors.torch_autograd_v2 import grad_transform_on_trace
 
-            if not requires_grad:
-                from thunder.executors.passes import transform_for_execution as transform_for_execution_pass
-                from thunder.executors.passes import _transform_for_operator_executor_execution
-                from thunder.distributed.utils import maybe_sort_waits
-
-                tmp_comp_trc = _transform_for_operator_executor_execution(computation_trc, cd.executors_list)
-                is_transformed, tmp_comp_trc = maybe_sort_waits(tmp_comp_trc)
-                if is_transformed:
-                    computation_trc = tmp_comp_trc
-                    computation_traces.append(computation_trc)
-
-                extraces = transform_for_execution(
-                    computation_trc,
-                    executors_list=cd.executors_list,
-                    use_del_last_used=False,
+                # !!! This will be incoporated into _transform_for_operator_executor_execution with Tom's work.
+                computation_trc = grad_transform_on_trace(
+                    computation_trc, *computation_trc.args, **computation_trc.kwargs
                 )
-                computation_traces.extend(extraces)
-                computation_trc = computation_traces[-1]
-                computation_trc = thunder.executors.passes.del_last_used(computation_trc)
+                computation_traces.append(computation_trc)
+
+            tmp_comp_trc = _transform_for_operator_executor_execution(computation_trc, cd.executors_list)
+            is_transformed, tmp_comp_trc = maybe_sort_waits(tmp_comp_trc)
+            if is_transformed:
+                computation_trc = tmp_comp_trc
+                computation_traces.append(computation_trc)
+
+            extraces = transform_for_execution(
+                computation_trc,
+                executors_list=cd.executors_list,
+                use_del_last_used=False,
+            )
+            computation_traces.extend(extraces)
+            computation_trc = computation_traces[-1]
+            if requires_grad:
+                from thunder.core.rematerialization import rematerialize
+                from thunder.executors.torch_autograd_v2 import split_forward_backward as split_forward_backward_v2
+
+                computation_trc = rematerialize(computation_trc)
+                computation_trc, backward_trc = split_forward_backward_v2(computation_trc)
+            computation_traces.append(computation_trc)
+            computation_trc = computation_traces[-1]
+            computation_trc = thunder.executors.passes.del_last_used(computation_trc)
+            if backward_trc is not None:
+                backward_trc = thunder.executors.passes.del_last_used(backward_trc, clear_mutable_collections=True)
+                backward_traces.append(backward_trc)
+
+            # if requires_grad:
+            #     # Currently split_forward_backward also includes
+            #     # transform_for_execution and various sorting of symbols,
+            #     # applying transform_for_execution after this would be
+            #     # breaking the order of operations
+            #     computation_trc, backward_trc = split_forward_backward(computation_trc, cd, cs, *computation_trc.args)
+            #     # Note computation_trc and backward_trc have been appended to cs.last_(backward_)traces
+            #     # by split_forward_backward
+
+            # if not requires_grad:
+            #     from thunder.executors.passes import transform_for_execution as transform_for_execution_pass
+            #     from thunder.executors.passes import _transform_for_operator_executor_execution
+            #     from thunder.distributed.utils import maybe_sort_waits
+
+            #     tmp_comp_trc = _transform_for_operator_executor_execution(computation_trc, cd.executors_list)
+            #     is_transformed, tmp_comp_trc = maybe_sort_waits(tmp_comp_trc)
+            #     if is_transformed:
+            #         computation_trc = tmp_comp_trc
+            #         computation_traces.append(computation_trc)
+
+            #     extraces = transform_for_execution(
+            #         computation_trc,
+            #         executors_list=cd.executors_list,
+            #         use_del_last_used=False,
+            #     )
+            #     computation_traces.extend(extraces)
+            #     computation_trc = computation_traces[-1]
+            #     computation_trc = thunder.executors.passes.del_last_used(computation_trc)
 
             if not compile_options.get("disable_inplace_copy_check", False):
                 thunder.core.transform_common._inplace_copy_sanity_check(computation_trc)

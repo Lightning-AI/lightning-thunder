@@ -1449,7 +1449,7 @@ def test_tag_static_memory_location():
 
     # outputs of operations should not be tagged static
     for bsym in lt.bound_symbols:
-        if bsym.sym == thunder.core.prims.unpack_trivial:
+        if bsym.sym in [thunder.core.prims.unpack_trivial, thunder.core.prims.unpack_sequence]:
             continue
         for a in bsym.flat_outs:
             if isinstance(a, thunder.Proxy):

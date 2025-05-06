@@ -115,5 +115,7 @@ def test_nanogpt_block():
     # We are checking the estimated memory against a fixed value for consistency.
     assert max_mem_fw[0] == 381754368
     assert sum(max_mem_fw[1].values()) == 375462912
-    assert max_mem_bw[0] == 437292032
-    assert sum(max_mem_bw[1].values()) == 40934400
+    assert max_mem_bw[0] == 641097728  # 437292032
+    # backward_trc = thunder.executors.passes.del_last_used(backward_trc, clear_mutable_collections=True) in __init__
+    # brought this down from ~160M to ~44M
+    assert sum(max_mem_bw[1].values()) == 440474624  # 40934400

@@ -464,6 +464,17 @@ class CollectionProxy(Proxy):
     def type_string(self) -> str:
         return "Collection"
 
+    # def replace(self, **changes):
+    #     r"""Return a copy of the TupleProxy object with new values for the specified fields as given to the constructor as arguments.
+    #     Valid keyword arguments are ``name``, ``history``.
+    #     Note that the copy will use the current (environment) tracectx."""
+    #     kwargs = dict(
+    #         name=self.name,
+    #         tags=self.tags,
+    #     )
+    #     kwargs.update(changes)
+    #     return CollectionProxy(self.coll, **kwargs)
+
 
 class TupleProxy(Proxy, tuple):
     _DEFAULT_PREFIX = "tup"
