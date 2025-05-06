@@ -2781,6 +2781,32 @@ def _cross_entropy_check_(
     return True
 
 
+def cross_entropy_fwd_meta(
+    a: TensorLike,
+    /,
+    target: TensorLike,
+    weight: None | TensorLike = None,
+    size_average: None | Any = None,
+    ignore_index: int = -100,
+    reduce: None | Any = None,
+    reduction: str = "mean",
+    label_smoothing: float = 0.0,
+) -> tuple[TensorLike, TensorLike, TensorLike, TensorLike]:
+    losses: TensorLike
+    if reduction == "mean":
+        losses = TensorLike(like=a, shape=())
+    else:
+        check(
+            False,
+            lambda: f"cross entropy expected reduction to be  'mean' but was given {reduction}",
+        )
+
+    max_log_sum_exp: TensorLike = TensorLike(like=target, shape=target.shape, dtype=dtypes.float32)
+    num_valid_indices: TensorLike = TensorLike(like=losses, shape=(), dtype=dtypes.float32)
+    a_max: TensorLike = TensorLike(like=target, shape=target.shape, dtype=dtypes.float32)
+    return losses, a_max, max_log_sum_exp, num_valid_indices
+
+
 def cross_entropy_fwd(
     a: TensorLike,
     /,
@@ -2825,32 +2851,6 @@ def cross_entropy_fwd(
     sum_3 = fd.ops.sum(where_1)
     div = fd.ops.div(sum_3, sum_2_cvt)
     return div, max, log, sum_2_cvt
-
-
-def cross_entropy_fwd_meta(
-    a: TensorLike,
-    /,
-    target: TensorLike,
-    weight: None | TensorLike = None,
-    size_average: None | Any = None,
-    ignore_index: int = -100,
-    reduce: None | Any = None,
-    reduction: str = "mean",
-    label_smoothing: float = 0.0,
-) -> tuple[TensorProxy, TensorProxy]:
-    losses: TensorProxy
-    if reduction == "mean":
-        losses = TensorProxy(like=a, shape=())
-    else:
-        check(
-            False,
-            lambda: f"cross entropy expected reduction to be  'mean' but was given {reduction}",
-        )
-
-    max_log_sum_exp: TensorProxy = TensorProxy(like=target, shape=target.shape, dtype=dtypes.float32)
-    num_valid_indices: TensorProxy = TensorProxy(like=losses, shape=(), dtype=dtypes.float32)
-    a_max: TensorProxy = TensorProxy(like=target, shape=target.shape, dtype=dtypes.float32)
-    return losses, a_max, max_log_sum_exp, num_valid_indices
 
 
 nv_cross_entropy_fwd = ex.register_operator(
@@ -2959,10 +2959,10 @@ def cross_entropy_transform(
 
 
 def cross_entropy_grad(
-    a: TensorProxy,
+    a: TensorLike,
     /,
-    target: TensorProxy,
-    weight: None | TensorProxy = None,
+    target: TensorLike,
+    weight: None | TensorLike = None,
     size_average: None | Any = None,
     ignore_index: int = -100,
     reduce: None | Any = None,
