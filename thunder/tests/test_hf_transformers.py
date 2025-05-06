@@ -1,3 +1,5 @@
+from urllib.request import urlopen
+
 import pytest
 import torch
 
@@ -27,9 +29,24 @@ def xfail_not_working(device, compile, model_id):
         pytest.xfail("Known issue with Qwen model on CUDA")
 
 
+important_models = [
+    "Qwen/Qwen2.5-7B-Instruct",
+    "microsoft/Phi-3-mini-128k-instruct",
+]
+
+
+def get_model_ids():
+    response = urlopen(
+        "https://gist.githubusercontent.com/IvanYashchuk/a16fe212ef4c9e42a648049790543f42/raw/5adc932e1e7899a95722222361059e88d821d6cb/hf_models.txt"
+    )
+    lines = response.read().decode("utf-8").split("\n")
+    lines = [line for line in lines if line.strip()]
+    return lines + important_models
+
+
 @pytest.mark.parametrize("device", ["cpu", "cuda"])
 @pytest.mark.parametrize("compile", [thunderfx, jit], ids=["thunderfx", "thunderjit"])
-@pytest.mark.parametrize("model_id", ["Qwen/Qwen2.5-7B-Instruct", "microsoft/Phi-3-mini-128k-instruct"])
+@pytest.mark.parametrize("model_id", get_model_ids())
 def test_hf(device, compile, model_id) -> None:
     skip_if_no_cuda(device)
     skip_if_no_bf16(device)
@@ -44,11 +61,11 @@ def test_hf(device, compile, model_id) -> None:
         pad_token_id=15,
         max_position_embeddings=32,
         num_hidden_layers=1,
-        _attn_implementation="sdpa",
+        trust_remote_code=True,
     )
     configuration.hidden_size = configuration.num_attention_heads
     with torch.device(device):
-        model = AutoModelForCausalLM.from_config(configuration).to(torch.float64)
+        model = AutoModelForCausalLM.from_config(configuration, trust_remote_code=True).to(torch.bfloat16)
 
     compiled_model = compile(model)
 
