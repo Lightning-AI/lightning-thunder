@@ -2823,7 +2823,7 @@ def cross_entropy_fwd(
 
     zero_scalar = fd.define_scalar(0, dtype=torch_dtype_to_nvfuser_dtype(dtypes.to_torch_dtype(a.dtype)))
 
-    # modify the labels to account for ignore index and then do a 
+    # modify the labels to account for ignore index and then do a
     # gather/ take_along_axis on the input tensor
     ne = fd.ops.ne(nv_target, nv_ignore_index)
     where_0 = fd.ops.where(ne, nv_target, zero_scalar)

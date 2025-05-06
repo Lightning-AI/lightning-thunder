@@ -1075,9 +1075,7 @@ def test_sdpa(
     dtypes=(thunder.float32,),
     devicetypes=(devices.DeviceType.CUDA,),
     executors=(nvFuserExecutor,),
-    decorators=(
-        pytest.mark.parametrize("ignore_index", [-100, -10]),
-    ),
+    decorators=(pytest.mark.parametrize("ignore_index", [-100, -10]),),
 )
 def test_cross_entropy(executor, device: str, thunder_dtype: dtypes.dtype, ignore_index):
     def cross_entropy_fn(logits, labels, ignore_index):
