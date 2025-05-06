@@ -7,6 +7,7 @@ on:
     paths:
       - ".github/workflows/ci-quickstart.yml"
       - ".github/run-quickstart-as-lit-jobs.py"
+      - ".github/load-quickstart-report.py"
       - "examples/quickstart/*"
   workflow_dispatch: {}
   schedule:
@@ -43,3 +44,22 @@ jobs:
         run: |
           pip install lightning_sdk -U -q
           python .github/run-quickstart-as-lit-jobs.py
+
+      - name: Load report
+        if: always()
+        id: load-report
+        run: |
+          report=$(python .github/load-quickstart-report.py)
+          echo "REPORT<<EOF" >> $GITHUB_ENV
+          echo "$report" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - uses: act10ns/slack@v2
+        if: always() && github.event_name != 'pull_request' && steps.load-report.conclusion == 'success'
+        with:
+          webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
+          status: ${{ job.status }}
+          message: |
+            *Quickstart CI* - [${{ job.status }}]
+            ${{ env.REPORT }}
+            ref: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

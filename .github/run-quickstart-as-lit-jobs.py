@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 import glob
 import os.path
@@ -22,8 +23,8 @@ def main():
 
     print("Running quickstart scripts...")
     timestamp = datetime.now().strftime("%Y-%m-%d|%H:%M:%S")
-    jobs = [
-        Job.run(
+    jobs = {
+        os.path.basename(script): Job.run(
             name=f"ci-{timestamp}_{script}",
             command=f"pip list && python quickstart/{os.path.basename(script)}",
             studio=s,
@@ -31,18 +32,22 @@ def main():
             interruptible=True,
         )
         for script in ls_quickstart
-    ]
+    }
 
     print("Stopping studio...")
     s.stop()
 
     print("Waiting for jobs to finish...")
-    failures = {}
-    for i, job in enumerate(jobs):
+    report, failures = {}, {}
+    for name, job in jobs.items():
         job.wait()
         print(f"[{job.status}]\t {job.name}")
+        report[name] = str(job.status).lower()
         if job.status != Status.Completed:
-            failures[job.name] = job.logs
+            failures[name] = job.logs
+
+    with open("quickstart_report.json", "w") as fp:
+        json.dump(report, fp, indent=4)
 
     print("Showing logs of failed jobs...")
     separator = "=" * 80
