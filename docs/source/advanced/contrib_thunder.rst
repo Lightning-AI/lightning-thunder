@@ -8,21 +8,21 @@ please don't hesitate to use the `GitHub Issue tracker <https://github.com/Light
 We welcome all individual contributors, regardless of their level of experience or hardware.
 Your contributions are valuable, and we are excited to see what you can accomplish in this collaborative and supportive environment.
 
-For a simple general overview of *Thunder*, we recommend reading
+For a simple general overview of Thunder, we recommend reading
 :doc:`inside Thunder <../advanced/inside_thunder>` first.
 
 
 ================
 Adding operators
 ================
-Adding operators might be one of the easiest and fun ways to get involved in contributing to *Thunder*.
+Adding operators might be one of the easiest and fun ways to get involved in contributing to Thunder.
 The `operator GitHub Issue tracker <https://github.com/Lightning-AI/lightning-thunder/issues?q=is%3Aissue+is%3Aopen+label%3Aoperators>`_
 provides a great starting point in deciding which operation to work on first.
 
 The subsections below are structured as follows
 
 * `Primitives`_, `The Core Language`_, `The Torch Language`_, `Language Context`_
-  describe the hierarchy of operations and abstractions around them in *Thunder* in general terms.
+  describe the hierarchy of operations and abstractions around them in Thunder in general terms.
 * `Adding operations to the Torch executor`_ moves from *theory* to *practice* where we inspect real contributors' pull requests.
 
 We recommend reading the document **sequentially**!
@@ -63,7 +63,7 @@ For example, the ``expm1`` operation can mathematically be defined in terms of t
 and so it does not need to be a primitive to enable any functionality.
 Many libraries, including `C++’s standard library <https://en.cppreference.com/w/c/numeric/math/expm1>`_,
 still define an ``expm1`` operation for numerical accuracy, and so ``expm1`` is a
-`primitive <https://github.com/Lightning-AI/lightning-thunder/blob/888b46324462fba70f93d5017bc0d99025f05091/thunder/core/prims.py#L1791>`_ in *Thunder*.
+`primitive <https://github.com/Lightning-AI/lightning-thunder/blob/888b46324462fba70f93d5017bc0d99025f05091/thunder/core/prims.py#L1791>`_ in Thunder.
 
 
 -----------------
@@ -103,7 +103,7 @@ For example, take a look at the following implementation of ``add`` from `clang 
 
 Before adding a core language operation consider if the functionality expressed is universal enough.
 
-As a style note, operations in *Thunder* should defer as much error checking as possible.
+As a style note, operations in Thunder should defer as much error checking as possible.
 For example, if a primitive’s meta function will perform an error check for ``X``,
 then the core language operation that calls it should generally not also check for ``X``.
 
@@ -111,7 +111,7 @@ then the core language operation that calls it should generally not also check f
 ------------------
 The Torch Language
 ------------------
-To translate ``torch`` operations into something that *Thunder* understands we define a
+To translate ``torch`` operations into something that Thunder understands we define a
 `torch language <https://github.com/Lightning-AI/lightning-thunder/blob/main/thunder/torch/__init__.py>`_.
 Operations in the ``torch`` should reflect the behavior of their corresponding torch operations (small deviations are sometimes OK).
 
@@ -196,9 +196,9 @@ and not the ``torch.Tensor`` as its input. The rest of the function checks the i
 a ``TensorProxy`` of the appropriate shape. ``like=a`` means that the output will inherit the meta-data
 like ``device`` and ``dtype`` from ``a``. The primitive is also tagged with ``tags=(OpTags.SHAPE_OP,)``,
 and, therefore, is associated with shape-based operations.
-We use tags to additionally group operations for group-specific operation optimizations inside *Thunder*.
+We use tags to additionally group operations for group-specific operation optimizations inside Thunder.
 
-Once the symbol is created, we need to tell *Thunder* how to *execute* it.
+Once the symbol is created, we need to tell Thunder how to *execute* it.
 Since we are updating the ``torch`` executor, the following lines are added to the
 `executors/torchex.py <https://github.com/Lightning-AI/lightning-thunder/blob/main/thunder/executors/torchex.py>`_ file
 
@@ -252,7 +252,7 @@ For example, the following lines from
    _register_implementation(prims.full, checker=_always_executable, execution_transform=_full_transform)
 
 show us how to accomplish that with the ``execution_transform`` argument of ``_register_implementation``
-where the *Thunder* meta-data like ``device``, ``dtype`` is converted to the corresponding PyTorch meta-data.
+where the Thunder meta-data like ``device``, ``dtype`` is converted to the corresponding PyTorch meta-data.
 
 ~~~~~~~~~~~~~~~~~~~~~
 Testing the Operation
@@ -324,7 +324,7 @@ and empty inputs (``shape=(0,)``, i.e. shapes containing zeros).
 And ``unfold_error_generator`` tests about every aspect of the underlying meta-function.
 
 To run the tests for a particular operator, use ``pytest``’s ``-k`` option.
-This will run tests for *Thunder*’s different executors, supported dtypes, and supported device types.
+This will run tests for Thunder’s different executors, supported dtypes, and supported device types.
 For example, to run the tests for ``unfold`` the command would be
 
 .. code-block:: bash
@@ -353,7 +353,7 @@ Another example of an OpInfo with specified ``test_directives``
    )
    elementwise_unary_ops.append(acos_opinfo)
 
-We strive for *Thunder* to be of the highest quality possible,
+We strive for Thunder to be of the highest quality possible,
 so it is always a good idea to be very thorough when it comes to testing.
 
 ~~~~~~~~~~~~~~~~~~~
@@ -403,7 +403,7 @@ lines
 
 define a grad transform for ``prims.topk``.
 This operation returns a 2-tuple in forward ``fwd = (val, idx)`` with only the first element
-being differentiable. Note that *Thunder* interleaves forward and backward computations in grad transforms.
+being differentiable. Note that Thunder interleaves forward and backward computations in grad transforms.
 Take a look at the lines ``val_grad = get_grad(val)``, which extracts the in-flowing backward gradient
 for ``val``, and ``put_grad(a, a_grad)`` which sets the backward gradient for the input ``a``.
 
@@ -435,7 +435,7 @@ The function is implemented in `thunder/torch/__init__.py <https://github.com/Li
         )
         return a * relu6(a + 3) / 6
 
-Note the checks (*Thunder* does not support in-place operations yet) and that ``hardswish`` is a composition
+Note the checks (Thunder does not support in-place operations yet) and that ``hardswish`` is a composition
 of the ``relu6`` operation (defined in the ``torch`` language) and the language context-specific binary operations
 over the objects that ``TensorProxy`` represent. All these basic operations are differentiable
 (for the Torch/NVFuser executors), and so is ``hardswish`` implicitly differentiable (for the Torch/NVFuser executors).
@@ -450,4 +450,4 @@ We hope that you find information provided here useful and we look forward to yo
 We also recommend checking out
 :doc:`Defining new Thunder operations <../notebooks/adding_custom_operator>` and
 :doc:`Defining custom forward and backward for existing operators <../notebooks/adding_custom_operator_backward>`
-that cover very similar topics related to extending *Thunder* out of the tree.
+that cover very similar topics related to extending Thunder out of the tree.

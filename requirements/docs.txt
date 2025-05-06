@@ -1,10 +1,10 @@
 sphinx ==5.3.0
 myst-parser ==1.0.0
-nbsphinx ~=0.9.6
-ipython[all] ~=8.34.0
+nbsphinx ~=0.9.7
+ipython[all] ~=8.36.0
 pandoc ==2.4
 docutils >=0.16
-sphinxcontrib-fulltoc ==1.2.0
+sphinxcontrib-fulltoc @ git+https://github.com/t-vi/sphinx-contrib-fulltoc@master
 sphinxcontrib-mockautodoc
 
 sphinx-autodoc-typehints ==1.23.0

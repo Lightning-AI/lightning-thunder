@@ -45,7 +45,7 @@ Modules and functions compiled with Thunder fully interoperate with vanilla PyTo
 Hello World
 -----------
 
-Here is a simple example of how *thunder* lets you compile and run PyTorch modules and functions::
+Here is a simple example of how Thunder lets you compile and run PyTorch modules and functions::
 
   import torch
   import thunder
@@ -111,8 +111,8 @@ The compiled function ``jitted_foo`` takes and returns PyTorch tensors, just lik
    :name: advanced
    :caption: Advanced
 
-   Inside thunder <advanced/inside_thunder>
-   Extending thunder <advanced/extending>
+   Inside Thunder <advanced/inside_thunder>
+   Extending Thunder <advanced/extending>
    notebooks/extend_thunder_with_cuda_python
    notebooks/adding_custom_operator
    notebooks/adding_custom_operator_backward

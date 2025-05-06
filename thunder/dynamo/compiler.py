@@ -3,8 +3,8 @@ from functools import partial
 from looseversion import LooseVersion
 from typing import TYPE_CHECKING
 import warnings
-import inspect
 from pathlib import Path
+import copy
 
 import torch
 
@@ -14,6 +14,11 @@ from thunder.dynamo.utils import (
     CompilerType,
     get_split_reasons_string,
     thunder_options_to_str,
+    ProfileStats,
+    ThunderAoTOptimizer,
+    default_filter,
+    default_optimizer,
+    input_to_example_input_meta,
 )
 from thunder.dynamo.splitter import _splitter
 from thunder.core.utils import check
@@ -23,8 +28,10 @@ from thunder.transforms.extraction_only_prologue_transform import ExtractionOnly
 if TYPE_CHECKING:
     from thunder.dynamo.utils import SubgraphInfo
     from thunder.core.transform_common import Transform
+    from thunder.core.trace import TraceCtx as Trace
     from os import PathLike
     from collections.abc import Callable
+    from thunder.core.trace import TraceCtx as Trace
 
 
 _DEFAULT_THUNDER_FUSION_TYPE = "dataflow"
@@ -212,23 +219,10 @@ def thunderfx(fn: Callable, /, **kwargs) -> Callable:
     """
     import thunder
 
-    from thunder.dynamo.utils import get_thunder_jit_kwargs, get_torch_compile_kwargs
+    from thunder.dynamo.utils import get_torch_compile_kwargs
 
-    thunder_jit_kwargs = get_thunder_jit_kwargs(**kwargs)
     torch_compile_kwargs = get_torch_compile_kwargs(**kwargs)
-
-    rest_kwargs = {k: v for k, v in kwargs.items() if k not in thunder_jit_kwargs and k not in torch_compile_kwargs}
-    check(
-        not rest_kwargs,
-        lambda: f"There are kwargs that are not supported by either thunder.jit or torch.compile: {rest_kwargs}",
-    )
-
-    overlap = [kwarg_name for kwarg_name in thunder_jit_kwargs if kwarg_name in torch_compile_kwargs]
-    check(
-        not overlap,
-        lambda: f"There are overlapping kwargs between thunder.jit and torch.compile: {overlap}",
-        ValueError,
-    )
+    thunder_jit_kwargs = {k: v for k, v in kwargs.items() if k not in torch_compile_kwargs}
 
     backend = ThunderCompiler(**thunder_jit_kwargs)
     compiled = torch.compile(fn, backend=backend, **torch_compile_kwargs)
@@ -237,7 +231,7 @@ def thunderfx(fn: Callable, /, **kwargs) -> Callable:
     # we have a place to hang the `last_*traces` properties.
     class CompiledObject:
         def __init__(self, be, func: Callable):
-            self._backend = backend
+            self._backend = be
             self._func = func
 
         def __call__(self, *args, **kwargs):
@@ -284,3 +278,111 @@ def thunderfx(fn: Callable, /, **kwargs) -> Callable:
 
     c = CompiledObject(backend, compiled)
     return c
+
+
+def thunder_profile(fn):
+    """
+    This function returns a profiling callable that wraps the torch compiled function and profiling
+    statistics. The statistics are stored in a :class:`thunder.dynamo.utils.ProfileStats` object,
+    which can be accessed through the `_tao.id_to_profile_stats` attribute of the returned callable.
+
+    For an example, see :func:`thunder.dynamo.compiler.thunder_optimize`
+    """
+    torch.compiler.reset()
+    tao: ThunderAoTOptimizer = ThunderAoTOptimizer()
+
+    def dispatching_backend(gm, *args):
+        if tao.is_profiling:
+            idx: int = id(gm)
+            # The gm needs to be recorded during Torch JIT compilation,
+            # because input information is discarded once compilation is complete.
+            # We need this input information to infer the input range for each subgraph in the splitter.
+            profile_stats = ProfileStats(gm=copy.deepcopy(gm))
+            tao.id_to_profile_stats[idx] = profile_stats
+            tao.id_to_gm_map[idx] = gm
+
+            def record_stats(*args):
+                input_meta = input_to_example_input_meta(args)
+                tao.id_to_profile_stats[idx].input_meta_to_called_times[input_meta] += 1
+                return gm(*args)
+
+            tao.dispatch_map[idx] = record_stats
+
+            def _dispatch(*args):
+                return tao.dispatch_map[idx](*args)
+
+            return _dispatch
+
+        # NOTE When not in profiling mode, this just returns the gm for eager execution
+        return gm
+
+    cfn = torch.compile(fn, backend=dispatching_backend)
+
+    # Wraps the torch compiled callable so we can invalidate the profiling
+    #   callable for UX clarity
+    def profiling_callable(*args, **kwargs):
+        if tao.is_profiling:
+            return cfn(*args, **kwargs)
+
+        raise AssertionError(f"No longer profiling")
+
+    profiling_callable._compiled_fn = cfn
+    profiling_callable._tao = tao
+    return profiling_callable
+
+
+def thunder_optimize(
+    profiling_callable,
+    *,
+    gm_filter=default_filter,
+    optimizer=default_optimizer,
+):
+    """
+    Optimizes the given profiling callable based on the statistics collected during profiling.
+
+    Args:
+        profiling_callable: The callable returned by :func:`thunder.dynamo.compiler.thunder_profile`
+        gm_filter: Function that selects which graph modules to optimize
+        optimizer: Function that performs the actual optimization on each graph module
+
+    Returns:
+        The torch compiled function
+
+    Example:
+        >>> import torch
+        >>> from thunder.dynamo import thunder_profile
+        >>> def foo(x):
+        ...     return x + 1
+        >>> x = torch.randn(2, 2)
+        >>> pfoo = thunder_profile(foo)
+        >>> pfoo(x)  # Profile with first input
+        >>> stats = pfoo._tao.id_to_profile_stats  # Access collected statistics
+        >>> optfoo = thunder_optimize(pfoo)
+        >>> optfoo(x)  # Optimized with first input
+    """
+
+    # 1) Filters the FX graphs based on their statistics
+    indices_to_optimize: set[int] = gm_filter(profiling_callable)
+
+    # 2) Replaces the FX graphs that are to be optimized with the optimized
+    #      callables, and other graphs with the graph modules
+    tao = profiling_callable._tao
+    dispatch_map = tao.dispatch_map
+    id_to_gm_map = tao.id_to_gm_map
+    for idx, call in dispatch_map.items():
+        if idx in indices_to_optimize:
+            gm = id_to_gm_map[idx]
+            profile_stats = tao.id_to_profile_stats[idx]
+            try:
+                dispatch_map[idx] = optimizer(gm, profile_stats)
+            except NotImplementedError:
+                # Executes the gm eagerly if the optimizer can't optimize it
+                dispatch_map[idx] = gm
+        else:
+            dispatch_map[idx] = id_to_gm_map[idx]
+
+    # 3) Marks the profiling period as over
+    tao.is_profiling = False
+
+    # 4) Returns the actual torch.compile'd callable to minimize calling latency
+    return profiling_callable._compiled_fn

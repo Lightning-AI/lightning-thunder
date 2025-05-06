@@ -49,8 +49,7 @@ For **performance experts**, Thunder is the most ergonomic framework for underst
 <div align="center">
   <div style="text-align: center;">
     <a target="_blank" href="#quick-start" style="margin: 0 10px;">Quick start</a> •
-    <a target="_blank" href="#featured-examples" style="margin: 0 10px;">Examples</a> •
-    <a target="_blank" href="#features" style="margin: 0 10px;">Features</a> •
+    <a target="_blank" href="#examples" style="margin: 0 10px;">Examples</a> •
     <a target="_blank" href="#performance" style="margin: 0 10px;">Performance</a> •
     <!-- <a target="_blank" href="#hosting-options" style="margin: 0 10px;">Hosting</a> • -->
     <a target="_blank" href="https://lightning.ai/docs/thunder/latest/" style="margin: 0 10px;">Docs</a>
@@ -59,11 +58,13 @@ For **performance experts**, Thunder is the most ergonomic framework for underst
 
 &#160;
 
+<!--
 <div align="center">
 <a target="_blank" href="https://lightning.ai/docs/thunder/home/get-started">
   <img src="https://pl-bolts-doc-images.s3.us-east-2.amazonaws.com/app-2/get-started-badge.svg" height="36px" alt="Get started"/>
 </a>
 </div>
+-->
 
 &#160;
 
@@ -73,7 +74,7 @@ For **performance experts**, Thunder is the most ergonomic framework for underst
 
 # Quick start
 
-Install Thunder via pip ([more options](https://lightning.ai/docs/litserve/home/install)):
+Install Thunder via pip ([more options](https://lightning.ai/docs/thunder/latest/fundamentals/installation.html)):
 
 ```bash
 pip install torch==2.6.0 torchvision==0.21 nvfuser-cu124-torch26
@@ -133,7 +134,7 @@ import torch.nn as nn
 model = nn.Sequential(nn.Linear(2048, 4096), nn.ReLU(), nn.Linear(4096, 64))
 ```
 
-Optimize it with thunder:
+Optimize it with Thunder:
 
 ```python
 import thunder

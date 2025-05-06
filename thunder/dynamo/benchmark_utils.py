@@ -490,7 +490,7 @@ def check_metrics(
             stream.write(msg)
             failed_folder = folder_path / "failed"
             report.write_benchmark(
-                failed_folder, compile_fn, timer_fn, file_name=f"failed_{filename1}", extra_comment_str=msg
+                failed_folder, compile_fn, timer_fn, file_name=f"failed_{filename}", extra_comment_str=msg
             )
             return None
 

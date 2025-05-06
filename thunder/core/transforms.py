@@ -1029,6 +1029,23 @@ def _exp_prim_grad(a: Number | TensorProxy) -> Number | TensorProxy:
 register_grad(pids.EXP, _exp_prim_grad)
 
 
+def _frexp_prim_grad(a: Number | TensorProxy):
+    fwd = prims.frexp(a)
+    mantissa, exponent = fwd
+
+    g_mantissa = get_grad(mantissa)
+
+    a_grad = g_mantissa / exponent.exp2()
+    a_grad = a_grad.masked_fill(~prims.isfinite(a_grad), 0.0)
+
+    put_grad(a, a_grad)
+
+    return fwd
+
+
+register_grad(pids.FREXP, _frexp_prim_grad)
+
+
 def _log_prim_grad(a: Number | TensorProxy) -> Number | TensorProxy:
     fwd = prims.log(a)
 
@@ -1425,9 +1442,9 @@ def _copy_with_setitem_grad(a: TensorProxy, index, value: Number | TensorProxy):
 
     if isinstance(value, TensorProxy):
         value_grad = g[index]
-        expanded_dims = value_grad.ndim - value.ndim
-        if expanded_dims > 0:
-            value_grad = prims.sum(value_grad, tuple(range(expanded_dims)))
+        # NOTE: `value` could be broadcasted.
+        if not utils.same_shape(value_grad.shape, value.shape):
+            value_grad = sum_to(value_grad, value.shape)
         put_grad(value, value_grad)
 
     return fwd
@@ -2839,7 +2856,7 @@ def backward_pass(forward_env, trace, init_cotangents):
                         put_grad(symbol.args[i], result.get(k, None))
             continue
 
-        if not isinstance(result, Sequence):
+        if not isinstance(result, tuple):
             result = (result,)
 
         def is_differentiable(arg):

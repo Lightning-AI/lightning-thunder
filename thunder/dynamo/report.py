@@ -515,13 +515,16 @@ class FXGraphReport:
             print(code_str, file=f)
         format_python_file(folder / file_name)
 
-    def run_benchmark(self, compile_fn: CompileSpecificationInterface, time_fn: TimerInterface):
+    def run_benchmark(
+        self, compile_fn: CompileSpecificationInterface, time_fn: TimerInterface, *, reset_torch_dynamo=True
+    ):
         # From torch.compile docs - https://pytorch.org/docs/stable/generated/torch.compile.html
         # > Multiple compiled results can be associated with a frame up to torch._dynamo.config.cache_size_limit, which defaults to 8; at which point we will fall back to eager.
         # Ref: https://github.com/pytorch/pytorch/blob/34d726011f482b716d879bf665aef100a7c08a8d/torch/_dynamo/__init__.py#L97
-        # > reset function clears all compile caches and restore initial state.  This function is intended
-        # to reset Dynamo's state *as if* you had started a fresh process invocation.
-        torch._dynamo.reset()
+        # > reset function clears all compile caches and restore initial state.
+        # Sets the `reset_torch_dynamo` to True when you need to reset Dynamo's state *as if* you had started a fresh process invocation.
+        if reset_torch_dynamo:
+            torch._dynamo.reset()
         example_inputs = self.make_example_inputs()
         # To avoid the AssertionError: attribute nodes of Graph object out of sync
         recompile_graph(self.graph)
@@ -750,15 +753,16 @@ class ThunderSplitGraphReport(FXGraphReport):
         self.split_reason = split_reason
 
         self.fusion_reports: list[ThunderFusionReport] = []
-        self.fwd_trc: TraceCtx = None
-        self.bwd_trc: TraceCtx = None
+        self.fwd_trc: TraceCtx | None = None
+        self.bwd_trc: TraceCtx | None = None
 
     def _create_thunder_traces(self):
         example_inputs = self.make_example_inputs()
         # Executes to get the trace
-        run_forward_backward(self.compiled_fn, *example_inputs)
+        _, grads = run_forward_backward(self.compiled_fn, *example_inputs)
         self.fwd_trc = last_traces(self.compiled_fn)[-1]
-        self.bwd_trc = last_backward_traces(self.compiled_fn)[-1]
+        if grads and (backward_traces := last_backward_traces(self.compiled_fn)):
+            self.bwd_trc = backward_traces[-1]
 
     def create_fusion_reports(self):
         """
@@ -766,7 +770,11 @@ class ThunderSplitGraphReport(FXGraphReport):
         and generate the :class:`ThunderFusionReport` instance based on it.
         """
         self._create_thunder_traces()
+
         for trace, prefix in [(self.fwd_trc, "forward"), (self.bwd_trc, "backward")]:
+            # `self.bwd_trc` can be None.
+            if trace is None:
+                continue
             for bsym in trace.bound_symbols:
                 if bsym.sym.is_fusion and "nvFusion" in bsym.sym.name:
                     self.fusion_reports.append(ThunderFusionReport(bsym, f"{self.graph_name}_{bsym.sym.name}_{prefix}"))
@@ -1134,17 +1142,10 @@ def get_thunder_fxgraph_reports(fn: Callable, stream: TextIO = sys.stdout, **com
     Returns:
         A function that takes *args, **kwargs and returns a list of ThunderFXGraphReport objects.
     """
-    from thunder.dynamo.utils import get_thunder_jit_kwargs, get_torch_compile_kwargs
+    from thunder.dynamo.utils import get_torch_compile_kwargs
 
-    thunder_jit_kwargs = get_thunder_jit_kwargs(**compile_kwargs)
     torch_compile_kwargs = get_torch_compile_kwargs(**compile_kwargs)
-    rest_kwargs = {
-        k: v for k, v in compile_kwargs.items() if k not in thunder_jit_kwargs and k not in torch_compile_kwargs
-    }
-    check(
-        not rest_kwargs,
-        lambda: f"There are kwargs that are not supported by either thunder.jit or torch.compile: {rest_kwargs}",
-    )
+    thunder_jit_kwargs = {k: v for k, v in compile_kwargs.items() if k not in torch_compile_kwargs}
 
     def inner_fn(*args, **kwargs):
         reports = fx_report(fn, **torch_compile_kwargs)(*args, **kwargs)
@@ -1304,15 +1305,8 @@ def thunderfx_benchmark_report(
 
     folder_path = Path(folder_path)
     folder_path.mkdir(exist_ok=True, parents=True)
-    thunder_jit_kwargs = get_thunder_jit_kwargs(**compile_kwargs)
     torch_compile_kwargs = get_torch_compile_kwargs(**compile_kwargs)
-    rest_kwargs = {
-        k: v for k, v in compile_kwargs.items() if k not in thunder_jit_kwargs and k not in torch_compile_kwargs
-    }
-    check(
-        not rest_kwargs,
-        lambda: f"There are compile_kwargs that are not supported by either thunder.jit or torch.compile: {rest_kwargs}",
-    )
+    thunder_jit_kwargs = {k: v for k, v in compile_kwargs.items() if k not in torch_compile_kwargs}
 
     def inner_fn(*args, **kwargs):
         if check_torch_runnablility:

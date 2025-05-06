@@ -31,8 +31,8 @@ Calling a Python builtin, standard library operation, or a function that calls i
 ..
   Certain op-level behavior
   -------------------------
-  1. Ops which have not yet been added to *thunder*. Please let us know if there’s missing operator support you would like to see and we will be happy to help.
-  2. Data dependent control flow (e.g. ``if x.any()``). Since *thunder* generates traces of programs ahead of the actual execution, control flow depending on the values of tensors as opposed to their metadata cannot be handled by *thunder*.
+  1. Ops which have not yet been added to Thunder. Please let us know if there’s missing operator support you would like to see and we will be happy to help.
+  2. Data dependent control flow (e.g. ``if x.any()``). Since Thunder generates traces of programs ahead of the actual execution, control flow depending on the values of tensors as opposed to their metadata cannot be handled by Thunder.
 
 
 Using Thunder-optimized Modules

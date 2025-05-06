@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from thunder.core import devices
 from thunder.core import prims
 from thunder.core import utils
-from thunder.core.proxies import DistParallelType
+from thunder.core.proxies import DistParallelType, TensorProxy, variableify
 from thunder.core.trace import from_trace
 from thunder.core.trace import tracectx
 from thunder.core.trace import TraceProvenance
@@ -156,16 +156,16 @@ class DDPTransform(Transform):
                         synchronized_parameters.append(dist_prims.synchronize(comp_inp_p, self.process_group))
         new_scope = computation_trace.pop_scope()
         # map of param -> synced param
-        proxies_to_replace = {id(bsym.args[0]): bsym.output for bsym in new_scope}
+        proxies_to_replace = {variableify(bsym.args[0]): bsym.output for bsym in new_scope}
 
         # See NOTE: Shared Parameters in Trace
         for param_name, base_param in self.shared_params_name.items():
             param_proxy = param_name_to_comp_trc_proxy[param_name]
             base_param_proxy = param_name_to_comp_trc_proxy[base_param]
-            synced_base_param_proxy = proxies_to_replace[id(base_param_proxy)]
+            synced_base_param_proxy = proxies_to_replace[variableify(base_param_proxy)]
             # Update `proxies_to_replace` so we replace all usage of `param_proxy`
             # with the output of the synced param on `base_param_proxy`.
-            proxies_to_replace[id(param_proxy)] = synced_base_param_proxy
+            proxies_to_replace[variableify(param_proxy)] = synced_base_param_proxy
 
         new_computation_trace = from_trace(computation_trace)
         for idx, bsym in enumerate(computation_trace.bound_symbols):
@@ -175,9 +175,16 @@ class DDPTransform(Transform):
 
         new_computation_trace.bound_symbols += new_scope
         for bsym in computation_trace.bound_symbols[idx:]:
+            if bsym.sym == prims.python_return:
+                # we need to preserve flat_args
+                # skipping the swapping this assumes we don't return sharded params, but that should be OK
+                assert not any(
+                    (variableify(o) in proxies_to_replace) for o in bsym.args[0]["output"] if isinstance(o, TensorProxy)
+                )
+                new_computation_trace.bound_symbols.append(bsym.from_bsym())
+                continue
             # replace param by synced_param
-            new_args = tuple(proxies_to_replace.get(id(a), a) for a in bsym.args)
-            new_computation_trace.bound_symbols.append(bsym.from_bsym(args=new_args))
+            new_computation_trace.bound_symbols.append(bsym.from_bsym_swap_proxies(proxies_to_replace))
 
         new_computation_trace.set_provenance(TraceProvenance("ddp pass"))
 

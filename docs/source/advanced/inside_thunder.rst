@@ -1,7 +1,7 @@
 Inside Thunder
 ##############
 
-This section elaborates on the design of some of *thunder*'s internals.
+This section elaborates on the design of some of Thunder's internals.
 
 Bytecode interpretation
 =======================

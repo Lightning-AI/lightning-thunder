@@ -305,7 +305,7 @@ def test_error_of_inplace_to_views(executor, device, _):
         return c, d, e
 
     jitted_f = executor.make_callable(f)
-    with pytest.raises(NotImplementedError, match="in-place op of `torch.Tensor.mul_`"):
+    with pytest.raises(NotImplementedError, match="Please modify usage of `torch.Tensor.mul_`"):
         _ = jitted_f(a, b)
 
 

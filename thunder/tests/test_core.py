@@ -3279,3 +3279,21 @@ def test_prims_pack_list():
     expected = [a, b]
 
     assert isinstance(actual, list) and actual == expected
+
+
+def test_enum_printing():
+    from enum import Enum
+
+    def fn():
+        pass
+
+    class A(Enum):
+        VALUE = 1
+
+    trc = thunder.TraceCtx(fn)
+    with thunder.core.trace.tracectx(trc):
+        thunder.core.prims.python_return(A.VALUE)
+
+    # the important bit here is that A_VALUE is there, so we can see
+    # the enum constant's value
+    assert "return _A_VALUE" in str(trc)
