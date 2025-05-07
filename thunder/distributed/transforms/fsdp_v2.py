@@ -93,6 +93,8 @@ class FSDPTransform(Transform):
         bucketing_strategy: FSDPBucketingStrategy = FSDPBucketingStrategy.NONE,
         release_original_parameters: bool = False,
         move_state_dict_to_cpu: bool = False,
+        *,
+        process_group: ProcessGroup | None = None,
     ) -> None:
         self.device = device
         self.broadcast_from = broadcast_from
@@ -100,7 +102,7 @@ class FSDPTransform(Transform):
         self.bucketing_strategy = bucketing_strategy
         self.release_original_parameters = release_original_parameters
         self.sharded_params: dict[str, Any] = {}
-        self.process_group: ProcessGroup | None = None
+        self.process_group: ProcessGroup | None = process_group
         self.shared_params_name: dict[str, str] = {}
         self.move_state_dict_to_cpu = move_state_dict_to_cpu
         if self.device is None:
@@ -114,7 +116,8 @@ class FSDPTransform(Transform):
         from thunder import compile_data as get_compile_data
         from thunder.core.module import ThunderModule
 
-        self.process_group = copy_default_process_group()
+        if self.process_group is None:
+            self.process_group = copy_default_process_group()
         utils.check(self.process_group is not None, lambda: "The default process group is None")
         global_rank = tdist.get_rank(group=self.process_group)
         world_size = tdist.get_world_size(group=self.process_group)
@@ -334,7 +337,9 @@ class FSDPTransform(Transform):
                         comp_inp_p._shape = tuple(new_shape)
                         comp_inp_p._device = thunder_device
                     with tracectx(computation_trace):
-                        synchronized_parameters.append(dist_prims.synchronize(comp_inp_p, self.process_group))
+                        synchronized_parameters.append(
+                            dist_prims.synchronize(comp_inp_p, self.process_group, DistParallelType.FULLY_SHARDED)
+                        )
                     if (padding_size := new_shape[0] * self.process_group.size() - old_shape[0]) > 0:
                         unsharded_to_padding[variableify(synchronized_parameters[-1])] = padding_size
 
