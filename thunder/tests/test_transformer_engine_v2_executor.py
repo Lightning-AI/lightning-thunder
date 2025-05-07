@@ -14,20 +14,27 @@ from transformer_engine.common import recipe
 import transformer_engine.pytorch as te
 
 # FP8 is supported on compute arch 8.9 onwards.
+# MXFP8 is supported on compute arch 10.0 onwards.
 # Skip the tests if current hardware is not supported.
-is_supported, msg = te.fp8.check_fp8_support()
-if not is_supported:
-    pytest.skip(msg, allow_module_level=True)
+is_fp8_supported, msg_fp8 = te.fp8.check_fp8_support()
+is_mxfp8_supported, msg_mxfp8 = te.fp8.check_mxfp8_support()
+if not is_fp8_supported:
+    pytest.skip(msg_fp8, allow_module_level=True)
 
-hybrid_fp8_recipe = recipe.DelayedScaling(fp8_format=recipe.Format.HYBRID)
+hybrid_fp8_delayed_scaling_recipe = recipe.DelayedScaling()
+mxfp8_e4m3_recipe = recipe.MXFP8BlockScaling()
 
 # `None` is used to test the default recipe.
-recipes = (None, hybrid_fp8_recipe)
+recipes = (None, hybrid_fp8_delayed_scaling_recipe, mxfp8_e4m3_recipe)
+recipe_ids = ("default", "delayed_scaling", "mxfp8_e4m3")
 
 
 @requiresCUDA
-@pytest.mark.parametrize("fp8_recipe", recipes)
-def test_te_linear_forward_backward(fp8_recipe):
+@pytest.mark.parametrize("fp8_recipe", recipes, ids=recipe_ids)
+def test_te_linear_forward_backward(fp8_recipe: recipe.Recipe):
+    if fp8_recipe and not (fp8_recipe.delayed() or is_mxfp8_supported):
+        pytest.skip(msg_mxfp8)
+
     # Test Description:
     # Verify that `torch.nn.functional.linear` is replaced with `te_linear_*`
     # and the output as well as the gradients match for thunder compiled code.
@@ -82,8 +89,11 @@ def test_te_linear_forward_backward(fp8_recipe):
 
 
 @requiresCUDA
-@pytest.mark.parametrize("fp8_recipe", recipes)
-def test_te_linear_forward_backward_multiple_iteration(fp8_recipe):
+@pytest.mark.parametrize("fp8_recipe", recipes, ids=recipe_ids)
+def test_te_linear_forward_backward_multiple_iteration(fp8_recipe: recipe.Recipe):
+    if fp8_recipe and not (fp8_recipe.delayed() or is_mxfp8_supported):
+        pytest.skip(msg_mxfp8)
+
     # Test Description:
     # In this test, we verify whether a model using TransformerEngine Linear
     # and transformer_engine executor converge to same state.
@@ -157,13 +167,11 @@ def test_te_linear_forward_backward_multiple_iteration(fp8_recipe):
 def test_te_linear_forward_backward_multiple_iteration_multiple_recipes():
     # This test is used to verify parity with TE library when it comes to changing recipes during runtime, regardless if that is the intended use or not.
 
-    from transformer_engine.pytorch.fp8 import DelayedScaling, MXFP8BlockScaling
-
-    recipes = [DelayedScaling()]
+    recipes = [recipe.DelayedScaling()]
     supports_mxfp8, _ = te.fp8.check_mxfp8_support()
 
     if supports_mxfp8:
-        recipes += [MXFP8BlockScaling()]
+        recipes += [recipe.MXFP8BlockScaling()]
 
     if len(recipes) < 2:
         pytest.skip("platform does not support two different recipes")
@@ -362,3 +370,58 @@ def test_te_grad_computation_with_intermediate():
         o.sum().backward()
 
         assert w.grad is not None
+
+
+@requiresCUDA
+@pytest.mark.parametrize("fp8_recipe", recipes, ids=recipe_ids)
+def test_te_trace_correctness(fp8_recipe: recipe.Recipe):
+    if fp8_recipe and not (fp8_recipe.delayed() or is_mxfp8_supported):
+        pytest.skip(msg_mxfp8)
+
+    def foo(x, w):
+        return thunder.torch.linear(x, w)
+
+    device = "cuda"
+    x = torch.randn(16, 16, device=device, requires_grad=True)
+    w = torch.randn(16, 16, device=device, requires_grad=True)
+
+    cfunc = thunder.jit(
+        foo,
+        executors=[transformer_engine_v2_ex],
+        transforms=[TransformerEngineTransform()],
+    )
+
+    with te.fp8_autocast(fp8_recipe=fp8_recipe):
+        out = cfunc(x, w)
+
+    fwd_trace = thunder.last_traces(cfunc)[-1]
+    fwd_trace_pyctx = fwd_trace.python_ctx()
+
+    # Check the order of ops and  verify that the stateful ops appear in the trace context
+    assert "get_te_fp8_recipe" in fwd_trace.bound_symbols[2].sym.name
+    assert fwd_trace.bound_symbols[2].sym.name in fwd_trace_pyctx.keys()
+
+    assert "get_te_fp8_state" in fwd_trace.bound_symbols[3].sym.name
+    assert fwd_trace.bound_symbols[3].sym.name in fwd_trace_pyctx.keys()
+
+    assert "get_te_fp8_quantizers" in fwd_trace.bound_symbols[4].sym.name
+    assert fwd_trace.bound_symbols[4].sym.name in fwd_trace_pyctx.keys()
+
+    assert "te_functional_linear_fwd" in fwd_trace.bound_symbols[5].sym.name
+    assert fwd_trace.bound_symbols[5].sym.name in fwd_trace_pyctx.keys()
+
+    assert "te_fp8_amax_and_scale_update" in fwd_trace.bound_symbols[6].sym.name
+
+    bwd_trace = thunder.last_backward_traces(cfunc)[-1]
+    bwd_trace_pyctx = bwd_trace.python_ctx()
+    # Same check but now for the backward trace
+    assert "get_te_fp8_state" in bwd_trace.bound_symbols[14].sym.name
+    assert bwd_trace.bound_symbols[14].sym.name in bwd_trace_pyctx.keys()
+
+    assert "get_te_fp8_quantizers" in bwd_trace.bound_symbols[15].sym.name
+    assert bwd_trace.bound_symbols[15].sym.name in bwd_trace_pyctx.keys()
+
+    assert "te_functional_linear_bwd" in bwd_trace.bound_symbols[16].sym.name
+    assert bwd_trace.bound_symbols[16].sym.name in bwd_trace_pyctx.keys()
+
+    assert "te_fp8_amax_and_scale_update" in bwd_trace.bound_symbols[18].sym.name
