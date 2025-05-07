@@ -1,4 +1,4 @@
-from functools import partial, lru_cache
+from functools import partial
 from itertools import chain
 from typing import Any
 from collections.abc import Sequence
@@ -161,13 +161,12 @@ def _should_shard_intermediate() -> bool:
     return False
 
 
-@lru_cache
-def _get_num_saved_tensors():
+def _get_num_saved_tensors(fp8_recipe):
     MIN_DIM = MXFP8_BLOCK_SCALING_SIZE
     te_linear = te.Linear(MIN_DIM, MIN_DIM)
 
     x = torch.randn(MIN_DIM, MIN_DIM, device="cuda")
-    with te.fp8_autocast():
+    with te.fp8_autocast(fp8_recipe=fp8_recipe):
         o = te_linear(x)
     return len(o.grad_fn.saved_tensors)
 
@@ -333,7 +332,10 @@ def make_te_linear_meta(is_grad_enabled: bool = False):
 
             # It's not critical to model the exact shape and dtype of
             # saved_tensors since they are not used in Thunder's meta functions.
-            saved_tensors = tuple(TensorProxy(like=a, shape=a.shape) for _ in range(_get_num_saved_tensors()))
+            saved_tensors = tuple(
+                TensorProxy(like=a, shape=a.shape)
+                for _ in range(_get_num_saved_tensors(get_recipe_from_options_or_default_recipe()))
+            )
 
             return TensorProxy(like=a, shape=output_shape), saved_tensors, ctx_dict
         return TensorProxy(like=a, shape=output_shape), None, None

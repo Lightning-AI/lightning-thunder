@@ -7,9 +7,12 @@ def main(report_path: str = "quickstart_report.json"):
     with open(report_path) as fp:
         report = json.load(fp)
 
-    # print("Quickstart report:")
-    for name, status in report.items():
-        status_icon = "✅" if status == "completed" else "❌"
+    success_count = sum(status == "completed" for status in report.values())
+    overall_status = "🟢" if success_count == len(report) else "⛔"
+    print(f"Quickstart report {overall_status} with {success_count} out of {len(report)} successful:")
+    # Sort so that entries with status "success" (or "completed") are last
+    for name, status in sorted(report.items(), key=lambda x: x[1] == "completed"):
+        status_icon = "✔️" if status == "completed" else "❌"
         print(f"{status_icon} {name}")
 
 
