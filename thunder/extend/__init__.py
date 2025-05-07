@@ -304,7 +304,7 @@ class StatefulExecutor(OperatorExecutor):
     def register_stateful_operator(self, name: str, state_class, *, meta) -> Callable[..., Any]:
         """
         Sets up a function that creates and registers new symbol for the given operator name and state class.
-        The output functiona also binds an instance of the state class to the bound symbol call context.
+        The output function also binds an instance of the state class to the bound symbol call context.
 
         Args:
             name: The name of the operator. Note that it is going to be combined with the counter number to generate a unique name.
