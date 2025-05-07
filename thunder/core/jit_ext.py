@@ -210,6 +210,21 @@ class JitCtx:
         return self._computation_trace
 
     def add_constraint(self, constraint):
+        # Avoid adding duplicate constraints
+        for i, c in enumerate(self._constraints):
+            if len(c) != len(constraint):
+                continue
+            if c[0] != constraint[0]:
+                continue
+            for i in range(1, len(c)):
+                if isinstance(c[i], ProxyInterface) and isinstance(constraint[i], ProxyInterface):
+                    if variableify(c[i]) != variableify(constraint[i]):
+                        break
+                elif c[i] != constraint[i]:
+                    break
+            else:
+                print(constraint)
+                return
         self._constraints.append(constraint)
 
     def proxify(self, value: WrappedValue) -> Any:
@@ -1791,6 +1806,26 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
     #   )
     pro_to_epi_inps = sorted(pro_to_epi_inps, key=is_variableified_tensorproxy)
     pro_to_comp_inps = sorted(pro_to_comp_inps, key=is_variableified_tensorproxy)
+
+    # We may have instances where pro_to_xx contain proxies which, although identical in practice,
+    # have different pointers to those referenced in prologue constraints.
+    # Since pro_to_xx proxies are the ones used in comp and epi, we replace the constraint proxy.
+    new_constraints = []
+    for constraint in ctx._constraints:
+        prim, *args = constraint
+        new_args = []
+        for a in args:
+            if isinstance(a, Proxy):
+                v = variableify(a)
+                if v in pro_to_epi_inps:
+                    idx = pro_to_epi_inps.index(v)
+                    a = pro_to_epi_inps[idx].proxy
+                elif v in pro_to_comp_inps:
+                    idx = pro_to_comp_inps.index(v)
+                    a = pro_to_comp_inps[idx].proxy
+            new_args.append(a)
+        new_constraints.append((prim, *new_args))
+    ctx._constraints = new_constraints
 
     pro_to_epi = tuple(sorted((unpack(v) for v in pro_to_epi_inps), key=lambda x: param_ordering[id(x)][1]))
     pro_to_comp = tuple(sorted((unpack(v) for v in pro_to_comp_inps), key=lambda x: param_ordering[id(x)][1]))

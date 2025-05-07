@@ -767,7 +767,7 @@ def test_litgpt_variants_kvcache(name, device):
         model.set_kv_cache(batch_size=1)
 
     # TODO: make check_trace mode work
-    tom = thunder.jit(model, executors=executors)  # , disable_torch_autograd_support=True
+    tom = thunder_jit(model, executors=executors)  # , disable_torch_autograd_support=True
 
     # kv cache prefill
     thunder_logits_1 = tom(x, torch.tensor([0, 1], device=device))
