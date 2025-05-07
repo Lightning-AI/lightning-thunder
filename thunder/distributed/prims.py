@@ -173,11 +173,12 @@ def synchronize_meta(
     a: TensorProxy,
     /,
     group: torch.distributed.ProcessGroup,
+    distparallel_type,
 ) -> TensorProxy:
     utils.check_type(a, TensorProxy)
     utils.check_type(group, torch.distributed.ProcessGroup)
 
-    match a.distparallel_type:
+    match distparallel_type:
         case DistParallelType.REPLICATED:
             return TensorProxy(like=a)
         case DistParallelType.FULLY_SHARDED:
@@ -376,13 +377,14 @@ synchronize_tensor_parallel_input = make_prim(
 def synchronize_augmented_forward_rule(
     a: TensorProxy,
     group: torch.distributed.ProcessGroup,
+    distparallel_type: DistParallelType,
 ) -> tuple[TensorProxy, tuple]:
-    match a.distparallel_type:
+    match distparallel_type:
         case DistParallelType.REPLICATED:
             # Assuming that the input is a replicated tensor, so no need to do anything
             # in the forward pass
             return a, (
-                a.distparallel_type,
+                distparallel_type,
                 group,
             )
         case DistParallelType.FULLY_SHARDED:
@@ -392,11 +394,11 @@ def synchronize_augmented_forward_rule(
             # passes would reorder the wait operation to be closer to the actual
             # usage of the tensor.
             return all_gather(a, group, True).wait(), (
-                a.distparallel_type,
+                distparallel_type,
                 group,
             )
         case _:
-            utils.check(False, lambda: f"Proxy {a} has unexpected {a.distparallel_type=}")
+            utils.check(False, lambda: f"unexpected {distparallel_type=}")
 
 
 @register_backward(PrimIDs.SYNCHRONIZE)
