@@ -82,6 +82,8 @@ class DDPTransform(Transform):
                         model.get_buffer(pn), group_src=self.broadcast_from, group=process_group, async_op=False
                     )
 
+            # note: we use model.get_parameter rather than the submodule's named parameters becasue we want the
+            #       ThunderModule's parameter overrides for composability.
             for pn, _ in submodule.named_parameters(recurse=False, prefix=module_name):
                 # If there are shared params in the original user Module, we reuse the sharded copy created from the original parameter below.
                 # This way we re-create parameter sharing in thunder's copy of the Module.

@@ -146,7 +146,10 @@ class BatchAllReduceVisitor:
     def __call__(self, bsym: BoundSymbol) -> None:
         sym: Symbol = bsym.sym
         if sym == dist_prims.wait:
-            # only filter weights for us
+            # only filter weights for us, i.e. those waits that belongs to the all_reduce
+            # we want to bucket.
+            # there may be other distributed operations, e.g. from FSDP, we want to leave
+            # their weights alone to play nicely in composition scenarios.
             if self.producers[bsym.args[0]].sym.id in self.prims_to_filter:
                 return VISIT_TYPE.REPLACE
             return VISIT_TYPE.INSERT_AFTER
@@ -311,5 +314,7 @@ def apply_bucketing_to_grad_allreduce(trace: TraceCtx) -> TraceCtx:
         return trace
 
     if TraceTag.AUGMENTED_FORWARD in trace.tags:
+        # gradient bucketing only applies to backward, but the function is also called on forward.
+        # todo: maybe exit earlier.
         return trace
     return optimize_allreduce_in_ddp_backward(trace, compile_data=compile_data)
