@@ -2613,7 +2613,7 @@ def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
                 # as required by LoRA.
                 from thunder.distributed.prims import all_gather
 
-                a, group = symbol.args
+                a, group, _ = symbol.args
                 primals = all_gather(a, group, True).wait()
             else:
                 primals = symbol_to_eval(symbol)(*args, **kwargs)
