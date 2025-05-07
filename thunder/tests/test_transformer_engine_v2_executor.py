@@ -214,7 +214,6 @@ def test_te_linear_forward_backward_multiple_iteration_multiple_recipes():
     def te_model(x, fp8_recipe):
         # Enable autocasting for the forward pass
         with te.fp8_autocast(fp8_recipe=fp8_recipe):
-            print("TE", id(FP8GlobalStateManager.FP8_RECIPE))
             return te_linear2(te_linear1(x))
 
     te_sgd_optimizer = torch.optim.SGD(list(te_linear1.parameters()) + list(te_linear2.parameters()))
@@ -233,7 +232,6 @@ def test_te_linear_forward_backward_multiple_iteration_multiple_recipes():
 
     def thunder_model(x, fp8_recipe):
         with te.fp8_autocast(fp8_recipe=fp8_recipe):
-            print("FUN TE", id(FP8GlobalStateManager.FP8_RECIPE))
             return cfn(x, w1, w2, b1, b2)
 
     train_model(thunder_model, thunder_sgd_optimizer)
@@ -382,8 +380,8 @@ def test_te_trace_correctness(fp8_recipe: recipe.Recipe):
         return thunder.torch.linear(x, w)
 
     device = "cuda"
-    x = torch.randn(16, 16, device=device, requires_grad=True)
-    w = torch.randn(16, 16, device=device, requires_grad=True)
+    x = torch.randn(32, 32, device=device, requires_grad=True)
+    w = torch.randn(32, 32, device=device, requires_grad=True)
 
     cfunc = thunder.jit(
         foo,
