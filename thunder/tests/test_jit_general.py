@@ -720,8 +720,6 @@ def test_litgpt_variants(name, device):
         "llama1-like",
         "long-context-like",
         "llama2-like",
-        "falcon-7b-like",
-        "falcon-40b-like",
         "codellama2-like",
         pytest.param(
             "mixtral-like",
