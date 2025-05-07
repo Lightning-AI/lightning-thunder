@@ -859,6 +859,27 @@ def get_torch_compile_kwargs(**kwargs) -> dict:
     return {k: v for k, v in kwargs.items() if k in torch_compile_kwarg_names}
 
 
+from torch.utils.weak import TensorWeakRef
+
+
+def get_or_create_example_inputs_from_placeholders(placeholders: list[torch.fx.Node]) -> list[torch.Tensor]:
+    """
+    Gets the weakref of the inputs if possible, otherwise create inputs for benchmarking
+    """
+    outs = []
+    for p in placeholders:
+        try:
+            input: TensorWeakRef | torch.SymInt = p.meta["grapharg"].example
+            if isinstance(input, torch.SymInt):
+                input = input.node.hint
+        except Exception as e:
+            # needs to create a new example input
+            outs.append(_get_example_inputs_from_placeholder(p, only_metadata=False))
+        else:
+            outs.append(input)
+    return outs
+
+
 def default_compile_strategy(gm, example_inputs) -> tuple[torch.fx.GraphModule, str]:
     """
     Default compile strategy for each Thunder-supported subgraph that selects the optimal compiler
@@ -1003,7 +1024,13 @@ def default_optimizer(gm: torch.fx.GraphModule, stats: ProfileStats) -> Callable
             continue
         graph_module = getattr(split_gm, node.name)
         placeholders = [n for n in graph_module.graph.nodes if n.op == "placeholder"]
-        example_inputs = [_get_example_inputs_from_placeholder(p, only_metadata=False) for p in placeholders]
+        print("bef: ", torch.cuda.memory_allocated())
+        example_inputs = get_or_create_example_inputs_from_placeholders(placeholders)
+        print("aft: ", torch.cuda.memory_allocated())
+        # gets the weakref of the inputs if possible, otherwise create inputs for benchmarking
+        # if not all("grapharg" in p.meta for p in placeholders):
+        #     import pdb; pdb.set_trace()
+        # example_inputs = [_get_example_inputs_from_placeholder(p, only_metadata=False) for p in placeholders]
         if thunder_split_gm.is_thunder_supported_partition(node):
             optimized_module, compiler_name = default_compile_strategy(graph_module, example_inputs)
             # Update the node name from "submod_*" to the optimizer specifed name for more user-friendly names

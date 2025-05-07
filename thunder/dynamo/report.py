@@ -525,7 +525,8 @@ class FXGraphReport:
         # Sets the `reset_torch_dynamo` to True when you need to reset Dynamo's state *as if* you had started a fresh process invocation.
         if reset_torch_dynamo:
             torch._dynamo.reset()
-        example_inputs = self.make_example_inputs()
+        if example_inputs is None:
+            example_inputs = self.make_example_inputs()
         # To avoid the AssertionError: attribute nodes of Graph object out of sync
         recompile_graph(self.graph)
         compiled_fn = compile_fn.compile(self.graph, inputs=example_inputs)
