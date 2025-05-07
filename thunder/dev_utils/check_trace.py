@@ -5,10 +5,10 @@ def check_subsymbols(parent_bsym):
     known_proxies = {a.name: a for a in parent_bsym.flat_proxy_args}
     for bsym in parent_bsym.subsymbols:
         for a in bsym.flat_proxy_args:
-            assert a.name in known_proxies, f"unknown proxy {a.name} is used in {bsym}"
-            assert known_proxies[a.name] is a, f"proxy name collision {a.name} in {bsym}"
+            assert a.name in known_proxies, f"unknown proxy {a.name} is used in {bsym} args"
+            assert known_proxies[a.name] is a, f"proxy name collision {a.name} in {bsym} args"
         for o in bsym.flat_proxy_outs:
-            assert known_proxies.get(o.name, o) is o, f"known proxy or proxy name collision {a.name} in {bsym}"
+            assert known_proxies.get(o.name, o) is o, f"known proxy or proxy name collision {o.name} in {bsym} outputs"
             known_proxies[o.name] = o
         check_subsymbols(bsym)
     for o in parent_bsym.flat_proxy_outs:
@@ -26,7 +26,7 @@ def check_trace(trace):
             assert a.name in known_proxies, f"unknown proxy {a.name} is used in {bsym} args"
             assert known_proxies[a.name] is a, f"proxy name collision {a.name} in {bsym} args"
         for o in bsym.flat_proxy_outs:
-            assert known_proxies.get(o.name, o) is o, f"proxy name collision {o.name} in {bsym} outputs"
+            assert known_proxies.get(o.name, o) is o, f"known proxy or proxy name collision {o.name} in {bsym} outputs"
             known_proxies[o.name] = o
         check_subsymbols(bsym)
 
