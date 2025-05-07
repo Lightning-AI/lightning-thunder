@@ -372,7 +372,7 @@ class TransformerEngineTransform(Transform):
             return_bsym = new_trace.bound_symbols[-1]
             assert return_bsym.sym.id == prims.PrimIDs.RETURN
             _, (saved_for_backward, env) = return_bsym.args
-            unique_env = {Variable(x) for x in env}
+            unique_env = list(dict.fromkeys(Variable(x) for x in env))
             self.new_saved_for_backward = (*saved_for_backward, *(unvariableify(x) for x in unique_env))
 
             _update_forward_with_new_saved_for_backward(new_trace, self.new_saved_for_backward)
