@@ -1,12 +1,13 @@
 import thunder.core.transforms
 from thunder.core.transforms import ForwardBackwardTraces
 
-from thunder.core import prims
+from thunder.core import prims, utils
 from thunder.core.transforms import (
     is_constant_for_vjp,
     _get_gradfn_and_executor,
     augmented_forward_impls,
     backward_impls,
+    recompute_saved_for_backward,
 )
 from thunder.core.utils import check
 from thunder.core.vjp_utils import make_aug_forward_and_backward
@@ -92,12 +93,18 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                                     self.swap_map[thunder.core.proxies.variableify(nbsym.output)] = current_grad
                                     # XXX_replace_output_with_current_grad
                                 elif name in output_proxy_names:
-                                    new_grad = self.add_processed_bsyms([nbsym.from_bsym()])
-                                    grad_proxy_map[name] = new_grad
-                                # elif KNOWN proxy:
-                                #    ### TODO: it can happen that an intermediate does not have put_grad, e.g. first arg to where
+                                    # output here???
+                                    new_bsym = nbsym.from_bsym()
+                                    self.add_processed_bsyms([new_bsym])
+                                    grad_proxy_map[name] = new_bsym.output
                                 else:
-                                    raise RuntimeError(f"grad of non-output and non-intermediate {name} requested")
+                                    # TODO: mark this? if all inputs to the backward formula are unused, we would not want to compute it.
+                                    new_bsym = thunder.torch.zeros.bind(
+                                        *p.shape, device=p.device, dtype=p.dtype, output=nbsym.output
+                                    )
+                                    self.add_processed_bsyms([new_bsym])
+                                    grad_proxy_map[name] = new_bsym.output
+                                    self.write(nbsym.output, new_bsym.output)
                             else:
                                 self.add_processed_bsyms([nbsym.from_bsym()])
                 self.collected_bw_part_bsyms.clear()
@@ -174,6 +181,17 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
             if joint_forward_backward is not None:
                 self.new_trace.push_scope([])
                 result = joint_forward_backward(*bsym.args, **bsym.kwargs)
+
+                # Check that the number of outputs of the original forward function is the
+                # same as the number of primal outputs of the augmented forward trace
+                utils.check(
+                    len(utils.sequencify(bsym.output)) == len(utils.sequencify(result)),
+                    lambda: f"While generating forward and backward functions for {bsym.sym.name}, encountered an error.\n"
+                    "The number of outputs of the gradient transform function must be the same as the nunmber of outputs of the original forward function.\n"
+                    f"Number of outputs of the original forward function: {len(utils.sequencify(bsym.output))}\n"
+                    f"Number of primal outputs of the gradient tansform / augmented forward: {len(utils.sequencify(result))}\n"
+                    "Please check the forward function and the gradient transfrm function / augmented forward to ensure that they have the same number of outputs.",
+                )
                 self.set_result(result)
                 new_bsyms = self.new_trace.pop_scope()
 
@@ -207,6 +225,7 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
 
     processor = AugmentedForwardProcessor(trace)
     trace, _ = processor()
+
     trace = thunder.core.transform_common.dce(trace)
 
     end_time_ns = time.perf_counter_ns()
@@ -324,4 +343,5 @@ def forward_and_backward_from_trace(trace: thunder.core.trace.TraceCtx, torch_au
     joint_trace = grad_transform_on_trace(trace)
 
     forward_trace, backward_trace = split_into_forward_and_backward(joint_trace)
+    forward_trace, backward_trace = recompute_saved_for_backward(forward_trace, backward_trace)
     return ForwardBackwardTraces(forward_trace, backward_trace)
