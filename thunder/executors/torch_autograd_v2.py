@@ -1,8 +1,9 @@
+from turtle import back
 import thunder
 
 import thunder.core.prims as prims
 from thunder.core.prims import get_grad
-from thunder.core.transforms import augmented_forward_pass, backward_pass, dce
+from thunder.core.transforms import augmented_forward_pass, backward_pass
 from thunder.core.pytree import tree_map
 import thunder.torch as ltorch
 
@@ -111,6 +112,11 @@ def split_forward_backward(joint_trace):
     # TODO: make this name-agnostic
     backward_trace.names.discard("saved_for_backward")
     backward_trace.names.discard("cotangents")
+
+    # !!!
+    if len(backward_trace.bound_symbols) == 0:
+        # no gradient is calculated
+        return forward_trace, None
 
     with thunder.core.trace.tracectx(backward_trace):
         p_C0 = thunder.core.proxies.CollectionProxy(list(saved_for_backward_tensors), name="C0")
