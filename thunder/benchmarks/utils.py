@@ -113,9 +113,11 @@ def backward_only_setup_graph_on_each_invocation(fn: Callable, *args, **kwargs):
 
     # Actually do the backward pass.
     def backward_fn(result, forward_inputs, output_grads):
-        for i in forward_inputs:
-            i.grad = None
+        # for i in forward_inputs:
+        #     i.grad = None
 
         torch.autograd.backward(result, output_grads)
+        for i in forward_inputs:
+            i.grad = None
 
     return backward_fn, backward_setup
