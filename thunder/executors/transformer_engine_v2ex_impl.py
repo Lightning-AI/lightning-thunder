@@ -301,7 +301,7 @@ _te_fp8_amax_and_scale_update = functional_te_ex.register_operator(
 
 class TransformerEngineTransform(Transform):
     """
-    A transform to pair up with the functional TrasnformerEngine executor.
+    A transform to pair up with the functional TransformerEngine executor.
 
     With the assumption of one recipe per trace, this transform removes recipe duplicates from the trace and updates all the symbols.
 
