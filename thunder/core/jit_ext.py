@@ -223,7 +223,6 @@ class JitCtx:
                 elif c[i] != constraint[i]:
                     break
             else:
-                print(constraint)
                 return
         self._constraints.append(constraint)
 
