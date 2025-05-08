@@ -1,12 +1,9 @@
 import math
-from dataclasses import dataclass
 from functools import partial
 import warnings
 
 import pytest
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 from torch.testing import assert_close, make_tensor
 
 import thunder
