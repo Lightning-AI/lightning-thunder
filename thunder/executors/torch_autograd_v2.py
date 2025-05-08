@@ -1,10 +1,9 @@
-import thunder
+from inspect import Parameter, Signature
 
+import thunder
 import thunder.core.prims as prims
-from thunder.core.prims import get_grad
-from thunder.core.transforms import augmented_forward_pass, backward_pass
 from thunder.core.pytree import tree_map
-import thunder.torch as ltorch
+from thunder.core.transforms import augmented_forward_pass, backward_pass
 
 
 # The entire contents of this file will be replaced by Tom's work.
@@ -17,7 +16,7 @@ def grad_transform_on_trace(ff_trace, /, *args, **kwargs):
             # remove the input that is also returned as part of the output
             prims.python_return((python_return.args[0]["output"],))
         output, all_intermediates = augmented_forward_pass(*args, trace=ff_trace, **kwargs)
-        output_grad = tree_map(get_grad, output)
+        output_grad = tree_map(prims.get_grad, output)
         # restore the args to the result
         result = {"flat_args": args, "output": output[0]}
         if grad_required:
@@ -25,6 +24,8 @@ def grad_transform_on_trace(ff_trace, /, *args, **kwargs):
             result.update({"grad_flat_args": backward_result})
         return result
 
+    params = [Parameter(arg.name, Parameter.POSITIONAL_OR_KEYWORD) for arg in args]
+    joint_forward_and_backward.__signature__ = Signature(params)
     #  the new check_trace was failing with weird errors of unknown variables
     #  dce eliminates that
     return thunder.trace(use_dce=True)(joint_forward_and_backward, *args, **kwargs)
