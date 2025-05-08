@@ -1,5 +1,4 @@
 import math
-from dataclasses import dataclass
 from functools import partial
 import warnings
 
