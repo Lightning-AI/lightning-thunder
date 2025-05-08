@@ -10,7 +10,7 @@ from thunder.core.transforms import (
     recompute_saved_for_backward,
 )
 from thunder.core.proxies import ProxyTag
-from thunder.core.symbols import BoundSymbol
+from thunder.core.symbol import BoundSymbol
 from thunder.core.utils import check
 from thunder.core.vjp_utils import make_aug_forward_and_backward
 from thunder.core.pytree import tree_map
