@@ -2858,7 +2858,6 @@ nv_cross_entropy_fwd = ex.register_operator(
     "nv_cross_entropy_fwd",
     meta=cross_entropy_fwd_meta,
     fn=cross_entropy_fwd,
-    tags=[prims.OpTags.RANDOM_OP],
 )
 register_supported(nv_cross_entropy_fwd.id, cross_entropy_fwd, None)
 
@@ -2937,7 +2936,6 @@ nv_cross_entropy_bwd = ex.register_operator(
     "nv_cross_entropy_bwd",
     meta=cross_entropy_bwd_meta,
     fn=cross_entropy_bwd,
-    tags=[prims.OpTags.RANDOM_OP],
 )
 
 register_supported(nv_cross_entropy_bwd.id, cross_entropy_bwd, None)
