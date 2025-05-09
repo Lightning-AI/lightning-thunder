@@ -11,7 +11,6 @@ from thunder.core.transforms import (
 )
 from thunder.core.proxies import ProxyTag
 from thunder.core.symbol import BoundSymbol
-from thunder.core.utils import check
 from thunder.core.vjp_utils import make_aug_forward_and_backward
 from thunder.core.pytree import tree_map
 import thunder
@@ -147,6 +146,19 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                 self.set_result(bsym.output)
                 return
 
+            if bsym.sym == thunder.torch.checkpoint:
+                # Tag all intermediate outputs as to be recomputed.
+                function_arg_names = {a.name for a in bsym.flat_proxy_args}
+
+                for subsym in bsym.subsymbols:
+                    for o in subsym.flat_proxy_outs:
+                        if o.name not in function_arg_names:
+                            o.tags.add(ProxyTag.RECOMPUTE_IN_BACKWARD)
+
+                # decompose
+                self.add_unprocessed_bsyms(bsym.subsymbols[:])
+                return
+
             # executor or global grad transform
             joint_forward_backward, _ = _get_gradfn_and_executor(bsym)
 
@@ -227,7 +239,7 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                 return
 
             # No gradient transform found, need to descend
-            check(not bsym.sym.is_prim, lambda: f"Failed to find a gradient transform for bound symbol {bsym=}")
+            utils.check(not bsym.sym.is_prim, lambda: f"Failed to find a gradient transform for bound symbol {bsym=}")
 
             # TODO: check if this is needed: the old impl checked whether len(bsym.subsymbols) > 0 except for the special case "torch.nn.functional.dropout" with p=0...
 
