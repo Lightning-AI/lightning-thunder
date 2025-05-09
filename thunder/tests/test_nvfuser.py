@@ -1075,6 +1075,52 @@ def test_sdpa(
     dtypes=(thunder.float32,),
     devicetypes=(devices.DeviceType.CUDA,),
     executors=(nvFuserExecutor,),
+    decorators=(pytest.mark.parametrize("ignore_index", [-100, -10]),),
+)
+def test_cross_entropy(executor, device: str, thunder_dtype: dtypes.dtype, ignore_index):
+    def cross_entropy_fn(logits, labels, ignore_index):
+        return torch.nn.functional.cross_entropy(logits, labels, ignore_index=ignore_index)
+
+    torch.manual_seed(0)
+    dtype = ltorch.to_torch_dtype(thunder_dtype)
+
+    sequence_length, vocab_size = 8192, 32064
+    logits = make_tensor((sequence_length, vocab_size), device=device, dtype=dtype, requires_grad=True)
+    labels = torch.randint(0, sequence_length, (sequence_length,), requires_grad=False, device=device)
+    labels[10:128] = ignore_index  # Set labels to the ignore index
+
+    inputs = [logits, labels]
+
+    compiled_func = executor.make_callable(cross_entropy_fn)
+    loss_out = compiled_func(logits, labels, ignore_index=ignore_index)
+    loss_out.backward()
+
+    fwd_trace = thunder.last_traces(compiled_func)[-1]
+    bwd_trace = thunder.last_backward_traces(compiled_func)[-1]
+    fwd_fusion = examine.get_fusions(fwd_trace)
+    bwd_fusion = examine.get_fusions(bwd_trace)
+
+    assert len(fwd_fusion) == 1
+    assert len(bwd_fusion) == 1
+
+    assert "nv_cross_entropy_fwd" in fwd_fusion[-1][-1].name
+    assert "nv_cross_entropy_bwd" in bwd_fusion[-1][-1].name
+
+    ref_inputs = [inp.clone().detach() for inp in inputs]
+    # logits needs to be requires_grad=True for backward
+    ref_inputs[0].requires_grad = True
+
+    ref_loss_out = cross_entropy_fn(*ref_inputs, ignore_index=ignore_index)
+    ref_loss_out.backward()
+
+    torch.testing.assert_close(loss_out, ref_loss_out)
+    torch.testing.assert_close(logits.grad, ref_inputs[0].grad)
+
+
+@instantiate(
+    dtypes=(thunder.float32,),
+    devicetypes=(devices.DeviceType.CUDA,),
+    executors=(nvFuserExecutor,),
     decorators=(
         pytest.mark.skipif(
             nvfuser_version() is None or nvfuser_version() < LooseVersion("0.2.23"),
