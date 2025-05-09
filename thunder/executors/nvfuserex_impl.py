@@ -52,7 +52,6 @@ from nvfuser.pytorch_utils import (
     torch_dtype_to_nvfuser_dtype,
 )
 
-import thunder.core.dtypes as dtypes
 
 from thunder.executors.utils import (
     Region,
