@@ -91,7 +91,9 @@ def test_functionalization(op: OpInfo, device: str, dtype: dtypes.dtype, executo
 
     is_polygamma = op.name == "polygamma_"
     inplace_op = op.torch_reference
-    jitted_inplace_op = executor.make_callable(op.torch_reference)
+    jitted_inplace_op = executor.make_callable(
+        op.torch_reference, skip_inplace_alias_updates=True, skip_inplace_functionalization=False
+    )
     sample: SampleInput
     for idx, sample in enumerate(op.sample_inputs(device, dtype)):
         if idx > 0:
@@ -155,7 +157,7 @@ def test_parse_resnet18(executor, device, dtype, turn_off_tf32_and_set_seed, tra
         ctx = nullcontext
     ref_model.load_state_dict(model.state_dict())
 
-    jitted = executor.make_callable(model)
+    jitted = executor.make_callable(model, skip_inplace_alias_updates=True, skip_inplace_functionalization=False)
     x = make_tensor((1, 3, 224, 224), dtype=tdtype, device=device)
 
     with ctx():
@@ -195,7 +197,7 @@ def test_inplace_to_views(executor, device, _):
     a, b = (make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2))
     a_, b_ = a.clone().detach(), b.clone().detach()
 
-    jitted_f = executor.make_callable(f)
+    jitted_f = executor.make_callable(f, skip_inplace_alias_updates=True, skip_inplace_functionalization=False)
 
     c, d, e = jitted_f(a, b)
     c_, d_, e_ = f(a_, b_)
@@ -215,7 +217,7 @@ def test_inplace_to_views(executor, device, _):
     a, b = (make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2))
     a_, b_ = a.clone().detach(), b.clone().detach()
 
-    jitted_g = executor.make_callable(g)
+    jitted_g = executor.make_callable(g, skip_inplace_alias_updates=True, skip_inplace_functionalization=False)
 
     d, e = jitted_g(a, b)
     d_, e_ = g(a_, b_)
@@ -235,7 +237,7 @@ def test_inplace_to_views(executor, device, _):
     a, b = (make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2))
     a_, b_ = a.clone().detach(), b.clone().detach()
 
-    jitted_h = executor.make_callable(h)
+    jitted_h = executor.make_callable(h, skip_inplace_alias_updates=True, skip_inplace_functionalization=False)
 
     c, d, e = jitted_h(a, b)
     c_, d_, e_ = h(a_, b_)
@@ -264,7 +266,7 @@ def test_inplace_to_args_with_nvfuser(executor, device, _):
     a, b = (make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2))
     a_, b_ = a.clone().detach(), b.clone().detach()
 
-    jitted = executor.make_callable(func)
+    jitted = executor.make_callable(func, skip_inplace_alias_updates=True, skip_inplace_functionalization=False)
 
     c, d, e = jitted(a, b)
     c_, d_, e_ = func(a_, b_)
@@ -289,7 +291,7 @@ def test_error_of_inplace_to_views(executor, device, _):
         return c, d, e
 
     a, b = (make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2))
-    jitted_f = executor.make_callable(f)
+    jitted_f = executor.make_callable(f, skip_inplace_alias_updates=True, skip_inplace_functionalization=False)
 
     with pytest.raises(NotImplementedError, match="in-place op of `torch.Tensor.add_` to `torch.flatten` output"):
         _ = jitted_f(a, b)
@@ -304,7 +306,7 @@ def test_error_of_inplace_to_views(executor, device, _):
         d.div_(a)
         return c, d, e
 
-    jitted_f = executor.make_callable(f)
+    jitted_f = executor.make_callable(f, skip_inplace_alias_updates=True, skip_inplace_functionalization=False)
     with pytest.raises(NotImplementedError, match="Please modify usage of `torch.Tensor.mul_`"):
         _ = jitted_f(a, b)
 
@@ -323,7 +325,7 @@ def test_multiple_inplace_to_args(executor, device, _):
     x_ref = x.clone().detach()
     expected = f(x_ref)
 
-    jitted = executor.make_callable(f)
+    jitted = executor.make_callable(f, skip_inplace_alias_updates=True, skip_inplace_functionalization=False)
     actual = jitted(x)
 
     torch.testing.assert_close(actual, expected)
@@ -337,7 +339,7 @@ def test_multiple_inplace_to_args(executor, device, _):
     x_ref = x.clone().detach()
     expected = f_with_view(x_ref)
 
-    jitted = executor.make_callable(f_with_view)
+    jitted = executor.make_callable(f_with_view, skip_inplace_alias_updates=True, skip_inplace_functionalization=False)
     actual = jitted(x)
 
     torch.testing.assert_close(actual, expected)
@@ -349,7 +351,7 @@ def test_multiple_inplace_to_args(executor, device, _):
     x = make_tensor((2, 2), device=device, dtype=torch.float32)
     x_ref = x.clone().detach()
     expected = f(x_ref)
-    jitted = executor.make_callable(f)
+    jitted = executor.make_callable(f, skip_inplace_alias_updates=True, skip_inplace_functionalization=False)
     actual = jitted(x)
     torch.testing.assert_close(actual, expected)
     assert x.data_ptr() == actual.data_ptr()
@@ -383,7 +385,7 @@ def test_multiple_views_before_inplace_to_base(executor, device, _):
     x_ref = x.clone().detach()
     expected = f(x_ref)
 
-    jitted = executor.make_callable(f)
+    jitted = executor.make_callable(f, skip_inplace_alias_updates=True, skip_inplace_functionalization=False)
     actual = jitted(x)
 
     torch.testing.assert_close(actual, expected)
@@ -404,7 +406,7 @@ def test_multiple_views_before_inplace_to_base(executor, device, _):
     x_ref = x.clone().detach()
     expected = f(x_ref)
 
-    jitted = executor.make_callable(f)
+    jitted = executor.make_callable(f, skip_inplace_alias_updates=True, skip_inplace_functionalization=False)
     actual = jitted(x)
 
     torch.testing.assert_close(actual, expected)
@@ -421,7 +423,7 @@ def test_multiple_views_before_inplace_to_base(executor, device, _):
 
     x = make_tensor((2, 2), device=device, dtype=torch.float32)
 
-    jitted = executor.make_callable(f)
+    jitted = executor.make_callable(f, skip_inplace_alias_updates=True, skip_inplace_functionalization=False)
     with pytest.raises(
         RuntimeError,
         match="Fail to propagate the in-place change of `t3` to `z` because of the different number of elements: 4 and 2",
@@ -440,7 +442,7 @@ def test_multiple_inplace_to_multiple_args(executor, device, _):
             z.add_(ys[i])
         return z
 
-    jitted = executor.make_callable(f)
+    jitted = executor.make_callable(f, skip_inplace_alias_updates=True, skip_inplace_functionalization=False)
     xs = [make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2)]
     ys = [make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2)]
     z = make_tensor((2, 2), device=device, dtype=torch.float32)
@@ -470,7 +472,7 @@ def test_inplace_to_tensors_with_grad(executor, device, _):
         return x.add_(x.grad, alpha=0.1)
 
     for f in (add_y, add_grad):
-        jitted_f = executor.make_callable(f)
+        jitted_f = executor.make_callable(f, skip_inplace_alias_updates=True, skip_inplace_functionalization=False)
         x = make_tensor((2, 2), device=device, dtype=torch.float32, requires_grad=True)
         x.grad = make_tensor((2, 2), device=device, dtype=torch.float32)
         y = make_tensor((2, 2), device=device, dtype=torch.float32)
@@ -534,7 +536,9 @@ def test_single_tensor_adam_like(executor, device, _):
     ref_state_steps = [torch.tensor(1, device=device) for _ in range(2)]
     single_tensor_adam(*ref_tensors, state_steps=ref_state_steps)
 
-    jitted = executor.make_callable(single_tensor_adam)
+    jitted = executor.make_callable(
+        single_tensor_adam, skip_inplace_alias_updates=True, skip_inplace_functionalization=False
+    )
     params, grads, exp_avgs, exp_avg_sqs = tensors
 
     jitted(params, grads, exp_avgs, exp_avg_sqs, state_steps)
@@ -557,7 +561,7 @@ def test_inplace_to_arg_return_value(executor, device, _):
 
     b__out = f(a_, b_)
 
-    jitted = executor.make_callable(f)
+    jitted = executor.make_callable(f, skip_inplace_alias_updates=True, skip_inplace_functionalization=False)
     b_out = jitted(a, b)
     torch.testing.assert_close(b_out, b__out)
     assert b.data_ptr() == b_out.data_ptr()
@@ -580,9 +584,11 @@ def test_no_self_repeat_in_subsymbols(executor, device, _):
     b = make_tensor((2, 2), device=device, dtype=torch.float32)
     c = make_tensor((1,), device=device, dtype=torch.float32)
 
-    a_out_ref = executor.make_callable(functional_f)(a, b, c)
+    a_out_ref = executor.make_callable(
+        functional_f, skip_inplace_alias_updates=True, skip_inplace_functionalization=False
+    )(a, b, c)
 
-    jitted = executor.make_callable(f)
+    jitted = executor.make_callable(f, skip_inplace_alias_updates=True, skip_inplace_functionalization=False)
     a_out = jitted(a, b, c)
     torch.testing.assert_close(a_out, a_out_ref)
 
@@ -611,7 +617,7 @@ def test_inplace_copy_on_fusion_inputs_issue_791(executor, device, _):
 
     o_ = f(a_, b_, idx, src)
 
-    jitted = executor.make_callable(f)
+    jitted = executor.make_callable(f, skip_inplace_alias_updates=True, skip_inplace_functionalization=False)
     o = jitted(a, b, idx, src)
 
     torch.testing.assert_close(a, a_)
@@ -630,7 +636,7 @@ def test_inplace_to_alias_func_args(executor, device, dtype):
     def f(a, b):
         return a.exp_() + b.tanh_(), a
 
-    jitted_f = executor.make_callable(f)
+    jitted_f = executor.make_callable(f, skip_inplace_alias_updates=True, skip_inplace_functionalization=False)
 
     a = make_tensor(shape, device=device, dtype=torch_dtype)
     b = make_tensor(shape, device=device, dtype=torch_dtype)
@@ -670,7 +676,7 @@ def test_inplace_to_alias_func_args(executor, device, dtype):
     def f(a, b):
         return a.exp() + b.tanh()
 
-    jitted_f = executor.make_callable(f)
+    jitted_f = executor.make_callable(f, skip_inplace_alias_updates=True, skip_inplace_functionalization=False)
     jitted_f(a, a)
     assert (thunder.cache_hits(jitted_f), thunder.cache_misses(jitted_f)) == (0, 1)
     jitted_f(a, b)
@@ -689,7 +695,7 @@ def test_inplace_to_alias_func_args(executor, device, dtype):
     a = make_tensor(shape, device=device, dtype=torch_dtype)
     a_expected = a.exp().tanh().cosh()
 
-    jitted_f = executor.make_callable(f)
+    jitted_f = executor.make_callable(f, skip_inplace_alias_updates=True, skip_inplace_functionalization=False)
     out = jitted_f(a, a, a)
 
     torch.testing.assert_close(a, a_expected)
@@ -713,7 +719,7 @@ def test_inplace_to_alias_func_args(executor, device, dtype):
     a = make_tensor(shape, device=device, dtype=torch_dtype)
     out_expected = torch.zeros_like(a)
 
-    jitted_f = executor.make_callable(f)
+    jitted_f = executor.make_callable(f, skip_inplace_alias_updates=True, skip_inplace_functionalization=False)
     out = jitted_f(a)
 
     torch.testing.assert_close(out, out_expected)
@@ -740,7 +746,7 @@ def test_reshape_flatten_error_out(executor, device, _):
 
     for fn in (f, g, h):
         x = make_tensor((3, 2, 4), device=device, dtype=torch.float32)
-        jitted = executor.make_callable(fn)
+        jitted = executor.make_callable(fn, skip_inplace_alias_updates=True, skip_inplace_functionalization=False)
 
         with pytest.raises(NotImplementedError, match="in-place op of"):
             jitted(x)
@@ -752,7 +758,7 @@ def test_reshape_flatten_error_out(executor, device, _):
         return z
 
     x = make_tensor((3, 2, 4), device=device, dtype=torch.float32)
-    jitted = executor.make_callable(f_with_clone)
+    jitted = executor.make_callable(f_with_clone, skip_inplace_alias_updates=True, skip_inplace_functionalization=False)
     jitted(x)
 
 
@@ -762,7 +768,7 @@ def test_aliases_and_functionalizable_inplace(executor, device, _):
     def f(a, x, y):
         return a.exp().add_(x) + y.exp()
 
-    jitted = executor.make_callable(f)
+    jitted = executor.make_callable(f, skip_inplace_alias_updates=True, skip_inplace_functionalization=False)
 
     x = make_tensor((2, 2), device=device, dtype=torch.float32)
     a = x.clone()
@@ -784,7 +790,7 @@ def test_unused_view_input(executor, device, _):
     a = x.clone()
     unused = x[0]
 
-    jitted = executor.make_callable(f)
+    jitted = executor.make_callable(f, skip_inplace_alias_updates=True, skip_inplace_functionalization=False)
 
     expected = f(a, x, unused)
     actual = jitted(a, x, unused)
@@ -803,7 +809,7 @@ def test_inplace_on_to(executor, device, _):
     for f in (f_self_result, f_copy):
         x = make_tensor((2, 2), device=device, dtype=torch.float32)
         x_ref = x.clone().detach()
-        jitted = executor.make_callable(f)
+        jitted = executor.make_callable(f, skip_inplace_alias_updates=True, skip_inplace_functionalization=False)
         actual = jitted(x)
         expected = f(x_ref)
         torch.testing.assert_close(actual, expected)
