@@ -2796,7 +2796,7 @@ def cross_entropy_fwd_meta(
 
     max_log_sum_exp: TensorLike = TensorLike(like=target, dtype=dtypes.float32)
     num_valid_indices: TensorLike = TensorLike(like=losses, shape=(), dtype=dtypes.float32)
-    a_max: TensorLike = TensorLike(like=target, shape=target.shape, dtype=dtypes.float32)
+    a_max: TensorLike = TensorLike(like=target, dtype=dtypes.float32)
     return losses, a_max, max_log_sum_exp, num_valid_indices
 
 
