@@ -1183,7 +1183,7 @@ def test_embedding(
         return torch.nn.functional.embedding(*inputs)
 
     for sample in embedding_opinfo.sample_inputs(device, dtype):
-        compiled_func = thunder.jit(embedding_fn, executors_list=executor.executors_list(), nv_enable_embedding=True)
+        compiled_func = thunder.jit(embedding_fn, executors_list=executor.executors_list())
         out = compiled_func(sample.args)
         expected_out = torch.nn.functional.embedding(*sample.args)
         fwd_trace = thunder.last_traces(compiled_func)[-1]
