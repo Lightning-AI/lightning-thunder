@@ -1091,7 +1091,7 @@ def test_cross_entropy(executor, device: str, thunder_dtype: dtypes.dtype, ignor
 
     inputs = [logits, labels]
 
-    compiled_func = thunder.jit(cross_entropy_fn, executors_list=executor.executors_list())
+    compiled_func = executor.make_callable(cross_entropy_fn)
     loss_out = compiled_func(logits, labels, ignore_index=ignore_index)
     loss_out.backward()
 
