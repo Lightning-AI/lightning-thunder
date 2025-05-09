@@ -23,7 +23,7 @@ from thunder.benchmarks import (
     LitGPTCausalSelfAttentionBenchmark,
     LitGPTSDPABenchmark,
     LitGPTSwigluBenchmark,
-    LlamaMLPBenchmark,
+    LitGPTMLPBenchmark,
     NanoGPTBenchmark,
     NanoGPTCrossEntropyBenchmark,
     LitGPTGeluBenchmark,
@@ -536,21 +536,57 @@ def test_llama_2_7b_hf(benchmark, executor: Callable, compute_type: ComputeType)
     benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
 
 
-# TODO: Upgrade this benchmark to use LitGPT and config, batch size parametrization
-# https://github.com/Lightning-AI/lightning-thunder/issues/742
+def get_configs_for_llamamlp():
+    config_names = list(sorted(c["name"] for c in configs)) if RUN_ALL_CONFIGS else IMPORTANT_CONFIGS
+    unique_config_names = {}
+    for config_name in config_names:
+        config = LitGPTConfig.from_name(config_name)
+        key = tuple(
+            getattr(config, k)
+            for k in (
+                "n_layer",
+                "n_head",
+                "n_embd",
+                "n_query_groups",
+                "intermediate_size",
+            )
+        )
+        if config_name in IMPORTANT_CONFIGS:
+            unique_config_names[key] = config_name
+        unique_config_names.setdefault(key, config_name)
+
+    config_names = list(sorted(unique_config_names.values()))
+    return config_names
+
+
 @pytest.mark.parametrize(
     "executor,",
     executors,
     ids=executors_ids,
 )
+@pytest.mark.parametrize(
+    "bs,",
+    (2**i for i in range(0, 2)),
+    ids=(f"bs{2**i}" for i in range(0, 2)),
+)
 @parametrize_compute_type
-def test_llama2_mlp_7b(benchmark, executor: Callable, compute_type: ComputeType):
-    bench: Benchmark = LlamaMLPBenchmark(
-        config="Llama-2-7b-hf",
-        batchdims=(2,),
+@pytest.mark.parametrize(
+    "config,",
+    get_configs_for_llamamlp(),
+)
+@pytest.mark.parametrize(
+    "name",
+    ["GemmaMLP", "GptNeoxMLP", "LLaMAMLP", "LLaMAMoE"],
+    ids=["GemmaMLP", "GptNeoxMLP", "LLaMAMLP", "LLaMAMoE"],
+)
+def test_litgpt_mlp(benchmark, executor: Callable, bs: int, compute_type: ComputeType, config: str, name: str):
+    bench: Benchmark = LitGPTMLPBenchmark(
+        config=config,
+        batchdims=(bs,),
         device="cuda:0",
         dtype=thunder.bfloat16,
         requires_grad=is_requires_grad(compute_type),
+        name=name,
     )
 
     args, kwargs = bench.make_batch()
