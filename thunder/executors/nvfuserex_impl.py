@@ -2788,13 +2788,11 @@ def cross_entropy_fwd_meta(
     label_smoothing: float = 0.0,
 ) -> tuple[TensorLike, TensorLike, TensorLike, TensorLike]:
     losses: TensorLike
-    if reduction == "mean":
-        losses = TensorLike(like=a, shape=())
-    else:
-        check(
-            False,
+    check(
+            reduction == "mean",
             lambda: f"cross entropy expected reduction to be  'mean' but was given {reduction}",
         )
+    losses = TensorLike(like=a, shape=())
 
     max_log_sum_exp: TensorLike = TensorLike(like=target, shape=target.shape, dtype=dtypes.float32)
     num_valid_indices: TensorLike = TensorLike(like=losses, shape=(), dtype=dtypes.float32)
