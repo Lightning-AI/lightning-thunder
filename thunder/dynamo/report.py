@@ -537,6 +537,7 @@ class FXGraphReport:
         *,
         example_inputs=None,
         reset_torch_dynamo=True,
+        retain_graph=True,
     ):
         # From torch.compile docs - https://pytorch.org/docs/stable/generated/torch.compile.html
         # > Multiple compiled results can be associated with a frame up to torch._dynamo.config.cache_size_limit, which defaults to 8; at which point we will fall back to eager.
@@ -557,11 +558,23 @@ class FXGraphReport:
         )
         bwd_measurement = None
         if not forward_only:
-            backward_fn, backward_setup = backward_only(compiled_fn, *example_inputs)
-            backward_args = backward_setup()
-            bwd_measurement = time_fn.time(
-                "backward_fn(*backward_args)", globals={"backward_fn": backward_fn, "backward_args": backward_args}
-            )
+            if retain_graph:
+                backward_fn, backward_setup = backward_only(compiled_fn, *example_inputs)
+                backward_args = backward_setup()
+                bwd_measurement = time_fn.time(
+                    "backward_fn(*backward_args)", globals={"backward_fn": backward_fn, "backward_args": backward_args}
+                )
+            else:
+                from thunder.dynamo.utils import custom_timeit
+
+                backward_fn, backward_setup = backward_only(
+                    compiled_fn, *example_inputs, setup_graph_on_each_invocation=True
+                )
+                bwd_measurement = custom_timeit(
+                    "backward_fn(*backward_args)",
+                    setup="backward_args=backward_setup()",
+                    globals={"backward_fn": backward_fn, "backward_setup": backward_setup},
+                )
         return fwd_measurement, bwd_measurement
 
     def write_benchmark(

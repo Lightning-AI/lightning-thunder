@@ -919,15 +919,17 @@ def default_compile_strategy(gm, example_inputs) -> tuple[torch.fx.GraphModule, 
 
     def get_timing(compile_fn, timer_fn):
         try:
-            measurement = report.run_fwd_and_bwd(compile_fn, example_inputs=example_inputs)
-            # measurement = report.run_benchmark(compile_fn, timer_fn, example_inputs=example_inputs, reset_torch_dynamo=False)
+            # measurement = report.run_fwd_and_bwd(compile_fn, example_inputs=example_inputs)
+            measurement = report.run_benchmark(
+                compile_fn, timer_fn, example_inputs=example_inputs, reset_torch_dynamo=False, retain_graph=False
+            )
             for inp in example_inputs:
                 inp.grad = None
         except Exception as e:
             print(f"Error running benchmark {compile_fn.name}: {e}")
             return float("inf")
         # return sum(m.median for m in measurement if m is not None)
-        return measurement["median"]
+        return sum((m.median if hasattr(m, "median") else m["median"]) for m in measurement if m is not None)
 
     # thunder_time = get_timing1(thunderjit, WallTime)
     print("bef2: ", torch.cuda.memory_allocated())
@@ -1042,7 +1044,7 @@ def default_optimizer(gm: torch.fx.GraphModule, stats: ProfileStats) -> Callable
 
     if has_symbolic_input(stats.gm):
         raise NotImplementedError("Optimizing graph module with symbolic inputs is not supported yet.")
-    # import pdb; pdb.set_trace()
+
     cur_gm = remove_empty_autocast(stats.gm)
     recompile_graph(cur_gm)
     _, subgraph_info = _splitter(cur_gm, jit, torch.compile, _unused_sample_args=None)
@@ -1057,10 +1059,6 @@ def default_optimizer(gm: torch.fx.GraphModule, stats: ProfileStats) -> Callable
         print("bef: ", torch.cuda.memory_allocated())
         example_inputs = get_or_create_example_inputs_from_placeholders(placeholders)
         print("aft: ", torch.cuda.memory_allocated())
-        # gets the weakref of the inputs if possible, otherwise create inputs for benchmarking
-        # if not all("grapharg" in p.meta for p in placeholders):
-        #     import pdb; pdb.set_trace()
-        # example_inputs = [_get_example_inputs_from_placeholder(p, only_metadata=False) for p in placeholders]
         if thunder_split_gm.is_thunder_supported_partition(node):
             optimized_module, compiler_name = default_compile_strategy(graph_module, example_inputs)
             # Update the node name from "submod_*" to the optimizer specifed name for more user-friendly names
