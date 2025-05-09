@@ -189,6 +189,12 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                         if bsym.sym == thunder.torch.autograd_function_apply:
                             flat_inps = args[2:]
                         # there may be non-gradient requiring additional args (todo: maybe only support this for non-tensor ones?)
+                        utils.check(
+                            len(flat_inps) <= len(grad_inps),
+                            lambda: f"Backward for {bsym.sym.id} returned {len(grad_inps)} value(s), "
+                            + f"but expected {len(flat_inps)}",
+                        )
+
                         assert len(grad_inps) <= len(flat_inps)
                         for i, gi in zip(flat_inps, grad_inps):
                             # for integer proxies etc. we expect gi to be None
