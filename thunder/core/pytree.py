@@ -23,6 +23,14 @@ optree.register_pytree_node(
 
 
 optree.register_pytree_node(
+    torch.fx.immutable_collections.immutable_list,
+    lambda l: (list(l), None, None),
+    lambda _, children: tuple(children),
+    namespace=OPTREE_NAMESPACE,
+)
+
+
+optree.register_pytree_node(
     slice,
     lambda s: ([s.start, s.stop, s.step], None, None),
     lambda _, children: slice(*children),
