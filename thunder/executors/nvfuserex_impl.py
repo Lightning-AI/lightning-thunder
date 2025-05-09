@@ -2682,7 +2682,9 @@ def _embedding_check(
         return False
     enable_embedding: None | bool = get_compile_option("nv_enable_embedding", "Enable nvFuser embedding.")
     if enable_embedding is not None:
-        warnings.warn("nv_enable_embedding is no longer used. embedding through nvfuserex is enabled by default, option nv_enable_embedding is ignored")
+        warnings.warn(
+            "nv_enable_embedding is no longer used. embedding through nvfuserex is enabled by default, option nv_enable_embedding is ignored"
+        )
     # Verify input and weight are supported tensors.
     if not are_supported_tensors(input, weight) or (weight.ndim != 2):
         return False
