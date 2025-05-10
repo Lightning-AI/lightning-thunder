@@ -109,13 +109,15 @@ def backward_only_setup_graph_on_each_invocation(fn: Callable, *args, **kwargs):
             torch_dtype = thunder.torch.to_torch_dtype(dtype)
             torch_device = thunder.core.devices.to_torch_device(device)
             output_grads.append(make_tensor(shape, dtype=torch_dtype, device=torch_device, requires_grad=False))
-        return result, forward_inputs, output_grads
+        return backwardable_tensor_result, forward_inputs, output_grads
 
     # Actually do the backward pass.
     def backward_fn(result, forward_inputs, output_grads):
-        for i in forward_inputs:
-            i.grad = None
+        # for i in forward_inputs:
+        #     i.grad = None
 
         torch.autograd.backward(result, output_grads)
+        for i in forward_inputs:
+            i.grad = None
 
     return backward_fn, backward_setup
