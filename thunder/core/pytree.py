@@ -4,6 +4,7 @@ import dataclasses
 
 import optree
 import torch
+from torch.fx.immutable_collections import immutable_list
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
 from thunder.core.baseutils import ProxyInterface, is_likely_from_collections_namedtuple
@@ -23,9 +24,9 @@ optree.register_pytree_node(
 
 
 optree.register_pytree_node(
-    torch.fx.immutable_collections.immutable_list,
+    immutable_list,
     lambda l: (list(l), None, None),
-    lambda _, children: tuple(children),
+    lambda _, children: immutable_list(children),
     namespace=OPTREE_NAMESPACE,
 )
 
@@ -67,6 +68,7 @@ def tree_flatten(args, namespace=OPTREE_NAMESPACE):
             torch._subclasses.fake_tensor.FakeTensor,
             torch.device,
             torch.autograd.function.FunctionCtx,
+            immutable_list,
         }
         and not isinstance(args, (ProxyInterface))
         and not is_likely_from_collections_namedtuple(args)
