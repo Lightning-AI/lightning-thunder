@@ -1351,4 +1351,6 @@ def save_failing_repros(
             report.run_repro(compile_fn, check_consistency)
         except Exception as e:
             comment = f"Failed to run the function using {compile_fn.name} with exception: {e}"
-            report.write_repro(repros_folder, compile_fn, extra_comment_str=comment)
+            report.write_repro(
+                repros_folder, compile_fn, extra_comment_str=comment, check_consistency=check_consistency
+            )

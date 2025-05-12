@@ -119,10 +119,15 @@ class Executor:
 
         return True
 
-    def get_execution_transform(self, sym: Symbol) -> None | Callable:
+    def get_execution_transform(self, bsym: BoundSymbol) -> None | Callable:
+        sym = bsym.sym
+
         impl: None | ImplInfo = self.implmap.get(sym.id, None)
 
         if impl is None:
+            return None
+
+        if not (impl.checker is None or impl.checker(*bsym.args, **bsym.kwargs)):
             return None
 
         return impl.execution_transform
