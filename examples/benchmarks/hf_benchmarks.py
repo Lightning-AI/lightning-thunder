@@ -13,9 +13,8 @@ from torch.profiler import profile, record_function, ProfilerActivity
 class DebugRecipe(BaseRecipe):
     def setup_config(self):
         config = super().setup_config()
-        config["skip_inplace_functionalization"] = True
-        config["skip_alias_functionalization"] = False
-        config["disable_inplace_copy_check"] = True
+        config["skip_inplace_functionalization"] = False
+        config["skip_alias_functionalization"] = True
         return config
 
 
@@ -97,8 +96,8 @@ def training_fwd():
     tokenizer = transformers.AutoTokenizer.from_pretrained(model_name)
     model = transformers.AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.bfloat16).to(device)
     inp = tokenizer(["Hello world! Here's a long story"], return_tensors='pt', max_length=2048, truncation=True)
-    inp["labels"] = inp["input_ids"]
-    inp = inp.to(device)
+    inp = {**inp, "labels": inp["input_ids"].clone()}
+    inp = {k: v.to(device) for k, v in inp.items()}
 
     def fwd(model, inp, cache=None):
         model(**inp)
@@ -110,8 +109,8 @@ def training_fwd_bwd():
     tokenizer = transformers.AutoTokenizer.from_pretrained(model_name)
     model = transformers.AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.bfloat16).to(device)
     inp = tokenizer(["Hello world! Here's a long story"], return_tensors='pt', max_length=2048, truncation=True)
-    inp["labels"] = inp["input_ids"]
-    inp = inp.to(device)
+    inp = {**inp, "labels": inp["input_ids"].clone()}
+    inp = {k: v.to(device) for k, v in inp.items()}
 
     def fwd_bwd(model, inp, cache=None):
         loss = model(**inp).loss
