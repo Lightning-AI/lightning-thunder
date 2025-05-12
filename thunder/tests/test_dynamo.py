@@ -1169,6 +1169,14 @@ def test_fxreport(executor, device: str, dtype: dtypes.dtype, use_benchmark, tmp
     def foo(x, y):
         return x + y
 
+    from thunder import jit
+
+    with pytest.raises(
+        ValueError,
+        match=r"fx_report requires the original \(uncompiled\) callable and cannot be used on the Thunder-compiled function.",
+    ):
+        fx_report(jit(foo))
+
     x = torch.randn(4, 4, device=device, requires_grad=True)
     y = torch.randn(4, 4, device=device, requires_grad=True)
     results = fx_report(foo, dynamic=True)(x, y)
