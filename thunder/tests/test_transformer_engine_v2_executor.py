@@ -87,7 +87,9 @@ def test_te_linear_forward_backward(fp8_recipe: recipe.Recipe):
     assert any(bsym.sym.name.startswith("te_functional_linear") for bsym in forward_trace[-1].bound_symbols)
     assert any(bsym.sym.name.startswith("te_functional_linear_bwd") for bsym in backward_trace[-1].bound_symbols)
     # and only two
-    assert 2 == len(filter(lambda bsym: bsym.sym.name.startswith("te_functional_linear"), forward_trace[-1].bound_symbols))
+    assert 2 == len(
+        filter(lambda bsym: bsym.sym.name.startswith("te_functional_linear"), forward_trace[-1].bound_symbols)
+    )
 
 
 @requiresCUDA
@@ -399,7 +401,17 @@ def test_te_trace_correctness(fp8_recipe: recipe.Recipe):
     from thunder.core.utils import OrderedSet
 
     fwd_trace_names = OrderedSet(map(lambda x: x.sym.name, fwd_trace.bound_symbols))
-    fwd_te_trace_op_names = list(reversed(("get_te_fp8_recipe", "get_te_fp8_state", "get_te_fp8_quantizers", "te_functional_linear_fwd", "te_fp8_amax_and_scale_update")))
+    fwd_te_trace_op_names = list(
+        reversed(
+            (
+                "get_te_fp8_recipe",
+                "get_te_fp8_state",
+                "get_te_fp8_quantizers",
+                "te_functional_linear_fwd",
+                "te_fp8_amax_and_scale_update",
+            )
+        )
+    )
 
     for name in fwd_trace_names:
         if fwd_te_trace_op_names and fwd_te_trace_op_names[-1] in name:
@@ -415,7 +427,11 @@ def test_te_trace_correctness(fp8_recipe: recipe.Recipe):
     bwd_trace_pyctx = bwd_trace.python_ctx()
     bwd_trace_names = OrderedSet(map(lambda x: x.sym.name, bwd_trace.bound_symbols))
     # No get_te_fp8_recipe in this list beacuse the transform made sure it's carried over from the forward
-    bwd_te_trace_op_names = list(reversed(("get_te_fp8_state", "get_te_fp8_quantizers", "te_functional_linear_bwd", "te_fp8_amax_and_scale_update")))
+    bwd_te_trace_op_names = list(
+        reversed(
+            ("get_te_fp8_state", "get_te_fp8_quantizers", "te_functional_linear_bwd", "te_fp8_amax_and_scale_update")
+        )
+    )
 
     for name in bwd_trace_names:
         if bwd_te_trace_op_names and bwd_te_trace_op_names[-1] in name:
