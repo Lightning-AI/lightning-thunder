@@ -394,32 +394,32 @@ def test_te_trace_correctness(fp8_recipe: recipe.Recipe):
 
     fwd_trace = thunder.last_traces(cfunc)[-1]
     fwd_trace_pyctx = fwd_trace.python_ctx()
+    from thunder.core.utils import OrderedSet
 
-    # Check the order of ops and  verify that the stateful ops appear in the trace context
-    assert "get_te_fp8_recipe" in fwd_trace.bound_symbols[2].sym.name
-    assert fwd_trace.bound_symbols[2].sym.name in fwd_trace_pyctx.keys()
+    fwd_trace_names = OrderedSet(map(lambda x: x.sym.name, fwd_trace.bound_symbols))
+    fwd_te_trace_op_names = list(reversed(("get_te_fp8_recipe", "get_te_fp8_state", "get_te_fp8_quantizers", "te_functional_linear_fwd", "te_fp8_amax_and_scale_update")))
 
-    assert "get_te_fp8_state" in fwd_trace.bound_symbols[3].sym.name
-    assert fwd_trace.bound_symbols[3].sym.name in fwd_trace_pyctx.keys()
+    for name in fwd_trace_names:
+        if fwd_te_trace_op_names and fwd_te_trace_op_names[-1] in name:
+            # Check that the state is in the trace context
+            assert name in fwd_trace_pyctx.keys()
+            fwd_te_trace_op_names.pop()
 
-    assert "get_te_fp8_quantizers" in fwd_trace.bound_symbols[4].sym.name
-    assert fwd_trace.bound_symbols[4].sym.name in fwd_trace_pyctx.keys()
+    # If all the elements appear in order in the trace then the list is empty
+    assert len(fwd_te_trace_op_names) == 0
 
-    assert "te_functional_linear_fwd" in fwd_trace.bound_symbols[5].sym.name
-    assert fwd_trace.bound_symbols[5].sym.name in fwd_trace_pyctx.keys()
-
-    assert "te_fp8_amax_and_scale_update" in fwd_trace.bound_symbols[6].sym.name
-
+    # Same check but now for the backward trace
     bwd_trace = thunder.last_backward_traces(cfunc)[-1]
     bwd_trace_pyctx = bwd_trace.python_ctx()
-    # Same check but now for the backward trace
-    assert "get_te_fp8_state" in bwd_trace.bound_symbols[14].sym.name
-    assert bwd_trace.bound_symbols[14].sym.name in bwd_trace_pyctx.keys()
+    bwd_trace_names = OrderedSet(map(lambda x: x.sym.name, bwd_trace.bound_symbols))
+    # No get_te_fp8_recipe in this list beacuse the transform made sure it's carried over from the forward
+    bwd_te_trace_op_names = list(reversed(("get_te_fp8_state", "get_te_fp8_quantizers", "te_functional_linear_bwd", "te_fp8_amax_and_scale_update")))
 
-    assert "get_te_fp8_quantizers" in bwd_trace.bound_symbols[15].sym.name
-    assert bwd_trace.bound_symbols[15].sym.name in bwd_trace_pyctx.keys()
+    for name in bwd_trace_names:
+        if bwd_te_trace_op_names and bwd_te_trace_op_names[-1] in name:
+            # Check that the state is in the trace context
+            assert name in bwd_trace_pyctx.keys()
+            bwd_te_trace_op_names.pop()
 
-    assert "te_functional_linear_bwd" in bwd_trace.bound_symbols[16].sym.name
-    assert bwd_trace.bound_symbols[16].sym.name in bwd_trace_pyctx.keys()
-
-    assert "te_fp8_amax_and_scale_update" in bwd_trace.bound_symbols[18].sym.name
+    # If all the elements appear in order in the trace then the list is empty
+    assert len(bwd_te_trace_op_names) == 0
