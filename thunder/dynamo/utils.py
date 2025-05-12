@@ -910,7 +910,8 @@ def default_compile_strategy(gm, example_inputs) -> tuple[torch.fx.GraphModule, 
 
     thunder_time = get_timing(thunderjit, WallTime)
     inductor_time = get_timing(torchinductor, WallTime)
-    eager_time = get_timing(torcheager, WallTime)
+    # eager_time = get_timing(torcheager, WallTime)
+    eager_time = float("inf")
 
     # Choose the fastest backend
     if thunder_time <= inductor_time and thunder_time <= eager_time:
@@ -989,7 +990,7 @@ def default_filter(fn: Callable, cutoff: int = 2) -> set[int]:
     return choosen
 
 
-def default_optimizer(gm: torch.fx.GraphModule, stats: ProfileStats) -> Callable:
+def default_optimizer1(gm: torch.fx.GraphModule, stats: ProfileStats) -> Callable:
     """
     Default optimizer function that optimizes a GraphModule based on profiling statistics.
 
@@ -1036,3 +1037,69 @@ def default_optimizer(gm: torch.fx.GraphModule, stats: ProfileStats) -> Callable
 
     recompile_graph(split_gm)
     return split_gm
+
+
+def default_optimizer(gm: torch.fx.GraphModule, stats: ProfileStats) -> Callable:
+    """
+    Default optimizer function that optimizes a GraphModule based on profiling statistics.
+
+    This function:
+    1. Checks if the GraphModule has symbolic inputs and raises NotImplementedError if it does
+    2. benchmarks the GraphModule with inductor, thunderfx, and eager
+    3. returns the best compiled GraphModule
+
+    Args:
+        gm: The GraphModule to optimize
+        stats: ProfileStats object containing profiling information for the GraphModule
+
+    Returns:
+        The optimized GraphModule
+    """
+    from thunder import jit
+    from thunder.dynamo import ThunderCompiler
+    from thunder.dynamo.report import FXGraphReport
+    from thunder.dynamo.benchmark_utils import (
+        TorchInductorSpecification,
+        TorchEagerSpecification,
+        WallTime,
+    )
+
+    if has_symbolic_input(stats.gm):
+        raise NotImplementedError("Optimizing graph module with symbolic inputs is not supported yet.")
+
+    thunder_compiler = ThunderCompiler(nv_skip_cache=True)
+    split_gm = thunder_compiler(gm, sample_args=None)
+
+    placeholders = [n for n in stats.gm.graph.nodes if n.op == "placeholder"]
+    example_inputs_meta = [_get_example_inputs_from_placeholder(p, only_metadata=True) for p in placeholders]
+
+    report_thunderfx = FXGraphReport(copy.deepcopy(split_gm), "split_gm", example_inputs_meta)
+    report_torch = FXGraphReport(stats.gm, "split_gm", example_inputs_meta)
+    thunderfx_on_split_gm = TorchEagerSpecification()
+    torchinductor = TorchInductorSpecification()
+    torcheager = TorchEagerSpecification()
+
+    example_inputs = [_get_example_inputs_from_placeholder(p, only_metadata=False) for p in placeholders]
+
+    def get_timing(report, compile_fn, timer_fn):
+        try:
+            measurement = report.run_benchmark(compile_fn, timer_fn, reset_torch_dynamo=False)
+        except Exception as e:
+            print(f"error benchmarking {e}")
+            return float("inf")
+        return sum(m.median for m in measurement if m is not None)
+
+    compiled_gm_to_measurement = []
+
+    compiled_gm_to_measurement.append((split_gm, get_timing(report_thunderfx, thunderfx_on_split_gm, WallTime)))
+    compiled_gm_to_measurement.append(
+        (_torch_inductor_compile(gm, example_inputs), get_timing(report_torch, torchinductor, WallTime))
+    )
+    compiled_gm_to_measurement.append((gm, get_timing(report_torch, torcheager, WallTime)))
+
+    from operator import itemgetter
+
+    sorted_compiled_gm_to_measurement = sorted(compiled_gm_to_measurement, key=itemgetter(1))
+    print(sorted_compiled_gm_to_measurement)
+    print("--------------------------------")
+    return sorted_compiled_gm_to_measurement[0][0]
