@@ -692,8 +692,7 @@ def fx_report(fn: Callable, **torch_compile_kwargs) -> Callable[..., FXReport]:
                 )
                 graph_report.write_benchmark(tmpdir, my_thunderjit, WallTime, file_name=f"{graph_name}_mythunder_benchmark.py")
     """
-    cs = compile_stats(fn)
-    if cs is not None:
+    if compile_stats(fn) is not None:
         raise ValueError(
             "fx_report requires the original (uncompiled) callable and cannot be used on the Thunder-compiled function."
         )
