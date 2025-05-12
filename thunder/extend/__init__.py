@@ -299,7 +299,7 @@ class StatefulExecutor(OperatorExecutor):
 
     def __init__(self, name: Hashable, *, version: Any | None = None):
         super().__init__(name, version=version)
-        self.counter: int = 0
+        self._counter: int = 0
 
     def register_stateful_operator(self, name: str, state_class, *, meta) -> Callable[..., Any]:
         """
@@ -317,14 +317,14 @@ class StatefulExecutor(OperatorExecutor):
         """
 
         def create_new_symbol_and_call(*args, **kwargs):
-            op_name = f"{name}_{self.counter}"
+            op_name = f"{name}_{self._counter}"
 
             def bind_state(bsym):
                 bsym._call_ctx = {op_name: state_class()}
 
             sym: Symbol = self.register_operator(op_name, meta=meta, bind_postprocess=bind_state)
 
-            self.counter += 1
+            self._counter += 1
             return sym(*args, **kwargs)
 
         return create_new_symbol_and_call
