@@ -234,9 +234,7 @@ def get_proxy_inputs_from_node(node: torch.fx.Node) -> tuple[tuple, dict]:
         return proxy_args, proxy_kwargs
 
 
-def try_execute_thunder_symbol(
-    thunder_symbol: Symbol, node: torch.fx.Node, requires_grad: bool
-) -> tuple[bool, SplitReason | None]:
+def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> tuple[bool, SplitReason | None]:
     """
     Attempts to execute a given Thunder symbol within a tracing context, using proxies for the node's arguments.
 
@@ -263,6 +261,23 @@ def try_execute_thunder_symbol(
     # which pushes state onto `CompileData.autocast_stack`.
     cd = CompileData(fn=lambda x: x, disable_preprocessing=True)
     cs = CompileStats()
+
+    def get_requires_grad(arg_node):
+        if not isinstance(arg_node, torch.fx.Node):
+            return False
+
+        if "example_value" not in arg_node.meta:
+            return False
+
+        example_value = arg_node.meta["example_value"]
+        if isinstance(example_value, torch.Tensor):
+            return example_value.requires_grad
+        elif isinstance(example_value, Sequence):
+            return any(x.requires_grad for x in example_value)
+        return False
+
+    args, _ = tree_flatten((node.args, node.kwargs))
+    requires_grad = any(map(get_requires_grad, args))
 
     @compile_data_and_stats(cd, cs)
     @thunder._with_cache_info_ctx
@@ -407,23 +422,6 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
                     return is_module_supported, split_reason
         return True, None
 
-    def get_requires_grad(arg_node):
-        if not isinstance(arg_node, torch.fx.Node):
-            return False
-
-        if "example_value" not in arg_node.meta:
-            return False
-
-        example_value = arg_node.meta["example_value"]
-        if isinstance(example_value, torch.Tensor):
-            return example_value.requires_grad
-        elif isinstance(example_value, Sequence):
-            return any(x.requires_grad for x in example_value)
-        return False
-
-    args, _ = tree_flatten((node.args, node.kwargs))
-    needs_grad = any(map(get_requires_grad, args))
-
     # If thunder has a mapping for this operation, try executing the meta function and see.
     # We have a symbol for `torch.where`, but we don't support one overload of it.
     # So, we try and execute the meta to get a real signal.
@@ -432,7 +430,7 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
     # We try to proxify the arguments and call these operations on them to see if they are supported.
     if target in _torch_to_thunder_function_map or inspect.isbuiltin(target):
         thunder_symbol_or_builtin = _torch_to_thunder_function_map.get(target, target)
-        did_run, opt_split_reason = try_execute_thunder_symbol(thunder_symbol_or_builtin, node, needs_grad)
+        did_run, opt_split_reason = try_execute_thunder_symbol(thunder_symbol_or_builtin, node)
         return did_run, opt_split_reason
 
     # There are few operations which are registered only as method in `torchctx` and hence they don't exist
@@ -451,7 +449,7 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
             )
         # NOTE: `get_method` may throw if relevant method is not found, so we have guarded it with `has_method`.
         method = torchctx.get_method(node.target, args, kwargs)
-        did_run, opt_split_reason = try_execute_thunder_symbol(method, node, needs_grad)
+        did_run, opt_split_reason = try_execute_thunder_symbol(method, node)
         return did_run, opt_split_reason
 
     # We found no automatic fallback registration and no mapping to thunder symbol.
