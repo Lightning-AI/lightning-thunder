@@ -270,10 +270,10 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
             return False
 
         example_value = arg_node.meta["example_value"]
-        if isinstance(example_value, torch.Tensor):
-            return example_value.requires_grad
-        elif isinstance(example_value, Sequence):
-            return any(x.requires_grad for x in example_value)
+        flattened_example_value, _ = tree_flatten(example_value)
+        for x in flattened_example_value:
+            if isinstance(x, torch.Tensor) and x.requires_grad:
+                return True
         return False
 
     args, _ = tree_flatten((node.args, node.kwargs))
