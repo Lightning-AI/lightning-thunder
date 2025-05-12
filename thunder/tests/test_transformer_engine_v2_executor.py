@@ -86,6 +86,8 @@ def test_te_linear_forward_backward(fp8_recipe: recipe.Recipe):
 
     assert any(bsym.sym.name.startswith("te_functional_linear") for bsym in forward_trace[-1].bound_symbols)
     assert any(bsym.sym.name.startswith("te_functional_linear_bwd") for bsym in backward_trace[-1].bound_symbols)
+    # and only two
+    assert 2 == len(filter(lambda bsym: bsym.sym.name.startswith("te_functional_linear"), forward_trace[-1].bound_symbols))
 
 
 @requiresCUDA
