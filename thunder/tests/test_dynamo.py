@@ -640,15 +640,15 @@ def test_empty_autocast():
 # NOTE: The conftest.py file customizes the benchmark grouping behavior for ThunderCompilerGraphBenchmarking.
 # It must be located in the same folder as the test file to ensure the configuration.
 @requiresCUDA
-def test_ThunderCompilerGraphBenchmarking_LlamaMLPBenchmark(benchmark):
+def test_ThunderCompilerGraphBenchmarking_LitGTMLPBenchmark(benchmark):
     import thunder
 
     backend = ThunderCompilerGraphBenchmarking(
         benchmark, executors={"thunder": thunder.jit, "inductor": torch.compile, "eager": None}
     )
-    from thunder.benchmarks import LlamaMLPBenchmark, Benchmark
+    from thunder.benchmarks import LitGPTMLPBenchmark, Benchmark
 
-    bench: Benchmark = LlamaMLPBenchmark(
+    bench: Benchmark = LitGPTMLPBenchmark(
         config="Llama-2-7b-hf",
         batchdims=(2,),
         device="cuda:0",

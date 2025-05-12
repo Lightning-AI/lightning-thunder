@@ -10,11 +10,6 @@ concurrency:
   cancel-in-progress: ${{ ! (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')) }}
 
 jobs:
-  precommit-run:
-    uses: Lightning-AI/utilities/.github/workflows/check-precommit.yml@main
-    with:
-      python-version: "3.10"
-
   check-schema:
     uses: Lightning-AI/utilities/.github/workflows/check-schema.yml@main
     with:
