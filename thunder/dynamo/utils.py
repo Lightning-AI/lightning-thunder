@@ -1039,6 +1039,27 @@ def default_optimizer1(gm: torch.fx.GraphModule, stats: ProfileStats) -> Callabl
     return split_gm
 
 
+from torch.utils.weak import TensorWeakRef
+
+
+def get_or_create_example_inputs_from_placeholders(placeholders: list[torch.fx.Node]) -> list[torch.Tensor]:
+    """
+    Gets the weakref of the inputs if possible, otherwise create inputs for benchmarking
+    """
+    outs = []
+    for p in placeholders:
+        try:
+            input: TensorWeakRef | torch.SymInt = p.meta["grapharg"].example
+            if isinstance(input, torch.SymInt):
+                input = input.node.hint
+        except Exception as e:
+            # needs to create a new example input
+            outs.append(_get_example_inputs_from_placeholder(p, only_metadata=False))
+        else:
+            outs.append(input)
+    return outs
+
+
 def default_optimizer(gm: torch.fx.GraphModule, stats: ProfileStats) -> Callable:
     """
     Default optimizer function that optimizes a GraphModule based on profiling statistics.
@@ -1079,11 +1100,16 @@ def default_optimizer(gm: torch.fx.GraphModule, stats: ProfileStats) -> Callable
     torchinductor = TorchInductorSpecification()
     torcheager = TorchEagerSpecification()
 
-    example_inputs = [_get_example_inputs_from_placeholder(p, only_metadata=False) for p in placeholders]
+    # example_inputs = [_get_example_inputs_from_placeholder(p, only_metadata=False) for p in placeholders]
+    print("bef: ", torch.cuda.memory_allocated())
+    example_inputs = get_or_create_example_inputs_from_placeholders(placeholders)
+    print("aft: ", torch.cuda.memory_allocated())
 
     def get_timing(report, compile_fn, timer_fn):
         try:
-            measurement = report.run_benchmark(compile_fn, timer_fn, reset_torch_dynamo=False)
+            measurement = report.run_benchmark(
+                compile_fn, timer_fn, reset_torch_dynamo=False, example_inputs=example_inputs
+            )
         except Exception as e:
             print(f"error benchmarking {e}")
             return float("inf")

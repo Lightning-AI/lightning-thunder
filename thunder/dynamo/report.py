@@ -516,7 +516,12 @@ class FXGraphReport:
         format_python_file(folder / file_name)
 
     def run_benchmark(
-        self, compile_fn: CompileSpecificationInterface, time_fn: TimerInterface, *, reset_torch_dynamo=True
+        self,
+        compile_fn: CompileSpecificationInterface,
+        time_fn: TimerInterface,
+        *,
+        reset_torch_dynamo=True,
+        example_inputs=None,
     ):
         # From torch.compile docs - https://pytorch.org/docs/stable/generated/torch.compile.html
         # > Multiple compiled results can be associated with a frame up to torch._dynamo.config.cache_size_limit, which defaults to 8; at which point we will fall back to eager.
@@ -525,7 +530,8 @@ class FXGraphReport:
         # Sets the `reset_torch_dynamo` to True when you need to reset Dynamo's state *as if* you had started a fresh process invocation.
         if reset_torch_dynamo:
             torch._dynamo.reset()
-        example_inputs = self.make_example_inputs()
+        if example_inputs is None:
+            example_inputs = self.make_example_inputs()
         # To avoid the AssertionError: attribute nodes of Graph object out of sync
         recompile_graph(self.graph)
         compiled_fn = compile_fn.compile(self.graph, inputs=example_inputs)
