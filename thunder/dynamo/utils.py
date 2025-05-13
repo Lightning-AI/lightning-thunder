@@ -1082,28 +1082,23 @@ def default_optimizer(gm: torch.fx.GraphModule, stats: ProfileStats) -> Callable
     from thunder.dynamo.benchmark_utils import (
         TorchInductorSpecification,
         TorchEagerSpecification,
+        ThunderCompilerOnGraphModuleSpecification,
         WallTime,
     )
 
     if has_symbolic_input(stats.gm):
         raise NotImplementedError("Optimizing graph module with symbolic inputs is not supported yet.")
 
-    thunder_compiler = ThunderCompiler(nv_skip_cache=True)
-    split_gm = thunder_compiler(gm, sample_args=None)
-
     placeholders = [n for n in stats.gm.graph.nodes if n.op == "placeholder"]
     example_inputs_meta = [_get_example_inputs_from_placeholder(p, only_metadata=True) for p in placeholders]
-
-    report_thunderfx = FXGraphReport(copy.deepcopy(split_gm), "split_gm", example_inputs_meta)
-    report_torch = FXGraphReport(stats.gm, "split_gm", example_inputs_meta)
-    thunderfx_on_split_gm = TorchEagerSpecification()
-    torchinductor = TorchInductorSpecification()
-    torcheager = TorchEagerSpecification()
-
-    # example_inputs = [_get_example_inputs_from_placeholder(p, only_metadata=False) for p in placeholders]
     print("bef: ", torch.cuda.memory_allocated())
     example_inputs = get_or_create_example_inputs_from_placeholders(placeholders)
     print("aft: ", torch.cuda.memory_allocated())
+
+    report = FXGraphReport(copy.deepcopy(gm), "gm", example_inputs_meta)
+    thunderfx_compiler = ThunderCompilerOnGraphModuleSpecification(nv_skip_cache=True)
+    torchinductor = TorchInductorSpecification()
+    torcheager = TorchEagerSpecification()
 
     def get_timing(report, compile_fn, timer_fn):
         try:
@@ -1120,16 +1115,21 @@ def default_optimizer(gm: torch.fx.GraphModule, stats: ProfileStats) -> Callable
         return sum(m.median for m in measurement if m is not None)
 
     compiled_gm_to_measurement = []
-
-    compiled_gm_to_measurement.append((split_gm, get_timing(report_thunderfx, thunderfx_on_split_gm, WallTime)))
-    compiled_gm_to_measurement.append(
-        (_torch_inductor_compile(gm, example_inputs), get_timing(report_torch, torchinductor, WallTime))
-    )
-    compiled_gm_to_measurement.append((gm, get_timing(report_torch, torcheager, WallTime)))
+    compiled_gm_to_measurement.append(("thunderfx", get_timing(report, thunderfx_compiler, WallTime)))
+    compiled_gm_to_measurement.append(("inductor", get_timing(report, torchinductor, WallTime)))
+    compiled_gm_to_measurement.append(("eager", get_timing(report, torcheager, WallTime)))
 
     from operator import itemgetter
 
     sorted_compiled_gm_to_measurement = sorted(compiled_gm_to_measurement, key=itemgetter(1))
     print(sorted_compiled_gm_to_measurement)
     print("--------------------------------")
-    return sorted_compiled_gm_to_measurement[0][0]
+    best_option = sorted_compiled_gm_to_measurement[0][0]
+    if best_option == "inductor":
+        return _torch_inductor_compile(gm, example_inputs)
+    elif best_option == "eager":
+        return gm
+    elif best_option == "thunderfx":
+        thunder_compiler = ThunderCompiler(nv_skip_cache=True)
+        split_gm = thunder_compiler(gm, sample_args=None)
+        return split_gm

@@ -73,6 +73,19 @@ class ThunderCompileSpecification(CompileSpecificationInterface):
         return ["import thunder"]
 
 
+class ThunderCompilerOnGraphModuleSpecification(CompileSpecificationInterface):
+    def __init__(self, specification_name="thunderfx", **kwargs):
+        self.name = specification_name
+        self.thunder_options: dict = kwargs
+
+    def compile(self, gm, **kwargs):
+        from thunder.dynamo import ThunderCompiler
+
+        thunder_compiler = ThunderCompiler(**kwargs)
+        split_gm = thunder_compiler(gm, sample_args=None)
+        return split_gm
+
+
 class TorchCompileSpecification(CompileSpecificationInterface):
     """
     A compile specification for :func:`torch.compile`.
