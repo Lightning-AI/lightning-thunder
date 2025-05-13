@@ -29,7 +29,6 @@ from transformer_engine.pytorch.tensor import Quantizer
 from transformer_engine.pytorch.ops import BasicLinear
 from transformer_engine.pytorch.fp8 import (
     _amax_and_scale_update,
-    get_default_fp8_recipe,
     get_fp8_max,
     Recipe,
     RecipeState,
@@ -69,15 +68,13 @@ class TERecipe:
         self.fp8_recipe = None
 
     def __call__(self) -> list[Recipe]:
-        # If the Thunder trace is not ran inside an fp8_autocast region then
-        # use the default recipe.
-        if not FP8GlobalStateManager.FP8_RECIPE:
-            if not self.fp8_recipe:
-                self.fp8_recipe = get_default_fp8_recipe()
+        if not self.fp8_recipe:
+            # If at runtime, the thunder function is ran inside an `fp8_autocast` region FP8GlobalStateManager will provide the recipe.
+            # If it wasn't called inside the region, `get_fp8_recipe` will return the default recipe for the platform.
+            # https://github.com/NVIDIA/TransformerEngine/blob/0e45e138c08af8f3b38e46eea58e2e9dbe628d42/transformer_engine/pytorch/fp8.py#L318-L322
+            self.fp8_recipe = FP8GlobalStateManager.get_fp8_recipe()
 
-            return self.fp8_recipe
-
-        return FP8GlobalStateManager.get_fp8_recipe()
+        return self.fp8_recipe
 
 
 _get_te_fp8_recipe = functional_te_ex.register_stateful_operator(
@@ -118,14 +115,13 @@ def _get_te_fp8_state_meta(recipe: AnyProxy, mode: str, num_quantizers: int, /):
 
 class TERecipeState:
     def __init__(self):
-        self.parent_recipe_type: None | RecipeType = None
+        self.parent_recipe: None | Recipe = None
         self.state = None
 
     def __call__(self, recipe: Recipe, mode: str, num_quantizers: int) -> RecipeState:
-        recipe_type = get_fp8_recipe_type(recipe)
 
-        # If the recipe type changes, then a new state is needed.
-        if self.state and self.parent_recipe_type == recipe_type:
+        # If the recipe changes, then a new state is needed.
+        if self.state and self.parent_recipe is recipe:
             return self.state
 
         # mode is needed to get the correct dtypes inside for computation(setup quantizers)
@@ -136,7 +132,7 @@ class TERecipeState:
         )
 
         self.state = recipe_state
-        self.parent_recipe_type = recipe_type
+        self.parent_recipe = recipe
 
         return recipe_state
 
@@ -200,7 +196,9 @@ def _linear_bwd_meta(
     return TensorProxy(like=a), TensorProxy(like=w)
 
 
-def _linear_bwd_impl(grad_o, a, w, input_quantizer: Quantizer, weight_quantizer: Quantizer, grad_output_quantizer: Quantizer):
+def _linear_bwd_impl(
+    grad_o, a, w, input_quantizer: Quantizer, weight_quantizer: Quantizer, grad_output_quantizer: Quantizer
+):
     grad_input, grad_weight = BasicLinear._functional_backward(
         grad_output=grad_o,
         input=a,
