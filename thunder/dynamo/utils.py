@@ -7,10 +7,12 @@ import inspect
 import itertools
 import copy
 from collections import defaultdict
+from operator import itemgetter
 
 import torch
 from torch.nn.modules.module import _addindent
 from torch._subclasses.fake_tensor import FakeTensor
+from torch.utils.weak import TensorWeakRef
 
 from thunder.torch.default_torch_ops import torch_auto_registered_ops
 from thunder.torch import _torch_to_thunder_function_map
@@ -910,8 +912,7 @@ def default_compile_strategy(gm, example_inputs) -> tuple[torch.fx.GraphModule, 
 
     thunder_time = get_timing(thunderjit, WallTime)
     inductor_time = get_timing(torchinductor, WallTime)
-    # eager_time = get_timing(torcheager, WallTime)
-    eager_time = float("inf")
+    eager_time = get_timing(torcheager, WallTime)
 
     # Choose the fastest backend
     if thunder_time <= inductor_time and thunder_time <= eager_time:
@@ -1039,9 +1040,6 @@ def default_optimizer1(gm: torch.fx.GraphModule, stats: ProfileStats) -> Callabl
     return split_gm
 
 
-from torch.utils.weak import TensorWeakRef
-
-
 def get_or_create_example_inputs_from_placeholders(placeholders: list[torch.fx.Node]) -> list[torch.Tensor]:
     """
     Gets the weakref of the inputs if possible, otherwise create inputs for benchmarking
@@ -1066,8 +1064,8 @@ def default_optimizer(gm: torch.fx.GraphModule, stats: ProfileStats) -> Callable
 
     This function:
     1. Checks if the GraphModule has symbolic inputs and raises NotImplementedError if it does
-    2. benchmarks the GraphModule with inductor, thunderfx, and eager
-    3. returns the best compiled GraphModule
+    2. Benchmarks the GraphModule with inductor, thunderfx, and eager
+    3. Returns the GraphModule compiled with the fastest backend
 
     Args:
         gm: The GraphModule to optimize
@@ -1076,7 +1074,6 @@ def default_optimizer(gm: torch.fx.GraphModule, stats: ProfileStats) -> Callable
     Returns:
         The optimized GraphModule
     """
-    from thunder import jit
     from thunder.dynamo import ThunderCompiler
     from thunder.dynamo.report import FXGraphReport
     from thunder.dynamo.benchmark_utils import (
@@ -1091,9 +1088,7 @@ def default_optimizer(gm: torch.fx.GraphModule, stats: ProfileStats) -> Callable
 
     placeholders = [n for n in stats.gm.graph.nodes if n.op == "placeholder"]
     example_inputs_meta = [_get_example_inputs_from_placeholder(p, only_metadata=True) for p in placeholders]
-    print("bef: ", torch.cuda.memory_allocated())
     example_inputs = get_or_create_example_inputs_from_placeholders(placeholders)
-    print("aft: ", torch.cuda.memory_allocated())
 
     report = FXGraphReport(copy.deepcopy(gm), "gm", example_inputs_meta)
     thunderfx_compiler = ThunderCompilerOnGraphModuleSpecification(nv_skip_cache=True)
@@ -1110,7 +1105,6 @@ def default_optimizer(gm: torch.fx.GraphModule, stats: ProfileStats) -> Callable
                 measure_fwd_bwd_together=True,
             )
         except Exception as e:
-            print(f"error benchmarking {e}")
             return float("inf")
         return sum(m.median for m in measurement if m is not None)
 
@@ -1119,11 +1113,7 @@ def default_optimizer(gm: torch.fx.GraphModule, stats: ProfileStats) -> Callable
     compiled_gm_to_measurement.append(("inductor", get_timing(report, torchinductor, WallTime)))
     compiled_gm_to_measurement.append(("eager", get_timing(report, torcheager, WallTime)))
 
-    from operator import itemgetter
-
     sorted_compiled_gm_to_measurement = sorted(compiled_gm_to_measurement, key=itemgetter(1))
-    print(sorted_compiled_gm_to_measurement)
-    print("--------------------------------")
     best_option = sorted_compiled_gm_to_measurement[0][0]
     if best_option == "inductor":
         return _torch_inductor_compile(gm, example_inputs)

@@ -309,13 +309,11 @@ def thunder_profile(fn):
             tao.dispatch_map[idx] = record_stats
 
             def _dispatch(*args):
-                # print(f"dispatching idx {id(gm)}")
                 return tao.dispatch_map[idx](*args)
 
             return _dispatch
 
         # NOTE When not in profiling mode, this just returns the gm for eager execution
-        print(f"*********************dispatch miss {id(gm)}")
         return gm
 
     cfn = torch.compile(fn, backend=dispatching_backend)
