@@ -514,8 +514,8 @@ def _get_min_and_val(t: torch.Tensor) -> tuple[Number | None, Number | None]:
     if t.dtype in (torch.float8_e4m3fn, torch.float8_e4m3fnuz, torch.float8_e5m2, torch.float8_e5m2fnuz):
         t = t.to(torch.float32)
     minmax: tuple[torch.Tensor, torch.Tensor] = torch.aminmax(t)
-    min_val = minmax[0].cpu().item()
-    max_val = minmax[1].cpu().item()
+    min_val = minmax[0].detach().cpu().item()
+    max_val = minmax[1].detach().cpu().item()
     return min_val, max_val
 
 
