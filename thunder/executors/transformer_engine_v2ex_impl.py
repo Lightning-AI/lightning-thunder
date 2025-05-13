@@ -67,12 +67,14 @@ class TERecipe:
     def __init__(self):
         self.fp8_recipe = None
 
-    def __call__(self) -> list[Recipe]:
-        if not self.fp8_recipe:
-            # If at runtime, the thunder function is ran inside an `fp8_autocast` region FP8GlobalStateManager will provide the recipe.
-            # If it wasn't called inside the region, `get_fp8_recipe` will return the default recipe for the platform.
-            # https://github.com/NVIDIA/TransformerEngine/blob/0e45e138c08af8f3b38e46eea58e2e9dbe628d42/transformer_engine/pytorch/fp8.py#L318-L322
-            self.fp8_recipe = FP8GlobalStateManager.get_fp8_recipe()
+    def __call__(self) -> Recipe:
+        # Since we want to mimic TransformerEngine default behaviour as much as possible, we rely on FP8GlobalStateManager.get_fp8_recipe() to provide the correct TE recipe.
+        # If the Thunder function is not ran under an `fp8_autocast`, `get_fp8_recipe` will return the default recipe for the platform.
+        # https://github.com/NVIDIA/TransformerEngine/blob/0e45e138c08af8f3b38e46eea58e2e9dbe628d42/transformer_engine/pytorch/fp8.py#L318-L322
+        te_fp8_recipe = FP8GlobalStateManager.get_fp8_recipe()
+
+        if not self.fp8_recipe or self.fp8_recipe is not te_fp8_recipe:
+            self.fp8_recipe = te_fp8_recipe
 
         return self.fp8_recipe
 
