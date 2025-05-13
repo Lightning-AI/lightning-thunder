@@ -442,7 +442,9 @@ def test_hf_for_nemo(model_id):
     # fullgraph=True used to work with transformers 4.45.2, but it doesn't work
     # with 4.46.2 because of re.findall usage in the loss function
     fullgraph = False
-    compiled_model = thunderfx(model, fullgraph=fullgraph)
+    compiled_model = thunderfx(
+        model, fullgraph=fullgraph, executors=[ex for ex in thunder.get_default_executors() if ex.name != "apex"]
+    )
 
     input_ids = torch.randint(0, configuration.vocab_size, (1, configuration.max_position_embeddings), device="cuda")
     ref_output = model(input_ids=input_ids, labels=input_ids)
