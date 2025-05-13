@@ -40,25 +40,6 @@ functional_te_ex = StatefulExecutor("functional_te")
 register_executor(functional_te_ex)
 
 
-class RecipeType(Enum):
-    DELAYED = auto()
-    MXFP8 = auto()
-    FP8_CURRENT_SCALING = auto()
-    FP8_BLOCK_SCALING = auto()
-
-
-def get_fp8_recipe_type(recipe: Recipe) -> RecipeType | None:
-    if recipe.delayed():
-        return RecipeType.DELAYED
-    if recipe.mxfp8():
-        return RecipeType.MXFP8
-    if recipe.float8_current_scaling():
-        return RecipeType.FP8_CURRENT_SCALING
-    if recipe.float8_block_scaling():
-        return RecipeType.FP8_BLOCK_SCALING
-    return None
-
-
 def _te_fp8_recipe_meta() -> AnyProxy:
     return AnyProxy(None, prefix="r")
 
