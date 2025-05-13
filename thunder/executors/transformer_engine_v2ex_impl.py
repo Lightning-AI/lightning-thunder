@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from thunder.core.proxies import TensorProxy
 
 import transformer_engine.pytorch as te
-from transformer_engine.pytorch.tensor.float8_tensor import Float8Quantizer
+from transformer_engine.pytorch.tensor import Quantizer
 from transformer_engine.pytorch.ops import BasicLinear
 from transformer_engine.pytorch.fp8 import (
     _amax_and_scale_update,
@@ -93,10 +93,10 @@ def _get_te_fp8_quantizers_meta(recipe_state: RecipeState, num_quantizers: int):
 
 class TEQuantizerState:
     def __init__(self):
-        self.quantizers = None
+        self.quantizers: None | list[Quantizer] = None
         self.parent_recipe_state: None | RecipeState = None
 
-    def __call__(self, recipe_state: RecipeState, num_quantizers: int) -> list[Float8Quantizer]:
+    def __call__(self, recipe_state: RecipeState, num_quantizers: int) -> list[Quantizer]:
         if self.quantizers and self.parent_recipe_state is recipe_state:
             return self.quantizers
         quantizers = recipe_state.make_quantizers()
@@ -157,7 +157,7 @@ def _linear_fwd_meta(
     return TensorProxy(like=a, shape=out_shape), TensorProxy(like=a), TensorProxy(like=w)
 
 
-def _linear_fwd_impl(a, w, bias, input_quantizer: Float8Quantizer, weight_quantizer: Float8Quantizer):
+def _linear_fwd_impl(a, w, bias, input_quantizer: Quantizer, weight_quantizer: Quantizer):
     out, quantized_a, quantized_w = BasicLinear._functional_forward(
         input=a,
         weight=w,
@@ -200,7 +200,7 @@ def _linear_bwd_meta(
     return TensorProxy(like=a), TensorProxy(like=w)
 
 
-def _linear_bwd_impl(grad_o, a, w, input_quantizer, weight_quantizer, grad_output_quantizer):
+def _linear_bwd_impl(grad_o, a, w, input_quantizer: Quantizer, weight_quantizer: Quantizer, grad_output_quantizer: Quantizer):
     grad_input, grad_weight = BasicLinear._functional_backward(
         grad_output=grad_o,
         input=a,
