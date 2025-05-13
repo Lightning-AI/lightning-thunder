@@ -7,7 +7,7 @@ from thunder.core.transforms import augmented_forward_pass, backward_pass
 
 
 # The entire contents of this file will be replaced by Tom's work.
-def grad_transform_on_trace(ff_trace, /, *args, **kwargs):
+def grad_transform_on_trace(ff_trace):
     grad_required = len(ff_trace.output["output"]) != 0
 
     def joint_forward_and_backward(*args, **kwargs):
@@ -24,11 +24,11 @@ def grad_transform_on_trace(ff_trace, /, *args, **kwargs):
             result.update({"grad_flat_args": backward_result})
         return result
 
-    params = [Parameter(arg.name, Parameter.POSITIONAL_OR_KEYWORD) for arg in args]
+    params = [Parameter(arg.name, Parameter.POSITIONAL_OR_KEYWORD) for arg in ff_trace.args]
     joint_forward_and_backward.__signature__ = Signature(params)
     #  the new check_trace was failing with weird errors of unknown variables
     #  dce eliminates that
-    return thunder.trace(use_dce=True)(joint_forward_and_backward, *args, **kwargs)
+    return thunder.trace(use_dce=True)(joint_forward_and_backward, *ff_trace.args, **ff_trace.kwargs)
 
 
 def split_forward_backward(joint_trace):

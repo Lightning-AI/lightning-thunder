@@ -565,9 +565,7 @@ def jit(
                 from thunder.executors.torch_autograd_v2 import grad_transform_on_trace
 
                 # !!! This will be incoporated into _transform_for_operator_executor_execution with Tom's work.
-                computation_trc = grad_transform_on_trace(
-                    computation_trc, *computation_trc.args, **computation_trc.kwargs
-                )
+                computation_trc = grad_transform_on_trace(computation_trc)
                 computation_traces.append(computation_trc)
 
             tmp_comp_trc = _transform_for_operator_executor_execution(computation_trc, cd.executors_list)

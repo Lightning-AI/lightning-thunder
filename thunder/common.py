@@ -311,7 +311,17 @@ def _unpack_inputs(fn, tracectx: TraceCtx, args, kwargs, *, rename_proxies: bool
         if isinstance(x, Proxy):
             # register proxy name used by NumberProxies in TensorProxy.shape
             if isinstance(x, TensorProxy):
-                for s_p in filter(lambda s: isinstance(s, Proxy), x._shape):
+                # !!! Ran into problem with symbolic value caching here.
+                # the ff_trace has already been unpacked, meaning that the IntegerProxies are already
+                # included in the args of ff_trace.  When ff_trace is traced again in grad_transform_on_trace,
+                # first the TensorProxy is translated with its shape names added to the trace, and then
+                # the rest of the args, including the IntegerProxies, are translated, triggering a name collision.
+                # To avoid this, we filter out the shape names that are in the args. :(
+                for s_p in filter(
+                    lambda s: isinstance(s, Proxy)
+                    and s.name not in tree_map(lambda arg: hasattr(arg, "name") and arg.name or None, args),
+                    x._shape,
+                ):
                     # TODO need to avoid name conflict here, since s_p.name
                     # could have conflicted with something defined earlier in
                     # the trace.
