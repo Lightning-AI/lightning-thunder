@@ -45,6 +45,13 @@ jobs:
           pip install lightning_sdk -U -q
           python .github/run-quickstart-as-lit-jobs.py
 
+      - name: Run quickstart benchmark
+        if: always()
+        id: run-benchmark
+        run: |
+          pip install torch==2.6.0 torchvision==0.21 nvfuser-cu124-torch26
+          python lightning-thunder/examples/benchmarks/hf_benchmarks.py
+      
       - name: Load report
         if: always()
         id: load-report
@@ -63,3 +70,4 @@ jobs:
             *Quickstart CI* - [${{ job.status }}]
             ${{ env.REPORT }}
             ref: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      
