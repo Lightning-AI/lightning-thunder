@@ -69,13 +69,15 @@ if TYPE_CHECKING:
     from thunder.dynamo.benchmark_utils import CompileSpecificationInterface, TimerInterface
 
 
-def run_forward_backward(fn, *args, **kwargs):
+def run_forward_backward(fn, *args, benchmark=False, **kwargs):
     result = fn(*args, **kwargs)
     result = sequencify(result)
 
     differentiable_tensor_result = list(filter(lambda x: isinstance(x, torch.Tensor) and x.requires_grad, result))
 
     if not differentiable_tensor_result:
+        if benchmark:
+            return
         return result, None
 
     forward_inputs = tree_flatten((args, kwargs))[0]
@@ -94,6 +96,10 @@ def run_forward_backward(fn, *args, **kwargs):
         i.grad = None
 
     torch.autograd.backward(differentiable_tensor_result, output_grads, inputs=inputs_requires_grad)
+    if benchmark:
+        for i in inputs_requires_grad:
+            i.grad = None
+        return
     return result, [t.grad for t in inputs_requires_grad]
 
 
@@ -522,6 +528,7 @@ class FXGraphReport:
         *,
         reset_torch_dynamo=True,
         example_inputs=None,
+        measure_fwd_bwd_together=False,
     ):
         # From torch.compile docs - https://pytorch.org/docs/stable/generated/torch.compile.html
         # > Multiple compiled results can be associated with a frame up to torch._dynamo.config.cache_size_limit, which defaults to 8; at which point we will fall back to eager.
@@ -536,6 +543,16 @@ class FXGraphReport:
         recompile_graph(self.graph)
         compiled_fn = compile_fn.compile(self.graph, inputs=example_inputs)
 
+        if measure_fwd_bwd_together:
+            fwd_bwd_measurement = time_fn.time(
+                "run_forward_backward(compiled_fn, *example_inputs, benchmark=True)",
+                globals={
+                    "run_forward_backward": run_forward_backward,
+                    "compiled_fn": compiled_fn,
+                    "example_inputs": example_inputs,
+                },
+            )
+            return fwd_bwd_measurement, None
         forward_only = not any(hasattr(arg, "requires_grad") and arg.requires_grad for arg in example_inputs)
         fwd_measurement = time_fn.time(
             "compiled_fn(*example_inputs)", globals={"compiled_fn": compiled_fn, "example_inputs": example_inputs}

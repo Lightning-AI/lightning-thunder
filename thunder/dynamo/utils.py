@@ -1108,7 +1108,11 @@ def default_optimizer(gm: torch.fx.GraphModule, stats: ProfileStats) -> Callable
     def get_timing(report, compile_fn, timer_fn):
         try:
             measurement = report.run_benchmark(
-                compile_fn, timer_fn, reset_torch_dynamo=False, example_inputs=example_inputs
+                compile_fn,
+                timer_fn,
+                reset_torch_dynamo=False,
+                example_inputs=example_inputs,
+                measure_fwd_bwd_together=True,
             )
         except Exception as e:
             print(f"error benchmarking {e}")
