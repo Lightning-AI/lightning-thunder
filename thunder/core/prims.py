@@ -153,6 +153,7 @@ class PrimIDs(Enum):
     IOTA = auto()
     UNIFORM = auto()
     UNIFORM_PHILOX = auto()
+    RANDINT = auto()
     RANDN = auto()
     EMPTY = auto()
     TENSOR_FROM_SEQUENCE = auto()
@@ -196,6 +197,7 @@ class PrimIDs(Enum):
     EXP2 = auto()
     EXPM1 = auto()
     FLOOR = auto()
+    FREXP = auto()
     ISFINITE = auto()
     LGAMMA = auto()
     LOG = auto()
@@ -2236,6 +2238,14 @@ floor = _make_elementwise_unary_prim(
     output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.INT_FOR_NUMBER,
 )
 
+
+def frexp_meta(a: TensorProxy, /) -> (TensorProxy, TensorProxy):
+    utils.check_type(a, TensorProxy)
+    return TensorProxy(like=a), TensorProxy(like=a, dtype=dtypes.int32)
+
+
+frexp = make_prim(PrimIDs.FREXP, "frexp", meta=frexp_meta)
+
 isfinite = _make_elementwise_unary_prim(
     PrimIDs.ISFINITE,
     "isfinite",
@@ -3025,6 +3035,27 @@ def _randn_meta(
 
 
 randn = make_prim(PrimIDs.RANDN, "randn", meta=_randn_meta)
+
+
+def _randint_meta(
+    low: int,
+    high: int,
+    shape: tuple[int, ...],
+    *,
+    device: devices.Device,
+    dtype: dtypes.dtype,
+):
+    utils.check_type(low, int)
+    utils.check_type(high, int)
+    utils.check(low < high, lambda: f"`low` must be less than `high` but {low=}, {high=}")
+    utils.check_type(device, devices.Device)
+    utils.check_type(dtype, dtypes.dtype)
+    utils.check_type(shape, tuple)
+    utils.check_valid_shape(shape)
+    return TensorProxy(shape=shape, device=device, dtype=dtype)
+
+
+randint = make_prim(PrimIDs.RANDINT, "randint", meta=_randint_meta)
 
 
 def _empty_meta(

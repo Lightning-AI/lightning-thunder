@@ -27,6 +27,9 @@ from thunder.executors.sdpaex import sdpa_ex
 from thunder.core.jit_ext import JITSharpEdgeError
 from thunder.core.transforms import Transform
 
+
+thunder_jit = partial(thunder.jit, debug_options=thunder.DebugOptions(check_traces=True))
+
 #
 # Test suite for the general jit
 #
@@ -62,10 +65,10 @@ def test_jitting_through_opaque_torch_symbols_error():
 
     x = torch.rand(1)
 
-    jno_error = thunder.jit(no_error)
+    jno_error = thunder_jit(no_error)
     jno_error(x)
 
-    jshould_error = thunder.jit(should_error)
+    jshould_error = thunder_jit(should_error)
     with pytest.raises(NotImplementedError):
         jshould_error(x, x)
 
@@ -74,7 +77,7 @@ def test_binary_add_tensors():
     def foo(a, b):
         return a + b
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder_jit(foo)
 
     a = torch.randn((2, 2), device="cpu")
     b = torch.randn((2, 2), device="cpu")
@@ -89,7 +92,7 @@ def test_torch_add_tensors():
     def foo(a, b):
         return torch.add(a, b)
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder_jit(foo)
 
     a = torch.randn((2, 2), device="cpu")
     b = torch.randn((2, 2), device="cpu")
@@ -109,7 +112,7 @@ def test_torch_add_tensors_closure():
 
         return bar()
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder_jit(foo)
 
     a = torch.randn((2, 2), device="cpu")
     b = torch.randn((2, 2), device="cpu")
@@ -130,12 +133,12 @@ def test_torch_add_tensors_closure_external():
     def foo():
         bar(b)
 
-    jbar = thunder.jit(bar)
+    jbar = thunder_jit(bar)
     actual = jbar(b)
     expected = bar(b)
     assert_close(actual, expected)
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder_jit(foo)
     actual = jfoo()
     expected = foo()
     assert_close(actual, expected)
@@ -145,7 +148,7 @@ def test_args_len():
     def foo(a, b=1):
         return a + b
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder_jit(foo)
 
     assert foo(2) == jfoo(2)
     assert foo(2, 3) == jfoo(2, 3)
@@ -161,7 +164,7 @@ def test_intermediate_torch_operations():
         g = [e, f]
         return torch.cat(g)
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder_jit(foo)
 
     a = torch.randn((2, 2), device="cpu")
     b = torch.randn((2, 2), device="cpu")
@@ -176,7 +179,7 @@ def test_cache_basic():
     def foo(a, b):
         return a + b
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder_jit(foo)
 
     a = torch.randn((2, 2), device="cpu")
     b = torch.randn((2, 2), device="cpu")
@@ -245,7 +248,7 @@ def test_cache_always_trace():
     def foo(a, b):
         return a + b
 
-    jfoo = thunder.jit(foo, cache=CACHE_OPTIONS.NO_CACHING)
+    jfoo = thunder_jit(foo, cache=CACHE_OPTIONS.NO_CACHING)
 
     a = torch.randn((2, 2), device="cpu")
     b = torch.randn((2, 2), device="cpu")
@@ -269,7 +272,7 @@ def test_cache_equality_constraint():
         else:
             return y
 
-    jfn = thunder.jit(fn)
+    jfn = thunder_jit(fn)
 
     assert_close(fn(True), jfn(True))
     assert_close(fn(False), jfn(False))
@@ -291,7 +294,7 @@ def test_nn_parameter():
     def fn(a):
         return b * a
 
-    jfn = thunder.jit(fn)
+    jfn = thunder_jit(fn)
 
     expected = fn(a)
     actual = jfn(a)
@@ -306,7 +309,7 @@ def test_nn_module():
     )
     a = torch.randn(2, 3)
 
-    tom = thunder.jit(m)
+    tom = thunder_jit(m)
     assert isinstance(tom, thunder.ThunderModule)
     # attributes are forwarded
     assert isinstance(tom.weight, torch.Tensor)
@@ -314,7 +317,7 @@ def test_nn_module():
     actual = tom(a)
     assert_close(expected, actual)
 
-    tom2 = thunder.jit(m2)
+    tom2 = thunder_jit(m2)
     assert isinstance(tom2, thunder.ThunderModule)
     # `ThunderModule` is not subscriptable even though it compiles a `Sequential`
     with pytest.raises(TypeError, match="not subscriptable"):
@@ -330,7 +333,7 @@ def test_nn_module():
     def fn(a):
         return m(a)
 
-    jfn = thunder.jit(fn)
+    jfn = thunder_jit(fn)
     expected = fn(a)
     actual = jfn(a)
     assert_close(expected, actual)
@@ -338,7 +341,7 @@ def test_nn_module():
     def fn2(a):
         return m2(a)
 
-    jfn2 = thunder.jit(fn2)
+    jfn2 = thunder_jit(fn2)
     expected = fn2(a)
     actual = jfn2(a)
     assert_close(expected, actual)
@@ -352,7 +355,7 @@ def test_compile_within_jit():
         cfn = torch.compile(model)
         return cfn(a, b, c)
 
-    jcfn = thunder.jit(jit_me)
+    jcfn = thunder_jit(jit_me)
 
     x = torch.randn(2, 2)
     y = torch.randn(2, 2)
@@ -370,7 +373,7 @@ def test_add_numbers():
     def foo(a, b):
         return torch.add(a, b)
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder_jit(foo)
 
     # TODO Add test for bool
     # see issue "Binary addition on booleans should promote to an integer"
@@ -392,7 +395,7 @@ def test_binary_add_tensor_number():
     def foo(a):
         return torch.add(a, 3)
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder_jit(foo)
 
     a = torch.randn((2, 2), device="cpu")
 
@@ -405,7 +408,7 @@ def test_binary_add_tensor_number():
     def foo(a):
         return a + 4
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder_jit(foo)
 
     actual = jfoo(a)
     expected = foo(a)
@@ -417,7 +420,7 @@ def test_binary_add_numbers():
     def foo(a, b):
         return a + b
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder_jit(foo)
 
     # TODO Add test for bool
     # see issue "Binary addition on booleans should promote to an integer"
@@ -438,7 +441,7 @@ def test_finfo():
     def foo(a):
         return torch.finfo(a.dtype)
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder_jit(foo)
     a = torch.randn((2, 2), device="cpu")
     actual = jfoo(a)
     expected = foo(a)
@@ -447,7 +450,7 @@ def test_finfo():
     def bar(a):
         return torch.finfo(a.dtype).min
 
-    jbar = thunder.jit(bar)
+    jbar = thunder_jit(bar)
     a = torch.randn((2, 2), device="cpu")
     actual = jbar(a)
     expected = bar(a)
@@ -462,7 +465,7 @@ def test_global_fails():
     def foo():
         return _test_add_global_global
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder_jit(foo)
 
     with pytest.raises(NotImplementedError):
         jfoo()
@@ -480,7 +483,7 @@ def test_nonlocal_outside_interpreter_fails():
             nonlocal x
             x = 4
 
-        jbar = thunder.jit(bar)
+        jbar = thunder_jit(bar)
 
         jbar()
 
@@ -496,7 +499,7 @@ def test_lookaside_bool():
             return a + b
         return a - b
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder_jit(foo)
 
     a = torch.randn((2, 2), device="cpu")
     b = torch.randn((2, 2), device="cpu")
@@ -515,7 +518,7 @@ def test_get_default_dtype():
     def foo():
         return torch.get_default_dtype()
 
-    assert foo() == thunder.jit(foo)()
+    assert foo() == thunder_jit(foo)()
 
 
 @pytest.mark.parametrize(
@@ -537,7 +540,7 @@ def test_proxy_no_multiple_renames(device):
 
         return g(a, b) + h(d, c)
 
-    jf = thunder.jit(f)
+    jf = thunder_jit(f)
 
     a = torch.rand(1, device=device)
     b = torch.rand(1, device=device)
@@ -561,7 +564,7 @@ def test_litgpt():
     cfg: Config = Config.from_name("gpt-neox-like")
     bench = LitGPTBenchmark(config=cfg, device="cpu", dtype=torch.bfloat16, requires_grad=True)
     module = bench.fn()
-    jfn = thunder.jit(module)
+    jfn = thunder_jit(module)
 
     args, kwargs = bench.make_batch()
 
@@ -591,7 +594,7 @@ def test_nanogpt_block():
 
     args, kwargs = bench.make_batch()
 
-    jfn = thunder.jit(module)
+    jfn = thunder_jit(module)
     result = jfn(*args, **kwargs)
 
     assert_close(result, module(*args, **kwargs))
@@ -612,7 +615,7 @@ def test_nanogpt_attn():
 
     args, kwargs = bench.make_batch()
 
-    jfn = thunder.jit(module)
+    jfn = thunder_jit(module)
     result = jfn(*args, **kwargs)
 
     assert_close(result, module(*args, **kwargs), atol=3e-5, rtol=1e-5)
@@ -628,7 +631,7 @@ def test_nanogpt_mlp():
 
     args, kwargs = bench.make_batch()
 
-    jfn = thunder.jit(module)
+    jfn = thunder_jit(module)
     result = jfn(*args, **kwargs)
 
     assert_close(result, module(*args, **kwargs))
@@ -647,7 +650,7 @@ def test_nanogpt():
         p.requires_grad_(False)
 
     args, kwargs = bench.make_batch()
-    jfn = thunder.jit(module)
+    jfn = thunder_jit(module)
     result = jfn(*args, **kwargs)
 
     assert_close(result, module(*args, **kwargs))
@@ -661,8 +664,6 @@ def test_nanogpt():
         "llama1-like",
         "long-context-like",
         "llama2-like",
-        "falcon-7b-like",
-        "falcon-40b-like",
         "codellama2-like",
         pytest.param(
             "mixtral-like",
@@ -680,10 +681,6 @@ def test_litgpt_variants(name, device):
 
     if device == "cuda" and not torch.cuda.is_available():
         pytest.skip("CUDA not available")
-    if device == "cuda" and name == "falcon-40b-like":
-        pytest.skip("NVFuser reenable when https://github.com/NVIDIA/Fuser/issues/3505 is fixed, Thunder issue #1504")
-    if device == "cuda" and name == "falcon-7b-like":
-        pytest.skip("NVFuser reenable when https://github.com/NVIDIA/Fuser/issues/3292 is fixed")
 
     device = torch.device(device)
 
@@ -699,7 +696,7 @@ def test_litgpt_variants(name, device):
     with device:
         model = GPT(config)
     model.load_state_dict(reference.state_dict())
-    tom = thunder.jit(model, executors=nvfuserex if device.type == "cuda" else torchex)
+    tom = thunder_jit(model, executors=nvfuserex if device.type == "cuda" else torchex)
     actual_logits = tom(x)
     assert_close(actual_logits, expected_logits)
 
@@ -723,8 +720,6 @@ def test_litgpt_variants(name, device):
         "llama1-like",
         "long-context-like",
         "llama2-like",
-        "falcon-7b-like",
-        "falcon-40b-like",
         "codellama2-like",
         pytest.param(
             "mixtral-like",
@@ -770,7 +765,9 @@ def test_litgpt_variants_kvcache(name, device):
 
     with device:
         model.set_kv_cache(batch_size=1)
-    tom = thunder.jit(model, executors=executors)  # , disable_torch_autograd_support=True
+
+    # TODO: make check_trace mode work
+    tom = thunder_jit(model, executors=executors)  # , disable_torch_autograd_support=True
 
     # kv cache prefill
     thunder_logits_1 = tom(x, torch.tensor([0, 1], device=device))
@@ -807,7 +804,7 @@ def test_tom_overrides_proxy(device):
     with device:
         model = GPT(config)
     model.load_state_dict(reference.state_dict())
-    tom = thunder.jit(model, executors=nvfuserex if device.type == "cuda" else torchex)
+    tom = thunder_jit(model, executors=nvfuserex if device.type == "cuda" else torchex)
 
     # we manually replace tensors here, early transforms (like distributed) will do this
     for k, v in tom._overrides_parameters.items():
@@ -846,7 +843,7 @@ def test_cache_symbolic_values_basic():
     def foo(a, scalar):
         return (a * scalar).sum(scalar)
 
-    jfoo = thunder.jit(foo, cache="symbolic values")
+    jfoo = thunder_jit(foo, cache="symbolic values")
 
     a = torch.randn((2, 2, 2), device="cpu")
     b = 1
@@ -889,7 +886,7 @@ def test_post_optimization_transform():
             commented_trace.bound_symbols = bsyms
             return commented_trace
 
-    jfoo = thunder.jit(foo, transforms=[MyTransform()])
+    jfoo = thunder_jit(foo, transforms=[MyTransform()])
 
     a = torch.randn(3, 3, requires_grad=True)
     b = torch.randn(3, 3)
@@ -928,7 +925,7 @@ def test_device_as_input(cache_option):
     if cache_option is thunder.CACHE_OPTIONS.SAME_INPUT:
         ctx = pytest.raises(NotImplementedError)
 
-    jfoo = thunder.jit(foo, cache=cache_option)
+    jfoo = thunder_jit(foo, cache=cache_option)
 
     for device in devices_to_check:
         expected_device = torch.device(device)
@@ -943,7 +940,7 @@ def test_cache_symbolic_values_constraints():
             return scalar
         return 0
 
-    jfoo = thunder.jit(foo, cache="symbolic values")
+    jfoo = thunder_jit(foo, cache="symbolic values")
 
     expected = foo(1.5)
     actual = jfoo(1.5)
@@ -982,7 +979,7 @@ def test_cache_symbolic_values_constraints():
     with pytest.raises(
         thunder.core.interpreter.InterpreterError, match="conversion to bool is not allowed on dynamic proxy"
     ):
-        jbar = thunder.jit(bar, cache="symbolic values")
+        jbar = thunder_jit(bar, cache="symbolic values")
         t = torch.randn(4, device="cpu")
         jbar(t)
 
@@ -995,7 +992,7 @@ def test_cache_symbolic_values_torch_device():
         # NOTE dtype needs to be explicit, see issue: https://github.com/Lightning-AI/lightning-thunder/issues/621
         return torch.ones(1, device=torch.device(dev, idx), dtype=torch.float32)
 
-    jfoo = thunder.jit(foo, cache="symbolic values")
+    jfoo = thunder_jit(foo, cache="symbolic values")
     expected = foo("cuda", 0)
     actual = jfoo("cuda", 0)
 
@@ -1014,7 +1011,7 @@ def test_load_original_state_dict():
 
     m = Model()
 
-    thunder_module = thunder.jit(Model())
+    thunder_module = thunder_jit(Model())
     thunder_module.load_original_state_dict(m.state_dict())
 
     # Check the updated values
@@ -1062,7 +1059,7 @@ def test_named_params_and_named_buffers(prefix, recurse, remove_duplicate):
     m = MyModel()
     expected = dict(m())
 
-    jm = thunder.jit(m)
+    jm = thunder_jit(m)
     actual = dict(jm())
 
     torch.testing.assert_close(actual, expected)
@@ -1077,7 +1074,7 @@ def test_isinstance_parameter():
         def forward(self, x):
             weight = self.fc.weight
 
-            # Verify that `thunder.jit` correctly picks this branch.
+            # Verify that `thunder_jit` correctly picks this branch.
             if isinstance(weight, torch.nn.Parameter):
                 return x + 1
 
@@ -1088,7 +1085,7 @@ def test_isinstance_parameter():
         1,
     )
     expected = m(x)
-    actual = thunder.jit(m)(x)
+    actual = thunder_jit(m)(x)
 
     torch.testing.assert_close(actual, expected)
 
@@ -1100,7 +1097,7 @@ def test_isinstance_parameter():
         def forward(self, x):
             weight = self.fc.weight
 
-            # Verify that `thunder.jit` correctly picks this branch.
+            # Verify that `thunder_jit` correctly picks this branch.
             if isinstance(weight, (torch.nn.Parameter, type(None))):
                 return x + 1
 
@@ -1111,7 +1108,7 @@ def test_isinstance_parameter():
         1,
     )
     expected = m(x)
-    actual = thunder.jit(m)(x)
+    actual = thunder_jit(m)(x)
 
     torch.testing.assert_close(actual, expected)
 
@@ -1122,7 +1119,7 @@ def test_cache_symbolic_values_reshape():
     def foo(t, batch_size):
         return t.reshape(batch_size, -1).sum(-1)
 
-    jfoo = thunder.jit(foo, cache="symbolic values", nv_enable_bookend=False)
+    jfoo = thunder_jit(foo, cache="symbolic values", nv_enable_bookend=False)
     expected = foo(a, 32)
     actual = jfoo(a, 32)
 
@@ -1162,7 +1159,7 @@ def test_custom_autograd_function():
 
     x = torch.randn((2, 2), dtype=torch.float64, requires_grad=True)
     model = Model().to(dtype=torch.float64)
-    jitted = thunder.jit(model)
+    jitted = thunder_jit(model)
 
     with pytest.raises(GradcheckError):
         gradcheck(jitted, (x,))
@@ -1195,7 +1192,7 @@ def test_custom_autograd_function():
 
     x = torch.randn((2, 2), dtype=torch.float64, requires_grad=True)
     model = Model().to(dtype=torch.float64)
-    jitted = thunder.jit(model)
+    jitted = thunder_jit(model)
     gradcheck(jitted, (x,), check_batched_grad=False)
 
     jitted.zero_grad()
@@ -1227,7 +1224,7 @@ def test_autograd_function_apply():
             non_differentiable_idx=[],
         )
 
-    jitted = thunder.jit(my_sin)
+    jitted = thunder_jit(my_sin)
     x = torch.randn((2, 2), requires_grad=True)
     x_ref = x.clone().detach().requires_grad_()
 
@@ -1253,7 +1250,7 @@ def test_autograd_function_apply():
             non_differentiable_idx=[],
         )
 
-    jitted = thunder.jit(my_sin_with_wrong_backward)
+    jitted = thunder_jit(my_sin_with_wrong_backward)
     x = torch.randn((2, 2), requires_grad=True)
     x_ref = x.clone().detach().requires_grad_()
 
@@ -1292,7 +1289,7 @@ def test_autograd_function_apply_with_no_grad():
         )
         return res
 
-    jitted = thunder.jit(my_sin)
+    jitted = thunder_jit(my_sin)
     x = torch.randn((2, 2), requires_grad=True)
 
     out = jitted(x)
@@ -1325,7 +1322,7 @@ def test_autograd_function_apply_with_no_grad():
         )
         return res
 
-    jitted = thunder.jit(fn)
+    jitted = thunder_jit(fn)
     x = torch.randn((2, 2), requires_grad=True)
 
     out = jitted(x)
@@ -1351,7 +1348,7 @@ def test_autograd_function_empty_forward():
         return Fn.apply(x) * 3
 
     a = torch.randn(2)
-    jfn = thunder.jit(fn)
+    jfn = thunder_jit(fn)
 
     ref = fn(a)
     out = jfn(a)
@@ -1375,7 +1372,7 @@ def test_cpp_property():
     def fn():
         return torch.cuda.get_device_properties(0).major
 
-    assert fn() == thunder.jit(fn)()
+    assert fn() == thunder_jit(fn)()
 
 
 def test_failing_prologue_in_last_prologue_traces():
@@ -1387,7 +1384,7 @@ def test_failing_prologue_in_last_prologue_traces():
         i += 1
         return i
 
-    jfn = thunder.jit(fn)
+    jfn = thunder_jit(fn)
     with pytest.raises(RuntimeError, match="Expected 1 to be equal to and have the type of 0"):
         jfn()
 
@@ -1406,7 +1403,7 @@ def test_matmul_nd_times_2d_runs_2d_gemm(device):
     def f(x, y):
         return x @ y
 
-    jf = thunder.jit(f)
+    jf = thunder_jit(f)
 
     x = torch.rand(2, 3, 4, device=device)
     y = torch.rand(4, 5, device=device)
@@ -1438,7 +1435,7 @@ def test_matmul_nd_times_2d_runs_2d_gemm(device):
 def test_tag_static_memory_location():
     # not much sense, but hey.
     m = torch.nn.Sequential(torch.nn.Tanh(), torch.nn.Linear(2, 3), torch.nn.BatchNorm1d(3))
-    jm = thunder.jit(m)
+    jm = thunder_jit(m)
     jm(torch.randn(2, 2))
     lt = thunder.last_traces(jm)[-1]
 
@@ -1458,7 +1455,7 @@ def test_tag_static_memory_location():
 
 
 def test_args_order():
-    @thunder.jit
+    @thunder_jit
     def fn(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10):
         # do not skip functionalization process
         a9 += 1
@@ -1476,7 +1473,7 @@ def test_cache_symbolic_values_dynamic_shape():
     def foo(a):
         return a.relu()
 
-    jfoo = thunder.jit(foo, cache="symbolic values")
+    jfoo = thunder_jit(foo, cache="symbolic values")
 
     a = torch.randn((2, 2, 2), device="cpu")
 
@@ -1502,7 +1499,7 @@ def test_cache_symbolic_values_reshape_numel():
         a = torch.reshape(a, [a.numel()])
         return a.relu()
 
-    jfoo = thunder.jit(foo, cache="symbolic values")
+    jfoo = thunder_jit(foo, cache="symbolic values")
 
     a = torch.randn(2, 3, 8, requires_grad=True, device="cpu")
 
@@ -1517,7 +1514,7 @@ def test_cache_symbolic_values_slice():
         a = a[..., : a.shape[-1]]
         return a.relu()
 
-    jfoo = thunder.jit(foo, cache="symbolic values")
+    jfoo = thunder_jit(foo, cache="symbolic values")
 
     a = torch.randn(2, 3, 8, requires_grad=True, device="cpu")
 
@@ -1531,7 +1528,7 @@ def test_cache_symbolic_values_dict():
     def foo(a, v):
         return a[v].relu()
 
-    jfoo = thunder.jit(foo, cache="symbolic values")
+    jfoo = thunder_jit(foo, cache="symbolic values")
 
     a = {
         2: torch.randn(2, 3, 8, requires_grad=True, device="cpu"),
@@ -1560,7 +1557,7 @@ def test_specific_dataclass_returns():
     def fn(x):
         return transformers.modeling_outputs.BaseModelOutputWithPast(last_hidden_state=x)
 
-    jfn = thunder.jit(fn)
+    jfn = thunder_jit(fn)
     x = torch.randn(2, 2)
     expected = fn(x)
     res = jfn(x)
@@ -1586,7 +1583,7 @@ def test_modulelist_idx():
             return x
 
     m = MyModel()
-    jm = thunder.jit(m)
+    jm = thunder_jit(m)
     x = torch.randn(2, 4)
     expected = m(x)
     res = jm(x)

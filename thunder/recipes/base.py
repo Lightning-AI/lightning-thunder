@@ -34,7 +34,7 @@ class BaseRecipe(Recipe):
         if self.fuser == "nvfuser":
             return executors
         elif self.fuser == "torch.compile":
-            executors = [el for el in executors if el.name not in ["torchcompile_cat", "nvfuser"]]
+            executors = [el for el in executors if el.name not in ["torchcompile_xentropy", "nvfuser"]]
             executors.append(torch_compile_ex)
             return executors
 

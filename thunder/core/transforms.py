@@ -1029,6 +1029,23 @@ def _exp_prim_grad(a: Number | TensorProxy) -> Number | TensorProxy:
 register_grad(pids.EXP, _exp_prim_grad)
 
 
+def _frexp_prim_grad(a: Number | TensorProxy):
+    fwd = prims.frexp(a)
+    mantissa, exponent = fwd
+
+    g_mantissa = get_grad(mantissa)
+
+    a_grad = g_mantissa / exponent.exp2()
+    a_grad = a_grad.masked_fill(~prims.isfinite(a_grad), 0.0)
+
+    put_grad(a, a_grad)
+
+    return fwd
+
+
+register_grad(pids.FREXP, _frexp_prim_grad)
+
+
 def _log_prim_grad(a: Number | TensorProxy) -> Number | TensorProxy:
     fwd = prims.log(a)
 
@@ -2596,7 +2613,7 @@ def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
                 # as required by LoRA.
                 from thunder.distributed.prims import all_gather
 
-                a, group = symbol.args
+                a, group, _ = symbol.args
                 primals = all_gather(a, group, True).wait()
             else:
                 primals = symbol_to_eval(symbol)(*args, **kwargs)
@@ -2839,7 +2856,7 @@ def backward_pass(forward_env, trace, init_cotangents):
                         put_grad(symbol.args[i], result.get(k, None))
             continue
 
-        if not isinstance(result, Sequence):
+        if not isinstance(result, tuple):
             result = (result,)
 
         def is_differentiable(arg):

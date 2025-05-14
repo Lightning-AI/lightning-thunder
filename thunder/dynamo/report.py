@@ -41,7 +41,7 @@ from thunder.dynamo.repro_script_template import (
     CALLABLE_NAME,
     COMPILED_CALLABLE_NAME,
 )
-from thunder import last_traces, last_backward_traces
+from thunder import last_traces, last_backward_traces, compile_stats
 from thunder.benchmarks.utils import backward_only
 from thunder.dynamo.benchmark_utils import (
     TorchCompileSpecification,
@@ -692,6 +692,10 @@ def fx_report(fn: Callable, **torch_compile_kwargs) -> Callable[..., FXReport]:
                 )
                 graph_report.write_benchmark(tmpdir, my_thunderjit, WallTime, file_name=f"{graph_name}_mythunder_benchmark.py")
     """
+    if compile_stats(fn) is not None:
+        raise ValueError(
+            "fx_report requires the original (uncompiled) callable and cannot be used on the Thunder-compiled function."
+        )
     graphs = []
     break_reasons = []
 
@@ -753,15 +757,16 @@ class ThunderSplitGraphReport(FXGraphReport):
         self.split_reason = split_reason
 
         self.fusion_reports: list[ThunderFusionReport] = []
-        self.fwd_trc: TraceCtx = None
-        self.bwd_trc: TraceCtx = None
+        self.fwd_trc: TraceCtx | None = None
+        self.bwd_trc: TraceCtx | None = None
 
     def _create_thunder_traces(self):
         example_inputs = self.make_example_inputs()
         # Executes to get the trace
-        run_forward_backward(self.compiled_fn, *example_inputs)
+        _, grads = run_forward_backward(self.compiled_fn, *example_inputs)
         self.fwd_trc = last_traces(self.compiled_fn)[-1]
-        self.bwd_trc = last_backward_traces(self.compiled_fn)[-1]
+        if grads and (backward_traces := last_backward_traces(self.compiled_fn)):
+            self.bwd_trc = backward_traces[-1]
 
     def create_fusion_reports(self):
         """
@@ -769,7 +774,11 @@ class ThunderSplitGraphReport(FXGraphReport):
         and generate the :class:`ThunderFusionReport` instance based on it.
         """
         self._create_thunder_traces()
+
         for trace, prefix in [(self.fwd_trc, "forward"), (self.bwd_trc, "backward")]:
+            # `self.bwd_trc` can be None.
+            if trace is None:
+                continue
             for bsym in trace.bound_symbols:
                 if bsym.sym.is_fusion and "nvFusion" in bsym.sym.name:
                     self.fusion_reports.append(ThunderFusionReport(bsym, f"{self.graph_name}_{bsym.sym.name}_{prefix}"))
@@ -1346,4 +1355,6 @@ def save_failing_repros(
             report.run_repro(compile_fn, check_consistency)
         except Exception as e:
             comment = f"Failed to run the function using {compile_fn.name} with exception: {e}"
-            report.write_repro(repros_folder, compile_fn, extra_comment_str=comment)
+            report.write_repro(
+                repros_folder, compile_fn, extra_comment_str=comment, check_consistency=check_consistency
+            )
