@@ -41,7 +41,7 @@ from thunder.dynamo.repro_script_template import (
     CALLABLE_NAME,
     COMPILED_CALLABLE_NAME,
 )
-from thunder import last_traces, last_backward_traces
+from thunder import last_traces, last_backward_traces, compile_stats
 from thunder.benchmarks.utils import backward_only
 from thunder.dynamo.benchmark_utils import (
     TorchCompileSpecification,
@@ -692,6 +692,10 @@ def fx_report(fn: Callable, **torch_compile_kwargs) -> Callable[..., FXReport]:
                 )
                 graph_report.write_benchmark(tmpdir, my_thunderjit, WallTime, file_name=f"{graph_name}_mythunder_benchmark.py")
     """
+    if compile_stats(fn) is not None:
+        raise ValueError(
+            "fx_report requires the original (uncompiled) callable and cannot be used on the Thunder-compiled function."
+        )
     graphs = []
     break_reasons = []
 
@@ -1351,4 +1355,6 @@ def save_failing_repros(
             report.run_repro(compile_fn, check_consistency)
         except Exception as e:
             comment = f"Failed to run the function using {compile_fn.name} with exception: {e}"
-            report.write_repro(repros_folder, compile_fn, extra_comment_str=comment)
+            report.write_repro(
+                repros_folder, compile_fn, extra_comment_str=comment, check_consistency=check_consistency
+            )
