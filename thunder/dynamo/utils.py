@@ -960,7 +960,7 @@ def get_or_create_example_inputs_from_placeholders(placeholders: list[torch.fx.N
             input: TensorWeakRef | torch.SymInt = p.meta["grapharg"].example
             if isinstance(input, torch.SymInt):
                 input = input.node.hint
-        except Exception as e:
+        except (KeyError, AssertionError) as e:
             # needs to create a new example input
             outs.append(_get_example_inputs_from_placeholder(p, only_metadata=False))
         else:
