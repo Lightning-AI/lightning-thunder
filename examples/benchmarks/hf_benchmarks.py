@@ -29,8 +29,8 @@ plugins_str = "" if plugins is None else plugins if isinstance(plugins, str) els
 
 # Define recipes
 nvfuser_recipe = DebugRecipe()
-# torchcompile_recipe = DebugRecipe(fuser="torch.compile")
-recipes = [nvfuser_recipe] # TODO: add torchcompile_recipe when torch.compile works
+torchcompile_recipe = DebugRecipe(fuser="torch.compile")
+recipes = [nvfuser_recipe, torchcompile_recipe]
 
 
 def run_and_profile(tag: str, fn, model, inp, compiled_models: dict[str, torch.nn.Module], cache=None):
