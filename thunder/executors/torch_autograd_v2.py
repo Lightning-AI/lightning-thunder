@@ -28,7 +28,10 @@ def grad_transform_on_trace(ff_trace):
     joint_forward_and_backward.__signature__ = Signature(params)
     #  the new check_trace was failing with weird errors of unknown variables
     #  dce eliminates that
-    return thunder.trace(use_dce=True)(joint_forward_and_backward, *ff_trace.args, **ff_trace.kwargs)
+    #  symbolic caching was running into naming collisions because of the renaming and re_unpacking of the args
+    return thunder.trace(use_dce=True, rename_proxies=False)(
+        joint_forward_and_backward, *ff_trace.args, **ff_trace.kwargs
+    )
 
 
 def split_forward_backward(joint_trace):
