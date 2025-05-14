@@ -457,13 +457,16 @@ class FXGraphReport:
     ):
         torch._dynamo.reset()
         example_inputs = self.make_example_inputs()
+        # ref: https://github.com/pytorch/pytorch/blob/0ef5ba43a6e7fe806ea9f27929bf4328ffd1ebf4/torch/_inductor/compile_fx.py#L1921-L1922
+        # The compile_fn may mutate the GraphModule, so we need to deepcopy it
+        graph = copy.deepcopy(self.graph)
         # To avoid the AssertionError: attribute nodes of Graph object out of sync
-        recompile_graph(self.graph)
-        compiled_model = compile_fn.compile(self.graph, inputs=example_inputs)
+        recompile_graph(graph)
+        compiled_model = compile_fn.compile(graph, inputs=example_inputs)
         result = run_forward_backward(compiled_model, *example_inputs)
 
         if check_consistency:
-            eager_result = run_forward_backward(self.graph, *example_inputs)
+            eager_result = run_forward_backward(graph, *example_inputs)
             torch.testing.assert_close(result, eager_result)
         return result
 
@@ -539,9 +542,12 @@ class FXGraphReport:
             torch._dynamo.reset()
         if example_inputs is None:
             example_inputs = self.make_example_inputs()
+        # ref: https://github.com/pytorch/pytorch/blob/0ef5ba43a6e7fe806ea9f27929bf4328ffd1ebf4/torch/_inductor/compile_fx.py#L1921-L1922
+        # The compile_fn may mutate the GraphModule, so we need to deepcopy it
+        graph = copy.deepcopy(self.graph)
         # To avoid the AssertionError: attribute nodes of Graph object out of sync
-        recompile_graph(self.graph)
-        compiled_fn = compile_fn.compile(self.graph, inputs=example_inputs)
+        recompile_graph(graph)
+        compiled_fn = compile_fn.compile(graph, inputs=example_inputs)
 
         if measure_fwd_bwd_together:
             fwd_bwd_measurement = time_fn.time(
@@ -552,7 +558,7 @@ class FXGraphReport:
                     "example_inputs": example_inputs,
                 },
             )
-            return fwd_bwd_measurement, None
+            return compiled_fn, fwd_bwd_measurement, None
         forward_only = not any(hasattr(arg, "requires_grad") and arg.requires_grad for arg in example_inputs)
         fwd_measurement = time_fn.time(
             "compiled_fn(*example_inputs)", globals={"compiled_fn": compiled_fn, "example_inputs": example_inputs}
@@ -564,7 +570,7 @@ class FXGraphReport:
             bwd_measurement = time_fn.time(
                 "backward_fn(*backward_args)", globals={"backward_fn": backward_fn, "backward_args": backward_args}
             )
-        return fwd_measurement, bwd_measurement
+        return compiled_fn, fwd_measurement, bwd_measurement
 
     def write_benchmark(
         self,

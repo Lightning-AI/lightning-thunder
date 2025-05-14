@@ -131,22 +131,24 @@ class TorchInductorSpecification(CompileSpecificationInterface):
     https://github.com/Lightning-AI/lightning-thunder/issues/1521
     """
 
-    def __init__(self, specification_name="inductor_backend"):
+    def __init__(self, specification_name="inductor_backend", *, skip_symbolic_trace=False):
         self.name: str = specification_name
+        self.skip_symbolic_trace = skip_symbolic_trace
 
     @staticmethod
-    def torch_inductor(fn, inputs):
+    def torch_inductor(fn, inputs, *, skip_symbolic_trace=False):
         from torch._inductor import compile as inductor_compile
         from torch.fx import symbolic_trace
 
-        fx_graph = symbolic_trace(fn)
-        return inductor_compile(fx_graph, inputs)
+        if not skip_symbolic_trace:
+            fn = symbolic_trace(fn)
+        return inductor_compile(fn, inputs)
 
     def compile(self, fn, *, inputs, **kwargs):
-        return self.torch_inductor(fn, inputs)
+        return self.torch_inductor(fn, inputs, skip_symbolic_trace=self.skip_symbolic_trace)
 
     def to_source(self, fn_name):
-        return f"TorchInductorSpecification.torch_inductor({fn_name}, inputs)"
+        return f"TorchInductorSpecification.torch_inductor({fn_name}, inputs, skip_symbolic_trace={self.skip_symbolic_trace})"
 
     def import_str(self):
         return ["import torch", "from thunder.dynamo.benchmark_utils import TorchInductorSpecification"]
@@ -508,8 +510,8 @@ def check_metrics(
             )
             return None
 
-    measure1 = try_and_log_benchmark(compile_fn1, filename1)
-    measure2 = try_and_log_benchmark(compile_fn2, filename2)
+    _, *measure1 = try_and_log_benchmark(compile_fn1, filename1)
+    _, *measure2 = try_and_log_benchmark(compile_fn2, filename2)
 
     if measure1 is None or measure2 is None:
         return measure1, measure2

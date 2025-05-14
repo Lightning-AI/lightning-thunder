@@ -7,7 +7,7 @@ import inspect
 import itertools
 import copy
 from collections import defaultdict
-from operator import itemgetter
+from collections import namedtuple
 
 import torch
 from torch.nn.modules.module import _addindent
@@ -891,7 +891,9 @@ def _torch_inductor_compile(gm, example_inputs) -> torch.nn.GraphModule:
         def forward(self, *args):
             return self.optimized_callable(*args)
 
-    return InductorModuleWrapper(torch._inductor.compile(gm, example_inputs))
+    # ref: https://github.com/pytorch/pytorch/blob/0ef5ba43a6e7fe806ea9f27929bf4328ffd1ebf4/torch/_inductor/compile_fx.py#L1921-L1922
+    # The compile_fn may mutate the GraphModule, so we need to deepcopy it
+    return InductorModuleWrapper(torch._inductor.compile(copy.deepcopy(gm), example_inputs))
 
 
 class ThunderAoTOptimizer:
@@ -982,7 +984,6 @@ def default_optimizer(gm: torch.fx.GraphModule, stats: ProfileStats) -> Callable
     Returns:
         The optimized GraphModule
     """
-    from thunder.dynamo import ThunderCompiler
     from thunder.dynamo.report import FXGraphReport
     from thunder.dynamo.benchmark_utils import (
         TorchInductorSpecification,
@@ -998,14 +999,14 @@ def default_optimizer(gm: torch.fx.GraphModule, stats: ProfileStats) -> Callable
     example_inputs_meta = [_get_example_inputs_from_placeholder(p, only_metadata=True) for p in placeholders]
     example_inputs = get_or_create_example_inputs_from_placeholders(placeholders)
 
-    report = FXGraphReport(copy.deepcopy(gm), "gm", example_inputs_meta)
-    thunderfx_compiler = ThunderCompilerOnGraphModuleSpecification(nv_skip_cache=True)
-    torchinductor = TorchInductorSpecification()
+    report = FXGraphReport(gm, "gm", example_inputs_meta)
     torcheager = TorchEagerSpecification()
+    torchinductor = TorchInductorSpecification(skip_symbolic_trace=True)
+    thunder_compiler_on_gm = ThunderCompilerOnGraphModuleSpecification()
 
     def get_timing(report, compile_fn, timer_fn):
         try:
-            measurement = report.run_benchmark(
+            compiled_fn, *measurement = report.run_benchmark(
                 compile_fn,
                 timer_fn,
                 reset_torch_dynamo=False,
@@ -1013,21 +1014,21 @@ def default_optimizer(gm: torch.fx.GraphModule, stats: ProfileStats) -> Callable
                 measure_fwd_bwd_together=True,
             )
         except Exception as e:
-            return float("inf")
-        return sum(m.median for m in measurement if m is not None)
+            return e, float("inf")
+        return compiled_fn, sum(m.median for m in measurement if m is not None)
 
+    CompilerMeasurement = namedtuple("CompilerMeasurement", ["name", "compiled_fn", "time"])
     compiled_gm_to_measurement = []
-    compiled_gm_to_measurement.append(("thunderfx", get_timing(report, thunderfx_compiler, WallTime)))
-    compiled_gm_to_measurement.append(("inductor", get_timing(report, torchinductor, WallTime)))
-    compiled_gm_to_measurement.append(("eager", get_timing(report, torcheager, WallTime)))
+    compiled_gm_to_measurement.append(
+        CompilerMeasurement("thunderfx", *get_timing(report, thunder_compiler_on_gm, WallTime))
+    )
+    compiled_gm_to_measurement.append(
+        CompilerMeasurement("torchinductor", *get_timing(report, torchinductor, WallTime))
+    )
+    compiled_gm_to_measurement.append(CompilerMeasurement("torcheager", *get_timing(report, torcheager, WallTime)))
 
-    sorted_compiled_gm_to_measurement = sorted(compiled_gm_to_measurement, key=itemgetter(1))
-    best_option = sorted_compiled_gm_to_measurement[0][0]
-    if best_option == "inductor":
-        return _torch_inductor_compile(gm, example_inputs)
-    elif best_option == "eager":
-        return gm
-    elif best_option == "thunderfx":
-        thunder_compiler = ThunderCompiler(nv_skip_cache=True)
-        split_gm = thunder_compiler(gm, sample_args=None)
-        return split_gm
+    sorted_compiled_gm_to_measurement = sorted(compiled_gm_to_measurement, key=lambda x: x.time)
+    if sorted_compiled_gm_to_measurement[0].time == float("inf"):
+        err_msg = ", ".join([f"{x.name} raised exception: {x.compiled_fn}" for x in sorted_compiled_gm_to_measurement])
+        raise RuntimeError(f"No compiler was able to compile the graph module, {err_msg}")
+    return sorted_compiled_gm_to_measurement[0].compiled_fn
