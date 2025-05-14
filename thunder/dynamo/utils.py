@@ -882,20 +882,6 @@ def get_torch_compile_kwargs(**kwargs) -> dict:
     return {k: v for k, v in kwargs.items() if k in torch_compile_kwarg_names}
 
 
-def _torch_inductor_compile(gm, example_inputs) -> torch.nn.GraphModule:
-    class InductorModuleWrapper(torch.nn.Module):
-        def __init__(self, optimized_callable):
-            super().__init__()
-            self.optimized_callable = optimized_callable
-
-        def forward(self, *args):
-            return self.optimized_callable(*args)
-
-    # ref: https://github.com/pytorch/pytorch/blob/0ef5ba43a6e7fe806ea9f27929bf4328ffd1ebf4/torch/_inductor/compile_fx.py#L1921-L1922
-    # The compile_fn may mutate the GraphModule, so we need to deepcopy it
-    return InductorModuleWrapper(torch._inductor.compile(copy.deepcopy(gm), example_inputs))
-
-
 class ThunderAoTOptimizer:
     """
     Helper class that keeps track of profiling data used by the Ahead-of-Time (AoT) optimization process.
