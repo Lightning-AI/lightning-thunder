@@ -7,8 +7,9 @@ import torch
 from torch.testing import assert_close
 
 import thunder
+import thunder.core.devices as devices
 import thunder.core.dtypes as dtypes
-from thunder.core.pytree import tree_map
+from thunder.core.pytree import tree_flatten, tree_map
 from thunder.tests.framework import assert_closer, ops, run_snippet, requiresJAX, requiresCUDA
 from thunder.tests.opinfos import OpInfo, SampleInput, opinfos
 import thunder.tests.bf16
@@ -32,6 +33,31 @@ def test_errors(op, device, dtype, executor, comp):
             return result
 
 
+def assert_consistency_of_compiletime_and_runtime(thunder_op, thunder_result):
+    from thunder.core.baseutils import sequencify
+
+    __tracebackhide__ = True
+
+    extrace: thunder.TraceCtx = thunder.last_traces(thunder_op)[-1]
+    for runtime, compiletime in zip(
+        tree_flatten(sequencify(thunder_result))[0],
+        tree_flatten(sequencify(extrace.output))[0],
+    ):
+        if isinstance(compiletime, thunder.TensorProxy):
+            torch_device = devices.to_torch_device(compiletime.device)
+            torch_dtype = dtypes.to_torch_dtype(compiletime.dtype)
+            if not (
+                (r_shape := tuple(runtime.shape)) == (c_shape := tuple(compiletime.shape))
+                and runtime.device == torch_device
+                and runtime.dtype == torch_dtype
+            ):
+                msg = (
+                    f"Runtime output has shape of `{r_shape}`, device of `{runtime.device}`, and dtype of `{runtime.dtype}` "
+                    f"but compiletime output has shape of `{c_shape}`, device of `{torch_device}`, and dtype of `{torch_dtype}`"
+                )
+                raise RuntimeError(msg)
+
+
 # Snippets run a single test using a single sample
 # TODO: should snippets be able to access the original opinfo? -- No?
 # TODO: revisit atol/rtol, maybe be more selective about which ops need a more permissive check
@@ -44,6 +70,8 @@ def snippet_torch_consistency(op: OpInfo, torch_op, sample: SampleInput, comp: C
     # TODO Review how thunder.jit returns Exception information
     if isinstance(thunder_result, Exception):
         raise thunder_result
+
+    assert_consistency_of_compiletime_and_runtime(op, thunder_result)
 
     # Try checking strictly, if that does not work, check against reference.
     try:
