@@ -45,13 +45,6 @@ jobs:
           pip install lightning_sdk -U -q
           python .github/run-quickstart-as-lit-jobs.py
 
-      - name: Run quickstart benchmark
-        if: always()
-        id: run-benchmark
-        run: |
-          pip install torch==2.6.0 torchvision==0.21 nvfuser-cu124-torch26
-          python examples/benchmarks/hf_benchmarks.py
-
       - name: Load report
         if: always()
         id: load-report
