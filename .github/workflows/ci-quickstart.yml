@@ -50,7 +50,7 @@ jobs:
         id: run-benchmark
         run: |
           pip install torch==2.6.0 torchvision==0.21 nvfuser-cu124-torch26
-          python lightning-thunder/examples/benchmarks/hf_benchmarks.py
+          python examples/benchmarks/hf_benchmarks.py
 
       - name: Load report
         if: always()
