@@ -566,30 +566,26 @@ def jit(
 
                 # !!! This will be incoporated into _transform_for_operator_executor_execution with Tom's work.
                 computation_trc = grad_transform_on_trace(computation_trc)
-                computation_traces.append(computation_trc)
 
             tmp_comp_trc = _transform_for_operator_executor_execution(computation_trc, cd.executors_list)
             is_transformed, tmp_comp_trc = maybe_sort_waits(tmp_comp_trc)
             if is_transformed:
                 computation_trc = tmp_comp_trc
-                computation_traces.append(computation_trc)
 
             extraces = transform_for_execution(
                 computation_trc,
                 executors_list=cd.executors_list,
                 use_del_last_used=False,
             )
-            computation_traces.extend(extraces)
-            computation_trc = computation_traces[-1]
+            computation_trc = extraces[-1]
             if requires_grad:
                 from thunder.core.rematerialization import rematerialize
                 from thunder.executors.torch_autograd_v2 import split_forward_backward as split_forward_backward_v2
 
                 computation_trc = rematerialize(computation_trc)
                 computation_trc, backward_trc = split_forward_backward_v2(computation_trc)
-            computation_traces.append(computation_trc)
-            computation_trc = computation_traces[-1]
             computation_trc = thunder.executors.passes.del_last_used(computation_trc)
+            computation_traces.append(computation_trc)
             if backward_trc is not None:
                 backward_trc = thunder.executors.passes.del_last_used(backward_trc, clear_mutable_collections=True)
                 backward_traces.append(backward_trc)
