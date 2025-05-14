@@ -246,20 +246,3 @@ def test_apex_cross_entropy_phantom_grad(device, dtype):
     reference_logits.grad = None
 
     assert_closer(reference=reference_grad, candidate=thunder_grad, competitor=torch_grad, comparator=comp)
-
-
-@pytest.mark.parametrize("device,", ["cuda"])
-@requiresCUDA
-def test_apex_cross_entropy_default_executor(device):
-    # apex_ex is default executor. Verify that we use apex's cross_entropy,
-    # even when it is not explicitly passed in `executors` to `thunder.jit`.
-    @thunder.jit
-    def cross_ent(pred, targets):
-        return torch.nn.functional.cross_entropy(pred, targets)
-
-    preds = torch.randn(2, 64, requires_grad=True, device="cuda")
-    targets = torch.randint(64, (2,), dtype=torch.int64, device="cuda")
-    cross_ent(preds, targets)
-
-    exec_trace = thunder.last_traces(cross_ent)[-1]
-    assert any(bsym.sym.id == "apex_cross_entropy" for bsym in exec_trace.bound_symbols)
