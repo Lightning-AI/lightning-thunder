@@ -284,6 +284,7 @@ out = thunder_model(inp)
 ```
 
 ### Benchmarking HF models
+
 In `examples/quickstart/hf_benchmarks.py` you can get an idea of how to benchmark a model for text generation, a forward pass with loss calculation, a forward pass with loss calculation and a full forward+backward pass.
 On an H100, with `torch=2.7.0` and `nvfuser-cu126-torch27`, for `deepseek-ai/DeepSeek-R1-Distill-Llama-1.5B` the speedups using either NVFuser or torch.compile executors withing `thunder` are:
 
