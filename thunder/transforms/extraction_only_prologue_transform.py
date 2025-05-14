@@ -7,7 +7,7 @@ class ExtractionOnlyPrologueTransform(thunder.Transform):
     def transform_traces_pre_prologue(self, prologue_trace, computation_trace, epilogue_trace, **kwargs):
         new_prologue_trace = from_trace(prologue_trace)
         new_bsyms = []
-
+        nums = 0
         for bsym in prologue_trace.bound_symbols:
             # NOTE - We assume TensorProxy's tagged with `STATIC_MEMORY_LOCATION` to
             #        be Parameters or Buffer. It should be safe to disable check for
@@ -16,11 +16,12 @@ class ExtractionOnlyPrologueTransform(thunder.Transform):
                 bsym.sym.id == thunder.prims.PrimIDs.CHECK_TENSOR_SHAPE_AND_METADATA
                 and ProxyTag.STATIC_MEMORY_LOCATION in bsym.args[0].tags
             ):
+                nums += 1
                 continue
 
             new_bsyms.append(bsym)
 
         new_prologue_trace.bound_symbols = new_bsyms
-
+        print(f"*******************nums: {nums}")
         new_prologue_trace.set_provenance("Extraction only prologue pass")
         return new_prologue_trace, computation_trace, epilogue_trace

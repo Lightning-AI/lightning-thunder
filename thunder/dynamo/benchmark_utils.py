@@ -142,7 +142,6 @@ class TorchInductorSpecification(CompileSpecificationInterface):
 
         if not skip_symbolic_trace:
             fn = symbolic_trace(fn)
-        assert isinstance(fn, torch.fx.GraphModule)
         return inductor_compile(fn, inputs)
 
     def compile(self, fn, *, inputs, **kwargs):

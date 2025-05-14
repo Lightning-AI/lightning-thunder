@@ -943,6 +943,7 @@ def get_or_create_example_inputs_from_placeholders(placeholders: list[torch.fx.N
     outs = []
     for p in placeholders:
         try:
+            # Ref: https://github.com/pytorch/pytorch/blob/8f3d7972ad3e41ce4dcb1e9ff7bd1a3b0a671977/torch/_dynamo/variables/builder.py#L311
             input: TensorWeakRef | torch.SymInt = p.meta["grapharg"].example
             if isinstance(input, torch.SymInt):
                 input = input.node.hint
