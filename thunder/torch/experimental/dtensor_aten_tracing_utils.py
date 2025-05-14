@@ -161,7 +161,7 @@ def get_fx_graph_and_output(torch_op, *args, **kwargs) -> tuple[torch.fx.GraphMo
 
     flat_aot_output, _ = pytree.tree_flatten(aot_output)
 
-    return fwd_graph, flat_aot_output
+    return fwd_graph, aot_output, flat_aot_output
 
 
 def get_aten_symbols_and_output(
@@ -220,7 +220,7 @@ def decompose_into_aten_subsymbols(torch_op, comp_trace, *args, **kwargs) -> Seq
     # NOTE: Setting the TracingContext is important else `aot_function` used in `get_fx_graph`
     #       may find different FakeTensorMode.
     with tracing(TracingContext(FakeTensorMode())):
-        aot_graph, flat_fake_output = get_fx_graph_and_output(torch_op, *args, **kwargs)
+        aot_graph, aot_output, flat_fake_output = get_fx_graph_and_output(torch_op, *args, **kwargs)
 
     # Step 4
     # The order of subsymbols should be roughly

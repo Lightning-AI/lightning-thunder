@@ -65,9 +65,9 @@ def register_method_for_dtensor(torch_fn, single_device_symbol, dtensor_symbol):
 
 def dtensor_mul_meta(a, b):
     with tracing(TracingContext(FakeTensorMode())):
-        _, output = get_fx_graph_and_output(torch.mul, a, b)
+        _, output, _ = get_fx_graph_and_output(torch.mul, a, b)
     local_tensor_proxy = a._local_tensor
-    spec = output[0]._spec
+    spec = output._spec
     spec_proxy = AnyProxy(spec, history=a.history)
     return DTensorProxy(
         local_tensor_proxy=local_tensor_proxy,
