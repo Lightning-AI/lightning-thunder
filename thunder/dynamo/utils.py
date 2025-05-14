@@ -1002,9 +1002,9 @@ def default_optimizer(gm: torch.fx.GraphModule, stats: ProfileStats) -> Callable
     report = FXGraphReport(gm, "gm", example_inputs_meta)
     torcheager = TorchEagerSpecification()
     torchinductor = TorchInductorSpecification(skip_symbolic_trace=True)
-    thunder_compiler_on_gm = ThunderCompilerOnGraphModuleSpecification()
+    thunder_compiler_on_gm = ThunderCompilerOnGraphModuleSpecification(nv_skip_cache=True)
 
-    def get_timing(report, compile_fn, timer_fn):
+    def get_compiled_fn_and_timing(report, compile_fn, timer_fn):
         try:
             compiled_fn, *measurement = report.run_benchmark(
                 compile_fn,
@@ -1020,12 +1020,14 @@ def default_optimizer(gm: torch.fx.GraphModule, stats: ProfileStats) -> Callable
     CompilerMeasurement = namedtuple("CompilerMeasurement", ["name", "compiled_fn", "time"])
     compiled_gm_to_measurement = []
     compiled_gm_to_measurement.append(
-        CompilerMeasurement("thunderfx", *get_timing(report, thunder_compiler_on_gm, WallTime))
+        CompilerMeasurement("thunderfx", *get_compiled_fn_and_timing(report, thunder_compiler_on_gm, WallTime))
     )
     compiled_gm_to_measurement.append(
-        CompilerMeasurement("torchinductor", *get_timing(report, torchinductor, WallTime))
+        CompilerMeasurement("torchinductor", *get_compiled_fn_and_timing(report, torchinductor, WallTime))
     )
-    compiled_gm_to_measurement.append(CompilerMeasurement("torcheager", *get_timing(report, torcheager, WallTime)))
+    compiled_gm_to_measurement.append(
+        CompilerMeasurement("torcheager", *get_compiled_fn_and_timing(report, torcheager, WallTime))
+    )
 
     sorted_compiled_gm_to_measurement = sorted(compiled_gm_to_measurement, key=lambda x: x.time)
     if sorted_compiled_gm_to_measurement[0].time == float("inf"):
