@@ -5,7 +5,7 @@ from thunder.torch import torchsymbol, TensorLike, register_function, TensorProx
 import thunder.torch as ltorch
 from thunder.core.pytree import tree_map, tree_flatten, tree_unflatten
 from thunder import clang
-from thunder.torch.experimental.dtensor_aten_tracing_utils import trace_torch_op_to_aten_ops, get_fx_graph_and_output
+from thunder.torch.experimental.dtensor_utils import get_fx_graph_and_output
 from thunder.torch.experimental.dtensor_proxy import DTensorProxy
 from thunder.torch.langctx import register_method
 import thunder.core.utils as utils
@@ -23,6 +23,16 @@ from thunder.core.transforms import (
 from thunder.distributed import get_skip_data_parallel_grad_sync
 from thunder.executors.torchex import ex as pytorchex
 from thunder.executors.pythonex import ex as pythonex
+from thunder.core.prims import make_prim, OpTags
+from thunder.core import prims
+from thunder.core.proxies import AnyProxy, TensorProxy
+from thunder.executors.torchex import ex as pytorchex
+from thunder.executors.pythonex import ex as pythonex
+from thunder.core import baseutils
+from thunder.core import utils
+from thunder import clang
+from thunder.core.transforms import register_grad, get_grad, put_grad
+
 
 import torch
 from torch._subclasses.fake_tensor import FakeTensorMode
@@ -63,9 +73,51 @@ def register_method_for_dtensor(torch_fn, single_device_symbol, dtensor_symbol):
     register_method(torch_fn.__name__, method_wrapper)
 
 
+def _check_dtensor_spec_repr_meta(s: AnyProxy, value: str) -> None:
+    baseutils.check_type(s, AnyProxy)
+
+
+check_dtensor_spec_repr = make_prim(
+    "check_dtensor_spec_repr",
+    "check_dtensor_spec_repr",
+    meta=_check_dtensor_spec_repr_meta,
+    tags=(OpTags.DONT_DCE,),
+)
+
+
+def _check_dtensor_spec_repr(s: object, value: str) -> None:
+    utils.check(repr(s) == value, lambda: f"Expected '{s} to be equal to '{value}")
+
+
+_check_python_repr_impl = pythonex.register_operator(
+    "check_python_repr", like=check_dtensor_spec_repr, fn=_check_dtensor_spec_repr
+)
+
+pythonex.register_implementation(check_dtensor_spec_repr, _check_python_repr_impl)
+
+
+def handle_check_dtensor_spec_in_prologue(prim, prologue_trace, args) -> bool:
+    if prim == check_dtensor_spec_repr:
+        # How does torch.compile guard for this?
+        a = args[0]
+        o = AnyProxy(None, prefix="dtensor_spec")
+        bsym = prims.unpack_attr.bind(a, "_spec", output=o)
+        prologue_trace.bound_symbols.append(bsym)
+        check_dtensor_spec_repr(o, repr(args[1]))
+
+        # Also adds metadata check for _local_tensor
+        t = TensorProxy(like=a._local_tensor, requires_grad=a._local_tensor.requires_grad)
+        bsym = prims.unpack_attr.bind(a, "_local_tensor", output=t)
+        prologue_trace.bound_symbols.append(bsym)
+        clang.check_tensor_shape_and_metadata(t)
+        return True
+
+    return False
+
+
 def dtensor_mul_meta(a, b):
     with tracing(TracingContext(FakeTensorMode())):
-        _, output, _ = get_fx_graph_and_output(torch.mul, a, b)
+        _, output = get_fx_graph_and_output(torch.mul, a, b)
     local_tensor_proxy = a._local_tensor
     spec = output._spec
     spec_proxy = AnyProxy(spec, history=a.history)
@@ -108,19 +160,5 @@ def dtensor_mul(a: TensorLike, b: TensorLike) -> TensorLike:
     return dtensor_mul_prim(a, b)
 
 
-@dtensor_torchsymbol(torch.ops.aten.add.Tensor, id="aten.add.Tensor")
-def aten_add(a, b, alpha=1):
-    if isinstance(alpha, TensorProxy) or alpha != 1:
-        b = b * alpha
-
-    return clang.add(a, b)
-
-
-@dtensor_torchsymbol(torch.add, id="dtensor.torch.add")
-def dtensor_add(a: TensorLike, b: TensorLike, alpha=1) -> TensorLike:
-    return trace_torch_op_to_aten_ops(torch.add, a, b, alpha=alpha)
-
-
 def register_dtensor_and_aten_function():
-    register_function_for_dtensor(torch.add, ltorch.add, dtensor_add, is_method=True)
     register_function_for_dtensor(torch.mul, ltorch.mul, dtensor_mul, is_method=True)

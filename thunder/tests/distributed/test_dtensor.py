@@ -46,13 +46,13 @@ class DTensorTest(DistributedParallelTestCase):
         in_dtensor = distribute_tensor(torch.randn(dim_size, dim_size, requires_grad=True), mesh, [Shard(0)])
 
         # Verify torch API works
-        _helper(lambda x, w: torch.add(x, w), in_dtensor, w_dtensor)
+        _helper(lambda x, w: torch.mul(x, w), in_dtensor, w_dtensor)
 
         # Verify calling method works
-        # _helper(lambda x, w: torch.Tensor.add(x, w), in_dtensor, w_dtensor)
+        _helper(lambda x, w: torch.Tensor.mul(x, w), in_dtensor, w_dtensor)
 
         # # Verify calling special method works
-        # _helper(lambda x, w: x + w, in_dtensor, w_dtensor)
+        _helper(lambda x, w: x * w, in_dtensor, w_dtensor)
 
     def test_dtensor_unsupported(self):
         num_devices = self.world_size
