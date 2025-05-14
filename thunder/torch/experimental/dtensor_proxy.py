@@ -14,7 +14,7 @@ class DTensorProxy(TensorProxy):
         self,
         name=None,
         *,
-        local_tensor_proxy=None,
+        local_tensor=None,
         spec=None,
         like=None,
         shape=None,
@@ -43,15 +43,18 @@ class DTensorProxy(TensorProxy):
             thunder_fsdp_padding_size=thunder_fsdp_padding_size,
         )
         if like is not None:
-            self._spec = like._spec if spec is None else spec
-            self._local_tensor = like._local_tensor if local_tensor_proxy is None else local_tensor_proxy
+            assert isinstance(like.spec if spec is None else spec, AnyProxy)
+            assert isinstance(like.local_tensor if local_tensor is None else local_tensor, TensorProxy)
+            self.spec = like.spec if spec is None else spec
+            self.local_tensor = like.local_tensor if local_tensor is None else local_tensor
         else:
             assert isinstance(spec, AnyProxy)
-            self._spec = spec
-            self._local_tensor = local_tensor_proxy
+            assert isinstance(local_tensor, TensorProxy)
+            self.spec = spec
+            self.local_tensor = local_tensor
 
     def type_string(self):
-        return f"DTensor {self.device.device_str()} {self.dtype.shortname()}{list(self._shape)} mesh={self._spec._o.mesh}, placements={self._spec._o.placements}"
+        return f"DTensor {self.device.device_str()} {self.dtype.shortname()}{list(self._shape)} mesh={self.spec._o.mesh}, placements={self.spec._o.placements}"
 
     def replace(self, **changes):
         r"""Return a copy of the TensorProxy object with new values for the specified fields as given to the constructor as arguments.
@@ -87,8 +90,8 @@ class DTensorProxy(TensorProxy):
         tags = changes.get("tags", self.tags)
         return DTensorProxy(
             name=name,
-            local_tensor_proxy=self._local_tensor,
-            spec=self._spec,
+            local_tensor=self.local_tensor,
+            spec=self.spec,
             tags=tags,
             shape=shape,
             device=device,
@@ -113,7 +116,7 @@ def proxify_dtensor(x, name: str | None = None, history: None | tuple = None) ->
         local_tensor_proxy = proxy(t, history=history)
         return DTensorProxy(
             name,
-            local_tensor_proxy=local_tensor_proxy,
+            local_tensor=local_tensor_proxy,
             spec=spec_proxy,
             shape=tuple(shape),
             device=device,

@@ -61,11 +61,11 @@ def get_fx_graph_and_output(torch_op, *args, **kwargs) -> tuple[torch.fx.GraphMo
 
             if isinstance(t, DTensorProxy):
                 i_t = torch.randn(
-                    t._local_tensor.shape,
-                    device=to_torch_device(t._local_tensor.device),
-                    dtype=to_torch_dtype(t._local_tensor.dtype),
+                    t.local_tensor.shape,
+                    device=to_torch_device(t.local_tensor.device),
+                    dtype=to_torch_dtype(t.local_tensor.dtype),
                 )
-                return DTensor(i_t, t._spec._o, requires_grad=False)
+                return DTensor(i_t, t.spec._o, requires_grad=False)
 
             return torch.randn(t.shape, device=to_torch_device(t.device), dtype=to_torch_dtype(t.dtype))
 

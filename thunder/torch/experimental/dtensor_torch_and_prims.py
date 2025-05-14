@@ -106,7 +106,7 @@ def handle_check_dtensor_spec_in_prologue(prim, prologue_trace, args) -> bool:
         check_dtensor_spec_repr(o, repr(args[1]))
 
         # Also adds metadata check for _local_tensor
-        t = TensorProxy(like=a._local_tensor, requires_grad=a._local_tensor.requires_grad)
+        t = TensorProxy(like=a.local_tensor, requires_grad=a.local_tensor.requires_grad)
         bsym = prims.unpack_attr.bind(a, "_local_tensor", output=t)
         prologue_trace.bound_symbols.append(bsym)
         clang.check_tensor_shape_and_metadata(t)
@@ -118,11 +118,11 @@ def handle_check_dtensor_spec_in_prologue(prim, prologue_trace, args) -> bool:
 def dtensor_mul_meta(a, b):
     with tracing(TracingContext(FakeTensorMode())):
         _, output = get_fx_graph_and_output(torch.mul, a, b)
-    local_tensor_proxy = a._local_tensor
+    local_tensor_proxy = TensorProxy(like=a.local_tensor)
     spec = output._spec
     spec_proxy = AnyProxy(spec, history=a.history)
     return DTensorProxy(
-        local_tensor_proxy=local_tensor_proxy,
+        local_tensor=local_tensor_proxy,
         spec=spec_proxy,
         shape=tuple(spec.shape),
         device=local_tensor_proxy.device,
