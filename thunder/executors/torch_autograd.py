@@ -48,7 +48,7 @@ def rename_bwd_trace_outputs(bwd_trace: TraceCtx, fwd_trace: TraceCtx) -> TraceC
 
     for fwd_arg, bwd_out in zip(fwd_inputs, bwd_outputs):
         if isinstance(bwd_out, TensorProxy):
-            swap_map[variableify(bwd_out)] = bwd_out.replace_name(f"grad_for_{fwd_arg.name}")
+            swap_map[variableify(bwd_out)] = bwd_out.replace_name(f"grad_for_{fwd_arg.name}", disambiguate=True)
     reset_tracectx(trace_tok)
 
     renamed_bwd_trace = from_trace(bwd_trace)
