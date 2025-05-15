@@ -2,7 +2,7 @@ from inspect import Parameter, Signature
 
 import thunder
 import thunder.core.prims as prims
-from thunder.core.pytree import tree_map
+from thunder.core.pytree import tree_flatten, tree_map
 from thunder.core.transforms import augmented_forward_pass, backward_pass
 
 
@@ -16,6 +16,7 @@ def grad_transform_on_trace(ff_trace):
             # remove the input that is also returned as part of the output
             prims.python_return((python_return.args[0]["output"],))
         output, all_intermediates = augmented_forward_pass(*args, trace=ff_trace, **kwargs)
+        # !!! need to filter out the tensors that don't require grad
         output_grad = tree_map(prims.get_grad, output)
         # restore the args to the result
         result = {"flat_args": args, "output": output[0]}
@@ -104,6 +105,10 @@ def split_forward_backward(joint_trace):
 
     with thunder.core.trace.tracectx(forward_trace):
         prims.python_return(fw_output_dict, (saved_for_backward_tensors, saved_for_backward_other))
+
+    # !!!
+    if len(backward_part_bsyms) == 0:
+        return forward_trace, None
 
     def backward_fn(saved_for_backward, cotangents):
         pass
