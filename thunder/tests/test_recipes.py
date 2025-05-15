@@ -6,6 +6,7 @@ import transformers
 import torch
 
 from thunder.extend import deregister_executor
+from thunder.executors import nvfuser_available
 from torch.testing import assert_close, make_tensor
 from thunder.tests.framework import version_between, IS_WINDOWS
 
@@ -27,6 +28,7 @@ def test_default_recipe_basic_bert():
 
 
 @pytest.mark.skipif(IS_WINDOWS, reason="slow on Windows")
+@pytest.mark.skipif(not nvfuser_available(), reason="NVFuser is not available")
 def test_recipe_basic_bert():
     bert = transformers.BertForSequenceClassification(transformers.BertConfig())
     del bert.bert.encoder.layer[1:]
@@ -49,7 +51,7 @@ def test_recipe_basic_bert():
     # cleanup after test
     deregister_executor("inplace_index_copy_ex")
 
-
+@pytest.mark.skipif(not nvfuser_available(), reason="NVFuser is not available")
 def test_recipe_basic_bert_fx():
     bert = transformers.BertForSequenceClassification(transformers.BertConfig())
     del bert.bert.encoder.layer[1:]
