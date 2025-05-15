@@ -1,7 +1,7 @@
 name: Benchmark HF Models
 
 on:
-  workflow_dispatch: {}  # Trigger manually via GitHub UI
+  workflow_dispatch: {} # Trigger manually via GitHub UI
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

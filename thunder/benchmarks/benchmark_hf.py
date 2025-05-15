@@ -78,16 +78,23 @@ def inference_gen():
     tokenizer = transformers.AutoTokenizer.from_pretrained(model_name)
     base_model = transformers.AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.bfloat16)
     base_model.eval().requires_grad_(False).to(device)
-    inp = tokenizer(["Hello world! Here's a long story"], return_tensors='pt').to(device)
+    inp = tokenizer(["Hello world! Here's a long story"], return_tensors="pt").to(device)
 
     def generate(model, inp, cache=None):
-        model.generate(**inp, pad_token_id=tokenizer.eos_token_id, do_sample=False,
-                       cache_implementation=cache, max_new_tokens=100, top_p=1.0,
-                       temperature=1)
+        model.generate(
+            **inp,
+            pad_token_id=tokenizer.eos_token_id,
+            do_sample=False,
+            cache_implementation=cache,
+            max_new_tokens=100,
+            top_p=1.0,
+            temperature=1,
+        )
 
     compiled_models = {
-        recipe.fuser[0] if isinstance(recipe.fuser, list) else recipe.fuser:
-        thunder.compile(base_model, plugins=plugins, recipe=recipe)
+        recipe.fuser[0] if isinstance(recipe.fuser, list) else recipe.fuser: thunder.compile(
+            base_model, plugins=plugins, recipe=recipe
+        )
         for recipe in recipes
     }
 
@@ -98,14 +105,17 @@ def inference_fwd():
     tokenizer = transformers.AutoTokenizer.from_pretrained(model_name)
     base_model = transformers.AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.bfloat16)
     base_model.eval().requires_grad_(False).to(device)
-    inp = tokenizer(["Hello world! Here's a long story"], return_tensors='pt', max_length=2048, truncation=True).to(device)
+    inp = tokenizer(["Hello world! Here's a long story"], return_tensors="pt", max_length=2048, truncation=True).to(
+        device
+    )
 
     def fwd(model, inp, cache=None):
         model(**inp)
 
     compiled_models = {
-        recipe.fuser[0] if isinstance(recipe.fuser, list) else recipe.fuser:
-        thunder.compile(base_model, plugins=plugins, recipe=recipe)
+        recipe.fuser[0] if isinstance(recipe.fuser, list) else recipe.fuser: thunder.compile(
+            base_model, plugins=plugins, recipe=recipe
+        )
         for recipe in recipes
     }
 
@@ -115,7 +125,7 @@ def inference_fwd():
 def training_fwd():
     tokenizer = transformers.AutoTokenizer.from_pretrained(model_name)
     base_model = transformers.AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.bfloat16).to(device)
-    inp = tokenizer(["Hello world! Here's a long story"], return_tensors='pt', max_length=2048, truncation=True)
+    inp = tokenizer(["Hello world! Here's a long story"], return_tensors="pt", max_length=2048, truncation=True)
     inp["labels"] = inp["input_ids"]
     inp.to(device)
 
@@ -123,8 +133,9 @@ def training_fwd():
         model(**inp)
 
     compiled_models = {
-        recipe.fuser[0] if isinstance(recipe.fuser, list) else recipe.fuser:
-        thunder.compile(base_model, plugins=plugins, recipe=recipe)
+        recipe.fuser[0] if isinstance(recipe.fuser, list) else recipe.fuser: thunder.compile(
+            base_model, plugins=plugins, recipe=recipe
+        )
         for recipe in recipes
     }
 
@@ -134,7 +145,7 @@ def training_fwd():
 def training_fwd_bwd():
     tokenizer = transformers.AutoTokenizer.from_pretrained(model_name)
     base_model = transformers.AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.bfloat16).to(device)
-    inp = tokenizer(["Hello world! Here's a long story"], return_tensors='pt', max_length=2048, truncation=True)
+    inp = tokenizer(["Hello world! Here's a long story"], return_tensors="pt", max_length=2048, truncation=True)
     inp["labels"] = inp["input_ids"]
     inp.to(device)
 
@@ -142,18 +153,20 @@ def training_fwd_bwd():
         model(**inp).loss.backward()
 
     compiled_models = {
-        recipe.fuser[0] if isinstance(recipe.fuser, list) else recipe.fuser:
-        thunder.compile(base_model, plugins=plugins, recipe=recipe)
+        recipe.fuser[0] if isinstance(recipe.fuser, list) else recipe.fuser: thunder.compile(
+            base_model, plugins=plugins, recipe=recipe
+        )
         for recipe in recipes
     }
 
     run_and_profile("fwd_bwd", fwd_bwd, base_model, inp, compiled_models, cache="static")
 
+
 if __name__ == "__main__":
     torch.backends.cuda.matmul.allow_tf32 = True
     root.mkdir(parents=True, exist_ok=True)
 
-    #inference_gen()
-    #inference_fwd()
+    # inference_gen()
+    # inference_fwd()
     training_fwd()
     training_fwd_bwd()
