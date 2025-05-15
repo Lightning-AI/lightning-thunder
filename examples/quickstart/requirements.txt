@@ -1,2 +1,1 @@
 transformers
-nvfuser-cu126-torch27
