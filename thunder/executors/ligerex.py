@@ -9,16 +9,21 @@ import litgpt
 
 import triton
 
-import liger_kernel.ops.rms_norm
-import liger_kernel.ops.layer_norm
-import liger_kernel.ops.cross_entropy
-import liger_kernel.ops.rope
-import liger_kernel.ops.geglu
-import liger_kernel.ops.swiglu
-import liger_kernel.ops.kl_div
-import liger_kernel.ops.fused_linear_cross_entropy
-import liger_kernel.ops.group_norm
-from liger_kernel.ops.utils import calculate_settings
+try:
+    import liger_kernel.ops.rms_norm
+    import liger_kernel.ops.layer_norm
+    import liger_kernel.ops.cross_entropy
+    import liger_kernel.ops.rope
+    import liger_kernel.ops.geglu
+    import liger_kernel.ops.swiglu
+    import liger_kernel.ops.kl_div
+    import liger_kernel.ops.fused_linear_cross_entropy
+    import liger_kernel.ops.group_norm
+    from liger_kernel.ops.utils import calculate_settings
+
+    LIGER_AVAILABLE = True
+except ImportError:
+    LIGER_AVAILABLE = False
 
 import thunder
 import thunder.core.dtypes as dtypes
@@ -32,6 +37,10 @@ from thunder.extend import OperatorExecutor, register_executor
 
 liger_ex: OperatorExecutor = OperatorExecutor("liger", version="0.5.8")
 register_executor(liger_ex)
+
+
+def liger_available() -> bool:
+    return LIGER_AVAILABLE
 
 
 prod = lambda *args: functools.reduce(lambda x, y: x * y, args)
@@ -124,11 +133,12 @@ def rms_norm_execution_transform(x: TensorProxy, weight: TensorProxy, eps: float
     return Y
 
 
-liger_ex.register_implementation(
-    rms_norm,
-    execution_transform=rms_norm_execution_transform,
-    grad_transform=rms_norm_grad_transform,
-)
+if liger_available():
+    liger_ex.register_implementation(
+        rms_norm,
+        execution_transform=rms_norm_execution_transform,
+        grad_transform=rms_norm_grad_transform,
+    )
 
 
 def geglu_fwd_meta(
@@ -181,11 +191,12 @@ def geglu_impl(a: TensorProxy, b: TensorProxy) -> TensorProxy:
 liger_geglu = liger_ex.register_operator("liger_geglu", fn=geglu_impl, like=geglu_impl)
 
 
-liger_ex.register_implementation(
-    liger_geglu,
-    execution_transform=geglu_execution_transform,
-    grad_transform=geglu_grad_transform,
-)
+if liger_available():
+    liger_ex.register_implementation(
+        liger_geglu,
+        execution_transform=geglu_execution_transform,
+        grad_transform=geglu_grad_transform,
+    )
 
 
 def rope_fwd_meta(
@@ -242,11 +253,12 @@ def rope_impl(q, k, cos, sin):
 liger_rope = liger_ex.register_operator("liger_rope", fn=rope_impl, like=rope_impl)
 
 
-liger_ex.register_implementation(
-    liger_rope,
-    execution_transform=rope_execution_transform,
-    grad_transform=rope_grad_transform,
-)
+if liger_available():
+    liger_ex.register_implementation(
+        liger_rope,
+        execution_transform=rope_execution_transform,
+        grad_transform=rope_grad_transform,
+    )
 
 
 def apply_rope_meta(x, cos, sin):
@@ -324,11 +336,12 @@ def layer_norm_execution_transform(x, weight, bias, eps):
     return Y
 
 
-liger_ex.register_implementation(
-    layer_norm,
-    execution_transform=layer_norm_execution_transform,
-    grad_transform=layer_norm_grad_transform,
-)
+if liger_available():
+    liger_ex.register_implementation(
+        layer_norm,
+        execution_transform=layer_norm_execution_transform,
+        grad_transform=layer_norm_grad_transform,
+    )
 
 
 def cross_entropy_fwd_meta(
@@ -422,11 +435,12 @@ def cross_entropy_execution_transform(
     return loss
 
 
-liger_ex.register_implementation(
-    cross_entropy,
-    execution_transform=cross_entropy_execution_transform,
-    grad_transform=cross_entropy_grad_transform,
-)
+if liger_available():
+    liger_ex.register_implementation(
+        cross_entropy,
+        execution_transform=cross_entropy_execution_transform,
+        grad_transform=cross_entropy_grad_transform,
+    )
 
 
 def swiglu_fwd_meta(
@@ -474,11 +488,12 @@ def swiglu_grad_transform(a, b):
     return res
 
 
-liger_ex.register_implementation(
-    liger_swiglu_forward,
-    grad_transform=swiglu_grad_transform,
-    execution_transform=liger_swiglu_forward,
-)
+if liger_available():
+    liger_ex.register_implementation(
+        liger_swiglu_forward,
+        grad_transform=swiglu_grad_transform,
+        execution_transform=liger_swiglu_forward,
+    )
 
 
 def kl_div_fwd_meta(
@@ -564,11 +579,12 @@ def kl_div_execution_transform(
     return x
 
 
-liger_ex.register_implementation(
-    kl_div,
-    execution_transform=kl_div_execution_transform,
-    grad_transform=kl_div_grad_transform,
-)
+if liger_available():
+    liger_ex.register_implementation(
+        kl_div,
+        execution_transform=kl_div_execution_transform,
+        grad_transform=kl_div_grad_transform,
+    )
 
 
 def fused_linear_cross_entropy_fwd_meta(
@@ -641,11 +657,12 @@ def fused_linear_cross_entropy_grad_transform(
     return loss
 
 
-liger_ex.register_implementation(
-    liger_fused_linear_cross_entropy_forward,
-    grad_transform=fused_linear_cross_entropy_grad_transform,
-    execution_transform=liger_fused_linear_cross_entropy_forward,
-)
+if liger_available():
+    liger_ex.register_implementation(
+        liger_fused_linear_cross_entropy_forward,
+        grad_transform=fused_linear_cross_entropy_grad_transform,
+        execution_transform=liger_fused_linear_cross_entropy_forward,
+    )
 
 
 def group_norm_fwd_meta(
@@ -726,8 +743,9 @@ def group_norm_execution_transform(
     return Y
 
 
-liger_ex.register_implementation(
-    group_norm,
-    execution_transform=group_norm_execution_transform,
-    grad_transform=group_norm_grad_transform,
-)
+if liger_available():
+    liger_ex.register_implementation(
+        group_norm,
+        execution_transform=group_norm_execution_transform,
+        grad_transform=group_norm_grad_transform,
+    )
