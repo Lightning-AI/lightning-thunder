@@ -41,7 +41,7 @@ def measure_fw_and_bw_memory_usage(fw_trace, bw_trace):
 def test_view_ops():
     def test(func, *shapes):
         inputs = [make_tensor(shape, dtype=torch.float32, device="cuda", requires_grad=True) for shape in shapes]
-        cfunc = TorchExecutor.make_callable(func, disable_preprocessing=False)
+        cfunc = thunder.jit(func, executors=["torch"], debug_options=thunder.DebugOptions(check_traces=True))
         cfunc(*inputs)
 
         fw_trace = thunder.last_traces(cfunc)[-1]
@@ -116,4 +116,4 @@ def test_nanogpt_block():
     assert max_mem_fw[0] == 381754368
     assert sum(max_mem_fw[1].values()) == 375462912
     assert max_mem_bw[0] == 437292032
-    assert sum(max_mem_bw[1].values()) == 40934400
+    assert sum(max_mem_bw[1].values()) == 34642944

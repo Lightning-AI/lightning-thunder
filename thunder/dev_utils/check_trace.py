@@ -1,3 +1,6 @@
+import thunder
+
+
 def check_subsymbols(parent_bsym):
     if parent_bsym.sym.is_prim:
         # assert that there are no subsymbols?
@@ -22,6 +25,12 @@ def check_trace(trace):
     # - args vs. flat_args in return
     known_proxies = {}
     for bsym in trace.bound_symbols:
+        if bsym.sym == thunder.core.prims.unpack_sequence:
+            coll = bsym.args[0].collection()
+            assert len(coll) == len(bsym.output), "unpack collection length mismatch"
+            for c, o in zip(coll, bsym.output):
+                assert c is o, f"mismatch in unpack collection: {c} {o}"
+
         for a in bsym.flat_proxy_args:
             assert a.name in known_proxies, f"unknown proxy {a.name} is used in {bsym} args"
             assert known_proxies[a.name] is a, f"proxy name collision {a.name} in {bsym} args"

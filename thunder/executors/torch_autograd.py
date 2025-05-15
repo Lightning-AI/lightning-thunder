@@ -6,7 +6,7 @@ import torch
 import thunder.core.utils as utils
 from thunder.core.prims import PrimIDs
 from thunder.core.proxies import TensorProxy, variableify
-from thunder.core.pytree import tree_flatten
+from thunder.core.pytree import tree_flatten, tree_map
 from thunder.core.symbol import BoundSymbol
 from thunder.core.trace import TraceCtx, from_trace, set_tracectx, reset_tracectx
 from thunder.core.transform_common import replace_redundant_inputs
@@ -54,6 +54,12 @@ def rename_bwd_trace_outputs(bwd_trace: TraceCtx, fwd_trace: TraceCtx) -> TraceC
     renamed_bwd_trace = from_trace(bwd_trace)
     renamed_bwd_trace.bound_symbols = []
 
+    def swap_as_needed(a):
+        if not isinstance(a, TensorProxy):
+            return a
+        return swap_map.get(variableify(a), a)
+
+    renamed_bwd_trace.args = tree_map(swap_as_needed, renamed_bwd_trace.args)
     bsym: BoundSymbol
     for bsym in bwd_trace.bound_symbols:
         renamed_bwd_trace.bound_symbols.append(bsym.from_bsym_swap_proxies(swap_map=swap_map))
@@ -246,8 +252,15 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     # the forward trace and inputs of the backward trace.
     fw_trace, bw_trace = forward_and_backward_from_trace(primal_trace, torch_autograd=True)
 
-    fw_traces = [fw_trace]
-    bw_traces = [bw_trace]
+    if compile_stats is not None:
+        fw_traces = compile_stats.last_traces
+        bw_traces = compile_stats.last_backward_traces
+    else:
+        fw_traces = []
+        bw_traces = []
+
+    fw_traces.append(fw_trace)
+    bw_traces.append(bw_trace)
 
     from thunder.distributed import FSDPType
 
@@ -426,11 +439,8 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     bw_extrace = del_last_used(bw_extrace, clear_mutable_collections=True)
     bw_traces.append(bw_extrace)
 
-    bw_trace = rename_bwd_trace_outputs(bw_extrace, fw_extrace)
-
-    if compile_stats is not None:
-        compile_stats.last_traces += fw_traces
-        compile_stats.last_backward_traces += bw_traces
+    bw_extrace = rename_bwd_trace_outputs(bw_extrace, fw_extrace)
+    bw_traces.append(bw_extrace)
 
     # Enable wrapping with `te.fp8_autocast`.
     fw_extrace._include_te_fp8_autocast = True
