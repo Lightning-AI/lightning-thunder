@@ -304,8 +304,8 @@ def compile(
         recipe = thunder.recipes.BaseRecipe(executors=default_executor_names)
 
     if recipe is not None and plugins:
-        if not isinstance(recipe, BaseRecipe):
-            raise TypeError(f"`recipe` must be an instance of BaseRecipe, got {type(recipe).__name__}")
+        if recipe not in thunder.recipes.get_recipes():
+            raise ValueError(f"Recipe {recipe} not recognized. Available recipes are {thunder.recipes.get_recipes()}.")
         recipe.add_plugins(plugins)
 
     return recipe.apply(fn)
