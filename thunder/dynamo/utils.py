@@ -1001,7 +1001,7 @@ def default_optimizer(gm: torch.fx.GraphModule, stats: ProfileStats) -> Callable
                 measure_fwd_bwd_together=True,
             )
         except Exception as e:
-            return e, float("inf")
+            return str(e), float("inf")
         return compiled_fn, sum(m.median for m in measurement if m is not None)
 
     CompilerMeasurement = namedtuple("CompilerMeasurement", ["name", "compiled_fn", "time"])
