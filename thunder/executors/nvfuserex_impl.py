@@ -2752,7 +2752,11 @@ def _cross_entropy_check_(
     if nvfuser_version() < LooseVersion("0.2.10"):
         return False
 
-    if a.shape[-2] != target.shape[-1]:
+    # TODO: support higher dim inputs
+    if a.ndim != 2 or a.ndim - 1 != target.ndim:
+        return False
+
+    if a.shape[0] != target.shape[0]:
         return False
 
     # input must be cast to float32
@@ -2767,7 +2771,7 @@ def _cross_entropy_check_(
     if ignore_index >= 0:
         return False
 
-    if (weight, size_average, reduce) != (None, None, None):
+    if not all(x is None for x in (weight, size_average, reduce)):
         return False
 
     if label_smoothing != 0.0:
