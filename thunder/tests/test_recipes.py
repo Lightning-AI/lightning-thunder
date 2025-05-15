@@ -51,6 +51,7 @@ def test_recipe_basic_bert():
     # cleanup after test
     deregister_executor("inplace_index_copy_ex")
 
+
 @pytest.mark.skipif(not nvfuser_available(), reason="NVFuser is not available")
 def test_recipe_basic_bert_fx():
     bert = transformers.BertForSequenceClassification(transformers.BertConfig())
