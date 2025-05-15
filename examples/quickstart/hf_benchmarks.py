@@ -1,5 +1,5 @@
 from pathlib import Path
-
+from datetime import datetime
 import torch
 import transformers
 
@@ -21,7 +21,9 @@ class DebugRecipe(BaseRecipe):
 device = "cuda"
 model_name = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
 
-root = Path("./results")
+timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+root = Path(f"./results/{timestamp}")
+
 save_traces = True
 save_profiles = False
 plugins = None  # or "reduce-overhead"
