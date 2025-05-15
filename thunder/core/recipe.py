@@ -6,7 +6,7 @@ import warnings
 import torch
 
 from thunder.core.transform_common import Transform
-from thunder.extend import Executor, get_default_executors
+from thunder.extend import Executor, get_all_executors
 
 
 @contextmanager
@@ -80,7 +80,7 @@ class Recipe:
         return None
 
     def setup_executors(self) -> list[Executor]:
-        return list(get_default_executors())
+        return list(get_all_executors())
 
     def setup_config(self) -> dict[str, Any]:
         return {}

@@ -36,15 +36,9 @@ def test_recipe_basic_bert():
 
     expected = bert(inp)
 
-    thunder_bert = thunder.compile(bert, recipe="hf-transformers")
-
-    actual = thunder_bert(inp)
-
-    assert_close(actual, expected)
-
     from thunder.recipes import HFTransformers
-
-    thunder_bert = thunder.compile(bert, recipe=HFTransformers())
+    executors = ["cudnn", "sdpa", "torchcompile_xentropy", "nvfuser"]
+    thunder_bert = thunder.compile(bert, recipe=HFTransformers(executors=executors))
 
     actual = thunder_bert(inp)
     expected = bert(inp)
@@ -63,11 +57,11 @@ def test_recipe_basic_bert_fx():
     inp = torch.randint(1, 20, (1, 32))
 
     from thunder.recipes import HFTransformers
-
-    thunder_bert = thunder.compile(bert, recipe=HFTransformers(interpreter="thunder.fx"))
+    executors = ["cudnn", "sdpa", "torchcompile_xentropy", "nvfuser"]
+    thunder_bert = thunder.compile(bert, recipe=HFTransformers(executors=executors, interpreter="thunder.fx"))
 
     actual = thunder_bert(inp)
-    expected = bert(inp)
+    expected = bert(inp)    
 
     assert_close(actual, expected)
 

@@ -83,6 +83,8 @@ import torch as pytorch
 import thunder.clang as clang
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
 
+from thunder.recipes.base import BaseRecipe
+
 # Imports executors (to populate default executors and make them accessible)
 import thunder.executors.pythonex
 import thunder.executors.torchex
@@ -270,7 +272,7 @@ CacheEntry = namedtuple(
 
 # TODO implement registration + "auto" recipe
 def compile(
-    fn: Callable, recipe: Recipe | str | None = None, plugins: Plugin | list[Plugin] | str | list[str] | None = None
+    fn: Callable, recipe: BaseRecipe | None = None, plugins: Plugin | list[Plugin] | str | list[str] | None = None
 ):
     import thunder.recipes
     import thunder.plugins
@@ -298,18 +300,12 @@ def compile(
         return thunder.jit(fn)
 
     if recipe is None and plugins:
-        recipe = thunder.recipes.BaseRecipe()
-
-    if recipe == "auto":
-        raise NotImplementedError
-
-    if isinstance(recipe, str):
-        recipe_cls = thunder.recipes.get_recipe_class(recipe)
-        if recipe_cls is None:
-            raise ValueError(f"Recipe {recipe} not recognized. Available recipes are {thunder.recipes.get_recipes()}.")
-        recipe = recipe_cls()
+        default_executor_names = [ex.name for ex in get_default_executors()]
+        recipe = thunder.recipes.BaseRecipe(executors=default_executor_names)
 
     if recipe is not None and plugins:
+        if not isinstance(recipe, BaseRecipe):
+            raise TypeError(f"`recipe` must be an instance of BaseRecipe, got {type(recipe).__name__}")
         recipe.add_plugins(plugins)
 
     return recipe.apply(fn)
