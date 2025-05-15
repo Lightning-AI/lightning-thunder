@@ -2857,7 +2857,6 @@ def cross_entropy_fwd(
 nv_cross_entropy_fwd = ex.register_operator(
     "nv_cross_entropy_fwd",
     meta=cross_entropy_fwd_meta,
-    fn=cross_entropy_fwd,
 )
 register_supported(nv_cross_entropy_fwd.id, cross_entropy_fwd, None)
 
@@ -2865,7 +2864,6 @@ register_supported(nv_cross_entropy_fwd.id, cross_entropy_fwd, None)
 def cross_entropy_bwd_meta(
     g: TensorLike,
     a: TensorLike,
-    /,
     *,
     target: TensorLike,
     a_max: TensorLike,
@@ -2880,7 +2878,6 @@ def cross_entropy_bwd_meta(
 def cross_entropy_bwd(
     g: TensorLike,
     a: TensorLike,
-    /,
     *,
     target: TensorLike,
     a_max: TensorLike,
@@ -2935,7 +2932,6 @@ def cross_entropy_bwd(
 nv_cross_entropy_bwd = ex.register_operator(
     "nv_cross_entropy_bwd",
     meta=cross_entropy_bwd_meta,
-    fn=cross_entropy_bwd,
 )
 
 register_supported(nv_cross_entropy_bwd.id, cross_entropy_bwd, None)
