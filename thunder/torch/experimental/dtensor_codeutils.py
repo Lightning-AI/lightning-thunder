@@ -1,6 +1,6 @@
 from typing import Any
 from torch.distributed.tensor._dtensor_spec import DTensorSpec, DeviceMesh, TensorMeta
-from torch.distributed.tensor import DeviceMesh, DTensor, Partial, Placement, Replicate, Shard
+from torch.distributed.tensor import DeviceMesh, Partial, Placement, Replicate, Shard
 
 
 def populate_object_ctx_for_dtensor_spec(x: Any, object_ctx: dict[str, Any]) -> bool:

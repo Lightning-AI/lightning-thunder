@@ -1,30 +1,16 @@
 from collections.abc import Sequence
-from functools import wraps
 from typing import Any
 
 import torch
-import torch.utils._pytree as pytree
-from torch._subclasses.fake_tensor import FakeTensorMode
-from torch._guards import TracingContext, tracing
+from torch._guards import TracingContext
 from functorch.compile import aot_function
 from torch.distributed.tensor import DTensor
 
-import thunder
-from thunder.core.symbol import BoundSymbol, Symbol
-from thunder.core.codeutils import SigInfo
-from thunder.core import prims
-from thunder.core import utils
-from thunder.core.proxies import ProxyInterface, Proxy
 from thunder.core.pytree import tree_map
-from thunder.core.trace import TraceCtx, tracectx, get_tracectx, detached_trace
 from thunder.core.proxies import TensorProxy, NumberProxy
 from thunder.core.devices import to_torch_device
 from thunder.core.dtypes import to_torch_dtype
-from thunder.core.pytree import tree_map, tree_flatten, tree_unflatten
-from thunder.executors.passes import transform_for_execution, dce
-from thunder.executors.torchex import ex as pytorchex
-from thunder.executors.pythonex import ex as pythonex
-from thunder.dynamo.utils import _checkpoint_function_converter
+from thunder.core.pytree import tree_map
 
 from thunder.torch.experimental.dtensor_proxy import DTensorProxy
 

@@ -1,37 +1,28 @@
 from functools import partial
 from collections.abc import Callable
 
-from thunder.torch import torchsymbol, TensorLike, register_function, TensorProxy
+from thunder.torch import torchsymbol, TensorLike, register_function
 import thunder.torch as ltorch
-from thunder.core.pytree import tree_map, tree_flatten, tree_unflatten
+from thunder.core.pytree import tree_flatten
 from thunder import clang
 from thunder.torch.experimental.dtensor_utils import get_fx_graph_and_output
 from thunder.torch.experimental.dtensor_proxy import DTensorProxy
 from thunder.torch.langctx import register_method
-import thunder.core.utils as utils
-from thunder.core.prims import make_prim, _make_elementwise_binary_prim
+from thunder.core.prims import make_prim
 
-from thunder.core.proxies import DistParallelType, FutureTensorProxy, pytype, TensorProxy, AnyProxy
+from thunder.core.proxies import TensorProxy, AnyProxy
 from thunder.core.transforms import (
-    register_augmented_forward,
-    register_backward,
     register_grad,
-    put_grad,
     put_grads,
     get_grad,
 )
-from thunder.distributed import get_skip_data_parallel_grad_sync
 from thunder.executors.torchex import ex as pytorchex
 from thunder.executors.pythonex import ex as pythonex
 from thunder.core.prims import make_prim, OpTags
 from thunder.core import prims
-from thunder.core.proxies import AnyProxy, TensorProxy
-from thunder.executors.torchex import ex as pytorchex
-from thunder.executors.pythonex import ex as pythonex
 from thunder.core import baseutils
 from thunder.core import utils
 from thunder import clang
-from thunder.core.transforms import register_grad, get_grad, put_grad
 
 
 import torch
