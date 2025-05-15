@@ -127,6 +127,7 @@ def test_get_all_executors_includes_all_native_executors():
         "apex",
         "cudnn",
         "fa3",
+        "liger",
         "torch",
         "cudnn_layernorm",
         "sdpa",
