@@ -151,5 +151,5 @@ def dtensor_mul(a: TensorLike, b: TensorLike) -> TensorLike:
     return dtensor_mul_prim(a, b)
 
 
-def register_dtensor_and_aten_function():
+def register_dtensor_torch_and_prims():
     register_function_for_dtensor(torch.mul, ltorch.mul, dtensor_mul, is_method=True)

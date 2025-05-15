@@ -74,10 +74,10 @@ from thunder.core.trace import TraceCtx, TraceResults
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.clang import _clang_fn_set
 from thunder.core.pytree import tree_map, tree_iter
-from thunder.torch.experimental.dtensor_torch_and_prims import register_dtensor_and_aten_function
+from thunder.torch.experimental.dtensor_torch_and_prims import register_dtensor_torch_and_prims
 
 # TODO: Find a better place to register these ops (mostly in thunder/torch/__init__.py but without cyclical dependency).
-register_dtensor_and_aten_function()
+register_dtensor_torch_and_prims()
 
 #
 # jit_ext.py implements extensions of thunder's interpreter
