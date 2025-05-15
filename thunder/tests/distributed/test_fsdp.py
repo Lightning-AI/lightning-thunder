@@ -132,6 +132,7 @@ class FSDPTest(DistributedParallelTestCase):
         #       If you fix this to be dynamically discerned, you'll be my hero.
         sharded_param_names = ("t_net1_weight", "t_net2_weight")
         # t20 and t22 are all-gather'ed t_net1_weight and t_net2_weight, respectively.
+        print(fwd_trc)
         unshard_param_names = ("t20", "t22")
         result_saved_for_bwd = [x.name for x in fwd_trc.bound_symbols[-1].args[1][0]]
         self.assertTrue(all(t not in sharded_param_names for t in result_saved_for_bwd))
@@ -433,8 +434,7 @@ class FSDPTest(DistributedParallelTestCase):
         config = GPTConfig(dropout=0)
         m = Block(config).to(device=device)
         cm = thunder.jit(
-            m,
-            executors=executors_map[executor].executors_list(),
+            m, executors=executors_map[executor].executors_list(), debug_options=thunder.DebugOptions(check_traces=True)
         )
         cm = fsdp(
             cm, device=device, broadcast_from=0, bucketing_strategy=bucketing_strategy, sharding_strategy=fsdptype

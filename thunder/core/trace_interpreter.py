@@ -282,6 +282,8 @@ class TraceSubstitutionProcessor:
                 # Duplicates are allowed and not overwritten
                 return
             raise ValueError(f"Variable {v.name} is being overwritten this is not allowed")
+        # inherit tags
+        val.tags.update(v.tags)
         self.env[v.name] = val
 
     def add_to_swap_map(self, old, new):
