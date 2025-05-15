@@ -304,8 +304,12 @@ def compile(
         recipe = thunder.recipes.BaseRecipe(executors=default_executor_names)
 
     if recipe is not None and plugins:
-        if recipe not in thunder.recipes.get_recipes():
-            raise ValueError(f"Recipe {recipe} not recognized. Available recipes are {thunder.recipes.get_recipes()}.")
+        valid_classes = set(thunder.recipes.names_to_recipes.values())
+        if type(recipe) not in valid_classes:
+            raise ValueError(
+                f"Recipe {type(recipe).__name__} not recognized. "
+                f"Available recipes: {list(thunder.recipes.names_to_recipes.keys())}"
+            )
         recipe.add_plugins(plugins)
 
     return recipe.apply(fn)
