@@ -18,6 +18,7 @@ from thunder.core.transforms import (
 )
 from thunder.core.transform_common import cse_single_bsym
 from thunder.executors.passes import del_last_used
+import thunder.core.utils as utils
 
 if TYPE_CHECKING:
     from thunder.core.trace import VariableInterface
@@ -36,8 +37,8 @@ from transformer_engine.pytorch.fp8 import (
 )
 
 
-functional_te_ex = StatefulExecutor("functional_te")
-register_executor(functional_te_ex)
+transformer_engine_v2_ex = StatefulExecutor("transformer_engine_v2")
+register_executor(transformer_engine_v2_ex)
 
 
 def _te_fp8_recipe_meta() -> AnyProxy:
@@ -60,7 +61,7 @@ class TERecipe:
         return self.fp8_recipe
 
 
-_get_te_fp8_recipe = functional_te_ex.register_stateful_operator(
+_get_te_fp8_recipe = transformer_engine_v2_ex.register_stateful_operator(
     "get_te_fp8_recipe", meta=_te_fp8_recipe_meta, state_class=TERecipe
 )
 
@@ -87,7 +88,7 @@ class TEQuantizerState:
         return quantizers
 
 
-_get_te_fp8_quantizers = functional_te_ex.register_stateful_operator(
+_get_te_fp8_quantizers = transformer_engine_v2_ex.register_stateful_operator(
     "get_te_fp8_quantizers", TEQuantizerState, meta=_get_te_fp8_quantizers_meta
 )
 
@@ -120,7 +121,7 @@ class TERecipeState:
         return recipe_state
 
 
-_get_te_fp8_state = functional_te_ex.register_stateful_operator(
+_get_te_fp8_state = transformer_engine_v2_ex.register_stateful_operator(
     "get_te_fp8_state", TERecipeState, meta=_get_te_fp8_state_meta
 )
 
@@ -149,7 +150,7 @@ def _linear_fwd_impl(a, w, bias, input_quantizer: Quantizer, weight_quantizer: Q
     return out, quantized_a, quantized_w
 
 
-_te_linear_fwd = functional_te_ex.register_operator(
+_te_linear_fwd = transformer_engine_v2_ex.register_operator(
     "te_functional_linear_fwd", meta=_linear_fwd_meta, fn=_linear_fwd_impl
 )
 
@@ -194,7 +195,7 @@ def _linear_bwd_impl(
     return grad_input, grad_weight
 
 
-_te_linear_bwd = functional_te_ex.register_operator(
+_te_linear_bwd = transformer_engine_v2_ex.register_operator(
     "te_functional_linear_bwd", meta=_linear_bwd_meta, fn=_linear_bwd_impl
 )
 
@@ -248,7 +249,7 @@ def _te_linear_grad_transform(a, w, bias):
     return primal
 
 
-functional_te_ex.register_implementation(
+transformer_engine_v2_ex.register_implementation(
     linear_prim,
     checker=_linear_checker,
     execution_transform=_te_linear_execution_transform,
@@ -256,14 +257,13 @@ functional_te_ex.register_implementation(
 )
 
 
-def _te_fp8_amax_and_scale_update_meta(recipe: AnyProxy, *, states: tuple[AnyProxy], tokens: tuple[TensorProxy] | None):
-    if tokens:
-        return (*(TensorProxy(like=t) for t in tokens),)
-    return tuple()
+def _te_fp8_amax_and_scale_update_meta(recipe: AnyProxy, *, states: tuple[AnyProxy], tokens: tuple[TensorProxy]):
+    utils.check(tokens is not None, lambda: "tokens cannot be None to create a valid dataflow", RuntimeError)
+    return (*(TensorProxy(like=t) for t in tokens),)
 
 
 # TODO can gather and scatter be made explicit here for ddp
-def _te_fp8_amax_and_scale_update_impl(recipe: Recipe, states: tuple[RecipeState], tokens: tuple[TensorProxy] | None):
+def _te_fp8_amax_and_scale_update_impl(recipe: Recipe, states: tuple[RecipeState], tokens: tuple[TensorProxy]):
     if recipe.delayed():
         for state in states:
             _amax_and_scale_update(
@@ -273,14 +273,14 @@ def _te_fp8_amax_and_scale_update_impl(recipe: Recipe, states: tuple[RecipeState
     return (*tokens,)
 
 
-_te_fp8_amax_and_scale_update = functional_te_ex.register_operator(
+_te_fp8_amax_and_scale_update = transformer_engine_v2_ex.register_operator(
     "te_fp8_amax_and_scale_update",
     meta=_te_fp8_amax_and_scale_update_meta,
     fn=_te_fp8_amax_and_scale_update_impl,
 )
 
 
-class TransformerEngineTransform(Transform):
+class TransformerEngineTransformV2(Transform):
     """
     A transform to pair up with the functional TransformerEngine executor.
 
@@ -307,7 +307,7 @@ class TransformerEngineTransform(Transform):
             computation_trace: Trace to perform the replacement on.
         """
 
-        if "functional_te" not in map(lambda x: x.name, kwargs["executors_list"]):
+        if "transformer_engine_v2_ex" not in map(lambda x: x.name, kwargs["executors_list"]):
             return computation_trace
 
         start_time_ns = time.perf_counter_ns()

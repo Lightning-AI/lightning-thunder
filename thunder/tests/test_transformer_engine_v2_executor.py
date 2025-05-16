@@ -9,7 +9,7 @@ transformer_engine_module = pytest.importorskip(
     "transformer_engine", reason="transformer_engine was not found, skipping the tests."
 )
 
-from thunder.executors.transformer_engine_v2ex import transformer_engine_v2_ex, TransformerEngineTransform
+from thunder.executors.transformer_engine_v2ex import transformer_engine_v2_ex, TransformerEngineTransformV2
 from transformer_engine.common import recipe
 import transformer_engine.pytorch as te
 
@@ -58,7 +58,7 @@ def test_te_linear_forward_backward(fp8_recipe: recipe.Recipe):
         o = torch.nn.functional.linear(x, w1)
         return torch.nn.functional.linear(o + x, w2)
 
-    cfn = thunder.jit(fn, executors=[transformer_engine_v2_ex], transforms=[TransformerEngineTransform()])
+    cfn = thunder.jit(fn, executors=[transformer_engine_v2_ex], transforms=[TransformerEngineTransformV2()])
 
     # Enable autocasting for the forward pass
     with te.fp8_autocast(fp8_recipe=fp8_recipe):
@@ -95,6 +95,9 @@ def test_te_linear_forward_backward(fp8_recipe: recipe.Recipe):
 @requiresCUDA
 @pytest.mark.parametrize("fp8_recipe", recipes, ids=recipe_ids)
 def test_te_linear_forward_backward_multiple_iteration(fp8_recipe: recipe.Recipe):
+    if not fp8_recipe:
+        pytest.skip("When recipe is None a new recipe is created for each iteration. This makes the results not numerically comparable.")
+
     if fp8_recipe and not (fp8_recipe.delayed() or is_mxfp8_supported):
         pytest.skip(msg_mxfp8)
 
@@ -148,7 +151,7 @@ def test_te_linear_forward_backward_multiple_iteration(fp8_recipe: recipe.Recipe
         o = torch.nn.functional.linear(x, w1, b1)
         return torch.nn.functional.linear(o, w2, b2)
 
-    cfn = thunder.jit(fn, executors=[transformer_engine_v2_ex], transforms=[TransformerEngineTransform()])
+    cfn = thunder.jit(fn, executors=[transformer_engine_v2_ex], transforms=[TransformerEngineTransformV2()])
 
     # Enable grad on thunder params.
     list(map(lambda t: t.requires_grad_(True), (w1, w2, b1, b2)))
@@ -228,7 +231,7 @@ def test_te_linear_forward_backward_multiple_iteration_multiple_recipes():
         o = torch.nn.functional.linear(x, w1, b1)
         return torch.nn.functional.linear(o, w2, b2)
 
-    cfn = thunder.jit(fn, executors=[transformer_engine_v2_ex], transforms=[TransformerEngineTransform()])
+    cfn = thunder.jit(fn, executors=[transformer_engine_v2_ex], transforms=[TransformerEngineTransformV2()])
 
     # Enable grad on thunder params.
     list(map(lambda t: t.requires_grad_(True), (w1, w2, b1, b2)))
@@ -253,7 +256,7 @@ def test_te_linear_invalid_inputs():
         def fn(x, w):
             return torch.nn.functional.linear(x, w)
 
-        cfn = thunder.jit(fn, executors=[transformer_engine_v2_ex], transforms=[TransformerEngineTransform()])
+        cfn = thunder.jit(fn, executors=[transformer_engine_v2_ex], transforms=[TransformerEngineTransformV2()])
         cfn(x, w)
         trace = thunder.last_traces(cfn)[-1]
         assert not any(bsym.sym.name.startswith("te_functional_linear") for bsym in trace.bound_symbols)
@@ -285,7 +288,7 @@ def test_te_with_autocast():
     cfunc = thunder.jit(
         autocast(foo, dtype=thunder.dtypes.bfloat16),
         executors=[transformer_engine_v2_ex],
-        transforms=[TransformerEngineTransform()],
+        transforms=[TransformerEngineTransformV2()],
         disable_preprocessing=True,
     )
     cfunc(x, w)
@@ -309,7 +312,7 @@ def test_te_with_retain_graph():
     cfunc = thunder.jit(
         foo,
         executors=[transformer_engine_v2_ex],
-        transforms=[TransformerEngineTransform()],
+        transforms=[TransformerEngineTransformV2()],
     )
     out = cfunc(x, w)
 
@@ -340,7 +343,7 @@ def test_te_trace_metadata_propagation():
         foo,
         executors=[transformer_engine_v2_ex],
         transforms=[
-            TransformerEngineTransform(),
+            TransformerEngineTransformV2(),
             MyNoopTransform(),
         ],
     )
@@ -366,7 +369,7 @@ def test_te_grad_computation_with_intermediate():
         x = torch.randn(32, 32, requires_grad=True)
         w = torch.randn(32, 32, requires_grad=True)
 
-        tfn = thunder.jit(fn, executors=[transformer_engine_v2_ex], transforms=[TransformerEngineTransform()])
+        tfn = thunder.jit(fn, executors=[transformer_engine_v2_ex], transforms=[TransformerEngineTransformV2()])
 
         o = tfn(x, w)
         o.sum().backward()
@@ -390,7 +393,7 @@ def test_te_trace_correctness(fp8_recipe: recipe.Recipe):
     cfunc = thunder.jit(
         foo,
         executors=[transformer_engine_v2_ex],
-        transforms=[TransformerEngineTransform()],
+        transforms=[TransformerEngineTransformV2()],
     )
 
     with te.fp8_autocast(fp8_recipe=fp8_recipe):
