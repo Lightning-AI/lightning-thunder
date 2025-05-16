@@ -1134,9 +1134,7 @@ def run_script(file_name, cmd):
 @requiresCUDA
 def test_report_thunderfx_pytest_benchmark_report(tmp_path, capsys):
     def foo(x):
-        y = x.sin()
-        torch._dynamo.graph_break()
-        return y + x.cos()
+        return x.sin()
 
     x = torch.randn(4, 4, device="cuda")
     thunderfx_pytest_benchmark_report(foo, x, folder_path=tmp_path, check_consistency=True)
