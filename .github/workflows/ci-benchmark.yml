@@ -16,7 +16,7 @@ defaults:
     shell: bash
 
 jobs:
-  benchmark-jobs:
+  launcher-benchmark:
     runs-on: "ubuntu-22.04"
 
     steps:

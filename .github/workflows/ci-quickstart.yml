@@ -22,7 +22,7 @@ defaults:
     shell: bash
 
 jobs:
-  launcher:
+  launcher-quickstart:
     runs-on: "ubuntu-22.04"
     #timeout-minutes: 55
     steps:
