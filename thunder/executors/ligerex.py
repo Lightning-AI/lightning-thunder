@@ -5,7 +5,12 @@ import functools
 
 import torch
 
-import litgpt
+try:
+    import litgpt
+
+    LITGPT_AVAILABLE = True
+except ImportError:
+    LITGPT_AVAILABLE = False
 
 import triton
 
@@ -43,6 +48,10 @@ def liger_available() -> bool:
     return LIGER_AVAILABLE
 
 
+def litgpt_available() -> bool:
+    return LITGPT_AVAILABLE
+
+
 prod = lambda *args: functools.reduce(lambda x, y: x * y, args)
 
 
@@ -67,11 +76,12 @@ def rms_norm_fwd_meta(
     return Y, TensorProxy(like=X, shape=(n_rows, n_cols)), RSTD, BLOCK_SIZE, num_warps, casting_mode
 
 
-liger_rms_norm_forward = liger_ex.register_operator(
-    "liger_rms_norm_forward",
-    meta=rms_norm_fwd_meta,
-    fn=liger_kernel.ops.rms_norm.rms_norm_forward,
-)
+if liger_available():
+    liger_rms_norm_forward = liger_ex.register_operator(
+        "liger_rms_norm_forward",
+        meta=rms_norm_fwd_meta,
+        fn=liger_kernel.ops.rms_norm.rms_norm_forward,
+    )
 
 
 def rms_norm_bwd_meta(
@@ -88,23 +98,25 @@ def rms_norm_bwd_meta(
     return TensorProxy(like=X), TensorProxy(like=W)
 
 
-liger_rms_norm_backward = liger_ex.register_operator(
-    "liger_rms_norm_backward",
-    meta=rms_norm_bwd_meta,
-    fn=liger_kernel.ops.rms_norm.rms_norm_backward,
-)
+if liger_available():
+    liger_rms_norm_backward = liger_ex.register_operator(
+        "liger_rms_norm_backward",
+        meta=rms_norm_bwd_meta,
+        fn=liger_kernel.ops.rms_norm.rms_norm_backward,
+    )
 
 
 def rms_norm_meta(x: TensorProxy, shape, w: TensorProxy, eps: float):
     return TensorProxy(like=x)
 
 
-rms_norm = liger_ex.register_operator(
-    "rms_norm",
-    meta=rms_norm_meta,
-    fn=torch.nn.functional.rms_norm,
-    replaces=torch.nn.functional.rms_norm,
-)
+if liger_available():
+    rms_norm = liger_ex.register_operator(
+        "rms_norm",
+        meta=rms_norm_meta,
+        fn=torch.nn.functional.rms_norm,
+        replaces=torch.nn.functional.rms_norm,
+    )
 
 
 def rms_norm_grad_transform(x: TensorProxy, shape, weight: TensorProxy, eps: float):
@@ -148,11 +160,12 @@ def geglu_fwd_meta(
     return TensorProxy(like=a)
 
 
-liger_geglu_forward = liger_ex.register_operator(
-    "liger_geglu_forward",
-    meta=geglu_fwd_meta,
-    fn=liger_kernel.ops.geglu.geglu_forward,
-)
+if liger_available():
+    liger_geglu_forward = liger_ex.register_operator(
+        "liger_geglu_forward",
+        meta=geglu_fwd_meta,
+        fn=liger_kernel.ops.geglu.geglu_forward,
+    )
 
 
 def geglu_bwd_meta(
@@ -163,11 +176,12 @@ def geglu_bwd_meta(
     return TensorProxy(like=a), TensorProxy(like=b)
 
 
-liger_geglu_backward = liger_ex.register_operator(
-    "liger_geglu_backward",
-    meta=geglu_bwd_meta,
-    fn=liger_kernel.ops.geglu.geglu_backward,
-)
+if liger_available():
+    liger_geglu_backward = liger_ex.register_operator(
+        "liger_geglu_backward",
+        meta=geglu_bwd_meta,
+        fn=liger_kernel.ops.geglu.geglu_backward,
+    )
 
 
 def geglu_grad_transform(a: TensorProxy, b: TensorProxy) -> TensorProxy:
@@ -188,7 +202,8 @@ def geglu_impl(a: TensorProxy, b: TensorProxy) -> TensorProxy:
     return c
 
 
-liger_geglu = liger_ex.register_operator("liger_geglu", fn=geglu_impl, like=geglu_impl)
+if liger_available():
+    liger_geglu = liger_ex.register_operator("liger_geglu", fn=geglu_impl, like=geglu_impl)
 
 
 if liger_available():
@@ -208,11 +223,12 @@ def rope_fwd_meta(
     return TensorProxy(like=q), TensorProxy(like=k), cos, sin
 
 
-liger_rope_forward = liger_ex.register_operator(
-    "liger_rope_forward",
-    meta=rope_fwd_meta,
-    fn=liger_kernel.ops.rope.rope_forward,
-)
+if liger_available():
+    liger_rope_forward = liger_ex.register_operator(
+        "liger_rope_forward",
+        meta=rope_fwd_meta,
+        fn=liger_kernel.ops.rope.rope_forward,
+    )
 
 
 def rope_bwd_meta(
@@ -224,11 +240,12 @@ def rope_bwd_meta(
     return TensorProxy(like=dq), TensorProxy(like=dk)
 
 
-liger_rope_backward = liger_ex.register_operator(
-    "liger_rope_backward",
-    meta=rope_bwd_meta,
-    fn=liger_kernel.ops.rope.rope_backward,
-)
+if liger_available():
+    liger_rope_backward = liger_ex.register_operator(
+        "liger_rope_backward",
+        meta=rope_bwd_meta,
+        fn=liger_kernel.ops.rope.rope_backward,
+    )
 
 
 def rope_grad_transform(q, k, cos, sin):
@@ -250,7 +267,8 @@ def rope_impl(q, k, cos, sin):
     return qr, kr
 
 
-liger_rope = liger_ex.register_operator("liger_rope", fn=rope_impl, like=rope_impl)
+if liger_available():
+    liger_rope = liger_ex.register_operator("liger_rope", fn=rope_impl, like=rope_impl)
 
 
 if liger_available():
@@ -265,9 +283,10 @@ def apply_rope_meta(x, cos, sin):
     return TensorProxy(like=x)
 
 
-litgpt_apply_rope = liger_ex.register_operator(
-    "litgpt_apply_rope", fn=litgpt.model.apply_rope, meta=apply_rope_meta, replaces=litgpt.model.apply_rope
-)
+if litgpt_available():
+    litgpt_apply_rope = liger_ex.register_operator(
+        "litgpt_apply_rope", fn=litgpt.model.apply_rope, meta=apply_rope_meta, replaces=litgpt.model.apply_rope
+    )
 
 
 def layer_norm_fwd_meta(
@@ -285,11 +304,12 @@ def layer_norm_fwd_meta(
     return Y, TensorProxy(like=X), Mean, RSTD, BLOCK_SIZE, num_warps
 
 
-liger_layer_norm_forward = liger_ex.register_operator(
-    "liger_layer_norm_forward",
-    meta=layer_norm_fwd_meta,
-    fn=liger_kernel.ops.layer_norm.layer_norm_forward,
-)
+if liger_available():
+    liger_layer_norm_forward = liger_ex.register_operator(
+        "liger_layer_norm_forward",
+        meta=layer_norm_fwd_meta,
+        fn=liger_kernel.ops.layer_norm.layer_norm_forward,
+    )
 
 
 def layer_norm_bwd_meta(
@@ -303,23 +323,25 @@ def layer_norm_bwd_meta(
     return TensorProxy(like=X), TensorProxy(like=W), TensorProxy(like=B)
 
 
-liger_layer_norm_backward = liger_ex.register_operator(
-    "liger_layer_norm_backward",
-    meta=layer_norm_bwd_meta,
-    fn=liger_kernel.ops.layer_norm.layer_norm_backward,
-)
+if liger_available():
+    liger_layer_norm_backward = liger_ex.register_operator(
+        "liger_layer_norm_backward",
+        meta=layer_norm_bwd_meta,
+        fn=liger_kernel.ops.layer_norm.layer_norm_backward,
+    )
 
 
 def layer_norm_meta(x, shape, w, b, eps):
     return TensorProxy(like=x)
 
 
-layer_norm = liger_ex.register_operator(
-    "layer_norm",
-    meta=layer_norm_meta,
-    fn=torch.nn.functional.layer_norm,
-    replaces=torch.nn.functional.layer_norm,
-)
+if liger_available():
+    layer_norm = liger_ex.register_operator(
+        "layer_norm",
+        meta=layer_norm_meta,
+        fn=torch.nn.functional.layer_norm,
+        replaces=torch.nn.functional.layer_norm,
+    )
 
 
 def layer_norm_grad_transform(x, shape, weight, bias, eps):
@@ -362,11 +384,12 @@ def cross_entropy_fwd_meta(
     return loss, z_loss, TensorProxy(like=_input)
 
 
-liger_cross_entropy_forward = liger_ex.register_operator(
-    "liger_cross_entropy_forward",
-    meta=cross_entropy_fwd_meta,
-    fn=liger_kernel.ops.cross_entropy.cross_entropy_forward,
-)
+if liger_available():
+    liger_cross_entropy_forward = liger_ex.register_operator(
+        "liger_cross_entropy_forward",
+        meta=cross_entropy_fwd_meta,
+        fn=liger_kernel.ops.cross_entropy.cross_entropy_forward,
+    )
 
 
 def cross_entropy_bwd_meta(
@@ -376,11 +399,12 @@ def cross_entropy_bwd_meta(
     return TensorProxy(like=_input)
 
 
-liger_cross_entropy_backward = liger_ex.register_operator(
-    "liger_cross_entropy_backward",
-    meta=cross_entropy_bwd_meta,
-    fn=liger_kernel.ops.cross_entropy.cross_entropy_backward,
-)
+if liger_available():
+    liger_cross_entropy_backward = liger_ex.register_operator(
+        "liger_cross_entropy_backward",
+        meta=cross_entropy_bwd_meta,
+        fn=liger_kernel.ops.cross_entropy.cross_entropy_backward,
+    )
 
 
 def cross_entropy_meta(
@@ -396,12 +420,13 @@ def cross_entropy_meta(
     return TensorProxy(like=x)
 
 
-cross_entropy = liger_ex.register_operator(
-    "cross_entropy",
-    meta=cross_entropy_meta,
-    fn=torch.nn.functional.cross_entropy,
-    replaces=torch.nn.functional.cross_entropy,
-)
+if liger_available():
+    cross_entropy = liger_ex.register_operator(
+        "cross_entropy",
+        meta=cross_entropy_meta,
+        fn=torch.nn.functional.cross_entropy,
+        replaces=torch.nn.functional.cross_entropy,
+    )
 
 
 def cross_entropy_grad_transform(
@@ -458,11 +483,12 @@ def swiglu_forward_impl(
     return res
 
 
-liger_swiglu_forward = liger_ex.register_operator(
-    "liger_swiglu_forward",
-    meta=swiglu_fwd_meta,
-    fn=swiglu_forward_impl,
-)
+if liger_available():
+    liger_swiglu_forward = liger_ex.register_operator(
+        "liger_swiglu_forward",
+        meta=swiglu_fwd_meta,
+        fn=swiglu_forward_impl,
+    )
 
 
 def swiglu_bwd_meta(
@@ -473,11 +499,12 @@ def swiglu_bwd_meta(
     return TensorProxy(like=a), TensorProxy(like=b)
 
 
-liger_swiglu_backward = liger_ex.register_operator(
-    "liger_swiglu_backward",
-    meta=swiglu_bwd_meta,
-    fn=liger_kernel.ops.swiglu.swiglu_backward,
-)
+if liger_available():
+    liger_swiglu_backward = liger_ex.register_operator(
+        "liger_swiglu_backward",
+        meta=swiglu_bwd_meta,
+        fn=liger_kernel.ops.swiglu.swiglu_backward,
+    )
 
 
 def swiglu_grad_transform(a, b):
@@ -509,11 +536,12 @@ def kl_div_fwd_meta(
     return TensorProxy(like=y_pred, shape=out_size)
 
 
-liger_kl_div_forward = liger_ex.register_operator(
-    "liger_kl_div_forward",
-    meta=kl_div_fwd_meta,
-    fn=liger_kernel.ops.kl_div.kldiv_forward_triton,
-)
+if liger_available():
+    liger_kl_div_forward = liger_ex.register_operator(
+        "liger_kl_div_forward",
+        meta=kl_div_fwd_meta,
+        fn=liger_kernel.ops.kl_div.kldiv_forward_triton,
+    )
 
 
 def kl_div_bwd_meta(
@@ -525,11 +553,12 @@ def kl_div_bwd_meta(
     return TensorProxy(like=new_grads)
 
 
-liger_kl_div_backward = liger_ex.register_operator(
-    "liger_kl_div_backward",
-    meta=kl_div_bwd_meta,
-    fn=liger_kernel.ops.kl_div.kldiv_backward_triton,
-)
+if liger_available():
+    liger_kl_div_backward = liger_ex.register_operator(
+        "liger_kl_div_backward",
+        meta=kl_div_bwd_meta,
+        fn=liger_kernel.ops.kl_div.kldiv_backward_triton,
+    )
 
 
 def kl_div_meta(
@@ -543,12 +572,13 @@ def kl_div_meta(
     return TensorProxy(like=_input)
 
 
-kl_div = liger_ex.register_operator(
-    "kl_div",
-    meta=kl_div_meta,
-    fn=torch.nn.functional.kl_div,
-    replaces=torch.nn.functional.kl_div,
-)
+if liger_available():
+    kl_div = liger_ex.register_operator(
+        "kl_div",
+        meta=kl_div_meta,
+        fn=torch.nn.functional.kl_div,
+        replaces=torch.nn.functional.kl_div,
+    )
 
 
 def kl_div_grad_transform(
@@ -604,11 +634,12 @@ def fused_linear_cross_entropy_fwd_meta(
     return loss, grad_input, grad_weight, grad_bias
 
 
-liger_fused_linear_cross_entropy_forward = liger_ex.register_operator(
-    "liger_fused_linear_cross_entropy_forward",
-    meta=fused_linear_cross_entropy_fwd_meta,
-    fn=liger_kernel.ops.fused_linear_cross_entropy.fused_linear_cross_entropy_forward,
-)
+if liger_available():
+    liger_fused_linear_cross_entropy_forward = liger_ex.register_operator(
+        "liger_fused_linear_cross_entropy_forward",
+        meta=fused_linear_cross_entropy_fwd_meta,
+        fn=liger_kernel.ops.fused_linear_cross_entropy.fused_linear_cross_entropy_forward,
+    )
 
 
 def fused_linear_cross_entropy_bwd_meta(
@@ -624,11 +655,12 @@ def fused_linear_cross_entropy_bwd_meta(
     )
 
 
-liger_fused_linear_cross_entropy_backward = liger_ex.register_operator(
-    "liger_fused_linear_cross_entropy_backward",
-    meta=fused_linear_cross_entropy_bwd_meta,
-    fn=liger_kernel.ops.fused_linear_cross_entropy.fused_linear_cross_entropy_backward,
-)
+if liger_available():
+    liger_fused_linear_cross_entropy_backward = liger_ex.register_operator(
+        "liger_fused_linear_cross_entropy_backward",
+        meta=fused_linear_cross_entropy_bwd_meta,
+        fn=liger_kernel.ops.fused_linear_cross_entropy.fused_linear_cross_entropy_backward,
+    )
 
 
 def fused_linear_cross_entropy_grad_transform(
@@ -683,11 +715,12 @@ def group_norm_fwd_meta(
     return Y, TensorProxy(like=X), Mean, RSTD, BLOCK_SIZE
 
 
-liger_group_norm_forward = liger_ex.register_operator(
-    "liger_group_norm_forward",
-    meta=group_norm_fwd_meta,
-    fn=liger_kernel.ops.group_norm.group_norm_forward,
-)
+if liger_available():
+    liger_group_norm_forward = liger_ex.register_operator(
+        "liger_group_norm_forward",
+        meta=group_norm_fwd_meta,
+        fn=liger_kernel.ops.group_norm.group_norm_forward,
+    )
 
 
 def group_norm_bwd_meta(
@@ -703,11 +736,12 @@ def group_norm_bwd_meta(
     return TensorProxy(like=X), TensorProxy(like=W), TensorProxy(like=B)
 
 
-liger_group_norm_backward = liger_ex.register_operator(
-    "liger_group_norm_backward",
-    meta=group_norm_bwd_meta,
-    fn=liger_kernel.ops.group_norm.group_norm_backward,
-)
+if liger_available():
+    liger_group_norm_backward = liger_ex.register_operator(
+        "liger_group_norm_backward",
+        meta=group_norm_bwd_meta,
+        fn=liger_kernel.ops.group_norm.group_norm_backward,
+    )
 
 
 def group_norm_meta(
@@ -716,12 +750,13 @@ def group_norm_meta(
     return TensorProxy(like=x)
 
 
-group_norm = liger_ex.register_operator(
-    "group_norm",
-    meta=group_norm_meta,
-    fn=torch.nn.functional.group_norm,
-    replaces=torch.nn.functional.group_norm,
-)
+if liger_available():
+    group_norm = liger_ex.register_operator(
+        "group_norm",
+        meta=group_norm_meta,
+        fn=torch.nn.functional.group_norm,
+        replaces=torch.nn.functional.group_norm,
+    )
 
 
 def group_norm_grad_transform(
