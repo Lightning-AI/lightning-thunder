@@ -515,8 +515,29 @@ class FXGraphReport:
             print(code_str, file=f)
         format_python_file(folder / file_name)
 
+    from thunder.dynamo.utils import custom_timeit
+
+    def run_fwd_and_bwd(self, compile_fn, time_fn=custom_timeit, *, example_inputs=None):
+        if example_inputs is None:
+            example_inputs = self.make_example_inputs()
+        compiled_fn = compile_fn.compile(self.graph, inputs=example_inputs)
+        backward_fn, backward_setup = backward_only(compiled_fn, *example_inputs, setup_graph_on_each_invocation=True)
+
+        measurement = time_fn(
+            "backward_fn(*backward_args)",
+            setup="backward_args=backward_setup()",
+            globals={"backward_fn": backward_fn, "backward_setup": backward_setup},
+        )
+        return measurement
+
     def run_benchmark(
-        self, compile_fn: CompileSpecificationInterface, time_fn: TimerInterface, *, reset_torch_dynamo=True
+        self,
+        compile_fn: CompileSpecificationInterface,
+        time_fn: TimerInterface,
+        *,
+        example_inputs=None,
+        reset_torch_dynamo=True,
+        retain_graph=True,
     ):
         # From torch.compile docs - https://pytorch.org/docs/stable/generated/torch.compile.html
         # > Multiple compiled results can be associated with a frame up to torch._dynamo.config.cache_size_limit, which defaults to 8; at which point we will fall back to eager.
@@ -525,7 +546,8 @@ class FXGraphReport:
         # Sets the `reset_torch_dynamo` to True when you need to reset Dynamo's state *as if* you had started a fresh process invocation.
         if reset_torch_dynamo:
             torch._dynamo.reset()
-        example_inputs = self.make_example_inputs()
+        if example_inputs is None:
+            example_inputs = self.make_example_inputs()
         # To avoid the AssertionError: attribute nodes of Graph object out of sync
         recompile_graph(self.graph)
         compiled_fn = compile_fn.compile(self.graph, inputs=example_inputs)
@@ -536,11 +558,23 @@ class FXGraphReport:
         )
         bwd_measurement = None
         if not forward_only:
-            backward_fn, backward_setup = backward_only(compiled_fn, *example_inputs)
-            backward_args = backward_setup()
-            bwd_measurement = time_fn.time(
-                "backward_fn(*backward_args)", globals={"backward_fn": backward_fn, "backward_args": backward_args}
-            )
+            if retain_graph:
+                backward_fn, backward_setup = backward_only(compiled_fn, *example_inputs)
+                backward_args = backward_setup()
+                bwd_measurement = time_fn.time(
+                    "backward_fn(*backward_args)", globals={"backward_fn": backward_fn, "backward_args": backward_args}
+                )
+            else:
+                from thunder.dynamo.utils import custom_timeit
+
+                backward_fn, backward_setup = backward_only(
+                    compiled_fn, *example_inputs, setup_graph_on_each_invocation=True
+                )
+                bwd_measurement = custom_timeit(
+                    "backward_fn(*backward_args)",
+                    setup="backward_args=backward_setup()",
+                    globals={"backward_fn": backward_fn, "backward_setup": backward_setup},
+                )
         return fwd_measurement, bwd_measurement
 
     def write_benchmark(

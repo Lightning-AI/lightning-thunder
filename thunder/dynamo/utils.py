@@ -880,6 +880,27 @@ def get_torch_compile_kwargs(**kwargs) -> dict:
     return {k: v for k, v in kwargs.items() if k in torch_compile_kwarg_names}
 
 
+from torch.utils.weak import TensorWeakRef
+
+
+def get_or_create_example_inputs_from_placeholders(placeholders: list[torch.fx.Node]) -> list[torch.Tensor]:
+    """
+    Gets the weakref of the inputs if possible, otherwise create inputs for benchmarking
+    """
+    outs = []
+    for p in placeholders:
+        try:
+            input: TensorWeakRef | torch.SymInt = p.meta["grapharg"].example
+            if isinstance(input, torch.SymInt):
+                input = input.node.hint
+        except Exception as e:
+            # needs to create a new example input
+            outs.append(_get_example_inputs_from_placeholder(p, only_metadata=False))
+        else:
+            outs.append(input)
+    return outs
+
+
 def default_compile_strategy(gm, example_inputs) -> tuple[torch.fx.GraphModule, str]:
     """
     Default compile strategy for each Thunder-supported subgraph that selects the optimal compiler
@@ -896,21 +917,53 @@ def default_compile_strategy(gm, example_inputs) -> tuple[torch.fx.GraphModule, 
     )
 
     example_input_metadata = input_to_example_input_meta(example_inputs)
+
     report = FXGraphReport(gm, "gm", example_input_metadata)
     thunderjit = ThunderCompileSpecification()
     torchinductor = TorchInductorSpecification()
     torcheager = TorchEagerSpecification()
 
+    def get_timing1(compile_fn, timer_fn):
+        try:
+            cm = compile_fn.compile(gm, inputs=example_inputs)
+            out = cm(*example_inputs)
+            out.sum().backward()
+            # del out
+
+            for inp in example_inputs:
+                inp.grad = None
+                # del inp
+            return float("inf")
+        except Exception as e:
+            print(f"Error running benchmark {compile_fn.name}: {e}")
+        return float("inf")
+
     def get_timing(compile_fn, timer_fn):
         try:
-            measurement = report.run_benchmark(compile_fn, timer_fn, reset_torch_dynamo=False)
-        except Exception:
+            # measurement = report.run_fwd_and_bwd(compile_fn, example_inputs=example_inputs)
+            measurement = report.run_benchmark(
+                compile_fn, timer_fn, example_inputs=example_inputs, reset_torch_dynamo=False, retain_graph=False
+            )
+            for inp in example_inputs:
+                inp.grad = None
+        except Exception as e:
+            print(f"Error running benchmark {compile_fn.name}: {e}")
             return float("inf")
-        return sum(m.median for m in measurement if m is not None)
+        # return sum(m.median for m in measurement if m is not None)
+        return sum((m.median if hasattr(m, "median") else m["median"]) for m in measurement if m is not None)
 
+    # thunder_time = get_timing1(thunderjit, WallTime)
+    print("bef2: ", torch.cuda.memory_allocated())
     thunder_time = get_timing(thunderjit, WallTime)
     inductor_time = get_timing(torchinductor, WallTime)
-    eager_time = get_timing(torcheager, WallTime)
+    # eager_time = get_timing(torcheager, WallTime) # may OOM
+    print("aft2: ", torch.cuda.memory_allocated())
+    # # eager_time = get_timing(torcheager, WallTime)
+    eager_time = float("inf")
+    # return _torch_inductor_compile(gm, example_inputs), "inductor"
+    # from thunder import jit
+
+    # return jit(gm), "thunder"
 
     # Choose the fastest backend
     if thunder_time <= inductor_time and thunder_time <= eager_time:
@@ -1024,7 +1077,9 @@ def default_optimizer(gm: torch.fx.GraphModule, stats: ProfileStats) -> Callable
             continue
         graph_module = getattr(split_gm, node.name)
         placeholders = [n for n in graph_module.graph.nodes if n.op == "placeholder"]
-        example_inputs = [_get_example_inputs_from_placeholder(p, only_metadata=False) for p in placeholders]
+        print("bef: ", torch.cuda.memory_allocated())
+        example_inputs = get_or_create_example_inputs_from_placeholders(placeholders)
+        print("aft: ", torch.cuda.memory_allocated())
         if thunder_split_gm.is_thunder_supported_partition(node):
             optimized_module, compiler_name = default_compile_strategy(graph_module, example_inputs)
             # Update the node name from "submod_*" to the optimizer specifed name for more user-friendly names
@@ -1036,3 +1091,46 @@ def default_optimizer(gm: torch.fx.GraphModule, stats: ProfileStats) -> Callable
 
     recompile_graph(split_gm)
     return split_gm
+
+
+def custom_timeit(stmt, setup="pass", globals=None, number=2, repeat=1):
+    import time
+    import statistics
+
+    """
+    Runs `stmt` after running `setup`, similar to timeit.Timer.
+
+    Parameters:
+        stmt (str): The statement to execute.
+        setup (str): Code to run before each `stmt` execution.
+        globals (dict): Namespace to execute the code in.
+        number (int): How many times to run stmt per repeat.
+        repeat (int): How many repeats to perform.
+
+    Returns:
+        List of elapsed times (seconds) for each repeat.
+    """
+    if globals is None:
+        globals = {}
+
+    compiled_setup = compile(setup, "<setup>", "exec")
+    compiled_stmt = compile(stmt, "<stmt>", "exec")
+
+    times = []
+    for _ in range(repeat):
+        for _ in range(number):
+            local_globals = globals.copy()
+            exec(compiled_setup, local_globals)  # run setup
+            start = time.perf_counter()
+            exec(compiled_stmt, local_globals)  # run stmt
+            end = time.perf_counter()
+            times.append(end - start)
+
+    return {
+        "median": statistics.median(times),
+        "mean": statistics.mean(times),
+        "stddev": statistics.stdev(times) if len(times) > 1 else 0.0,
+        "min": min(times),
+        "max": max(times),
+        "all_runs": times,
+    }
