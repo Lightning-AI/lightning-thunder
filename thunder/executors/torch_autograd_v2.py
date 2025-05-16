@@ -106,9 +106,9 @@ def split_forward_backward(joint_trace):
     with thunder.core.trace.tracectx(forward_trace):
         prims.python_return(fw_output_dict, (saved_for_backward_tensors, saved_for_backward_other))
 
-    # !!!
-    if len(backward_part_bsyms) == 0:
-        return forward_trace, None
+    # # !!!
+    # if len(backward_part_bsyms) == 0:
+    #     return forward_trace, None
 
     def backward_fn(saved_for_backward, cotangents):
         pass
