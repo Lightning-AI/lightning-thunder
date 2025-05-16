@@ -15,7 +15,7 @@ from torch.distributed.tensor.placement_types import Placement, Shard, Replicate
 
 
 @unittest.skipUnless(
-    torch.cuda.is_available() and torch.distributed.is_available() and torch.distributed.is_nccl_available(),
+    torch.cuda.is_available() and torch.distributed.is_nccl_available(),
     "DTensor test requires CUDA and NCCL `torch.distributed` backend",
 )
 class DTensorTest(DistributedParallelTestCase):
