@@ -11,7 +11,7 @@ def main():
     s = Studio("thunder-quickstarts", "oss-thunder", org="lightning-ai", create_ok=True)
     print("Uploading package and scripts...")
     s.upload_folder("dist", remote_path="dist")
-    pkg_path = glob.glob("dist/thunder-*.whl")[0]
+    pkg_path = glob.glob("dist/*.whl")[0]
     s.upload_folder("examples/quickstart", remote_path="quickstart")
 
     print("Starting studio...")

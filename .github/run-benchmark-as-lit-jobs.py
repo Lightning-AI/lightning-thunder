@@ -11,7 +11,7 @@ def main():
 
     print("Uploading package and benchmark script...")
     s.upload_folder("dist", remote_path="dist")
-    pkg_path = glob.glob("dist/thunder-*.whl")[0]
+    pkg_path = glob.glob("dist/*.whl")[0]
     s.upload_file("thunder/benchmarks/benchmark_hf.py", remote_path="benchmarks/benchmark_hf.py")
 
     print("Starting studio...")
