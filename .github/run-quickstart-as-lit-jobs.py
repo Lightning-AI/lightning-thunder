@@ -36,6 +36,7 @@ def main():
     }
 
     print("Stopping studio...")
+    s.run("rm -rf dist/")
     s.stop()
 
     print("Waiting for jobs to finish...")
