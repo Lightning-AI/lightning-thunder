@@ -513,7 +513,8 @@ def _get_storage_shape(t: torch.Tensor):
 
 
 def _get_min_and_val(t: torch.Tensor) -> tuple[Number | None, Number | None]:
-    if isinstance(t, (FakeTensor, DTensor)) or t.device.type == "meta" or t.numel() == 0:
+    # We assume that for TensorSubclass, `aminmax` is not supported which is true for FakeTensor and DTensor.
+    if (isinstance(t, torch.Tensor) and type(t) is not torch.Tensor) or t.device.type == "meta" or t.numel() == 0:
         return None, None
     if t.dtype in (torch.float8_e4m3fn, torch.float8_e4m3fnuz, torch.float8_e5m2, torch.float8_e5m2fnuz):
         t = t.to(torch.float32)
