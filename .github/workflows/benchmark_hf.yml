@@ -34,7 +34,7 @@ jobs:
           LIGHTNING_API_KEY: ${{ secrets.LIGHTNING_API_KEY }}
         run: |
           pip install lightning_sdk -U -q
-          python .github/run-benchmark_hf-as-lit-jobs.py
+          python .github/run-benchmark_hf-as-lit-job.py
 
       - name: Post Slack Notification
         if: always()
