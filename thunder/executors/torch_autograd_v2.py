@@ -107,8 +107,10 @@ def split_forward_backward(joint_trace):
         prims.python_return(fw_output_dict, (saved_for_backward_tensors, saved_for_backward_other))
 
     # # !!!
-    # if len(backward_part_bsyms) == 0:
-    #     return forward_trace, None
+    if len(backward_part_bsyms) == 0 and not any(
+        [True if arg is not None else False for arg in return_bsym.args[0]["grad_flat_args"]]
+    ):
+        return forward_trace, None
 
     def backward_fn(saved_for_backward, cotangents):
         pass

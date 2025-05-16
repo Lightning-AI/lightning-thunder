@@ -588,11 +588,7 @@ def jit(
             computation_traces.append(computation_trc)
             if backward_trc is not None:
                 backward_trc = thunder.executors.passes.del_last_used(backward_trc, clear_mutable_collections=True)
-                if len(backward_trc.bound_symbols) > 0:
-                    backward_traces.append(backward_trc)
-                else:
-                    # if backward_trc is empty, we don't need to return it
-                    backward_trc = None
+                backward_traces.append(backward_trc)
 
             # if requires_grad:
             #     # Currently split_forward_backward also includes
