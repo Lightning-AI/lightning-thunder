@@ -342,7 +342,7 @@ class StatefulExecutor(OperatorExecutor):
             sym: Symbol queried for grad transform.
 
         Returns:
-            out: sym's grad_transform wrapped in `disable_caching_split_forward_and_backward` decorator or None.
+            Callable | None: a callable object implementing grad transform if it exists.
         """
         grad_transform: Any | None = super().get_grad_transform(sym)
         if grad_transform:
