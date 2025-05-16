@@ -85,17 +85,25 @@ def get_fx_graph_and_output(torch_op, *args, **kwargs) -> tuple[torch.fx.GraphMo
 
     return fwd_graph, aot_output
 
+
 def check_dtensor_cotangent_metadata(dtensor, metadata):
     if not dtensor._spec == metadata:
-        raise RuntimeError("Metadata (placement and mesh) has changed for cotangent between tracing and runtime"
-                           f"during tracing it was {metadata} but at runtime it is {dtensor._spec}.")
+        raise RuntimeError(
+            "Metadata (placement and mesh) has changed for cotangent between tracing and runtime"
+            f"during tracing it was {metadata} but at runtime it is {dtensor._spec}."
+        )
+
 
 def check_in_backward(bw_trace: TraceCtx):
     from thunder.core.prims import PrimIDs
     from thunder.core.symbol import Symbol
     from thunder.core.trace import from_trace
 
-    check_dtensor_cotangent_metadata_symbol = Symbol(name="check_dtensor_cotangent_metadata", meta=lambda dtensor, metadata: None, python_impl=check_dtensor_cotangent_metadata)
+    check_dtensor_cotangent_metadata_symbol = Symbol(
+        name="check_dtensor_cotangent_metadata",
+        meta=lambda dtensor, metadata: None,
+        python_impl=check_dtensor_cotangent_metadata,
+    )
     new_bw_trace = from_trace(bw_trace)
     new_bsyms = []
     for bsym in bw_trace.bound_symbols:
