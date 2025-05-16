@@ -17,7 +17,7 @@ def main():
     print("Starting studio...")
     s.start()
     print("Installing Thunder and dependencies...")
-    s.run(f"pip install {pkg_path} -U transformers 'nvfuser_cu128_torch27==0.2.27.dev20250501'")
+    s.run(f"pip install {pkg_path} -U transformers 'numpy<2.0' 'nvfuser_cu128_torch27==0.2.27.dev20250501'")
 
     print("Running HF benchmark script...")
     timestamp = datetime.now().strftime("%Y-%m-%d|%H:%M:%S")
