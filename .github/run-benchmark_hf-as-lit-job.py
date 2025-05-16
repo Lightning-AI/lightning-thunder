@@ -15,13 +15,15 @@ def main():
     print("Starting studio...")
     s.start()
     print("Installing Thunder and dependencies...")
-    
+
     # install from latest commit
-    s.run("""
+    s.run(
+        """
     git clone https://github.com/lightning-AI/lightning-thunder.git &&
     pip install -e lightning-thunder &&
     pip install transformers nvfuser_cu128_torch27==0.2.27.dev20250501
-    """)
+    """
+    )
 
     print("Running HF benchmark script...")
     timestamp = datetime.now().strftime("%Y-%m-%d|%H:%M:%S")
