@@ -438,6 +438,7 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     bw_extrace._include_te_fp8_autocast = False
 
     from thunder.torch.experimental.dtensor_utils import check_in_backward
+
     bw_extrace = check_in_backward(bw_extrace)
 
     if len(bw_extrace.bound_symbols) == 1:
