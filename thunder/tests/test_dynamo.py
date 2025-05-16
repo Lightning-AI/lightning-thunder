@@ -1169,6 +1169,14 @@ def test_fxreport(executor, device: str, dtype: dtypes.dtype, use_benchmark, tmp
     def foo(x, y):
         return x + y
 
+    from thunder import jit
+
+    with pytest.raises(
+        ValueError,
+        match=r"fx_report requires the original \(uncompiled\) callable and cannot be used on the Thunder-compiled function.",
+    ):
+        fx_report(jit(foo))
+
     x = torch.randn(4, 4, device=device, requires_grad=True)
     y = torch.randn(4, 4, device=device, requires_grad=True)
     results = fx_report(foo, dynamic=True)(x, y)
@@ -1576,3 +1584,24 @@ def test_aot_optimize():
 
     with pytest.raises(AssertionError, match="No longer profiling"):
         pfoo(x)
+
+
+def test_spliter_bwd():
+    def fn(x, idx, val):
+        x = x.clone()
+        x[idx] = val
+        return x
+
+    x = torch.randn(1, 4, 5, dtype=torch.bfloat16, requires_grad=True)
+    idx = torch.rand(1, 4, 5) > 0.5
+    nz = torch.count_nonzero(idx)
+    val = torch.randn(nz, dtype=torch.bfloat16, requires_grad=True)
+
+    cfn = thunderfx(fn)
+    cfn(x, idx, val)
+    reason = cfn._backend.subgraph_infos[0].split_reasons
+    assert len(reason) == 1
+    assert "Failed while running meta for node with name: setitem" in reason[0].info
+    assert "Advanced indexing" in reason[0].exception and reason[0].exception.endswith(
+        "found a tensor with dtype thunder.dtypes.bool8 and 3 dimensions"
+    )

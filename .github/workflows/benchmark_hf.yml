@@ -1,0 +1,47 @@
+name: Benchmark HF Models
+
+on:
+  workflow_dispatch: {} # Trigger manually via GitHub UI
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  benchmark-hf:
+    runs-on: "ubuntu-22.04"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Build Thunder Package
+        run: |
+          pip install -U build
+          python -m build --sdist --wheel --outdir dist/
+          ls -l dist/
+
+      - name: Launch HF Benchmark Job in Lightning Studio
+        env:
+          LIGHTNING_USER_ID: ${{ secrets.LIGHTNING_USER_ID }}
+          LIGHTNING_API_KEY: ${{ secrets.LIGHTNING_API_KEY }}
+        run: |
+          pip install lightning_sdk -U -q
+          python .github/run-benchmark_hf-as-lit-job.py
+
+      - name: Post Slack Notification
+        if: always()
+        uses: act10ns/slack@v2
+        with:
+          webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
+          status: ${{ job.status }}
+          message: |
+            *HF Benchmark Triggered Manually* - [${{ job.status }}]
+            ref: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
