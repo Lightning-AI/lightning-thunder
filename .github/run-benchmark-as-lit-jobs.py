@@ -6,7 +6,7 @@ from lightning_sdk import Studio, Job, Machine, Status
 
 def main():
     print("Creating studio...")
-    s = Studio("thunder-benchmark-hf", "oss-thunder", org="lightning-ai", create_ok=True)
+    s = Studio("thunder-benchmark", "oss-thunder", org="lightning-ai", create_ok=True)
 
     print("Uploading package and benchmark script...")
     s.upload_folder("dist", remote_path="dist")
