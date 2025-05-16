@@ -1,3 +1,4 @@
+import glob
 import json
 from datetime import datetime
 
@@ -10,13 +11,13 @@ def main():
 
     print("Uploading package and benchmark script...")
     s.upload_folder("dist", remote_path="dist")
+    pkg_path = glob.glob("dist/thunder-*.whl")[0]
     s.upload_file("thunder/benchmarks/benchmark_hf.py", remote_path="benchmarks/benchmark_hf.py")
 
     print("Starting studio...")
     s.start()
     print("Installing Thunder and dependencies...")
-    s.run("ls -lh dist/")
-    s.run("""pip install lightning-thunder transformers 'nvfuser_cu128_torch27==0.2.27.dev20250501' -f dist/ -U""")
+    s.run(f"pip install {pkg_path} -U transformers 'nvfuser_cu128_torch27==0.2.27.dev20250501'")
 
     print("Running HF benchmark script...")
     timestamp = datetime.now().strftime("%Y-%m-%d|%H:%M:%S")
