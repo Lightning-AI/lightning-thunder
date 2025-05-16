@@ -131,5 +131,34 @@ def proxify_dtensor(x, name: str | None = None, history: None | tuple = None) ->
     return None
 
 
+def create_dtensor_proxy_from_proxies(local_tensor: TensorProxy, spec: AnyProxy, requires_grad: bool) -> DTensorProxy:
+    """Creates a DTensorProxy from existing TensorProxy and AnyProxy objects.
+
+    This function constructs a distributed tensor proxy by combining a local tensor proxy
+    with a specification proxy that contains distribution information.
+
+    Args:
+        local_tensor (TensorProxy): The local tensor proxy representing the distributed tensor's local portion.
+        spec (AnyProxy): The specification proxy containing distribution information (mesh, placements, etc.).
+        requires_grad (bool): Whether the tensor requires gradient computation.
+
+    Returns:
+        DTensorProxy: A new distributed tensor proxy combining the local tensor and distribution spec.
+    """
+    assert isinstance(local_tensor, TensorProxy)
+    assert isinstance(spec, AnyProxy)
+    return DTensorProxy(
+        local_tensor=local_tensor,
+        spec=spec,
+        shape=tuple(spec._o.shape),
+        device=local_tensor.device,
+        dtype=local_tensor.dtype,
+        requires_grad=requires_grad,
+        grad=None,
+        distparallel_type=None,
+        thunder_fsdp_padding_size=None,
+    )
+
+
 def is_dtensor_proxy(x):
     return isinstance(x, DTensorProxy)

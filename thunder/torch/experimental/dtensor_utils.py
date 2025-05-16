@@ -13,6 +13,12 @@ from thunder.core.dtypes import to_torch_dtype
 from thunder.core.pytree import tree_map
 from thunder.core.trace import TraceCtx
 from thunder.torch.experimental.dtensor_proxy import DTensorProxy
+from thunder.core.prims import PrimIDs
+from thunder.core.symbol import Symbol
+from thunder.core.trace import from_trace
+
+from torch._subclasses.fake_tensor import FakeTensorMode
+from torch._guards import TracingContext, tracing
 
 
 def get_fx_graph_and_output(torch_op, *args, **kwargs) -> tuple[torch.fx.GraphModule, Sequence[Any]]:
@@ -85,6 +91,11 @@ def get_fx_graph_and_output(torch_op, *args, **kwargs) -> tuple[torch.fx.GraphMo
 
     return fwd_graph, aot_output
 
+def run_with_fake_tensor(torch_op, *args, **kwargs):
+    with tracing(TracingContext(FakeTensorMode())):
+        fx_graph, output = get_fx_graph_and_output(torch_op, *args, **kwargs)
+    return fx_graph, output
+
 
 def check_dtensor_cotangent_metadata(dtensor, metadata):
     if not dtensor._spec == metadata:
@@ -94,11 +105,16 @@ def check_dtensor_cotangent_metadata(dtensor, metadata):
         )
 
 
-def check_in_backward(bw_trace: TraceCtx):
-    from thunder.core.prims import PrimIDs
-    from thunder.core.symbol import Symbol
-    from thunder.core.trace import from_trace
+def check_dtensor_cotangent_metadata_in_backward(bw_trace: TraceCtx):
+    # NOTE: The metadata (placement and mesh) of the cotangent DTensor
+    #       can be different at runtime than the one we assumed during tracing.
+    #       Because of this, we currently add a check in backward to verify the same.
+    #       However, in future, we should add a symbol which will take care of mapping
+    #       the cotangent metadata at runtime to the cotangent metadata during tracing.
+    #       Also refer: https://github.com/pytorch/pytorch/pull/118670
 
+    # Quick implementation of a symbol to verify
+    # that the metadata of the cotangent at runtime as that as during tracing.
     check_dtensor_cotangent_metadata_symbol = Symbol(
         name="check_dtensor_cotangent_metadata",
         meta=lambda dtensor, metadata: None,
@@ -107,15 +123,19 @@ def check_in_backward(bw_trace: TraceCtx):
     new_bw_trace = from_trace(bw_trace)
     new_bsyms = []
     for bsym in bw_trace.bound_symbols:
+        # Find the `unpack_sequence` for the cotangents.
         if bsym.sym.id == PrimIDs.UNPACK_SEQUENCE and bsym.args[0].name == "cotangents":
             new_bsyms.append(bsym)
             args = bsym.args[0].collection()
             for arg in args:
+                # For every DTensor cotangent,
+                # add symbol to verify that the metadata is the same as during tracing.
                 if isinstance(arg, DTensorProxy):
                     bsym = check_dtensor_cotangent_metadata_symbol.bind(arg, arg.spec._o, output=None)
                     new_bsyms.append(bsym)
         else:
             new_bsyms.append(bsym)
+
     new_bw_trace.bound_symbols = new_bsyms
 
     return new_bw_trace

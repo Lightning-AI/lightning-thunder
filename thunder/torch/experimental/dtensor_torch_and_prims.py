@@ -5,8 +5,8 @@ from thunder.torch import torchsymbol, TensorLike, register_function
 import thunder.torch as ltorch
 from thunder.core.pytree import tree_flatten
 from thunder import clang
-from thunder.torch.experimental.dtensor_utils import get_fx_graph_and_output
-from thunder.torch.experimental.dtensor_proxy import DTensorProxy
+from thunder.torch.experimental.dtensor_utils import run_with_fake_tensor
+from thunder.torch.experimental.dtensor_proxy import DTensorProxy, create_dtensor_proxy_from_proxies
 from thunder.torch.langctx import register_method
 from thunder.core.prims import make_prim
 
@@ -26,8 +26,6 @@ from thunder import clang
 
 
 import torch
-from torch._subclasses.fake_tensor import FakeTensorMode
-from torch._guards import TracingContext, tracing
 
 dtensor_torchsymbol = partial(torchsymbol, allow_tensor_subclass_proxy=True)
 
@@ -107,22 +105,11 @@ def handle_check_dtensor_spec_in_prologue(prim, prologue_trace, args) -> bool:
 
 
 def dtensor_mul_meta(a, b):
-    with tracing(TracingContext(FakeTensorMode())):
-        _, output = get_fx_graph_and_output(torch.mul, a, b)
+    _, output = run_with_fake_tensor(torch.mul, a, b)
     local_tensor_proxy = TensorProxy(like=a.local_tensor)
     spec = output._spec
     spec_proxy = AnyProxy(spec, history=a.history)
-    return DTensorProxy(
-        local_tensor=local_tensor_proxy,
-        spec=spec_proxy,
-        shape=tuple(spec.shape),
-        device=local_tensor_proxy.device,
-        dtype=local_tensor_proxy.dtype,
-        requires_grad=local_tensor_proxy.requires_grad,
-        grad=None,
-        distparallel_type=None,
-        thunder_fsdp_padding_size=None,
-    )
+    return create_dtensor_proxy_from_proxies(local_tensor_proxy, spec_proxy, False)
 
 
 dtensor_mul_prim = make_prim("dtensor_mul_prim", "dtensor_mul_prim", meta=dtensor_mul_meta)
