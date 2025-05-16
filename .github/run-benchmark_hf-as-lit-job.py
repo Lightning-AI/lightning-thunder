@@ -15,7 +15,7 @@ def main():
     print("Starting studio...")
     s.start()
     print("Installing Thunder and dependencies...")
-    s.run("pip install lightning-thunder transformers -f dist/ -U")
+    s.run("pip install lightning-thunder transformers nvfuser-cu128-torch27 -f dist/ -U")
 
     print("Running HF benchmark script...")
     timestamp = datetime.now().strftime("%Y-%m-%d|%H:%M:%S")
