@@ -1,11 +1,11 @@
-name: Benchmark HF Models
+name: Benchmark Models
 
 on:
   workflow_dispatch: {}
   pull_request:
     paths:
       - ".github/workflows/benchmark-hf.yml"
-      - ".github/run-benchmark_hf-as-lit-job.py"
+      - ".github/run-benchmark-as-lit-jobs.py"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -16,7 +16,7 @@ defaults:
     shell: bash
 
 jobs:
-  benchmark-hf:
+  benchmark-jobs:
     runs-on: "ubuntu-22.04"
 
     steps:
@@ -32,20 +32,20 @@ jobs:
           python -m build --sdist --wheel --outdir dist/
           ls -l dist/
 
-      - name: Launch HF Benchmark Job in Lightning Studio
+      - name: Launch Benchmark Job in Lightning Studio
         env:
           LIGHTNING_USER_ID: ${{ secrets.LIGHTNING_USER_ID }}
           LIGHTNING_API_KEY: ${{ secrets.LIGHTNING_API_KEY }}
         run: |
           pip install lightning_sdk -U -q
-          python .github/run-benchmark_hf-as-lit-job.py
+          python .github/run-benchmark-as-lit-jobs.py
 
       - name: Post Slack Notification
-        if: always()
+        if: always() && github.event_name != 'pull_request'
         uses: act10ns/slack@v2
         with:
           webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
           status: ${{ job.status }}
           message: |
-            *HF Benchmark Triggered Manually* - [${{ job.status }}]
+            *Benchmark Triggered Manually* - [${{ job.status }}]
             ref: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
