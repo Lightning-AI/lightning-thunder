@@ -440,6 +440,7 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     # Should this be a post optmization transform?
     # We only want to apply it on backward trace.
     from thunder.torch.experimental.dtensor_utils import check_dtensor_cotangent_metadata_in_backward
+
     bw_extrace = check_dtensor_cotangent_metadata_in_backward(bw_extrace)
 
     if len(bw_extrace.bound_symbols) == 1:

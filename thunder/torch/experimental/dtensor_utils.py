@@ -91,6 +91,7 @@ def get_fx_graph_and_output(torch_op, *args, **kwargs) -> tuple[torch.fx.GraphMo
 
     return fwd_graph, aot_output
 
+
 def run_with_fake_tensor(torch_op, *args, **kwargs):
     with tracing(TracingContext(FakeTensorMode())):
         fx_graph, output = get_fx_graph_and_output(torch_op, *args, **kwargs)
