@@ -94,3 +94,20 @@ class DTensorTest(DistributedParallelTestCase):
         tmodel = thunder.jit(fn)
         with pytest.raises(AssertionError):
             tmodel(in_dtensor, w)
+
+    def test_dtensor_incorrect_cotangent(self):
+        num_devices = self.world_size
+        mesh = DeviceMesh("cuda", list(range(num_devices)))
+
+        dim_size = 16
+
+        w_dtensor = distribute_tensor(torch.randn(dim_size, dim_size, requires_grad=True), mesh, [Shard(0)])
+        in_dtensor = distribute_tensor(torch.randn(dim_size, dim_size, requires_grad=True), mesh, [Shard(0)])
+        def fn(x, w):
+            return torch.mul(x, w)
+        tmodel = thunder.jit(fn)
+        actual = tmodel(in_dtensor, w_dtensor)
+        g_o = distribute_tensor(torch.ones(dim_size, dim_size), mesh, [Shard(1)])
+
+        with pytest.raises(RuntimeError, match="has changed for cotangent between tracing and runtime"):
+            torch.autograd.grad(actual, (in_dtensor, w_dtensor), g_o)

@@ -437,6 +437,9 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     # We only want the forward function to be called with `te.fp8_autocast` manager.
     bw_extrace._include_te_fp8_autocast = False
 
+    from thunder.torch.experimental.dtensor_utils import check_in_backward
+    bw_extrace = check_in_backward(bw_extrace)
+
     if len(bw_extrace.bound_symbols) == 1:
         # only return, no unpacking, so no gradient is calculated
         bw_extrace = None

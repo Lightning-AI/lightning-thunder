@@ -11,7 +11,7 @@ from thunder.core.proxies import TensorProxy, NumberProxy
 from thunder.core.devices import to_torch_device
 from thunder.core.dtypes import to_torch_dtype
 from thunder.core.pytree import tree_map
-
+from thunder.core.trace import TraceCtx
 from thunder.torch.experimental.dtensor_proxy import DTensorProxy
 
 
@@ -84,3 +84,30 @@ def get_fx_graph_and_output(torch_op, *args, **kwargs) -> tuple[torch.fx.GraphMo
     # DTensor(local_tensor=FakeTensor(..., device='cuda:0', size=(8, 16)), device_mesh=DeviceMesh('cuda', [0, 1]), placements=(Shard(dim=0),))
 
     return fwd_graph, aot_output
+
+def check_dtensor_cotangent_metadata(dtensor, metadata):
+    if not dtensor._spec == metadata:
+        raise RuntimeError("Metadata (placement and mesh) has changed for cotangent between tracing and runtime"
+                           f"during tracing it was {metadata} but at runtime it is {dtensor._spec}.")
+
+def check_in_backward(bw_trace: TraceCtx):
+    from thunder.core.prims import PrimIDs
+    from thunder.core.symbol import Symbol
+    from thunder.core.trace import from_trace
+
+    check_dtensor_cotangent_metadata_symbol = Symbol(name="check_dtensor_cotangent_metadata", meta=lambda dtensor, metadata: None, python_impl=check_dtensor_cotangent_metadata)
+    new_bw_trace = from_trace(bw_trace)
+    new_bsyms = []
+    for bsym in bw_trace.bound_symbols:
+        if bsym.sym.id == PrimIDs.UNPACK_SEQUENCE and bsym.args[0].name == "cotangents":
+            new_bsyms.append(bsym)
+            args = bsym.args[0].collection()
+            for arg in args:
+                if isinstance(arg, DTensorProxy):
+                    bsym = check_dtensor_cotangent_metadata_symbol.bind(arg, arg.spec._o, output=None)
+                    new_bsyms.append(bsym)
+        else:
+            new_bsyms.append(bsym)
+    new_bw_trace.bound_symbols = new_bsyms
+
+    return new_bw_trace
