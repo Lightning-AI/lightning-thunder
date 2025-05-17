@@ -700,8 +700,12 @@ def _general_jit_named_buffers_lookaside(obj: Any, *args, **kwargs):
 def _convert_pytorchfunc_to_thundertrace(
     func: Callable[[Any], Any],
     shallow_copy_output: bool,
-    *args,
-    **kwargs,
+    *,
+    call_args,
+    call_kwargs=None,
+    name=None,
+    trace_args=None,
+    trace_kwargs=None,
 ) -> tuple[TraceCtx | INTERPRETER_SIGNALS, ProvenanceRecord | None]:
     """Converts pytorch function to thunder trace.
 
@@ -714,11 +718,13 @@ def _convert_pytorchfunc_to_thundertrace(
         *args:
         **kwargs
     """
+    if call_kwargs is None:
+        call_kwargs = {}
     from thunder.core.baseutils import sequencify
 
     active_jit_ctx: JitCtx = get_jit_ctx()
     active_jit_ctx.computation_trace.push_scope([])
-    wrapped_func_result = _interpret_call(func, *args, **kwargs)
+    wrapped_func_result = _interpret_call(func, *call_args, **call_kwargs)
     if wrapped_func_result is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return wrapped_func_result, None
 
@@ -736,6 +742,13 @@ def _convert_pytorchfunc_to_thundertrace(
         func_result = tree_map(lambda t: out_to_shallow_copy.get(variableify(t), t), func_result)
     with tracectx(trace):
         prims.python_return(func_result)
+    trace.args = trace_args
+    if trace_kwargs is not None:
+        trace.kwargs = trace_kwargs
+    trace._siginfo = SigInfo.from_name_and_args(
+        name,
+        trace_args,
+    )
     return trace, sequencify(wrapped_func_result)[0].provenance
 
 
@@ -760,19 +773,20 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     wrapped_ctx = wrap_const(
         ctx_proxy, provenance=ProvenanceRecord(PseudoInst.NEW, inputs=[wrap_const(typ).provenance])
     )
+
+    unwrapped_custom_forward_args = tree_map(lambda a: unwrap(a), args)
     trace_of_fwd, fwd_output_provenance = _convert_pytorchfunc_to_thundertrace(
-        custom_forward, True, wrapped_ctx, *args, **kwargs
+        custom_forward,
+        True,
+        call_args=(wrapped_ctx, *args),
+        call_kwargs=kwargs,
+        trace_args=unwrapped_custom_forward_args,
+        name=custom_autograd_function_cls.__name__,
     )
     if trace_of_fwd is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return trace_of_fwd
 
     # Forward.
-    unwrapped_custom_forward_args = tree_map(lambda a: unwrap(a), args)
-    trace_of_fwd._siginfo = SigInfo.from_name_and_args(
-        custom_autograd_function_cls.__name__,
-        unwrapped_custom_forward_args,
-    )
-    trace_of_fwd.args = unwrapped_custom_forward_args
     unpack_bsyms = [
         prims.unpack_trivial.bind(a, name=a.name, output=a)
         for a in filter(lambda a: isinstance(a, Proxy), trace_of_fwd.args)
@@ -811,14 +825,16 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
         sequencify(trace_of_fwd.output),
     )
     wrapped_grads = tree_map(lambda g: wrap(g, provenance=fwd_output_provenance), grads)
-    trace_of_backward, _ = _convert_pytorchfunc_to_thundertrace(custom_backward, False, wrapped_ctx, *wrapped_grads)
+    trace_of_backward_args = tuple(ctx_proxy.saved_tensors + grads)
+    trace_of_backward, _ = _convert_pytorchfunc_to_thundertrace(
+        custom_backward,
+        False,
+        call_args=(wrapped_ctx, *wrapped_grads),
+        trace_args=trace_of_backward_args,
+        name=f"{custom_fwd_sym.name}_backward",
+    )
     if trace_of_backward is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return trace_of_backward
-    trace_of_backward._siginfo = SigInfo.from_name_and_args(
-        f"{custom_fwd_sym.name}_backward",
-        ctx_proxy.saved_tensors + grads,
-    )
-    trace_of_backward.args = tuple(ctx_proxy.saved_tensors + grads)
     bwd_unpack_bsyms = [
         prims.unpack_trivial.bind(a, name=a.name, output=a)
         for a in filter(lambda a: isinstance(a, Proxy), trace_of_backward.args)
@@ -895,26 +911,26 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
             if not isinstance(unwrap(v), TensorProxy):
                 new_fwd_args.append(v)
     new_fwd_args = (wrap_const(None),) + tuple(new_fwd_args)
+    unwrapped_fwd_args = tree_map(lambda t: unwrap(t), new_fwd_args)
 
-    aug_fwd_trace, aug_fwd_provenance = _convert_pytorchfunc_to_thundertrace(fwd, False, *new_fwd_args)
+    tmp_name = _generate_random_str_id()
+    aug_fwd_trace, aug_fwd_provenance = _convert_pytorchfunc_to_thundertrace(
+        fwd,
+        False,
+        call_args=new_fwd_args,
+        trace_args=unwrapped_fwd_args,
+        name=f"higher_order_autograd_function_apply_{tmp_name}",
+    )
     if aug_fwd_trace is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return aug_fwd_trace
     aug_fwd_result = aug_fwd_trace.output
     output, saved_values = unwrap(aug_fwd_result)
-    unwrapped_fwd_args = tree_map(lambda t: unwrap(t), new_fwd_args)
-
-    tmp_name = _generate_random_str_id()
-    aug_fwd_trace.args = unwrapped_fwd_args
-    aug_fwd_trace._siginfo = SigInfo.from_name_and_args(
-        f"higher_order_autograd_function_apply_{tmp_name}",
-        aug_fwd_trace.args,
-    )
 
     trace_of_forward = from_trace(aug_fwd_trace)
     for bsym in aug_fwd_trace.bound_symbols:
         if bsym.sym.id == prims.PrimIDs.RETURN:
             continue
-        trace_of_forward.bound_symbols.append(bsym)
+        trace_of_forward.bound_symbols.append(bsym.from_bsym())
     with tracectx(trace_of_forward):
         prims.python_return(*(sequencify(output)))
 
@@ -932,17 +948,17 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
     bwd_trace, bwd_trace_provenance = _convert_pytorchfunc_to_thundertrace(
         bwd,
         False,
-        *wrapped_bwd_args,
+        call_args=wrapped_bwd_args,
+        trace_args=bwd_args,
+        name=f"bwd_{tmp_name}",
     )
     if bwd_trace is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return bwd_trace
-    bwd_trace.args = bwd_args
     bwd_unpack_bsyms = [
         prims.unpack_trivial.bind(a, name=a.name, output=a)
         for a in filter(lambda a: isinstance(a, Proxy), bwd_trace.args)
     ]
     bwd_trace.bound_symbols = bwd_unpack_bsyms + bwd_trace.bound_symbols
-    bwd_trace._siginfo = SigInfo.from_name_and_args(f"bwd_{tmp_name}", bwd_trace.args)
 
     @wraps(forward)
     def grad_transform(*args, **kwargs):
