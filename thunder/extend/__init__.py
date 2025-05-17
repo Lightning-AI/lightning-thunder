@@ -14,6 +14,7 @@ from thunder.core.proxies import Proxy, TensorProxy, proxy
 from thunder.core.pytree import tree_map
 from thunder.core.symbol import Symbol, BoundSymbol, default_python_printer
 from thunder.core.trace import TraceCtx
+from thunder.core.vjp_utils import disable_caching_split_forward_and_backward
 
 __all__ = [
     "register_executor",
@@ -276,6 +277,78 @@ class OperatorExecutor(Executor):
 
         _id = sym_or_id.id if isinstance(sym_or_id, Symbol) else sym_or_id
         self.implmap[_id] = impl
+
+
+class StatefulExecutor(OperatorExecutor):
+    """
+    A specialized executor for operators that need to keep a state for as long as the trace lifetime.
+
+    This executor is able to register operators and bind them to their state class.
+    It uses a counter to keep operator names unique.
+
+    Key Features:
+        - Creates and binds state object to operators.
+        - Gives unique naming to the operators by using a counter.
+        - Disables cacheing of it's symbols' `grad_transform`.
+
+    Example:
+        >>> executor = StatefulExecutor()
+        >>> op = executor.register_operator(
+        ...     name="temp_add",
+        ...     StateClass,
+        ...     [...same arguments that would have been passed to register_operator...]
+        ... )
+
+    For more examples check out transformer engine executor.
+    """
+
+    def __init__(self, name: Hashable, *, version: Any | None = None):
+        super().__init__(name, version=version)
+        self._counter: int = 0
+
+    def register_stateful_operator(self, name: str, state_class, *, meta) -> Callable[..., Any]:
+        """
+        Sets up a function that creates and registers new symbol for the given operator name and state class.
+        The output function also binds an instance of the state class to the bound symbol call context.
+
+        Args:
+            name: The name of the operator. Note that it is going to be combined with the counter number to generate a unique name.
+            state_class: The name of a user defined class that implements a __call__ method that returns the
+                operator output (i.e. the value of the state).
+            meta: The meta function for the operator.
+
+        Returns:
+            out: Instance of `create_new_symbol_and_call` function that register the operator and binds the state object upon call.
+        """
+
+        def create_new_symbol_and_call(*args, **kwargs):
+            op_name = f"{name}_{self._counter}"
+
+            def bind_state(bsym):
+                bsym._call_ctx = {op_name: state_class()}
+
+            sym: Symbol = self.register_operator(op_name, meta=meta, bind_postprocess=bind_state)
+
+            self._counter += 1
+            return sym(*args, **kwargs)
+
+        return create_new_symbol_and_call
+
+    def get_grad_transform(self, sym: Symbol):
+        """
+        Since every call to the symbol is unique, this function disables cacheing on the symbol's grad transform.
+
+        Args:
+            sym: Symbol queried for grad transform.
+
+        Returns:
+            Callable | None: a callable object implementing grad transform if it exists.
+        """
+        grad_transform: Any | None = super().get_grad_transform(sym)
+        if grad_transform:
+            # Always disable cache for stateful grad transform
+            return disable_caching_split_forward_and_backward(grad_transform)
+        return grad_transform
 
 
 class TemporaryExecutor(OperatorExecutor):
