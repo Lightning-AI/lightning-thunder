@@ -28,7 +28,7 @@ from thunder.core.jit_ext import JITSharpEdgeError
 from thunder.core.transforms import Transform
 
 
-thunder_jit = partial(thunder.jit, debug_options=thunder.DebugOptions(check_traces=True))
+thunder_jit = partial(thunder.jit, debug_options=thunder.DebugOptions(check_traces=2))
 
 #
 # Test suite for the general jit
