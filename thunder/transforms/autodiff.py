@@ -160,11 +160,18 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                     bwd_impl = backward_impls.get(bsym.sym.id)
 
                     def joint_forward_backward(*args, **kwargs):
+                        arg_proxy_names = {a.name for a in bsym.flat_proxy_args}
                         aug_fwd_res = aug_fwd_impl(*bsym.args, **bsym.kwargs)
-                        if isinstance(aug_fwd_res, thunder.core.transforms.VJPDual):
-                            res, saved_for_backward = aug_fwd_res
-                        else:
-                            res, saved_for_backward = aug_fwd_res
+
+                        def shallow_copy_if_input(p):
+                            if isinstance(p, thunder.TensorProxy) and p.name in arg_proxy_names:
+                                return thunder.core.prims.shallow_copy(p)
+                            return p
+
+                        # aug_fwd_res could be either VJPDual or just a tuple
+                        res, saved_for_backward = aug_fwd_res
+                        res = tree_map(shallow_copy_if_input, res)
+
                         grad_outs = []
                         for r in thunder.core.pytree.tree_iter(res):
                             if isinstance(r, thunder.TensorProxy):
