@@ -1,14 +1,14 @@
 import torch
 import traceback
-import thunder 
+import thunder
 
 from transformers import (
     AutoConfig,
     AutoTokenizer,
     AutoModel,
-    AutoModelForCausalLM, 
+    AutoModelForCausalLM,
     AutoModelForSeq2SeqLM,
-    AutoModelForImageClassification
+    AutoModelForImageClassification,
 )
 
 
@@ -22,14 +22,12 @@ MODEL_LIST = [
     "facebook/dinov2-small",
     "albert-base-v2",
     "google/electra-base-discriminator",
-    "facebook/opt-1.3b", 
-    "google/vit-base-patch16-224"
- ]
+    "facebook/opt-1.3b",
+    "google/vit-base-patch16-224",
+]
 
-MODEL_TASKS = {
-    "openai/clip-vit-large-patch14": "clip",
-    "facebook/dinov2-small": "vision"
-}
+MODEL_TASKS = {"openai/clip-vit-large-patch14": "clip", "facebook/dinov2-small": "vision"}
+
 
 def get_model_class(model_name, config):
     task = MODEL_TASKS.get(model_name, "text")
@@ -41,18 +39,17 @@ def get_model_class(model_name, config):
         return AutoModelForSeq2SeqLM
     else:
         return AutoModel
+
+
 # custom input depending on model task
 def get_dummy_input(model_name, config):
     task = MODEL_TASKS.get(model_name, "text")
 
     if task == "vision":
-        return {
-            "pixel_values": torch.randn(1, 3, 224, 224, device="cpu", dtype=torch.float32)
-        }
-    else:  
-        return {
-            "input_ids": torch.randint(0, 1000, (1, 16), device="cpu")
-        }
+        return {"pixel_values": torch.randn(1, 3, 224, 224, device="cpu", dtype=torch.float32)}
+    else:
+        return {"input_ids": torch.randint(0, 1000, (1, 16), device="cpu")}
+
 
 @thunder._with_cache_info_ctx
 def run_prologue(jfn, *args, **kwargs):
@@ -68,6 +65,7 @@ def run_prologue(jfn, *args, **kwargs):
         pro_to_comp, pro_to_epi = cache_entry.prologue_fn(*args, **kwargs)
     return cache_entry, pro_to_comp, pro_to_epi
 
+
 def try_model(model_name):
     print(f"\n=== Testing {model_name} ===")
 
@@ -80,8 +78,8 @@ def try_model(model_name):
     except Exception as setup_err:
         print(f"[SKIPPED] {model_name} - model setup failed")
         traceback.print_exc()
-        return  
-    
+        return
+
     try:
         jmodel = thunder.jit(model)
         ce, pro_to_comp, pro_to_epi = run_prologue(jmodel, **input_sample)
@@ -90,6 +88,7 @@ def try_model(model_name):
     except Exception as thunder_err:
         print(f"[FAILURE] {model_name} - Thunder trace acquisition failed")
         traceback.print_exc()
+
 
 if __name__ == "__main__":
     for model in MODEL_LIST:
