@@ -100,10 +100,7 @@ def test_recipe_errors():
             self.executors = ["cudnn", "nonexistent_executor"]
 
     recipe = BrokenRecipe()
-    try:
-        recipe.setup_executors()
-    except ValueError as e:
-        print(repr(str(e)))
+
     with pytest.raises(
         ValueError,
         match="Executor 'nonexistent_executor' was specified in the recipe but is not available in the current environment.",
