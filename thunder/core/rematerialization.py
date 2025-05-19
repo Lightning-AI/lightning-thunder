@@ -657,11 +657,11 @@ def rematerialize_forward_and_backward(fw_trace: TraceCtx, bw_trace: TraceCtx) -
         v = variableify(p)
         if isinstance(p, TensorProxy) and v not in swapmap and p.name not in skipmap:
             with tracectx(joint_extrace):
-                swapmap[v] = p.replace_name(f"bw_{p.name}", disambiguate=True)
+                swapmap[v] = p.replace(name=f"bw_{p.name}")
 
     for bsym in bw_trace.bound_symbols[:-1]:
         if bsym.sym.id != PrimIDs.UNPACK_SEQUENCE:
-            # we want rename except the saved for backwards tensors
+            # we want rename except the saved for backkwards tensors
             apply_to_proxy_outputs_and_subsymbols(bsym, add_to_swapmap)
         else:
             for p in bsym.flat_proxy_outs:

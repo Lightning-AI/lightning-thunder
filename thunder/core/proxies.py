@@ -137,19 +137,8 @@ class Proxy(VariableInterface, ProxyInterface):
         kwargs.update(changes)
         return Proxy(**kwargs)
 
-    def replace_name(self, name: str | None = None, *, disambiguate=False):
+    def replace_name(self, name: str | None = None):
         """Return a copy of this proxy with the given name."""
-        if disambiguate:
-            trc = get_tracectx()
-        else:
-            trc = None
-
-        if trc is not None:
-            name_prefix = name
-            cnt = 0
-            while trc.has_name(name):
-                name = f"{name_prefix}_{cnt}"
-
         return self.replace(name=name)
 
     def __repr__(self) -> str:
