@@ -16,6 +16,7 @@ from thunder.core.proxies import DistParallelType
 from thunder.core.proxies import TensorProxy
 from thunder.core.proxies import variableify
 from thunder.core.transform_common import Transform
+from thunder.core.trace_interpreter import rerun_trace
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -274,12 +275,14 @@ class TransformForTensorParallel(Transform):
             visit=visit,
             provenance=provenance,
         )
-        if not visit.eligible_for_comm_optimization:
-            return prologue_trace, new_computation_trace, epilogue_trace
-        else:
+        if visit.eligible_for_comm_optimization:
             from thunder.distributed.tensor_parallel.optimize_comm import remove_redundant_comms
 
-            return prologue_trace, remove_redundant_comms(new_computation_trace), epilogue_trace
+            new_computation_trace = remove_redundant_comms(new_computation_trace)
+
+        # fix shapes
+        new_computation_trace = rerun_trace(new_computation_trace)
+        return prologue_trace, new_computation_trace, epilogue_trace
 
     def transform_module(self, model: ThunderModule) -> None:
         import torch.nn as nn
