@@ -11,6 +11,7 @@ def test_examine_fn():
     x = torch.ones(2, 2)
     thunder.examine.examine(foo, x)
 
+
 @pytest.mark.skipif(not nvfuser_available(), reason="NVFuser is not available")
 def test_examine_jfn():
     def foo(x):
