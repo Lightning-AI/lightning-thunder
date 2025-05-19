@@ -199,5 +199,7 @@ class DebugOptions:
         return "\n".join(repr)
 
 
-DebugOptions.register_option("check_traces", bool | int, False, doc="Check traces for consistency. Pass True to enable.")
+DebugOptions.register_option(
+    "check_traces", bool | int, False, doc="Check traces for consistency. Pass True to enable."
+)
 DebugOptions._set_docstring()
