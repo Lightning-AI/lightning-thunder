@@ -421,7 +421,7 @@ def test_lora_transform_linear():
     assert_close(actual, litgpt_lora_output, atol=2e-1, rtol=2e-1)
 
     tr = thunder.last_traces(jmodel)[-1]
-    flat_arg_names = [a.name for a in tr.bound_symbols[-1].args[0]['flat_args']]
+    flat_arg_names = [a.name for a in tr.bound_symbols[-1].args[0]["flat_args"]]
     arg_names = [a.name for a in tr.args]
     assert flat_arg_names == arg_names
 
