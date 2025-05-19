@@ -145,7 +145,8 @@ class DebugOptions:
             v = kwargs.pop(k, default)
             typ = cls.__annotations__[k]
             if not isinstance(v, typ):
-                raise TypeError(f"{cls.__name__}.{k} needs to be of type {typ.__name__}")
+                typ_name = getattr(typ, "__name__", str(typ))
+                raise TypeError(f"{cls.__name__}.{k} needs to be of type {typ_name}")
             setattr(self, k, v)
         if kwargs:
             unknown_args = ", ".join(f"{k}" for k in kwargs)
@@ -179,7 +180,8 @@ class DebugOptions:
         for name, default in sorted(cls._defaults.items()):
             typ = cls.__annotations__[name]
             doc = cls._docs[name]
-            lines.append(f"{name}: {typ.__name__}={default}   {doc}")
+            typ_name = getattr(typ, "__name__", str(typ))
+            lines.append(f"{name}: {typ_name}={default}   {doc}")
 
         sep = "\n" if not docstr else "\n\n        "
         return sep.join(lines)
@@ -197,5 +199,5 @@ class DebugOptions:
         return "\n".join(repr)
 
 
-DebugOptions.register_option("check_traces", bool, False, doc="Check traces for consistency")
+DebugOptions.register_option("check_traces", bool | int, False, doc="Check traces for consistency")
 DebugOptions._set_docstring()
