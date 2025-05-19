@@ -96,7 +96,9 @@ def test_te_linear_forward_backward(fp8_recipe: recipe.Recipe):
 @pytest.mark.parametrize("fp8_recipe", recipes, ids=recipe_ids)
 def test_te_linear_forward_backward_multiple_iteration(fp8_recipe: recipe.Recipe):
     if not fp8_recipe:
-        pytest.skip("When recipe is None a new recipe is created for each iteration. This makes the results not numerically comparable.")
+        pytest.skip(
+            "When recipe is None a new recipe is created for each iteration. This makes the results not numerically comparable."
+        )
 
     if fp8_recipe and not (fp8_recipe.delayed() or is_mxfp8_supported):
         pytest.skip(msg_mxfp8)

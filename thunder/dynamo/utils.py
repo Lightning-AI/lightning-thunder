@@ -16,6 +16,7 @@ from thunder.torch.default_torch_ops import torch_auto_registered_ops
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.torch.langctx import torchctx
 from thunder.core.utils import check
+from thunder.core.pytree import tree_flatten
 
 if TYPE_CHECKING:
     from numbers import Number
@@ -254,11 +255,29 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
     from thunder.core.trace import TraceCtx
     from thunder.core.compile_data import compile_data_and_stats
     from thunder.common import CompileData, CompileStats
+    from thunder.core.transforms import value_and_grad
 
     # This is required for verifying `_enter_autocast`
     # which pushes state onto `CompileData.autocast_stack`.
     cd = CompileData(fn=lambda x: x, disable_preprocessing=True)
     cs = CompileStats()
+
+    def get_requires_grad(arg_node):
+        if not isinstance(arg_node, torch.fx.Node):
+            return False
+
+        if "example_value" not in arg_node.meta:
+            return False
+
+        example_value = arg_node.meta["example_value"]
+        flattened_example_value, _ = tree_flatten(example_value)
+        for x in flattened_example_value:
+            if isinstance(x, torch.Tensor) and x.requires_grad:
+                return True
+        return False
+
+    args, _ = tree_flatten((node.args, node.kwargs))
+    requires_grad = any(map(get_requires_grad, args))
 
     @compile_data_and_stats(cd, cs)
     @thunder._with_cache_info_ctx
@@ -282,10 +301,11 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
                 exception=str(e),
             )
 
+        function_to_run = value_and_grad(thunder_symbol) if requires_grad else thunder_symbol
         # We need to be under trace context to generate proxies.
         with thunder.core.trace.tracectx(TraceCtx()):
             try:
-                thunder_symbol(*proxy_args, **proxy_kwargs)
+                function_to_run(*proxy_args, **proxy_kwargs)
             except Exception as e:
                 return False, SplitReason(
                     SplitReasonType.EXCEPTION_META_THUNDER_OP,
@@ -338,6 +358,7 @@ def is_graphmodule_supported_by_thunder(gm):
                 info=f"node with name: {node.name} and target: {node.target} is not supported probably because it is in unsupported context.",
             )
             return False, split_reason
+
         is_thunder_supported, split_reason = is_node_supported_by_thunder(node)
         if not is_thunder_supported:
             return False, split_reason
