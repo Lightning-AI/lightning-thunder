@@ -56,6 +56,7 @@ from thunder.core.utils import (
     OrderedSet,
     ProxyDict,
 )
+from thunder.core.codeutils import is_literal
 import thunder.clang as clang
 from thunder.clang import (
     empty,
@@ -2346,6 +2347,8 @@ def iter_bound_symbols(bound_symbols):
     for symbol in bound_symbols:
         if symbol.sym.id in trace_interpreter_skip_list:
             continue
+        elif all(is_literal(sym_out) for sym_out in symbol.flat_outs):
+            continue
         elif symbol.output is None:
             continue
         else:
@@ -2643,12 +2646,7 @@ def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
     def _vjp_impl(*args, **kwargs):
         primals, kwargs = tree_map(lambda x: x.primal if isinstance(x, VJPDual) else x, (args, kwargs))
         out_primal, out_residuals = vjp_impl(*primals, **kwargs)
-        # We are saving the residuals and pullback only in the first output
-        # backward_pass then retrieves the residuals and pullback from the first output
-        if isinstance(out_primal, Sequence):
-            return (VJPDual(out_primal[0], out_residuals), *(VJPDual(o, tuple()) for o in out_primal[1:]))
-
-        return (VJPDual(out_primal, out_residuals),)
+        return tree_map(lambda x: VJPDual(x, out_residuals), sequencify(out_primal))
 
     return _vjp_impl
 
