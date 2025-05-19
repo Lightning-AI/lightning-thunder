@@ -2771,8 +2771,7 @@ def _cross_entropy_check_(
     if ignore_index >= 0:
         return False
 
-    if not all(x is None for x in (weight, size_average, reduce)):
-        return False
+    if any(x is not None for x in (weight, size_average, reduce)):
 
     if label_smoothing != 0.0:
         return False
