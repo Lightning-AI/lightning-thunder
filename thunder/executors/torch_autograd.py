@@ -435,7 +435,6 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     bw_extrace = rename_bwd_trace_outputs(bw_extrace, fw_extrace)
     bw_traces.append(bw_extrace)
 
-
     if compile_stats is not None:
         compile_stats.last_traces += fw_traces
         compile_stats.last_backward_traces += bw_traces
