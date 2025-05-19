@@ -1996,3 +1996,25 @@ def test_benchmark_grad():
     backward_fn, backward_setup = backward_only(tfunc, x)
     backward_args = backward_setup()
     backward_fn(*backward_args)
+
+
+def test_disambiguate_grad_names():
+    def fn(a, grad_for_a):
+        return a * grad_for_a
+
+    jfn = thunder.jit(fn)
+
+    a = torch.randn(2, 2, requires_grad=True)
+    b = torch.randn(2, 2, requires_grad=True)
+
+    # this should work
+    res = jfn(a, b)
+    ref = fn(a, b)
+
+    go = torch.randn_like(res)
+
+    res_grads = torch.autograd.grad(res, (a, b), go)
+    ref_grads = torch.autograd.grad(ref, (a, b), go)
+
+    assert_close(res, ref)
+    assert_close(res_grads, ref_grads)
