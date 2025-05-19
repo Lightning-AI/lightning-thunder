@@ -432,7 +432,9 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     bw_extrace = del_last_used(bw_extrace, clear_mutable_collections=True)
     bw_traces.append(bw_extrace)
 
-    bw_trace = rename_bwd_trace_outputs(bw_extrace, fw_extrace)
+    bw_extrace = rename_bwd_trace_outputs(bw_extrace, fw_extrace)
+    bw_traces.append(bw_extrace)
+
 
     if compile_stats is not None:
         compile_stats.last_traces += fw_traces
