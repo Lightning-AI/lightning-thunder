@@ -1,10 +1,8 @@
+import random
 from typing import Any
 
 import torch
-import numpy as np
-import random
 
-from lightning_utilities.core.imports import package_available
 from looseversion import LooseVersion
 
 
@@ -71,24 +69,15 @@ def _get_cudnn_handle(query_device):
 # WARNING: cudnn executor is experimental. Tests that use cudnn might fail.\n
 # Issue for tracking support: https://github.com/Lightning-AI/lightning-thunder/issues/880~
 
-from dataclasses import dataclass
-from functools import lru_cache
-from typing import Union, Dict
-
 import thunder.core.dtypes as dtypes
-from thunder.torch import TensorLike
-from thunder.core.compile_data import get_compile_option
-from thunder.core.proxies import Proxy, TensorProxy
-from thunder.core.prims import OpTags
-
-
-from thunder.core.transforms import (
-    get_grad,
-    put_grad,
-    put_grads,
-)
-from thunder.extend import OperatorExecutor, register_executor
 import thunder.torch as ltorch
+from thunder.core.compile_data import get_compile_option
+from thunder.core.prims import OpTags
+from thunder.core.proxies import TensorProxy
+
+from thunder.core.transforms import get_grad, put_grad, put_grads
+from thunder.extend import OperatorExecutor, register_executor
+from thunder.torch import TensorLike
 
 cudnn_ex: OperatorExecutor = OperatorExecutor("cudnn", version=cudnn_backend_version)
 register_executor(cudnn_ex)
@@ -121,9 +110,30 @@ class CudnnexLRUCache(OrderedDict):
 _cudnnex_cache = CudnnexLRUCache(maxlen=1024)
 
 
-def _make_cudnn_sdpa_forward_graph(
-    query, key, value, attn_mask, dropout_p, is_causal, query_stride, key_stride, value_stride
-):
+def _get_strides(
+    query: torch.Tensor | TensorProxy,
+    key: torch.Tensor | TensorProxy,
+    value: torch.Tensor | TensorProxy,
+    attn_mask: torch.Tensor | TensorProxy | None,
+) -> tuple[tuple[int, ...], tuple[int, ...], tuple[int, ...], tuple[int, ...] | None]:
+    if isinstance(query, TensorProxy):
+        # TensorProxy do not contain stride information, but cudnn graph requires them.
+        # Assume row major layout for now. If the strides during execution are different, a new graph will be built.
+        query_stride = _compute_row_major_strides(query.shape)
+        key_stride = _compute_row_major_strides(key.shape)
+        value_stride = _compute_row_major_strides(value.shape)
+        attn_mask_stride = _compute_row_major_strides(attn_mask.shape) if attn_mask is not None else None
+    else:
+        query_stride = query.stride()
+        key_stride = key.stride()
+        value_stride = value.stride()
+        attn_mask_stride = attn_mask.stride() if attn_mask is not None else None
+
+    return query_stride, key_stride, value_stride, attn_mask_stride
+
+
+def _make_cudnn_sdpa_forward_graph(query, key, value, attn_mask, dropout_p, is_causal):
+    query_stride, key_stride, value_stride, attn_mask_stride = _get_strides(query, key, value, attn_mask)
     graph = cudnn.pygraph(
         intermediate_data_type=cudnn.data_type.FLOAT,
         compute_data_type=cudnn.data_type.FLOAT,
@@ -135,7 +145,6 @@ def _make_cudnn_sdpa_forward_graph(
     V = graph.tensor(name="V", dim=value.shape, stride=value_stride, data_type=torch_to_cudnn_dtype(value.dtype))
     Bias = None
     if attn_mask is not None:
-        attn_mask_stride = _compute_row_major_strides(attn_mask.shape)
         Bias = graph.tensor(
             name="bias", dim=attn_mask.shape, stride=attn_mask_stride, data_type=torch_to_cudnn_dtype(attn_mask.dtype)
         )
@@ -310,7 +319,12 @@ def _cudnn_sdpa_fwd_impl(
         softmax_stats,
         graph,
     ) = _make_cudnn_sdpa_forward_graph(
-        query, key, value, attn_mask, dropout_p, is_causal, query.stride(), key.stride(), value.stride()
+        query,
+        key,
+        value,
+        attn_mask,
+        dropout_p,
+        is_causal,
     )
 
     b, h_q, s_q, d_q = query.size()
@@ -385,12 +399,6 @@ def _cudnn_sdpa_checker(
             return False
 
     try:
-        # TensorProxy do not contain stride information, but cudnn graph requires them.
-        # Assume row major layout for now. If the strides during execution are different, a new graph will be built.
-        query_stride = _compute_row_major_strides(query.size())
-        key_stride = _compute_row_major_strides(key.size())
-        value_stride = _compute_row_major_strides(value.size())
-
         if attn_mask is not None:
             # Make attn_mask to be of the same dimensionality as other input tensors
             attn_mask_shape = (1,) * (query.ndim - attn_mask.ndim) + attn_mask.shape
@@ -400,9 +408,7 @@ def _cudnn_sdpa_checker(
             attn_mask = TensorProxy(like=attn_mask, shape=attn_mask_shape, dtype=attn_mask_dtype)
 
         # Build both forward and backward graphs
-        _make_cudnn_sdpa_forward_graph(
-            query, key, value, attn_mask, dropout_p, is_causal, query_stride, key_stride, value_stride
-        )
+        _make_cudnn_sdpa_forward_graph(query, key, value, attn_mask, dropout_p, is_causal)
         _make_cudnn_sdpa_backward_graph(
             query,
             key,
@@ -410,12 +416,6 @@ def _cudnn_sdpa_checker(
             attn_mask,
             dropout_p,
             is_causal,
-            query_stride,
-            key_stride,
-            value_stride,
-            query_stride,
-            key_stride,
-            value_stride,  # Use the same strides as inputs for their respective grads
         )
     # If cudnn can't support the graph, return false
     # Please turn on cudnn API logging for helpful messages that mention why the graph is not supported.
@@ -446,13 +446,11 @@ def _make_cudnn_sdpa_backward_graph(
     attn_mask,
     dropout_p,
     is_causal,
-    query_stride,
-    key_stride,
-    value_stride,
-    grad_query_stride,
-    grad_key_stride,
-    grad_value_stride,
+    grad_query=None,
+    grad_key=None,
+    grad_value=None,
 ):
+    query_stride, key_stride, value_stride, attn_mask_stride = _get_strides(query, key, value, attn_mask)
     b, h, s_q, _ = query.shape
     _, _, _, d_v = value.shape
 
@@ -479,7 +477,6 @@ def _make_cudnn_sdpa_backward_graph(
     Bias = None
     dBias = None
     if attn_mask is not None:
-        attn_mask_stride = _compute_row_major_strides(attn_mask.shape)
         Bias = graph.tensor(
             name="bias", dim=attn_mask.shape, stride=attn_mask_stride, data_type=torch_to_cudnn_dtype(attn_mask.dtype)
         )
@@ -520,6 +517,10 @@ def _make_cudnn_sdpa_backward_graph(
         dropout=dropout_tuple,
     )
 
+    if grad_query is None:
+        grad_query_stride, grad_key_stride, grad_value_stride = query_stride, key_stride, value_stride
+    else:
+        grad_query_stride, grad_key_stride, grad_value_stride, _ = _get_strides(grad_query, grad_key, grad_value, None)
     dQ.set_output(True).set_dim(query.shape).set_stride(grad_query_stride).set_data_type(
         torch_to_cudnn_dtype(query.dtype)
     )
@@ -679,12 +680,9 @@ def _cudnn_sdpa_bwd_impl(
         attn_mask,
         dropout_p,
         is_causal,
-        query.stride(),
-        key.stride(),
-        value.stride(),
-        grad_query.stride(),
-        grad_key.stride(),
-        grad_value.stride(),
+        grad_query,
+        grad_key,
+        grad_value,
     )
 
     # Default value of scale, if not provided, in all torch versions

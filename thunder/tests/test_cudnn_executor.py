@@ -29,6 +29,49 @@ def _maybe_xfail() -> None:
         pytest.xfail("cuDNN SDPA uses flash attention, which requires Ampere+")
 
 
+def test_make_cudnn_sdpa_backward_graph_with_mask():
+    from thunder.executors.cudnnex import _make_cudnn_sdpa_backward_graph
+
+    batch_size = 2  # Note that batch_size=1 is supported
+    sequence_length = 4096
+
+    # "Qwen/Qwen2.5-7B"
+    num_attention_heads = 28
+    hidden_size = 3584
+
+    shape = (batch_size, num_attention_heads, sequence_length, hidden_size // num_attention_heads)
+    q = torch.rand(shape, dtype=torch.bfloat16, device="cuda", requires_grad=True)
+    k = torch.rand(shape, dtype=torch.bfloat16, device="cuda", requires_grad=True)
+    v = torch.rand(shape, dtype=torch.bfloat16, device="cuda", requires_grad=True)
+
+    # "BHTS" case is working
+    mask = torch.ones(
+        batch_size, num_attention_heads, sequence_length, sequence_length, dtype=torch.bool, device="cuda"
+    )
+    mask = torch.where(mask, 0.0, float("-inf")).to(torch.bfloat16)
+    # mask = mask.expand(batch_size, num_attention_heads, sequence_length, sequence_length)
+    _make_cudnn_sdpa_backward_graph(q, k, v, mask, 0.0, None)
+
+    # "11TS" case is working
+    mask = torch.ones(1, 1, sequence_length, sequence_length, dtype=torch.bool, device="cuda")
+    mask = torch.where(mask, 0.0, float("-inf")).to(torch.bfloat16)
+    _make_cudnn_sdpa_backward_graph(q, k, v, mask, 0.0, None)
+
+    # "1HTS" case is working
+    mask = torch.ones(1, num_attention_heads, sequence_length, sequence_length, dtype=torch.bool, device="cuda")
+    mask = torch.where(mask, 0.0, float("-inf")).to(torch.bfloat16)
+    _make_cudnn_sdpa_backward_graph(q, k, v, mask, 0.0, None)
+
+    # "B1TS" case is not working
+    mask = torch.ones(batch_size, 1, sequence_length, sequence_length, dtype=torch.bool, device="cuda")
+    mask = torch.where(mask, 0.0, float("-inf")).to(torch.bfloat16)
+    # Reason: dbias cannot be reduced just across heads.
+    # Supported reduction patterns are [1,1,T,S], [1,H,T,S], [B,H,T,S] at: (!batch_dim_reduction_requested) && head_dim_reduction_requested
+    # See: https://github.com/Lightning-AI/lightning-thunder/issues/1799
+    with pytest.raises(cudnn.cudnnGraphNotSupportedError, match="No valid engine configs"):
+        _make_cudnn_sdpa_backward_graph(q, k, v, mask, 0.0, None)
+
+
 # These reference inputs are currently used by cudnnex
 def grad_scaled_dot_product_attention_reference_generator(op, device, dtype, requires_grad, **kwargs):
     """https://pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html"""
@@ -73,6 +116,8 @@ def grad_scaled_dot_product_attention_reference_generator(op, device, dtype, req
     additive_attn_mask = make((1, n_head, L, S), dtype=q.dtype, requires_grad=requires_grad)
     yield SampleInput(q, k, v, additive_attn_mask, is_causal=False)
     additive_attn_mask = make((N, n_head, L, S), dtype=q.dtype, requires_grad=requires_grad)
+    yield SampleInput(q, k, v, additive_attn_mask, is_causal=False)
+    additive_attn_mask = make((N, 1, L, S), dtype=q.dtype, requires_grad=requires_grad)
     yield SampleInput(q, k, v, additive_attn_mask, is_causal=False)
 
     # Boolean attn_mask
