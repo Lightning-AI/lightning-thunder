@@ -1,3 +1,4 @@
+import glob
 import json
 from datetime import datetime
 
@@ -6,16 +7,17 @@ from lightning_sdk import Studio, Job, Machine, Status
 
 def main():
     print("Creating studio...")
-    s = Studio("thunder-benchmark-hf", "oss-thunder", org="lightning-ai", create_ok=True)
+    s = Studio("thunder-benchmark", "oss-thunder", org="lightning-ai", create_ok=True)
 
     print("Uploading package and benchmark script...")
     s.upload_folder("dist", remote_path="dist")
+    pkg_path = glob.glob("dist/*.whl")[0]
     s.upload_file("thunder/benchmarks/benchmark_hf.py", remote_path="benchmarks/benchmark_hf.py")
 
     print("Starting studio...")
     s.start()
     print("Installing Thunder and dependencies...")
-    s.run("pip install lightning-thunder transformers -f dist/ -U")
+    s.run(f"pip install {pkg_path} -U transformers 'numpy<2.0' 'nvfuser_cu128_torch27==0.2.27.dev20250501'")
 
     print("Running HF benchmark script...")
     timestamp = datetime.now().strftime("%Y-%m-%d|%H:%M:%S")
@@ -28,6 +30,7 @@ def main():
     )
 
     print("Stopping studio...")
+    s.run("rm -rf dist/")
     s.stop()
 
     print("Waiting for job to finish...")
