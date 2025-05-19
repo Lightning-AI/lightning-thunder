@@ -37,9 +37,15 @@ class BaseRecipe(Recipe):
         selected_ex = []
         for name in self.executors:
             if name not in available_ex_map:
-                raise ValueError(
-                    f"Executor '{name}' was specified in the recipe but is not available in the current environment."
-                )
+                if name == "nvfuser":
+                    raise ValueError(
+                        """Executor nvfuser was specified in the recipe but is not available in the current environment.
+                    See https://github.com/Lightning-AI/lightning-thunder/?tab=readme-ov-file#quick-start for install instructions."""
+                    )
+                else:
+                    raise ValueError(
+                        f"Executor '{name}' was specified in the recipe but is not available in the current environment."
+                    )
 
             selected_ex.append(available_ex_map[name])
 
