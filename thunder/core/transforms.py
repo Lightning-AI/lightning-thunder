@@ -466,6 +466,7 @@ def add_transform(
         sharp_edges=cd.sharp_edges,
         # cache, interpretation?
         transforms=transforms,
+        debug_options=cd.debug_options,
         disable_torch_autograd=cd.disable_torch_autograd_support or disable_torch_autograd_support,
         **cd.compile_options,
     )
