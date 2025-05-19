@@ -11,12 +11,13 @@ def main():
     s = Studio("thunder-quickstarts", "oss-thunder", org="lightning-ai", create_ok=True)
     print("Uploading package and scripts...")
     s.upload_folder("dist", remote_path="dist")
+    pkg_path = glob.glob("dist/*.whl")[0]
     s.upload_folder("examples/quickstart", remote_path="quickstart")
 
     print("Starting studio...")
     s.start()
     print("Installing Thunder and other requirements...")
-    s.run("pip install lightning-thunder -f dist/ -U -r quickstart/requirements.txt")
+    s.run(f"pip install {pkg_path} -U -r quickstart/requirements.txt")
 
     ls_quickstart = glob.glob("examples/quickstart/*.py")
     print("Found quickstart scripts:", ls_quickstart)
@@ -35,6 +36,7 @@ def main():
     }
 
     print("Stopping studio...")
+    s.run("rm -rf dist/")
     s.stop()
 
     print("Waiting for jobs to finish...")
