@@ -12,7 +12,7 @@ def check_subsymbols(parent_bsym):
             known_proxies[o.name] = o
         check_subsymbols(bsym)
     for o in parent_bsym.flat_proxy_outs:
-        assert known_proxies.get(o.name, o) is o, f"known proxy or proxy name collision {a.name} in {parent_bsym}"
+        assert known_proxies.get(o.name, o) is o, f"known proxy or proxy name collision {o.name} in {parent_bsym}"
 
 
 def check_trace(trace):
