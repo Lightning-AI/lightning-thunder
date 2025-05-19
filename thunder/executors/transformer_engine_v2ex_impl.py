@@ -428,9 +428,9 @@ def _te_activation_checkpointing_transform(fwd_trace: TraceCtx, bwd_trace: Trace
             # breakpoint()
             states_to_carry |= {variableify(state)}
 
-            assert quantizers is not None, (
-                "A fowrward symbol appears in the backward that is not present in the forward"
-            )
+            assert (
+                quantizers is not None
+            ), "A fowrward symbol appears in the backward that is not present in the forward"
             assert state is not None, "State not associated with linear"
 
             states_and_quantizers_to_carry_over += [*quantizers, state]

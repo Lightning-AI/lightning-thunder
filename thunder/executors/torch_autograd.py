@@ -421,7 +421,11 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
         _transformer_engine_bwd_fp8_meta_sync(fw_extrace, bw_extrace)
 
     # TODO move this into the transform once new autodiff and new fwd/bwd split is merged
-    from thunder.executors.transformer_engine_v2ex import transformer_engine_v2_ex, _te_activation_checkpointing_transform
+    from thunder.executors.transformer_engine_v2ex import (
+        transformer_engine_v2_ex,
+        _te_activation_checkpointing_transform,
+    )
+
     if transformer_engine_v2_ex in compile_data.executors_list:
         fw_extrace, bw_extrace = _te_activation_checkpointing_transform(fw_extrace, bw_extrace)
 
