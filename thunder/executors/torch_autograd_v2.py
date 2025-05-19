@@ -2,6 +2,8 @@ from inspect import Parameter, Signature
 
 import thunder
 import thunder.core.prims as prims
+from thunder.core.proxies import ProxyTag
+from thunder.core.symbol import BoundSymbol
 from thunder.core.pytree import tree_flatten, tree_map
 from thunder.core.transforms import augmented_forward_pass, backward_pass
 
@@ -35,13 +37,29 @@ def grad_transform_on_trace(ff_trace):
     )
 
 
+def _should_recompute_bsym_in_backward(bsym):
+    return any((ProxyTag.RECOMPUTE_IN_BACKWARD in o.tags) for o in bsym.flat_proxy_outs)
+
+
 def split_forward_backward(joint_trace):
+    """split a joint trace for forward and backward into separate ones, including recomputation (aka activation checkpointing)"""
+
+    # the joint trace will have the forward computation at the beginning and then the backward computation
+    # from how it is constructed.
+    # we split the trace:
+    # - forward symbols go into the forward
+    # - all symbols not in the forward go into the backward
+    # for recomputation, we want to insert symbols going into the forward also into the
+    # backward. but we want to do so "just in time". To this end, we gather the symbols in a dict and later
+    # insert it when their respective outputs are needed.
+
     # !!!
     if "grad_flat_args" not in joint_trace.output:
         return joint_trace, None
 
     forward_part_bsyms = []
     backward_part_bsyms = []
+    backward_part_bsyms_recomputed: dict[str, tuple[BoundSymbol, set[str]]] = {}  # name -> (bsym, name_set)
 
     return_bsym = joint_trace.bound_symbols[-1]
     assert return_bsym.sym == prims.python_return
@@ -57,6 +75,9 @@ def split_forward_backward(joint_trace):
     # for inplace, we need to update this (or have flat args be the right thing?...)
     forward_proxy_names.update(a.name for a in return_bsym.args[0]["flat_args"] if isinstance(a, thunder.Proxy))
 
+    backward_needed_names = set()
+    backward_available_names = set()
+
     for bsym in reversed(joint_trace.bound_symbols):
         if bsym.sym == prims.python_return:
             continue
@@ -64,8 +85,17 @@ def split_forward_backward(joint_trace):
         # unpack_trivial is always a (forward trace) argument
         if any((o.name in forward_proxy_names) for o in bsym.flat_proxy_outs) or bsym.sym == prims.unpack_trivial:
             forward_part_bsyms.insert(0, bsym.from_bsym())
-            forward_proxy_names.update(a.name for a in bsym.flat_proxy_args)
-            forward_proxy_names.update(o.name for o in bsym.flat_proxy_outs)
+            bsym_arg_names = {a.name for a in bsym.flat_proxy_args}
+            bsym_out_names = {o.name for o in bsym.flat_proxy_outs if o.name not in bsym_arg_names}
+            forward_proxy_names.update(bsym_arg_names)
+            forward_proxy_names.update(bsym_out_names)
+
+            if _should_recompute_bsym_in_backward(bsym):
+                backward_available_names.update(bsym_out_names)
+                backward_needed_names.update(bsym_arg_names)
+                bsym_rec = (bsym.from_bsym(), bsym_out_names)
+                backward_part_bsyms_recomputed.update((n, bsym_rec) for n in bsym_out_names)
+
             continue
 
         if bsym.sym == prims.get_grad:
@@ -81,13 +111,29 @@ def split_forward_backward(joint_trace):
 
         backward_part_bsyms.insert(0, bsym.from_bsym())
 
+    # we insert the recomputed symbols just before where they are needed.
+    bw_idx = 0
+    while bw_idx < len(backward_part_bsyms):
+        bsym = backward_part_bsyms[bw_idx]
+        modified = False
+        for n in reversed(bsym.flat_proxy_args):
+            recomp_bsym_rec = backward_part_bsyms_recomputed.get(n.name)
+            if recomp_bsym_rec is not None:
+                modified = True
+                recomp_bsym, recomp_output = recomp_bsym_rec
+                backward_part_bsyms.insert(bw_idx, recomp_bsym)
+                for nn in recomp_output:
+                    del backward_part_bsyms_recomputed[nn]
+        if not modified:
+            bw_idx += 1
+
     # collect needed computation
     saved_for_backward = {}
     for bsym in backward_part_bsyms:
         saved_for_backward.update(
             (a.name, a)
             for a in bsym.flat_proxy_args
-            if a.name in forward_proxy_names and a.name not in saved_for_backward
+            if a.name in forward_proxy_names and a.name not in backward_available_names
         )
     saved_for_backward_tensors = [p for p in saved_for_backward.values() if isinstance(p, thunder.TensorProxy)]
     saved_for_backward_other = [p for p in saved_for_backward.values() if not isinstance(p, thunder.TensorProxy)]
@@ -128,7 +174,8 @@ def split_forward_backward(joint_trace):
         p_C1 = thunder.core.proxies.CollectionProxy(list(saved_for_backward_other), name="C1")
         p_saved_for_backward = thunder.core.proxies.CollectionProxy([p_C0, p_C1], name="saved_for_backward")
         p_cotangents = thunder.core.proxies.CollectionProxy(grad_outs, name="cotangents")
-        backward_trace.args = (p_saved_for_backward, p_cotangents)
+        saved_for_backward_tuple = [p_C0.collection(), p_C1.collection()]
+        backward_trace.args = (saved_for_backward_tuple, p_cotangents.collection())
 
         prims.unpack_trivial(p_saved_for_backward, name="saved_for_backward")
         prims.unpack_trivial(p_cotangents, name="cotangents")
@@ -141,17 +188,5 @@ def split_forward_backward(joint_trace):
 
     with thunder.core.trace.tracectx(backward_trace):
         prims.python_return(tuple(return_bsym.args[0]["grad_flat_args"]))
-
-    # !!! args are CollectionProxies, which is not the case in the current implementation
-    # !!! also, this is gross
-    backward_trace.args = tree_map(
-        lambda x: x.coll if isinstance(x, thunder.core.proxies.CollectionProxy) else x, backward_trace.args
-    )
-    backward_trace.args = (
-        tree_map(
-            lambda x: x.coll if isinstance(x, thunder.core.proxies.CollectionProxy) else x, backward_trace.args[0]
-        ),
-        backward_trace.args[1],
-    )
 
     return forward_trace, backward_trace
