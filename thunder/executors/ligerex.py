@@ -5,7 +5,7 @@ import functools
 
 import torch
 
-import triton  # noqa: E402
+import triton
 
 try:
     import liger_kernel.ops.rms_norm
