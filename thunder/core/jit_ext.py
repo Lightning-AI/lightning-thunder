@@ -701,11 +701,11 @@ def _convert_pytorchfunc_to_thundertrace(
     func: Callable[[Any], Any],
     shallow_copy_output: bool,
     *,
-    call_args,
-    call_kwargs=None,
-    name=None,
-    trace_args=None,
-    trace_kwargs=None,
+    call_args: tuple,
+    call_kwargs: dict | None = None,
+    name: str | None = None,
+    trace_args: tuple | None = None,
+    trace_kwargs: dict | None = None,
 ) -> tuple[TraceCtx | INTERPRETER_SIGNALS, ProvenanceRecord | None]:
     """Converts pytorch function to thunder trace.
 
@@ -715,8 +715,11 @@ def _convert_pytorchfunc_to_thundertrace(
         func: A callable composed of pytorch functions.
         shallow_copy_output: Needs to be :obj:`True` only if func is `torch.autograd.Function.apply` as
             it produces views of the tensor to attach the autograd node to.
-        *args:
-        **kwargs
+        call_args: (wrapped) positional arguments to call the function with
+        call_kwargs: optional dict of (wrapped) kwargs
+        name: name of the function or trace
+        trace_args: tuple with formal args (typically of proxies)
+        trace_kwargs: dict of formal kwargs
     """
     if call_kwargs is None:
         call_kwargs = {}
