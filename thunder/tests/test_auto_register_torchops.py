@@ -94,9 +94,7 @@ def test_torch_ops_trace(device, requires_grad, op_info):
                     trc = thunder.last_backward_traces(jfun)[-1]
                     fwd_trc = thunder.last_traces(jfun)[-1]
                     # skip if it is not differentiable
-                    outs = fwd_trc.output
-                    if isinstance(fwd_trc.output[0], dict):
-                        outs = outs[0]["output"]
+                    outs = fwd_trc.output[0]["output"]
                     outs = outs if isinstance(outs, tuple) else (outs,)
                     if all(not thunder.core.dtypes.is_inexact_dtype(o.dtype) for o in outs):
                         continue

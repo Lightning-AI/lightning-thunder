@@ -252,15 +252,8 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     # the forward trace and inputs of the backward trace.
     fw_trace, bw_trace = forward_and_backward_from_trace(primal_trace, torch_autograd=True)
 
-    if compile_stats is not None:
-        fw_traces = compile_stats.last_traces
-        bw_traces = compile_stats.last_backward_traces
-    else:
-        fw_traces = []
-        bw_traces = []
-
-    fw_traces.append(fw_trace)
-    bw_traces.append(bw_trace)
+    fw_traces = [fw_trace]
+    bw_traces = [bw_trace]
 
     from thunder.distributed import FSDPType
 
@@ -329,7 +322,7 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     assert bw_trace.bound_symbols[0].sym.id == PrimIDs.UNPACK_TRIVIAL
     assert bw_trace.bound_symbols[0].kwargs["name"] == "saved_for_backward"
     assert bw_trace.bound_symbols[4].sym.id == PrimIDs.UNPACK_SEQUENCE
-    assert bw_trace.bound_symbols[4].args[0].name == "C0", bw_trace.bound_symbols[4]
+    assert bw_trace.bound_symbols[4].args[0].name == "C0"
     assert bw_trace.bound_symbols[5].sym.id == PrimIDs.UNPACK_SEQUENCE
     assert bw_trace.bound_symbols[5].args[0].name == "C1"
     new_bsyms[4] = new_bsyms[4].from_bsym_swap_proxies(
@@ -439,8 +432,11 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     bw_extrace = del_last_used(bw_extrace, clear_mutable_collections=True)
     bw_traces.append(bw_extrace)
 
-    bw_extrace = rename_bwd_trace_outputs(bw_extrace, fw_extrace)
-    bw_traces.append(bw_extrace)
+    bw_trace = rename_bwd_trace_outputs(bw_extrace, fw_extrace)
+
+    if compile_stats is not None:
+        compile_stats.last_traces += fw_traces
+        compile_stats.last_backward_traces += bw_traces
 
     # Enable wrapping with `te.fp8_autocast`.
     fw_extrace._include_te_fp8_autocast = True

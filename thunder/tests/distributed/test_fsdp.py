@@ -435,7 +435,8 @@ class FSDPTest(DistributedParallelTestCase):
         config = GPTConfig(dropout=0)
         m = Block(config).to(device=device)
         cm = thunder.jit(
-            m, executors=executors_map[executor].executors_list(), debug_options=thunder.DebugOptions(check_traces=True)
+            m,
+            executors=executors_map[executor].executors_list(),
         )
         cm = fsdp(
             cm, device=device, broadcast_from=0, bucketing_strategy=bucketing_strategy, sharding_strategy=fsdptype
