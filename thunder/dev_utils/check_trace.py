@@ -21,7 +21,18 @@ def check_subsymbols(parent_bsym):
 
 
 def check_trace(trace, *, version=CHECK_VERSION):
-    """checks a trace for consistency"""
+    """checks a trace for consistency
+
+    The check is versioned for the benefit of CI and other automated testing.
+
+    As a user, don't pass a version to get all implemented checks.
+
+    If you add new checks and do not fix all newly detected inconsistencies,
+    bump the CHECK_VERSION and make your tests only apply to this latest version.
+
+    Please do file issues for things that fail with the latest versions so we can
+    catch up.
+    """
     # TODO:
     # - args vs. unpack trivial
     # - args vs. flat_args in return
