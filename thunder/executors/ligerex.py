@@ -5,14 +5,7 @@ import functools
 
 import torch
 
-try:
-    import litgpt
-
-    LITGPT_AVAILABLE = True
-except ImportError:
-    LITGPT_AVAILABLE = False
-
-import triton
+import triton  # noqa: E402
 
 try:
     import liger_kernel.ops.rms_norm
@@ -31,7 +24,6 @@ from thunder.core.proxies import TensorProxy, AnyProxy
 from thunder.core.transforms import get_grad, put_grads
 import thunder.core.utils as utils
 import thunder.core.devices as devices
-from thunder.executors.triton_crossentropy_impl import TRITON_AVAILABLE
 
 from thunder.extend import OperatorExecutor, register_executor
 
@@ -42,10 +34,6 @@ register_executor(liger_ex)
 
 def liger_available() -> bool:
     return LIGER_AVAILABLE
-
-
-def litgpt_available() -> bool:
-    return LITGPT_AVAILABLE
 
 
 prod = lambda *args: functools.reduce(lambda x, y: x * y, args)
@@ -346,7 +334,7 @@ def group_norm_fwd_meta(
     return Y, TensorProxy(like=X), Mean, RSTD, BLOCK_SIZE
 
 
-if liger_available() and TRITON_AVAILABLE:
+if liger_available():
     liger_group_norm_forward = liger_ex.register_operator(
         "liger_group_norm_forward",
         meta=group_norm_fwd_meta,
