@@ -848,7 +848,14 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
 
         attention_ctx = sdpa_kernel(backends, **kwargs)
 
-    with attention_ctx:
+    te_autocast_ctx = nullcontext()
+
+    if "transformerengine_v2" in benchmark.compile:
+        from transformer_engine.pytorch.fp8 import fp8_autocast
+
+        te_autocast_ctx = fp8_autocast(enabled=True)
+
+    with attention_ctx, te_autocast_ctx:
         benchmark.train()
 
     if global_rank in [0, None]:
