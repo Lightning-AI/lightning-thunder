@@ -149,6 +149,7 @@ class Proxy(VariableInterface, ProxyInterface):
             cnt = 0
             while trc.has_name(name):
                 name = f"{name_prefix}_{cnt}"
+                cnt += 1
 
         return self.replace(name=name)
 
