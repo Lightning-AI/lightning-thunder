@@ -1,3 +1,8 @@
+import thunder
+
+CHECK_VERSION = 3
+
+
 def check_subsymbols(parent_bsym):
     if parent_bsym.sym.is_prim:
         # assert that there are no subsymbols?
@@ -15,13 +20,33 @@ def check_subsymbols(parent_bsym):
         assert known_proxies.get(o.name, o) is o, f"known proxy or proxy name collision {o.name} in {parent_bsym}"
 
 
-def check_trace(trace):
-    """checks a trace for consistency"""
+def check_trace(trace, *, version=CHECK_VERSION):
+    """checks a trace for consistency
+
+    The check is versioned for the benefit of CI and other automated testing.
+
+    As a user, don't pass a version to get all implemented checks.
+
+    If you add new checks and do not fix all newly detected inconsistencies,
+    bump the CHECK_VERSION and make your tests only apply to this latest version.
+
+    Please do file issues for things that fail with the latest versions so we can
+    catch up.
+    """
     # TODO:
     # - args vs. unpack trivial
     # - args vs. flat_args in return
     known_proxies = {}
     for bsym in trace.bound_symbols:
+        if (version >= 3) and bsym.sym == thunder.core.prims.unpack_sequence:
+            coll = bsym.args[0].collection()
+            assert len(coll) == len(bsym.output), f"unpack collection length mismatch {bsym}"
+            for c, o in zip(coll, bsym.output):
+                if o is None:  # unused outputs
+                    continue
+                if isinstance(c, thunder.Proxy):
+                    assert c is o, f"mismatch in unpack collection: {c} {o} {bsym}"
+
         for a in bsym.flat_proxy_args:
             assert a.name in known_proxies, f"unknown proxy {a.name} is used in {bsym} args"
             assert known_proxies[a.name] is a, f"proxy name collision {a.name} in {bsym} args"
@@ -32,11 +57,21 @@ def check_trace(trace):
 
 
 class CheckedListOfTraces(list):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        cd = thunder.core.compile_data.get_compile_data()
+        if cd.debug_options.check_traces is True:
+            self._check_version = CHECK_VERSION
+        elif not cd.debug_options.check_traces:
+            self._check_version = 0
+        else:
+            self._check_version = cd.debug_options.check_traces
+
     def append(self, trace):
-        check_trace(trace)
+        check_trace(trace, version=self._check_version)
         super().append(trace)
 
     def extend(self, traces):
         for tr in traces:
-            check_trace(tr)
+            check_trace(tr, version=self._check_version)
         super().extend(traces)
