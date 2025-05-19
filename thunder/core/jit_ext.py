@@ -709,7 +709,7 @@ def _convert_pytorchfunc_to_thundertrace(
 ) -> tuple[TraceCtx | INTERPRETER_SIGNALS, ProvenanceRecord | None]:
     """Converts pytorch function to thunder trace.
 
-    Note that the generated trace would not have _siginfo and args set.
+    Note that this is an internal function.
 
     Args:
         func: A callable composed of pytorch functions.
@@ -748,10 +748,13 @@ def _convert_pytorchfunc_to_thundertrace(
     trace.args = trace_args
     if trace_kwargs is not None:
         trace.kwargs = trace_kwargs
-    trace._siginfo = SigInfo.from_name_and_args(
-        name,
-        trace_args,
-    )
+    if name is None:
+        name = func.__name__
+    if trace_args is not None:
+        trace._siginfo = SigInfo.from_name_and_args(
+            name,
+            trace_args,
+        )
     return trace, sequencify(wrapped_func_result)[0].provenance
 
 
