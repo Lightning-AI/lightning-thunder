@@ -307,7 +307,7 @@ class TransformerEngineTransformV2(Transform):
             computation_trace: Trace to perform the replacement on.
         """
 
-        if "transformer_engine_v2_ex" not in map(lambda x: x.name, kwargs["executors_list"]):
+        if "transformer_engine_v2" not in map(lambda x: x.name, kwargs["executors_list"]):
             return computation_trace
 
         start_time_ns = time.perf_counter_ns()
