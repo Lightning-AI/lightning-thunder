@@ -698,9 +698,7 @@ def test_ThunderCompilerGraphBenchmarking_groupby(benchmark):
 
     import thunder
 
-    backend = ThunderCompilerGraphBenchmarking(
-        benchmark, executors={"thunder": thunder.jit, "inductor": torch.compile, "eager": None}
-    )
+    backend = ThunderCompilerGraphBenchmarking(benchmark, executors={"thunder": thunder.jit, "inductor": torch.compile})
     compiled = torch.compile(backend=backend)(f)
     x = torch.ones(2).cuda()
     y = torch.ones(2, requires_grad=True).cuda()
