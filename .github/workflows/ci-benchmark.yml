@@ -6,6 +6,8 @@ on:
     paths:
       - ".github/workflows/benchmark-hf.yml"
       - ".github/run-benchmark-as-lit-jobs.py"
+  push: # enable tracing which commit to master broke it...
+    branches: [main]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
