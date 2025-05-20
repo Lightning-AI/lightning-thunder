@@ -59,6 +59,9 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                         output_proxy_names.add(self.read(o).name)
                 grad_proxy_map = {}
 
+                # which names we saw get_grad for, we cannot do put_grad on them anymore
+                names_seen_get_grad = set()
+
                 # we iterate through the collected symbols backward in order (from the generation of the list, this
                 # is the backward of the last forward instruction first, then then the backward of the second to last etc.
                 for bw_bsyms in self.collected_bw_part_bsyms:
@@ -77,6 +80,7 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                                 # - structurally (for correctness), there should be no put_grad
                                 #   after a get_grad
                                 p = self.env.get(nbsym.args[0].name, nbsym.args[0])
+                                assert p.name not in names_seen_get_grad, f"put_grad after get_grad on {p.name}"
                                 current_grad = grad_proxy_map.get(p.name)
                                 new_grad = nbsym.args[1]
                                 if current_grad is None and p.name in output_proxy_names:
@@ -94,7 +98,7 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                                 # - the gradient of an intermediate (possibly combined with an output) form put_grad above
                                 #   note that all put_grads are happen before all get_grads from the dataflow of the forward,
                                 #   in this case we use the gradient from the put_grad(s)
-                                # - an output of the forward function (that has not been combined with an intermediate in pu grd),
+                                # - an output of the forward function (that has not been combined with an intermediate in put grad),
                                 #   then the gradient is like the "grad_out" in the parameter list of a autograd.Function.backward
                                 #   in this case we keep a get_grad in the trace.
                                 # - an intermediate that does not have a gradient computed. In this case the gradient is 0 in the shape
@@ -105,6 +109,7 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
 
                                 # TODO: set proxy requires grad here!
                                 name = p.name
+                                names_seen_get_grad.add(name)
                                 current_grad = grad_proxy_map.get(name)
                                 if current_grad is not None:
                                     # do we also need to map?
@@ -346,8 +351,7 @@ def split_into_forward_and_backward(joint_trace):
     # ones saved in the forward for the backward
     backward_recomputed_proxy_names = set()
 
-    # here we go through the bound symbols to assign to the three categories, keeping track of the forward names, the backward needed
-    # and the backward available names.
+    # loop over the bound symbols in reverse (see above)
     for bsym in reversed(joint_trace.bound_symbols):
         if bsym.sym == prims.python_return:  # we will re-do the return statements below, so we skip it here
             continue
