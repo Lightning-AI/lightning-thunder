@@ -39,7 +39,7 @@ class BaseRecipe(Recipe):
         plugins=None,
     ):
         super().__init__(interpreter=interpreter, plugins=plugins)
-        self.executors = ["torch", "python", "cudnn", "sdpa"]
+        self.executors = ["cudnn", "sdpa", "torchcompile_xentropy"]
         self.fuser = fuser
         self.setup_fuser()
         self.show_progress = show_progress

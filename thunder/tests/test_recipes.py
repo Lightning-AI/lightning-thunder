@@ -113,6 +113,7 @@ def test_plugins_basics():
     model = torch.nn.Sequential(torch.nn.Linear(2048, 4096), torch.nn.ReLU(), torch.nn.Linear(4096, 64))
 
     from thunder import compile_data as get_compile_data
+    from thunder.recipes.base import BaseRecipe
 
     thunder_model = thunder.compile(model)
     x = torch.randn(64, 2048)
