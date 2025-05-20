@@ -1227,7 +1227,6 @@ def _infer_tensor_properties(
     shape: ShapeLike | None = None,
     device: devices.Device | None = None,
     dtype: dtypes.dtype | None = None,
-    requires_grad: bool | None = None,
     grad: TensorProxy | None = None,
     distparallel_type: DistParallelType | None = None,
     thunder_fsdp_padding_size: int | None = None,
@@ -1235,7 +1234,6 @@ def _infer_tensor_properties(
     _shape = None
     _device = None
     _dtype = None
-    _requires_grad: None | bool = None
     _grad = None
     _dist_parallel_type = DistParallelType.NONE
     _thunder_fsdp_padding_size = None
@@ -1245,7 +1243,6 @@ def _infer_tensor_properties(
         _shape = tuple(like._shape)
         _device = like.device
         _dtype = like.true_dtype
-        _requires_grad = like.requires_grad
         _grad = like.grad
         _dist_parallel_type = getattr(like, "distparallel_type", DistParallelType.NONE)
 
@@ -1256,10 +1253,7 @@ def _infer_tensor_properties(
     _device = device if device is not None else _device
     _dtype = dtype if dtype is not None else _dtype
     _dtype = dtypes.numbertype_to_dtype(_dtype) if dtypes.is_numbertype(_dtype) else _dtype
-    _requires_grad = requires_grad if requires_grad is not None else _requires_grad
-    _requires_grad = False if not dtypes.is_inexact_dtype(_dtype) else _requires_grad
     _grad = grad if grad is not None else _grad
-    _grad = None if not _requires_grad else _grad
     _dist_parallel_type = distparallel_type if distparallel_type is not None else _dist_parallel_type
     _thunder_fsdp_padding_size = (
         thunder_fsdp_padding_size if thunder_fsdp_padding_size is not None else _thunder_fsdp_padding_size
@@ -1281,7 +1275,6 @@ def _infer_tensor_properties(
     # Validates inputs
     baseutils.check_type(_device, devices.Device)
     baseutils.check_type(_dtype, dtypes.dtype)
-    baseutils.check_type(_requires_grad, bool)
     baseutils.check_type(_dist_parallel_type, DistParallelType)
     if isinstance(_thunder_fsdp_padding_size, int):
         baseutils.check(
@@ -1305,7 +1298,6 @@ def _infer_tensor_properties(
         _true_dtype,
         _numel,
         _ndim,
-        _requires_grad,
         _grad,
         _dist_parallel_type,
         _thunder_fsdp_padding_size,
@@ -1338,7 +1330,6 @@ class FutureTensorProxy(Proxy, TensorProxyInterface):
             self._true_dtype,
             self._numel,
             self._ndim,
-            self._requires_grad,
             _,  # grad
             _,  # distparallel_type
             _,  # thunder_fsdp_padding_size
@@ -1379,10 +1370,6 @@ class FutureTensorProxy(Proxy, TensorProxyInterface):
         return self._true_dtype
 
     @property
-    def requires_grad(self):
-        return self._requires_grad
-
-    @property
     def grad(self):
         return None  # FutureTensorProxies never require grad
 
@@ -1412,7 +1399,6 @@ class FutureTensorProxy(Proxy, TensorProxyInterface):
             true_dtype,
             numel,
             ndim,
-            requires_grad,
             _,  # grad
             _,  # distparallel_type
             _,  # thunder_fsdp_padding_size
@@ -1448,7 +1434,6 @@ class TensorProxy(Proxy, TensorProxyInterface):
         shape: ShapeLike | None = None,
         device: devices.Device | None = None,
         dtype: dtypes.dtype | None = None,
-        requires_grad: bool = False,
         grad: TensorProxy | None = None,
         prefix: None | str = None,
         distparallel_type: DistParallelType | None = None,
@@ -1465,7 +1450,6 @@ class TensorProxy(Proxy, TensorProxyInterface):
             self._true_dtype,
             self._numel,
             self._ndim,
-            self._requires_grad,
             self._grad,
             self._distparallel_type,
             self._thunder_fsdp_padding_size,
@@ -1474,7 +1458,6 @@ class TensorProxy(Proxy, TensorProxyInterface):
             shape,
             device,
             dtype,
-            requires_grad,
             grad,
             distparallel_type,
             thunder_fsdp_padding_size,
@@ -1509,10 +1492,6 @@ class TensorProxy(Proxy, TensorProxyInterface):
         return self._true_dtype
 
     @property
-    def requires_grad(self):
-        return self._requires_grad
-
-    @property
     def grad(self):
         return self._grad
 
@@ -1536,7 +1515,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
 
     def replace(self, **changes):
         r"""Return a copy of the TensorProxy object with new values for the specified fields as given to the constructor as arguments.
-        Valid keyword arguments are ``name``, ``history``, ``shape``, ``dtype``, ``device``, ``requires_grad``, ``distparallel_type``,  ``thunder_fsdp_padding_size``.
+        Valid keyword arguments are ``name``, ``history``, ``shape``, ``dtype``, ``device``, ``distparallel_type``,  ``thunder_fsdp_padding_size``.
         ``like`` is also a valid keyword and will take metadata from the tensor proxy argument
         in preference to the old values but overridable by keyword arguments.
         Note that the copy will use the current (environment) tracectx."""
@@ -1549,7 +1528,6 @@ class TensorProxy(Proxy, TensorProxyInterface):
             true_dtype,
             numel,
             ndim,
-            requires_grad,
             grad,
             distparallel_type,
             thunder_fsdp_padding_size,
@@ -1558,7 +1536,6 @@ class TensorProxy(Proxy, TensorProxyInterface):
             changes.get("shape", self._shape if like is None else None),
             changes.get("device", self._device if like is None else None),
             changes.get("dtype", self._dtype if like is None else None),
-            changes.get("requires_grad", self._requires_grad if like is None else None),
             changes.get("grad", self._grad if like is None else None),
             changes.get("distparallel_type", self._distparallel_type if like is None else None),
             changes.get("thunder_fsdp_padding_size", self._thunder_fsdp_padding_size if like is None else None),
@@ -1572,7 +1549,6 @@ class TensorProxy(Proxy, TensorProxyInterface):
             shape=shape,
             device=device,
             dtype=dtype,
-            requires_grad=requires_grad,
             distparallel_type=distparallel_type,
             thunder_fsdp_padding_size=thunder_fsdp_padding_size,
             history=history,
@@ -1911,6 +1887,52 @@ class TensorProxy(Proxy, TensorProxyInterface):
         return method(self)
 
 
+class RuntimeTensorProxy(TensorProxy):
+    def __init__(
+        self,
+        name: str | None = None,
+        *,
+        like: TensorProxy | None = None,
+        shape: ShapeLike | None = None,
+        device: devices.Device | None = None,
+        dtype: dtypes.dtype | None = None,
+        grad: TensorProxy | None = None,
+        prefix: None | str = None,
+        distparallel_type: DistParallelType | None = None,
+        history: None | tuple = None,
+        tags: set | None = None,
+        thunder_fsdp_padding_size: int | None = None,
+        requires_grad: bool = False,
+        is_leaf: bool = True,
+    ):
+        super().__init__(
+            name,
+            like=like,
+            shape=shape,
+            device=device,
+            dtype=dtype,
+            grad=grad,
+            prefix=prefix,
+            distparallel_type=distparallel_type,
+            history=history,
+            tags=tags,
+            thunder_fsdp_padding_size=thunder_fsdp_padding_size,
+        )
+        self._requires_grad = requires_grad
+        self._is_leaf = is_leaf
+
+    def __repr__(self):
+        return f'<{type(self).__name__}(name="{self.name}", dtype={self.dtype}, shape={self.shape}, requires_grad={self.requires_grad}, is_leaf={self.is_leaf})>'
+
+    @property
+    def requires_grad(self):
+        return self._requires_grad
+
+    @property
+    def is_leaf(self):
+        return self._is_leaf
+
+
 class TorchAutogradFunctionCtxProxy(Proxy, TorchAutogradFunctionCtxProxyInterface):
     _DEFAULT_PREFIX = "fc"
 
@@ -1983,7 +2005,7 @@ _cls_to_number_proxy_map = {
 
 
 # TODO: move this function to jit_ext.py
-def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple = None) -> TensorProxy:
+def tensorproxy(t: torch.Tensor, /, *, name: None | str = None, history: None | tuple = None) -> TensorProxy:
     from thunder.core.interpreter import ProvenanceRecord, PseudoInst, wrap_const
 
     if hasattr(t, "_thunder_device"):
@@ -2018,35 +2040,17 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
     else:
         # NOTE Without tuple(t.shape) then the shape would be a torch.Size object
         shape = tuple(t.shape)
-    return TensorProxy(
+    return RuntimeTensorProxy(
         name,
         shape=tuple(shape),
         device=device,
         dtype=dtype,
-        requires_grad=t.requires_grad,
         grad=grad,
         distparallel_type=distparallel_type,
         history=history,
         thunder_fsdp_padding_size=_thunder_fsdp_padding_size,
-    )
-
-
-def futuretensorproxy(
-    t: torch.Tensor | TensorProxy | FutureTensorProxy, /, *, name: None | str, history: None | tuple = None
-) -> FutureTensorProxy:
-    if hasattr(t, "_thunder_device"):
-        torch_device = t._thunder_device
-    else:
-        torch_device = t.device
-    device = devices.to_device(torch_device)
-    dtype = dtypes.to_dtype(t.dtype)
-    # NOTE Without tuple(t.shape) then the shape would be a torch.Size object
-    return FutureTensorProxy(
-        name,
-        shape=tuple(t.shape),
-        device=device,
-        dtype=dtype,
-        history=history,
+        requires_grad=t.requires_grad,
+        is_leaf=t.is_leaf,
     )
 
 

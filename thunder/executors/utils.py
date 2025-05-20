@@ -203,7 +203,6 @@ def _convert_to_meta_tensor(a: None | TensorProxy) -> None | torch.Tensor:
     return torch.empty(
         a.shape,
         dtype=_thunder_to_torch_dtype_map[a.dtype],
-        requires_grad=a.requires_grad,
         device="meta",
     )
 
