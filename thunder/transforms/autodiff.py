@@ -28,7 +28,7 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
     # - in the order of the executor list
     #   - if the executor defines a grad transform, call that to
     #     get fw + bw,
-    # - if there is a augmented forward registered, use that and the backwared registered,
+    # - if there is a augmented forward registered, use that and the backward registered,
     #   to construct a grad transform to get fw + bw
     # - if neither of the above apply, and the symbol has subsymbols, push the decomposition
     #   to the front of the queue
@@ -48,8 +48,8 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                 # - get_grad "reads" the gradient of a variable from the forward to compute with it
                 #   (if you are used to torch.autograd.Function, this is a "grad_out" in the arguments
                 #    of the backward static method)
-                # - put_grad "writes" a computed gradients (similar to returning the "grad_in" in t.a.F)
-                # The backward computation in self.collected_bw_part_syms is in the oder of th
+                # - put_grad "writes" a computed gradients (similar to returning the "grad_in" in torch.autograd.Function)
+                # The backward computation in self.collected_bw_part_syms is in the order of the
                 # backward computation.
                 #
                 input_proxy_names = {p.name for p in bsym.args[0]["flat_args"] if isinstance(p, thunder.Proxy)}
@@ -97,7 +97,7 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                                 # - an output of the forward function (that has not been combined with an intermediate in pu grd),
                                 #   then the gradient is like the "grad_out" in the parameter list of a autograd.Function.backward
                                 #   in this case we keep a get_grad in the trace.
-                                # - an intermedite that does not have a gradient computed. In this case the gradient is 0 in the shape
+                                # - an intermediate that does not have a gradient computed. In this case the gradient is 0 in the shape
                                 #   of the get_grad argument. This happens e.g. if we have something like "a > 0" for a float a then
                                 #   a has grad 0.
                                 #   TODO: We could (and should) optimize this (see below).
@@ -130,7 +130,7 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                 self.collected_bw_part_bsyms.clear()
 
                 # we collect the gradients fo the flat args in the output dictionary's 'grad_flat_args'
-                # this means that the joint trace as them as outputs, which is good.
+                # this means that the joint trace has them as outputs, which is good.
                 grad_flat_args = []
                 for p in bsym.args[0]["flat_args"]:
                     # or p = self.read(p) here?
@@ -150,14 +150,14 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
             # we now handle various bound symbols by collecting augmented forward and backward symbols
 
             # 1. constant for gradients (no grad required)
-            #    excemting synchronize here terrible hack to cope with non-grad-needing sharded tensors
+            #    executing synchronize here terrible hack to cope with non-grad-needing sharded tensors
             #    as required by LoRA. We should have a symbol tag "always compute grad" instead.
             if is_constant_for_vjp(bsym) and not bsym.sym.name == "synchronize":
                 self.add_processed_bsyms([bsym.from_bsym()])
                 self.set_result(bsym.output)
                 return
 
-            # 2. Special case the thunder.torch.checkpoint higher oder function
+            # 2. Special case the thunder.torch.checkpoint higher order function
             if bsym.sym == thunder.torch.checkpoint:
                 # Tag all intermediate outputs as to be recomputed.
                 function_arg_names = {a.name for a in bsym.flat_proxy_args}
@@ -247,10 +247,10 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                 utils.check(
                     len(utils.sequencify(bsym.output)) == len(utils.sequencify(result)),
                     lambda: f"While generating forward and backward functions for {bsym.sym.name}, encountered an error.\n"
-                    "The number of outputs of the gradient transform function must be the same as the nunmber of outputs of the original forward function.\n"
+                    "The number of outputs of the gradient transform function must be the same as the number of outputs of the original forward function.\n"
                     f"Number of outputs of the original forward function: {len(utils.sequencify(bsym.output))}\n"
-                    f"Number of primal outputs of the gradient tansform / augmented forward: {len(utils.sequencify(result))}\n"
-                    "Please check the forward function and the gradient transfrm function / augmented forward to ensure that they have the same number of outputs.",
+                    f"Number of primal outputs of the gradient transform / augmented forward: {len(utils.sequencify(result))}\n"
+                    "Please check the forward function and the gradient transform function / augmented forward to ensure that they have the same number of outputs.",
                 )
                 self.set_result(result)
                 new_bsyms = self.new_trace.pop_scope()
@@ -316,11 +316,11 @@ def split_into_forward_and_backward(joint_trace):
     # - forward symbols go into forward_part_bsyms
     # - all symbols not in the forward go into backward_part_bsyms
     # - for recomputation (aka activation checkpointing), we want to insert symbols going into the forward also into the
-    #   backward. but we want to do so "just in time". To this end, we gather the symbols in a dict and later
-    #   insert it when their respective outputs are needed. This is in backward_part_bsyms_recomputated
+    #   backward, but we want to do so "just in time". To this end, we gather the symbols in a dict and later
+    #   insert it when their respective outputs are needed. This is in backward_part_bsyms_recomputed
     #   The just in time recomputation is a heuristic to save memory mimicking checkpointing: e.g. for a checkpointed
     #   block, the forward would be recomputed just before computing the gradient.
-    # the splitting is done in the reverse order fo the bound symbols, and works out which bits are needed for the forward
+    # the splitting is done in the reverse order of the bound symbols, and works out which bits are needed for the forward
     # from there.
     forward_part_bsyms = []
     backward_part_bsyms = []
@@ -419,7 +419,7 @@ def split_into_forward_and_backward(joint_trace):
     forward_trace.names = forward_trace.names.copy()  ## ehem
     forward_trace.bound_symbols += forward_part_bsyms
 
-    # now we create the return value and return bound symbol for  the forward
+    # now we create the return value and return bound symbol for the forward
     fw_output_dict = {k: v for k, v in return_bsym.args[0].items() if k != "grad_flat_args"}
     flat_output, _ = thunder.core.pytree.tree_flatten_with_dataclass(fw_output)
     fw_output_dict["flat_output"] = tuple(flat_output)
