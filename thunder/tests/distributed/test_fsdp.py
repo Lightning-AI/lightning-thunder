@@ -117,7 +117,9 @@ class FSDPTest(DistributedParallelTestCase):
         m = ToyModel().to(device)
         cm = thunder.jit(m)
         cm = fsdp(cm, device=device, broadcast_from=0)
-        x = torch.ones((2, 12), device=device)
+        # if we don't require grad of x, we do not need the t_net1_weight
+        # in the backward below and it could be legitimately DCE'd.
+        x = torch.ones((2, 12), device=device, requires_grad=True)
         cm(x).mean().backward()
 
         fwd_trc = [t for t in thunder.last_traces(cm) if thunder.core.trace.TraceTag.AUGMENTED_FORWARD in t.tags][0]
@@ -131,8 +133,8 @@ class FSDPTest(DistributedParallelTestCase):
         #       in the original trace and are inputs to all_gather, the unshard are the outputs fo the corresponding wait
         #       If you fix this to be dynamically discerned, you'll be my hero.
         sharded_param_names = ("t_net1_weight", "t_net2_weight")
-        # t20 and t22 are all-gather'ed t_net1_weight and t_net2_weight, respectively.
-        unshard_param_names = ("t20", "t22")
+        # t30 and t84 are all-gather'ed t_net1_weight and t_net2_weight, respectively.
+        unshard_param_names = ("t30", "t84")
         result_saved_for_bwd = [x.name for x in fwd_trc.bound_symbols[-1].args[1][0]]
         self.assertTrue(all(t not in sharded_param_names for t in result_saved_for_bwd))
         self.assertTrue(all(t in result_saved_for_bwd for t in unshard_param_names))
