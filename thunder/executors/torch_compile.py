@@ -256,4 +256,4 @@ torch_compile_xentropy_ex._implmap = {
 
 torch_compile_ex = TorchCompileExecutor(name="torchcompile")
 register_executor(torch_compile_ex)
-torch_compile_ex._implmap = {op: ImplInfo() for op in pytorch_ex.implmap}
+torch_compile_ex._implmap = {op: ImplInfo() for op in pytorch_ex.implmap if op != prims.PrimIDs.GET_GRAD}

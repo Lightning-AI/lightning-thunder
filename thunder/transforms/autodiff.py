@@ -379,7 +379,7 @@ def split_into_forward_and_backward(joint_trace):
             continue
 
         # copy_ updating a forward proxy is special regardless of the output
-        if bsym.sym == prims.copy_ and bsym.args[1].name in forward_proxy_names:
+        if (bsym.sym == prims.copy_ or bsym.sym.name == "copy_") and bsym.args[1].name in forward_proxy_names:
             # todo: should we also handle ltorch.copy_ ?
             forward_part_bsyms.insert(0, bsym.from_bsym())
             forward_proxy_names.update(a.name for a in bsym.flat_proxy_args)
@@ -429,6 +429,12 @@ def split_into_forward_and_backward(joint_trace):
     fw_output_dict["flat_output"] = tuple(flat_output)
     with thunder.core.trace.tracectx(forward_trace):
         prims.python_return(fw_output_dict, (saved_for_backward_tensors, saved_for_backward_other))
+
+    # !!!
+    if len(backward_part_bsyms) == 0 and not any(
+        [True if arg is not None else False for arg in return_bsym.args[0]["grad_flat_args"]]
+    ):
+        return forward_trace, None
 
     # then we construct the backward trace, unpacking saved_for_backward and cotangents lists
     def backward_fn(saved_for_backward, cotangents):
