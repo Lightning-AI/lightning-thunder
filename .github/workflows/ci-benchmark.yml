@@ -38,7 +38,7 @@ jobs:
           LIGHTNING_API_KEY: ${{ secrets.LIGHTNING_API_KEY }}
         run: |
           pip install lightning_sdk -U -q
-          python .github/run-benchmark-as-lit-jobs.py
+          python .github/run-benchmark-as-lit-jobs.py ${{ github.run_id }}
 
       - name: Post Slack Notification
         if: always() && github.event_name != 'pull_request'
