@@ -160,7 +160,7 @@ def test_plugins_hybrid_ddpfsdp(monkeypatch):
 
     monkeypatch.setenv("LOCAL_RANK", "0")
     if not torch.distributed.is_initialized():
-        torch.distributed.init_process_group(backend="gloo", rank=0, world_size=1, init_method="tcp://127.0.0.1:123456")
+        torch.distributed.init_process_group(backend="gloo", rank=0, world_size=1, init_method="tcp://127.0.0.1:1234")
     from thunder.plugins import FSDP
     from torch.distributed.device_mesh import init_device_mesh
 
