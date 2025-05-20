@@ -40,7 +40,8 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
 
         def process_bsym(self, bsym: thunder.core.symbol.BoundSymbol) -> None:
             if bsym.sym is prims.python_return:
-                # This is big (and a big messy):
+                ########### BEGINNING of return handling (and putting the backward computation in the joint trace)
+                # This is big (and a bit messy):
                 # the return (of the input trace) signals the end of the forward processing
                 # all the backwards will have been put in self.collected_bw_part_syms
                 # special symbols are
@@ -58,7 +59,8 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                         output_proxy_names.add(self.read(o).name)
                 grad_proxy_map = {}
 
-                # we iterate through the collected symbols in order
+                # we iterate through the collected symbols backward in order (from the generation of the list, this
+                # is the backward of the last forward instruction first, then then the backward of the second to last etc.
                 for bw_bsyms in self.collected_bw_part_bsyms:
                     # if we don't have and grad_outs, we know that the grad_ins are not needed, so we don't compute them
                     # (e.g. for `where(a * b > 0, a, b)` we do not need the grad components of a * b propagated
@@ -88,8 +90,20 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                                 grad_proxy_map[p.name] = new_grad
                                 self.write(new_grad, new_grad)
                             elif nbsym.sym == prims.get_grad:
+                                # get grad reads a gradient, this could be
+                                # - the gradient of an intermediate (possibly combined with an output) form put_grad above
+                                #   note that all put_grads are happen before all get_grads from the dataflow of the forward,
+                                #   in this case we use the gradient from the put_grad(s)
+                                # - an output of the forward function (that has not been combined with an intermediate in pu grd),
+                                #   then the gradient is like the "grad_out" in the parameter list of a autograd.Function.backward
+                                #   in this case we keep a get_grad in the trace.
+                                # - an intermedite that does not have a gradient computed. In this case the gradient is 0 in the shape
+                                #   of the get_grad argument. This happens e.g. if we have something like "a > 0" for a float a then
+                                #   a has grad 0.
+                                #   TODO: We could (and should) optimize this (see below).
                                 p = nbsym.args[0]
-                                # TODO: set requires grad here!
+
+                                # TODO: set proxy requires grad here!
                                 name = p.name
                                 current_grad = grad_proxy_map.get(name)
                                 if current_grad is not None:
@@ -111,9 +125,12 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                                     grad_proxy_map[name] = new_bsym.output
                                     self.write(nbsym.output, new_bsym.output)
                             else:
+                                # all other symbols are just computation
                                 self.add_processed_bsyms([nbsym.from_bsym()])
                 self.collected_bw_part_bsyms.clear()
 
+                # we collect the gradients fo the flat args in the output dictionary's 'grad_flat_args'
+                # this means that the joint trace as them as outputs, which is good.
                 grad_flat_args = []
                 for p in bsym.args[0]["flat_args"]:
                     # or p = self.read(p) here?
@@ -128,15 +145,19 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                 self.add_processed_bsyms([bsym.from_bsym()])
                 self.set_result(bsym.output)
                 return
+                ########### END of return handling (and putting the backward computation in the joint trace)
 
-            # constant for gradients (no grad required)
-            # excemting synchronize here terrible hack to cope with non-grad-needing sharded tensors
-            # as required by LoRA. We should have a symbol tag instead.
+            # we now handle various bound symbols by collecting augmented forward and backward symbols
+
+            # 1. constant for gradients (no grad required)
+            #    excemting synchronize here terrible hack to cope with non-grad-needing sharded tensors
+            #    as required by LoRA. We should have a symbol tag "always compute grad" instead.
             if is_constant_for_vjp(bsym) and not bsym.sym.name == "synchronize":
                 self.add_processed_bsyms([bsym.from_bsym()])
                 self.set_result(bsym.output)
                 return
 
+            # 2. Special case the thunder.torch.checkpoint higher oder function
             if bsym.sym == thunder.torch.checkpoint:
                 # Tag all intermediate outputs as to be recomputed.
                 function_arg_names = {a.name for a in bsym.flat_proxy_args}
@@ -150,42 +171,58 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                 self.add_unprocessed_bsyms(bsym.subsymbols[:])
                 return
 
+            # 3a. see if we have a grad_transform (e.g. from OperatorExecutor.register_grad_transform)
+
             # executor or global grad transform
             joint_forward_backward, _ = _get_gradfn_and_executor(bsym)
 
             if joint_forward_backward is None:
+                # 3b. if we don't have a grad_transform for a bsym, maybe we have old style augmented forward and backward
+                # registered. In this case, we make the joint_forward_backward which works like a grad_gransform.
                 # registered augmented forward impl (where aug fwd and backward are registered separately)
                 aug_fwd_impl = augmented_forward_impls.get(bsym.sym.id)
                 if aug_fwd_impl is not None:
                     bwd_impl = backward_impls.get(bsym.sym.id)
 
+                    # this is our ad hoc combined forward and backward function ("grad_transform")
                     def joint_forward_backward(*args, **kwargs):
                         arg_proxy_names = {a.name for a in bsym.flat_proxy_args}
+
+                        # run the augmented forward res
                         aug_fwd_res = aug_fwd_impl(*bsym.args, **bsym.kwargs)
 
+                        # aug_fwd_res could be either VJPDual or just a tuple, in any case, we can decompose it.
+                        res, saved_for_backward = aug_fwd_res
+
+                        # we need to shallow copy inputs that are returned for "get_grad" and "put_grad" to properly work
+                        # (this shallow copy is the equivalent because we of an "edge" in the PyTorch autograd graph)
                         def shallow_copy_if_input(p):
                             if isinstance(p, thunder.TensorProxy) and p.name in arg_proxy_names:
                                 return thunder.core.prims.shallow_copy(p)
                             return p
 
-                        # aug_fwd_res could be either VJPDual or just a tuple
-                        res, saved_for_backward = aug_fwd_res
                         res = tree_map(shallow_copy_if_input, res)
 
+                        # now we need the backward. it starts by getting the grad_outs
                         grad_outs = []
                         for r in thunder.core.pytree.tree_iter(res):
                             if isinstance(r, thunder.TensorProxy):
                                 grad_outs.append(prims.get_grad(r))
-                        # to do non-grad outputs of bwd
+
+                        # The backward computes the grad_inps of the bsym from the grad_outs
+                        # TODO: non-grad outputs of bwd?
                         grad_inps = bwd_impl(*saved_for_backward, *grad_outs)
                         if isinstance(grad_inps, thunder.Proxy):
                             grad_inps = [grad_inps]
 
+                        # match the grad_inps to the inputs of the boudnd symbol and put the grads
+
                         flat_inps = args
                         # for autograd_function_apply, skip the function args
-                        # TODO: fix the returned gradients to include two None...
+                        # TODO: fix the returned gradients to include two None?.
                         if bsym.sym == thunder.torch.autograd_function_apply:
                             flat_inps = args[2:]
+
                         # there may be non-gradient requiring additional args (todo: maybe only support this for non-tensor ones?)
                         num_flat_tensor_inps = sum(isinstance(i, thunder.TensorProxy) for i in flat_inps)
                         utils.check(
@@ -200,6 +237,7 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                                 prims.put_grad(i, gi)
                         return res
 
+            # 3c if we have a joint forward backward (either grad_transform or the ad hoc constructed one above), we can comptue the gradient
             if joint_forward_backward is not None:
                 self.new_trace.push_scope([])
                 result = joint_forward_backward(*bsym.args, **bsym.kwargs)
@@ -242,19 +280,22 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                 self.collected_bw_part_bsyms.insert(0, backward_part_bsyms)
                 return
 
-            # No gradient transform found, need to descend
+            # 4. No gradient transform found, need to decompose the symbol
+
+            # error if this is a primitive
             utils.check(not bsym.sym.is_prim, lambda: f"Failed to find a gradient transform for bound symbol {bsym=}")
 
             # TODO: check if this is needed: the old impl checked whether len(bsym.subsymbols) > 0 except for the special case "torch.nn.functional.dropout" with p=0...
-
-            # OUTPUTS to map
+            # add the decomposition (= the subsymbols) to the front of the symbols to be processed
             self.add_unprocessed_bsyms(bsym.subsymbols[:])
+
+            # end of 4 and end of the bsym processing loop.
 
     start_time_ns = time.perf_counter_ns()
 
-    processor = AugmentedForwardProcessor(trace)
-    trace, _ = processor()
-
+    # run the trace through the processor
+    trace, _ = AugmentedForwardProcessor(trace)()
+    # run through DCE in case some of the gradients of intermediates are not needed.
     trace = thunder.core.transform_common.dce(trace)
 
     end_time_ns = time.perf_counter_ns()
