@@ -5,7 +5,12 @@ import functools
 
 import torch
 
-import triton
+try:
+    import triton
+
+    TRITON_AVAILABLE = True
+except ImportError:
+    TRITON_AVAILABLE = False
 
 try:
     import liger_kernel.ops.rms_norm
@@ -34,6 +39,10 @@ register_executor(liger_ex)
 
 def liger_available() -> bool:
     return LIGER_AVAILABLE
+
+
+def triton_available() -> bool:
+    return TRITON_AVAILABLE
 
 
 prod = lambda *args: functools.reduce(lambda x, y: x * y, args)
@@ -334,7 +343,7 @@ def group_norm_fwd_meta(
     return Y, TensorProxy(like=X), Mean, RSTD, BLOCK_SIZE
 
 
-if liger_available():
+if liger_available() and triton_available():
     liger_group_norm_forward = liger_ex.register_operator(
         "liger_group_norm_forward",
         meta=group_norm_fwd_meta,
