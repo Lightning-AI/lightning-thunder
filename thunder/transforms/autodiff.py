@@ -313,37 +313,47 @@ def split_into_forward_and_backward(joint_trace):
     # the joint trace will have the forward computation at the beginning and then the backward computation
     # from how it is constructed.
     # we split the trace:
-    # - forward symbols go into the forward
-    # - all symbols not in the forward go into the backward
-    # for recomputation, we want to insert symbols going into the forward also into the
-    # backward. but we want to do so "just in time". To this end, we gather the symbols in a dict and later
-    # insert it when their respective outputs are needed.
+    # - forward symbols go into forward_part_bsyms
+    # - all symbols not in the forward go into backward_part_bsyms
+    # - for recomputation (aka activation checkpointing), we want to insert symbols going into the forward also into the
+    #   backward. but we want to do so "just in time". To this end, we gather the symbols in a dict and later
+    #   insert it when their respective outputs are needed. This is in backward_part_bsyms_recomputated
+    #   The just in time recomputation is a heuristic to save memory mimicking checkpointing: e.g. for a checkpointed
+    #   block, the forward would be recomputed just before computing the gradient.
+    # the splitting is done in the reverse order fo the bound symbols, and works out which bits are needed for the forward
+    # from there.
     forward_part_bsyms = []
     backward_part_bsyms = []
     backward_part_bsyms_recomputed: dict[str, tuple[BoundSymbol, set[str]]] = {}  # name -> (bsym, name_set)
 
+    # return has a dict, it contains the forward outputs in "output" and the backward outputs in "grad_flat_args", corresponding
+    # to "flat_args"
     return_bsym = joint_trace.bound_symbols[-1]
     assert return_bsym.sym == prims.python_return
-
     fw_output = return_bsym.args[0]["output"]
     assert isinstance(fw_output, tuple)
 
     grad_outs = [None for _ in fw_output]
-
     output_pos = {o.name: i for i, o in enumerate(fw_output) if isinstance(o, thunder.TensorProxy)}
-    forward_proxy_names = {o.name for o in thunder.core.pytree.tree_iter(fw_output) if isinstance(o, thunder.Proxy)}
 
+    # the proxies we need to compute in the forward - we start with the outputs of the forward
+    forward_proxy_names = {o.name for o in thunder.core.pytree.tree_iter(fw_output) if isinstance(o, thunder.Proxy)}
+    # we also have the inputs available, so we add flat_args.
     # for inplace, we need to update this (or have flat args be the right thing?...)
     forward_proxy_names.update(a.name for a in return_bsym.args[0]["flat_args"] if isinstance(a, thunder.Proxy))
 
-    backward_needed_names = set()
-    backward_available_names = set()
+    # We keep track of the names of proxies we recompute in the backward as those will not need to be part of the
+    # ones saved in the forward for the backward
+    backward_recomputed_proxy_names = set()
 
+    # here we go through the bound symbols to assign to the three categories, keeping track of the forward names, the backward needed
+    # and the backward available names.
     for bsym in reversed(joint_trace.bound_symbols):
-        if bsym.sym == prims.python_return:
+        if bsym.sym == prims.python_return:  # we will re-do the return statements below, so we skip it here
             continue
 
-        # unpack_trivial is always a (forward trace) argument
+        # unpack_trivial is always a (forward trace) argument, the backward inputs are from get_grad
+        # anything that outputs something needed for the forward (the forward_proxy_names) is part of the forward
         if any((o.name in forward_proxy_names) for o in bsym.flat_proxy_outs) or bsym.sym == prims.unpack_trivial:
             forward_part_bsyms.insert(0, bsym.from_bsym())
             bsym_arg_names = {a.name for a in bsym.flat_proxy_args}
@@ -351,27 +361,32 @@ def split_into_forward_and_backward(joint_trace):
             forward_proxy_names.update(bsym_arg_names)
             forward_proxy_names.update(bsym_out_names)
 
+            # if we need to recompute this, we also add the bound symbol to backward_part_bsyms_recomputed
             if _should_recompute_bsym_in_backward(bsym):
-                backward_available_names.update(bsym_out_names)
-                backward_needed_names.update(bsym_arg_names)
+                backward_recomputed_proxy_names.update(bsym_out_names)
                 bsym_rec = (bsym.from_bsym(), bsym_out_names)
                 backward_part_bsyms_recomputed.update((n, bsym_rec) for n in bsym_out_names)
 
             continue
 
+        # get grad is always part of the input, record the grad_out (will be part of the "cotangents" list)
         if bsym.sym == prims.get_grad:
             grad_outs[output_pos[bsym.args[0].name]] = bsym.output
             continue
 
+        # copy_ updating a forward proxy is special regardless of the output
         if bsym.sym == prims.copy_ and bsym.args[1].name in forward_proxy_names:
             # todo: should we also handle ltorch.copy_ ?
             forward_part_bsyms.insert(0, bsym.from_bsym())
             forward_proxy_names.update(a.name for a in bsym.flat_proxy_args)
             continue
 
+        # if we don't need to have it in the forward, it is part of the backward
         backward_part_bsyms.insert(0, bsym.from_bsym())
 
     # we insert the recomputed symbols just before where they are needed.
+    # as this inserts into the list during processing, we use a while loop rather than
+    # a for loop
     bw_idx = 0
     while bw_idx < len(backward_part_bsyms):
         bsym = backward_part_bsyms[bw_idx]
@@ -387,31 +402,31 @@ def split_into_forward_and_backward(joint_trace):
         if not modified:
             bw_idx += 1
 
-    # collect needed computation
+    # collect proxies needing to be saved in the forward for the backward
     saved_for_backward = {}
     for bsym in backward_part_bsyms:
         saved_for_backward.update(
             (a.name, a)
             for a in bsym.flat_proxy_args
-            if a.name in forward_proxy_names and a.name not in backward_available_names
+            if a.name in forward_proxy_names and a.name not in backward_recomputed_proxy_names
         )
     saved_for_backward_tensors = [p for p in saved_for_backward.values() if isinstance(p, thunder.TensorProxy)]
     saved_for_backward_other = [p for p in saved_for_backward.values() if not isinstance(p, thunder.TensorProxy)]
 
+    # we build the forward trace
     forward_trace = thunder.core.trace.from_trace(joint_trace)
     forward_trace.tags.add(thunder.core.trace.TraceTag.AUGMENTED_FORWARD)
-
     forward_trace.names = forward_trace.names.copy()  ## ehem
     forward_trace.bound_symbols += forward_part_bsyms
 
+    # now we create the return value and return bound symbol for  the forward
     fw_output_dict = {k: v for k, v in return_bsym.args[0].items() if k != "grad_flat_args"}
-
     flat_output, _ = thunder.core.pytree.tree_flatten_with_dataclass(fw_output)
     fw_output_dict["flat_output"] = tuple(flat_output)
-
     with thunder.core.trace.tracectx(forward_trace):
         prims.python_return(fw_output_dict, (saved_for_backward_tensors, saved_for_backward_other))
 
+    # then we construct the backward trace, unpacking saved_for_backward and cotangents lists
     def backward_fn(saved_for_backward, cotangents):
         pass
 
@@ -423,14 +438,18 @@ def split_into_forward_and_backward(joint_trace):
     backward_trace.names.discard("saved_for_backward")
     backward_trace.names.discard("cotangents")
 
+    # set up the inputs of the backward properly (args and unpacking)
     with thunder.core.trace.tracectx(backward_trace):
         p_C0 = thunder.core.proxies.CollectionProxy(list(saved_for_backward_tensors), name="C0")
         p_C1 = thunder.core.proxies.CollectionProxy(list(saved_for_backward_other), name="C1")
         p_saved_for_backward = thunder.core.proxies.CollectionProxy([p_C0, p_C1], name="saved_for_backward")
         p_cotangents = thunder.core.proxies.CollectionProxy(grad_outs, name="cotangents")
+
+        # set the args (which currently don't use the collection proxies but the collections directly)
         saved_for_backward_tuple = [p_C0.collection(), p_C1.collection()]
         backward_trace.args = (saved_for_backward_tuple, p_cotangents.collection())
 
+        # unpacking symbols
         prims.unpack_trivial(p_saved_for_backward, name="saved_for_backward")
         prims.unpack_trivial(p_cotangents, name="cotangents")
         prims.unpack_sequence(p_saved_for_backward, len(p_saved_for_backward.coll))
@@ -438,8 +457,10 @@ def split_into_forward_and_backward(joint_trace):
         prims.unpack_sequence(p_C0, len(p_C0.coll))
         prims.unpack_sequence(p_C1, len(p_C1.coll))
 
+    # add the backward computation
     backward_trace.bound_symbols += backward_part_bsyms
 
+    # and finally the backward return statement
     with thunder.core.trace.tracectx(backward_trace):
         prims.python_return(tuple(return_bsym.args[0]["grad_flat_args"]))
 
