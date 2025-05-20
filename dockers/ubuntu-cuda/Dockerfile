@@ -108,7 +108,7 @@ RUN \
         git checkout "${TORCH_VERSION}" && \
         git submodule sync && \
         git submodule update --init --recursive && \
-        pip install cmake==3.31.6 && \
+        pip install cmake==3.31.6 typing_extensions && \
         pip install . && \
         pip install "pytorch-triton==$(cat .ci/docker/triton_version.txt)" --index-url="https://download.pytorch.org/whl/nightly/" && \
         cd .. && \
