@@ -9,3 +9,4 @@ opt_einsum >= 3.3.0
 mpmath <1.4.0
 # Support for 3.12
 dill >=0.3.8
+triton >= 2.1
