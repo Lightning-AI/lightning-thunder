@@ -11,11 +11,13 @@ class BaseRecipe(Recipe):
     def __init__(
         self,
         show_progress=False,
+        fuser="nvfuser",
         interpreter="thunder.jit",
         plugins=None,
     ):
         super().__init__(interpreter=interpreter, plugins=plugins)
-        self.executors = ["cudnn", "sdpa", "torchcompile_xentropy", "nvfuser"]
+        self.executors = ["torch", "python", "cudnn", "sdpa"]
+        self.setup_fuser()
         self.show_progress = show_progress
 
     def setup_config(self) -> dict[str, Any]:
@@ -27,6 +29,20 @@ class BaseRecipe(Recipe):
         transforms = [PrunePrologueChecks()]
 
         return transforms
+
+    def setup_fuser(self) -> None:
+        if self.fuser == "nvfuser":
+            if "nvfuser" not in self.executors:
+                self.executors.append("nvfuser")
+        elif self.fuser == "torch.compile":
+            if "torchcompile_xentropy" in self.executors:
+                self.executors.remove("torchcompile_xentropy")
+            if "torchcompile" not in self.executors:
+                self.executors.append("torchcompile")
+        else:
+            raise NotImplementedError(
+                f"Unknown fuser '{self.fuser}'. Supported options are 'nvfuser' and 'torch.compile'."
+            )
 
     def setup_executors(self) -> list[Executor]:
         if not isinstance(self.executors, list):
@@ -40,7 +56,13 @@ class BaseRecipe(Recipe):
                 if name == "nvfuser":
                     raise ValueError(
                         """Executor nvfuser was specified in the recipe but is not available in the current environment.
-                    See https://github.com/Lightning-AI/lightning-thunder/?tab=readme-ov-file#quick-start for install instructions."""
+                    Please ensure it is installed by running:
+                    ```
+                    pip install torch==2.6.0 torchvision==0.21 nvfuser-cu124-torch26
+                    ```
+                    Note that nvfuser needs to be installed for the exact pytorch version in use.
+                    Alternatively you can switch from nvFuser to torch.compile as the fusion executor by specifying `fuser="torch.compile"`.
+                    """
                     )
                 else:
                     raise ValueError(

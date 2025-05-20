@@ -12,12 +12,11 @@ def test_examine_fn():
     thunder.examine.examine(foo, x)
 
 
-@pytest.mark.skipif(not nvfuser_available(), reason="NVFuser is not available")
 def test_examine_jfn():
     def foo(x):
         x[0] = 5 * x[1]
 
-    jfoo = thunder.compile(foo)
+    jfoo = thunder.jit(foo)
     x = torch.ones(2, 2)
     thunder.examine.examine(jfoo, x)
 

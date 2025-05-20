@@ -12,7 +12,7 @@ from thunder.executors import nvfuser_available
 from thunder.tests.framework import version_between, IS_WINDOWS
 
 
-@pytest.mark.skipif(not nvfuser_available(), reason="NVFuser is not available")
+@pytest.mark.skipif(not nvfuser_available(), reason="nvFuser is not available")
 @pytest.mark.skipif(IS_WINDOWS, reason="slow on Windows")
 def test_default_recipe_basic_bert():
     bert = transformers.BertForSequenceClassification(transformers.BertConfig())
@@ -29,7 +29,7 @@ def test_default_recipe_basic_bert():
     assert_close(actual, expected)
 
 
-@pytest.mark.skipif(not nvfuser_available(), reason="NVFuser is not available")
+@pytest.mark.skipif(not nvfuser_available(), reason="nvFuser is not available")
 @pytest.mark.skipif(IS_WINDOWS, reason="slow on Windows")
 def test_recipe_basic_bert():
     bert = transformers.BertForSequenceClassification(transformers.BertConfig())
@@ -59,7 +59,7 @@ def test_recipe_basic_bert():
     deregister_executor("inplace_index_copy_ex")
 
 
-@pytest.mark.skipif(not nvfuser_available(), reason="NVFuser is not available")
+@pytest.mark.skipif(not nvfuser_available(), reason="nvFuser is not available")
 def test_recipe_basic_bert_fx():
     bert = transformers.BertForSequenceClassification(transformers.BertConfig())
     del bert.bert.encoder.layer[1:]
@@ -80,7 +80,7 @@ def test_recipe_basic_bert_fx():
     deregister_executor("inplace_index_copy_ex")
 
 
-@pytest.mark.skipif(not nvfuser_available(), reason="NVFuser is not available")
+@pytest.mark.skipif(not nvfuser_available(), reason="nvFuser is not available")
 def test_recipe_mlp():
     model = torch.nn.Sequential(torch.nn.Linear(2048, 4096), torch.nn.ReLU(), torch.nn.Linear(4096, 64))
 
@@ -108,7 +108,7 @@ def test_recipe_errors():
         recipe.setup_executors()
 
 
-@pytest.mark.skipif(not nvfuser_available(), reason="NVFuser is not available")
+@pytest.mark.skipif(not nvfuser_available(), reason="nvFuser is not available")
 def test_plugins_basics():
     model = torch.nn.Sequential(torch.nn.Linear(2048, 4096), torch.nn.ReLU(), torch.nn.Linear(4096, 64))
 
@@ -124,7 +124,7 @@ def test_plugins_basics():
 
 
 # test skipped if nvfuser isn't available because providing plugins calls BaseRecipe
-@pytest.mark.skipif(not nvfuser_available(), reason="NVFuser is not available")
+@pytest.mark.skipif(not nvfuser_available(), reason="nvFuser is not available")
 @pytest.mark.skipif(IS_WINDOWS, reason="libuv error with PT build on windows")
 def test_plugins_composition(monkeypatch):
     model = torch.nn.Sequential(torch.nn.Linear(2048, 4096), torch.nn.ReLU(), torch.nn.Linear(4096, 64))
