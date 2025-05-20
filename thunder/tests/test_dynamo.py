@@ -12,7 +12,6 @@ from looseversion import LooseVersion
 from unittest.mock import patch
 import weakref
 import re
-import random
 
 from thunder import dtypes
 from thunder.dynamo import thunderfx
@@ -64,6 +63,27 @@ def reset_torch_dynamo():
     # [0/8]    last reason: 0/0:
     # [0/8] To log all recompilation reasons, use TORCH_LOGS="recompiles".
     torch._dynamo.reset()
+
+
+def run_script(file_name, cmd):
+    cmd = cmd + [file_name]
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    assert result.returncode == 0, f"Script {file_name} failed: {result}"
+
+
+from hypothesis import strategies as st
+from hypothesis import given, settings
+
+
+# Uses hypothesis to randomly select num_files files to run
+def run_sample_scripts(py_files, cmd, *, num_files=1):
+    @given(selected_files=st.lists(st.sampled_from(py_files), min_size=num_files, max_size=num_files, unique=True))
+    @settings(max_examples=1, deadline=None)  # We only need to run one example
+    def run_scripts(selected_files):
+        for file in selected_files:
+            run_script(file, cmd)
+
+    run_scripts()
 
 
 @instantiate(
@@ -976,12 +996,6 @@ def test_dynamo_reproducer_split(executor, device: str, dtype: dtypes.dtype, use
     actual = cfunc(x)
     cfunc._backend.save_reproducer_to_folder(tmp_path, use_pytest_benchmark)
 
-    def check(file_name, cmd):
-        assert os.path.exists(file_name)
-        cmd = cmd + [file_name]
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        assert result.returncode == 0, f"Reproducer {file_name} failed: {result}"
-
     suffix = "_benchmark" if use_pytest_benchmark else "_repro"
     s1 = f"{tmp_path}/graph0_thunder_0{suffix}.py"
     s2 = f"{tmp_path}/graph0_thunder_2{suffix}.py"
@@ -991,8 +1005,7 @@ def test_dynamo_reproducer_split(executor, device: str, dtype: dtypes.dtype, use
         cmd = cmd + ["-m", "pytest"]
 
     # Randomly pick one file to run to save time
-    fname = random.choice([s1, s2, s3])
-    check(fname, cmd)
+    run_sample_scripts([s1, s2, s3], cmd, num_files=1)
 
 
 @requiresCUDA
@@ -1123,12 +1136,6 @@ def test_thunderfx_meta_tensor():
     thfoo = thunderfx(foo)
     out = thfoo(t0)
     assert out.device.type == "meta"
-
-
-def run_script(file_name, cmd):
-    cmd = cmd + [file_name]
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    assert result.returncode == 0, f"Script {file_name} failed: {result}"
 
 
 @requiresCUDA
@@ -1266,9 +1273,7 @@ def test_thunder_specific_reports(tmp_path):
     assert len(py_files) == 16
 
     # Randomly select 2 files to run to save time
-    selected_files = random.sample(py_files, min(2, len(py_files)))
-    for file in selected_files:
-        run_script(file, cmd)
+    run_sample_scripts(py_files, cmd, num_files=2)
 
 
 @requiresCUDA
@@ -1375,9 +1380,7 @@ def test_reports_repro(tmp_path):
     assert len(py_files) == 16
 
     # Randomly select 2 files to run to save time
-    selected_files = random.sample(py_files, min(2, len(py_files)))
-    for file in selected_files:
-        run_script(file, cmd)
+    run_sample_scripts(py_files, cmd, num_files=2)
 
 
 @requiresCUDA
@@ -1423,9 +1426,7 @@ def test_reports_benchmark(tmp_path):
     assert len(py_files) == 5
 
     # Randomly select 2 files to run to save time
-    selected_files = random.sample(py_files, min(2, len(py_files)))
-    for file in selected_files:
-        run_script(file, cmd)
+    run_sample_scripts(py_files, cmd, num_files=2)
 
 
 @requiresCUDA
