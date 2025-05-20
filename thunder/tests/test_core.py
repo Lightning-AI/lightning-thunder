@@ -1378,7 +1378,8 @@ def test_bound_symbol_header_context(executor, device: str, dtype: dtypes.dtype)
     assert sin_symbol.sym.name == "sin"
     assert "# Testing\n# This symbol's\n# Header\nt0 = prims.sin(x)" in str(sin_symbol)
     assert "\n  # Testing\n  # This symbol's\n  # Header\n  t0 = prims.sin(x)" in str(trace)
-    assert str(trace).count("Testing") == 1
+    # the unbind, the sin and the return all have the header
+    assert str(trace).count("Testing") == 3
 
 
 # Check to verify the issue in "KeyError thrown in thunder.executor.utils.Region

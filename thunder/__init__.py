@@ -213,9 +213,6 @@ if sdpa_executor:
 if cudnn_executor:
     add_default_executor(cudnn_executor)
 
-if apex_executor:
-    add_default_executor(apex_executor)
-
 #
 # Promoted debugging functions
 #
