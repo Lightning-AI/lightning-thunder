@@ -682,6 +682,18 @@ class FSDPDDPHybridTest(DistributedParallelTestCase):
             slice_size = rg.size(0) // 2
             assert_close(g, rg[slice_size * fsdp_rank : slice_size * (fsdp_rank + 1)])
 
+        from thunder.plugins import FSDP
+
+        plugin = FSDP(process_group=mesh)
+
+        jm = thunder.compile(m, plugins=[plugin])
+        res = jm(inp)
+        grads = torch.autograd.grad(res, jm.parameters(), go)
+        assert_close(res, ref)
+        for g, rg in zip(grads, ref_grads):
+            slice_size = rg.size(0) // 2
+            assert_close(g, rg[slice_size * fsdp_rank : slice_size * (fsdp_rank + 1)])
+
 
 common_utils.instantiate_parametrized_tests(FSDPDDPHybridTest)
 

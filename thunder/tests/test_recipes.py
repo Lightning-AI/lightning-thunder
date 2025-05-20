@@ -152,3 +152,39 @@ def test_plugins_composition(monkeypatch):
         for expected in expected_transforms:
             assert any(isinstance(el, expected) for el in transforms)
         assert "transformer_engine" in [el.name for el in call_args.kwargs["executors"]]
+
+
+@pytest.mark.skipif(IS_WINDOWS, reason="libuv error with PT build on windows")
+def test_plugins_hybrid_ddpfsdp(monkeypatch):
+    model = torch.nn.Sequential(torch.nn.Linear(2048, 4096), torch.nn.ReLU(), torch.nn.Linear(4096, 64))
+
+    monkeypatch.setenv("LOCAL_RANK", "0")
+    if not torch.distributed.is_initialized():
+        torch.distributed.init_process_group(backend="gloo", rank=0, world_size=1, init_method="tcp://127.0.0.1:123456")
+    from thunder.plugins import FSDP
+    from torch.distributed.device_mesh import init_device_mesh
+
+    mesh = init_device_mesh("cpu", (1,), mesh_dim_names=("fsdp",))  # single-dim mesh
+
+    plugin = FSDP(process_group=mesh)
+
+    with patch("thunder.jit") as mock_jit:
+        _ = thunder.compile(model, plugins=[plugin])
+        call_args = mock_jit.call_args
+        transforms = call_args.kwargs["transforms"]
+        expected = thunder.distributed.transforms.fsdp_v2.FSDPTransform
+        assert any(isinstance(el, expected) for el in transforms)
+
+    mesh = init_device_mesh("cpu", (1, 1), mesh_dim_names=("ddp", "fsdp"))
+    plugin = FSDP(process_group=mesh)
+
+    with patch("thunder.jit") as mock_jit:
+        _ = thunder.compile(model, plugins=[plugin])
+        call_args = mock_jit.call_args
+        transforms = call_args.kwargs["transforms"]
+        expected = [
+            thunder.distributed.transforms.fsdp_v2.FSDPTransform,
+            thunder.distributed.transforms.ddp_v2.DDPTransform,
+        ]
+        for e in expected:
+            assert any(isinstance(el, e) for el in transforms)
