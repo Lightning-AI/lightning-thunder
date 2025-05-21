@@ -22,7 +22,7 @@ defaults:
     shell: bash
 
 jobs:
-  launcher:
+  launcher-quickstart:
     runs-on: "ubuntu-22.04"
     #timeout-minutes: 55
     steps:
@@ -43,7 +43,7 @@ jobs:
           LIGHTNING_API_KEY: ${{ secrets.LIGHTNING_API_KEY }}
         run: |
           pip install lightning_sdk -U -q
-          python .github/run-quickstart-as-lit-jobs.py
+          python .github/run-quickstart-as-lit-jobs.py ${{ github.run_id }}
 
       - name: Load report
         if: always()
