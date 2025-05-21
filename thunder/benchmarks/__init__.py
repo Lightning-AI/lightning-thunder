@@ -3368,6 +3368,38 @@ class LinearLoRABenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return self.lora_cls(self.model)
 
 
+class HFUnet2DBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    def __init__(
+        self,
+        model_id: str,
+        batch_size: int,
+        device: str = "cuda",
+        dtype: dtypes.dtype = thunder.float32,
+        requires_grad: bool = False,
+    ) -> None:
+        super().__init__()
+        from diffusers import UNet2DModel
+
+        self.model_id = model_id
+        self.unet = UNet2DModel.from_pretrained(self.model_id)
+        self.in_channels = self.unet.config.in_channels
+        self.sample_size = self.unet.config.sample_size
+        self.batch_size = batch_size
+        self.device: str = device
+        self.tdtype: torch.dtype = ltorch.to_torch_dtype(dtype)
+        self.requires_grad: bool = requires_grad
+        self.input_shape = (self.batch_size, self.in_channels, self.sample_size, self.sample_size)
+
+    def make_batch(self) -> tuple[list, dict]:
+        make = partial(make_tensor, device=self.device, dtype=self.tdtype)
+        latents = make(self.input_shape, requires_grad=self.requires_grad)
+        timestep = make_tensor((self.batch_size,), device=self.device, dtype=torch.long)
+        return (latents, timestep), {}
+
+    def fn(self) -> Callable:
+        return self.unet.to(self.device, self.tdtype).requires_grad_(self.requires_grad)
+
+
 class HFUNet2DConditionModelBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     def __init__(
         self,

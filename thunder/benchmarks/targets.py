@@ -34,6 +34,7 @@ from thunder.benchmarks import (
     LinearLoRABenchmark,
     DeepSeekSGLangMoEBenchmark,
     HFUNet2DConditionModelBenchmark,
+    HFUnet2DBenchmark,
     thunder_apex_executor,
     thunder_apex_nvfuser_executor,
     thunder_cudnn_executor,
@@ -1033,6 +1034,7 @@ def test_optim_functional(
 
 
 hf_diffusers_unet2d_condition_model_ids = [
+    # unet2dconditionmodel
     "runwayml/stable-diffusion-v1-5",
     "CompVis/stable-diffusion-v1-4",
     "ionet-official/bc8-alpha",
@@ -1042,6 +1044,8 @@ hf_diffusers_unet2d_condition_model_ids = [
     "stabilityai/stable-diffusion-xl-base-1.0",
     "stabilityai/stable-diffusion-xl-refiner-1.0",
     "diffusers/stable-diffusion-xl-1.0-inpainting-0.1",
+    # unet2d
+    "google/ddpm-cat-256",
 ]
 
 
@@ -1058,36 +1062,41 @@ hf_diffusers_unet2d_condition_model_ids = [
 @pytest.mark.parametrize(
     "model_id", hf_diffusers_unet2d_condition_model_ids, ids=hf_diffusers_unet2d_condition_model_ids
 )
-# @pytest.mark.parametrize("batch_size", range(8, 8), ids=[f"BS{i}" for i in range(1, 2)])
 @pytest.mark.parametrize("batch_size", (2**i for i in range(0, 5)), ids=(f"bs{2**i}" for i in range(0, 5)))
-def test_hf_diffusers_unet2d_condition_model(benchmark, model_id: str, batch_size: int, executor, compute_type):
+def test_hf_diffusers_unet2d_model(benchmark, model_id: str, batch_size: int, executor, compute_type):
     if not importlib.util.find_spec("diffusers"):
         pytest.skip("HF diffusers not available.")
-    if "xl" in model_id:
-        time_ids_dim = 6
-        text_embeds_dim = 1280
-        if "refiner" in model_id:
-            time_ids_dim = 2
-            text_embeds_dim = 2048
-        b = HFUNet2DConditionModelBenchmark(
-            model_id,
-            77,
-            batch_size,
-            time_ids_dim=time_ids_dim,
-            text_embeds_dim=text_embeds_dim,
-            device="cuda",
-            dtype=torch.bfloat16,
-            requires_grad=is_requires_grad(compute_type),
+    is_unconditional = model_id in ["google/ddpm-cat-256"]
+    if is_unconditional:
+        b = HFUnet2DBenchmark(
+            model_id, batch_size, device="cuda", dtype=torch.bfloat16, requires_grad=is_requires_grad(compute_type)
         )
     else:
-        b = HFUNet2DConditionModelBenchmark(
-            model_id,
-            77,
-            batch_size,
-            device="cuda",
-            dtype=torch.bfloat16,
-            requires_grad=is_requires_grad(compute_type),
-        )
+        if "xl" in model_id:
+            time_ids_dim = 6
+            text_embeds_dim = 1280
+            if "refiner" in model_id:
+                time_ids_dim = 2
+                text_embeds_dim = 2048
+            b = HFUNet2DConditionModelBenchmark(
+                model_id,
+                77,
+                batch_size,
+                time_ids_dim=time_ids_dim,
+                text_embeds_dim=text_embeds_dim,
+                device="cuda",
+                dtype=torch.bfloat16,
+                requires_grad=is_requires_grad(compute_type),
+            )
+        else:
+            b = HFUNet2DConditionModelBenchmark(
+                model_id,
+                77,
+                batch_size,
+                device="cuda",
+                dtype=torch.bfloat16,
+                requires_grad=is_requires_grad(compute_type),
+            )
 
     args, kwargs = b.make_batch()
     fn = executor(b.fn())
