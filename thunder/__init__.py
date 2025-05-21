@@ -593,7 +593,8 @@ def jit(
                 computation_trc = dce(computation_trc)
                 computation_trc, backward_trc = split_into_forward_and_backward(computation_trc)
                 computation_trc = update_fusion_call_ctx(computation_trc)
-                backward_trc = update_fusion_call_ctx(backward_trc)
+                if backward_trc is not None:
+                    backward_trc = update_fusion_call_ctx(backward_trc)
 
             computation_trc = thunder.executors.passes.del_last_used(computation_trc)
             computation_traces.append(computation_trc)
