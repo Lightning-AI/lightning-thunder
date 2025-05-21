@@ -1848,11 +1848,7 @@ def pad_backward(a, padding_config, g):
 
     # Un-pad by padding with zero values
     zero_padding_config = [(-lo, -hi, 0) for lo, hi, _ in padding_config]
-
-    if utils.is_integer_dtype(a.dtype):
-        zero_value = 0
-    else:
-        zero_value = 0.0
+    zero_value = dtypes.dtype_to_numbertype(g.dtype)(0)
 
     g = prims.pad(g, zero_value, zero_padding_config)
 
