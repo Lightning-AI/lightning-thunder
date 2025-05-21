@@ -3368,6 +3368,62 @@ class LinearLoRABenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return self.lora_cls(self.model)
 
 
+class HFUNet2DConditionModelBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    def __init__(
+        self,
+        model_id: str,
+        seq_length: int,
+        batch_size: int,
+        *,
+        time_ids_dim: int = None,
+        text_embeds_dim: int = None,
+        device: str = "cuda",
+        dtype: dtypes.dtype = thunder.float32,
+        requires_grad: bool = False,
+    ) -> None:
+        super().__init__()
+        from diffusers import UNet2DConditionModel
+
+        self.model_id = model_id
+        try:
+            self.unet = UNet2DConditionModel.from_pretrained(self.model_id, subfolder="unet")
+        except OSError:
+            self.unet = UNet2DConditionModel.from_pretrained(self.model_id, subfolder="unet", use_safetensors=False)
+
+        self.in_channels = self.unet.config.in_channels
+        self.sample_size = self.unet.config.sample_size
+        self.cross_attention_dim = self.unet.config.cross_attention_dim
+        self.addition_embed_type = self.unet.config.addition_embed_type
+
+        self.batch_size = batch_size
+        self.input_shape = (self.batch_size, self.in_channels, self.sample_size, self.sample_size)
+        self.hidden_states_shape = (self.batch_size, seq_length, self.cross_attention_dim)
+        if self.addition_embed_type is not None:
+            assert text_embeds_dim is not None and time_ids_dim is not None
+            self.time_ids_shape = (batch_size, time_ids_dim)
+            self.text_embeds_shape = (batch_size, text_embeds_dim)
+
+        self.device: str = device
+        self.tdtype: torch.dtype = ltorch.to_torch_dtype(dtype)
+        self.requires_grad: bool = requires_grad
+
+    def make_batch(self) -> tuple[list, dict]:
+        make = partial(make_tensor, device=self.device, dtype=self.tdtype)
+        latents = make(self.input_shape, requires_grad=self.requires_grad)
+        timestep = make_tensor((self.batch_size,), device=self.device, dtype=torch.long)
+        encoder_hidden_states = make(self.hidden_states_shape)
+        added_cond_kwargs = {}
+        if self.addition_embed_type is not None:
+            added_cond_kwargs["text_embeds"] = make(self.text_embeds_shape)
+            added_cond_kwargs["time_ids"] = make(self.time_ids_shape)
+
+        return (latents, timestep, encoder_hidden_states), {"added_cond_kwargs": added_cond_kwargs}
+
+    def fn(self) -> Callable:
+        self.unet = self.unet.to(self.device, self.tdtype).requires_grad_(self.requires_grad)
+        return self.unet
+
+
 class OptimBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     _args = (
         BenchmarkArg(

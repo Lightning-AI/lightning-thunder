@@ -33,6 +33,7 @@ from thunder.benchmarks import (
     HFBenchmark,
     LinearLoRABenchmark,
     DeepSeekSGLangMoEBenchmark,
+    HFUNet2DConditionModelBenchmark,
     thunder_apex_executor,
     thunder_apex_nvfuser_executor,
     thunder_cudnn_executor,
@@ -1027,5 +1028,68 @@ def test_optim_functional(
 
     fn = executor(bench.fn())
     args, kwargs = bench.make_batch()
+
+    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
+
+
+hf_diffusers_unet2d_condition_model_ids = [
+    "runwayml/stable-diffusion-v1-5",
+    "CompVis/stable-diffusion-v1-4",
+    "ionet-official/bc8-alpha",
+    "stabilityai/stable-diffusion-2-1",
+    "stabilityai/sd-turbo",
+    "runwayml/stable-diffusion-inpainting",
+    "stabilityai/stable-diffusion-xl-base-1.0",
+    "stabilityai/stable-diffusion-xl-refiner-1.0",
+    "diffusers/stable-diffusion-xl-1.0-inpainting-0.1",
+]
+
+
+@pytest.mark.parametrize(
+    "executor,",
+    [
+        thunderfx_executor,
+        torch_compile_executor,
+        torch_executor,
+    ],
+    ids=["thunderfx", "inductor", "eager"],
+)
+@parametrize_compute_type
+@pytest.mark.parametrize(
+    "model_id", hf_diffusers_unet2d_condition_model_ids, ids=hf_diffusers_unet2d_condition_model_ids
+)
+# @pytest.mark.parametrize("batch_size", range(8, 8), ids=[f"BS{i}" for i in range(1, 2)])
+@pytest.mark.parametrize("batch_size", (2**i for i in range(0, 5)), ids=(f"bs{2**i}" for i in range(0, 5)))
+def test_hf_diffusers_unet2d_condition_model(benchmark, model_id: str, batch_size: int, executor, compute_type):
+    if not importlib.util.find_spec("diffusers"):
+        pytest.skip("HF diffusers not available.")
+    if "xl" in model_id:
+        time_ids_dim = 6
+        text_embeds_dim = 1280
+        if "refiner" in model_id:
+            time_ids_dim = 2
+            text_embeds_dim = 2048
+        b = HFUNet2DConditionModelBenchmark(
+            model_id,
+            77,
+            batch_size,
+            time_ids_dim=time_ids_dim,
+            text_embeds_dim=text_embeds_dim,
+            device="cuda",
+            dtype=torch.bfloat16,
+            requires_grad=is_requires_grad(compute_type),
+        )
+    else:
+        b = HFUNet2DConditionModelBenchmark(
+            model_id,
+            77,
+            batch_size,
+            device="cuda",
+            dtype=torch.bfloat16,
+            requires_grad=is_requires_grad(compute_type),
+        )
+
+    args, kwargs = b.make_batch()
+    fn = executor(b.fn())
 
     benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
