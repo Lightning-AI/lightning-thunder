@@ -131,8 +131,9 @@ class TorchInductorSpecification(CompileSpecificationInterface):
     https://github.com/Lightning-AI/lightning-thunder/issues/1521
     """
 
-    def __init__(self, specification_name="inductor_backend", *, skip_symbolic_trace=False):
+    def __init__(self, specification_name="inductor_backend", *, skip_symbolic_trace=True):
         self.name: str = specification_name
+        # self.skip_symbolic_trace decides whether to skip symbolic trace for self.compile
         self.skip_symbolic_trace = skip_symbolic_trace
 
     @staticmethod
@@ -147,8 +148,9 @@ class TorchInductorSpecification(CompileSpecificationInterface):
     def compile(self, fn, *, inputs, **kwargs):
         return self.torch_inductor(fn, inputs, skip_symbolic_trace=self.skip_symbolic_trace)
 
+    # to_source will always use symbolic trace
     def to_source(self, fn_name):
-        return f"TorchInductorSpecification.torch_inductor({fn_name}, inputs, skip_symbolic_trace={self.skip_symbolic_trace})"
+        return f"TorchInductorSpecification.torch_inductor({fn_name}, inputs)"
 
     def import_str(self):
         return ["import torch", "from thunder.dynamo.benchmark_utils import TorchInductorSpecification"]

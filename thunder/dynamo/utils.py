@@ -988,7 +988,7 @@ def default_optimizer(gm: torch.fx.GraphModule, stats: ProfileStats) -> Callable
 
     report = FXGraphReport(gm, "gm", example_inputs_meta)
     torcheager = TorchEagerSpecification()
-    torchinductor = TorchInductorSpecification(skip_symbolic_trace=True)
+    torchinductor = TorchInductorSpecification()
     thunder_compiler_on_gm = ThunderCompilerOnGraphModuleSpecification(nv_skip_cache=True)
 
     def get_compiled_fn_and_timing(report, compile_fn, timer_fn):
