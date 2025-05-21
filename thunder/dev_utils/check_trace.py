@@ -55,6 +55,20 @@ def check_trace(trace, *, version=CHECK_VERSION):
             known_proxies[o.name] = o
         check_subsymbols(bsym)
 
+    tr = thunder.core.trace.from_trace(trace)
+    with thunder.core.trace.tracectx(tr):
+        for bsym in trace.bound_symbols:
+            if bsym.sym.name.startswith("unpack") or bsym.sym.name in {"pack_buffer"}:
+                continue
+            res = bsym.sym(*bsym.args, **bsym.kwargs)
+
+            def check_shape(x, y):
+                if isinstance(x, thunder.TensorProxy) and y is not None:  # formal output can be none if unused
+                    assert x.shape == y.shape, f"shape of proxy {y.name} recomputes to {x.shape} incorrectly in {bsym}"
+                return x
+
+            thunder.core.utils.safe_map_flat(check_shape, res, bsym.output)
+
 
 class CheckedListOfTraces(list):
     def __init__(self, *args, **kwargs):
