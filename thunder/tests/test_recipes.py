@@ -128,7 +128,8 @@ def test_plugins_composition(monkeypatch):
         for ex in thunder.get_default_executors():
             assert ex.name in [el.name for el in call_args.kwargs["executors"]]
 
-    torch.distributed.init_process_group(backend="gloo", rank=0, world_size=1, init_method="tcp://127.0.0.1:12345")
+    if not torch.distributed.is_initialized():
+        torch.distributed.init_process_group(backend="gloo", rank=0, world_size=1, init_method="tcp://127.0.0.1:12345")
 
     with patch("thunder.jit") as mock_jit:
         _ = thunder.compile(model, plugins=["fsdp"])
