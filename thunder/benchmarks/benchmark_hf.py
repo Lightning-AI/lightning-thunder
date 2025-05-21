@@ -166,7 +166,7 @@ if __name__ == "__main__":
     torch.backends.cuda.matmul.allow_tf32 = True
     root.mkdir(parents=True, exist_ok=True)
 
-    # inference_gen()
-    # inference_fwd()
+    inference_gen()
+    inference_fwd()
     training_fwd()
     training_fwd_bwd()
