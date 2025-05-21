@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ARG UBUNTU_VERSION="22.04"
+ARG UBUNTU_VERSION="24.04"
 ARG CUDA_VERSION="12.6.3"
 # select devel | runtime
 ARG IMAGE_TYPE="devel"
