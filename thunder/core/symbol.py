@@ -321,9 +321,8 @@ class Symbol:
             # vjp transform (applied later).
             def tag_tensorproxy_output_as_detached(proxy):
                 if isinstance(proxy, TensorProxy):
-                    # We need to remove name from trace, otherwise replace will return a proxy with new name.
-                    trace.names.remove(proxy.name)
-                    return proxy.replace(tags=(ProxyTag.DETACHED_AUTOGRAD_GRAPH,))
+                    proxy.tags.add(ProxyTag.DETACHED_AUTOGRAD_GRAPH)
+
                 return proxy
 
             result = tree_map(tag_tensorproxy_output_as_detached, result)
