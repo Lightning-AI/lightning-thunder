@@ -106,7 +106,7 @@ def test_recipe_errors():
         match="Executor 'nonexistent_executor' was specified in the recipe but is not available in the current environment.",
     ):
         recipe.setup_executors()
-    
+
     # cleanup after test
     deregister_executor("inplace_index_copy_ex")
 
