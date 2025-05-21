@@ -80,7 +80,7 @@ class Recipe:
         return None
 
     def setup_executors(self) -> list[Executor]:
-        return None
+        return []
 
     def setup_config(self) -> dict[str, Any]:
         return {}
