@@ -95,7 +95,7 @@ class BaseRecipe(Recipe):
         executors = []
 
         for name in self.executors:
-            executor = thunder.get_executor(name)
+            executor = get_executor(name)
             if executor is None:
 
                 if name == "nvfuser":
