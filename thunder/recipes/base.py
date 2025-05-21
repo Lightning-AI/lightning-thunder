@@ -4,30 +4,50 @@ from thunder.core.recipe import Interpreter
 from thunder.executors import nvfuser_available
 from thunder.executors.torch_compile import torch_compile_ex
 from thunder.transforms.prune_prologue_checks import PrunePrologueChecks
-from thunder.extend import get_all_executors
+from thunder.extend import get_executor
 from typing import Any
 
 
-def get_nvfuser_package_for_torch(torch_version) -> str:
-    torch_major_minor = torch_version[:4].replace(".", "")
+def get_nvfuser_package_hint() -> str:
 
-    nvfuser_map = {
-        "21": "nvfuser-cu118-torch21",
-        "22": "nvfuser-cu118-torch22",
-        "23": "nvfuser-cu118-torch23",
-        "24": "nvfuser-cu118-torch24",
-        "25": "nvfuser-cu124-torch25",  # prefer cu124 over cu121
-        "26": "nvfuser-cu126-torch26",  # prefer cu126 over cu124
-        "27": "nvfuser-cu128-torch27",  # prefer cu128 over cu126
+    torch_version = torch.__version__.split("+")[0]
+    cuda_version = torch.version.cuda or "unknown"
+
+    known_versions = {
+        "2.5": "nvfuser-cu124-torch25",
+        "2.6": "nvfuser-cu126-torch26",
+        "2.7": "nvfuser-cu128-torch27",
     }
 
-    if torch_major_minor not in nvfuser_map:
-        raise RuntimeError(
-            f"No known nvFuser wheel for PyTorch {torch_version}. "
-            f"Supported versions are: {', '.join(sorted(nvfuser_map.keys()))}"
-        )
+    torch_key = ".".join(torch_version.split(".")[:2])
+    package = known_versions.get(torch_key)
 
-    return nvfuser_map[torch_major_minor]
+    if package:
+        return f"""nvFuser was specified but not found in your environment.
+You are running torch {torch_version} and CUDA {cuda_version}.
+
+Try installing the matching nvFuser package:
+  pip install {package}
+
+For more options, see:
+  https://github.com/NVIDIA/Fuser
+
+Alternatively, switch to the torch.compile fuser with `fuser="torch.compile"`.
+"""
+    else:
+        return f"""nvFuser was specified but we don't currently support torch {torch_version}.
+
+Please upgrade to torch 2.6 or 2.7 and then run
+```
+pip install nvfuser-cu126-torch26 # for torch 2.6
+pip install nvfuser-cu128-torch27 # for torch 2.7
+```
+
+For compatibility options, see:
+  https://github.com/NVIDIA/Fuser
+
+Alternatively, switch to the torch.compile fuser with `fuser="torch.compile"`.
+"""
 
 
 class BaseRecipe(Recipe):
@@ -72,30 +92,20 @@ class BaseRecipe(Recipe):
         if not isinstance(self.executors, list):
             raise TypeError(f"self.executors must be a list of executor names, got {type(self.executors).__name__}")
 
-        available_ex = list(get_all_executors())
-        available_ex_map = {ex.name: ex for ex in available_ex}
-        selected_ex = []
+        executors = []
+
         for name in self.executors:
-            if name not in available_ex_map:
+            executor = thunder.get_executor(name)
+            if executor is None:
+
                 if name == "nvfuser":
-                    torch_version = torch.__version__.split("+")[0]
-                    nvfuser_package = get_nvfuser_package_for_torch(torch_version)
-
-                    raise ValueError(
-                        f"""Executor 'nvfuser' was specified in the recipe but is not available in the current environment.
-Please ensure it is installed by running:
-    pip install torch=={torch_version} {nvfuser_package}
-
-Note that nvfuser needs to be installed for the exact PyTorch version in use.
-Alternatively, switch to torch.compile by setting `fuser="torch.compile"`.
-"""
-                    )
-
+                    hint = get_nvfuser_package_hint()
+                    print(hint)
                 else:
                     raise ValueError(
                         f"Executor '{name}' was specified in the recipe but is not available in the current environment."
                     )
 
-            selected_ex.append(available_ex_map[name])
+            executors.append(executor)
 
-        return selected_ex
+        return executors

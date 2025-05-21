@@ -45,9 +45,10 @@ class HFTransformers(BaseRecipe):
         plugins=None,
     ):
         super().__init__(show_progress=show_progress, interpreter=interpreter, plugins=plugins)
-        self.executors.append("inplace_index_copy_ex")
+
         # for kv-cache inplace ops
         self.inplace_index_copy_transform = InplaceIndexCopyTransform()
+        self.executors.append(InplaceIndexCopyTransform().executor.name)
 
     @classmethod
     def validate(cls, model):
