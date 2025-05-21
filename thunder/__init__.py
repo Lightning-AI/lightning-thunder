@@ -586,10 +586,14 @@ def jit(
 
             if requires_grad:
                 from thunder.core.rematerialization import rematerialize
+                from thunder.executors.passes import update_fusion_call_ctx
                 from thunder.transforms.autodiff import split_into_forward_and_backward
 
                 computation_trc = rematerialize(computation_trc)
+                computation_trc = dce(computation_trc)
                 computation_trc, backward_trc = split_into_forward_and_backward(computation_trc)
+                computation_trc = update_fusion_call_ctx(computation_trc)
+                backward_trc = update_fusion_call_ctx(backward_trc)
 
             computation_trc = thunder.executors.passes.del_last_used(computation_trc)
             computation_traces.append(computation_trc)
