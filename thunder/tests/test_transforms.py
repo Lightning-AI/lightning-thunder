@@ -420,6 +420,11 @@ def test_lora_transform_linear():
     litgpt_lora_output = original_model(x)
     assert_close(actual, litgpt_lora_output, atol=2e-1, rtol=2e-1)
 
+    tr = thunder.last_traces(jmodel)[-1]
+    flat_arg_names = [a.name for a in tr.bound_symbols[-1].args[0]["flat_args"]]
+    arg_names = [a.name for a in tr.args]
+    assert flat_arg_names == arg_names
+
 
 def test_constant_folding():
     # Helper to verify we see the expected constant tensors
@@ -560,6 +565,7 @@ def test_cudagraph_fw_bw():
     after_snapshot = torch.cuda.memory_snapshot()
 
     # Ensure all saved for backwards tensors are marked as static inputs
+    # the grad_out and idx will not be in a static mem location, all others should be
     assert all(cg_transform.cuda_graph_runner.python_callables["CUDAGraph2"][1][1:-2])
 
     # Ensure that all newly allocated segments are allocated in the shared memeory pool or the global pool
@@ -843,7 +849,6 @@ def test_cache_symbolic_values_grad_matmul():
         return torch.nn.functional.linear(a, w)
 
     jfoo = thunder.jit(foo, cache="symbolic values")
-    set_requires_grad = lambda x: x.requires_grad_()
 
     a = torch.randn(2, 8, 6)
     b = torch.randn(4, 6)
@@ -887,7 +892,6 @@ def test_cache_symbolic_values_grad_unsqueeze():
         return x + cache_unsqueezed
 
     jfoo = thunder.jit(foo, cache="symbolic values")
-    set_requires_grad = lambda x: x.requires_grad_()
 
     a = torch.randn(2, 8, 128)
     a_ref = a.clone()

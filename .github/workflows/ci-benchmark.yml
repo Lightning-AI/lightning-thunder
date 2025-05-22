@@ -6,6 +6,8 @@ on:
     paths:
       - ".github/workflows/benchmark-hf.yml"
       - ".github/run-benchmark-as-lit-jobs.py"
+  push: # enable tracing which commit to master broke it...
+    branches: [main]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -38,7 +40,7 @@ jobs:
           LIGHTNING_API_KEY: ${{ secrets.LIGHTNING_API_KEY }}
         run: |
           pip install lightning_sdk -U -q
-          python .github/run-benchmark-as-lit-jobs.py
+          python .github/run-benchmark-as-lit-jobs.py ${{ github.run_id }}
 
       - name: Post Slack Notification
         if: always() && github.event_name != 'pull_request'
