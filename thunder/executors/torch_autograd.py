@@ -225,8 +225,10 @@ def connect_to_autograd(
 
 def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stats, /, *flat_args):
     from thunder.core.rematerialization import rematerialize_all_gather, rematerialize_forward_and_backward
+
     # By default, use new autodiff; use old behavior only if _old_autograd is set in compile options
     from thunder.core.compile_data import get_compile_option
+
     if get_compile_option("_old_autograd", "Use old autograd implementation"):
         from thunder.core.transforms import forward_and_backward_from_trace
     else:
