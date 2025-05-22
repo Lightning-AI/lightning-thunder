@@ -299,6 +299,11 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
 
             # TODO: check if this is needed: the old impl checked whether len(bsym.subsymbols) > 0 except for the special case "torch.nn.functional.dropout" with p=0...
             # add the decomposition (= the subsymbols) to the front of the symbols to be processed
+
+            # inherit tags, in particular RECOMPUTE_IN_BACKWARD
+            for nbsym in bsym.subsymbols:
+                nbsym.tags |= bsym.tags
+
             self.add_unprocessed_bsyms(bsym.subsymbols[:])
 
             # end of 4 and end of the bsym processing loop.
