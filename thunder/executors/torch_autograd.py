@@ -225,7 +225,12 @@ def connect_to_autograd(
 
 def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stats, /, *flat_args):
     from thunder.core.rematerialization import rematerialize_all_gather, rematerialize_forward_and_backward
-    from thunder.transforms.autodiff import forward_and_backward_from_trace
+    # Conditionally import the correct forward_and_backward_from_trace based on _new_autodiff compile option
+    from thunder.core.compile_data import get_compile_option
+    if get_compile_option("_new_autodiff", "Use new autodiff implementation"):
+        from thunder.transforms.autodiff import forward_and_backward_from_trace
+    else:
+        from thunder.core.transforms import forward_and_backward_from_trace
     from thunder.distributed.transforms import FSDPCommBucketing
     from thunder.distributed.utils import sort_data_parallel_syncs, sort_waits, sort_communication_ops
     from thunder.executors.passes import del_last_used, transform_for_execution

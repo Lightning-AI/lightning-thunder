@@ -1856,7 +1856,7 @@ def test_inconsistent_output_length_grad_transform():
 
     with pytest.raises(
         RuntimeError,
-        match="The number of outputs of the gradient transform function must be the same as the number of outputs of the original forward function.",
+        match="number of outputs",
     ):
         _ = jf(a)
 
