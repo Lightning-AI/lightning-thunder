@@ -244,43 +244,40 @@ def autocast(func: Callable, dtype: dtypes.dtype):
 
 class AutocastTransform(Transform):
     """Transform that applies autocast to certain operations.
-    
+
     Args:
         dtype: The data type to cast to if they are `dtypes.float32`.
     """
-    
+
     def __init__(self, dtype: dtypes.dtype):
         if not isinstance(dtype, dtypes.dtype):
             raise ValueError(f"`dtype` is expected to be `thunder.dtype.dtype` but {type(dtype)}")
         _check_valid_autocast_dtype(dtype)
         self.dtype = dtype
-        
+
     def transform_traces_pre_prologue(self, prologue_trace, computation_trace, epilogue_trace, **kwargs):
         """Transform the computation trace to apply autocast rules.
-        
+
         This applies autocast rules to eligible operations in the computation trace.
         The prologue and epilogue traces are left unchanged.
         """
         new_computation_trace = from_trace(computation_trace)
         new_bound_symbols = []
-        
+
         for bsym in computation_trace.bound_symbols:
             autocast_impl = _maybe_get_autocast_rule_for_symbol(bsym.sym)
             if autocast_impl is not None:
                 # Apply the autocast rule
                 with disable_autocast():
-                    new_bsym = bsym.from_bsym(
-                        sym=partial(autocast_impl, dtype=self.dtype),
-                        subsymbols=[]
-                    )
+                    new_bsym = bsym.from_bsym(sym=partial(autocast_impl, dtype=self.dtype), subsymbols=[])
                 new_bound_symbols.append(new_bsym)
             else:
                 # Keep original symbol
                 new_bound_symbols.append(bsym.from_bsym())
-                
+
         new_computation_trace.bound_symbols = new_bound_symbols
         new_computation_trace.set_provenance(TraceProvenance("Autocast Transform"))
-        
+
         return prologue_trace, new_computation_trace, epilogue_trace
 
 
