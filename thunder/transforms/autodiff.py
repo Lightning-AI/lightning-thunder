@@ -42,7 +42,7 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
 
         def process_bsym(self, bsym: thunder.core.symbol.BoundSymbol) -> None:
             if bsym.sym is prims.python_return:
-                ########### BEGINNING of return handling (and putting the backward computation in the joint trace)
+                # BEGINNING of return handling (and putting the backward computation in the joint trace)
                 # This is big (and a bit messy):
                 # the return (of the input trace) signals the end of the forward processing
                 # all the backwards will have been put in self.collected_bw_part_syms
@@ -152,7 +152,7 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                 self.add_processed_bsyms([bsym.from_bsym()])
                 self.set_result(bsym.output)
                 return
-                ########### END of return handling (and putting the backward computation in the joint trace)
+                # END of return handling (and putting the backward computation in the joint trace)
 
             # we now handle various bound symbols by collecting augmented forward and backward symbols
 
@@ -177,6 +177,17 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
 
                 # decompose
                 self.add_unprocessed_bsyms(bsym.subsymbols[:])
+                # shallow copies that need to be not recomputed and need their output replaced.
+                shallow_copy_bsyms = []
+                for x in bsym.flat_proxy_outs:
+                    x.tags.discard(ProxyTag.RECOMPUTE_IN_BACKWARD)
+                    shallow_copy_bsyms.append(prims.shallow_copy.bind(x, output=x))
+                self.add_unprocessed_bsyms(shallow_copy_bsyms)
+                return
+
+            # here we do the copy for the args form above
+            if bsym.sym == prims.shallow_copy and bsym.output is bsym.args[0]:
+                self.add_bsyms_from_function(bsym.sym, *bsym.args)
                 return
 
             # 3a. see if we have a grad_transform (e.g. from OperatorExecutor.register_grad_transform)
