@@ -176,18 +176,32 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                             o.tags.add(ProxyTag.RECOMPUTE_IN_BACKWARD)
 
                 # decompose
-                self.add_unprocessed_bsyms(bsym.subsymbols[:])
+                decomposed_bsyms = bsym.subsymbols[:]
                 # shallow copies that need to be not recomputed and need their output replaced.
-                shallow_copy_bsyms = []
                 for x in bsym.flat_proxy_outs:
                     x.tags.discard(ProxyTag.RECOMPUTE_IN_BACKWARD)
-                    shallow_copy_bsyms.append(prims.shallow_copy.bind(x, output=x))
-                self.add_unprocessed_bsyms(shallow_copy_bsyms)
+                    decomposed_bsyms.append(prims.shallow_copy.bind(x, output=x))
+
+                self.add_unprocessed_bsyms(decomposed_bsyms)
                 return
 
             # here we do the copy for the args form above
             if bsym.sym == prims.shallow_copy and bsym.output is bsym.args[0]:
-                self.add_bsyms_from_function(bsym.sym, *bsym.args)
+                # this is a bit of a hack in order to only replace the output,
+                # not the input
+                (a,) = bsym.args
+                a_inp = self.swap_map.get(thunder.core.proxies.variableify(a), a)
+                with thunder.core.trace.tracectx(self.new_trace):
+                    o = prims.shallow_copy(a_inp)
+                self.add_to_swap_map(a, o)
+                self.add_to_swap_map(a_inp, o)
+                self.write(a_inp, o)
+
+                self.new_trace.push_scope([])
+                with thunder.core.trace.tracectx(self.new_trace):
+                    prims.put_grad(a_inp, prims.get_grad(o))
+                backward_part_bsyms = self.new_trace.pop_scope()
+                self.collected_bw_part_bsyms.insert(0, backward_part_bsyms)
                 return
 
             # 3a. see if we have a grad_transform (e.g. from OperatorExecutor.register_grad_transform)
@@ -497,7 +511,6 @@ def split_into_forward_and_backward(joint_trace):
 def forward_and_backward_from_trace(trace: thunder.core.trace.TraceCtx, torch_autograd=False) -> ForwardBackwardTraces:
     if not torch_autograd:
         return thunder.core.transforms.forward_and_backward_from_trace(trace, torch_autograd=torch_autograd)
-
     joint_trace = grad_transform_on_trace(trace)
 
     forward_trace, backward_trace = split_into_forward_and_backward(joint_trace)
