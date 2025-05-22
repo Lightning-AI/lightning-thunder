@@ -274,7 +274,7 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                 self.set_result(result)
                 new_bsyms = self.new_trace.pop_scope()
 
-                # inherit tags, in particular RECOMPUTE_IN_BACKWARD
+                # Let the new bound symbols inherit tags, in particular RECOMPUTE_IN_BACKWARD
                 for nbsym in new_bsyms:
                     nbsym.tags |= bsym.tags
 
@@ -311,7 +311,7 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
             # TODO: check if this is needed: the old impl checked whether len(bsym.subsymbols) > 0 except for the special case "torch.nn.functional.dropout" with p=0...
             # add the decomposition (= the subsymbols) to the front of the symbols to be processed
 
-            # inherit tags, in particular RECOMPUTE_IN_BACKWARD
+            # Let the decomposition inherit tags, in particular RECOMPUTE_IN_BACKWARD
             for nbsym in bsym.subsymbols:
                 nbsym.tags |= bsym.tags
 
