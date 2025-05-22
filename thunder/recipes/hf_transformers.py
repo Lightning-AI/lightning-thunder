@@ -41,13 +41,14 @@ class HFTransformers(BaseRecipe):
     def __init__(
         self,
         show_progress=False,
-        fuser="nvfuser",
         interpreter="thunder.jit",
         plugins=None,
     ):
-        super().__init__(show_progress=show_progress, fuser=fuser, interpreter=interpreter, plugins=plugins)
+        super().__init__(show_progress=show_progress, interpreter=interpreter, plugins=plugins)
+
         # for kv-cache inplace ops
         self.inplace_index_copy_transform = InplaceIndexCopyTransform()
+        self.executors.append(self.inplace_index_copy_transform.executor.name)
 
     @classmethod
     def validate(cls, model):
@@ -99,10 +100,6 @@ class HFTransformers(BaseRecipe):
     def setup_transforms(self):
         transforms = super().setup_transforms()
         return [self.inplace_index_copy_transform] + transforms
-
-    def setup_executors(self):
-        executors = super().setup_executors()
-        return [self.inplace_index_copy_transform.get_executor()] + executors
 
     def apply(self, model):
         thunder_model = super().apply(model)

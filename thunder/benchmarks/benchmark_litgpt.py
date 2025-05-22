@@ -580,6 +580,8 @@ class Benchmark_litGPT:
             model = torch.compile(model)
         elif "thunder" in self.compile:
             executors = list(thunder.get_default_executors())
+            transforms = []
+
             if "inductor_cat" in self.compile:
                 from thunder.executors.torch_compile import torch_compile_cat_ex as torch_compile_ex
 
@@ -589,7 +591,17 @@ class Benchmark_litGPT:
 
                 executors.insert(0, torch_compile_ex)
 
-            if "transformerengine" in self.compile:
+            if "transformerengine_v2" in self.compile:
+
+                from thunder.executors.transformer_engine_v2ex import (
+                    transformer_engine_v2_ex,
+                    TransformerEngineTransformV2,
+                )
+
+                executors.insert(0, transformer_engine_v2_ex)
+                transforms.insert(0, TransformerEngineTransformV2())
+
+            elif "transformerengine" in self.compile:
                 from thunder.executors.transformer_engineex import transformer_engine_ex
 
                 executors.insert(0, transformer_engine_ex)
@@ -603,7 +615,7 @@ class Benchmark_litGPT:
 
                 # Force old autograd for benchmarking
                 # See https://github.com/Lightning-AI/lightning-thunder/issues/2116
-                self.backend = ThunderCompiler(executors=executors, _old_autograd=True)
+                self.backend = ThunderCompiler(executors=executors, transforms=transforms, _old_autograd=True)
                 # Because Lightning Fabric is imported in this script it monkey patches the torch.compile function
                 # https://github.com/Lightning-AI/pytorch-lightning/blob/828fd998961f6a60f92c35254bb94d6e049ad069/src/lightning/fabric/wrappers.py#L421
                 # using __wrapped__ to access the original torch.compile function did not work
@@ -612,7 +624,7 @@ class Benchmark_litGPT:
             else:
                 jit_options = {}
                 jit_options["fp8_shard_intermediate_activation"] = self.fp8_shard_intermediate_activation
-                model = thunder.jit(model, executors=executors, **jit_options)
+                model = thunder.jit(model, executors=executors, transforms=transforms, **jit_options)
 
         elif self.compile != "eager":
             raise ValueError(f"Invalid compile option: {self.compile}")
@@ -838,7 +850,14 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
 
         attention_ctx = sdpa_kernel(backends, **kwargs)
 
-    with attention_ctx:
+    te_autocast_ctx = nullcontext()
+
+    if "transformerengine_v2" in benchmark.compile:
+        from transformer_engine.pytorch.fp8 import fp8_autocast
+
+        te_autocast_ctx = fp8_autocast(enabled=True)
+
+    with attention_ctx, te_autocast_ctx:
         benchmark.train()
 
     if global_rank in [0, None]:
