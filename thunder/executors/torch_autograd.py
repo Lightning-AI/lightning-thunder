@@ -225,7 +225,7 @@ def connect_to_autograd(
 
 def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stats, /, *flat_args):
     from thunder.core.rematerialization import rematerialize_all_gather, rematerialize_forward_and_backward
-    from thunder.core.transforms import forward_and_backward_from_trace
+    from thunder.transforms.autodiff import forward_and_backward_from_trace
     from thunder.distributed.transforms import FSDPCommBucketing
     from thunder.distributed.utils import sort_data_parallel_syncs, sort_waits, sort_communication_ops
     from thunder.executors.passes import del_last_used, transform_for_execution
@@ -432,7 +432,8 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     bw_extrace = del_last_used(bw_extrace, clear_mutable_collections=True)
     bw_traces.append(bw_extrace)
 
-    bw_trace = rename_bwd_trace_outputs(bw_extrace, fw_extrace)
+    bw_extrace = rename_bwd_trace_outputs(bw_extrace, fw_extrace)
+    bw_traces.append(bw_extrace)
 
     if compile_stats is not None:
         compile_stats.last_traces += fw_traces

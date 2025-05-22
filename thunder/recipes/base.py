@@ -1,9 +1,53 @@
+import torch
 from thunder import Recipe, Plugin, DebugOptions, Transform, Executor
 from thunder.core.recipe import Interpreter
+from thunder.executors import nvfuser_available
 from thunder.executors.torch_compile import torch_compile_ex
 from thunder.transforms.prune_prologue_checks import PrunePrologueChecks
-
+from thunder.extend import get_executor
 from typing import Any
+
+
+def get_nvfuser_package_hint() -> str:
+
+    torch_version = torch.__version__.split("+")[0]
+    cuda_version = torch.version.cuda or "unknown"
+
+    known_versions = {
+        "2.5": "nvfuser-cu124-torch25",
+        "2.6": "nvfuser-cu126-torch26",
+        "2.7": "nvfuser-cu128-torch27",
+    }
+
+    torch_key = ".".join(torch_version.split(".")[:2])
+    package = known_versions.get(torch_key)
+
+    if package:
+        return f"""nvFuser was specified but not found in your environment.
+You are running torch {torch_version} and CUDA {cuda_version}.
+
+Try installing the matching nvFuser package:
+  pip install {package}
+
+For more options, see:
+  https://github.com/NVIDIA/Fuser
+
+Alternatively, switch to the torch.compile fuser with `fuser="torch.compile"`.
+"""
+    else:
+        return f"""nvFuser was specified but we don't currently support torch {torch_version}.
+
+Please upgrade to torch 2.6 or 2.7 and then run
+```
+pip install nvfuser-cu126-torch26 # for torch 2.6
+pip install nvfuser-cu128-torch27 # for torch 2.7
+```
+
+For compatibility options, see:
+  https://github.com/NVIDIA/Fuser
+
+Alternatively, switch to the torch.compile fuser with `fuser="torch.compile"`.
+"""
 
 
 class BaseRecipe(Recipe):
@@ -15,7 +59,9 @@ class BaseRecipe(Recipe):
         plugins=None,
     ):
         super().__init__(interpreter=interpreter, plugins=plugins)
+        self.executors = ["cudnn", "sdpa", "torchcompile_xentropy"]
         self.fuser = fuser
+        self.setup_fuser()
         self.show_progress = show_progress
 
     def setup_config(self) -> dict[str, Any]:
@@ -28,14 +74,38 @@ class BaseRecipe(Recipe):
 
         return transforms
 
-    def setup_executors(self) -> list[Executor]:
-        executors = super().setup_executors()
-
+    def setup_fuser(self) -> None:
         if self.fuser == "nvfuser":
-            return executors
+            if "nvfuser" not in self.executors:
+                self.executors.append("nvfuser")
         elif self.fuser == "torch.compile":
-            executors = [el for el in executors if el.name not in ["torchcompile_xentropy", "nvfuser"]]
-            executors.append(torch_compile_ex)
-            return executors
+            if "torchcompile_xentropy" in self.executors:
+                self.executors.remove("torchcompile_xentropy")
+            if "torchcompile" not in self.executors:
+                self.executors.append("torchcompile")
+        else:
+            raise NotImplementedError(
+                f"Unknown fuser '{self.fuser}'. Supported options are 'nvfuser' and 'torch.compile'."
+            )
 
-        raise ValueError(f"Invalid fuser {self.fuser}. Allowed fusers: 'nvfuser', 'torch.compile'.")
+    def setup_executors(self) -> list[Executor]:
+        if not isinstance(self.executors, list):
+            raise TypeError(f"self.executors must be a list of executor names, got {type(self.executors).__name__}")
+
+        executors = []
+
+        for name in self.executors:
+            executor = get_executor(name)
+            if executor is None:
+
+                if name == "nvfuser":
+                    hint = get_nvfuser_package_hint()
+                    print(hint)
+                else:
+                    raise ValueError(
+                        f"Executor '{name}' was specified in the recipe but is not available in the current environment."
+                    )
+
+            executors.append(executor)
+
+        return executors

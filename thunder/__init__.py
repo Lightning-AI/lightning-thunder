@@ -294,10 +294,7 @@ def compile(
             plugins_.append(plugin)
     plugins = plugins_
 
-    if recipe is None and not plugins:
-        return thunder.jit(fn)
-
-    if recipe is None and plugins:
+    if recipe is None:
         recipe = thunder.recipes.BaseRecipe()
 
     if recipe == "auto":
