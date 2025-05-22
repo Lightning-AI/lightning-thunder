@@ -612,7 +612,7 @@ def test_checkpointing_thunderfx():
         return (mem_after - mem_before) / 2**20
 
     with torch.device("cuda"):
-        m = litgpt_model.GPT.from_name("llama2-like").bfloat16()
+        m = litgpt_model.GPT.from_name("llama2-like")
         inp = torch.ones((1, 2048), dtype=torch.int64)
 
     check_fn = lambda submodule: isinstance(submodule, litgpt_model.Block)
@@ -628,7 +628,7 @@ def test_checkpointing_thunderfx():
     mem_thunder = forward_backward_peak(jm, inp)
     mem_eager = forward_backward_peak(m, inp)
 
-    assert mem_thunder < 50.3  #  mem_thunder ~50.2, eager ~38.6
+    assert mem_thunder < 105  # this ~35% is more than eager, in isolation 100 vs. 74
 
     ref = m(inp)
     grads_ref = torch.autograd.grad(ref.sum(), [*m.parameters()])
@@ -636,7 +636,8 @@ def test_checkpointing_thunderfx():
     res = jm(inp)
     grads_res = torch.autograd.grad(res.sum(), [*m.parameters()])
 
-    assert_close(res, ref, atol=1e-2, rtol=1e-2)
+    assert_close(res, ref)
+    assert_close(grads_res, grads_ref, atol=1e-4, rtol=1e-4)
 
 
 @requiresCUDA
