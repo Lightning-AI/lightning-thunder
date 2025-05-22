@@ -48,7 +48,7 @@ class HFTransformers(BaseRecipe):
 
         # for kv-cache inplace ops
         self.inplace_index_copy_transform = InplaceIndexCopyTransform()
-        self.executors.append(self.inplace_index_copy_transform.executor.name)
+        self.executors_names.append(self.inplace_index_copy_transform.executor.name)
 
     @classmethod
     def validate(cls, model):

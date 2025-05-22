@@ -59,7 +59,7 @@ class BaseRecipe(Recipe):
         plugins=None,
     ):
         super().__init__(interpreter=interpreter, plugins=plugins)
-        self.executors = ["cudnn", "sdpa", "torchcompile_xentropy"]
+        self.executor_names = ["cudnn", "sdpa", "torchcompile_xentropy"]
         self.fuser = fuser
         self.setup_fuser()
         self.show_progress = show_progress
@@ -76,25 +76,25 @@ class BaseRecipe(Recipe):
 
     def setup_fuser(self) -> None:
         if self.fuser == "nvfuser":
-            if "nvfuser" not in self.executors:
-                self.executors.append("nvfuser")
+            if "nvfuser" not in self.executor_names:
+                self.executor_names.append("nvfuser")
         elif self.fuser == "torch.compile":
-            if "torchcompile_xentropy" in self.executors:
-                self.executors.remove("torchcompile_xentropy")
-            if "torchcompile" not in self.executors:
-                self.executors.append("torchcompile")
+            if "torchcompile_xentropy" in self.executor_names:
+                self.executor_names.remove("torchcompile_xentropy")
+            if "torchcompile" not in self.executor_names:
+                self.executor_names.append("torchcompile")
         else:
             raise NotImplementedError(
                 f"Unknown fuser '{self.fuser}'. Supported options are 'nvfuser' and 'torch.compile'."
             )
 
     def setup_executors(self) -> list[Executor]:
-        if not isinstance(self.executors, list):
-            raise TypeError(f"self.executors must be a list of executor names, got {type(self.executors).__name__}")
+        if not isinstance(self.executor_names, list):
+            raise TypeError(f"self.executor_names must be a list of executor names, got {type(self.executor_names).__name__}")
 
         executors = []
 
-        for name in self.executors:
+        for name in self.executor_names:
             executor = get_executor(name)
             if executor is None:
 
