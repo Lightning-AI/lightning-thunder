@@ -1848,8 +1848,9 @@ def pad_backward(a, padding_config, g):
 
     # Un-pad by padding with zero values
     zero_padding_config = [(-lo, -hi, 0) for lo, hi, _ in padding_config]
+    zero_value = dtypes.dtype_to_numbertype(g.dtype)(0)
 
-    g = prims.pad(g, 0.0, zero_padding_config)
+    g = prims.pad(g, zero_value, zero_padding_config)
 
     # Un-slice by slicing with a stride of value (dilation + 1)
     for dim, (_, _, d) in enumerate(padding_config):
