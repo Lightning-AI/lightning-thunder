@@ -10,7 +10,7 @@ from thunder.core.transforms import (
     recompute_saved_for_backward,
 )
 from thunder.core.proxies import ProxyTag
-from thunder.core.symbol import BoundSymbol
+from thunder.core.symbol import BoundSymbol, BoundSymbolTag
 from thunder.core.vjp_utils import make_aug_forward_and_backward
 from thunder.core.pytree import tree_map
 import thunder
@@ -18,7 +18,9 @@ import time
 
 
 def _should_recompute_bsym_in_backward(bsym):
-    return any((ProxyTag.RECOMPUTE_IN_BACKWARD in o.tags) for o in bsym.flat_proxy_outs)
+    return BoundSymbolTag.RECOMPUTE_IN_BACKWARD in bsym.tags or any(
+        (ProxyTag.RECOMPUTE_IN_BACKWARD in o.tags) for o in bsym.flat_proxy_outs
+    )
 
 
 # Transforms a trace by determining which grad transforms to call given the list of executors in priority order
@@ -168,6 +170,7 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                 function_arg_names = {a.name for a in bsym.flat_proxy_args}
 
                 for subsym in bsym.subsymbols:
+                    subsym.tags.add(BoundSymbolTag.RECOMPUTE_IN_BACKWARD)
                     for o in subsym.flat_proxy_outs:
                         if o.name not in function_arg_names:
                             o.tags.add(ProxyTag.RECOMPUTE_IN_BACKWARD)
@@ -259,6 +262,10 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                 )
                 self.set_result(result)
                 new_bsyms = self.new_trace.pop_scope()
+
+                # inherit tags, in particular RECOMPUTE_IN_BACKWARD
+                for nbsym in new_bsyms:
+                    nbsym.tags |= bsym.tags
 
                 # simple splitting: only compute in forward what is needed for the output
                 forward_part_proxy_names = {
