@@ -267,12 +267,10 @@ class AutocastTransform(Transform):
         for bsym in computation_trace.bound_symbols:
             autocast_impl = _maybe_get_autocast_rule_for_symbol(bsym.sym)
             if autocast_impl is not None:
-                # Apply the autocast rule
                 with disable_autocast():
                     new_bsym = bsym.from_bsym(sym=partial(autocast_impl, dtype=self.dtype), subsymbols=[])
                 new_bound_symbols.append(new_bsym)
             else:
-                # Keep original symbol
                 new_bound_symbols.append(bsym.from_bsym())
 
         new_computation_trace.bound_symbols = new_bound_symbols
