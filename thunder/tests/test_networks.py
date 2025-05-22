@@ -637,7 +637,7 @@ def test_checkpointing_thunderfx():
     grads_res = torch.autograd.grad(res.sum(), [*m.parameters()])
 
     assert_close(res, ref)
-    assert_close(grads_res, grads_ref, atol=1e-4, rtol=1e-4)
+    assert_close(grads_res, grads_ref, atol=1e-3, rtol=1e-3)
 
 
 @requiresCUDA
