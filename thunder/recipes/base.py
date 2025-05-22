@@ -90,7 +90,9 @@ class BaseRecipe(Recipe):
 
     def setup_executors(self) -> list[Executor]:
         if not isinstance(self.executor_names, list):
-            raise TypeError(f"self.executor_names must be a list of executor names, got {type(self.executor_names).__name__}")
+            raise TypeError(
+                f"self.executor_names must be a list of executor names, got {type(self.executor_names).__name__}"
+            )
 
         executors = []
 
