@@ -14,9 +14,11 @@ from thunder.tests.framework import instantiate, TorchExecutor, requiresCUDA
 
 
 # TODO This test currently ignores the "should_autocast" argument enumerated in it
-@instantiate(dtypes=dtypes.float_math_dtypes)
+@instantiate(
+    dtypes=dtypes.float_math_dtypes,
+)
 def test_thunder_autocast_transform(executor, device, dtype):
-    from thunder.transforms.autocast import AutocastTransform
+    from thunder.transforms.autocast import autocast
 
     # TODO: Consider adding support for device specific dtypes in the test
     # instantiator.
@@ -47,17 +49,13 @@ def test_thunder_autocast_transform(executor, device, dtype):
         )
     else:
         pytest.fail(f"Invalid combination of parameters: {executor=}, {device=}, {dtype=}")
-
     for (func, should_autocast), autocast_dtype in itertools.product(
         ((f, True), (g, False), (h, True)), autocast_dtypes
     ):
         autocast_torch_dtype = ltorch.to_torch_dtype(autocast_dtype)
         x, y, z = (torch.randn((2, 2), device=device, dtype=torch_dtype) for _ in range(3))
-
-        # Use AutocastTransform instead of autocast function
-        compiled = thunder.jit(
-            func, transforms=[AutocastTransform(dtype=autocast_dtype)], executors=executor.executors_list()
-        )
+        initial_trace = thunder.trace()(autocast(func, dtype=autocast_dtype), x, y, z)
+        compiled = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)
         out = compiled(x, y, z)
 
         devicetype = torch.device(device).type
