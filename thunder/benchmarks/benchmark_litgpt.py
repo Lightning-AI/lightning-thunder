@@ -601,7 +601,9 @@ class Benchmark_litGPT:
 
                     dynamo_config.cache_size_limit = 64
 
-                self.backend = ThunderCompiler(executors=executors)
+                # Force old autograd for benchmarking
+                # See https://github.com/Lightning-AI/lightning-thunder/issues/2116
+                self.backend = ThunderCompiler(executors=executors, _old_autograd=True)
                 # Because Lightning Fabric is imported in this script it monkey patches the torch.compile function
                 # https://github.com/Lightning-AI/pytorch-lightning/blob/828fd998961f6a60f92c35254bb94d6e049ad069/src/lightning/fabric/wrappers.py#L421
                 # using __wrapped__ to access the original torch.compile function did not work
