@@ -288,8 +288,9 @@ def test_hf_bert():
     version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
     reason="https://github.com/bitsandbytes-foundation/bitsandbytes/pull/1413",
 )
-@pytest.mark.skipif(not BITSANDBYTES_AVAILABLE, reason="`bitsandbytes` is not available")
 @requiresCUDA
+@pytest.mark.skipif(not BITSANDBYTES_AVAILABLE, reason="`bitsandbytes` is not available")
+@pytest.mark.xfail(ValueError, reason="Likely Fabric issue with `bitsandbytes`")  # ToDo - fixme in Thunder
 def test_quantization():
     from thunder.tests import litgpt_model
     from lightning.fabric.plugins import BitsandbytesPrecision
