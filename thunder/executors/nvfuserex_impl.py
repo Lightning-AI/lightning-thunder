@@ -2794,7 +2794,7 @@ def cross_entropy_fwd_meta(
     losses: TensorLike
     check(
         reduction == "mean",
-        lambda: f"cross entropy expected reduction to be  'mean' but was given {reduction}",
+        lambda: f"cross entropy expected reduction to be 'mean' but was given {reduction}",
     )
     losses = TensorLike(like=a, shape=())
 
