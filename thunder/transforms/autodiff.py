@@ -339,6 +339,9 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
     trace, _ = AugmentedForwardProcessor(trace)()
     # run through DCE in case some of the gradients of intermediates are not needed.
     trace = thunder.core.transform_common.dce(trace)
+    # group get_grad symbols together for torch compile fusions
+    # !!! is it preferrable to do this here or in the torch compile fusion pass?
+    _group_get_grad_bsyms(trace)
 
     end_time_ns = time.perf_counter_ns()
     elapsed_time_ns = end_time_ns - start_time_ns
@@ -347,6 +350,19 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
         thunder.core.trace.TraceProvenance(f"Grad transform pass (took {elapsed_time_millis} milliseconds)")
     )
     return trace
+
+
+def _group_get_grad_bsyms(trace):
+    i = 0
+    n = len(trace.bound_symbols)
+    while i < n and trace.bound_symbols[i].sym != prims.get_grad:
+        i += 1
+    if i == n:
+        return
+    get_grad_bsyms = list(filter(lambda bsym: bsym.sym == prims.get_grad, trace.bound_symbols))
+    bsyms = list(filter(lambda bsym: bsym.sym != prims.get_grad, trace.bound_symbols))
+    bsyms = bsyms[:i] + list(get_grad_bsyms) + bsyms[i:]
+    trace.bound_symbols = bsyms
 
 
 def split_into_forward_and_backward(joint_trace):
@@ -376,7 +392,11 @@ def split_into_forward_and_backward(joint_trace):
     assert isinstance(fw_output, tuple)
 
     grad_outs = [None for _ in fw_output]
-    output_pos = {o.name: i for i, o in enumerate(fw_output) if isinstance(o, thunder.TensorProxy)}
+    output_pos = {}
+    for i, o in enumerate(fw_output):
+        if isinstance(o, thunder.TensorProxy):
+            output_pos.setdefault(o.name, []).append(i)
+    # output_pos = {o.name: i for i, o in enumerate(fw_output) if isinstance(o, thunder.TensorProxy)}
 
     # the proxies we need to compute in the forward - we start with the outputs of the forward
     forward_proxy_names = {o.name for o in thunder.core.pytree.tree_iter(fw_output) if isinstance(o, thunder.Proxy)}
@@ -411,12 +431,12 @@ def split_into_forward_and_backward(joint_trace):
             continue
 
         # get grad is always part of the input, record the grad_out (will be part of the "cotangents" list)
-        if bsym.sym == prims.get_grad:
-            grad_outs[output_pos[bsym.args[0].name]] = bsym.output
+        if bsym.sym == prims.get_grad or bsym.sym.id == "get_grad":
+            grad_outs[output_pos[bsym.args[0].name].pop(0)] = bsym.output
             continue
 
         # copy_ updating a forward proxy is special regardless of the output
-        if bsym.sym == prims.copy_ and bsym.args[1].name in forward_proxy_names:
+        if (bsym.sym == prims.copy_ or bsym.sym.name == "copy_") and bsym.args[1].name in forward_proxy_names:
             # todo: should we also handle ltorch.copy_ ?
             forward_part_bsyms.insert(0, bsym.from_bsym())
             forward_proxy_names.update(a.name for a in bsym.flat_proxy_args)
@@ -466,6 +486,12 @@ def split_into_forward_and_backward(joint_trace):
     fw_output_dict["flat_output"] = tuple(flat_output)
     with thunder.core.trace.tracectx(forward_trace):
         prims.python_return(fw_output_dict, (saved_for_backward_tensors, saved_for_backward_other))
+
+    # !!!
+    if len(backward_part_bsyms) == 0 and not any(
+        [True if arg is not None else False for arg in return_bsym.args[0]["grad_flat_args"]]
+    ):
+        return forward_trace, None
 
     # then we construct the backward trace, unpacking saved_for_backward and cotangents lists
     def backward_fn(saved_for_backward, cotangents):

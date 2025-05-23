@@ -286,6 +286,9 @@ def cse_single_bsym(
         skip_output=True,
     )
 
+    if bsym.sym.id == prims.PrimIDs.GET_GRAD:
+        return new_bsym
+
     # Skip appending this bsym to the new bound symbols due to its rhs being a common subexpression.
     rhs = new_bsym.rhs
     if (prior_bsym := rhs_to_bsym_map.get(rhs)) is not None and bsym._executor is prior_bsym._executor:
