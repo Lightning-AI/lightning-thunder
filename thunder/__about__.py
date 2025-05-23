@@ -1,4 +1,4 @@
-__version__ = "0.2.3dev"
+__version__ = "0.2.3"
 __author__ = "Lightning-AI et al"
 __author_email__ = "community@lightning.ai"
 __copyright__ = f"2024 {__author__}"
