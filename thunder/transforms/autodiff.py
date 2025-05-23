@@ -317,9 +317,10 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
 
 def _group_get_grad_bsyms(trace):
     i = 0
-    while trace.bound_symbols[i].sym != prims.get_grad:
+    n = len(trace.bound_symbols)
+    while i < n and trace.bound_symbols[i].sym != prims.get_grad:
         i += 1
-    if i == len(trace.bound_symbols):
+    if i == n:
         return
     get_grad_bsyms = list(filter(lambda bsym: bsym.sym == prims.get_grad, trace.bound_symbols))
     bsyms = list(filter(lambda bsym: bsym.sym != prims.get_grad, trace.bound_symbols))

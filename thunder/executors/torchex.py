@@ -249,26 +249,6 @@ def _arange_transform(
     return arange(start=start, step=step, end=end, device=torch_device, dtype=torch_dtype)
 
 
-def _get_grad_transform(a: TensorProxy) -> TensorProxy:
-    # return a.grad
-    return prims.get_grad(a)
-
-
-def _put_grad_transform(a: TensorProxy, val: TensorProxy) -> None:
-    # what a hack. _transform_for_operator_executor_execution needs that prims are executable
-    # by some executor, and if they are not, it will descend to the subsymbols.  So, we
-    # force that and recurse so that the symbol is not removed/no error is raised.
-    # This is breaking the intent of transform_for_operator_executor_execution, in that
-    # it is not executable.  But there will be postprocessing that will make it executable.
-    # a.grad = val
-    prims.put_grad(a, val)
-    return None
-
-
-_register_implementation(prims.get_grad, checker=_always_executable, execution_transform=_get_grad_transform)
-_register_implementation(prims.put_grad, checker=_always_executable, execution_transform=_put_grad_transform)
-
-
 # TODO Remove or restore exogenous_like
 # def _exogenous_like_helper(likes: Sequence[torch.Tensor], /) -> tuple[torch.Tensor, ...]:
 #     return tuple([torch.zeros_like(x) for x in likes])
