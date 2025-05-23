@@ -797,9 +797,17 @@ def get_env() -> tuple[str, str]:
         torch_env += f"  {i}: {torch.cuda.get_device_name(i)}\n"
     torch_env += f"CUDA version: {torch.version.cuda}\n"
     _, packages = get_pip_packages(run)
-    torch_env += packages
+    if packages is not None:
+        torch_env += packages
     _, thunder_packages = get_pip_packages(run, {"lightning-thunder", "nvfuser"})
-    return torch_env, thunder_packages
+    return (
+        torch_env,
+        (
+            thunder_packages
+            if thunder_packages is not None
+            else "pip list failed. Might be related to https://github.com/pytorch/pytorch/issues/144615"
+        ),
+    )
 
 
 def thunder_options_to_str(thunder_options: dict) -> str:
