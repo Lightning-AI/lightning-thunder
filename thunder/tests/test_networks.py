@@ -594,6 +594,53 @@ def test_memory_litgpt_llama3():
 
 
 @requiresCUDA
+def test_checkpointing_thunderfx():
+    from thunder.dynamo import thunderfx
+    from thunder.tests import litgpt_model
+    from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
+        apply_activation_checkpointing,
+        checkpoint_wrapper,
+        CheckpointWrapper,
+    )
+
+    def forward_backward_peak(m, inp):
+        torch.cuda.reset_peak_memory_stats(device=None)
+        mem_before = torch.cuda.max_memory_allocated()
+        res = m(inp)
+        res.sum().backward()
+        mem_after = torch.cuda.max_memory_allocated()
+        return (mem_after - mem_before) / 2**20
+
+    with torch.device("cuda"):
+        m = litgpt_model.GPT.from_name("llama2-like")
+        inp = torch.ones((1, 2048), dtype=torch.int64)
+
+    check_fn = lambda submodule: isinstance(submodule, litgpt_model.Block)
+    apply_activation_checkpointing(m, checkpoint_wrapper_fn=checkpoint_wrapper, check_fn=check_fn)
+
+    # warmup, allocate grads etc.
+    forward_backward_peak(m, inp)
+    forward_backward_peak(m, inp)
+    jm = thunderfx(m)
+    forward_backward_peak(jm, inp)
+    forward_backward_peak(jm, inp)
+
+    mem_thunder = forward_backward_peak(jm, inp)
+    mem_eager = forward_backward_peak(m, inp)
+
+    assert mem_thunder < 105  # this ~35% is more than eager, in isolation 100 vs. 74
+
+    ref = m(inp)
+    grads_ref = torch.autograd.grad(ref.sum(), [*m.parameters()])
+
+    res = jm(inp)
+    grads_res = torch.autograd.grad(res.sum(), [*m.parameters()])
+
+    assert_close(res, ref)
+    assert_close(grads_res, grads_ref, atol=1e-3, rtol=1e-3)
+
+
+@requiresCUDA
 def test_hf_kvcache():
     from transformers.models.llama import LlamaForCausalLM, LlamaConfig
     from transformers.models.llama.modeling_llama import logger as llama_logger
