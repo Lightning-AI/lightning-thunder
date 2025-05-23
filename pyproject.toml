@@ -8,13 +8,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "lightning-thunder"
 # Version is dynamically set during build time by setup.py
-dynamic = ["version", "dependencies"]
+dynamic = ["version", "dependencies", "readme"]
 description = "Lightning Thunder is a source-to-source compiler for PyTorch, enabling PyTorch programs to run on different hardware accelerators and graph compilers."
 authors = [
     { name = "Lightning AI", email = "support@lightning.ai" },
 ]
 license = "Apache-2.0"
-readme = "README.md"
 requires-python = ">=3.10, <3.14"
 keywords = ["deep learning", "AI", "compiler"]
 classifiers=[
