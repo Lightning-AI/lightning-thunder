@@ -9199,11 +9199,6 @@ cross_entropy_opinfo = OpInfo(
     torch_reference=torch.nn.functional.cross_entropy,
     dtypes=(datatypes.floating,),
     test_directives=(
-        # take_along_axis is disabled with nvfuser, which this operator relies on.
-        DecorateInfo(
-            pytest.mark.skip,
-            executors=("nvfuser",),
-        ),
         # TODO Investigate why CPU torch executor tests fail in CI (but not locally)
         DecorateInfo(
             pytest.mark.skip,
