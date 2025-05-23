@@ -302,6 +302,9 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
     trace, _ = AugmentedForwardProcessor(trace)()
     # run through DCE in case some of the gradients of intermediates are not needed.
     trace = thunder.core.transform_common.dce(trace)
+    # group get_grad symbols together for torch compile fusions
+    # !!! is it preferrable to do this here or in the torch compile fusion pass?
+    _group_get_grad_bsyms(trace)
 
     end_time_ns = time.perf_counter_ns()
     elapsed_time_ns = end_time_ns - start_time_ns
@@ -310,6 +313,18 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
         thunder.core.trace.TraceProvenance(f"Grad transform pass (took {elapsed_time_millis} milliseconds)")
     )
     return trace
+
+
+def _group_get_grad_bsyms(trace):
+    i = 0
+    while trace.bound_symbols[i].sym != prims.get_grad:
+        i += 1
+    if i == len(trace.bound_symbols):
+        return
+    get_grad_bsyms = list(filter(lambda bsym: bsym.sym == prims.get_grad, trace.bound_symbols))
+    bsyms = list(filter(lambda bsym: bsym.sym != prims.get_grad, trace.bound_symbols))
+    bsyms = bsyms[:i] + list(get_grad_bsyms) + bsyms[i:]
+    trace.bound_symbols = bsyms
 
 
 def split_into_forward_and_backward(joint_trace):
