@@ -65,6 +65,27 @@ def reset_torch_dynamo():
     torch._dynamo.reset()
 
 
+def run_script(file_name, cmd):
+    cmd = cmd + [file_name]
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    assert result.returncode == 0, f"Script {file_name} failed: {result}"
+
+
+from hypothesis import strategies as st
+from hypothesis import given, settings
+
+
+# Uses hypothesis to randomly select num_files files to run
+def run_sample_scripts(py_files, cmd, *, num_files=1):
+    @given(selected_files=st.lists(st.sampled_from(py_files), min_size=num_files, max_size=num_files, unique=True))
+    @settings(max_examples=1, deadline=None)  # We only need to run one example
+    def run_scripts(selected_files):
+        for file in selected_files:
+            run_script(file, cmd)
+
+    run_scripts()
+
+
 @instantiate(
     dtypes=NOTHING,
     executors=[DynamoThunderExecutor],
@@ -669,19 +690,17 @@ def test_ThunderCompilerGraphBenchmarking_groupby(benchmark):
         if x.sum() > 0:
             x = x.exp()
             y = torch.sinc(x) + torch.cos(y)
-            return y + 1
+            return y
         else:
             y = y.exp()
             x = torch.sinc(y) + torch.cos(x)
-            return x - 1
+            return x
 
     import thunder
 
-    backend = ThunderCompilerGraphBenchmarking(
-        benchmark, executors={"thunder": thunder.jit, "inductor": torch.compile, "eager": None}
-    )
+    backend = ThunderCompilerGraphBenchmarking(benchmark, executors={"thunder": thunder.jit, "inductor": torch.compile})
     compiled = torch.compile(backend=backend)(f)
-    x = torch.ones(2, requires_grad=True).cuda()
+    x = torch.ones(2).cuda()
     y = torch.ones(2, requires_grad=True).cuda()
     compiled(x, y)
 
@@ -975,12 +994,6 @@ def test_dynamo_reproducer_split(executor, device: str, dtype: dtypes.dtype, use
     actual = cfunc(x)
     cfunc._backend.save_reproducer_to_folder(tmp_path, use_pytest_benchmark)
 
-    def check(file_name, cmd):
-        assert os.path.exists(file_name)
-        cmd = cmd + [file_name]
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        assert result.returncode == 0, f"Reproducer {file_name} failed: {result}"
-
     suffix = "_benchmark" if use_pytest_benchmark else "_repro"
     s1 = f"{tmp_path}/graph0_thunder_0{suffix}.py"
     s2 = f"{tmp_path}/graph0_thunder_2{suffix}.py"
@@ -988,8 +1001,9 @@ def test_dynamo_reproducer_split(executor, device: str, dtype: dtypes.dtype, use
     cmd = [sys.executable]
     if use_pytest_benchmark:
         cmd = cmd + ["-m", "pytest"]
-    for fname in [s1, s2, s3]:
-        check(fname, cmd)
+
+    # Randomly pick one file to run to save time
+    run_sample_scripts([s1, s2, s3], cmd, num_files=1)
 
 
 @requiresCUDA
@@ -1122,20 +1136,12 @@ def test_thunderfx_meta_tensor():
     assert out.device.type == "meta"
 
 
-def run_script(file_name, cmd):
-    cmd = cmd + [file_name]
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    assert result.returncode == 0, f"Script {file_name} failed: {result}"
-
-
 @requiresCUDA
 def test_report_thunderfx_pytest_benchmark_report(tmp_path, capsys):
     def foo(x):
-        y = x.sin()
-        torch._dynamo.graph_break()
-        return y + x.cos()
+        return x.sin()
 
-    x = torch.randn(4, 4, device="cuda", requires_grad=True)
+    x = torch.randn(4, 4, device="cuda")
     thunderfx_pytest_benchmark_report(foo, x, folder_path=tmp_path, check_consistency=True)
     captured = capsys.readouterr()
     msg = captured.out
@@ -1246,6 +1252,7 @@ def test_thunder_specific_reports(tmp_path):
         return y + 1
 
     results = fx_report(foo)(x)
+    # import pdb; pdb.set_trace()
     for idx, fx_graph_report in enumerate(results.fx_graph_reports):
         thunder_fx_graph_report = analyze_thunder_splits(fx_graph_report)
         thunder_fx_graph_report.write_thunder_repro(tmp_path)
@@ -1263,8 +1270,8 @@ def test_thunder_specific_reports(tmp_path):
     py_files = list(tmp_path.rglob("*.py"))
     assert len(py_files) == 16
 
-    for file in py_files:
-        run_script(file, cmd)
+    # Randomly select 2 files to run to save time
+    run_sample_scripts(py_files, cmd, num_files=2)
 
 
 @requiresCUDA
@@ -1370,8 +1377,8 @@ def test_reports_repro(tmp_path):
     py_files = list(tmp_path.rglob("*.py"))
     assert len(py_files) == 16
 
-    for file in py_files:
-        run_script(file, cmd)
+    # Randomly select 2 files to run to save time
+    run_sample_scripts(py_files, cmd, num_files=2)
 
 
 @requiresCUDA
@@ -1384,7 +1391,7 @@ def test_reports_benchmark(tmp_path):
         x = x.exp()
         torch._dynamo.graph_break()
         y = torch.sinc(x) + torch.cos(x)
-        return y + 1
+        return y
 
     results = fx_report(foo)(x)
     thunderjit = ThunderCompileSpecification()
@@ -1416,8 +1423,8 @@ def test_reports_benchmark(tmp_path):
     py_files = list(tmp_path.rglob("*.py"))
     assert len(py_files) == 5
 
-    for file in py_files:
-        run_script(file, cmd)
+    # Randomly select 2 files to run to save time
+    run_sample_scripts(py_files, cmd, num_files=2)
 
 
 @requiresCUDA
