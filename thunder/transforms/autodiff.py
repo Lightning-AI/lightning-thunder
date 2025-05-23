@@ -339,7 +339,11 @@ def split_into_forward_and_backward(joint_trace):
     assert isinstance(fw_output, tuple)
 
     grad_outs = [None for _ in fw_output]
-    output_pos = {o.name: i for i, o in enumerate(fw_output) if isinstance(o, thunder.TensorProxy)}
+    output_pos = {}
+    for i, o in enumerate(fw_output):
+        if isinstance(o, thunder.TensorProxy):
+            output_pos.setdefault(o.name, []).append(i)
+    # output_pos = {o.name: i for i, o in enumerate(fw_output) if isinstance(o, thunder.TensorProxy)}
 
     # the proxies we need to compute in the forward - we start with the outputs of the forward
     forward_proxy_names = {o.name for o in thunder.core.pytree.tree_iter(fw_output) if isinstance(o, thunder.Proxy)}
@@ -374,8 +378,8 @@ def split_into_forward_and_backward(joint_trace):
             continue
 
         # get grad is always part of the input, record the grad_out (will be part of the "cotangents" list)
-        if bsym.sym == prims.get_grad:
-            grad_outs[output_pos[bsym.args[0].name]] = bsym.output
+        if bsym.sym == prims.get_grad or bsym.sym.id == "get_grad":
+            grad_outs[output_pos[bsym.args[0].name].pop(0)] = bsym.output
             continue
 
         # copy_ updating a forward proxy is special regardless of the output

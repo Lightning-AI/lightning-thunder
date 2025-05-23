@@ -250,6 +250,7 @@ def _arange_transform(
 
 
 def _get_grad_transform(a: TensorProxy) -> TensorProxy:
+    # return a.grad
     return prims.get_grad(a)
 
 
@@ -259,6 +260,7 @@ def _put_grad_transform(a: TensorProxy, val: TensorProxy) -> None:
     # force that and recurse so that the symbol is not removed/no error is raised.
     # This is breaking the intent of transform_for_operator_executor_execution, in that
     # it is not executable.  But there will be postprocessing that will make it executable.
+    # a.grad = val
     prims.put_grad(a, val)
     return None
 
@@ -2356,6 +2358,16 @@ def _shape_impl(t):
 
 shape = ex.register_operator("shape", meta=prims.shape_meta, fn=_shape_impl)
 _register_implementation(prims.shape, shape, checker=_always_executable)
+
+
+# def _grad_impl(t):
+#     t.retain_grad()
+#     return t.grad
+
+
+# grad = ex.register_operator("get_grad", meta=prims.get_grad, fn=_grad_impl)
+# _register_implementation(prims.get_grad, grad, checker=_always_executable)
+
 
 shallow_copy = ex.register_operator("shallow_copy", meta=prims.shallow_copy, fn=lambda x: x)
 _register_implementation(prims.shallow_copy, shallow_copy, checker=_always_executable)
