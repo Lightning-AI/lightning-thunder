@@ -19,12 +19,18 @@ def measure_memory_usage(trace):
         return make_tensor(p.shape, dtype=ltorch.to_torch_dtype(p.dtype), device=p.device)
 
     args, kwargs = tree_map(make_tensor_like_torch_dtype, (trace.args, trace.kwargs))
+    args = [list(a) if isinstance(a, tuple) else a for a in args]
+    mem_in_lists = 0
+    for a in args:
+        if isinstance(a, list):
+            mem_in_lists += sum(t.numel() * t.dtype.itemsize if isinstance(t, torch.Tensor) else 0 for t in a)
+
     output = trace.python_callable()(*args, **kwargs)
 
     after = torch.cuda.memory_stats()["requested_bytes.all.current"]
     peak = torch.cuda.memory_stats()["requested_bytes.all.peak"]
 
-    return {"peak": peak - before, "current": after - before, "output": output}
+    return {"args": mem_in_lists, "peak": peak - before, "current": after - before, "output": output}
 
 
 def measure_fw_and_bw_memory_usage(fw_trace, bw_trace):
@@ -52,7 +58,8 @@ def test_view_ops():
         result = measure_fw_and_bw_memory_usage(fw_trace, bw_trace)
         assert max_mem_fw[0] == result["fw_peak"]
         assert sum(max_mem_fw[1].values()) == result["fw_current"]
-        assert max_mem_bw[0] == result["bw_peak"]
+        assert max_mem_bw[0] == result["bw_peak"] + result["bw_args"]
+        print(bw_trace)
         assert sum(max_mem_bw[1].values()) == result["bw_current"]
 
     def foo(a, b):  # [4] [4]
