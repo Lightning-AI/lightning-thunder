@@ -56,13 +56,12 @@ def run_prologue(jfn, *args, **kwargs):
     cs = thunder.compile_stats(jfn)
     ci = thunder._get_cache_info()
     cd.populate_cache_info(ci, *args, **kwargs)
-    traces = cd.acquire_initial_trace(
-        cd.fn, args, kwargs, cd, cs, cd.executors_list[0]
-    )
+    traces = cd.acquire_initial_trace(cd.fn, args, kwargs, cd, cs, cd.executors_list[0])
     cache_entry = cd.apply_transforms_and_build_cache_entry(cd, cs, ci, *traces)
     with thunder.compile_data_and_stats(cd, cs):
         pro_to_comp, pro_to_epi = cache_entry.prologue_fn(*args, **kwargs)
     return cache_entry, pro_to_comp, pro_to_epi
+
 
 @instantiate(dtypes=NOTHING, decorators=(_parametrize_decorator,))
 def test_instantiate_and_pytest_parametrize(executor, device: str, dtype: dtypes.dtype, num: int, s: str):
@@ -3299,8 +3298,3 @@ def test_enum_printing():
     # the important bit here is that A_VALUE is there, so we can see
     # the enum constant's value
     assert "return _A_VALUE" in str(trc)
-
-
-
-
-
