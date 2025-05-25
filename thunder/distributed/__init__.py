@@ -18,6 +18,7 @@ import thunder.core.utils as utils
 from thunder.core.proxies import DistParallelType
 from thunder.distributed.tensor_parallel import column_parallel
 from thunder.distributed.tensor_parallel import row_parallel
+from thunder import jit
 
 if TYPE_CHECKING:
     from torch.distributed import ProcessGroup
@@ -309,16 +310,15 @@ def ddp(
     if not isinstance(model, ThunderModule):
         raise TypeError(f"Thunder DDP only works on ThunderModule, got {type(model)}")
     from thunder.distributed.transforms.ddp_v2 import DDPTransform
-    from thunder.core.transforms import add_transform
-
     process_group = copy_default_process_group()
     utils.check(process_group is not None, lambda: "The default process group is None")
-    # will insert syncs for parameters (and gradient syncs in the backward pass, this is handled by thunder)
-    # usually, other transforms will remove the forward syncs inserted by this transform.
     transform_from_trace_to_ddp_trace = DDPTransform(
         process_group=process_group, bucket_size_in_mb=bucket_size_in_mb, broadcast_from=broadcast_from
     )
-    model_new = add_transform(model, transform=transform_from_trace_to_ddp_trace)
+    model_new = jit(
+        model,
+        transforms=[transform_from_trace_to_ddp_trace],
+    )
     return model_new
 
 
@@ -436,16 +436,15 @@ def fsdp(
         raise TypeError(
             f"Expected `model` to be of type `thunder.core.module.ThunderModule`, but got {type(model).__name__}"
         )
-    from thunder.core.transforms import add_transform
     from thunder.distributed.transforms.fsdp_v2 import FSDPTransform
     from thunder.transforms import MaterializationTransform
 
     if device is None:
         local_rank = int(os.environ["LOCAL_RANK"])
         device = torch.device("cuda", local_rank)
-    return add_transform(
+    return jit(
         model,
-        transform=[
+        transforms=[
             FSDPTransform(
                 device=device,
                 broadcast_from=broadcast_from,
