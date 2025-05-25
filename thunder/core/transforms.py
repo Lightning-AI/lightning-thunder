@@ -439,6 +439,20 @@ def add_transform(
     transform: Transform | list[Transform],
     disable_torch_autograd_support=False,
 ) -> Callable:
+    """
+    DEPRECATED: Use thunder.jit(..., transforms=[...]) instead.
+
+    This function is deprecated and will be removed in a future release.
+    Please use the transforms argument to thunder.jit directly:
+        jfoo = thunder.jit(foo, transforms=[A(), B(), C()])
+    """
+    import warnings
+    warnings.warn(
+        "add_transform is deprecated and will be removed in a future release. "
+        "Use thunder.jit(..., transforms=[...]) instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     from thunder.common import CompileData
 
     cd: None | Any = getattr(cfn, "_lc_cd", None)
