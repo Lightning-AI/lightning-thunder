@@ -39,6 +39,7 @@ import thunder.core.prims as prims
 from thunder.core.trace import TraceCtx, set_tracectx, reset_tracectx, tracectx
 from thunder.core.symbol import BoundSymbol
 
+
 #
 # Tests related to the test framework itself
 #
@@ -48,6 +49,20 @@ from thunder.core.symbol import BoundSymbol
 
 _parametrize_decorator = pytest.mark.parametrize("num, s", ((2, "hi"), (-5, "bye")))
 
+
+@thunder._with_cache_info_ctx
+def run_prologue(jfn, *args, **kwargs):
+    cd = thunder.compile_data(jfn)
+    cs = thunder.compile_stats(jfn)
+    ci = thunder._get_cache_info()
+    cd.populate_cache_info(ci, *args, **kwargs)
+    traces = cd.acquire_initial_trace(
+        cd.fn, args, kwargs, cd, cs, cd.executors_list[0]
+    )
+    cache_entry = cd.apply_transforms_and_build_cache_entry(cd, cs, ci, *traces)
+    with thunder.compile_data_and_stats(cd, cs):
+        pro_to_comp, pro_to_epi = cache_entry.prologue_fn(*args, **kwargs)
+    return cache_entry, pro_to_comp, pro_to_epi
 
 @instantiate(dtypes=NOTHING, decorators=(_parametrize_decorator,))
 def test_instantiate_and_pytest_parametrize(executor, device: str, dtype: dtypes.dtype, num: int, s: str):
@@ -3225,20 +3240,6 @@ def test_thunder_jit_parts():
 
     inp = torch.randn((32, 64))
 
-    @thunder._with_cache_info_ctx
-    def run_prologue(jfn, /, *args, **kwargs):
-        cd = thunder.compile_data(jfn)
-        cs = thunder.compile_stats(jfn)
-        ci = thunder._get_cache_info()
-        cd.populate_cache_info(ci, *args, **kwargs)
-        prologue_trc, computation_trc, epilogue_trc = cd.acquire_initial_trace(
-            cd.fn, args, kwargs, cd, cs, cd.executors_list[0]
-        )
-        cache_entry = cd.apply_transforms_and_build_cache_entry(cd, cs, ci, prologue_trc, computation_trc, epilogue_trc)
-        with thunder.compile_data_and_stats(cd, cs):
-            pro_to_comp, pro_to_epi = cache_entry.prologue_fn(*args, **kwargs)
-        return cache_entry, pro_to_comp, pro_to_epi
-
     jm = thunder.jit(m)
 
     ce, pro_to_comp, pro_to_epi = run_prologue(jm, inp)
@@ -3298,3 +3299,8 @@ def test_enum_printing():
     # the important bit here is that A_VALUE is there, so we can see
     # the enum constant's value
     assert "return _A_VALUE" in str(trc)
+
+
+
+
+
