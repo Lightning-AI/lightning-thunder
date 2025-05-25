@@ -18,7 +18,6 @@ import thunder.core.utils as utils
 from thunder.core.proxies import DistParallelType
 from thunder.distributed.tensor_parallel import column_parallel
 from thunder.distributed.tensor_parallel import row_parallel
-from thunder import jit
 
 if TYPE_CHECKING:
     from torch.distributed import ProcessGroup
@@ -316,6 +315,7 @@ def ddp(
     transform_from_trace_to_ddp_trace = DDPTransform(
         process_group=process_group, bucket_size_in_mb=bucket_size_in_mb, broadcast_from=broadcast_from
     )
+    from thunder import jit
     model_new = jit(
         model,
         transforms=[transform_from_trace_to_ddp_trace],
@@ -443,6 +443,7 @@ def fsdp(
     if device is None:
         local_rank = int(os.environ["LOCAL_RANK"])
         device = torch.device("cuda", local_rank)
+    from thunder import jit
     return jit(
         model,
         transforms=[
