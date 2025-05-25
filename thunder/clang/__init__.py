@@ -2147,7 +2147,7 @@ def where(pred, a, b):
     a, b = maybe_convert_to_dtype(a, promotiontype), maybe_convert_to_dtype(b, promotiontype)
 
     # Broadcasts
-    pred, a, b = maybe_broadcast(pred, a, b)
+    pred, a, b = maybe_broadcast(pred, a, b, treat_cpu_scalar_tensors_as_numbers=False)
 
     # Short circuits in the case that the predicate is a number
     if isinstance(pred, Number) and pytype(pred) is bool:
