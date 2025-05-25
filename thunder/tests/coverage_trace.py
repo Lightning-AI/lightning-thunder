@@ -10,6 +10,7 @@ from transformers import (
     AutoModelForSeq2SeqLM,
     AutoModelForImageClassification,
 )
+from test_core import run_prologue
 
 
 MODEL_LIST = [
@@ -51,19 +52,6 @@ def get_dummy_input(model_name, config):
         return {"input_ids": torch.randint(0, 1000, (1, 16), device="cpu")}
 
 
-@thunder._with_cache_info_ctx
-def run_prologue(jfn, *args, **kwargs):
-    cd = thunder.compile_data(jfn)
-    cs = thunder.compile_stats(jfn)
-    ci = thunder._get_cache_info()
-    cd.populate_cache_info(ci, *args, **kwargs)
-    prologue_trc, computation_trc, epilogue_trc = cd.acquire_initial_trace(
-        cd.fn, args, kwargs, cd, cs, cd.executors_list[0]
-    )
-    cache_entry = cd.apply_transforms_and_build_cache_entry(cd, cs, ci, prologue_trc, computation_trc, epilogue_trc)
-    with thunder.compile_data_and_stats(cd, cs):
-        pro_to_comp, pro_to_epi = cache_entry.prologue_fn(*args, **kwargs)
-    return cache_entry, pro_to_comp, pro_to_epi
 
 
 def try_model(model_name):
