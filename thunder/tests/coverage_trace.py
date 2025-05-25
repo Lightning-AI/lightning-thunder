@@ -52,8 +52,6 @@ def get_dummy_input(model_name, config):
         return {"input_ids": torch.randint(0, 1000, (1, 16), device="cpu")}
 
 
-
-
 def try_model(model_name):
     print(f"\n=== Testing {model_name} ===")
 
