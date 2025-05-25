@@ -1330,28 +1330,7 @@ def stack(tensors: list[TensorProxy], dim: int):
 @clangop()
 def compute_broadcast_shape(*_shapes):
     """Computes the common shape with the fewest dimensions that all input shapes can be broadcast to."""
-    shapes = tuple(x for x in filter(lambda x: x is not None, _shapes))
-
-    # Short-circuits if there are no inputs shapes
-    #   This might happen in calls like add(2, 3)
-    if len(shapes) == 0:
-        return None
-
-    common_shape = [
-        1,
-    ] * reduce(max, (len(shape) for shape in shapes))
-
-    for shape in shapes:
-        for idx in range(-1, -1 - len(shape), -1):
-            if common_shape[idx] == 1:
-                common_shape[idx] = shape[idx]
-
-            utils.check(
-                (shape[idx] == 1) or (common_shape[idx] == shape[idx]),
-                lambda: f"Attempting to broadcast a dimension of length {shape[idx]}!",
-            )
-
-    return tuple(common_shape)
+    return prims.compute_broadcast_shape(*_shapes)
 
 
 @run_once
@@ -2147,7 +2126,7 @@ def where(pred, a, b):
     a, b = maybe_convert_to_dtype(a, promotiontype), maybe_convert_to_dtype(b, promotiontype)
 
     # Broadcasts
-    pred, a, b = maybe_broadcast(pred, a, b, treat_cpu_scalar_tensors_as_numbers=False)
+    pred, a, b = maybe_broadcast(pred, a, b)
 
     # Short circuits in the case that the predicate is a number
     if isinstance(pred, Number) and pytype(pred) is bool:
