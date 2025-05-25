@@ -225,6 +225,7 @@ def row_parallel(
     from thunder.distributed import copy_default_process_group
     from thunder.transforms import MaterializationTransform
     from thunder import jit
+
     utils.check_type(thunder_module, ThunderModule)
     if process_group is None:
         process_group = copy_default_process_group()

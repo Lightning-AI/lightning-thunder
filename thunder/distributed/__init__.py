@@ -310,6 +310,7 @@ def ddp(
     if not isinstance(model, ThunderModule):
         raise TypeError(f"Thunder DDP only works on ThunderModule, got {type(model)}")
     from thunder.distributed.transforms.ddp_v2 import DDPTransform
+
     process_group = copy_default_process_group()
     utils.check(process_group is not None, lambda: "The default process group is None")
     transform_from_trace_to_ddp_trace = DDPTransform(

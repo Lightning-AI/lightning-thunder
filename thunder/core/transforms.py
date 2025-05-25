@@ -447,6 +447,7 @@ def add_transform(
         jfoo = thunder.jit(foo, transforms=[A(), B(), C()])
     """
     import warnings
+
     warnings.warn(
         "add_transform is deprecated and will be removed in a future release. "
         "Use thunder.jit(..., transforms=[...]) instead.",
