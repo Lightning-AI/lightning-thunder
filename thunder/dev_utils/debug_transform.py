@@ -4,7 +4,6 @@ import time
 
 from thunder.core.trace import TraceCtx, from_trace, TraceProvenance
 import thunder
-from thunder import jit
 from thunder.core.symbol import Symbol, BoundSymbol
 from thunder.dev_utils.utils import NON_COMPUTATION_PRIMS
 
@@ -113,4 +112,5 @@ def debug_execution_trace(cfn, pre_callback: Callable | None = None, post_callba
             "debug_execution_trace: Both `pre_callback` and `post_callback` were None, expected atleast one of them to not be None."
         )
     _debug_transform = DebugTransform(pre_callback=pre_callback, post_callback=post_callback)
+    from thunder import jit
     return jit(cfn, transforms=[_debug_transform])
