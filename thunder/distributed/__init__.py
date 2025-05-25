@@ -316,6 +316,7 @@ def ddp(
         process_group=process_group, bucket_size_in_mb=bucket_size_in_mb, broadcast_from=broadcast_from
     )
     from thunder import jit
+
     model_new = jit(
         model,
         transforms=[transform_from_trace_to_ddp_trace],
@@ -444,6 +445,7 @@ def fsdp(
         local_rank = int(os.environ["LOCAL_RANK"])
         device = torch.device("cuda", local_rank)
     from thunder import jit
+
     return jit(
         model,
         transforms=[
