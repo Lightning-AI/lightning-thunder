@@ -301,33 +301,47 @@ def check_vjp(f, *primals, comp, executor="torch", set_compile_data: bool = Fals
 
     # dirty little trick for speed: skip the prologue, however, the prologue is required when
     # there are non-differentiable kwargs
-    jf = executor.make_callable(f, disable_torch_autograd=True)
+    jf = executor.make_callable(f)
 
     # if there are things the prologue passes to the epilogue, we need the prologue
     # this happens e.g. if the function returns inputs
     prologue_trc = thunder.compile_data(jf).get_computation_and_inputs(*primals)[0].prologue_traces[-1]
     prologue_required = prologue_required or prologue_trc.output[1]  # non-empty prologue_to_epilogue
 
-    if prologue_required:
+    if prologue_required or True:
         comp_f = jf
     else:
-        comp_f = thunder.compile_data(jf).get_computation_and_inputs(*primals)[0].computation_fn
+        comp_f_0 = thunder.compile_data(jf).get_computation_and_inputs(*primals)[0].computation_fn
+
+        # TODO: why is this needed sometimes?
+        def comp_f(*args, **kwargs):
+            res = comp_f_0(*args, **kwargs)
+            if isinstance(res, tuple) and res and isinstance(res[0], dict):
+                return res[0]["output"]
+            return res
 
     outs_p, J_u = numerical_jvp(comp_f)(primals, u)
 
-    multiple_results = isinstance(outs_p, Sequence)
-
     v = tree_map(make, outs_p)
-    if set_compile_data:
-        with thunder.core.compile_data.compile_data_and_stats(thunder.compile_data(jf), None):
-            initial_trace_vjp_f = thunder.trace()(vjp(f), primals, v)
-    else:
-        initial_trace_vjp_f = thunder.trace()(vjp(f), primals, v)
-    _, J_star_v = executor.make_callable(initial_trace_vjp_f.python_callable(), disable_torch_autograd=True)(primals, v)
-
+    multiple_results = isinstance(outs_p, Sequence)
     if not multiple_results:
         v = (v,)
         J_u = (J_u,)
+
+    res = thunder.jit(f)(*primals)
+    if isinstance(res, Sequence):
+        rg = [r.requires_grad if isinstance(r, torch.Tensor) else None for r in res]
+        if not any(rg):
+            return
+
+        res_diff = [r for r, rg in zip(res, rg) if rg]
+        v_diff = [vv for vv, rg in zip(v, rg) if rg]
+        J_star_v = torch.autograd.grad(res_diff, primals, v_diff, allow_unused=True)
+    else:
+        if not res.requires_grad:
+            return
+
+        J_star_v = torch.autograd.grad(res, primals, v, allow_unused=True)
 
     J_u_v = _dot(J_u, v)
     u_J_star_v = _dot(u, J_star_v)
@@ -347,10 +361,8 @@ def _is_differentiable(x):
         bool: True if the tensor is differentiable, False otherwise.
     """
     if isinstance(x, torch.Tensor):
-        # Allow passing through bool and integer tensors
-        # Their gradient is None
-        if _is_exact_dtype(x.dtype):
-            return True
+        # following PyTorch, we don't consider bool and integer tensors
+        # differentiable
         return x.requires_grad
     # NOTE: we skip testing Python numbers for now
     # because internally fp32 may be used for computations with PyTorch
