@@ -165,7 +165,7 @@ class TensorParallelTest(DistributedParallelTestCase):
 
         model = Model(bias=bias).to(device)
         model.load_state_dict(ref_state_dict)
-        tp_model = thunder.jit(model)
+        tp_model = thunder.jit(model, debug_options=thunder.DebugOptions(check_traces=True))
 
         column_parallel_layers = ["embed_1", "linear1_0"]
         tp_model = column_parallel(tp_model, column_parallel_layers, process_group)

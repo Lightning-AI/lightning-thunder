@@ -1916,7 +1916,7 @@ class NanoGPTMLPBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return gpt_mlp
 
 
-class LlamaMLPBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+class LitGPTMLPBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     _args = (
         BenchmarkArg(
             name="config",
@@ -1938,12 +1938,21 @@ class LlamaMLPBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
             name="requires_grad",
             description="Whether the model parameters require grad. Default is True.",
         ),
+        BenchmarkArg(
+            name="name",
+            description="The name of the mlp variant to benchmark.",
+        ),
     )
 
     @classmethod
     @property
     def name(cls) -> str:
         return "litgpt-llamamlp"
+
+    @classmethod
+    @property
+    def description(cls) -> str:
+        return "Benchmark mlp variants."
 
     @classmethod
     @property
@@ -1957,6 +1966,7 @@ class LlamaMLPBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         device: str = "cuda",
         dtype: dtypes.dtype = thunder.bfloat16,
         requires_grad: bool = True,
+        name: str = "LLaMAMLP",
     ) -> None:
         from litgpt.config import Config as LitGPTConfig
 
@@ -1967,6 +1977,7 @@ class LlamaMLPBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         self.device = device
         self.dtype = dtype
         self.requires_grad: bool = requires_grad
+        self.name: str = name
 
         # Performs torch dtype conversions
         self.tdtype: torch.dtype = ltorch.to_torch_dtype(self.dtype)
@@ -1981,9 +1992,20 @@ class LlamaMLPBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return (make(shape),), {}
 
     def fn(self) -> Callable:
-        from litgpt.model import LLaMAMLP
+        from litgpt.model import GemmaMLP, GptNeoxMLP, LLaMAMLP, LLaMAMoE
 
-        module = LLaMAMLP(self.config).to(device=self.device, dtype=self.tdtype).requires_grad_(self.requires_grad)
+        mlp_variant = {
+            "GemmaMLP": GemmaMLP,
+            "GptNeoxMLP": GptNeoxMLP,
+            "LLaMAMLP": LLaMAMLP,
+            "LLaMAMoE": LLaMAMoE,
+        }
+
+        module = (
+            mlp_variant[self.name](self.config)
+            .to(device=self.device, dtype=self.tdtype)
+            .requires_grad_(self.requires_grad)
+        )
         return module
 
 
@@ -2460,6 +2482,82 @@ class NanoGPTLayerNormBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
             nanoGPTLayerNorm().to(device=self.device, dtype=self.tdtype).requires_grad_(self.requires_grad)
         )
         return layernorm_module
+
+
+class LitGPTRMSNormBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    _args = (
+        BenchmarkArg(
+            name="config",
+            description="The LitGPT config (str, LitGPTConfig) to use. See the litgpt_model.py for details.",
+        ),
+        BenchmarkArg(
+            name="batchdims",
+            description="The shape (Sequence[int]) of input batch dimensions. Default is (16,).",
+        ),
+        BenchmarkArg(
+            name="device",
+            description="A device (str) to run on. Default is 'cuda'.",
+        ),
+        BenchmarkArg(
+            name="dtype",
+            description="The dtype (thunder.dtypes.dtype, torch.dtype, or str) of the input and model. Default is thunder.float32.",
+        ),
+        BenchmarkArg(
+            name="requires_grad",
+            description="Whether the model parameters require grad. Default is True.",
+        ),
+    )
+
+    @classmethod
+    @property
+    def name(cls) -> str:
+        return "litgpt-rmsnorm"
+
+    @classmethod
+    @property
+    def description(cls) -> str:
+        return "LitGPT's rms norm operation."
+
+    @classmethod
+    @property
+    def args(cls) -> tuple[BenchmarkArg, ...]:
+        return cls._args
+
+    def __init__(
+        self,
+        config: str,
+        batchdims: Sequence[int] = (16,),
+        device: str = "cuda",
+        dtype: dtypes.dtype = thunder.float32,
+        requires_grad: bool = True,
+        use_apex: bool = False,
+    ) -> None:
+        from litgpt.config import Config as LitGPTConfig
+
+        super().__init__()
+
+        self.config = LitGPTConfig.from_name(config) if not isinstance(config, LitGPTConfig) else config
+        self.batchdims = batchdims
+        self.device = device
+        self.dtype = dtype
+        self.requires_grad: bool = requires_grad
+        self.tdtype: torch.dtype = ltorch.to_torch_dtype(self.dtype)
+        self.devices: list[str] = [device]
+        self.use_apex = use_apex
+
+    def make_batch(self) -> tuple[list, dict]:
+        make = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
+        shape = self.batchdims + (self.config.n_embd,)
+
+        return (make(shape),), {}
+
+    def fn(self) -> Callable:
+        return torch.nn.RMSNorm(
+            normalized_shape=self.config.n_embd,
+            eps=self.config.norm_eps,
+            device=self.device,
+            dtype=self.dtype,
+        )
 
 
 class NanoGPTEmbeddingBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
@@ -3268,6 +3366,273 @@ class LinearLoRABenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     def fn(self) -> Callable:
         return self.lora_cls(self.model)
+
+
+class OptimBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    _args = (
+        BenchmarkArg(
+            name="config",
+            description="Config to enable single tensor, multi-tensor (foreach), or fused.",
+        ),
+        BenchmarkArg(
+            name="params",
+            description="An iterable of parameters.",
+        ),
+        BenchmarkArg(
+            name="device",
+            description="A string representing the device to run on. Default is 'cuda'.",
+        ),
+        BenchmarkArg(
+            name="dtype",
+            description="The dtype of the tensors. Default is thunder.float32.",
+        ),
+        BenchmarkArg(
+            name="requires_grad",
+            description="Whether the input tensors require grad. Default is False.",
+        ),
+        BenchmarkArg(
+            name="optimizer_name",
+            description="The name of the optimizer to benchmark.",
+        ),
+    )
+
+    @classmethod
+    @property
+    def name(cls) -> str:
+        return "optim-functional"
+
+    @classmethod
+    @property
+    def description(cls) -> str:
+        return "Benchmark functional optimizers"
+
+    @classmethod
+    @property
+    def args(cls) -> tuple[BenchmarkArg, ...]:
+        return cls._args
+
+    def __init__(
+        self,
+        config: tuple[str, bool, bool | None],
+        params: Sequence[int],
+        device: str = "cuda",
+        dtype: dtypes.dtype = thunder.float32,
+        requires_grad: bool = False,
+        optimizer_name: str = "adam",
+    ) -> None:
+        super().__init__()
+
+        self.config: tuple[str, bool, bool] = config
+        self.params: Sequence[int] = params
+        self.device: str = device
+        self.dtype: dtypes.dtype = dtype
+        self.tdtype: torch.dtype = ltorch.to_torch_dtype(self.dtype)
+        self.requires_grad: bool = requires_grad
+        self.optimizer_name: str = optimizer_name
+
+        self.devices: list[str] = [device]
+
+    def make_batch(self) -> tuple[list, dict]:
+        pt = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
+        params = [pt(shape) for shape in self.params]
+        grads = [pt(grad) for grad in self.params]
+        state_steps = [
+            torch.tensor(0, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
+            for _ in self.params
+        ]
+
+        name, foreach, fused = self.config
+        common_kwargs = {
+            "foreach": foreach,
+        }
+
+        if self.optimizer_name == "adam":
+            exp_avgs = [pt(ea, requires_grad=False) for ea in self.params]
+            exp_avg_sqs = [pt(eas, requires_grad=False) for eas in self.params]
+            max_exp_avg_sqs = [pt(meas, requires_grad=False) for meas in self.params]
+            kwargs = {
+                **common_kwargs,
+                # to enable dynamo trace
+                "capturable": True,
+                "differentiable": False,
+                "fused": fused,
+                "amsgrad": False,
+                "lr": 0.001,
+                "beta1": 0.9,
+                "beta2": 0.999,
+                "eps": 1e-08,
+                "weight_decay": 0,
+                "maximize": False,
+            }
+            return (params, grads, exp_avgs, exp_avg_sqs, max_exp_avg_sqs, state_steps), kwargs
+
+        elif self.optimizer_name == "adamax":
+            exp_avgs = [pt(ea, requires_grad=False) for ea in self.params]
+            exp_infs = [pt(ei, requires_grad=False) for ei in self.params]
+            kwargs = {
+                **common_kwargs,
+                # to enable dynamo trace
+                "capturable": True,
+                "eps": 1e-8,
+                "beta1": 0.9,
+                "beta2": 0.999,
+                "lr": 0.9,
+                "weight_decay": 0.01,
+            }
+            return (params, grads, exp_avgs, exp_infs, state_steps), kwargs
+
+        elif self.optimizer_name == "adadelta":
+            square_avgs = [pt(sq_avgs, requires_grad=False) for sq_avgs in self.params]
+            acc_deltas = [pt(acc_d, requires_grad=False) for acc_d in self.params]
+            kwargs = {
+                **common_kwargs,
+                # to enable dynamo trace
+                "capturable": True,
+                "lr": 0.001,
+                "rho": 0.9,
+                "eps": 1e-6,
+                "weight_decay": 0,
+                "maximize": False,
+            }
+            return (params, grads, square_avgs, acc_deltas, state_steps), kwargs
+
+        elif self.optimizer_name == "adagrad":
+            state_sums = [pt(ss, requires_grad=False) for ss in self.params]
+            kwargs = {
+                **common_kwargs,
+                # fused_adagrad is only supported in CPU
+                # https://github.com/pytorch/pytorch/pull/124905
+                "fused": False,
+                "lr": 0.001,
+                "weight_decay": 0,
+                "lr_decay": 0.01,
+                "eps": 1e-8,
+                "maximize": False,
+            }
+            return (params, grads, state_sums, state_steps), kwargs
+
+        elif self.optimizer_name == "adamw":
+            exp_avgs = [pt(ev, requires_grad=False) for ev in self.params]
+            exp_avg_sqs = [pt(eas, requires_grad=False) for eas in self.params]
+            max_exp_avg_sqs = [pt(meas, requires_grad=False) for meas in self.params]
+            kwargs = {
+                **common_kwargs,
+                # to enable dynamo trace
+                "capturable": True,
+                "fused": fused,
+                "amsgrad": False,
+                "beta1": 0.009,
+                "beta2": 0.99,
+                "lr": 0.1,
+                "weight_decay": 0.1,
+                "eps": 1e-6,
+                "maximize": False,
+            }
+            return (params, grads, exp_avgs, exp_avg_sqs, max_exp_avg_sqs, state_steps), kwargs
+
+        elif self.optimizer_name == "asgd":
+            axs = [pt(a, requires_grad=False) for a in self.params]
+            mus = [torch.tensor(1.0, device=self.device, dtype=self.tdtype, requires_grad=False) for _ in self.params]
+            etas = [torch.tensor(0.01, device=self.device, dtype=self.tdtype, requires_grad=False) for _ in self.params]
+            kwargs = {
+                **common_kwargs,
+                # to enable dynamo trace
+                "capturable": True,
+                "lambd": 1e-3,
+                "lr": 0.01,
+                "t0": 1e-6,
+                "alpha": 0.1,
+                "weight_decay": 0.01,
+            }
+            return (params, grads, axs, mus, etas, state_steps), kwargs
+
+        elif self.optimizer_name == "nadam":
+            exp_avgs = [pt(ev, requires_grad=False) for ev in self.params]
+            exp_avg_sqs = [pt(eas, requires_grad=False) for eas in self.params]
+            mu_products = [
+                torch.tensor(1.0, device=self.device, dtype=self.tdtype, requires_grad=False) for _ in self.params
+            ]
+            kwargs = {
+                **common_kwargs,
+                # to enable dynamo trace
+                "capturable": True,
+                "beta1": 0.009,
+                "beta2": 0.99,
+                "lr": 0.01,
+                "weight_decay": 0.001,
+                "momentum_decay": 0.01,
+                "eps": 1e-6,
+            }
+            return (params, grads, exp_avgs, exp_avg_sqs, mu_products, state_steps), kwargs
+
+        elif self.optimizer_name == "radam":
+            exp_avgs = [pt(ev, requires_grad=False) for ev in self.params]
+            exp_avg_sqs = [pt(eas, requires_grad=False) for eas in self.params]
+            kwargs = {
+                **common_kwargs,
+                # to enable dynamo trace
+                "capturable": True,
+                "beta1": 0.009,
+                "beta2": 0.99,
+                "lr": 0.01,
+                "weight_decay": 0.001,
+                "eps": 1e-6,
+            }
+            return (params, grads, exp_avgs, exp_avg_sqs, state_steps), kwargs
+
+        elif self.optimizer_name == "rmsprop":
+            square_avgs = [pt(sq_avgs, requires_grad=False) for sq_avgs in self.params]
+            grad_avgs = [pt(g_avgs, requires_grad=False) for g_avgs in self.params]
+            momentum_buffer_list = [pt(mbl, requires_grad=False) for mbl in self.params]
+            kwargs = {
+                **common_kwargs,
+                # to enable dynamo trace
+                "capturable": True,
+                "lr": 0.01,
+                "alpha": 0.99,
+                "eps": 1e-08,
+                "weight_decay": 0.0,
+                "momentum": 0.0,
+                "centered": False,
+            }
+            return (params, grads, square_avgs, grad_avgs, momentum_buffer_list, state_steps), kwargs
+
+        elif self.optimizer_name == "rprop":
+            prevs = [pt(p, requires_grad=False) for p in self.params]
+            step_sizes = [pt(s_size, requires_grad=False) for s_size in self.params]
+            kwargs = {
+                **common_kwargs,
+                # to enable dynamo trace
+                "capturable": True,
+                "maximize": False,
+                "differentiable": False,
+                "has_complex": False,
+                "step_size_min": 1e-6,
+                "step_size_max": 50,
+                "etaminus": 0.5,
+                "etaplus": 1.2,
+            }
+            return (params, grads, prevs, step_sizes, state_steps), kwargs
+
+        elif self.optimizer_name == "sgd":
+            d_p_list = [pt(d_p, requires_grad=False) for d_p in self.params]
+            momentum_buffer_list = [pt(mbl, requires_grad=False) for mbl in self.params]
+            kwargs = {
+                **common_kwargs,
+                "fused": fused,
+                "weight_decay": 0.0,
+                "lr": 0.001,
+                "momentum": 0.0,
+                "dampening": 0.01,
+                "nesterov": False,
+                "maximize": False,
+            }
+            return (params, d_p_list, momentum_buffer_list), kwargs
+
+    def fn(self) -> Callable:
+        optimizer_func = getattr(torch.optim._functional, self.optimizer_name)
+
+        return optimizer_func
 
 
 # TODO Add descriptions to the executors when listed, and list them alphabetically

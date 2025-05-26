@@ -161,6 +161,16 @@ def _should_shard_intermediate() -> bool:
     return False
 
 
+def _get_num_saved_tensors(fp8_recipe):
+    MIN_DIM = MXFP8_BLOCK_SCALING_SIZE
+    te_linear = te.Linear(MIN_DIM, MIN_DIM)
+
+    x = torch.randn(MIN_DIM, MIN_DIM, device="cuda")
+    with te.fp8_autocast(fp8_recipe=fp8_recipe):
+        o = te_linear(x)
+    return len(o.grad_fn.saved_tensors)
+
+
 class TELinear(TransformerEngineBaseModule):
     def __init__(self, in_features: int, out_features: int) -> None:
         super().__init__()
@@ -329,14 +339,9 @@ def make_te_linear_meta(is_grad_enabled: bool = False):
 
             # It's not critical to model the exact shape and dtype of
             # saved_tensors since they are not used in Thunder's meta functions.
-
-            # https://github.com/NVIDIA/TransformerEngine/blob/f2b09d2a206ebaddbec6aa7da1158a449f0457f9/transformer_engine/pytorch/module/linear.py/#L270-L274
-            saved_tensors = (
-                TensorProxy(like=a, shape=a.shape, dtype=float8_e4m3fn),  # saved_inputmat
-                TensorProxy(like=w, shape=w.shape, dtype=uint8),  # fp8_weight (rowwise)
-                TensorProxy(like=w, shape=w.shape, dtype=uint8),  # fp8_weight (colwise)
-                TensorProxy(like=w, shape=w.shape),  # weight
-                None if bias is None else TensorProxy(like=bias, shape=bias.shape),  # bias
+            saved_tensors = tuple(
+                TensorProxy(like=a, shape=a.shape)
+                for _ in range(_get_num_saved_tensors(get_recipe_from_options_or_default_recipe()))
             )
 
             return TensorProxy(like=a, shape=output_shape), saved_tensors, ctx_dict

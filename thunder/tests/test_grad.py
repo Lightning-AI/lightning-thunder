@@ -46,6 +46,7 @@ op_skip = {
     "embedding",
     "index_put",
     "batch_norm",
+    "instance_norm",
     "type_as",
 }
 
@@ -75,6 +76,7 @@ vjp_op_force = {
     "mse_loss",
     "adaptive_avg_pool2d",
     "max_pool2d",
+    "local_response_norm",
 }
 
 
@@ -479,7 +481,7 @@ def test_vjp_correctness_type_as_manual(op, device, dtype, executor, comp):
 
 
 @ops(
-    (get_opinfo("batch_norm"),),
+    (get_opinfo("batch_norm"), get_opinfo("instance_norm")),
     supported_dtypes=(dtypes.float64,),
 )
 def test_vjp_correctness_batch_norm_manual(op, device, dtype, executor, comp):
@@ -715,7 +717,12 @@ def test_vjp_correctness_einsum_manual(op, device, dtype, executor, comp):
 # TODO Extend requires_grad so that tensors produced from thunder.jit functions requires_grad
 #   and have their autograd functions set properly
 # Tests that we track the requires_grad property properly
-@instantiate(dtypes=(dtypes.float32,))
+@instantiate(
+    dtypes=(dtypes.float32,),
+    # TODO Reenable this test when we track the requires_grad consistently for all operators
+    # See https://github.com/Lightning-AI/lightning-thunder/issues/1768
+    decorators=(pytest.mark.xfail(strict=True, reason="Requires_grad propagation is not implemented"),),
+)
 def test_requires_grad(executor, device, dtype):
     import thunder.torch as ltorch
 
@@ -1320,7 +1327,12 @@ def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp):
         # torch.return_types.topk(
         # values=tensor([1., 1.]),
         # indices=tensor([0, 1]))
-        return x.grad_fn is not None
+        return x.grad_fn is not None or is_returning_self(x)
+
+    def is_returning_self(x):
+        if x.is_leaf and x.requires_grad:
+            return True
+        return False
 
     def filter_differentiable_outputs(outputs):
         if isinstance(outputs, torch.Tensor):
@@ -1380,7 +1392,10 @@ def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp):
     thunder_flat_grads = grad_op(*sample.args, **sample.kwargs)
 
     assert_closer(
-        reference=reference_grad_result, candidate=thunder_flat_grads, competitor=torch_grad_result, comparator=comp
+        reference=reference_grad_result,
+        candidate=thunder_flat_grads,
+        competitor=torch_grad_result,
+        comparator=comp,
     )
 
 
@@ -1389,7 +1404,7 @@ def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp):
     supported_dtypes=dtypes.float_math_dtypes,
 )
 def test_phantom_grad_vs_torch_consistency(op, device: str, dtype: dtypes.dtype, executor, comp):
-    if dtypes.is_complex_dtype(dtype):
+    if dtypes.is_complex_dtype(dtype) and not op.instantiate_complex_tests:
         pytest.skip("Skipping complex operator tests in CI for speed")
     if torch.device(device).type == "cuda" and dtype is dtypes.bfloat16 and not torch.cuda.is_bf16_supported():
         pytest.skip("Your CUDA device does not support bfloat16")
@@ -1841,7 +1856,7 @@ def test_inconsistent_output_length_grad_transform():
 
     with pytest.raises(
         RuntimeError,
-        match="number of outputs of the original forward function must be the same as the number of primal outputs",
+        match="The number of outputs of the gradient transform function must be the same as the number of outputs of the original forward function.",
     ):
         _ = jf(a)
 
@@ -1929,30 +1944,48 @@ def test_adhoc_executor_grad(executor, device, _):
     torch.testing.assert_close(actual_gr, expected_gr)
 
 
-@pytest.mark.parametrize("device", ("cuda", "cpu"))
-def test_backward_recomputation_decomposed_ops(device):
-    if device == "cuda" and not torch.cuda.is_available():
-        pytest.skip("CUDA is not available")
+@requiresCUDA
+def test_benchmark_grad():
+    from thunder.benchmarks.utils import backward_only
+    from thunder.dynamo.report import run_forward_backward
 
-    def fn(a):
-        return torch.nn.functional.gelu(a)
+    # Workaround for "RuntimeError: Triton Error [CUDA]: an illegal memory access was encountered"
+    # https://github.com/pytorch/pytorch/issues/124565
+    torch.empty(1, device="cuda", requires_grad=True).backward()
 
-    # rematerialization will also trigger recomputation here.
-    jfn = thunder.jit(fn, executors=())
-    jfn2 = thunder.jit(fn, auto_recompute_intermediates=True)
-    a = torch.randn(2, 2, device=device, requires_grad=True)
-    res = jfn(a)
-    res2 = jfn2(a)
-    assert len(res.grad_fn.saved_tensors) == 3  # should be decomposed
-    assert len(res2.grad_fn.saved_tensors) == 1
+    def func(x):
+        arange = torch.arange(0, 96, 2, dtype=torch.int64, device="cuda").float()
+        return x.exp(), arange
 
-    if NVFUSER_AVAILABLE and device == "cuda":
-        # check everything is fused
-        assert {bsym.sym.name for bsym in thunder.last_backward_traces(jfn2)[-1].bound_symbols} == {
-            "nvFusion0",
-            "clear_mutable_collection",
-            "python_return",
-            "python_del",
-            "unpack_sequence",
-            "unpack_trivial",
-        }
+    jfunc = thunder.jit(func)
+    tfunc = torch.compile(func)
+    x = torch.randn(2, 2, device="cuda", requires_grad=True)
+    out1 = run_forward_backward(jfunc, x)
+    out2 = run_forward_backward(tfunc, x)
+    torch.testing.assert_close(out1, out2)
+
+    backward_fn, backward_setup = backward_only(tfunc, x)
+    backward_args = backward_setup()
+    backward_fn(*backward_args)
+
+
+def test_disambiguate_grad_names():
+    def fn(a, grad_for_a):
+        return a * grad_for_a
+
+    jfn = thunder.jit(fn)
+
+    a = torch.randn(2, 2, requires_grad=True)
+    b = torch.randn(2, 2, requires_grad=True)
+
+    # this should work
+    res = jfn(a, b)
+    ref = fn(a, b)
+
+    go = torch.randn_like(res)
+
+    res_grads = torch.autograd.grad(res, (a, b), go)
+    ref_grads = torch.autograd.grad(ref, (a, b), go)
+
+    assert_close(res, ref)
+    assert_close(res_grads, ref_grads)

@@ -29,13 +29,20 @@ from thunder.tests.framework import (
     version_between,
 )
 from thunder.tests.make_tensor import make_tensor
-from thunder.dynamo.report import thunderfx_pytest_benchmark_report, fx_report, analyze_thunder_splits
+from thunder.dynamo.report import (
+    thunderfx_pytest_benchmark_report,
+    fx_report,
+    analyze_thunder_splits,
+    save_failing_repros,
+    get_thunder_fxgraph_reports,
+)
 from thunder.dynamo.benchmark_utils import (
     ThunderCompileSpecification,
     TorchCompileSpecification,
     TorchEagerSpecification,
     WallTime,
     KernelTime,
+    WallTimeWithMemoryUsage,
     BoundSymbolNvfuserSpecification,
     BoundSymbolTorchCompileSpecification,
 )
@@ -633,15 +640,15 @@ def test_empty_autocast():
 # NOTE: The conftest.py file customizes the benchmark grouping behavior for ThunderCompilerGraphBenchmarking.
 # It must be located in the same folder as the test file to ensure the configuration.
 @requiresCUDA
-def test_ThunderCompilerGraphBenchmarking_LlamaMLPBenchmark(benchmark):
+def test_ThunderCompilerGraphBenchmarking_LitGTMLPBenchmark(benchmark):
     import thunder
 
     backend = ThunderCompilerGraphBenchmarking(
         benchmark, executors={"thunder": thunder.jit, "inductor": torch.compile, "eager": None}
     )
-    from thunder.benchmarks import LlamaMLPBenchmark, Benchmark
+    from thunder.benchmarks import LitGPTMLPBenchmark, Benchmark
 
-    bench: Benchmark = LlamaMLPBenchmark(
+    bench: Benchmark = LitGPTMLPBenchmark(
         config="Llama-2-7b-hf",
         batchdims=(2,),
         device="cuda:0",
@@ -858,7 +865,6 @@ def test_dynamo_reproducer_2graph(executor, device: str, dtype: dtypes.dtype, us
             executors=[nvfuser_executor],
             cache="constant values",
             langctx=None,
-            record_history=False,
         )
     else:
         cfunc = thunderfx(func, executors=None)
@@ -934,7 +940,7 @@ def test_deepcopy_graph_module():
     import thunder
 
     _, subgraph_info = thunder.dynamo.splitter._splitter(gm, thunder.jit, thunder.jit, [])
-    original_split_gm = subgraph_info.original_split_graph_module
+    original_split_gm = subgraph_info.original_split_graph_module.split_graph_module
     assert original_split_gm.graph.find_nodes(op="output")
     for subm in original_split_gm.children():
         assert subm.graph.find_nodes(op="output")
@@ -1006,6 +1012,17 @@ def test_thunderfx():
     assert len(thunder_compiled_fns) == 1
     trc = last_traces(thunder_compiled_fns[-1])[-1]
     assert any(bsym.sym.id == "nvtx_range_push" for bsym in trc.bound_symbols)
+
+    def fn(x, w):
+        return x @ w
+
+    x = torch.randn(4, 4, device="cuda", requires_grad=True)
+    w = torch.randn(4, 4, device="cuda", requires_grad=True)
+    # Tests the compile_options in thunder.jit
+    cfn = thunderfx(fn, nv_enable_matmul=True)
+    cfn(x, w)
+    trc = cfn.last_traces[-1]
+    assert any(bsym.sym.name == "nvFusion0" for bsym in trc.bound_symbols)
 
 
 def test_thunderfx_last_traces():
@@ -1152,9 +1169,17 @@ def test_fxreport(executor, device: str, dtype: dtypes.dtype, use_benchmark, tmp
     def foo(x, y):
         return x + y
 
+    from thunder import jit
+
+    with pytest.raises(
+        ValueError,
+        match=r"fx_report requires the original \(uncompiled\) callable and cannot be used on the Thunder-compiled function.",
+    ):
+        fx_report(jit(foo))
+
     x = torch.randn(4, 4, device=device, requires_grad=True)
     y = torch.randn(4, 4, device=device, requires_grad=True)
-    results = fx_report(foo, x, y, compile_options={"dynamic": True})
+    results = fx_report(foo, dynamic=True)(x, y)
     for r in results.fx_graph_reports:
         r.write_eager_repro(tmp_path, use_benchmark=use_benchmark)
         r.write_thunder_repro(tmp_path, use_benchmark=use_benchmark)
@@ -1220,7 +1245,7 @@ def test_thunder_specific_reports(tmp_path):
         y = torch.sinc(x) + torch.cos(x)
         return y + 1
 
-    results = fx_report(foo, x)
+    results = fx_report(foo)(x)
     for idx, fx_graph_report in enumerate(results.fx_graph_reports):
         thunder_fx_graph_report = analyze_thunder_splits(fx_graph_report)
         thunder_fx_graph_report.write_thunder_repro(tmp_path)
@@ -1270,6 +1295,12 @@ def test_WallTime_KernelTime():
     WallTime.time(stmt="fd.execute(inputs)", globals={"fd": fd, "inputs": inputs})
     KernelTime.time(stmt="fd.execute(inputs)", globals={"fd": fd, "inputs": inputs})
 
+    m = WallTimeWithMemoryUsage.time(stmt="fd.execute(inputs)", globals={"fd": fd, "inputs": inputs})
+    torch.cuda.reset_peak_memory_stats()
+    fd.execute(inputs)
+    max_mem = torch.cuda.max_memory_allocated()
+    assert max_mem == m.max_allocated_memory
+
 
 @requiresCUDA
 def test_ThunderCompileSpecification():
@@ -1293,7 +1324,7 @@ def test_ThunderCompileSpecification():
     o1 = thunderjit1.compile(foo)(x)
     o2 = thunderjit2.compile(foo)(x)
     assert o1.equal(o2)
-    assert str1 == "thunder.jit(foo, )"
+    assert str1 == "thunder.jit(foo)"
     assert (
         str2
         == "thunder.jit(foo, executors=[thunder.extend.get_executor('torchcompile_cat'),thunder.extend.get_executor('nvfuser')],cache='constant values',langctx=None,record_history=False,)"
@@ -1312,7 +1343,7 @@ def test_reports_repro(tmp_path):
         y = torch.sinc(x) + torch.cos(x)
         return y + 1
 
-    results = fx_report(foo, x)
+    results = fx_report(foo)(x)
     thunderjit = ThunderCompileSpecification()
     torchcompile = TorchCompileSpecification(dynamic=True)
     torcheager = TorchEagerSpecification()
@@ -1355,7 +1386,7 @@ def test_reports_benchmark(tmp_path):
         y = torch.sinc(x) + torch.cos(x)
         return y + 1
 
-    results = fx_report(foo, x)
+    results = fx_report(foo)(x)
     thunderjit = ThunderCompileSpecification()
     torchcompile = TorchCompileSpecification()
     torcheager = TorchEagerSpecification()
@@ -1365,7 +1396,12 @@ def test_reports_benchmark(tmp_path):
     assert len(thunder_fx_graph_report.subgraph_reports) == 1  # exp
     thunder_split_report = thunder_fx_graph_report.subgraph_reports[0]
     split_name = thunder_split_report.graph_name
-    thunder_split_report.write_benchmark(tmp_path, torchcompile, WallTime, file_name=f"{split_name}_torchcompile.py")
+    thunder_split_report.write_benchmark(
+        tmp_path,
+        torchcompile,
+        WallTimeWithMemoryUsage(min_run_time=0.01, max_run_time=9.0, threshold=0.08),
+        file_name=f"{split_name}_torchcompile.py",
+    )
     thunder_split_report.write_benchmark(tmp_path, torcheager, WallTime, file_name=f"{split_name}_eager.py")
     thunder_split_report.write_benchmark(tmp_path, thunderjit, WallTime, file_name=f"{split_name}_jit.py")
     thunder_split_report.create_fusion_reports()
@@ -1373,7 +1409,7 @@ def test_reports_benchmark(tmp_path):
     nvf = thunder_split_report.fusion_reports[0]
     nvf.write_nvfuser_benchmark(tmp_path, WallTime)
     nvf.write_inductor_benchmark(tmp_path, WallTime)
-    nvf.run_benchmark(BoundSymbolNvfuserSpecification(), WallTime)
+    nvf.run_benchmark(BoundSymbolNvfuserSpecification(), WallTime(min_run_time=0.01, max_run_time=5.0, threshold=0.08))
     nvf.run_benchmark(BoundSymbolTorchCompileSpecification(), WallTime)
 
     cmd = [sys.executable]
@@ -1393,7 +1429,7 @@ def test_TorchInductorSpecification(tmp_path):
     def foo(x):
         return torch.sinc(x) + torch.cos(x)
 
-    results = fx_report(foo, x)
+    results = fx_report(foo)(x)
     assert len(results.fx_graph_reports) == 1  # 1 Dynamo graphs
     fx_graph_report = results.fx_graph_reports[0]
     thunder_fx_graph_report = analyze_thunder_splits(fx_graph_report)
@@ -1411,3 +1447,161 @@ def test_TorchInductorSpecification(tmp_path):
     assert len(py_files) == 2
     for file in py_files:
         run_script(file, cmd)
+
+
+@requiresCUDA
+def test_save_failing_repros(tmp_path):
+    from thunder.dynamo.benchmark_utils import TorchEagerSpecification
+
+    x = torch.ones(2, 2, device="cuda", requires_grad=True)
+
+    def foo(x):
+        return torch.sin(x) + torch.cos(x)
+
+    # Tests for dynamo fx graphreports
+    results = fx_report(foo)(x)
+    with patch("thunder.dynamo.report.FXGraphReport.run_repro", side_effect=Exception("run_Repro raises exception")):
+        save_failing_repros(results.fx_graph_reports, TorchCompileSpecification(), tmp_path)
+    assert os.path.exists(tmp_path / "graph0.py")
+
+    # Tests for thunder split reports
+    thunder_fxgraph_reports = get_thunder_fxgraph_reports(foo)(x)
+    assert len(thunder_fxgraph_reports) == 1
+    with patch("thunder.dynamo.report.FXGraphReport.run_repro", side_effect=Exception("run_Repro raises exception")):
+        save_failing_repros(thunder_fxgraph_reports[0].subgraph_reports, ThunderCompileSpecification(), tmp_path)
+    assert os.path.exists(tmp_path / "graph0_thunder_0.py")
+
+    # Tests for check_consistency
+    def wrapped_fn(x):
+        return foo(x) + 1
+
+    class _BadCompileSpecification(TorchEagerSpecification):
+        def compile(self, fn, **kwargs):
+            return wrapped_fn
+
+    results = fx_report(foo)(x)
+    save_failing_repros(
+        results.fx_graph_reports, _BadCompileSpecification(), tmp_path / "consistency", check_consistency=False
+    )
+    assert not os.path.exists(tmp_path / "consistency" / "graph0.py")
+
+    save_failing_repros(
+        results.fx_graph_reports, _BadCompileSpecification(), tmp_path / "consistency", check_consistency=True
+    )
+    assert os.path.exists(tmp_path / "consistency" / "graph0.py")
+
+
+@requiresCUDA
+def test_autograd_function_fx_report(tmp_path):
+    class Sin(torch.autograd.Function):
+        @staticmethod
+        def forward(ctx, x):
+            ctx.save_for_backward(x)
+            return torch.sin(x)
+
+        @staticmethod
+        def backward(ctx, g):
+            (x,) = ctx.saved_tensors
+            return g * torch.cos(x) * 100
+
+    def func(x):
+        return torch.cos(x) + Sin.apply(x)
+
+    x = torch.ones(2, 2, device="cuda", requires_grad=True)
+
+    if LooseVersion(torch.__version__) < LooseVersion("2.6.0"):
+        with pytest.raises(
+            RuntimeError,
+            match="The Reporting Tool for Torch higher-order operators is supported only in PyTorch version 2.6 or later.",
+        ):
+            results = fx_report(func)(x)
+    else:
+        results = fx_report(func)(x)
+        assert len(results.fx_graph_reports) == 1  # 1 Dynamo graph
+        fx_graph_report = results.fx_graph_reports[0]
+        thunder_fx_graph_report = analyze_thunder_splits(fx_graph_report)
+        assert len(thunder_fx_graph_report.subgraph_reports) == 1  # no split
+        thunder_split_report = thunder_fx_graph_report.subgraph_reports[0]
+
+        thunder_split_report.run_repro(ThunderCompileSpecification())
+        thunder_split_report.run_benchmark(ThunderCompileSpecification(), WallTime)
+        thunder_split_report.write_benchmark(tmp_path, ThunderCompileSpecification(), WallTime)
+        thunder_split_report.write_repro(tmp_path, ThunderCompileSpecification(), file_name="repro.py")
+
+        cmd = [sys.executable]
+        py_files = list(tmp_path.rglob("*.py"))
+        assert len(py_files) == 2
+        for file in py_files:
+            run_script(file, cmd)
+
+
+@requiresCUDA
+def test_aot_optimize():
+    from thunder.dynamo import thunder_profile, thunder_optimize
+
+    def foo(x):
+        # torch.sinc has automatic fallback registered,
+        # so that operation will be given to inductor.
+        x = x.exp()
+        torch._dynamo.graph_break()
+        y = torch.sinc(x) + torch.cos(x)
+        return y + 1
+
+    x = torch.ones(2, 2, device="cuda", requires_grad=True)
+    y = torch.ones(4, 4, device="cuda", requires_grad=True)
+    z = torch.ones(8, 4, device="cuda", requires_grad=True)
+    pfoo = thunder_profile(foo)
+    pfoo(x)
+    # 2 graphs because of the graph break
+    assert len(pfoo._tao.id_to_profile_stats) == 2
+    # 2 more dynamic graphs
+    pfoo(y)
+    assert len(pfoo._tao.id_to_profile_stats) == 4
+    # uses the dynamic graphs instead of the static ones
+    pfoo(x)
+    pfoo(z)
+    pfoo(x)
+    pfoo(y)
+
+    stats = list(pfoo._tao.id_to_profile_stats.values())
+    # the last two are the dymamic graphs' stats
+    # input x,y are called 2 times, z is called 1 time for the dynamic graphs
+    input_meta_dict = stats[-1].input_meta_to_called_times
+    for k, v in input_meta_dict.items():
+        if k[-1].shape == (2, 2):
+            assert v == 2
+        elif k[-1].shape == (4, 4):
+            assert v == 2
+        elif k[-1].shape == (8, 4):
+            assert v == 1
+        else:
+            assert False
+
+    # filters the dynamic graphs, only the static ones are optimized
+    optfoo = thunder_optimize(pfoo)
+    # fallbacks to eager for the dynamic graphs
+    optfoo(x)
+
+    with pytest.raises(AssertionError, match="No longer profiling"):
+        pfoo(x)
+
+
+def test_spliter_bwd():
+    def fn(x, idx, val):
+        x = x.clone()
+        x[idx] = val
+        return x
+
+    x = torch.randn(1, 4, 5, dtype=torch.bfloat16, requires_grad=True)
+    idx = torch.rand(1, 4, 5) > 0.5
+    nz = torch.count_nonzero(idx)
+    val = torch.randn(nz, dtype=torch.bfloat16, requires_grad=True)
+
+    cfn = thunderfx(fn)
+    cfn(x, idx, val)
+    reason = cfn._backend.subgraph_infos[0].split_reasons
+    assert len(reason) == 1
+    assert "Failed while running meta for node with name: setitem" in reason[0].info
+    assert "Advanced indexing" in reason[0].exception and reason[0].exception.endswith(
+        "found a tensor with dtype thunder.dtypes.bool8 and 3 dimensions"
+    )

@@ -93,6 +93,8 @@ class FSDPTransform(Transform):
         bucketing_strategy: FSDPBucketingStrategy = FSDPBucketingStrategy.NONE,
         release_original_parameters: bool = False,
         move_state_dict_to_cpu: bool = False,
+        *,
+        process_group: ProcessGroup | None = None,
     ) -> None:
         self.device = device
         self.broadcast_from = broadcast_from
@@ -100,9 +102,12 @@ class FSDPTransform(Transform):
         self.bucketing_strategy = bucketing_strategy
         self.release_original_parameters = release_original_parameters
         self.sharded_params: dict[str, Any] = {}
-        self.process_group: ProcessGroup | None = None
+        self.process_group: ProcessGroup | None = process_group
         self.shared_params_name: dict[str, str] = {}
         self.move_state_dict_to_cpu = move_state_dict_to_cpu
+        if self.device is None:
+            local_rank = int(os.environ["LOCAL_RANK"])
+            self.device = torch.device("cuda", local_rank)
 
     def transform_module(
         self,
@@ -111,15 +116,13 @@ class FSDPTransform(Transform):
         from thunder import compile_data as get_compile_data
         from thunder.core.module import ThunderModule
 
-        self.process_group = copy_default_process_group()
+        if self.process_group is None:
+            self.process_group = copy_default_process_group()
         utils.check(self.process_group is not None, lambda: "The default process group is None")
         global_rank = tdist.get_rank(group=self.process_group)
         world_size = tdist.get_world_size(group=self.process_group)
         self.global_rank = global_rank
         self.world_size = world_size
-        if self.device is None:
-            local_rank = int(os.environ["LOCAL_RANK"])
-            self.device = torch.device("cuda", local_rank)
 
         cd = get_compile_data(thunder_model)
         # TODO: promote use_fsdp and use_ddp to public members of CompileData
@@ -334,7 +337,9 @@ class FSDPTransform(Transform):
                         comp_inp_p._shape = tuple(new_shape)
                         comp_inp_p._device = thunder_device
                     with tracectx(computation_trace):
-                        synchronized_parameters.append(dist_prims.synchronize(comp_inp_p, self.process_group))
+                        synchronized_parameters.append(
+                            dist_prims.synchronize(comp_inp_p, self.process_group, DistParallelType.FULLY_SHARDED)
+                        )
                     if (padding_size := new_shape[0] * self.process_group.size() - old_shape[0]) > 0:
                         unsharded_to_padding[variableify(synchronized_parameters[-1])] = padding_size
 
@@ -357,16 +362,16 @@ class FSDPTransform(Transform):
                     a0, shape, _, *a2pp = bsym.args
                     bsym.args = (a0, shape, thunder_device_str, *a2pp)
 
-        proxies_to_replace = {id(bsym.args[0]): bsym.output for bsym in new_scope}
+        proxies_to_replace = {variableify(bsym.args[0]): bsym.output for bsym in new_scope}
 
         # See NOTE: Shared Parameters in Trace
         for param_name, base_param in self.shared_params_name.items():
             param_proxy = param_name_to_comp_trc_proxy[param_name]
             base_param_proxy = param_name_to_comp_trc_proxy[base_param]
-            allgather_base_param_proxy = proxies_to_replace[id(base_param_proxy)]
+            allgather_base_param_proxy = proxies_to_replace[variableify(base_param_proxy)]
             # Update `proxies_to_replace` so we replace all usage of `param_proxy`
             # with the output of `AllGather` on `base_param_proxy`.
-            proxies_to_replace[id(param_proxy)] = allgather_base_param_proxy
+            proxies_to_replace[variableify(param_proxy)] = allgather_base_param_proxy
 
         new_computation_trace = from_trace(computation_trace)
         for idx, bsym in enumerate(computation_trace.bound_symbols):
@@ -375,8 +380,16 @@ class FSDPTransform(Transform):
             new_computation_trace.bound_symbols.append(bsym.from_bsym())
         new_computation_trace.bound_symbols += new_scope
         for bsym in computation_trace.bound_symbols[idx:]:
-            new_args = tuple(proxies_to_replace.get(id(a), a) for a in bsym.args)
-            new_computation_trace.bound_symbols.append(bsym.from_bsym(args=new_args))
+            if bsym.sym == prims.python_return:
+                # we need to preserve flat_args
+                # skipping the swapping this assumes we don't return sharded params, but that should be OK
+                assert not any(
+                    (variableify(o) in proxies_to_replace) for o in bsym.args[0]["output"] if isinstance(o, TensorProxy)
+                )
+                new_computation_trace.bound_symbols.append(bsym.from_bsym())
+                continue
+            # replace param by synced_param
+            new_computation_trace.bound_symbols.append(bsym.from_bsym_swap_proxies(proxies_to_replace))
 
         new_computation_trace.set_provenance(TraceProvenance("fsdp pass"))
         if unsharded_to_padding:

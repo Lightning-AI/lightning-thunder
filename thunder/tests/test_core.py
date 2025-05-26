@@ -1378,7 +1378,8 @@ def test_bound_symbol_header_context(executor, device: str, dtype: dtypes.dtype)
     assert sin_symbol.sym.name == "sin"
     assert "# Testing\n# This symbol's\n# Header\nt0 = prims.sin(x)" in str(sin_symbol)
     assert "\n  # Testing\n  # This symbol's\n  # Header\n  t0 = prims.sin(x)" in str(trace)
-    assert str(trace).count("Testing") == 1
+    # the unbind, the sin and the return all have the header
+    assert str(trace).count("Testing") == 3
 
 
 # Check to verify the issue in "KeyError thrown in thunder.executor.utils.Region
@@ -3211,3 +3212,89 @@ def test_apply_autograd_memory(thunderfx_disable_split_autograd):
         return [weakref.ref(x), weakref.ref(o)]
 
     assert not any(wr() for wr in foo())
+
+
+def test_thunder_jit_parts():
+    from thunder.tests import litgpt_model
+
+    m = torch.nn.Sequential(
+        torch.nn.Linear(64, 128),
+        torch.nn.ReLU(),
+        torch.nn.Linear(128, 64),
+    )
+
+    inp = torch.randn((32, 64))
+
+    @thunder._with_cache_info_ctx
+    def run_prologue(jfn, /, *args, **kwargs):
+        cd = thunder.compile_data(jfn)
+        cs = thunder.compile_stats(jfn)
+        ci = thunder._get_cache_info()
+        cd.populate_cache_info(ci, *args, **kwargs)
+        prologue_trc, computation_trc, epilogue_trc = cd.acquire_initial_trace(
+            cd.fn, args, kwargs, cd, cs, cd.executors_list[0]
+        )
+        cache_entry = cd.apply_transforms_and_build_cache_entry(cd, cs, ci, prologue_trc, computation_trc, epilogue_trc)
+        with thunder.compile_data_and_stats(cd, cs):
+            pro_to_comp, pro_to_epi = cache_entry.prologue_fn(*args, **kwargs)
+        return cache_entry, pro_to_comp, pro_to_epi
+
+    jm = thunder.jit(m)
+
+    ce, pro_to_comp, pro_to_epi = run_prologue(jm, inp)
+    ce2, pro_to_comp2, pro_to_epi2 = thunder.compile_data(jm).get_computation_and_inputs(inp)
+
+    def clean(tr):
+        new_tr = thunder.core.trace.from_trace(tr)
+        new_tr.bound_symbols = thunder.core.transform_common.canonicalize_proxies(tr.bound_symbols)
+        res = str(new_tr)
+        # some traces report timings, we don't want those to influcence
+        res = re.sub(r"took \d+ ", "", res)
+        return res
+
+    assert clean(ce.prologue_traces[-1]) == clean(ce2.prologue_traces[-1])
+    assert clean(ce.computation_traces[-1]) == clean(ce2.computation_traces[-1])
+    assert clean(ce.epilogue_traces[-1]) == clean(ce2.epilogue_traces[-1])
+
+    assert_close(pro_to_comp, pro_to_comp2)
+    assert_close(pro_to_epi, pro_to_epi2)
+
+
+def test_prims_pack_list():
+    def foo():
+        pass
+
+    trace = TraceCtx(foo)
+
+    a = torch.randn(2, 2)
+    b = torch.randn(2, 2)
+
+    with tracectx(trace):
+        x = prims.unpack_trivial(a, name="x")
+        y = prims.unpack_trivial(b, name="y")
+        l = prims.pack_list(x, y)
+        prims.python_return(l)
+
+    func = trace.python_callable()
+    actual = func()
+    expected = [a, b]
+
+    assert isinstance(actual, list) and actual == expected
+
+
+def test_enum_printing():
+    from enum import Enum
+
+    def fn():
+        pass
+
+    class A(Enum):
+        VALUE = 1
+
+    trc = thunder.TraceCtx(fn)
+    with thunder.core.trace.tracectx(trc):
+        thunder.core.prims.python_return(A.VALUE)
+
+    # the important bit here is that A_VALUE is there, so we can see
+    # the enum constant's value
+    assert "return _A_VALUE" in str(trc)

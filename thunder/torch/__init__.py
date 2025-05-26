@@ -69,7 +69,6 @@ import warnings
 
 # Type annotation helpers
 TensorLike = TensorProxy
-FutureTensorLike = FutureTensorProxy
 DeviceLike = str | devices.Device | torch.device
 dtypeLike = dtypes.dtype | torch.dtype
 
@@ -227,6 +226,7 @@ def register_function(torchfn, thunderfn_impl):
 
 def _copy_(a, b, /):
     cd = get_compile_data()
+    b = clang.maybe_convert_to_dtype(b, a.dtype)
     return prims.copy_(b, a, grad_enabled=cd.is_grad_enabled if cd is not None else False)
 
 
@@ -744,6 +744,65 @@ def uniform_philox(
     return clang.uniform_philox(shape, minval, maxval, device=device, dtype=dtype, seed=seed, offset=offset)
 
 
+@torchsymbol(torch.rand)
+def rand(
+    *shape,
+    generator: None | torch.Generator = None,
+    dtype: None | dtypeLike = None,
+    device: None | DeviceLike = None,
+    layout: torch.layout = torch.strided,
+    requires_grad: bool = False,
+    pin_memory: bool = False,
+    out: TensorLike = None,
+):
+    utils.check(
+        not requires_grad, lambda: "requires_grad=True is not yet supported within thunder.jit", NotImplementedError
+    )
+    utils.check(layout == torch.strided, lambda: "Only torch.strided layout is supported", NotImplementedError)
+    utils.check(not pin_memory, lambda: "pin_memory=True is not supported within thunder.jit", NotImplementedError)
+    # NOTE: Currently, we don't model randomness
+    utils.check(generator is None, lambda: "generator is not None which is currently unsupported", NotImplementedError)
+    utils.check(out is None, lambda: "out is not None which is currently unsupported", NotImplementedError)
+
+    device = to_device(maybe_get_default_device(device))
+    dtype = to_dtype(maybe_get_default_dtype(dtype))
+    shape = tuple(utils.extract_shape_from_varargs(shape))
+    return clang.uniform(shape, 0, 1, device=device, dtype=dtype)
+
+
+@torchsymbol(torch.randint)
+def randint(
+    *args,
+    generator: None | torch.Generator = None,
+    out: TensorLike = None,
+    dtype: None | dtypeLike = None,
+    layout: torch.layout = torch.strided,
+    device: None | DeviceLike = None,
+    requires_grad: bool = False,
+):
+    utils.check(
+        not requires_grad, lambda: "requires_grad=True is not yet supported within thunder.jit", NotImplementedError
+    )
+    utils.check(layout == torch.strided, lambda: "Only torch.strided layout is supported", NotImplementedError)
+    utils.check(generator is None, lambda: "generator is not None which is currently unsupported", NotImplementedError)
+    utils.check(out is None, lambda: "out is not None which is currently unsupported", NotImplementedError)
+    device = to_device(maybe_get_default_device(device))
+    dtype = to_dtype(maybe_get_default_dtype(dtype))
+
+    # dispatch our two overloads:
+    if len(args) == 2 and isinstance(args[1], (tuple, list)):
+        # torch.randint(high, size)
+        low, shape_arg = 0, args[1]
+        high = args[0]
+        shape = tuple(shape_arg)
+    else:
+        # torch.randint(low, high, *size)
+        low, high, *rest = args
+        shape = tuple(utils.extract_shape_from_varargs(rest))
+
+    return prims.randint(low, high, shape, device=device, dtype=dtype)
+
+
 @torchsymbol(torch.randn)
 def randn(
     *shape,
@@ -802,14 +861,13 @@ def randn_like(
 
 
 @torchsymbol(torch.bernoulli, is_method=True)
-def bernoulli(a: TensorLike, *, generator=None, out=None):
+def bernoulli(a: TensorLike, *, generator=None):
     # NOTE: Currently, we don't model randomness
     utils.check(
         generator is None,
         lambda: "bernoulli: generator is not None which is currently unsupported",
         NotImplementedError,
     )
-    utils.check(out is None, lambda: "bernoulli: out is not None which is currently unsupported", NotImplementedError)
     utils.check(dtypes.is_float_dtype(a.dtype), lambda: f"bernoulli only supports floating point dtypes, got {a.dtype}")
     return (uniform_like(a) < a).to(a.dtype)
 
@@ -1038,11 +1096,9 @@ def pad(a: TensorProxy, /, pad: tuple[int, ...], mode: str | None = "constant", 
     if value is None:
         value = 0
     a_typ = to_dtype(a, true_dtype=True)
-    # Note that this can be unsafe. This can happen, for example, if `a` is an
-    # integer tensor and `value` is a float. It can also be more subtle, where
-    # `a` is a lower-precision float than `value`.
-    if a_typ is not to_dtype(value, true_dtype=True):
-        warnings.warn("`value` and Tensor input are of different types. This " "may create numeric issues.")
+    # Note that when value is a float but the tensor is of dtype integer, it will be truncated.
+    # Similarly, a float value is cast to lower precision.
+    # Questionable or not, we do follow PyTorch behaviour here.
     v2 = clang.maybe_convert_to_dtype(value, a_typ)
 
     return clang.pad(a, v2, pad_config)
@@ -1058,7 +1114,7 @@ def permute(a: TensorLike, /, *dims: int) -> TensorLike:
 def repeat(a: TensorLike, /, *repeats: int) -> TensorLike:
     repeats = utils.extract_shape_from_varargs(repeats)
     utils.check_valid_shape(repeats)
-    utils.check(a.ndim <= len(repeats), f"Expected {a.ndim=} <= {len(repeats)=}")
+    utils.check(a.ndim <= len(repeats), lambda: f"Expected {a.ndim=} <= {len(repeats)=}")
 
     repeats = tuple(repeats)
     new_dims = len(repeats) - a.ndim
@@ -1577,9 +1633,28 @@ def floor_(a):
     return _copy_(a, floor(a))
 
 
+@torchsymbol(torch.frexp, is_method=True)
+def frexp(a: TensorLike) -> (TensorLike, TensorLike):
+    return clang.frexp(a)
+
+
 @torchsymbol(torch.isfinite, is_method=True)
 def isfinite(a):
     return clang.isfinite(a)
+
+
+@torchsymbol(torch.isinf, is_method=True)
+def isinf(a: TensorLike) -> TensorLike:
+    if utils.is_complex_dtype(a.dtype):
+        return logical_or(isinf(real(a)), isinf(imag(a)))
+    if utils.is_float_dtype(a.dtype):
+        return clang.abs(a) == float("inf")
+    return zeros_like(a, dtype=dtypes.bool8)
+
+
+@torchsymbol(torch.isnan, is_method=True)
+def isnan(a: TensorLike) -> TensorLike:
+    return clang.isnan(a)
 
 
 @torchsymbol(torch.lgamma, is_method=True)
@@ -1760,9 +1835,14 @@ def zero_(a):
     return _copy_(a, zeros_like(a))
 
 
-@torchsymbol(torch.real, is_method=False)
+@torchsymbol(torch.real, is_method=True)
 def real(a):
     return clang.real(a)
+
+
+@torchsymbol(torch.imag, is_method=True)
+def imag(a: TensorLike) -> TensorLike:
+    return clang.imag(a)
 
 
 #
@@ -1862,6 +1942,31 @@ def relu6(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
 _inplace_to_out_of_place[relu6] = relu6, 1
 
 
+@torchsymbol(torch.rrelu, torch.nn.functional.rrelu, id="torch.rrelu", is_method=False)
+def rrelu(
+    a: TensorProxy, /, lower: float = 0.125, upper: float = 1.0 / 3, training: bool = False, inplace: bool = False
+) -> TensorLike:
+    if training:
+        noise = uniform_like(a, minval=lower, maxval=upper, dtype=a.dtype, device=a.device)
+        out = where(a <= 0, a * noise, a)
+    else:
+        out = where(a <= 0, a * (upper + lower) / 2, a)
+    if inplace:
+        return _copy_(a, out)
+    return out
+
+
+_inplace_to_out_of_place[rrelu] = rrelu, 4
+
+
+@torchsymbol(torch.nn.functional.rrelu_, is_method=False, tags=(prims.OpTags.IN_PLACE,))
+def rrelu_(a: TensorProxy, /, lower: float = 0.125, upper: float = 1.0 / 3, training: bool = False) -> TensorLike:
+    return _copy_(a, rrelu(a, lower, upper, training, False))
+
+
+_inplace_to_out_of_place[rrelu_] = rrelu, -1
+
+
 @torchsymbol(torch.nn.functional.hardshrink, is_method=False)
 def hardshrink(a: TensorProxy, /, lambd: float = 0.5) -> TensorLike:
     utils.check(
@@ -1907,6 +2012,37 @@ def hardtanh_(a: TensorProxy, /, min_val: float = -1.0, max_val: float = 1.0) ->
 _inplace_to_out_of_place[hardtanh_] = hardtanh, -1
 
 
+@torchsymbol(torch.nn.functional.mish, is_method=False)
+def mish(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
+    # ltorch.softplus isn't used here because outside of a certain range,
+    # it returns a, rather than log1p(exp(a))
+    out = a * tanh(log1p(exp(a)))
+    if inplace:
+        return _copy_(a, out)
+    return out
+
+
+_inplace_to_out_of_place[mish] = mish, 1
+
+
+@torchsymbol(torch.nn.functional.prelu, is_method=True)
+def prelu(a: TensorProxy, /, weight: TensorProxy) -> TensorLike:
+    if weight.numel() != 1:
+        num_channels = a.shape[1] if a.ndim >= 2 else 1
+        utils.check(
+            weight.numel() == num_channels,
+            lambda: f"Mismatch of parameter numbers and input channel size. Found parameter numbers ="
+            f" {weight.numel()} and channel size = {num_channels}.",
+        )
+    utils.check(
+        weight.ndim == 0 or weight.ndim == 1,
+        lambda: f"prelu: Expected `weight` to be a scalar or 1D tensor, but got: " f"ndim = {weight.ndim}",
+    )
+    if a.ndim != 1:
+        weight = prims.broadcast_in_dim(weight, a.shape, () if weight.ndim == 0 else (0 if a.ndim == 1 else 1,))
+    return where(a > 0, a, weight * a)
+
+
 # id=torch.selu because we ignore inplace argument in torch.nn.functional.selu
 @torchsymbol(torch.selu, torch.nn.functional.selu, id="torch.selu", is_method=False)
 def selu(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
@@ -1935,6 +2071,21 @@ def silu(a: TensorLike, /, inplace: bool = False) -> TensorLike:
 _inplace_to_out_of_place[silu] = silu, 1
 
 
+@torchsymbol(torch.nn.functional.softplus, is_method=False)
+def softplus(a: TensorProxy, /, beta: float = 1.0, threshold: float = 20.0) -> TensorLike:
+    utils.check(
+        dtypes.is_numbertype(to_dtype(beta)),
+        lambda: f"beta must be a number type, but found to be {to_dtype(beta)}",
+    )
+    utils.check(
+        dtypes.is_numbertype(to_dtype(threshold)),
+        lambda: f"threshold must be a number type, but found to be {to_dtype(threshold)}",
+    )
+    scaled_input = a * beta
+    rhs = log1p(exp(scaled_input)) / beta
+    return where(scaled_input > threshold, a, rhs)
+
+
 @torchsymbol(torch.nn.functional.softshrink, is_method=False)
 def softshrink(a: TensorProxy, /, lambd: float = 0.5) -> TensorLike:
     utils.check(
@@ -1950,12 +2101,40 @@ def softshrink(a: TensorProxy, /, lambd: float = 0.5) -> TensorLike:
     return where(abs(a) > lambd, a - sign(a) * lambd, a * 0)
 
 
+@torchsymbol(torch.nn.functional.softsign, is_method=False)
+def softsign(a: TensorProxy, /) -> TensorLike:
+    return a / (abs(a) + 1)
+
+
 @torchsymbol(torch.nn.functional.tanhshrink)
 def tanhshrink(a: TensorLike, /) -> TensorLike:
     return a - tanh(a)
 
 
 _inplace_to_out_of_place[tanhshrink] = tanhshrink, -1
+
+
+@torchsymbol(torch.threshold, torch.nn.functional.threshold, id="torch.threshold", is_method=False)
+def threshold(a: TensorProxy, /, threshold: float, value: float, inplace: bool = False) -> TensorLike:
+    out = where(a <= threshold, value, a)
+    if inplace:
+        return _copy_(a, out)
+    return out
+
+
+_inplace_to_out_of_place[threshold] = threshold, 3
+
+# alias to avoid conflict with keyword argument `threshold` in threshold_
+_threshold = threshold
+
+
+@torchsymbol(torch.nn.functional.threshold_, is_method=False, tags=(prims.OpTags.IN_PLACE,))
+def threshold_(a: TensorProxy, /, threshold: float, value: float) -> TensorLike:
+    return _copy_(a, _threshold(a, threshold, value, False))
+
+
+_inplace_to_out_of_place[threshold_] = threshold, -1
+
 
 #
 # Elementwise binary operations
@@ -2134,6 +2313,36 @@ def logical_not(a: TensorLike, /) -> TensorLike:
 @torchsymbol(torch.Tensor.logical_not_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def logical_not_(a: TensorLike, /) -> TensorLike:
     return _copy_(a, logical_not(a))
+
+
+@torchsymbol(torch.logical_or, is_method=True)
+def logical_or(a: TensorLike, b: TensorLike, /) -> TensorLike:
+    return clang.logical_or(a, b)
+
+
+@torchsymbol(torch.Tensor.logical_or_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def logical_or_(a: TensorLike, b: TensorLike, /) -> TensorLike:
+    return _copy_(a, logical_or(a, b))
+
+
+@torchsymbol(torch.logical_xor, is_method=True)
+def logical_xor(a: TensorLike, b: TensorLike, /) -> TensorLike:
+    return clang.logical_xor(a, b)
+
+
+@torchsymbol(torch.Tensor.logical_xor_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def logical_xor_(a: TensorLike, b: TensorLike, /) -> TensorLike:
+    return _copy_(a, logical_xor(a, b))
+
+
+@torchsymbol(torch.ldexp, torch.Tensor.ldexp, is_method=True)
+def ldexp(a: TensorLike, b: TensorLike, /) -> TensorLike:
+    utils.check(
+        a.device == b.device,
+        lambda: f"Expected all tensors to be on the same device, but found at least two devices, cuda and cpu",
+    )
+
+    return mul(a, exp2(b))
 
 
 @torchsymbol(torch.le, is_method=True)
@@ -2882,6 +3091,9 @@ def cumsum(a: TensorLike, dim: int, *, dtype: None | dtypeLike = None) -> Tensor
     # check the input dimension
     utils.canonicalize_dim(a.ndim, dim)
     if dtype is None:
+        # ref: https://github.com/pytorch/pytorch/blob/78fe079c/torch/_refs/__init__.py#L2301-L2315
+        if a.dtype in dtypes.integer_dtypes:
+            return TensorProxy(like=a, dtype=dtypes.int64)
         return TensorProxy(like=a)
     else:
         return TensorProxy(like=a, dtype=to_dtype(dtype))
@@ -2934,6 +3146,27 @@ def var_mean(
     return result
 
 
+@torchsymbol(torch.std, is_method=True)
+def std(
+    a: TensorProxy,
+    /,
+    dim=None,
+    *,
+    keepdim: bool = False,
+    correction: NumberLike = 1,
+) -> TensorProxy:
+    result = _reduction(
+        a,
+        partial(prims.std, correction=correction),
+        dims=dim,
+        keepdims=keepdim,
+        dtype=None,
+        has_identity=True,
+        output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.COMPLEX_TO_FLOAT,
+    )
+    return result
+
+
 @torchsymbol(torch.argmax, is_method=True)
 def argmax(a: TensorLike, /, dim: int | None = None, keepdim: bool | None = False):
     return clang.argmax(a, dim, keepdim)
@@ -2946,16 +3179,52 @@ def argmin(a: TensorLike, /, dim: int | None = None, keepdim: bool | None = Fals
 
 @torchsymbol(torch.topk, is_method=True)
 def topk(
-    a: TensorLike, /, k: int, dim: None | int = None, largest: bool = True, sorted: bool = True, *, out=None
+    a: TensorLike, /, k: int, dim: None | int = None, largest: bool = True, sorted: bool = True
 ) -> (TensorLike, TensorLike):
-    return clang.topk(a, k, dim, largest, sorted, out=out)
+    return clang.topk(a, k, dim, largest, sorted)
+
+
+@torchsymbol(torch.atleast_1d, is_method=True)
+def atleast_1d(*args: Union[TensorLike, Sequence[TensorLike]]) -> Union[TensorLike, tuple[TensorLike, ...]]:
+    res = tuple(a if a.ndim >= 1 else unsqueeze(a, 0) for a in args)
+    return res if len(res) > 1 else res[0]
+
+
+@torchsymbol(torch.atleast_2d, is_method=True)
+def atleast_2d(*args: Union[TensorLike, Sequence[TensorLike]]) -> Union[TensorLike, tuple[TensorLike, ...]]:
+
+    def _unsqueeze_atleast(a):
+        if a.ndim == 0:
+            return a.unsqueeze(0).unsqueeze(1)
+        elif a.ndim == 1:
+            return a.unsqueeze(0)
+        return a
+
+    res = tuple(_unsqueeze_atleast(a) if isinstance(a, TensorProxy) else a for a in args)
+    return res if len(res) > 1 else res[0]
+
+
+@torchsymbol(torch.atleast_3d, is_method=True)
+def atleast_3d(*args: Union[TensorLike, Sequence[TensorLike]]) -> Union[TensorLike, tuple[TensorLike, ...]]:
+
+    def _unsqueeze_atleast(a):
+        if a.ndim == 0:
+            return a.reshape(1, 1, 1)
+        elif a.ndim == 1:
+            return a.reshape(1, -1, 1)
+        elif a.ndim == 2:
+            return a.unsqueeze(-1)
+        return a
+
+    res = tuple(_unsqueeze_atleast(a) if isinstance(a, TensorProxy) else a for a in args)
+    return res if len(res) > 1 else res[0]
 
 
 @torchsymbol(torch.sort, is_method=True)
 def sort(
-    a: TensorLike, /, dim: None | int = None, descending: bool = False, stable: bool = False, *, out=None
+    a: TensorLike, /, dim: None | int = None, descending: bool = False, stable: bool = False
 ) -> (TensorLike, TensorLike):
-    return clang.sort(a, dim, descending, stable, out=out)
+    return clang.sort(a, dim, descending, stable)
 
 
 #
@@ -3643,6 +3912,113 @@ def outer(a: TensorLike, b: TensorLike, /) -> TensorLike:
     return a[:, None] * b[None, :]
 
 
+def _matrix_chain_order(a: Sequence[TensorLike], /) -> TensorLike:
+    import torch
+
+    n = len(a)
+    p = []
+    for i in range(n):
+        p.append(a[i].size(0))
+    p.append(a[n - 1].size(1))
+    m = torch.zeros(n, n, dtype=torch.int64)
+    s = torch.zeros(n, n, dtype=torch.int64)
+    for l in range(1, n):
+        for i in range(n - l):
+            j = i + l
+            m[i][j] = torch.iinfo(torch.int64).max
+            for k in range(i, j):
+                q = m[i][k] + m[k + 1][j] + p[i] * p[k + 1] * p[j + 1]
+
+                if q < m[i][j]:
+                    m[i][j] = q
+                    s[i][j] = k
+    return s
+
+
+def _matrix_chain_multiplication(
+    a: Sequence[TensorLike], /, s: TensorLike, i: int | IntegerProxy, j: int | IntegerProxy
+) -> TensorLike:
+    if i == j:
+        return a[i]
+    else:
+        k = s[i][j]
+        left = _matrix_chain_multiplication(a, s, i, k)
+        right = _matrix_chain_multiplication(a, s, k + 1, j)
+        return matmul(left, right)
+
+
+@torchsymbol(
+    torch.linalg.multi_dot,
+    "torch.linalg.multi_dot",
+    id="torch.linalg.multi_dot",
+)
+def multi_dot(tensors: Sequence[TensorLike], *, out: TensorLike | None = None) -> TensorLike:
+    utils.check(out is None, lambda: "multi_dot(): Non-None out is not supported", NotImplementedError)
+    utils.check(
+        not any(any(isinstance(i, NumberProxy) for i in tensor.shape) for tensor in tensors),
+        lambda: f"multi_dot(): does not support dynamic shapes",
+    )
+
+    n = len(tensors)
+    utils.check(
+        n >= 2,
+        lambda: f"multi_dot(): expected at least 2 tensors, but got {n}",
+    )
+
+    a = [0] * n
+    out_shape = []
+
+    # check first tensor
+    utils.check_type(tensors[0], TensorProxy)
+    utils.check(
+        1 <= tensors[0].dim() <= 2, lambda: f"multi_dot(): the first tensor must be 1D or 2D but got {a[0].dim()}D"
+    )
+    if tensors[0].dim() == 1:
+        a[0] = unsqueeze(tensors[0], 0)
+    else:
+        a[0] = tensors[0]
+        out_shape.append(tensors[0].size(0))
+
+    # check last tensor
+    utils.check_type(tensors[-1], TensorProxy)
+    utils.check(
+        1 <= tensors[n - 1].dim() <= 2, lambda: f"multi_dot(): the last tensor must be 1D or 2D but got {a[n-1].dim()}D"
+    )
+    if tensors[n - 1].dim() == 1:
+        a[n - 1] = unsqueeze(tensors[n - 1], -1)
+    else:
+        a[n - 1] = tensors[n - 1]
+        out_shape.append(tensors[n - 1].size(1))
+
+    # check middle tensor
+    for i in range(1, n - 1):
+        utils.check_type(tensors[i], TensorProxy)
+        utils.check(tensors[i].dim() == 2, lambda: f"multi_dot(): tensor {i} must be 2D but got {tensors[i].dim()}D")
+        a[i] = tensors[i]
+
+    if n == 2:
+        return matmul(a[0], a[1]).view(out_shape)
+
+    if n == 3:
+        t0 = a[0].size(0)
+        t1 = a[1].size(0)
+        t2 = a[2].size(0)
+        t3 = a[2].size(1)
+
+        cost_1 = (t0 * t2) * (t1 + t3)
+        cost_2 = (t1 * t3) * (t0 + t2)
+
+        if cost_1 > cost_2:
+            return matmul(a[0], matmul(a[1], a[2])).view(out_shape)
+        else:
+            return matmul(matmul(a[0], a[1]), a[2]).view(out_shape)
+
+    order = _matrix_chain_order(a)
+    i = 0
+    j = n - 1
+    return _matrix_chain_multiplication(a, order, i, j).view(out_shape)
+
+
 #
 # Normalization operations
 #
@@ -3784,13 +4160,22 @@ def rms_norm(
     weight: None | TensorLike = None,
     eps: None | float = None,
 ):
+    input_dtype = a.dtype
+
+    if a.dtype in (thunder.float16, thunder.bfloat16):
+        a = clang.maybe_convert_to_dtype(a, thunder.float32, enforce_safe_casting=True)
+
     if eps is None:
         eps = torch.finfo(to_torch_dtype(a.dtype)).eps
+
     reduction_dims = _check_normalized_shape_and_get_reduction_dims(a, normalized_shape, weight)
-    norm_a = mean(a * a, dim=reduction_dims, keepdim=True)
+    norm_a = mean(a * a, dim=reduction_dims, keepdim=True, dtype=None)
     a_normed = a * rsqrt(norm_a + eps)
+
     if weight is not None:
         a_normed = a_normed * weight
+
+    a_normed = clang.maybe_convert_to_dtype(a_normed, input_dtype, enforce_safe_casting=True)
     return a_normed
 
 
@@ -3918,6 +4303,68 @@ def batch_norm(
 
     result = _native_batch_norm(a, weight, bias, running_mean, running_var, training, momentum, eps)
     return result
+
+
+@torchsymbol(torch.nn.functional.instance_norm)
+def instance_norm(
+    a: TensorLike,
+    /,
+    running_mean: None | TensorLike = None,
+    running_var: None | TensorLike = None,
+    weight: None | TensorLike = None,
+    bias: None | TensorLike = None,
+    use_input_stats: bool = True,
+    momentum: NumberLike = 0.1,
+    eps: NumberLike = 1e-5,
+) -> TensorLike:
+    org_shape = a.shape
+    b = org_shape[0]
+    c = org_shape[1]
+    if running_mean is not None:
+        running_mean = repeat(running_mean, b)
+    if running_var is not None:
+        running_var = repeat(running_var, b)
+    if weight is not None:
+        weight = repeat(weight, b)
+    if bias is not None:
+        bias = repeat(bias, b)
+
+    shape = (1, b * c) + org_shape[2:]
+    a = a.reshape(shape)
+
+    out = batch_norm(a, running_mean, running_var, weight, bias, use_input_stats, momentum, eps)
+
+    return out.reshape(org_shape)
+
+
+@torchsymbol(torch.nn.functional.local_response_norm)
+def local_response_norm(
+    a: TensorLike,
+    /,
+    size: int,
+    alpha: NumberLike = 0.0001,
+    beta: NumberLike = 0.75,
+    k: NumberLike = 1.0,
+) -> TensorLike:
+    dim = a.ndim
+    utils.check(dim >= 3, lambda: f"Expected 3D or higher dimensionality input (got {dim} dimensions)")
+
+    if a.numel == 0:
+        return a
+
+    div = a.mul(a)
+    if dim == 3:
+        div = div.unsqueeze(1)
+        div = pad(div, (0, 0, size // 2, (size - 1) // 2))
+        div = avg_pool2d(div, (size, 1), stride=1).squeeze(1)
+    else:
+        sizes = a.size()
+        div = div.view(sizes[0], 1, sizes[1], sizes[2], -1)
+        div = pad(div, (0, 0, 0, 0, size // 2, (size - 1) // 2))
+        div = avg_pool3d(div, (size, 1, 1), stride=1).squeeze(1)
+        div = div.view(sizes)
+    div = div.mul(alpha).add(k).pow(beta)
+    return a / div
 
 
 #
@@ -4833,7 +5280,10 @@ def _interpolate_scale_factor_helper(
     scale_factor: Sequence[float] | float,
     mode: str = "nearest",
 ) -> TensorLike:
-    assert mode == "nearest"
+    if mode not in ("nearest", "nearest-exact"):
+        raise ValueError(
+            f"_interpolate_scale_factor_helper expected mode to be 'nearest' or 'nearest-exact', but got {mode}"
+        )
 
     # a is assumed to be at least 3D.
     batch, channels, *spatial_dims = a.shape
@@ -4854,13 +5304,23 @@ def _interpolate_scale_factor_helper(
         )
 
     # perform nearest up/down-sampling
-    def nearest_sampler(t, input_dim, output_dim, *, scale, dim):
+    def nearest_sampler(
+        t: TensorLike,
+        input_dim: int,
+        output_dim: int,
+        *,
+        scale: float,
+        dim: int,
+        exact: bool,
+    ) -> TensorLike:
         # It is expected that output_dim = int(input_dim * scale).
         # Indices [0, ..., output_dim - 1] are mapped to [0, ..., input_dim - 1]
-        # with the rule i -> int(i * scale)
+        # with the rule i -> int(i * scale) or i -> round((i + 0.5) * scale - 0.5),
+        # corresponding to modes 'nearest' or 'nearest-exact', respectively.
         # Values at these indices is the result.
+        # References https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/native/UpSample.h
         selected_idx = arange(0, output_dim, device=a.device)
-        selected_idx = to(selected_idx * scale, selected_idx.dtype)
+        selected_idx = to((selected_idx + exact * 0.5) * scale, selected_idx.dtype)
         return clang.take(t, selected_idx, dim=dim)
 
     def dim_expander(t, dim, n_repeats):
@@ -4882,6 +5342,7 @@ def _interpolate_scale_factor_helper(
         # dimenions corresponding to batches and channels.
         curr_dim = 2 + (len(spatial_dims) - k - 1)
 
+        exact: bool = mode == "nearest-exact"
         if output_dim <= input_dim:
             if output_dim <= input_dim // 2:
                 # scale_factor <= 1 (i.e. output_dim <= input_dim) implies simple slice
@@ -4891,7 +5352,7 @@ def _interpolate_scale_factor_helper(
                 a = clang.slice_in_dim(a, 0, end, stride=stride, dim=curr_dim)
             else:
                 # In this case slice will not do and explicit downsample is needed.
-                a = nearest_sampler(a, input_dim, output_dim, scale=1.0 / scale, dim=curr_dim)
+                a = nearest_sampler(a, input_dim, output_dim, scale=1.0 / scale, dim=curr_dim, exact=exact)
         else:
             if output_dim % input_dim == 0:
                 # In this case we can just expand dim.
@@ -4899,7 +5360,7 @@ def _interpolate_scale_factor_helper(
                 a = dim_expander(a, curr_dim, n_repeats)
             else:
                 # In this case expand will not cut it and explicit upsampling is needed.
-                a = nearest_sampler(a, input_dim, output_dim, scale=1.0 / scale, dim=curr_dim)
+                a = nearest_sampler(a, input_dim, output_dim, scale=1.0 / scale, dim=curr_dim, exact=exact)
 
     output_shape = [batch, channels] + res_output_spatial_dims[::-1]
     return reshape(a, output_shape)
@@ -4929,7 +5390,7 @@ def _interpolate_size_helper(
 
     scale_factor = tuple(output_size / input_size for output_size, input_size in zip(size, spatial_dims))
 
-    return _interpolate_scale_factor_helper(a, scale_factor)
+    return _interpolate_scale_factor_helper(a, scale_factor, mode)
 
 
 # TODO Implement additional modes and parameters
@@ -4945,8 +5406,8 @@ def interpolate(
     antialias: bool = False,
 ) -> TensorLike:
     utils.check(
-        mode == "nearest",
-        lambda: f"only mode='nearest' is supported at the moment, but got {mode=}",
+        (mode == "nearest" or mode == "nearest-exact"),
+        lambda: f"only modes 'nearest' and 'nearest-exact' are supported at the moment, but got {mode=}",
         exception_type=NotImplementedError,
     )
 
@@ -5344,6 +5805,17 @@ def softmax(a: TensorLike, dim: int, dtype: None | dtypeLike = None, _stacklevel
     return _softmax(a, dim=dim, dtype=dtype)
 
 
+@torchsymbol(torch.nn.functional.softmin, is_method=False, id="torch.nn.functional.softmin")
+def _softmin(a: TensorLike, /, dim: int, *, dtype: None | dtypeLike = None) -> TensorLike:
+    return softmax(-a, dim, dtype)
+
+
+# A wrapper to support `torch.nn.Softmin` whose `forward` passes the kwarg of `_stacklevel=5` to `torch.nn.functional.softmin`.
+# ref: https://github.com/pytorch/pytorch/blob/8d12ba9acfa20ed7df438a8892c9bf8e6bef5775/torch/nn/modules/activation.py#L1487
+def softmin(a: TensorLike, dim: int, dtype: None | dtypeLike = None, _stacklevel: int = 3) -> TensorLike:
+    return _softmin(a, dim=dim, dtype=dtype)
+
+
 def torch_device(type: DeviceLike, index: int | None = None) -> devices.Device:
     if isinstance(type, (devices.Device, torch.device)):
         # PyTorch behavior:
@@ -5523,7 +5995,7 @@ if torch.distributed.is_available():
         group: torch.distributed.ProcessGroup | None = None,
         async_op: bool = False,
         dim: int | None = None,
-    ) -> TensorLike | FutureTensorLike:
+    ) -> TensorLike | FutureTensorProxy:
         group = group if group is not None else torch.distributed.new_group()
 
         return dist_prims.all_gather(a, group, async_op, dim=dim)
@@ -5570,7 +6042,7 @@ if torch.distributed.is_available():
         group: None | torch.distributed.ProcessGroup | str = None,
         async_op: bool = False,
         **kwargs,
-    ) -> TensorLike | FutureTensorLike:
+    ) -> TensorLike | FutureTensorProxy:
         # note: torch.ops._c10d_functional takes name of group
         if isinstance(group, str):
             from torch._C._distributed_c10d import _resolve_process_group
@@ -5614,7 +6086,7 @@ if torch.distributed.is_available():
         src: int,
         group: torch.distributed.ProcessGroup | None = None,
         async_op: bool = False,
-    ) -> TensorLike | FutureTensorLike:
+    ) -> TensorLike | FutureTensorProxy:
         group = group if group is not None else torch.distributed.new_group()
 
         return dist_prims.broadcast(a, src, group, async_op)
@@ -5629,7 +6101,7 @@ if torch.distributed.is_available():
         group: torch.distributed.ProcessGroup | None = None,
         async_op: bool = False,
         dim: int | None = None,
-    ) -> TensorLike | FutureTensorLike:
+    ) -> TensorLike | FutureTensorProxy:
         op = to_thunder_distributed_reduce_op(op)
         group = group if group is not None else torch.distributed.new_group()
 
@@ -6138,6 +6610,7 @@ _syms_returning_views: set[Symbol] = {
     transpose,
     t,
     real,
+    imag,
     unflatten,
     unfold,
     unsqueeze,

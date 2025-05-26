@@ -69,7 +69,7 @@ def backward_only_setup_graph_once(fn: Callable, *args, **kwargs):
         for i in forward_inputs:
             i.grad = None
 
-        torch.autograd.backward(result, output_grads, retain_graph=True)
+        torch.autograd.backward(backwardable_tensor_result, output_grads, retain_graph=True)
 
     return backward_fn, backward_setup
 

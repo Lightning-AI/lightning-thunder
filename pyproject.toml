@@ -1,13 +1,49 @@
-[metadata]
-license_file = "LICENSE"
-description-file = "README.md"
-
 [build-system]
 requires = [
-    "setuptools",
+    "setuptools>=42", # Minimum version for pyproject.toml support
     "wheel",
 ]
+build-backend = "setuptools.build_meta"
 
+[project]
+name = "lightning-thunder"
+# Version is dynamically set during build time by setup.py
+dynamic = ["version", "dependencies", "readme"]
+description = "Lightning Thunder is a source-to-source compiler for PyTorch, enabling PyTorch programs to run on different hardware accelerators and graph compilers."
+authors = [
+    { name = "Lightning AI", email = "support@lightning.ai" },
+]
+license = "Apache-2.0"
+requires-python = ">=3.10, <3.14"
+keywords = ["deep learning", "AI", "compiler"]
+classifiers=[
+    "Environment :: Console",
+    "Natural Language :: English",
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13", # Add 3.13 if supported, remove <3.14 above if so
+]
+
+[project.urls]
+Homepage = "https://github.com/Lightning-AI/lightning-thunder"
+"Bug Tracker" = "https://github.com/Lightning-AI/lightning-thunder/issues"
+Documentation = "https://lightning-thunder.rtfd.io/en/latest/"
+Source = "https://github.com/Lightning-AI/lightning-thunder"
+
+
+# Consider adding 'all' or 'dev' aggregates if useful
+[project.optional-dependencies]
+# Populated from requirements/*.txt files (excluding base, devel, docs)
+# sdpa = ["thunder-sdpa"]
+# apex = ["apex"]
+# triton = ["triton>=2.1.0"]
 
 [tool.check-manifest]
 ignore = [

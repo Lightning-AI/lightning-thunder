@@ -8,6 +8,5 @@ Torch Compile Executor
 .. autosummary::
     :toctree: generated/
 
-    to_torch_translator
     make_compiled
     TorchCompileExecutor

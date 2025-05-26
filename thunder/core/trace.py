@@ -4,6 +4,7 @@ from contextvars import ContextVar
 from contextlib import contextmanager
 import pathlib
 from typing import Optional, Any, Tuple, Type, Dict, List, Union
+from enum import Enum
 from collections.abc import Callable
 from collections.abc import Sequence, Hashable
 import string
@@ -55,10 +56,6 @@ class TraceCtx:
     Args:
         fn: Callable to represent.
 
-    Keyword Args:
-        prologue: Prologue trace that verifies metadata of args and kwargs with real values.
-        is_prologue:
-
     Attributes:
         fn (Callable | None): Callable to represent. It's either a callable
             written with pytorch functions or :class:`~torch.nn.Module`.
@@ -76,11 +73,8 @@ class TraceCtx:
 
     """
 
-    def __init__(self, fn: None | Callable = None, *, prologue: TraceCtx | None = None, is_prologue: bool = False):
+    def __init__(self, fn: None | Callable = None):
         self.fn: None | Callable = fn
-
-        self._prologue = prologue
-        self._is_prologue: bool = is_prologue
 
         self.args = None
         self.kwargs = {}
@@ -145,14 +139,6 @@ class TraceCtx:
     def tags(self):
         return self._tags
 
-    @property
-    def prologue(self):
-        return self._prologue
-
-    @property
-    def is_prologue(self):
-        return self._is_prologue
-
     #
     # Methods related to the trace's signature
     #
@@ -203,6 +189,9 @@ class TraceCtx:
                 self.obj_name_ctr += 1
                 if obj is None:
                     name = f"_object_{name}"
+                elif isinstance(obj, Enum):
+                    # even though it should be unique, we need to do the counter suffix for technical problems
+                    name = f"_{baseutils.print_type(type(obj), with_quotes=False)}_{obj.name}_{name}"
                 else:
                     name = f"_{baseutils.print_type(type(obj), with_quotes=False)}_{name}"
             else:
@@ -531,7 +520,7 @@ class TraceCtx:
 # Constructs a new trace by shallow copying parts of an existing trace
 # NOTE Bound symbols and provenance are not copied
 def from_trace(trace: TraceCtx) -> TraceCtx:
-    t = TraceCtx(trace.fn, prologue=trace.prologue)
+    t = TraceCtx(trace.fn)
     t.args = trace.args
     t.kwargs = trace.kwargs
 

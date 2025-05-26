@@ -117,7 +117,9 @@ class FSDPTest(DistributedParallelTestCase):
         m = ToyModel().to(device)
         cm = thunder.jit(m)
         cm = fsdp(cm, device=device, broadcast_from=0)
-        x = torch.ones((2, 12), device=device)
+        # if we don't require grad of x, we do not need the t_net1_weight
+        # in the backward below and it could be legitimately DCE'd.
+        x = torch.ones((2, 12), device=device, requires_grad=True)
         cm(x).mean().backward()
 
         fwd_trc = [t for t in thunder.last_traces(cm) if thunder.core.trace.TraceTag.AUGMENTED_FORWARD in t.tags][0]
@@ -131,8 +133,8 @@ class FSDPTest(DistributedParallelTestCase):
         #       in the original trace and are inputs to all_gather, the unshard are the outputs fo the corresponding wait
         #       If you fix this to be dynamically discerned, you'll be my hero.
         sharded_param_names = ("t_net1_weight", "t_net2_weight")
-        # t20 and t22 are all-gather'ed t_net1_weight and t_net2_weight, respectively.
-        unshard_param_names = ("t20", "t22")
+        # t30 and t84 are all-gather'ed t_net1_weight and t_net2_weight, respectively.
+        unshard_param_names = ("t30", "t84")
         result_saved_for_bwd = [x.name for x in fwd_trc.bound_symbols[-1].args[1][0]]
         self.assertTrue(all(t not in sharded_param_names for t in result_saved_for_bwd))
         self.assertTrue(all(t in result_saved_for_bwd for t in unshard_param_names))
@@ -601,8 +603,116 @@ class FSDPTest(DistributedParallelTestCase):
         expected = jitted_ref(x)
         assert_close(result, expected)
 
+    @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
+    def test_fsdpv2_no_grad(self):
+        import re
+        from thunder.tests.litgpt_model import Config, GPT
+
+        device = torch.device("cuda", self.rank)
+        config = Config("Llama-2-7b-hf")
+        config.n_layer = 1
+        with torch.device("meta"):
+            model = GPT(config)
+        with device:
+            model_ref = GPT(config)
+        jitted = fsdp(thunder.jit(model), device=device)
+        jitted.load_original_state_dict(model_ref.state_dict())
+
+        t = config.block_size
+        data = torch.randint(
+            0,
+            100,
+            (
+                1,
+                t + 1,
+            ),
+            dtype=torch.int64,
+        )
+        x = data[:, :t]
+        x = x.to(device=device)
+        with torch.no_grad():
+            result = jitted(x)
+            expected = model_ref(x)
+        assert_close(result, expected)
+
 
 common_utils.instantiate_parametrized_tests(FSDPTest)
+
+
+@unittest.skipUnless(
+    torch.cuda.is_available() and torch.distributed.is_available() and torch.distributed.is_nccl_available(),
+    "FSDP test requires CUDA and NCCL `torch.distributed` backend",
+)
+class FSDPDDPHybridTest(DistributedParallelTestCase):
+    @property
+    def world_size(self) -> int:
+        return min(torch.cuda.device_count(), 4)
+
+    @pytest.mark.skipif(torch.cuda.device_count() < 4, reason="Requires 4 devices")
+    def test_fsdp_ddp_hybrid(self):
+        import torch, thunder
+        import torch.distributed
+        from torch.testing import assert_close
+        from thunder.distributed.transforms.fsdp_v2 import FSDPTransform
+        from thunder.distributed.transforms.ddp_v2 import DDPTransform
+
+        torch.manual_seed(1337)
+
+        mesh = torch.distributed.device_mesh.init_device_mesh("cuda", (2, 2), mesh_dim_names=("ddp", "fsdp"))
+        global_rank = mesh.get_rank()
+        fsdp_rank = mesh.get_local_rank("fsdp")
+
+        with torch.device("cuda"):
+            m = torch.nn.Sequential(torch.nn.Linear(256, 256), torch.nn.ReLU(), torch.nn.Linear(256, 256))
+            inp = torch.randn(4, 256)
+
+        jm = thunder.jit(
+            m,
+            transforms=[
+                FSDPTransform(process_group=mesh["fsdp"].get_group()),
+                DDPTransform(mesh["ddp"].get_group(), broadcast_from=0, bucket_size_in_mb=25.0),
+            ],
+        )
+
+        res = jm(inp)
+        go = torch.randn_like(res)
+        grads = torch.autograd.grad(res, jm.parameters(), go)
+        ref = m(inp)
+        ref_grads = torch.autograd.grad(ref, m.parameters(), go)
+        assert_close(res, ref)
+        for g, rg in zip(grads, ref_grads):
+            slice_size = rg.size(0) // 2
+            assert_close(g, rg[slice_size * fsdp_rank : slice_size * (fsdp_rank + 1)])
+
+    @pytest.mark.skipif(torch.cuda.device_count() < 4, reason="Requires 4 devices")
+    def test_fsdp_ddp_plugin(self):
+        import torch, thunder
+        import torch.distributed
+        from thunder.plugins import FSDP
+        from torch.testing import assert_close
+
+        torch.manual_seed(1337)
+
+        mesh = torch.distributed.device_mesh.init_device_mesh("cuda", (2, 2), mesh_dim_names=("ddp", "fsdp"))
+
+        with torch.device("cuda"):
+            m = torch.nn.Sequential(torch.nn.Linear(256, 256), torch.nn.ReLU(), torch.nn.Linear(256, 256))
+            inp = torch.randn(4, 256)
+
+        plugin = FSDP(process_group=mesh)
+
+        jm = thunder.compile(m, plugins=[plugin])
+        res = jm(inp)
+        grads = torch.autograd.grad(res, jm.parameters(), go)
+        ref = m(inp)
+        ref_grads = torch.autograd.grad(ref, m.parameters(), go)
+        assert_close(res, ref)
+        for g, rg in zip(grads, ref_grads):
+            slice_size = rg.size(0) // 2
+            assert_close(g, rg[slice_size * fsdp_rank : slice_size * (fsdp_rank + 1)])
+
+
+common_utils.instantiate_parametrized_tests(FSDPDDPHybridTest)
 
 
 def _test_native_fsdp_helper(input_data):

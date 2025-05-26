@@ -306,7 +306,8 @@ def ddp(
     )
     from thunder.core.module import ThunderModule
 
-    assert isinstance(model, ThunderModule), "Thunder DDP only works on ThunderModules"
+    if not isinstance(model, ThunderModule):
+        raise TypeError(f"Thunder DDP only works on ThunderModule, got {type(model)}")
     from thunder.distributed.transforms.ddp_v2 import DDPTransform
     from thunder.core.transforms import add_transform
 
@@ -431,7 +432,10 @@ def fsdp(
         lambda: "fsdp requires torch distributed to be available (but it's not)",
     )
 
-    assert isinstance(model, ThunderModule), "only ThunderModules support the FSDP Transform"
+    if not isinstance(model, ThunderModule):
+        raise TypeError(
+            f"Expected `model` to be of type `thunder.core.module.ThunderModule`, but got {type(model).__name__}"
+        )
     from thunder.core.transforms import add_transform
     from thunder.distributed.transforms.fsdp_v2 import FSDPTransform
     from thunder.transforms import MaterializationTransform
