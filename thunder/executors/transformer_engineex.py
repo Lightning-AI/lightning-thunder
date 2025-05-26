@@ -441,7 +441,9 @@ def _create_fp8_linear_bound_symbol(
         _bind_postprocess=bind_postprocess,
         tags=(prims.OpTags.DONT_RECOMPUTE_IN_BACKWARD,),
     )
-    bsym = sym.bind(a, w, b, True, True if b is not None else False, output=meta_fn(a, w, b, True, True if b is not None else False))
+    bsym = sym.bind(
+        a, w, b, True, True if b is not None else False, output=meta_fn(a, w, b, True, True if b is not None else False)
+    )
 
     # Now we need to append the BoundSymbol to the current trace.
     trace = get_tracectx()
