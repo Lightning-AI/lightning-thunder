@@ -620,12 +620,12 @@ def _transformer_engine_set_requires_grad(fw_extrace: TraceCtx, bw_extrace: Trac
 
 
 def _transformer_engine_bwd_fp8_meta_sync(fw_extrace, bw_extrace) -> tuple[TraceCtx, TraceCtx]:
-    fw_extrace, bw_extrace = _transformer_engine_set_requires_grad(fw_extrace, bw_extrace)
+    updated_fw_extrace, updated_bw_extrace = _transformer_engine_set_requires_grad(fw_extrace, bw_extrace)
 
     # See doc of `_insert_bwd_fp8_meta_sync` for more details.
     # `bw_extrace` is mutated in place.
-    _insert_bwd_fp8_meta_sync(bw_extrace)
-    return fw_extrace, bw_extrace
+    _insert_bwd_fp8_meta_sync(updated_bw_extrace)
+    return updated_fw_extrace, updated_bw_extrace
 
 
 def _insert_bwd_fp8_meta_sync(bw_extrace):

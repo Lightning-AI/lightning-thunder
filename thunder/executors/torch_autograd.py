@@ -423,7 +423,6 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     from thunder.executors.transformer_engineex import _transformer_engine_bwd_fp8_meta_sync, transformer_engine_ex
 
     if transformer_engine_ex in compile_data.executors_list:
-        # NOTE: `_transformer_engine_bwd_fp8_meta_sync` may mutate `fw_extrace` or `bw_extrace`.
         fw_extrace, bw_extrace = _transformer_engine_bwd_fp8_meta_sync(fw_extrace, bw_extrace)
 
     fw_extrace = del_last_used(fw_extrace)
