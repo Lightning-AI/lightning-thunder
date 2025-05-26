@@ -190,7 +190,7 @@ class TELinear(TransformerEngineBaseModule):
         else:
             self.pg = None
 
-    def forward(self, inp, weight, bias, is_grad_enabled: bool = False, *, weight_requires_grad, bias_requires_grad):
+    def forward(self, inp, weight, bias, weight_requires_grad, bias_requires_grad, *, is_grad_enabled: bool = False):
         # NOTE: Backward FP8 metadata sync
         # TransformerEngine v1.6 onwards, we control the sync and update of FP8 metadata for FP8 tensors
         # tied to backward pass (i.e. the gradient tensors)
@@ -325,7 +325,7 @@ register_executor(transformer_engine_ex)
 
 def make_te_linear_meta(is_grad_enabled: bool = False):
     def _te_functional_linear_meta(
-        a: TensorProxy, w: TensorProxy, bias: None | TensorProxy
+        a: TensorProxy, w: TensorProxy, bias: None | TensorProxy, weight_requires_grad: bool, bias_requires_grad: bool
     ) -> tuple[TensorProxy, AnyProxy | None]:
         from thunder.core.dtypes import float8_e4m3fn, uint8
 
@@ -418,8 +418,6 @@ def _create_fp8_linear_bound_symbol(
     linear_fn = partial(
         TELinear(w.shape[1], w.shape[0]),
         is_grad_enabled=is_grad_enabled,
-        weight_requires_grad=w.requires_grad,
-        bias_requires_grad=b.requires_grad if b is not None else False,
     )
     global LINEAR_CALLS_COUNTER
     name = f"te_linear_{LINEAR_CALLS_COUNTER}"
@@ -442,7 +440,7 @@ def _create_fp8_linear_bound_symbol(
         _bind_postprocess=bind_postprocess,
         tags=(prims.OpTags.DONT_RECOMPUTE_IN_BACKWARD,),
     )
-    bsym = sym.bind(a, w, b, output=meta_fn(a, w, b))
+    bsym = sym.bind(a, w, b, True, True if b is not None else False, output=meta_fn(a, w, b, True, True if b is not None else False))
 
     # Now we need to append the BoundSymbol to the current trace.
     trace = get_tracectx()
@@ -511,8 +509,8 @@ def linear_forward_rule(a, w, bias):
         a.shape,
         w.shape,
         bias.shape if bias is not None else None,
-        w.requires_grad,
-        bias.requires_grad if bias is not None else False,
+        True,
+        True if bias is not None else False,
         ctx,
         saved_tensors,
     )
@@ -574,9 +572,35 @@ te_sync_fp8_meta_bwd = transformer_engine_ex.register_operator(
 )
 
 
+def _transformer_engine_set_requires_grad(fw_extrace, bw_extrace):
+    ctx_to_requires_grad = {}
+    for bsym in bw_extrace.bound_symbols:
+        if bsym.sym.name == "te_functional_linear_backward":
+            dgrad, wgrad, bgrad = bsym.output
+            w_requires_grad = True if wgrad is not None else False
+            b_requires_grad = True if bgrad is not None else False
+            ctx_to_requires_grad[bsym.args[5].name] = (w_requires_grad, b_requires_grad)
+            args = list(bsym.args)
+            args[3] = w_requires_grad
+            args[4] = b_requires_grad
+            bsym.args = tuple(args)
+
+    for bsym in fw_extrace.bound_symbols:
+        if "te_linear" in bsym.sym.name:
+            w_requires_grad, b_requires_grad = ctx_to_requires_grad[bsym.output[-1].name]
+            args = list(bsym.args)
+            args[-2] = w_requires_grad
+            args[-1] = b_requires_grad
+            bsym.args = tuple(args)
+
+    return fw_extrace, bw_extrace
+
+
 def _transformer_engine_bwd_fp8_meta_sync(fw_extrace, bw_extrace):
     # See doc of `_insert_bwd_fp8_meta_sync` for more details.
     _insert_bwd_fp8_meta_sync(bw_extrace)
+
+    _transformer_engine_set_requires_grad(fw_extrace, bw_extrace)
 
 
 def _insert_bwd_fp8_meta_sync(bw_extrace):
