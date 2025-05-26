@@ -2340,15 +2340,6 @@ shape = ex.register_operator("shape", meta=prims.shape_meta, fn=_shape_impl)
 _register_implementation(prims.shape, shape, checker=_always_executable)
 
 
-# def _grad_impl(t):
-#     t.retain_grad()
-#     return t.grad
-
-
-# grad = ex.register_operator("get_grad", meta=prims.get_grad, fn=_grad_impl)
-# _register_implementation(prims.get_grad, grad, checker=_always_executable)
-
-
 shallow_copy = ex.register_operator("shallow_copy", meta=prims.shallow_copy, fn=lambda x: x)
 _register_implementation(prims.shallow_copy, shallow_copy, checker=_always_executable)
 
