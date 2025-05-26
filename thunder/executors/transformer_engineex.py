@@ -25,6 +25,7 @@ from thunder.extend import OperatorExecutor, register_executor
 from thunder.core.compile_data import get_compile_option, get_compile_data
 from thunder.distributed import FSDPType
 from thunder.executors.utils import Context, set_saved_tensors
+from thunder.core.trace import from_trace, TraceCtx, TraceProvenance
 
 
 __all__ = [
@@ -572,35 +573,57 @@ te_sync_fp8_meta_bwd = transformer_engine_ex.register_operator(
 )
 
 
-def _transformer_engine_set_requires_grad(fw_extrace, bw_extrace):
+def _transformer_engine_set_requires_grad(fw_extrace: TraceCtx, bw_extrace: TraceCtx) -> tuple[TraceCtx, TraceCtx]:
+    # NOTE: Implementation of _transformer_engine_set_requires_grad
+    # This function determines the requires_grad for weight and bias based on whether the
+    # gradients are returned from the backward trace.
+    # 1. First, it analyzes the backward trace to determine which gradients (weight and bias)
+    #    are actually computed and needed. This information is stored in a mapping from
+    #    context names to (weight_requires_grad, bias_requires_grad) tuples.
+    # 2. Then, it updates the forward trace's corresponding bound symbols to pass the correct requires_grad flags.
+    # This is required in `PEFT` settings to avoiding unncessary weight and bias gradients computation.
+
+    updated_fw_extrace = from_trace(fw_extrace)
+    updated_bw_extrace = from_trace(bw_extrace)
     ctx_to_requires_grad = {}
     for bsym in bw_extrace.bound_symbols:
         if bsym.sym.name == "te_functional_linear_backward":
+            # Check if `w_requires_grad` and `b_requires_grad` are used or not.
+            # If they are unused, they would show up as `None` in the output of the BoundSymbol.
             dgrad, wgrad, bgrad = bsym.output
             w_requires_grad = True if wgrad is not None else False
             b_requires_grad = True if bgrad is not None else False
+
+            # Update the BoundSymbol to take the correct flags as input.
             ctx_to_requires_grad[bsym.args[5].name] = (w_requires_grad, b_requires_grad)
             args = list(bsym.args)
             args[3] = w_requires_grad
             args[4] = b_requires_grad
             bsym.args = tuple(args)
+        updated_bw_extrace.bound_symbols.append(bsym)
 
     for bsym in fw_extrace.bound_symbols:
         if "te_linear" in bsym.sym.name:
+            # Update the BoundSymbol to correctly pass the requires_grad flags to the `TELinear` module.
             w_requires_grad, b_requires_grad = ctx_to_requires_grad[bsym.output[-1].name]
             args = list(bsym.args)
             args[-2] = w_requires_grad
             args[-1] = b_requires_grad
             bsym.args = tuple(args)
+        updated_fw_extrace.bound_symbols.append(bsym)
 
-    return fw_extrace, bw_extrace
+    updated_fw_extrace.set_provenance(TraceProvenance(f"TransformerEngine update weight and bias requires_grad pass"))
+    updated_bw_extrace.set_provenance(TraceProvenance(f"TransformerEngine update weight and bias requires_grad pass"))
+    return updated_fw_extrace, updated_bw_extrace
 
 
-def _transformer_engine_bwd_fp8_meta_sync(fw_extrace, bw_extrace):
+def _transformer_engine_bwd_fp8_meta_sync(fw_extrace, bw_extrace) -> tuple[TraceCtx, TraceCtx]:
+    fw_extrace, bw_extrace = _transformer_engine_set_requires_grad(fw_extrace, bw_extrace)
+
     # See doc of `_insert_bwd_fp8_meta_sync` for more details.
+    # `bw_extrace` is mutated in place.
     _insert_bwd_fp8_meta_sync(bw_extrace)
-
-    _transformer_engine_set_requires_grad(fw_extrace, bw_extrace)
+    return fw_extrace, bw_extrace
 
 
 def _insert_bwd_fp8_meta_sync(bw_extrace):
