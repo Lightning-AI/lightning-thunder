@@ -684,6 +684,33 @@ class FSDPDDPHybridTest(DistributedParallelTestCase):
             slice_size = rg.size(0) // 2
             assert_close(g, rg[slice_size * fsdp_rank : slice_size * (fsdp_rank + 1)])
 
+    @pytest.mark.skipif(torch.cuda.device_count() < 4, reason="Requires 4 devices")
+    def test_fsdp_ddp_plugin(self):
+        import torch, thunder
+        import torch.distributed
+        from thunder.plugins import FSDP
+        from torch.testing import assert_close
+
+        torch.manual_seed(1337)
+
+        mesh = torch.distributed.device_mesh.init_device_mesh("cuda", (2, 2), mesh_dim_names=("ddp", "fsdp"))
+
+        with torch.device("cuda"):
+            m = torch.nn.Sequential(torch.nn.Linear(256, 256), torch.nn.ReLU(), torch.nn.Linear(256, 256))
+            inp = torch.randn(4, 256)
+
+        plugin = FSDP(process_group=mesh)
+
+        jm = thunder.compile(m, plugins=[plugin])
+        res = jm(inp)
+        grads = torch.autograd.grad(res, jm.parameters(), go)
+        ref = m(inp)
+        ref_grads = torch.autograd.grad(ref, m.parameters(), go)
+        assert_close(res, ref)
+        for g, rg in zip(grads, ref_grads):
+            slice_size = rg.size(0) // 2
+            assert_close(g, rg[slice_size * fsdp_rank : slice_size * (fsdp_rank + 1)])
+
 
 common_utils.instantiate_parametrized_tests(FSDPDDPHybridTest)
 

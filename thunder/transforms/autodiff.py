@@ -10,7 +10,7 @@ from thunder.core.transforms import (
     recompute_saved_for_backward,
 )
 from thunder.core.proxies import ProxyTag
-from thunder.core.symbol import BoundSymbol
+from thunder.core.symbol import BoundSymbol, BoundSymbolTag
 from thunder.core.vjp_utils import make_aug_forward_and_backward
 from thunder.core.pytree import tree_map
 import thunder
@@ -18,7 +18,9 @@ import time
 
 
 def _should_recompute_bsym_in_backward(bsym):
-    return any((ProxyTag.RECOMPUTE_IN_BACKWARD in o.tags) for o in bsym.flat_proxy_outs)
+    return BoundSymbolTag.RECOMPUTE_IN_BACKWARD in bsym.tags or any(
+        (ProxyTag.RECOMPUTE_IN_BACKWARD in o.tags) for o in bsym.flat_proxy_outs
+    )
 
 
 # Transforms a trace by determining which grad transforms to call given the list of executors in priority order
@@ -40,7 +42,7 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
 
         def process_bsym(self, bsym: thunder.core.symbol.BoundSymbol) -> None:
             if bsym.sym is prims.python_return:
-                ########### BEGINNING of return handling (and putting the backward computation in the joint trace)
+                # BEGINNING of return handling (and putting the backward computation in the joint trace)
                 # This is big (and a bit messy):
                 # the return (of the input trace) signals the end of the forward processing
                 # all the backwards will have been put in self.collected_bw_part_syms
@@ -150,7 +152,7 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                 self.add_processed_bsyms([bsym.from_bsym()])
                 self.set_result(bsym.output)
                 return
-                ########### END of return handling (and putting the backward computation in the joint trace)
+                # END of return handling (and putting the backward computation in the joint trace)
 
             # we now handle various bound symbols by collecting augmented forward and backward symbols
 
@@ -168,12 +170,38 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                 function_arg_names = {a.name for a in bsym.flat_proxy_args}
 
                 for subsym in bsym.subsymbols:
+                    subsym.tags.add(BoundSymbolTag.RECOMPUTE_IN_BACKWARD)
                     for o in subsym.flat_proxy_outs:
                         if o.name not in function_arg_names:
                             o.tags.add(ProxyTag.RECOMPUTE_IN_BACKWARD)
 
                 # decompose
-                self.add_unprocessed_bsyms(bsym.subsymbols[:])
+                decomposed_bsyms = bsym.subsymbols[:]
+                # shallow copies that need to be not recomputed and need their output replaced.
+                for x in bsym.flat_proxy_outs:
+                    x.tags.discard(ProxyTag.RECOMPUTE_IN_BACKWARD)
+                    decomposed_bsyms.append(prims.shallow_copy.bind(x, output=x))
+
+                self.add_unprocessed_bsyms(decomposed_bsyms)
+                return
+
+            # here we do the copy for the args form above
+            if bsym.sym == prims.shallow_copy and bsym.output is bsym.args[0]:
+                # this is a bit of a hack in order to only replace the output,
+                # not the input
+                (a,) = bsym.args
+                a_inp = self.swap_map.get(thunder.core.proxies.variableify(a), a)
+                with thunder.core.trace.tracectx(self.new_trace):
+                    o = prims.shallow_copy(a_inp)
+                self.add_to_swap_map(a, o)
+                self.add_to_swap_map(a_inp, o)
+                self.write(a_inp, o)
+
+                self.new_trace.push_scope([])
+                with thunder.core.trace.tracectx(self.new_trace):
+                    prims.put_grad(a_inp, prims.get_grad(o))
+                backward_part_bsyms = self.new_trace.pop_scope()
+                self.collected_bw_part_bsyms.insert(0, backward_part_bsyms)
                 return
 
             # 3a. see if we have a grad_transform (e.g. from OperatorExecutor.register_grad_transform)
@@ -260,6 +288,10 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                 self.set_result(result)
                 new_bsyms = self.new_trace.pop_scope()
 
+                # Let the new bound symbols inherit tags, in particular RECOMPUTE_IN_BACKWARD
+                for nbsym in new_bsyms:
+                    nbsym.tags |= bsym.tags
+
                 # simple splitting: only compute in forward what is needed for the output
                 forward_part_proxy_names = {
                     o.name for o in thunder.core.pytree.tree_iter(result) if isinstance(o, thunder.Proxy)
@@ -292,6 +324,11 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
 
             # TODO: check if this is needed: the old impl checked whether len(bsym.subsymbols) > 0 except for the special case "torch.nn.functional.dropout" with p=0...
             # add the decomposition (= the subsymbols) to the front of the symbols to be processed
+
+            # Let the decomposition inherit tags, in particular RECOMPUTE_IN_BACKWARD
+            for nbsym in bsym.subsymbols:
+                nbsym.tags |= bsym.tags
+
             self.add_unprocessed_bsyms(bsym.subsymbols[:])
 
             # end of 4 and end of the bsym processing loop.
@@ -500,7 +537,6 @@ def split_into_forward_and_backward(joint_trace):
 def forward_and_backward_from_trace(trace: thunder.core.trace.TraceCtx, torch_autograd=False) -> ForwardBackwardTraces:
     if not torch_autograd:
         return thunder.core.transforms.forward_and_backward_from_trace(trace, torch_autograd=torch_autograd)
-
     joint_trace = grad_transform_on_trace(trace)
 
     forward_trace, backward_trace = split_into_forward_and_backward(joint_trace)
