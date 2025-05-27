@@ -133,8 +133,8 @@ class FSDPTest(DistributedParallelTestCase):
         #       in the original trace and are inputs to all_gather, the unshard are the outputs fo the corresponding wait
         #       If you fix this to be dynamically discerned, you'll be my hero.
         sharded_param_names = ("t_net1_weight", "t_net2_weight")
-        # t30 and t84 are all-gather'ed t_net1_weight and t_net2_weight, respectively.
-        unshard_param_names = ("t30", "t84")
+        # t103 and t107 are all-gather'ed t_net1_weight and t_net2_weight, respectively.
+        unshard_param_names = ("t103", "t107")
         result_saved_for_bwd = [x.name for x in fwd_trc.bound_symbols[-1].args[1][0]]
         self.assertTrue(all(t not in sharded_param_names for t in result_saved_for_bwd))
         self.assertTrue(all(t in result_saved_for_bwd for t in unshard_param_names))
@@ -145,9 +145,10 @@ class FSDPTest(DistributedParallelTestCase):
 
         # check allgather is inserted in backward trace
         from thunder.distributed.prims import PrimIDs
+        from thunder.executors.torchex import all_gather_prim_impl
 
         self.assertTrue(all(bsym.sym.id != PrimIDs.ALL_GATHER for bsym in bwd_trc.bound_symbols))
-        self.assertTrue(any(bsym.sym.id == PrimIDs.ALL_GATHER for bsym in result_bwd_trc.bound_symbols))
+        self.assertTrue(any(bsym.sym.id == all_gather_prim_impl.id for bsym in result_bwd_trc.bound_symbols))
 
     @pytest.mark.xfail(strict=True, reason="This is not updated yet for joint forward-backward trace")
     @common_utils.parametrize(
