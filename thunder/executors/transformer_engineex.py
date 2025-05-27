@@ -441,6 +441,10 @@ def _create_fp8_linear_bound_symbol(
         _bind_postprocess=bind_postprocess,
         tags=(prims.OpTags.DONT_RECOMPUTE_IN_BACKWARD,),
     )
+
+    # Value for `weight_requires_grad` and `bias_requires_grad` are default.
+    # The correct values are set by looking at the backward trace.
+    # See NOTE: Implementation of _transformer_engine_set_requires_grad
     bsym = sym.bind(
         a, w, b, True, True if b is not None else False, output=meta_fn(a, w, b, True, True if b is not None else False)
     )
