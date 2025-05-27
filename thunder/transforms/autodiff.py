@@ -423,11 +423,11 @@ def split_into_forward_and_backward(joint_trace: TraceCtx):
             continue
 
         # copy_ updating a forward proxy is special regardless of the output
-        # if bsym.sym == prims.copy_ and bsym.args[1].name in forward_proxy_names:
-        #     # todo: should we also handle ltorch.copy_ ?
-        #     forward_part_bsyms.insert(0, bsym.from_bsym())
-        #     forward_proxy_names.update(a.name for a in bsym.flat_proxy_args)
-        #     continue
+        if bsym.sym == prims.copy_ and bsym.args[1].name in forward_proxy_names:
+            # todo: should we also handle ltorch.copy_ ?
+            forward_part_bsyms.insert(0, bsym.from_bsym())
+            forward_proxy_names.update(a.name for a in bsym.flat_proxy_args)
+            continue
 
         # if we don't need to have it in the forward, it is part of the backward
         backward_part_bsyms.insert(0, bsym.from_bsym())
