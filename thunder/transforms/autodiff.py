@@ -54,8 +54,7 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                 # - put_grad "writes" a computed gradients (similar to returning the "grad_in" in torch.autograd.Function)
                 # The backward computation in self.collected_bw_part_syms is in the order of the
                 # backward computation.
-                #
-                input_proxy_names = {p.name for p in bsym.args[0]["flat_args"] if isinstance(p, thunder.Proxy)}
+
                 output_proxy_names = set()
                 for o in tree_iter(bsym.args[0]["output"]):
                     if isinstance(o, Proxy):
@@ -92,10 +91,11 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                                     self.add_processed_bsyms(self.new_trace.pop_scope())
 
                                 if current_grad is not None:
-                                    new_grad = self.add_bsyms_from_function(thunder.torch.add, current_grad, new_grad)
+                                    new_grad = self.add_bsyms_from_function(ltorch.add, current_grad, new_grad)
 
                                 grad_proxy_map[p.name] = new_grad
                                 self.write(new_grad, new_grad)
+
                             elif nbsym.sym == prims.get_grad:
                                 # get grad reads a gradient, this could be
                                 # - the gradient of an intermediate (possibly combined with an output) form put_grad above
@@ -118,7 +118,7 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                                     # do we also need to map?
                                     self.write(nbsym.output, current_grad)
                                     # replace_output_with_current_grad
-                                    self.swap_map[thunder.core.proxies.variableify(nbsym.output)] = current_grad
+                                    self.swap_map[variableify(nbsym.output)] = current_grad
                                 elif name in output_proxy_names:
                                     # output here???
                                     new_bsym = nbsym.from_bsym()
@@ -126,7 +126,7 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                                     grad_proxy_map[name] = new_bsym.output
                                 else:
                                     # TODO: mark this? if all inputs to the backward formula are unused, we would not want to compute it.
-                                    new_bsym = thunder.torch.zeros.bind(
+                                    new_bsym = ltorch.zeros.bind(
                                         *p.shape, device=p.device, dtype=p.dtype, output=nbsym.output
                                     )
                                     self.add_processed_bsyms([new_bsym])
@@ -335,15 +335,16 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
     start_time_ns = time.perf_counter_ns()
 
     # run the trace through the processor
-    trace, _ = AugmentedForwardProcessor(trace)()
+    joint_trace, _ = AugmentedForwardProcessor(trace)()
+
     # run through DCE in case some of the gradients of intermediates are not needed.
-    trace = dce(trace)
+    joint_trace = dce(joint_trace)
 
     end_time_ns = time.perf_counter_ns()
     elapsed_time_ns = end_time_ns - start_time_ns
     elapsed_time_millis = elapsed_time_ns // 1000000
-    trace.set_provenance(TraceProvenance(f"Grad transform pass (took {elapsed_time_millis} milliseconds)"))
-    return trace
+    joint_trace.set_provenance(TraceProvenance(f"Grad transform pass (took {elapsed_time_millis} milliseconds)"))
+    return joint_trace
 
 
 def split_into_forward_and_backward(joint_trace: TraceCtx):
@@ -390,6 +391,11 @@ def split_into_forward_and_backward(joint_trace: TraceCtx):
         if bsym.sym == prims.python_return:  # we will re-do the return statements below, so we skip it here
             continue
 
+        # get grad is always part of the input, record the grad_out (will be part of the "cotangents" list)
+        if bsym.sym == prims.get_grad:
+            grad_outs[output_pos[bsym.args[0].name]] = bsym.output
+            continue
+
         # unpack_trivial is always a (forward trace) argument, the backward inputs are from get_grad
         # anything that outputs something needed for the forward (the forward_proxy_names) is part of the forward
         if any((o.name in forward_proxy_names) for o in bsym.flat_proxy_outs) or bsym.sym == prims.unpack_trivial:
@@ -405,11 +411,6 @@ def split_into_forward_and_backward(joint_trace: TraceCtx):
                 bsym_rec = (bsym.from_bsym(), bsym_out_names)
                 backward_part_bsyms_recomputed.update((n, bsym_rec) for n in bsym_out_names)
 
-            continue
-
-        # get grad is always part of the input, record the grad_out (will be part of the "cotangents" list)
-        if bsym.sym == prims.get_grad:
-            grad_outs[output_pos[bsym.args[0].name]] = bsym.output
             continue
 
         # copy_ updating a forward proxy is special regardless of the output
@@ -452,8 +453,8 @@ def split_into_forward_and_backward(joint_trace: TraceCtx):
     saved_for_backward_other = [p for p in saved_for_backward.values() if not isinstance(p, TensorProxy)]
 
     # we build the forward trace
-    forward_trace = thunder.core.trace.from_trace(joint_trace)
-    forward_trace.tags.add(thunder.core.trace.TraceTag.AUGMENTED_FORWARD)
+    forward_trace = from_trace(joint_trace)
+    forward_trace.tags.add(TraceTag.AUGMENTED_FORWARD)
     forward_trace.names = forward_trace.names.copy()  ## ehem
     forward_trace.bound_symbols += forward_part_bsyms
 
@@ -467,7 +468,7 @@ def split_into_forward_and_backward(joint_trace: TraceCtx):
     def backward_fn(saved_for_backward, cotangents):
         pass
 
-    backward_trace = thunder.core.trace.TraceCtx(fn=backward_fn)
+    backward_trace = TraceCtx(fn=backward_fn)
     backward_trace.names = forward_trace.names
     backward_trace.name_ctr = forward_trace.name_ctr
 
@@ -507,6 +508,7 @@ def split_into_forward_and_backward(joint_trace: TraceCtx):
 def forward_and_backward_from_trace(trace: TraceCtx, torch_autograd=False) -> ForwardBackwardTraces:
     if not torch_autograd:
         from thunder.core.transforms import forward_and_backward_from_trace as legacy_autograd
+
         return legacy_autograd(trace, torch_autograd=torch_autograd)
     joint_trace = grad_transform_on_trace(trace)
 
