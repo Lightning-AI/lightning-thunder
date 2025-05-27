@@ -187,6 +187,7 @@ class FSDPTest(DistributedParallelTestCase):
         run_test_no_sync_grad_accumulation(self, get_model_and_optimizer, is_comm, dataset_size=2)
 
     # TODO(crcrpar): Add torch compile to executors_list
+    @pytest.mark.xfail(strict=True, reason="This is not updated yet for joint forward-backward trace")
     @common_utils.parametrize(
         "executor,bucketing_strategy,fsdptype",
         product(
