@@ -85,7 +85,7 @@ def test_torch_compile_cat_rope_single_fusion():
 
     backward_execution_trace = thunder.last_backward_traces(jfn)[-1]
     assert len(get_fusions(backward_execution_trace)) == 1
-    assert len(backward_execution_trace.bound_symbols) == 17
+    assert len(backward_execution_trace.bound_symbols) == 14
 
 
 @pytest.mark.skipif(not is_inductor_supported() or platform.system() == "Windows", reason="inductor unsupported")

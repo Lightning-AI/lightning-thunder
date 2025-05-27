@@ -3,6 +3,7 @@ from thunder.core.transforms import ForwardBackwardTraces
 
 from thunder.core import prims, utils
 from thunder.core.transforms import (
+    dce,
     is_constant_for_vjp,
     _get_gradfn_and_executor,
     augmented_forward_impls,
@@ -529,6 +530,7 @@ def split_into_forward_and_backward(joint_trace):
     with thunder.core.trace.tracectx(backward_trace):
         prims.python_return(tuple(return_bsym.args[0]["grad_flat_args"]))
 
+    backward_trace = dce(backward_trace)
     return forward_trace, backward_trace
 
 
