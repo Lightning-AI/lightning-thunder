@@ -341,7 +341,7 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
     # run through DCE in case some of the gradients of intermediates are not needed.
     trace = thunder.core.transform_common.dce(trace)
     # group get_grad symbols together for torch compile fusions
-    # !!! is it preferrable to do this here or in the torch compile fusion pass?
+    # !!! is it preferable to do this here or in the torch compile fusion pass?
     _group_get_grad_bsyms(trace)
 
     end_time_ns = time.perf_counter_ns()
