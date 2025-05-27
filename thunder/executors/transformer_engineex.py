@@ -219,6 +219,8 @@ class TELinear(TransformerEngineBaseModule):
                 grad_input_quantizer,
             ) = self._get_quantizers(is_grad_enabled)
 
+            input_quantizer.internal = True
+
             ctx = Context() if is_grad_enabled else None
 
             import inspect
