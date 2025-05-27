@@ -399,7 +399,10 @@ class FSDPTest(DistributedParallelTestCase):
         assert model.buf.device.type == "cuda"
 
     # This is not updated yet for joint forward-backward trace
-    @common_utils.decorateIf(unittest.expectedFailure, lambda params: params["bucketing_strategy"] in (FSDPBucketingStrategy.LAYER, FSDPBucketingStrategy.BLOCK))
+    @common_utils.decorateIf(
+        unittest.expectedFailure,
+        lambda params: params["bucketing_strategy"] in (FSDPBucketingStrategy.LAYER, FSDPBucketingStrategy.BLOCK),
+    )
     @common_utils.parametrize(
         "executor,bucketing_strategy,fsdptype",
         product(

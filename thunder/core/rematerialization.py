@@ -514,6 +514,7 @@ def rematerialize_all_gather(fw_trace: TraceCtx, bw_trace: TraceCtx) -> tuple[Tr
         _update_backward_with_new_saved_for_backward,
         _update_forward_with_new_saved_for_backward,
     )
+
     _update_backward_with_new_saved_for_backward(new_bw_trace, new_required_for_backward)
 
     new_fw_trace = from_trace(fw_trace)
