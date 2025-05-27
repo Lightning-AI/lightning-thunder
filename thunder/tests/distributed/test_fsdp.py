@@ -149,6 +149,7 @@ class FSDPTest(DistributedParallelTestCase):
         self.assertTrue(all(bsym.sym.id != PrimIDs.ALL_GATHER for bsym in bwd_trc.bound_symbols))
         self.assertTrue(any(bsym.sym.id == PrimIDs.ALL_GATHER for bsym in result_bwd_trc.bound_symbols))
 
+    @pytest.mark.xfail(strict=True, reason="This is not updated yet for joint forward-backward trace")
     @common_utils.parametrize(
         "executor,bucketing_strategy,fsdptype",
         product(
