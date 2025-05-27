@@ -948,12 +948,17 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
     with tracectx(trace_of_forward):
         prims.python_return(*(sequencify(output)))
 
+    from thunder.core.update_aliases import insert_alias_updates
+
+    alias_tensor_indices = [[i] for i in range(len(trace_of_forward.args))]
+    aliased_trace_of_forward = insert_alias_updates(trace_of_forward, alias_tensor_indices)
+
     # See NOTE: `autograd_function_apply` and `no_grad` interaction for details about
     # `thunder.torch.call_higher_order_function_and_consider_outer_autograd_setting`
     @wraps(aug_fwd_trace.python_callable())
     @thunder.torch.call_higher_order_function_and_consider_outer_autograd_setting
     def forward(*args, **kwargs):
-        return interpret_trace(trace_of_forward, *args, **kwargs)
+        return interpret_trace(aliased_trace_of_forward, *args, **kwargs)
 
     grads = sequencify(tree_map(lambda t: TensorProxy(like=t), sequencify(output)))
     bwd_tensor_args = grads + tuple(saved_values)
@@ -974,6 +979,11 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
     ]
     bwd_trace.bound_symbols = bwd_unpack_bsyms + bwd_trace.bound_symbols
 
+    from thunder.core.update_aliases import insert_alias_updates
+
+    alias_tensor_indices = [[i] for i in range(len(bwd_trace.args))]
+    aliased_bwd_trace = insert_alias_updates(bwd_trace, alias_tensor_indices)
+
     @wraps(forward)
     def grad_transform(*args, **kwargs):
         from thunder.core.transforms import get_grad, put_grads
@@ -981,12 +991,12 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
         primal, residuals = interpret_trace(aug_fwd_trace, *args, **kwargs)
         grads = tree_map(lambda t: get_grad(t), sequencify(primal))
         bwd_args = (None,) + tuple(grads) + tuple(sequencify(residuals))
-        result = interpret_trace(bwd_trace, *bwd_args)
+        result = interpret_trace(aliased_bwd_trace, *bwd_args)
         put_grads(args[1:], result)
 
         return primal
 
-    forward_op = get_jit_ctx().ad_hoc_executor.register_operator(trace_of_forward._siginfo.name, like=forward)
+    forward_op = get_jit_ctx().ad_hoc_executor.register_operator(aliased_trace_of_forward._siginfo.name, like=forward)
     unwrapped_output = forward_op(*unwrapped_fwd_args)
     output = wrap(
         unwrapped_output, provenance=ProvenanceRecord(PseudoInst.LOOKASIDE, inputs=[fwd.provenance, aug_fwd_provenance])
