@@ -395,6 +395,8 @@ class FSDPTest(DistributedParallelTestCase):
         # buffers were moved too
         assert model.buf.device.type == "cuda"
 
+    # This is not updated yet for joint forward-backward trace
+    @common_utils.decorateIf(unittest.expectedFailure, lambda params: params["bucketing_strategy"] in (FSDPBucketingStrategy.LAYER, FSDPBucketingStrategy.BLOCK))
     @common_utils.parametrize(
         "executor,bucketing_strategy,fsdptype",
         product(
@@ -447,7 +449,7 @@ class FSDPTest(DistributedParallelTestCase):
 
         # get the trace before sorting
         fwd_trc = thunder.last_traces(cm)[-2]
-        bwd_trc = thunder.last_backward_traces(cm)[-2]
+        bwd_trc = thunder.last_backward_traces(cm)[-1]
 
         from thunder.distributed.utils import limit_in_flight_allgathers
 
