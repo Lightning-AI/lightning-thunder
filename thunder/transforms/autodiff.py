@@ -149,8 +149,17 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                     else:
                         grad_flat_args.append(None)
 
-                bsym.args[0]["grad_flat_args"] = grad_flat_args
-                self.add_processed_bsyms([bsym.from_bsym()])
+                # Store the outputs from the forward trace in fw_flat_out what will be used in
+                # the split logic to create the return for the forward trace.
+                new_return_args = {
+                    **bsym.args[0],
+                    "fw_flat_out": bsym.args[0]["output"],
+                    "output": tuple(grad_flat_args),
+                }
+
+                new_return_bsym = bsym.from_bsym(args=(new_return_args,))
+                self.add_processed_bsyms([new_return_bsym])
+
                 self.set_result(bsym.output)
                 return
                 # END of return handling (and putting the backward computation in the joint trace)
@@ -370,7 +379,7 @@ def split_into_forward_and_backward(joint_trace: TraceCtx):
     # to "flat_args"
     return_bsym = joint_trace.bound_symbols[-1]
     assert return_bsym.sym == prims.python_return
-    fw_output = return_bsym.args[0]["output"]
+    fw_output = return_bsym.args[0]["fw_flat_out"]
     assert isinstance(fw_output, tuple)
 
     grad_outs = [None for _ in fw_output]
@@ -380,7 +389,7 @@ def split_into_forward_and_backward(joint_trace: TraceCtx):
     forward_proxy_names = {o.name for o in tree_iter(fw_output) if isinstance(o, Proxy)}
     # we also have the inputs available, so we add flat_args.
     # for inplace, we need to update this (or have flat args be the right thing?...)
-    forward_proxy_names.update(a.name for a in return_bsym.args[0]["flat_args"] if isinstance(a, thunder.Proxy))
+    forward_proxy_names.update(a.name for a in return_bsym.args[0]["flat_args"] if isinstance(a, Proxy))
 
     # We keep track of the names of proxies we recompute in the backward as those will not need to be part of the
     # ones saved in the forward for the backward
@@ -459,6 +468,10 @@ def split_into_forward_and_backward(joint_trace: TraceCtx):
     forward_trace.bound_symbols += forward_part_bsyms
 
     # now we create the return value and return bound symbol for the forward
+    fw_output_dict = {k: v for k, v in return_bsym.args[0].items() if k != "fw_flat_out"}
+    # replace the backward output with the forward one for the forward trace
+    fw_output_dict.update({"output": return_bsym.args[0]["fw_flat_out"]})
+
     flat_output, _ = tree_flatten_with_dataclass(fw_output)
     fw_output_dict["flat_output"] = tuple(flat_output)
     with tracectx(forward_trace):
@@ -500,7 +513,7 @@ def split_into_forward_and_backward(joint_trace: TraceCtx):
 
     # and finally the backward return statement
     with tracectx(backward_trace):
-        prims.python_return(tuple(return_bsym.args[0]["grad_flat_args"]))
+        prims.python_return(tuple(return_bsym.args[0]["output"]))
 
     return forward_trace, backward_trace
 
