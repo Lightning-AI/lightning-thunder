@@ -824,6 +824,11 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     trace_of_augmented_fwd._siginfo = SigInfo.from_name_and_args(custom_fwd_sym.name, unwrapped_custom_forward_args)
     trace_of_augmented_fwd.args = unwrapped_custom_forward_args
 
+    from thunder.core.update_aliases import insert_alias_updates
+
+    alias_tensor_indices = [[i] for i in range(len(trace_of_augmented_fwd.args))]
+    aliased_trace_of_augmented_fwd = insert_alias_updates(trace_of_augmented_fwd, alias_tensor_indices)
+
     # Backward definition
     custom_backward = custom_autograd_function_cls.backward
     grads = tree_map(
@@ -855,9 +860,12 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     )
     bwd_trace_impl.args = tuple(ctx_proxy.saved_consts + ctx_proxy.saved_tensors + grads)
 
+    alias_tensor_indices = [[i] for i in range(len(bwd_trace_impl.args))]
+    aliased_bwd_trace_impl = insert_alias_updates(bwd_trace_impl, alias_tensor_indices)
+
     @wraps(bwd_trace_impl.python_callable())
     def bwd_impl_callable(*args, **kwargs):
-        return thunder.core.trace_interpreter.interpret_trace(bwd_trace_impl, *args, **kwargs)
+        return thunder.core.trace_interpreter.interpret_trace(aliased_bwd_trace_impl, *args, **kwargs)
 
     @wraps(core_of_forward)
     def grad_transform(*args, **kwargs):
@@ -866,7 +874,7 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
         from thunder.core.trace_interpreter import interpret_trace
 
         check(not kwargs, lambda: f"{kwargs=} should be empty")
-        primal, residuals = interpret_trace(trace_of_augmented_fwd, *args, **kwargs)
+        primal, residuals = interpret_trace(aliased_trace_of_augmented_fwd, *args, **kwargs)
         check(len(primal) == 1, lambda: f"{primal=} has {len(primal)} proxies but expected 1")
         grads = tree_map(lambda t: get_grad(t), primal)
         bwd_args = ctx_proxy.saved_consts + tuple(sequencify(residuals)) + grads
