@@ -397,7 +397,7 @@ def _make_subkey_for(x: Any) -> tuple[bool, None | tuple]:
 
     if isinstance(x, TensorProxy):
         # calling _shape instead shape to avoid leaving a prims.shape in the trace
-        return True, (type(x), x._shape, x.device, x.dtype, x.requires_grad)
+        return True, (type(x), x._shape, x.device, x.dtype, getattr(x, "requires_grad", False))
 
     # TODO Add NumPy ndarray support
     if isinstance(x, np.ndarray):
