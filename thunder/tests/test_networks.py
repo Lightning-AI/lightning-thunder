@@ -541,10 +541,12 @@ def test_hf_llama():
     # changes this to fewer as needed, the goal is to not have too many fusions
     assert len(get_fusion_symbols(thunder.last_traces(jm)[-1])) == 6
 
-
+# Both attn implementation have almost same memory requirements
+# Default - 3596010496
+# eager - 3596534784
 @requiresCUDA
 @requiresDeviceMemory(required_memory_bytes=int(3.6 * 1024 * 1024 * 1024))
-@pytest.mark.parametrize("attn_implementation", [None, "sdpa"])
+@pytest.mark.parametrize("attn_implementation", [None, "eager"])
 def test_hf_phi3_vision(attn_implementation):
     # This test takes around 3597163520 bytes (~3.59GB) of memory.
     # Shapes for data generated with help of the following script
