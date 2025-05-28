@@ -357,7 +357,9 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
     end_time_ns = time.perf_counter_ns()
     elapsed_time_ns = end_time_ns - start_time_ns
     elapsed_time_millis = elapsed_time_ns // 1000000
-    joint_trace.set_provenance(thunder.core.trace.TraceProvenance(f"Grad transform pass (took {elapsed_time_millis} milliseconds)"))
+    joint_trace.set_provenance(
+        thunder.core.trace.TraceProvenance(f"Grad transform pass (took {elapsed_time_millis} milliseconds)")
+    )
     return joint_trace
 
 
