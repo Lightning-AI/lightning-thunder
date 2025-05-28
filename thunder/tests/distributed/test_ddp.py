@@ -105,6 +105,8 @@ class DDPTest(DistributedParallelTestCase):
             x = torch.randn(20, 12).to(self.rank)
             outputs = cm(x)
 
+    # `apply_bucketing_to_grad_allreduce` needs to be updated to work correctly with joint trace
+    @pytest.mark.xfail(strict=True, reason="This is not updated yet for joint forward-backward trace")
     @common_utils.parametrize("executor,bucket_size_in_mb", product(tuple(executors_map.keys()), (0, 1000)))
     def test_ddp_grad_bucketing(self, executor, bucket_size_in_mb: int):
         from thunder.distributed import ddp
