@@ -389,7 +389,7 @@ def split_into_forward_and_backward(joint_trace: TraceCtx):
     forward_proxy_names = {o.name for o in tree_iter(fw_output) if isinstance(o, Proxy)}
     # we also have the inputs available, so we add flat_args.
     # for inplace, we need to update this (or have flat args be the right thing?...)
-    forward_proxy_names.update(a.name for a in return_bsym.args[0]["flat_args"] if isinstance(a, thunder.Proxy))
+    forward_proxy_names.update(a.name for a in return_bsym.args[0]["flat_args"] if isinstance(a, Proxy))
 
     # We keep track of the names of proxies we recompute in the backward as those will not need to be part of the
     # ones saved in the forward for the backward
