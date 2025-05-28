@@ -541,6 +541,7 @@ def test_hf_llama():
     # changes this to fewer as needed, the goal is to not have too many fusions
     assert len(get_fusion_symbols(thunder.last_traces(jm)[-1])) == 6
 
+
 # Both attn implementation have almost same memory requirements
 # Default - 3596010496
 # eager - 3596534784
