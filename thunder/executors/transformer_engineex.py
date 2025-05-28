@@ -219,8 +219,6 @@ class TELinear(TransformerEngineBaseModule):
                 grad_input_quantizer,
             ) = self._get_quantizers(is_grad_enabled)
 
-            input_quantizer.internal = True
-
             ctx = Context() if is_grad_enabled else None
 
             import inspect
@@ -292,7 +290,7 @@ class TELinear(TransformerEngineBaseModule):
         grad_output_quantizer = None
         output_quantizer = None
         input_quantizer = self.quantizers["scaling_fwd"][tex.FP8FwdTensors.GEMM1_INPUT]
-        input_quantizer.internal = False
+        input_quantizer.internal = True
         weight_quantizer = self.quantizers["scaling_fwd"][tex.FP8FwdTensors.GEMM1_WEIGHT]
         weight_quantizer.internal = True
         if fp8_output:
