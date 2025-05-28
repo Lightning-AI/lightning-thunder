@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from thunder.core.trace import TraceCtx as Trace
     from os import PathLike
     from collections.abc import Callable
+    from thunder.core.trace import TraceCtx as Trace
 
 
 _DEFAULT_THUNDER_FUSION_TYPE = "dataflow"

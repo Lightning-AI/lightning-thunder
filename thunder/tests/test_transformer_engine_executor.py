@@ -13,20 +13,27 @@ from transformer_engine.common import recipe
 import transformer_engine.pytorch as te
 
 # FP8 is supported on compute arch 8.9 onwards.
+# MXFP8 is supported on compute arch 10.0 onwards.
 # Skip the tests if current hardware is not supported.
-is_supported, msg = te.fp8.check_fp8_support()
-if not is_supported:
-    pytest.skip(msg, allow_module_level=True)
+is_fp8_supported, msg_fp8 = te.fp8.check_fp8_support()
+is_mxfp8_supported, msg_mxfp8 = te.fp8.check_mxfp8_support()
+if not is_fp8_supported:
+    pytest.skip(msg_fp8, allow_module_level=True)
 
-hybrid_fp8_recipe = recipe.DelayedScaling(fp8_format=recipe.Format.HYBRID)
+hybrid_fp8_delayed_scaling_recipe = recipe.DelayedScaling()
+mxfp8_e4m3_recipe = recipe.MXFP8BlockScaling()
 
 # `None` is used to test the default recipe.
-recipes = (None, hybrid_fp8_recipe)
+recipes = (None, hybrid_fp8_delayed_scaling_recipe, mxfp8_e4m3_recipe)
+recipe_ids = ("default", "delayed_scaling", "mxfp8_e4m3")
 
 
 @requiresCUDA
-@pytest.mark.parametrize("fp8_recipe", recipes)
-def test_te_linear_forward_backward(fp8_recipe):
+@pytest.mark.parametrize("fp8_recipe", recipes, ids=recipe_ids)
+def test_te_linear_forward_backward(fp8_recipe: recipe.Recipe):
+    if fp8_recipe and not (fp8_recipe.delayed() or is_mxfp8_supported):
+        pytest.skip(msg_mxfp8)
+
     # Test Description:
     # Verify that `torch.nn.functional.linear` is replaced with `te_linear_*`
     # and the output as well as the gradients match for thunder compiled code.
@@ -79,8 +86,11 @@ def test_te_linear_forward_backward(fp8_recipe):
 
 
 @requiresCUDA
-@pytest.mark.parametrize("fp8_recipe", recipes)
+@pytest.mark.parametrize("fp8_recipe", recipes, ids=recipe_ids)
 def test_te_linear_forward_backward_multiple_iteration(fp8_recipe):
+    if fp8_recipe and not (fp8_recipe.delayed() or is_mxfp8_supported):
+        pytest.skip(msg_mxfp8)
+
     # Test Description:
     # In this test, we verify whether a model using TransformerEngine Linear
     # and transformer_engine executor converge to same state.

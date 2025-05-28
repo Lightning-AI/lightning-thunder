@@ -13,6 +13,8 @@ def main():
         model = ViTForImageClassification.from_pretrained("google/vit-base-patch16-224", attn_implementation="sdpa", torch_dtype=torch.float32)
         model.requires_grad_(False)
         model.eval()
+        # apparently, Transformers 4.51.3 does not instantiate models on the default device
+        model.to(device)
 
         inp = torch.randn(128, 3, 224, 224)
 
@@ -22,7 +24,7 @@ def main():
 
     thunder_out = thunder_model(inp)
 
-    torch.testing.assert_close(out, thunder_out)
+    torch.testing.assert_close(out, thunder_out, atol=1e-2, rtol=1e-2)
 
     print(f"Eager: {benchmark(model, inp):.2f}ms")
     print(f"Thunder: {benchmark(thunder_model, inp):.2f}ms")

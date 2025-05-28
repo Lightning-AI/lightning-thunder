@@ -49,8 +49,7 @@ For **performance experts**, Thunder is the most ergonomic framework for underst
 <div align="center">
   <div style="text-align: center;">
     <a target="_blank" href="#quick-start" style="margin: 0 10px;">Quick start</a> •
-    <a target="_blank" href="#featured-examples" style="margin: 0 10px;">Examples</a> •
-    <a target="_blank" href="#features" style="margin: 0 10px;">Features</a> •
+    <a target="_blank" href="#examples" style="margin: 0 10px;">Examples</a> •
     <a target="_blank" href="#performance" style="margin: 0 10px;">Performance</a> •
     <!-- <a target="_blank" href="#hosting-options" style="margin: 0 10px;">Hosting</a> • -->
     <a target="_blank" href="https://lightning.ai/docs/thunder/latest/" style="margin: 0 10px;">Docs</a>
@@ -135,7 +134,7 @@ import torch.nn as nn
 model = nn.Sequential(nn.Linear(2048, 4096), nn.ReLU(), nn.Linear(4096, 64))
 ```
 
-Optimize it with thunder:
+Optimize it with Thunder:
 
 ```python
 import thunder
@@ -282,6 +281,30 @@ out = model(inp)
 thunder_model = thunder.compile(model)
 
 out = thunder_model(inp)
+```
+
+### Benchmarking HF models
+
+The script `examples/quickstart/hf_benchmarks.py` demonstrates how to benchmark a model for text generation, forward pass, forward pass with loss, and a full forward + backward computation.
+
+On an H100 with torch=2.7.0 and nvfuser-cu126-torch27, running deepseek-ai/DeepSeek-R1-Distill-Llama-1.5B, the thunder executors (NVFuser and torch.compile) achieve the following speedups:
+
+```
+Text generation:
+Thunder (nvfuser): 3.36× faster
+Thunder (torch.compile): 3.42× faster
+
+Forward pass:
+Thunder (nvfuser): 1.51× faster
+Thunder (torch.compile): 1.63× faster
+
+Forward pass + loss:
+Thunder (nvfuser): 1.55× faster
+Thunder (torch.compile): 1.64× faster
+
+Forward + backward:
+Thunder (nvfuser): 1.51× faster
+Thunder (torch.compile): 1.69× faster
 ```
 
 ## Plugins

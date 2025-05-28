@@ -466,6 +466,7 @@ def add_transform(
         sharp_edges=cd.sharp_edges,
         # cache, interpretation?
         transforms=transforms,
+        debug_options=cd.debug_options,
         disable_torch_autograd=cd.disable_torch_autograd_support or disable_torch_autograd_support,
         **cd.compile_options,
     )
@@ -1027,6 +1028,23 @@ def _exp_prim_grad(a: Number | TensorProxy) -> Number | TensorProxy:
 
 
 register_grad(pids.EXP, _exp_prim_grad)
+
+
+def _frexp_prim_grad(a: Number | TensorProxy):
+    fwd = prims.frexp(a)
+    mantissa, exponent = fwd
+
+    g_mantissa = get_grad(mantissa)
+
+    a_grad = g_mantissa / exponent.exp2()
+    a_grad = a_grad.masked_fill(~prims.isfinite(a_grad), 0.0)
+
+    put_grad(a, a_grad)
+
+    return fwd
+
+
+register_grad(pids.FREXP, _frexp_prim_grad)
 
 
 def _log_prim_grad(a: Number | TensorProxy) -> Number | TensorProxy:
@@ -1830,8 +1848,9 @@ def pad_backward(a, padding_config, g):
 
     # Un-pad by padding with zero values
     zero_padding_config = [(-lo, -hi, 0) for lo, hi, _ in padding_config]
+    zero_value = dtypes.dtype_to_numbertype(g.dtype)(0)
 
-    g = prims.pad(g, 0.0, zero_padding_config)
+    g = prims.pad(g, zero_value, zero_padding_config)
 
     # Un-slice by slicing with a stride of value (dilation + 1)
     for dim, (_, _, d) in enumerate(padding_config):
@@ -2246,9 +2265,8 @@ def split_backward(dim, dtype, device, out_shapes, *grads):
     return cat(grads, dim)
 
 
-@register_augmented_forward("torch.nn.functional.embedding")
-def embedding_aug_fwd(
-    a: Proxy,
+def _embedding_grad(
+    idx: Proxy,
     weight: Proxy,
     padding_idx: int | None,
     max_norm: float | None,
@@ -2256,10 +2274,10 @@ def embedding_aug_fwd(
     scale_grad_by_freq: bool,
     sparse: bool,
 ) -> VJPDual:
-    from thunder.torch import embedding
+    from thunder.torch import embedding, embedding_backward
 
-    primal = embedding(
-        a,
+    out = embedding(
+        idx,
         weight,
         padding_idx=padding_idx,
         max_norm=max_norm,
@@ -2267,17 +2285,14 @@ def embedding_aug_fwd(
         scale_grad_by_freq=scale_grad_by_freq,
         sparse=sparse,
     )
-    residuals = (a, weight.shape[0], padding_idx, scale_grad_by_freq, sparse)
-    return VJPDual(primal, residuals)
-
-
-@register_backward("torch.nn.functional.embedding")
-def embedding_backward(a, num_weights, padding_idx, scale_grad_by_freq, sparse, g):
-    from thunder.torch import embedding_backward
-
     padding_idx = -1 if padding_idx is None else padding_idx
-    gweight = embedding_backward(g, a, num_weights, padding_idx, scale_grad_by_freq, sparse)
-    return gweight
+    g_out = get_grad(out)
+    g_weight = embedding_backward(g_out, idx, weight.shape[0], padding_idx, scale_grad_by_freq, sparse)
+    put_grad(weight, g_weight)
+    return out
+
+
+register_grad("torch.nn.functional.embedding", _embedding_grad)
 
 
 @register_augmented_forward("torch.cumsum")
@@ -2596,7 +2611,7 @@ def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
                 # as required by LoRA.
                 from thunder.distributed.prims import all_gather
 
-                a, group = symbol.args
+                a, group, _ = symbol.args
                 primals = all_gather(a, group, True).wait()
             else:
                 primals = symbol_to_eval(symbol)(*args, **kwargs)
@@ -2839,7 +2854,7 @@ def backward_pass(forward_env, trace, init_cotangents):
                         put_grad(symbol.args[i], result.get(k, None))
             continue
 
-        if not isinstance(result, Sequence):
+        if not isinstance(result, tuple):
             result = (result,)
 
         def is_differentiable(arg):
