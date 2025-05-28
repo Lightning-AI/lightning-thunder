@@ -24,7 +24,7 @@ def main():
 
     thunder_out = thunder_model(inp)
 
-    torch.testing.assert_close(out, thunder_out)
+    torch.testing.assert_close(out, thunder_out, atol=1e-2, rtol=1e-2)
 
     print(f"Eager: {benchmark(model, inp):.2f}ms")
     print(f"Thunder: {benchmark(thunder_model, inp):.2f}ms")

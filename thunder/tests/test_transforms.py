@@ -114,10 +114,6 @@ def test_materialization():
     assert_close(actual, expected, rtol=1e-2, atol=1e-2)
 
 
-@pytest.mark.skipif(
-    version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
-    reason="https://github.com/bitsandbytes-foundation/bitsandbytes/pull/1413",
-)
 @pytest.mark.skipif(not BITSANDBYTES_AVAILABLE, reason="`bitsandbytes` is not available")
 @requiresCUDA
 def test_quantization_on_meta():
@@ -191,10 +187,6 @@ def test_quantization_on_meta():
     assert_close(actual, actual2)
 
 
-@pytest.mark.skipif(
-    version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
-    reason="https://github.com/bitsandbytes-foundation/bitsandbytes/pull/1413",
-)
 @pytest.mark.skipif(not BITSANDBYTES_AVAILABLE, reason="`bitsandbytes` is not available")
 @requiresCUDA
 def test_nvfuser_cse():
@@ -299,10 +291,6 @@ def test_cudagraph_warmup_runs_with_correct_buffers():
     jf(weights)
 
 
-@pytest.mark.skipif(
-    version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
-    reason="https://github.com/bitsandbytes-foundation/bitsandbytes/pull/1413",
-)
 @pytest.mark.skipif(not BITSANDBYTES_AVAILABLE, reason="`bitsandbytes` is not available")
 @requiresCUDA
 def test_materialization_init():
@@ -419,6 +407,11 @@ def test_lora_transform_linear():
     original_model.load_state_dict(rename_state_dict, strict=False)
     litgpt_lora_output = original_model(x)
     assert_close(actual, litgpt_lora_output, atol=2e-1, rtol=2e-1)
+
+    tr = thunder.last_traces(jmodel)[-1]
+    flat_arg_names = [a.name for a in tr.bound_symbols[-1].args[0]["flat_args"]]
+    arg_names = [a.name for a in tr.args]
+    assert flat_arg_names == arg_names
 
 
 def test_constant_folding():
@@ -560,6 +553,7 @@ def test_cudagraph_fw_bw():
     after_snapshot = torch.cuda.memory_snapshot()
 
     # Ensure all saved for backwards tensors are marked as static inputs
+    # the grad_out and idx will not be in a static mem location, all others should be
     assert all(cg_transform.cuda_graph_runner.python_callables["CUDAGraph2"][1][1:-2])
 
     # Ensure that all newly allocated segments are allocated in the shared memeory pool or the global pool
@@ -843,7 +837,6 @@ def test_cache_symbolic_values_grad_matmul():
         return torch.nn.functional.linear(a, w)
 
     jfoo = thunder.jit(foo, cache="symbolic values")
-    set_requires_grad = lambda x: x.requires_grad_()
 
     a = torch.randn(2, 8, 6)
     b = torch.randn(4, 6)
@@ -887,7 +880,6 @@ def test_cache_symbolic_values_grad_unsqueeze():
         return x + cache_unsqueezed
 
     jfoo = thunder.jit(foo, cache="symbolic values")
-    set_requires_grad = lambda x: x.requires_grad_()
 
     a = torch.randn(2, 8, 128)
     a_ref = a.clone()
