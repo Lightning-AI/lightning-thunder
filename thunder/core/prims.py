@@ -2831,9 +2831,19 @@ def _where_meta(pred: Number | TensorProxy, a: Number | TensorProxy, b: Number |
 
     # Determines output shape
     # NOTE Assumes at least one of pred, a, and b is a TensorProxy because of prior check for Number x Number x Number
-    # `pred` can be a CPU bool scalar tensor, thus to filter it out by checking the numel.
-    shapes = tuple(x.shape for x in (pred, a, b) if isinstance(x, TensorProxy) and x.numel > 1)
-    resultshape = shapes[0]
+    shapes = tuple(x.shape for x in (pred, a, b) if isinstance(x, TensorProxy))
+    # It's possible that `pred` is a CPU bool scalar tensor and either or both of `a` and `b` are a CUDA tensor.
+    # In that case, `shapes[0]`, i.e., `pred.shape` should not be the result shape.
+    if (
+        len(shapes) > 1
+        and isinstance(pred, TensorProxy)
+        and pred.numel == 1
+        and pred.device.devicetype is devices.DeviceType.CPU
+        and (isinstance(a, TensorProxy) or isinstance(b, TensorProxy))
+    ):
+        resultshape = shapes[1]
+    else:
+        resultshape = shapes[0]
 
     return TensorProxy(shape=resultshape, device=resultdevice, dtype=dtype)
 
