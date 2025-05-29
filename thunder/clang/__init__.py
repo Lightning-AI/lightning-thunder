@@ -1330,7 +1330,28 @@ def stack(tensors: list[TensorProxy], dim: int):
 @clangop()
 def compute_broadcast_shape(*_shapes):
     """Computes the common shape with the fewest dimensions that all input shapes can be broadcast to."""
-    return prims.compute_broadcast_shape(*_shapes)
+    shapes = tuple(x for x in filter(lambda x: x is not None, _shapes))
+
+    # Short-circuits if there are no inputs shapes
+    #   This might happen in calls like add(2, 3)
+    if len(shapes) == 0:
+        return None
+
+    common_shape = [
+        1,
+    ] * reduce(max, (len(shape) for shape in shapes))
+
+    for shape in shapes:
+        for idx in range(-1, -1 - len(shape), -1):
+            if common_shape[idx] == 1:
+                common_shape[idx] = shape[idx]
+
+            utils.check(
+                (shape[idx] == 1) or (common_shape[idx] == shape[idx]),
+                lambda: f"Attempting to broadcast a dimension of length {shape[idx]}!",
+            )
+
+    return tuple(common_shape)
 
 
 @run_once
