@@ -2787,32 +2787,6 @@ lerp = make_prim(
 )
 
 
-def compute_broadcast_shape(*_shapes):
-    """Computes the common shape with the fewest dimensions that all input shapes can be broadcast to."""
-    shapes = tuple(x for x in filter(lambda x: x is not None, _shapes))
-
-    # Short-circuits if there are no inputs shapes
-    #   This might happen in calls like add(2, 3)
-    if len(shapes) == 0:
-        return None
-
-    common_shape = [
-        1,
-    ] * reduce(max, (len(shape) for shape in shapes))
-
-    for shape in shapes:
-        for idx in range(-1, -1 - len(shape), -1):
-            if common_shape[idx] == 1:
-                common_shape[idx] = shape[idx]
-
-            utils.check(
-                (shape[idx] == 1) or (common_shape[idx] == shape[idx]),
-                lambda: f"Attempting to broadcast a dimension of length {shape[idx]}!",
-            )
-
-    return tuple(common_shape)
-
-
 # TODO Restore Number x Number x Number support
 def _where_meta(pred: Number | TensorProxy, a: Number | TensorProxy, b: Number | TensorProxy, /) -> TensorProxy:
     # Checks types
@@ -2858,7 +2832,7 @@ def _where_meta(pred: Number | TensorProxy, a: Number | TensorProxy, b: Number |
     # Determines output shape
     # NOTE Assumes at least one of pred, a, and b is a TensorProxy because of prior check for Number x Number x Number
     shapes = tuple(x.shape for x in (pred, a, b) if isinstance(x, TensorProxy))
-    resultshape = compute_broadcast_shape(*shapes)
+    resultshape = shapes[0]
 
     return TensorProxy(shape=resultshape, device=resultdevice, dtype=dtype)
 
