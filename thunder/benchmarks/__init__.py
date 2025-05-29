@@ -698,6 +698,13 @@ def run_multiprocess_benchmark(
 # Common executors (defined here for convenience)
 #
 
+def pbasu_nvfuser(fn: Callable) -> Callable:
+    """
+    A convenience function to use the nvfuser executor with the pbasu backend.
+    """
+    torch.backends.cuda.matmul.allow_tf32 = True
+    return thunder.jit(fn, executors=[thunder.nvfuser_executor])
+
 
 def torch_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True

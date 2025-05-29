@@ -44,6 +44,7 @@ from thunder.benchmarks import (
     torch_executor,
     thunder_transformerengine_executor,
     record_peak_allocated_memory,
+    pbasu_nvfuser,
 )
 from thunder.core.interpreter import interpret
 
@@ -285,8 +286,10 @@ def test_batch_norm(benchmark, executor: Callable, compute_type: ComputeType):
 #        is very slow"
 @pytest.mark.parametrize(
     "executor,",
-    (executors + apex_executors),
-    ids=(executors_ids + apex_executors),
+    # (executors + apex_executors),
+    (pbasu_nvfuser,),
+    # ids=(executors_ids + apex_executors),
+    ids = ("thunder",),
 )
 @parametrize_compute_type
 def test_nanogpt_cross_entropy(benchmark, executor: None | Callable, compute_type: ComputeType):
@@ -301,6 +304,99 @@ def test_nanogpt_cross_entropy(benchmark, executor: None | Callable, compute_typ
     fn = executor(bench.fn())
 
     benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
+
+
+
+class SyntheticMiniModel:
+    @staticmethod
+    def mini_model(logits, labels):
+        labels = torch.nn.functional.pad(labels, (0, 1))
+        labels = labels[1 : labels.shape[-1]]
+        logits = logits.to(dtype=torch.float32)
+        logits = logits.squeeze(dim=0)
+        return torch.nn.functional.cross_entropy(logits, labels)
+
+    @staticmethod
+    def inputs(batch_size, vocab_size):
+        input = torch.randn(
+            1,
+            batch_size,
+            vocab_size,
+            device="cuda",
+            dtype=torch.bfloat16,
+            requires_grad=True,
+        )
+        labels = torch.randint(
+            0,
+            vocab_size - 1,
+            (batch_size,),
+            device="cuda",
+            requires_grad=False,
+        )
+        return (input, labels)
+
+    @staticmethod
+    def grads():
+        grad = torch.tensor(1, device="cuda", dtype=torch.float32, requires_grad=False)
+        return grad
+
+    @staticmethod
+    def generate_vocab_sizes():
+        sizes_from_models = [
+            49152,  # Starcoder
+            129280,  # DeepSeek-R1
+            128256,  # Llama3
+            202048,  # Llama4
+            256000,  # Gemma2
+            131072,  # Mistral
+            152064,  # Qwen2
+            32064,  # Phi3.5
+            100352,  # Phi4
+            50264,  # GPT-2
+        ]
+
+        powers_of_2 = [2**i * 1024 for i in range(4, 9)]
+
+        combined_set = sorted(set(sizes_from_models) | set(powers_of_2))
+
+        # for each vocab size in the set we increment in steps 64 in +/- 5 directions
+        # which gives the total number of vocab sizes to benchmark
+        variations = set()
+        step = 64
+        for num in combined_set:
+            for i in range(1, 6):
+                variations.add(num + (i * step))
+                variations.add(num - (i * step))
+
+            variations.add(num)
+
+        return sorted(variations)
+
+
+@pytest.mark.parametrize(
+    "executor,",
+    # (executors + apex_executors),
+    (pbasu_nvfuser, torch_compile_executor,),
+    # ids=(executors_ids + apex_executors),
+    ids = ("thunder", "torch.compile",),
+)
+@parametrize_compute_type
+def test_new_cross_entropy(benchmark, executor: None | Callable, compute_type: ComputeType):
+    if executor is None:
+        pytest.skip("Executor is unavailable")
+
+    # def fwd_call(inp, kwargs=None):
+    #     return SyntheticMiniModel.mini_model(*inp)
+    
+    fwd_call = SyntheticMiniModel.mini_model
+
+    args = SyntheticMiniModel.inputs(4096, 50264)
+    fn = executor(fwd_call)
+    # outputs = fn(args)
+    # grads = SyntheticMiniModel.grads()
+
+    benchmark_for_compute_type(compute_type, benchmark, fn, args, {})
+
 
 
 # TODO: Upgrade this benchmark to use LitGPT and config, batch size parametrization
