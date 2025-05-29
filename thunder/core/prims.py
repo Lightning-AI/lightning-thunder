@@ -2831,7 +2831,8 @@ def _where_meta(pred: Number | TensorProxy, a: Number | TensorProxy, b: Number |
 
     # Determines output shape
     # NOTE Assumes at least one of pred, a, and b is a TensorProxy because of prior check for Number x Number x Number
-    shapes = tuple(x.shape for x in (pred, a, b) if isinstance(x, TensorProxy))
+    # `pred` can be a CPU bool scalar tensor, thus to filter it out by checking the numel.
+    shapes = tuple(x.shape for x in (pred, a, b) if isinstance(x, TensorProxy) and x.numel > 1)
     resultshape = shapes[0]
 
     return TensorProxy(shape=resultshape, device=resultdevice, dtype=dtype)
