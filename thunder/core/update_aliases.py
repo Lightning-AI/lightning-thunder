@@ -1,6 +1,6 @@
 from functools import reduce, partial
 
-from thunder.core.functionalization import replace_args_with_alias_map
+from thunder.core.functionalization import is_in_place_op, replace_args_with_alias_map
 import thunder.core.prims as prims
 from thunder.core.proxies import TensorProxy, variableify, unvariableify
 from thunder.core.trace import from_trace, tracectx, TraceCtx as Trace, TraceProvenance
@@ -55,6 +55,9 @@ def _involves_viewed_args(bsym, viewed):
 
 
 def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[list[int]]) -> Trace:
+    if not any(is_in_place_op(bsym) for bsym in computation_trace.bound_symbols):
+        return computation_trace
+
     swap_map = dict()
     bsyms = []
 

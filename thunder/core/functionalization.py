@@ -111,7 +111,7 @@ def check_inplace_to_views(computation_trace: Trace) -> dict[VariableInterface, 
     return swap_map
 
 
-def is_functionalizable(bsym: BoundSymbol) -> bool:
+def is_in_place_op(bsym: BoundSymbol) -> bool:
     """Has `OpTags.IN_PLACE` and its args are NOT ``computation_trace.args`` nor ``computation_trace.kwargs``."""
     from thunder.torch import _inplace_to_out_of_place
 
@@ -287,7 +287,7 @@ def canonicalize_bsym_args(
 
         # non in-place bsyms would only need to update its outputs.
         # but in-place bsyms would, as it needs to make sure they return `prims.copy_`'s return value.
-        if not is_functionalizable(new_bsym):
+        if not is_in_place_op(new_bsym):
             bsyms.append(new_bsym)
         else:
             copy_bsym = bsym.subsymbols[-1]
@@ -432,7 +432,7 @@ def apply_functionalization_to_canonicalized_trace(
                 view_to_base[variableify(v)] = base
             base_to_views[var_base].extend(views)
 
-        if not is_functionalizable(new_bsym):
+        if not is_in_place_op(new_bsym):
             new_bsyms.append(new_bsym)
             if replaced_args_map := {
                 variableify(x): swap_map[variableify(x)]
@@ -924,7 +924,7 @@ def functionalize_inplace_ops(
             represents the group of args that have the same :func:`torch.Tensor.data_ptr`.
     """
 
-    if not any(is_functionalizable(bsym) for bsym in computation_trace.bound_symbols):
+    if not any(is_in_place_op(bsym) for bsym in computation_trace.bound_symbols):
         return []
 
     # Step 0:
