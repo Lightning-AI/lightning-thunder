@@ -60,7 +60,6 @@ class FSDP(Plugin):
         transforms = []
 
         if isinstance(pg, DeviceMesh):
-
             dims = pg.mesh_dim_names
 
             if dims == ("ddp", "fsdp"):

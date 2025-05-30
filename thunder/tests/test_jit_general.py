@@ -1,12 +1,8 @@
-from collections.abc import Iterable, Iterator, Sequence
-from functools import partial, wraps
-from itertools import product
+from functools import partial
 from contextlib import nullcontext
 
 import operator
 import sys
-import dis
-from collections.abc import Callable
 
 import pytest
 import torch
@@ -15,16 +11,12 @@ from torch.testing import assert_close
 from lightning_utilities import compare_version
 
 import thunder
-from thunder.core.interpreter import is_jitting, InterpreterError
 
-from thunder.tests.framework import version_between, requiresCUDA, IS_WINDOWS
-import thunder.clang as clang
+from thunder.tests.framework import requiresCUDA, IS_WINDOWS
 from thunder.core.options import CACHE_OPTIONS
-import thunder.torch as ltorch
 import thunder.core.prims as prims
 from thunder import pytorch_executor, nvfuser_executor
 from thunder.executors.sdpaex import sdpa_ex
-from thunder.core.jit_ext import JITSharpEdgeError
 from thunder.core.transforms import Transform
 
 
@@ -1204,7 +1196,6 @@ def test_custom_autograd_function():
 
 @pytest.mark.filterwarnings("ignore:Please use torch.vmap")
 def test_autograd_function_apply():
-
     # see https://github.com/Lightning-AI/lightning-thunder/issues/1248#issuecomment-2388655917
     # for why `torch.foo` instead of `torch.Tensor.foo`
     def forward(ctx, x):
@@ -1301,14 +1292,14 @@ def test_autograd_function_apply_with_no_grad():
 
     # This is using `thunder` operations
     # NOTE - This takes a different codepath compared to above.
-    def forward(_, x):
+    def forward(_, x):  # noqa: F811
         saved_for_backward = (x,)
         thunder.torch._set_grad_enabled_with_warning(False)
         sin = thunder.torch.sin(x)
         thunder.torch._set_grad_enabled_with_warning(True)
         return sin, saved_for_backward
 
-    def backward(_, grad_output, *saved_tensors):
+    def backward(_, grad_output, *saved_tensors):  # noqa: F811
         # NOTE - This is incorrect on purpose
         return grad_output * 2
 

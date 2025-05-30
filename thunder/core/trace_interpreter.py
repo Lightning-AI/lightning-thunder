@@ -2,7 +2,7 @@ from functools import partial
 from typing import Any
 
 from thunder.core import prims
-from thunder.core.pytree import tree_map, tree_flatten_with_dataclass
+from thunder.core.pytree import tree_map
 from thunder.core.trace import VariableInterface, from_trace, tracectx
 from thunder.core.baseutils import ProxyInterface, TensorProxyInterface
 from thunder.core.utils import safe_map_flat, sequencify
@@ -372,7 +372,6 @@ class TraceSubstitutionProcessor:
                     assert self.replacement_result is not self.NULL, "Need to call set_result if producing new bsyms"
 
                 if self.replacement_result is not self.NULL:
-
                     # TODO: if inputs are returned, the old outputs should be mapped on the new ones (= the inputs) instead of the other way round
                     if not self.new_bsyms:
                         # empty result means we want to swap references to the old

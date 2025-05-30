@@ -13,12 +13,6 @@ from functools import partial, reduce, wraps
 from numbers import Number
 from types import NoneType, ModuleType
 from typing import Any, overload
-import builtins
-import collections
-import itertools
-import math
-import operator
-import re
 
 import opt_einsum
 
@@ -32,7 +26,6 @@ import thunder.core.dtypes as dtypes
 from thunder.core.dtypes import to_torch_dtype, to_dtype, _thunder_to_torch_dtype_map, _torch_to_thunder_dtype_map
 import thunder.core.prims as prims
 import thunder.core.utils as utils
-import thunder.distributed.prims as dist_prims
 from thunder.core.langctxs import langctx, Languages, get_langctx
 from thunder.core.compile_data import get_compile_data
 from thunder.core.proxies import (
@@ -54,6 +47,7 @@ from thunder.core.symbol import Symbol
 from thunder.core.transforms import register_grad, register_augmented_forward, register_backward
 from thunder.core.prims import get_grad, put_grad
 import thunder
+import thunder.distributed.prims as dist_prims
 from thunder.torch.default_torch_ops import _auto_registered_operators_returning_views
 
 
@@ -210,8 +204,9 @@ class torchsymbol:
             if self.id is not None:
                 name = self.id
             _inplace_to_out_of_place[sym] = (
-                self.out_of_place if self.out_of_place is not None else globals()[name[:-1]]
-            ), -1
+                (self.out_of_place if self.out_of_place is not None else globals()[name[:-1]]),
+                -1,
+            )
 
         return sym
 
@@ -327,7 +322,6 @@ def _device_and_dtype_to_old_torch_typestring(device: DeviceLike, dtype: dtypeLi
 
 
 def _old_torch_typestring_to_devicetype_and_dtype(typestring: str) -> tuple[DeviceLike, dtypeLike]:
-
     # Two cases:
     #    - torch.DtypeTensor
     #    - torch.device.DtypeTensor
@@ -362,7 +356,7 @@ def _old_torch_typestring_to_devicetype_and_dtype(typestring: str) -> tuple[Devi
 def torch_type(a: TensorLike, /, dtype: None | str | dtypeLike = None, non_blocking: bool = False) -> str | TensorLike:
     utils.check(
         not non_blocking,
-        lambda: f"type(): `non_blocking==True` is currently not supported.",
+        lambda: "type(): `non_blocking==True` is currently not supported.",
         exception_type=NotImplementedError,
     )
 
@@ -421,17 +415,17 @@ def _parse_to_device_and_dtype(
 ) -> tuple[devices.Device, dtypes.dtype]:
     # Case 3 and 5 -- device first
     if isinstance(tensor_dtype_or_device, (torch.device, devices.Device, str)):
-        utils.check(device is None, lambda: f"to received both a positional and keyword device argument")
+        utils.check(device is None, lambda: "to received both a positional and keyword device argument")
         device = to_device(tensor_dtype_or_device)
 
         if optional_positional_dtype is not None:
-            utils.check(dtype is None, lambda: f"to received both a positional and keyword dtype argument")
+            utils.check(dtype is None, lambda: "to received both a positional and keyword dtype argument")
             dtype = to_dtype(optional_positional_dtype)
         else:
             dtype = to_dtype(dtype)
     # Case 2 -- dtype first
     elif isinstance(tensor_dtype_or_device, (torch.dtype, dtypes.dtype)):
-        utils.check(dtype is None, lambda: f"to received both a positional and keyword dtype argument")
+        utils.check(dtype is None, lambda: "to received both a positional and keyword dtype argument")
         device = to_device(device) if device is not None else None
         dtype = to_dtype(tensor_dtype_or_device)
     # Case 4 -- None first
@@ -580,7 +574,6 @@ def arange(
 
 # Infers dtype from the fill_value and dtype
 def _infer_full_dtype(fill_value: NumberLike, dtype: None | dtypeLike) -> dtypeLike:
-
     # Short-circuits if dtype is explicitly specified
     if dtype is not None:
         return to_dtype(dtype)
@@ -717,7 +710,7 @@ def multinomial(
     # See issue "randomness: enable PyTorch generators for operations like
     # multinomial"
     utils.check(
-        generator is None, lambda: f"multinomial does not yet support specifying a generator", NotImplementedError
+        generator is None, lambda: "multinomial does not yet support specifying a generator", NotImplementedError
     )
 
     seed = None
@@ -982,10 +975,10 @@ def contiguous(a: TensorLike, /, *, memory_format: torch.memory_format = torch.c
     elif memory_format is torch.contiguous_format:
         return clang.stride_order(a)
     elif memory_format is torch.channels_last:
-        utils.check(a.ndim == 4, lambda: f"Expected a 4D tensor for the channels last memory format")
+        utils.check(a.ndim == 4, lambda: "Expected a 4D tensor for the channels last memory format")
         return clang.stride_order(a, (3, 0, 2, 1))
     elif memory_format is torch.channels_last_3d:
-        utils.check(a.ndim == 5, lambda: f"Expected a 5D tensor for the channels last 3D memory format")
+        utils.check(a.ndim == 5, lambda: "Expected a 5D tensor for the channels last 3D memory format")
         return clang.stride_order(a, (4, 0, 3, 2, 1))
 
     utils.check(False, lambda: f"Found unexpected memory_format={memory_format}", exception_type=ValueError)
@@ -1079,11 +1072,11 @@ def movedim(a: TensorLike, /, source: int | Sequence[int], destination: int | Se
 
 @torchsymbol(torch.nn.functional.pad)
 def pad(a: TensorProxy, /, pad: tuple[int, ...], mode: str | None = "constant", value: NumberLike | None = None):
-    utils.check(mode == "constant", lambda: f"Mode arguments other than constant are not supported")
-    utils.check(len(pad) % 2 == 0, lambda: f"Padding length must be divisible by 2")
+    utils.check(mode == "constant", lambda: "Mode arguments other than constant are not supported")
+    utils.check(len(pad) % 2 == 0, lambda: "Padding length must be divisible by 2")
     utils.check(
         len(pad) <= a.ndim * 2,
-        lambda: f"Padding length should be less than or equal to two times the input dimension.",
+        lambda: "Padding length should be less than or equal to two times the input dimension.",
     )
 
     pad_config = []
@@ -1142,7 +1135,7 @@ def reshape(a: TensorLike, /, *shape: int) -> TensorLike:
 def unflatten(a: TensorLike, /, dim: int, sizes=Sequence[int]) -> TensorLike:
     utils.check(
         len(sizes) > 0,
-        lambda: f"unflatten() sizes must be non-empty",
+        lambda: "unflatten() sizes must be non-empty",
         RuntimeError,
     )
     dim = utils.canonicalize_dim(a.ndim, dim)
@@ -1154,7 +1147,7 @@ def select(a: TensorLike, /, dim: int, index: int):
     # dim check
     utils.check(
         a.ndim != 0,
-        lambda: f"select() cannot be applied to a 0-dim tensor.",
+        lambda: "select() cannot be applied to a 0-dim tensor.",
     )
     dim = utils.canonicalize_dim(a.ndim, dim)
 
@@ -1908,7 +1901,6 @@ def logsigmoid(a: TensorProxy, /) -> TensorLike:
 # TODO Should this use clamp? -- Would that propagate NaNs properly?
 @torchsymbol(torch.relu, torch.nn.functional.relu, id="torch.relu", is_method=True)
 def relu(a: TensorLike, /, inplace: bool = False) -> TensorLike:
-
     out = where(a > 0, a, 0)
     if inplace:
         return _copy_(a, out)
@@ -2036,7 +2028,7 @@ def prelu(a: TensorProxy, /, weight: TensorProxy) -> TensorLike:
         )
     utils.check(
         weight.ndim == 0 or weight.ndim == 1,
-        lambda: f"prelu: Expected `weight` to be a scalar or 1D tensor, but got: " f"ndim = {weight.ndim}",
+        lambda: f"prelu: Expected `weight` to be a scalar or 1D tensor, but got: ndim = {weight.ndim}",
     )
     if a.ndim != 1:
         weight = prims.broadcast_in_dim(weight, a.shape, () if weight.ndim == 0 else (0 if a.ndim == 1 else 1,))
@@ -2339,7 +2331,7 @@ def logical_xor_(a: TensorLike, b: TensorLike, /) -> TensorLike:
 def ldexp(a: TensorLike, b: TensorLike, /) -> TensorLike:
     utils.check(
         a.device == b.device,
-        lambda: f"Expected all tensors to be on the same device, but found at least two devices, cuda and cpu",
+        lambda: "Expected all tensors to be on the same device, but found at least two devices, cuda and cpu",
     )
 
     return mul(a, exp2(b))
@@ -2420,7 +2412,7 @@ def nextafter_(a, b, /):
 @torchsymbol(torch.polygamma, torch.special.polygamma, is_method=True)
 def polygamma(n: int, a: TensorLike, /) -> TensorLike:
     utils.check(
-        isinstance(n, (int, NumberProxy)), lambda: f"polygamma(n, a) expects the first argument to be an integer."
+        isinstance(n, (int, NumberProxy)), lambda: "polygamma(n, a) expects the first argument to be an integer."
     )
     utils.check(n >= 0, lambda: f"polygamma(n, a) does not support negative {n=}.")
 
@@ -2555,18 +2547,18 @@ def clamp(
 ) -> TensorLike:
     utils.check(
         min is not None or max is not None,
-        lambda: f"clamp: At least one of 'min' or 'max' must not be None",
+        lambda: "clamp: At least one of 'min' or 'max' must not be None",
         ValueError,
     )
     input_types = [to_dtype(x) for x in [a, min, max] if x is not None]
     # Bool and complex are not supported
     utils.check(
         not all(dtypes.is_boolean_dtype(input_type) for input_type in input_types),
-        lambda: f"clamp is not supported for boolean type",
+        lambda: "clamp is not supported for boolean type",
     )
     utils.check(
         not any(utils.is_complex_dtype(input_type) for input_type in input_types),
-        lambda: f"clamp is not supported for complex types",
+        lambda: "clamp is not supported for complex types",
     )
 
     # torch.clamp outputs nan when one of a, min, max is nan
@@ -2680,7 +2672,7 @@ def where(
 ) -> TensorLike:
     utils.check(
         isinstance(a, (Number, NumberProxy, TensorProxy)) and isinstance(b, (Number, NumberProxy, TensorProxy)),
-        lambda: f"torch.where() does not support only specifying a condition",
+        lambda: "torch.where() does not support only specifying a condition",
         exception_type=NotImplementedError,
     )
     return clang.where(pred, a, b)
@@ -3192,7 +3184,6 @@ def atleast_1d(*args: Union[TensorLike, Sequence[TensorLike]]) -> Union[TensorLi
 
 @torchsymbol(torch.atleast_2d, is_method=True)
 def atleast_2d(*args: Union[TensorLike, Sequence[TensorLike]]) -> Union[TensorLike, tuple[TensorLike, ...]]:
-
     def _unsqueeze_atleast(a):
         if a.ndim == 0:
             return a.unsqueeze(0).unsqueeze(1)
@@ -3206,7 +3197,6 @@ def atleast_2d(*args: Union[TensorLike, Sequence[TensorLike]]) -> Union[TensorLi
 
 @torchsymbol(torch.atleast_3d, is_method=True)
 def atleast_3d(*args: Union[TensorLike, Sequence[TensorLike]]) -> Union[TensorLike, tuple[TensorLike, ...]]:
-
     def _unsqueeze_atleast(a):
         if a.ndim == 0:
             return a.reshape(1, 1, 1)
@@ -3282,7 +3272,7 @@ def scatter(
 
     utils.check(
         (src is not None) ^ (value is not None),
-        lambda: f"scatter: only one of the arguments (`src`, `value`) can be non-None",
+        lambda: "scatter: only one of the arguments (`src`, `value`) can be non-None",
     )
 
     if src is not None:
@@ -3308,7 +3298,7 @@ def scatter_(
 
     utils.check(
         (src is not None) ^ (value is not None),
-        lambda: f"scatter_: only one of the arguments (`src`, `value`) can be non-None",
+        lambda: "scatter_: only one of the arguments (`src`, `value`) can be non-None",
     )
 
     if src is None:
@@ -3377,7 +3367,7 @@ def generalized_diagonal_tensor(dim_len, rank, device):
 def einsum(equation: str, *operands: TensorLike | Sequence[TensorLike]) -> TensorLike:
     utils.check(
         isinstance(equation, str),
-        lambda: f"Sublist inputs are not currently supported. "
+        lambda: "Sublist inputs are not currently supported. "
         "Rewrite the sublist input to use a string equation, "
         "and/or file an issue requesting sublist einsum support here: "
         "https://github.com/Lightning-AI/lightning-thunder/issues/new/choose",
@@ -3400,7 +3390,7 @@ def einsum(equation: str, *operands: TensorLike | Sequence[TensorLike]) -> Tenso
         (input_subscript,) = input_output_subscripts
     else:
         utils.check(
-            len(input_output_subscripts) == 2, lambda: f"Found multiple arrows (->) in einsum equation", ValueError
+            len(input_output_subscripts) == 2, lambda: "Found multiple arrows (->) in einsum equation", ValueError
         )
         input_subscript, output_subscript = input_output_subscripts
 
@@ -3430,7 +3420,7 @@ def einsum(equation: str, *operands: TensorLike | Sequence[TensorLike]) -> Tenso
             if l == ".":
                 utils.check(
                     not self.seen_ellipsis,
-                    lambda: f"Incorrect subscript for operand #{self.pos}: " "it contains two or more ellipses",
+                    lambda: f"Incorrect subscript for operand #{self.pos}: it contains two or more ellipses",
                     ValueError,
                 )
                 self.seen_ellipsis = True
@@ -3956,7 +3946,7 @@ def multi_dot(tensors: Sequence[TensorLike], *, out: TensorLike | None = None) -
     utils.check(out is None, lambda: "multi_dot(): Non-None out is not supported", NotImplementedError)
     utils.check(
         not any(any(isinstance(i, NumberProxy) for i in tensor.shape) for tensor in tensors),
-        lambda: f"multi_dot(): does not support dynamic shapes",
+        lambda: "multi_dot(): does not support dynamic shapes",
     )
 
     n = len(tensors)
@@ -3982,7 +3972,8 @@ def multi_dot(tensors: Sequence[TensorLike], *, out: TensorLike | None = None) -
     # check last tensor
     utils.check_type(tensors[-1], TensorProxy)
     utils.check(
-        1 <= tensors[n - 1].dim() <= 2, lambda: f"multi_dot(): the last tensor must be 1D or 2D but got {a[n-1].dim()}D"
+        1 <= tensors[n - 1].dim() <= 2,
+        lambda: f"multi_dot(): the last tensor must be 1D or 2D but got {a[n - 1].dim()}D",
     )
     if tensors[n - 1].dim() == 1:
         a[n - 1] = unsqueeze(tensors[n - 1], -1)
@@ -4286,7 +4277,7 @@ def batch_norm(
     else:
         utils.check(
             running_mean is not None and running_var is not None,
-            lambda: f"running_mean and running_var must be defined in evaluation mode",
+            lambda: "running_mean and running_var must be defined in evaluation mode",
         )
     computation_dtype = utils.get_computation_dtype(a.dtype)
     # Check mixed input types
@@ -4564,7 +4555,7 @@ def _conv_helper(
             else:
                 utils.check(
                     False,
-                    lambda: f"padding string values other than ('valid', 'same') " "are not supported, got {padding=}",
+                    lambda: "padding string values other than ('valid', 'same') are not supported, got {padding=}",
                 )
         else:
             return padding, a
@@ -4781,7 +4772,7 @@ def adaptive_avg_pool2d(
 
     utils.check_type(output_size, (int, IntegerProxy, Sequence))
     if isinstance(output_size, Sequence):
-        utils.check(len(output_size) == 2, lambda: f"adaptive_avg_pool2d: output_size must be 2")
+        utils.check(len(output_size) == 2, lambda: "adaptive_avg_pool2d: output_size must be 2")
         utils.check_types(output_size, (int, IntegerProxy))
         check_valid_shape(output_size)
     else:
@@ -5334,7 +5325,7 @@ def _interpolate_scale_factor_helper(
         output_dim = int(scale * input_dim)
         utils.check(
             output_dim > 0,
-            lambda: f"provided scale_factor value {scale} results " f"in a zero length output at dimension {k + 2}",
+            lambda: f"provided scale_factor value {scale} results in a zero length output at dimension {k + 2}",
         )
         res_output_spatial_dims.append(output_dim)
 
@@ -5415,23 +5406,23 @@ def interpolate(
     utils.check(a.numel() > 0, lambda: f"Expected {a.numel=} to be greater than 0")
     utils.check(
         align_corners == None,
-        lambda: f"Thunder does not yet support 'align_corners'.",
+        lambda: "Thunder does not yet support 'align_corners'.",
         exception_type=NotImplementedError,
     )
     utils.check(
         recompute_scale_factor is None or recompute_scale_factor == False,
-        lambda: f"Thunder does not yet support 'recompute_scale_factor=True'.",
+        lambda: "Thunder does not yet support 'recompute_scale_factor=True'.",
         exception_type=NotImplementedError,
     )
     utils.check(
         antialias == False,
-        lambda: f"Thunder does not yet support 'antialias=True'.",
+        lambda: "Thunder does not yet support 'antialias=True'.",
         exception_type=NotImplementedError,
     )
 
     utils.check(
         (size is not None) ^ (scale_factor is not None),
-        lambda: "Only one of `size` or `scale_factor` has to be specified, but " f"got {size=} and {scale_factor=}",
+        lambda: f"Only one of `size` or `scale_factor` has to be specified, but got {size=} and {scale_factor=}",
     )
 
     if size is not None:
@@ -5821,7 +5812,7 @@ def torch_device(type: DeviceLike, index: int | None = None) -> devices.Device:
         # PyTorch behavior:
         # >>> torch.device(torch.device("cuda"), 0)
         # TypeError: device(): argument 'type' (position 1) must be str, not torch.device
-        utils.check(index is None, lambda: f"device(): `index` is only allowed when `device` is a `str`.")
+        utils.check(index is None, lambda: "device(): `index` is only allowed when `device` is a `str`.")
         return to_device(type)
 
     # NOTE: device_or_str is `str`
@@ -6146,7 +6137,7 @@ else:
         group: Any | None = None,
         async_op: bool = False,
     ) -> None:
-        utils.check(False, lambda: f"torch.distributed is not available")
+        utils.check(False, lambda: "torch.distributed is not available")
 
     def all_gather_(
         output_tensor: TensorLike,
@@ -6164,7 +6155,7 @@ else:
         group: Any | None = None,
         async_op: bool = False,
     ) -> None:
-        utils.check(False, lambda: f"torch.distributed is not available")
+        utils.check(False, lambda: "torch.distributed is not available")
 
     def all_reduce_(
         a: TensorLike,
@@ -6181,7 +6172,7 @@ else:
         group: Any | None = None,
         async_op: bool = False,
     ) -> None:
-        utils.check(False, lambda: f"torch.distributed is not available")
+        utils.check(False, lambda: "torch.distributed is not available")
 
     def reduce_scatter(
         a: TensorLike,
@@ -6189,7 +6180,7 @@ else:
         group: Any | None = None,
         async_op: bool = False,
     ) -> None:
-        utils.check(False, lambda: f"torch.distributed is not available")
+        utils.check(False, lambda: "torch.distributed is not available")
 
     def reduce_scatter_(
         output: TensorLike,

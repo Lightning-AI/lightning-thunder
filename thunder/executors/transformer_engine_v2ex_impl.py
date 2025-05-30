@@ -1,4 +1,3 @@
-from enum import Enum, auto
 import time
 from typing import TYPE_CHECKING
 
@@ -103,7 +102,6 @@ class TERecipeState:
         self.state = None
 
     def __call__(self, recipe: Recipe, mode: str, num_quantizers: int) -> RecipeState:
-
         # If the recipe changes, then a new state is needed.
         if self.state and self.parent_recipe is recipe:
             return self.state

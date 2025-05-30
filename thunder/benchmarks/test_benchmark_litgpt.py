@@ -132,7 +132,7 @@ class Runner:
             ]
             subprocess_cmd.extend(command_list)
 
-        print(f'Running {" ".join(subprocess_cmd)!r}')
+        print(f"Running {' '.join(subprocess_cmd)!r}")
         proc_output = subprocess.run(subprocess_cmd, capture_output=True, text=True)
 
         self.perf_metrics_dict = {}

@@ -154,7 +154,7 @@ __all__ = [
 ]
 
 
-from thunder.__about__ import *  # import all
+from thunder.__about__ import *  # noqa: F403
 
 
 # TODO maybe move these aliases to the core language?
@@ -1068,7 +1068,7 @@ def get_auto_registered_torch_op_names(fn: Callable, /) -> set[str] | None:
 
 
 # TODO (mruberry) Update this
-def _grad_transform(trace):
+def _grad_transform(trace):  # noqa: F811
     grad_fwd_trace = from_trace(trace)
     trace_tok = set_tracectx(grad_fwd_trace)
     all_residuals = []
