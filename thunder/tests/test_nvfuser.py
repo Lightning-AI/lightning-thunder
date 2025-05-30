@@ -1,43 +1,25 @@
 import pytest
-from functools import partial
 
 import torch
 
 import thunder
 import thunder.examine as examine
-from thunder.examine import get_fusions
 from thunder.executors.nvfuserex import nvfuser_version, nvfuserex
 import thunder.torch as ltorch
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
 import thunder.core.prims as prims
 from thunder.core.pytree import tree_map
-from thunder.core.rematerialization import (
-    apply_rematerialization_for_consumer,
-    apply_rematerialization_for_producer,
-    find_cut,
-    find_external_producer_outputs,
-    find_filtered_producer_consumer_pairs,
-    find_nvfuser_producer_consumer_pairs,
-)
-from thunder.core import utils
 from thunder.core.transforms import value_and_grad
 
 from thunder.tests.framework import (
     instantiate,
     TestExecutor,
     NOTHING,
-    ops,
-    run_snippet,
-    assert_closer,
     nvFuserExecutor,
-    TorchExecutor,
 )
 from thunder.tests.make_tensor import make_tensor
 from thunder.tests.opinfos import (
-    opinfos,
-    tensor_creation_ops,
-    get_opinfo,
     linear_opinfo,
     matmul_opinfo,
     embedding_opinfo,
@@ -52,7 +34,7 @@ def test_rematerialization_with_forward_and_backward_from_trace(executor: TestEx
     from thunder import trace
     from thunder.clang import cos, sin
     import thunder.torch as ltorch
-    from thunder.core.transforms import forward_and_backward_from_trace, value_and_grad
+    from thunder.core.transforms import forward_and_backward_from_trace
     from thunder.core.transform_common import wrap_return_value_together_with_arguments
     from thunder.common import transform_for_execution
     from thunder.core.rematerialization import rematerialize_forward_and_backward
@@ -261,7 +243,6 @@ def test_redundant_no_op(executor, device: str, dtype: dtypes.dtype):
 
 @instantiate(dtypes=NOTHING, devicetypes=(devices.DeviceType.CUDA,), executors=(nvFuserExecutor,))
 def test_cse_subsymbol_removal(executor, device, _):
-    from thunder.core.pytree import tree_flatten
 
     def func(x):
         t0 = x.relu()
@@ -324,7 +305,6 @@ def test_cse_subsymbol_redundant_args(executor, device, _):
 def test_cse_rematerialization(executor, device, _):
     # Unit test for "llama2.c example failed with bookend disabled."
     from thunder.tests.llama2_model import Transformer, ModelArgs
-    from thunder.core.pytree import tree_flatten
 
     batch_size = 2
     max_seq_len = 32

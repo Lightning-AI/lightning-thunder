@@ -442,7 +442,7 @@ class Benchmark_litGPT:
 
         # Distributed Setup
         # TODO: Change compiler call names
-        if "thunder" in self.compile and not "dynamo" in self.compile:
+        if "thunder" in self.compile and "dynamo" not in self.compile:
             if self.distributed_mode == "ddp":
                 from thunder.distributed import ddp
 
@@ -470,7 +470,7 @@ class Benchmark_litGPT:
             else:
                 if self.distributed_mode == "fsdp2":
                     raise ValueError(
-                        f"To use `fsdp2`, use thunder as torch.compile backend by including dynamo in `--compile` option or set `--compile` to either eager or inductor"
+                        "To use `fsdp2`, use thunder as torch.compile backend by including dynamo in `--compile` option or set `--compile` to either eager or inductor"
                     )
         else:
             if self.distributed_mode == "ddp":

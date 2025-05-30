@@ -6,10 +6,10 @@ import transformers
 import torch
 
 from thunder.extend import deregister_executor
-from torch.testing import assert_close, make_tensor
+from torch.testing import assert_close
 from thunder.recipes import HFTransformers
 from thunder.executors import nvfuser_available
-from thunder.tests.framework import version_between, IS_WINDOWS
+from thunder.tests.framework import IS_WINDOWS
 
 
 @pytest.mark.skipif(not nvfuser_available(), reason="nvFuser is not available")
@@ -116,7 +116,6 @@ def test_plugins_basics():
     model = torch.nn.Sequential(torch.nn.Linear(2048, 4096), torch.nn.ReLU(), torch.nn.Linear(4096, 64))
 
     from thunder import compile_data as get_compile_data
-    from thunder.recipes.base import BaseRecipe
 
     thunder_model = thunder.compile(model)
     x = torch.randn(64, 2048)

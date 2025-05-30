@@ -1,7 +1,6 @@
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from functools import partial
-from itertools import chain, product, takewhile
-from typing import Optional, Tuple, Union, Dict
+from itertools import chain, takewhile
 from collections.abc import Callable
 from collections.abc import Sequence
 from collections import defaultdict
@@ -12,8 +11,8 @@ import networkx as nx
 from thunder.core import prims, utils
 from thunder.core.baseutils import BoundSymbolInterface, ProxyInterface
 from thunder.core.prims import PrimIDs
-from thunder.core.proxies import TensorProxy, variableify, NumberProxy, CollectionProxy, Proxy
-from thunder.core.pytree import tree_flatten, tree_unflatten
+from thunder.core.proxies import TensorProxy, variableify, NumberProxy, Proxy
+from thunder.core.pytree import tree_flatten
 from thunder.core.symbol import has_tags
 from thunder.core.trace import from_trace, TraceCtx, TraceProvenance
 from thunder.core.transforms import bsym_list_to_dag, toposort_bsym_dag, TOPOSORT_ORDER

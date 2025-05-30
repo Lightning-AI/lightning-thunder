@@ -1,7 +1,5 @@
 """Taken from https://github.com/Lightning-AI/litgpt/blob/main/litgpt/model.py"""
 
-import torch
-import torch.nn as nn
 
 
 configs = [
