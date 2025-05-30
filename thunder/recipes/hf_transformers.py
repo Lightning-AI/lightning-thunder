@@ -104,7 +104,7 @@ class HFTransformers(BaseRecipe):
     def apply(self, model):
         thunder_model = super().apply(model)
 
-        # here we rebind methods to the ThunderModule (model.__class__._foo is the unbound method 
+        # here we rebind methods to the ThunderModule (model.__class__._foo is the unbound method
         # and __get__ binds it to the ThunderModule as self).
         if getattr(thunder_model, "generate", None):
             thunder_model.generate = model.__class__.generate.__get__(thunder_model, thunder_model.__class__)
