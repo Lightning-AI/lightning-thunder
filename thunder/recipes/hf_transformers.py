@@ -29,8 +29,7 @@ class InplaceIndexCopyTransform(thunder.Transform):
         comp_new = thunder.core.trace.from_trace(comp)
         for bsym in comp.bound_symbols:
             if bsym.sym == thunder.torch.index_copy:
-                if bsym.args[0].history is not None:
-                    bsym.args[0].tags.add(thunder.core.proxies.ProxyTag.STATIC_MEMORY_LOCATION)
+                bsym.args[0].tags.add(thunder.core.proxies.ProxyTag.STATIC_MEMORY_LOCATION)
                 bsym = bsym.from_bsym(sym=self.inplace_index_copy)
             else:
                 bsym = bsym.from_bsym()
