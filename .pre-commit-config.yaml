@@ -38,14 +38,14 @@ repos:
         additional_dependencies: [tomli]
         #args: ["--write-changes"] # uncomment if you want to get automatic fixing
 
-   - repo: https://github.com/astral-sh/ruff-pre-commit
-     rev: v0.11.11
-     hooks:
-       - id: ruff-check
-         args: ["--fix"]
-       - id: ruff-format
-         types_or: [ python, pyi ]
-         exclude: "examples"
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.11.11
+    hooks:
+      - id: ruff-check
+        args: ["--fix"]
+      - id: ruff-format
+        types_or: [ python, pyi ]
+        exclude: "examples"
 
   - repo: https://github.com/executablebooks/mdformat
     rev: 0.7.22
