@@ -29,7 +29,8 @@ class InplaceIndexCopyTransform(thunder.Transform):
         comp_new = thunder.core.trace.from_trace(comp)
         for bsym in comp.bound_symbols:
             if bsym.sym == thunder.torch.index_copy:
-                bsym.args[0].tags.add(thunder.core.proxies.ProxyTag.STATIC_MEMORY_LOCATION)
+                if bsym.args[0].history is not None:
+                    bsym.args[0].tags.add(thunder.core.proxies.ProxyTag.STATIC_MEMORY_LOCATION)
                 bsym = bsym.from_bsym(sym=self.inplace_index_copy)
             else:
                 bsym = bsym.from_bsym()
@@ -105,9 +106,9 @@ class HFTransformers(BaseRecipe):
         thunder_model = super().apply(model)
 
         if getattr(thunder_model, "generate", None):
-            thunder_model.generate = partial(thunder_model.generate.__func__, thunder_model)
+            thunder_model.generate = model.__class__.generate.__get__(thunder_model, thunder_model.__class__)
 
         if getattr(thunder_model, "_sample", None):
-            thunder_model._sample = partial(thunder_model._sample.__func__, thunder_model)
+            thunder_model.sample = model.__class__._sample.__get__(thunder_model, thunder_model.__class__)
 
         return thunder_model
