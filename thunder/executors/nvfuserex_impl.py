@@ -2960,7 +2960,6 @@ def cross_entropy_grad(
     reduction: str = "mean",
     label_smoothing: float = 0.0,
 ) -> Any:
-
     fwd, max, log_sum_exp, valid_indices = nv_cross_entropy_fwd(
         a, target, weight, size_average, ignore_index, reduce, reduction, label_smoothing
     )
