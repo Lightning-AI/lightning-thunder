@@ -16,7 +16,6 @@ import torch
 import torch.multiprocessing as mp
 import torch.nn as nn
 from lightning_utilities.core.imports import package_available
-from torch.testing import make_tensor
 
 import thunder
 import thunder.dynamo
