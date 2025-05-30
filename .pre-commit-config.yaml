@@ -45,7 +45,6 @@ repos:
         args: ["--fix"]
       - id: ruff-format
         types_or: [ python, pyi ]
-        exclude: "examples"
 
   - repo: https://github.com/executablebooks/mdformat
     rev: 0.7.22

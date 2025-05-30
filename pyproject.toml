@@ -148,7 +148,9 @@ exclude = [
     "_build",
     "build",
     "dist",
-    "docs"
+    "docs",
+    "examples",
+    "notebooks",
 ]
 ignore-init-module-imports = true
 
