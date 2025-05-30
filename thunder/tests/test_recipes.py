@@ -81,6 +81,38 @@ def test_recipe_basic_bert_fx():
 
 
 @pytest.mark.skipif(not nvfuser_available(), reason="nvFuser is not available")
+def test_recipe_qwen2_5_kvcache():
+    model_name = "Qwen/Qwen2.5-3B"
+
+    config = transformers.AutoConfig.from_pretrained(model_name, trust_remote_code=True)
+    config.num_hidden_layers = 2
+
+    model = transformers.AutoModelForCausalLM.from_pretrained(
+        model_name,
+        config=config,
+        torch_dtype="auto",
+        trust_remote_code=True,
+        ignore_mismatched_sizes=True,
+    )
+    model.eval()
+
+    tokenizer = transformers.AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    encoded = tokenizer("Hello, how are", return_tensors="pt", add_special_tokens=False)
+    input_ids = encoded["input_ids"]
+
+    torch.manual_seed(0)
+    expected = model.generate(input_ids, max_new_tokens=5, do_sample=False, use_cache=True)
+
+    thunder_model = thunder.compile(model, recipe=HFTransformers(interpreter="thunder.jit"))
+    torch.manual_seed(0)
+    actual = thunder_model.generate(input_ids, max_new_tokens=5, do_sample=False, use_cache=True)
+
+    assert_close(actual, expected)
+
+    deregister_executor("inplace_index_copy_ex")
+
+
+@pytest.mark.skipif(not nvfuser_available(), reason="nvFuser is not available")
 def test_recipe_mlp():
     model = torch.nn.Sequential(torch.nn.Linear(2048, 4096), torch.nn.ReLU(), torch.nn.Linear(4096, 64))
 
