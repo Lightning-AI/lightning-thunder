@@ -91,7 +91,6 @@ def test_recipe_qwen2_5_kvcache():
         model_name,
         config=config,
         torch_dtype="auto",
-        device_map="auto",
         trust_remote_code=True,
         ignore_mismatched_sizes=True,
     )
