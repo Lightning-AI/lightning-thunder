@@ -521,6 +521,7 @@ def split_into_forward_and_backward(joint_trace: TraceCtx):
 def forward_and_backward_from_trace(trace: TraceCtx, torch_autograd=False) -> ForwardBackwardTraces:
     if not torch_autograd:
         from thunder.core.transforms import forward_and_backward_from_trace as legacy_autodiff
+
         return legacy_autodiff(trace, torch_autograd=torch_autograd)
 
     joint_trace = grad_transform_on_trace(trace)
