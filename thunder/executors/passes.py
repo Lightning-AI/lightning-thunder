@@ -56,7 +56,7 @@ def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: 
                 if (isinstance(ex, OperatorExecutor) and ex.can_execute(bsym)) or (
                     isinstance(ex, FusionExecutor) and ex.can_fuse(bsym)
                 ):
-                    execution_transform: None | Callable = ex.get_execution_transform(bsym.sym)
+                    execution_transform: None | Callable = ex.get_execution_transform(bsym)
                     if execution_transform is not None:
                         self.add_bsyms_from_function(execution_transform, *bsym.args, **bsym.kwargs)
                         return

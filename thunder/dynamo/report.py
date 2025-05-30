@@ -41,7 +41,7 @@ from thunder.dynamo.repro_script_template import (
     CALLABLE_NAME,
     COMPILED_CALLABLE_NAME,
 )
-from thunder import last_traces, last_backward_traces
+from thunder import last_traces, last_backward_traces, compile_stats
 from thunder.benchmarks.utils import backward_only
 from thunder.dynamo.benchmark_utils import (
     TorchCompileSpecification,
@@ -69,13 +69,15 @@ if TYPE_CHECKING:
     from thunder.dynamo.benchmark_utils import CompileSpecificationInterface, TimerInterface
 
 
-def run_forward_backward(fn, *args, **kwargs):
+def run_forward_backward(fn, *args, benchmark=False, **kwargs):
     result = fn(*args, **kwargs)
     result = sequencify(result)
 
     differentiable_tensor_result = list(filter(lambda x: isinstance(x, torch.Tensor) and x.requires_grad, result))
 
     if not differentiable_tensor_result:
+        if benchmark:
+            return
         return result, None
 
     forward_inputs = tree_flatten((args, kwargs))[0]
@@ -94,6 +96,10 @@ def run_forward_backward(fn, *args, **kwargs):
         i.grad = None
 
     torch.autograd.backward(differentiable_tensor_result, output_grads, inputs=inputs_requires_grad)
+    if benchmark:
+        for i in inputs_requires_grad:
+            i.grad = None
+        return
     return result, [t.grad for t in inputs_requires_grad]
 
 
@@ -451,13 +457,16 @@ class FXGraphReport:
     ):
         torch._dynamo.reset()
         example_inputs = self.make_example_inputs()
+        # ref: https://github.com/pytorch/pytorch/blob/0ef5ba43a6e7fe806ea9f27929bf4328ffd1ebf4/torch/_inductor/compile_fx.py#L1921-L1922
+        # The compile_fn may mutate the GraphModule, so we need to deepcopy it
+        graph = copy.deepcopy(self.graph)
         # To avoid the AssertionError: attribute nodes of Graph object out of sync
-        recompile_graph(self.graph)
-        compiled_model = compile_fn.compile(self.graph, inputs=example_inputs)
+        recompile_graph(graph)
+        compiled_model = compile_fn.compile(graph, inputs=example_inputs)
         result = run_forward_backward(compiled_model, *example_inputs)
 
         if check_consistency:
-            eager_result = run_forward_backward(self.graph, *example_inputs)
+            eager_result = run_forward_backward(graph, *example_inputs)
             torch.testing.assert_close(result, eager_result)
         return result
 
@@ -516,7 +525,13 @@ class FXGraphReport:
         format_python_file(folder / file_name)
 
     def run_benchmark(
-        self, compile_fn: CompileSpecificationInterface, time_fn: TimerInterface, *, reset_torch_dynamo=True
+        self,
+        compile_fn: CompileSpecificationInterface,
+        time_fn: TimerInterface,
+        *,
+        reset_torch_dynamo=True,
+        example_inputs=None,
+        measure_fwd_bwd_together=False,
     ):
         # From torch.compile docs - https://pytorch.org/docs/stable/generated/torch.compile.html
         # > Multiple compiled results can be associated with a frame up to torch._dynamo.config.cache_size_limit, which defaults to 8; at which point we will fall back to eager.
@@ -525,11 +540,25 @@ class FXGraphReport:
         # Sets the `reset_torch_dynamo` to True when you need to reset Dynamo's state *as if* you had started a fresh process invocation.
         if reset_torch_dynamo:
             torch._dynamo.reset()
-        example_inputs = self.make_example_inputs()
+        if example_inputs is None:
+            example_inputs = self.make_example_inputs()
+        # ref: https://github.com/pytorch/pytorch/blob/0ef5ba43a6e7fe806ea9f27929bf4328ffd1ebf4/torch/_inductor/compile_fx.py#L1921-L1922
+        # The compile_fn may mutate the GraphModule, so we need to deepcopy it
+        graph = copy.deepcopy(self.graph)
         # To avoid the AssertionError: attribute nodes of Graph object out of sync
-        recompile_graph(self.graph)
-        compiled_fn = compile_fn.compile(self.graph, inputs=example_inputs)
+        recompile_graph(graph)
+        compiled_fn = compile_fn.compile(graph, inputs=example_inputs)
 
+        if measure_fwd_bwd_together:
+            fwd_bwd_measurement = time_fn.time(
+                "run_forward_backward(compiled_fn, *example_inputs, benchmark=True)",
+                globals={
+                    "run_forward_backward": run_forward_backward,
+                    "compiled_fn": compiled_fn,
+                    "example_inputs": example_inputs,
+                },
+            )
+            return compiled_fn, fwd_bwd_measurement, None
         forward_only = not any(hasattr(arg, "requires_grad") and arg.requires_grad for arg in example_inputs)
         fwd_measurement = time_fn.time(
             "compiled_fn(*example_inputs)", globals={"compiled_fn": compiled_fn, "example_inputs": example_inputs}
@@ -541,7 +570,7 @@ class FXGraphReport:
             bwd_measurement = time_fn.time(
                 "backward_fn(*backward_args)", globals={"backward_fn": backward_fn, "backward_args": backward_args}
             )
-        return fwd_measurement, bwd_measurement
+        return compiled_fn, fwd_measurement, bwd_measurement
 
     def write_benchmark(
         self,
@@ -692,6 +721,10 @@ def fx_report(fn: Callable, **torch_compile_kwargs) -> Callable[..., FXReport]:
                 )
                 graph_report.write_benchmark(tmpdir, my_thunderjit, WallTime, file_name=f"{graph_name}_mythunder_benchmark.py")
     """
+    if compile_stats(fn) is not None:
+        raise ValueError(
+            "fx_report requires the original (uncompiled) callable and cannot be used on the Thunder-compiled function."
+        )
     graphs = []
     break_reasons = []
 
@@ -1351,4 +1384,6 @@ def save_failing_repros(
             report.run_repro(compile_fn, check_consistency)
         except Exception as e:
             comment = f"Failed to run the function using {compile_fn.name} with exception: {e}"
-            report.write_repro(repros_folder, compile_fn, extra_comment_str=comment)
+            report.write_repro(
+                repros_folder, compile_fn, extra_comment_str=comment, check_consistency=check_consistency
+            )

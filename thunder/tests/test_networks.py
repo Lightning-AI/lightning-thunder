@@ -122,12 +122,6 @@ def test_nanogpt_complete_cudagraphs(executor, device, dtype):
 @instantiate(
     dtypes=(thunder.float32,),
     devicetypes=(thunder.devices.DeviceType.CUDA,),
-    decorators=(
-        pytest.mark.skipif(
-            version_between(torch.__version__, min_ver="2.7.0dev0", max_ver="2.7.0a99"),
-            reason="https://github.com/lightning-ai/lightning-thunder/pull/1629",
-        ),
-    ),
 )
 def test_nanogpt_complete_cudagraphs_autograd(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
@@ -284,10 +278,6 @@ def test_hf_bert():
     assert_close(actual, expected)
 
 
-@pytest.mark.skipif(
-    version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
-    reason="https://github.com/bitsandbytes-foundation/bitsandbytes/pull/1413",
-)
 @pytest.mark.skipif(not BITSANDBYTES_AVAILABLE, reason="`bitsandbytes` is not available")
 @requiresCUDA
 def test_quantization():
@@ -364,10 +354,6 @@ def test_quantization():
         assert_close(v, sd2[k])
 
 
-@pytest.mark.skipif(
-    version_between(torch.__version__, min_ver="2.7.0dev0", max_ver="2.7.0a99"),
-    reason="https://github.com/bitsandbytes-foundation/bitsandbytes/pull/1629",
-)
 @thunder.tests.framework.requiresCUDA
 def test_thunderfx_mistral_nemo_small():
     """
@@ -419,7 +405,6 @@ def test_thunderfx_mistral_nemo_small():
 
 
 @thunder.tests.framework.requiresCUDA
-@pytest.mark.skip(reason="assertion error occurs for transformers==4.50.2")  # TODO
 @pytest.mark.parametrize("model_id", ["Qwen/Qwen2.5-7B-Instruct", "microsoft/Phi-3-mini-128k-instruct"])
 def test_hf_for_nemo(model_id):
     from thunder.dynamo import thunderfx
@@ -592,6 +577,53 @@ def test_memory_litgpt_llama3():
     }
 
     assert mem_thunder < mem_eager
+
+
+@requiresCUDA
+def test_checkpointing_thunderfx():
+    from thunder.dynamo import thunderfx
+    from thunder.tests import litgpt_model
+    from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
+        apply_activation_checkpointing,
+        checkpoint_wrapper,
+        CheckpointWrapper,
+    )
+
+    def forward_backward_peak(m, inp):
+        torch.cuda.reset_peak_memory_stats(device=None)
+        mem_before = torch.cuda.max_memory_allocated()
+        res = m(inp)
+        res.sum().backward()
+        mem_after = torch.cuda.max_memory_allocated()
+        return (mem_after - mem_before) / 2**20
+
+    with torch.device("cuda"):
+        m = litgpt_model.GPT.from_name("llama2-like")
+        inp = torch.ones((1, 2048), dtype=torch.int64)
+
+    check_fn = lambda submodule: isinstance(submodule, litgpt_model.Block)
+    apply_activation_checkpointing(m, checkpoint_wrapper_fn=checkpoint_wrapper, check_fn=check_fn)
+
+    # warmup, allocate grads etc.
+    forward_backward_peak(m, inp)
+    forward_backward_peak(m, inp)
+    jm = thunderfx(m)
+    forward_backward_peak(jm, inp)
+    forward_backward_peak(jm, inp)
+
+    mem_thunder = forward_backward_peak(jm, inp)
+    mem_eager = forward_backward_peak(m, inp)
+
+    assert mem_thunder < 105  # this ~35% is more than eager, in isolation 100 vs. 74
+
+    ref = m(inp)
+    grads_ref = torch.autograd.grad(ref.sum(), [*m.parameters()])
+
+    res = jm(inp)
+    grads_res = torch.autograd.grad(res.sum(), [*m.parameters()])
+
+    assert_close(res, ref)
+    assert_close(grads_res, grads_ref, atol=1e-3, rtol=1e-3)
 
 
 @requiresCUDA
