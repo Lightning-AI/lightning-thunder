@@ -79,6 +79,7 @@ def test_recipe_basic_bert_fx():
     # cleanup after test
     deregister_executor("inplace_index_copy_ex")
 
+
 @pytest.mark.skipif(not nvfuser_available(), reason="nvFuser is not available")
 def test_recipe_qwen2_5_kvcache():
     model_name = "Qwen/Qwen2.5-3B"
