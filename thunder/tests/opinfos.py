@@ -2383,7 +2383,7 @@ floor_divide_opinfo = OpInfo(
             pytest.mark.xfail(strict=True),
             "test_core_vs_torch_consistency",
             dtypes=datatypes.float_math_dtypes,
-        )
+        ),
     ),
 )
 elementwise_binary_ops.append(floor_divide_opinfo)
@@ -3739,7 +3739,7 @@ diagonal_opinfo = OpInfo(
         DecorateInfo(
             pytest.mark.xfail(strict=True),
             "test_core_vs_torch_consistency",
-        )
+        ),
     ),
 )
 shape_ops.append(diagonal_opinfo)
@@ -3946,7 +3946,7 @@ unfold_opinfo = OpInfo(
             pytest.mark.xfail(strict=True),
             "test_core_vs_torch_consistency",
         ),
-    )
+    ),
 )
 
 shape_ops.append(unfold_opinfo)
@@ -4235,7 +4235,7 @@ getitem_opinfo = OpInfo(
         DecorateInfo(
             pytest.mark.xfail(strict=True),
             "test_core_vs_torch_consistency",
-        )
+        ),
     ),
 )
 shape_ops.append(getitem_opinfo)
