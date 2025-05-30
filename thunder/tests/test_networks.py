@@ -389,7 +389,8 @@ def test_thunderfx_mistral_nemo_small():
     device = torch.device("cuda")
     model.to(device)
     model.train()
-    mdl = thunder.dynamo.thunderfx(model)
+    # mdl = thunder.dynamo.thunderfx(model)
+    mdl = thunder.jit(model)
 
     batch_size = 1
     iid_size = (batch_size, config.max_position_embeddings)
@@ -404,8 +405,16 @@ def test_thunderfx_mistral_nemo_small():
     assert mdl._backend.subgraph_infos, "Should have at least 1 subgraph"
 
 
+nemo_models: list[str] = [
+    "microsoft/Phi-3-mini-128k-instruct",
+    "bigcode/starcoder2-7b",
+    "Qwen/Qwen2.5-7B-Instruct",
+    "Qwen/Qwen2-7B",
+]
+
+
 @thunder.tests.framework.requiresCUDA
-@pytest.mark.parametrize("model_id", ["Qwen/Qwen2.5-7B-Instruct", "microsoft/Phi-3-mini-128k-instruct"])
+@pytest.mark.parametrize("model_id", nemo_models)
 def test_hf_for_nemo(model_id):
     from thunder.dynamo import thunderfx
     from transformers import AutoConfig, AutoModelForCausalLM
@@ -428,7 +437,8 @@ def test_hf_for_nemo(model_id):
     # fullgraph=True used to work with transformers 4.45.2, but it doesn't work
     # with 4.46.2 because of re.findall usage in the loss function
     fullgraph = False
-    compiled_model = thunderfx(model, fullgraph=fullgraph)
+    # compiled_model = thunderfx(model, fullgraph=fullgraph)
+    compiled_model = thunder.jit(model, fullgraph=fullgraph)
 
     input_ids = torch.randint(0, configuration.vocab_size, (1, configuration.max_position_embeddings), device="cuda")
     ref_output = model(input_ids=input_ids, labels=input_ids)
