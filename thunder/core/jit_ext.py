@@ -30,7 +30,6 @@ import torch.utils.checkpoint
 import thunder
 from thunder.core.compile_data import get_cache_option, get_compile_data
 import thunder.clang as clang
-import thunder.core.transforms
 import thunder.core.baseutils as baseutils
 import thunder.core.codeutils as codeutils
 from thunder.core.proxies import (

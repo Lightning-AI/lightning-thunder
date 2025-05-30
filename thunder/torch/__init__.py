@@ -26,7 +26,6 @@ import thunder.core.dtypes as dtypes
 from thunder.core.dtypes import to_torch_dtype, to_dtype, _thunder_to_torch_dtype_map, _torch_to_thunder_dtype_map
 import thunder.core.prims as prims
 import thunder.core.utils as utils
-import thunder.distributed.prims as dist_prims
 from thunder.core.langctxs import langctx, Languages, get_langctx
 from thunder.core.compile_data import get_compile_data
 from thunder.core.proxies import (
@@ -48,6 +47,7 @@ from thunder.core.symbol import Symbol
 from thunder.core.transforms import register_grad, register_augmented_forward, register_backward
 from thunder.core.prims import get_grad, put_grad
 import thunder
+import thunder.distributed.prims as dist_prims
 from thunder.torch.default_torch_ops import _auto_registered_operators_returning_views
 
 
