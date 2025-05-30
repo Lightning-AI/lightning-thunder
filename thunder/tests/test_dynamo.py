@@ -994,7 +994,6 @@ def test_dynamo_reproducer_split(
     if use_pytest_benchmark:
         cmd = cmd + ["-m", "pytest"]
 
-    # Randomly pick one file to run to save time
     all_files = [s1, s2, s3]
     selected_files = [all_files[i] for i in file_indices]
     for file in selected_files:
@@ -1249,7 +1248,6 @@ def test_thunder_specific_reports(tmp_path, file_indices):
         return y + 1
 
     results = fx_report(foo)(x)
-    # import pdb; pdb.set_trace()
     for idx, fx_graph_report in enumerate(results.fx_graph_reports):
         thunder_fx_graph_report = analyze_thunder_splits(fx_graph_report)
         thunder_fx_graph_report.write_thunder_repro(tmp_path)
@@ -1267,7 +1265,6 @@ def test_thunder_specific_reports(tmp_path, file_indices):
     py_files = list(tmp_path.rglob("*.py"))
     assert len(py_files) == 16
 
-    # Randomly select 2 files to run to save time
     selected_files = [py_files[i] for i in file_indices]
     for file in selected_files:
         run_script(file, cmd)
@@ -1378,7 +1375,6 @@ def test_reports_repro(tmp_path, file_indices):
     py_files = list(tmp_path.rglob("*.py"))
     assert len(py_files) == 16
 
-    # Randomly select 2 files to run to save time
     selected_files = [py_files[i] for i in file_indices]
     for file in selected_files:
         run_script(file, cmd)
@@ -1428,7 +1424,6 @@ def test_reports_benchmark(tmp_path, file_indices):
     py_files = list(tmp_path.rglob("*.py"))
     assert len(py_files) == 5
 
-    # Randomly select 2 files to run to save time
     selected_files = [py_files[i] for i in file_indices]
     for file in selected_files:
         run_script(file, cmd)
