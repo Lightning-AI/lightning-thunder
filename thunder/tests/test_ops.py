@@ -1,4 +1,5 @@
 from collections.abc import Callable
+import os
 
 import numpy as np
 import pytest
@@ -80,10 +81,16 @@ def test_core_vs_torch_consistency(op, device: str, dtype: dtypes.dtype, executo
     ):
         pytest.skip("Your CUDA device does not support bfloat16")
 
-    for sample in op.sample_inputs(device, dtype):
-        comp = sample.comp if sample.comp is not None else comp
+    # Check if a specific sample index is requested via environment variable
+    target_sample_idx = int(os.environ.get("THUNDER_OPTEST_SAMPLE_INDEX", -1))
 
-        tfn: Callable
+    for i, sample in enumerate(op.sample_inputs(device, dtype)):
+        # Skip samples that don't match the requested index
+        if target_sample_idx >= 0 and i != target_sample_idx:
+            continue
+
+        sample_comp = sample.comp if sample.comp is not None else comp
+
         tfn = thunder.jit(
             op.op,
             executors=executor.executors_list(),
@@ -91,23 +98,45 @@ def test_core_vs_torch_consistency(op, device: str, dtype: dtypes.dtype, executo
             disable_torch_autograd=True,
         )
 
-        result = run_snippet(
-            snippet_torch_consistency,
-            op,
-            device,
-            dtype,
-            tfn,
-            op.torch_reference,
-            sample,
-            lambda a, b, **kwargs: comp(a, b, equal_nan=True, **kwargs),
+        path = os.path.relpath(__file__)
+        repro_cmd = (
+            f"command to reproduce the error: THUNDER_OPTEST_SAMPLE_INDEX={i} "
+            f'pytest {path} -k "test_core_vs_torch_consistency and {device} and {dtype} and {op.name}"'
         )
 
-        # See [NOTE] dynamo reset
-        if any("torchcompile" in ex.name for ex in executor.executors_list()):
-            torch._dynamo.reset()
+        try:
+            result = run_snippet(
+                snippet_torch_consistency,
+                op,
+                device,
+                dtype,
+                tfn,
+                op.torch_reference,
+                sample,
+                lambda a, b, **kwargs: sample_comp(a, b, equal_nan=True, **kwargs),
+            )
+        except Exception as e:
+            if repro_cmd not in str(e):
+                raise type(e)(f"{str(e)}\n{repro_cmd}") from e
+            else:
+                raise
+        else:
+            # This runs only if no exception was raised
+            # See [NOTE] dynamo reset
+            if any("torchcompile" in ex.name for ex in executor.executors_list()):
+                torch._dynamo.reset()
 
-        if result is not None:
-            return result
+            if result is not None:
+                # Check if result is a tuple of exceptions and metadata
+                if isinstance(result, tuple) and len(result) > 0 and isinstance(result[0], Exception):
+                    # Add repro command to exception message
+                    ex = result[0]
+                    if repro_cmd not in str(ex):
+                        new_ex = type(ex)(f"{str(ex)}\n{repro_cmd}")
+                        # Preserve the original traceback
+                        new_ex.__traceback__ = ex.__traceback__
+                        result = (new_ex,) + result[1:]
+                return result
 
 
 def snippet_jax_consistency(op, jax_op, sample, comp):
