@@ -44,7 +44,7 @@ repos:
       - id: ruff-check
         args: ["--fix"]
       - id: ruff-format
-        types_or: [ python, pyi ]
+        types_or: [python, pyi]
 
   - repo: https://github.com/executablebooks/mdformat
     rev: 0.7.22
