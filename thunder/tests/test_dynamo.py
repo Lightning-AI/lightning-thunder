@@ -12,6 +12,9 @@ from looseversion import LooseVersion
 from unittest.mock import patch
 import weakref
 import re
+from hypothesis import strategies as st
+from hypothesis import given, settings
+from hypothesis import HealthCheck
 
 from thunder import dtypes
 from thunder.dynamo import thunderfx
@@ -69,21 +72,6 @@ def run_script(file_name, cmd):
     cmd = cmd + [file_name]
     result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     assert result.returncode == 0, f"Script {file_name} failed: {result}"
-
-
-from hypothesis import strategies as st
-from hypothesis import given, settings
-
-
-# Uses hypothesis to randomly select num_files files to run
-def run_sample_scripts(py_files, cmd, *, num_files=1):
-    @given(selected_files=st.lists(st.sampled_from(py_files), min_size=num_files, max_size=num_files, unique=True))
-    @settings(max_examples=1, deadline=None)  # We only need to run one example
-    def run_scripts(selected_files):
-        for file in selected_files:
-            run_script(file, cmd)
-
-    run_scripts()
 
 
 @instantiate(
@@ -974,7 +962,11 @@ def test_deepcopy_graph_module():
     executors=[DynamoThunderExecutor],
     decorators=(pytest.mark.parametrize("use_pytest_benchmark", (True, False), ids=("benchmark", "repro")),),
 )
-def test_dynamo_reproducer_split(executor, device: str, dtype: dtypes.dtype, use_pytest_benchmark, tmp_path):
+@given(file_indices=st.lists(st.integers(min_value=0, max_value=2), min_size=2, max_size=2, unique=True))
+@settings(max_examples=1, deadline=None)
+def test_dynamo_reproducer_split(
+    executor, device: str, dtype: dtypes.dtype, use_pytest_benchmark, tmp_path, file_indices
+):
     if IS_WINDOWS and use_pytest_benchmark:
         pytest.skip(
             "Skipping on Windows because this uses torch.compile (see https://github.com/Lightning-AI/lightning-thunder/issues/1326)"
@@ -1003,7 +995,10 @@ def test_dynamo_reproducer_split(executor, device: str, dtype: dtypes.dtype, use
         cmd = cmd + ["-m", "pytest"]
 
     # Randomly pick one file to run to save time
-    run_sample_scripts([s1, s2, s3], cmd, num_files=1)
+    all_files = [s1, s2, s3]
+    selected_files = [all_files[i] for i in file_indices]
+    for file in selected_files:
+        run_script(file, cmd)
 
 
 @requiresCUDA
@@ -1240,7 +1235,9 @@ def test_leak_on_unsupported_thunder_operator():
 
 
 @requiresCUDA
-def test_thunder_specific_reports(tmp_path):
+@given(file_indices=st.lists(st.integers(min_value=0, max_value=15), min_size=2, max_size=2, unique=True))
+@settings(max_examples=2, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+def test_thunder_specific_reports(tmp_path, file_indices):
     x = torch.ones(2, 2, device="cuda", requires_grad=True)
 
     def foo(x):
@@ -1271,7 +1268,9 @@ def test_thunder_specific_reports(tmp_path):
     assert len(py_files) == 16
 
     # Randomly select 2 files to run to save time
-    run_sample_scripts(py_files, cmd, num_files=2)
+    selected_files = [py_files[i] for i in file_indices]
+    for file in selected_files:
+        run_script(file, cmd)
 
 
 @requiresCUDA
@@ -1339,7 +1338,9 @@ def test_ThunderCompileSpecification():
 
 
 @requiresCUDA
-def test_reports_repro(tmp_path):
+@given(file_indices=st.lists(st.integers(min_value=0, max_value=15), min_size=2, max_size=2, unique=True))
+@settings(max_examples=2, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+def test_reports_repro(tmp_path, file_indices):
     x = torch.ones(2, 2, device="cuda", requires_grad=True)
 
     def foo(x):
@@ -1378,11 +1379,15 @@ def test_reports_repro(tmp_path):
     assert len(py_files) == 16
 
     # Randomly select 2 files to run to save time
-    run_sample_scripts(py_files, cmd, num_files=2)
+    selected_files = [py_files[i] for i in file_indices]
+    for file in selected_files:
+        run_script(file, cmd)
 
 
 @requiresCUDA
-def test_reports_benchmark(tmp_path):
+@given(file_indices=st.lists(st.integers(min_value=0, max_value=4), min_size=2, max_size=2, unique=True))
+@settings(max_examples=2, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+def test_reports_benchmark(tmp_path, file_indices):
     x = torch.ones(2, 2, device="cuda", requires_grad=True)
 
     def foo(x):
@@ -1424,7 +1429,9 @@ def test_reports_benchmark(tmp_path):
     assert len(py_files) == 5
 
     # Randomly select 2 files to run to save time
-    run_sample_scripts(py_files, cmd, num_files=2)
+    selected_files = [py_files[i] for i in file_indices]
+    for file in selected_files:
+        run_script(file, cmd)
 
 
 @requiresCUDA
