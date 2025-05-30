@@ -218,7 +218,6 @@ def test_te_linear_forward_backward_multiple_iteration_multiple_recipes():
             optimizer.step()
             optimizer.zero_grad()
 
-
     def te_model(x, fp8_recipe):
         # Enable autocasting for the forward pass
         with te.fp8_autocast(fp8_recipe=fp8_recipe):

@@ -513,13 +513,12 @@ def test_thundercompiler_optim_step(executor, device, dtype, optim):
         torch.testing.assert_close(
             tuple(model.parameters()),
             tuple(ref_model.parameters()),
-            msg=lambda s: f"{i+1}-iter {s}",
+            msg=lambda s: f"{i + 1}-iter {s}",
         )
 
 
 @instantiate(dtypes=NOTHING, executors=[DynamoThunderExecutor])
 def test_no_grad_ctx_manager(executor, device: str, dtype: dtypes.dtype):
-
     def func(x):
         with torch.no_grad():
             with torch.autocast("cuda", dtype=torch.bfloat16):
@@ -549,7 +548,6 @@ def test_no_grad_ctx_manager(executor, device: str, dtype: dtypes.dtype):
 
 @instantiate(dtypes=NOTHING, executors=[DynamoThunderExecutor])
 def test_no_grad_enabled_grad_nested_ctx_manager(executor, device: str, dtype: dtypes.dtype):
-
     def func(x):
         with torch.no_grad():
             with torch.autocast("cuda", dtype=torch.bfloat16):

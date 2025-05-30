@@ -447,9 +447,7 @@ def test_constant_folding():
                 2,
             )
             + 1
-        )[
-            0
-        ]  # 1
+        )[0]  # 1
         return x + getitem + getitem_2
 
     jforward = thunder.jit(forward, transforms=[ConstantFolding()])
@@ -629,7 +627,6 @@ def test_disable_params_check_thunderfx():
 def test_buffer_dtype_casting():
     import torch.nn as nn
     import itertools
-
 
     class CastBuffers(thunder.core.transform_common.Transform):
         def __init__(self):

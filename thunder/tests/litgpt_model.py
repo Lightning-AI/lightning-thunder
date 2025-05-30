@@ -1,7 +1,5 @@
 """Taken from https://github.com/Lightning-AI/litgpt/blob/main/litgpt/model.py"""
 
-
-
 configs = [
     # diverse sample of configs FOR TESTING that cover all major checkpoints variants architecturally but with reduced
     # size

@@ -223,7 +223,6 @@ def test_fa3_used(dtype: torch.dtype):
 # verify that checker is correctly returning False on invalid fa3 use cases
 @requiresCUDA
 def test_checker():
-
     if not HAS_FA3:
         pytest.skip("fa3 not built")
 
