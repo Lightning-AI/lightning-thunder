@@ -121,6 +121,28 @@ line_length = 120
 line-length = 120
 # Always generate Python 3.10-compatible code.
 target-version = "py310"
+#extend-select = [
+#    "C4",  # see: https://pypi.org/project/flake8-comprehensions
+#    "PT",  # see: https://pypi.org/project/flake8-pytest-style
+#    "RET",  # see: https://pypi.org/project/flake8-return
+#    "SIM",  # see: https://pypi.org/project/flake8-simplify
+#]
+# Exclude a variety of commonly ignored directories.
+exclude = [
+    ".eggs",
+    ".git",
+    ".mypy_cache",
+    ".ruff_cache",
+    "__pypackages__",
+    "_build",
+    "build",
+    "dist",
+    "docs",
+    "examples",
+    "notebooks",
+]
+
+[tool.ruff.lint]
 # Enable Pyflakes `E` and `F` codes by default.
 select = [
     "E", "W",  # see: https://pypi.org/project/pycodestyle
@@ -128,12 +150,6 @@ select = [
 #    "D",  # see: https://pypi.org/project/pydocstyle
 #    "N",  # see: https://pypi.org/project/pep8-naming
 ]
-#extend-select = [
-#    "C4",  # see: https://pypi.org/project/flake8-comprehensions
-#    "PT",  # see: https://pypi.org/project/flake8-pytest-style
-#    "RET",  # see: https://pypi.org/project/flake8-return
-#    "SIM",  # see: https://pypi.org/project/flake8-simplify
-#]
 ignore = [
     "E731",  # Do not assign a lambda expression, use a def
     "E501",  # todo: Line too long (235 > 120 characters)
@@ -149,23 +165,8 @@ ignore = [
     "E721",  # 11  https://docs.astral.sh/ruff/rules/type-comparison/
     "E722",  # 11  https://docs.astral.sh/ruff/rules/bare-except/
 ]
-# Exclude a variety of commonly ignored directories.
-exclude = [
-    ".eggs",
-    ".git",
-    ".mypy_cache",
-    ".ruff_cache",
-    "__pypackages__",
-    "_build",
-    "build",
-    "dist",
-    "docs",
-    "examples",
-    "notebooks",
-]
-ignore-init-module-imports = true
 
-[tool.ruff.per-file-ignores]
+[tool.ruff.lint.per-file-ignores]
 "setup.py" = ["D100", "SIM115"]
 "__about__.py" = ["D100"]
 "__init__.py" = ["D100"]
@@ -173,15 +174,18 @@ ignore-init-module-imports = true
     # Allow variable annotations such as `f32[4, 4]`
     "F821",  # https://docs.astral.sh/ruff/rules/undefined-name/
 ]
+# The default is `true` and this option is deprecated as per
+# https://docs.astral.sh/ruff/settings/#lint_ignore-init-module-imports
+# "ignore-init-module-imports" = true
 
-[tool.ruff.pydocstyle]
+[tool.ruff.lint.pydocstyle]
 # Use Google-style docstrings.
 convention = "google"
 
 #[tool.ruff.pycodestyle]
 #ignore-overlong-task-comments = true
 
-[tool.ruff.mccabe]
+[tool.ruff.lint.mccabe]
 # Unlike Flake8, default to a complexity level of 10.
 max-complexity = 10
 
