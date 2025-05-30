@@ -98,7 +98,7 @@ def test_recipe_qwen2_5_kvcache():
 
     tokenizer = transformers.AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
     encoded = tokenizer("Hello, how are", return_tensors="pt", add_special_tokens=False)
-    input_ids = encoded["input_ids"].cuda()
+    input_ids = encoded["input_ids"]
 
     torch.manual_seed(0)
     expected = model.generate(input_ids, max_new_tokens=5, do_sample=False, use_cache=True)
