@@ -370,3 +370,55 @@ def test_inplace_to_alias_func_args(executor, device, dtype):
     out = jitted_f(a)
 
     torch.testing.assert_close(out, out_expected)
+
+
+@instantiate(
+    dtypes=(dtypes.float32,),
+)
+def test_higher_order_inplace_alias_update(executor, device, dtype):
+    torch_dtype = dtypes.to_torch_dtype(dtype)
+
+    class Sin(torch.autograd.Function):
+        @staticmethod
+        def forward(ctx, x):
+            ctx.save_for_backward(x)
+            y = x * 1
+            y.sin_()
+            return y
+
+        @staticmethod
+        def backward(ctx, g):
+            (x,) = ctx.saved_tensors
+            y = g * x
+            y.cos_()
+            return y
+
+    def foo(x):
+        return Sin.apply(x)
+
+    a = torch.ones(2, device=device, dtype=torch_dtype, requires_grad=True)
+    b = torch.ones(2, device=device, dtype=torch_dtype, requires_grad=True)
+    c = torch.ones(2, device=device, dtype=torch_dtype, requires_grad=True)
+
+    g = torch.rand_like(a)
+
+    jfoo = thunder.jit(foo, executors=executor.executors_list())
+    actual_jit = jfoo(a)
+
+    from thunder.dynamo import thunderfx
+
+    cfoo = thunderfx(foo, executors=executor.executors_list())
+    actual_fx = cfoo(b)
+
+    expected = foo(c)
+
+    # Checking both paths in jit_ext.py
+    torch.testing.assert_close(actual_jit, expected)
+    torch.testing.assert_close(actual_fx, expected)
+
+    actual_grad_jit = torch.autograd.grad(actual_jit, a, g)
+    actual_grad_fx = torch.autograd.grad(actual_fx, b, g)
+
+    expected_grad = torch.autograd.grad(expected, c, g)
+    torch.testing.assert_close(actual_grad_fx, expected_grad)
+    torch.testing.assert_close(actual_grad_jit, expected_grad)
