@@ -12,7 +12,7 @@ expecttest ==0.3.0  # for test_ddp.py
 hypothesis ~=6.131.9  # for test_ddp.py
 numpy
 einops  # for test_einops.py
-litgpt==0.4.11  # for the model definition in tests and benchmarks
+litgpt==0.5.8  # for the model definition in tests and benchmarks
 absl-py # thunder/benchmarks/test_benchmark_litgpt.py
 pandas # thunder/benchmarks/test_benchmark_litgpt.py
 xlsxwriter # thunder/benchmarks/test_benchmark_litgpt.py
