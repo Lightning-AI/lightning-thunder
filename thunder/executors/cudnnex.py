@@ -90,9 +90,6 @@ from thunder.core.transforms import (
 from thunder.extend import OperatorExecutor, register_executor
 import thunder.torch as ltorch
 
-cudnn_ex: OperatorExecutor = OperatorExecutor("cudnn", version=cudnn_backend_version)
-register_executor(cudnn_ex)
-
 
 from collections import OrderedDict
 from itertools import accumulate
@@ -116,9 +113,6 @@ class CudnnexLRUCache(OrderedDict):
             oldest = next(iter(self))
             del self[oldest]
         super().__setitem__(key, value)
-
-
-_cudnnex_cache = CudnnexLRUCache(maxlen=1024)
 
 
 def _make_cudnn_sdpa_forward_graph(
@@ -431,14 +425,6 @@ def _cudnn_sdpa_checker(
     return True
 
 
-cudnn_sdpa_fwd = cudnn_ex.register_operator(
-    "cudnn_sdpa_fwd",
-    meta=_cudnn_sdpa_forward_meta,
-    fn=_cudnn_sdpa_fwd_impl,
-    tags=(OpTags.DONT_AUTO_RECOMPUTE_IN_BACKWARD,),
-)
-
-
 def _make_cudnn_sdpa_backward_graph(
     query,
     key,
@@ -729,13 +715,6 @@ def _cudnn_sdpa_bwd_impl(
     return grads
 
 
-cudnn_sdpa_bwd = cudnn_ex.register_operator(
-    "cudnn_sdpa_bwd",
-    meta=_cudnn_sdpa_bwd_meta,
-    fn=_cudnn_sdpa_bwd_impl,
-)
-
-
 def _cudnn_sdpa_fwd_wrapper(
     query: TensorProxy,
     key: TensorProxy,
@@ -810,10 +789,26 @@ tensor and return them as slices of that tensor.
     return primal
 
 
-# Registers the implementation for torch.nn.functional.scaled_dot_product_attention
-cudnn_ex.register_implementation(
-    ltorch.scaled_dot_product_attention,
-    checker=_cudnn_sdpa_checker,
-    execution_transform=_cudnn_sdpa_fwd_wrapper,
-    grad_transform=_cudnn_sdpa_bwd_wrapper,
-)
+if cudnn_available():
+    cudnn_ex: OperatorExecutor = OperatorExecutor("cudnn", version=cudnn_backend_version)
+    register_executor(cudnn_ex)
+    _cudnnex_cache = CudnnexLRUCache(maxlen=1024)
+    cudnn_sdpa_fwd = cudnn_ex.register_operator(
+        "cudnn_sdpa_fwd",
+        meta=_cudnn_sdpa_forward_meta,
+        fn=_cudnn_sdpa_fwd_impl,
+        tags=(OpTags.DONT_AUTO_RECOMPUTE_IN_BACKWARD,),
+    )
+
+    cudnn_sdpa_bwd = cudnn_ex.register_operator(
+        "cudnn_sdpa_bwd",
+        meta=_cudnn_sdpa_bwd_meta,
+        fn=_cudnn_sdpa_bwd_impl,
+    )
+    # Registers the implementation for torch.nn.functional.scaled_dot_product_attention
+    cudnn_ex.register_implementation(
+        ltorch.scaled_dot_product_attention,
+        checker=_cudnn_sdpa_checker,
+        execution_transform=_cudnn_sdpa_fwd_wrapper,
+        grad_transform=_cudnn_sdpa_bwd_wrapper,
+    )

@@ -97,7 +97,7 @@ def test_recipe_errors():
     class BrokenRecipe(HFTransformers):
         def __init__(self):
             super().__init__()
-            self.executor_names = ["cudnn", "nonexistent_executor"]
+            self.executor_names = ["nonexistent_executor"]
 
     recipe = BrokenRecipe()
 
