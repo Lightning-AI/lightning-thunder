@@ -84,7 +84,7 @@ def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[li
     # First pass: identify inputs which are views of each other and swap them out with a default,
     # reshaping if necessary.
     computation_trace, _ = replace_args_with_alias_map(computation_trace, alias_tensor_indices)
-    # computation_trace = _add_output_to_setitem(computation_trace)
+    computation_trace = _add_output_to_setitem(computation_trace)
 
     # Second pass: identify views, their originals, and operands involved in inplace ops
     view_groups = []
