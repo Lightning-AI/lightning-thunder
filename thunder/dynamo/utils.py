@@ -222,6 +222,8 @@ def get_proxy_inputs_from_node(node: torch.fx.Node) -> tuple[tuple, dict]:
                         e_v.new_ones(_concrete_value(e_v.shape), device=e_v.device, dtype=e_v.dtype)
                         for e_v in example_value
                     )
+                elif isinstance(example_value, torch.types.py_sym_types):
+                    return proxy(example_value.node.hint)
                 else:
                     # NOTE - This will be caught and be part of the SplitReason.
                     raise TypeError("`make_input_proxy` received example_value which wasn't Tensor or Tuple")
