@@ -421,7 +421,6 @@ def _te_activation_checkpointing_transform(fwd_trace: TraceCtx, bwd_trace: Trace
     new_bwd_boundsymbols = []
     states_to_carry = set()
 
-    quantizer_state_map: dict[Variable, AnyProxy] = {}
     for bsym in bwd_trace.bound_symbols:
         if "get_te_fp8_quantizers" in bsym.sym.name:
             q1 = variableify(bsym.output[0])
@@ -431,7 +430,6 @@ def _te_activation_checkpointing_transform(fwd_trace: TraceCtx, bwd_trace: Trace
             pseudo_bsym = bsym.from_bsym(args=bsym.args[:-2])
             quantizers = fwd_linear_quantizers_map.get(pseudo_bsym.rhs)
             state = fwd_linear_state_map.get(pseudo_bsym.rhs)
-            # breakpoint()
             states_to_carry |= {variableify(state)}
 
             assert (
@@ -473,7 +471,6 @@ def _te_activation_checkpointing_transform(fwd_trace: TraceCtx, bwd_trace: Trace
     new_fwd_trace = from_trace(fwd_trace)
     new_fwd_trace.bound_symbols = new_fwd_boundsymbols
 
-    # breakpoint()
     return_bsym = new_fwd_trace.bound_symbols[-1]
     assert return_bsym.sym.id == prims.PrimIDs.RETURN
     _, (saved_for_backward, env) = return_bsym.args
