@@ -48,6 +48,11 @@ from thunder.core.transforms import (
     put_grads,
 )
 
+from nvfuser.pytorch_utils import (
+    torch_dtype_to_nvfuser_dtype,
+)
+
+
 from thunder.executors.utils import (
     Region,
     _input_dtype_check_fused_scaled_dot_product_attention,
@@ -2730,6 +2735,268 @@ def embedding(
 
 register_supported(PrimIDs.EMBEDDING, embedding, _embedding_check)
 register_supported(ltorch.embedding, embedding, _embedding_check)
+
+
+def _cross_entropy_check_(
+    a: TensorLike,
+    /,
+    target: TensorLike,
+    weight: None | TensorLike,
+    size_average: None | Any,
+    ignore_index: int,
+    reduce: None | Any,
+    reduction: str,
+    label_smoothing: float,
+    *args,
+) -> bool:
+    if nvfuser_version() < LooseVersion("0.2.10"):
+        return False
+
+    # TODO: support higher dim inputs
+    if a.ndim != 2 or a.ndim - 1 != target.ndim:
+        return False
+
+    if a.shape[0] != target.shape[0]:
+        return False
+
+    # input must be cast to float32
+    # since we use fmax which only supports float32
+    if dtypes.to_torch_dtype(a.dtype) != torch.float32:
+        return False
+
+    # We only optimize for the following cases
+    if reduction != "mean":
+        return False
+
+    if ignore_index >= 0:
+        return False
+
+    if any(x is not None for x in (weight, size_average, reduce)):
+        return False
+
+    if label_smoothing != 0.0:
+        return False
+
+    return True
+
+
+def cross_entropy_fwd_meta(
+    a: TensorLike,
+    /,
+    target: TensorLike,
+    weight: None | TensorLike = None,
+    size_average: None | Any = None,
+    ignore_index: int = -100,
+    reduce: None | Any = None,
+    reduction: str = "mean",
+    label_smoothing: float = 0.0,
+) -> tuple[TensorLike, TensorLike, TensorLike, TensorLike]:
+    losses: TensorLike
+    check(
+        reduction == "mean",
+        lambda: f"cross entropy expected reduction to be 'mean' but was given {reduction}",
+    )
+    losses = TensorLike(like=a, shape=())
+
+    max_log_sum_exp: TensorLike = TensorLike(like=target, dtype=dtypes.float32)
+    num_valid_indices: TensorLike = TensorLike(like=losses, shape=(), dtype=dtypes.float32)
+    a_max: TensorLike = TensorLike(like=target, dtype=dtypes.float32)
+    return losses, a_max, max_log_sum_exp, num_valid_indices
+
+
+def cross_entropy_fwd(
+    a: TensorLike,
+    /,
+    target: TensorLike,
+    weight: None | TensorLike = None,
+    size_average: None | Any = None,
+    ignore_index: int = -100,
+    reduce: None | Any = None,
+    reduction: str = "mean",
+    label_smoothing: float = 0.0,
+    *,
+    fd: FusionDefinition,
+    lc_to_nv_map: dict,
+) -> Any:
+    nv_a = getnv(a, fd, lc_to_nv_map)
+    nv_target = getnv(target, fd, lc_to_nv_map)
+    nv_ignore_index = getnv(ignore_index, fd, lc_to_nv_map)
+
+    zero_scalar = fd.define_scalar(0, dtype=torch_dtype_to_nvfuser_dtype(dtypes.to_torch_dtype(a.dtype)))
+
+    # modify the labels to account for ignore index and then do a
+    # gather/ take_along_axis on the input tensor
+    ne = fd.ops.ne(nv_target, nv_ignore_index)
+    where_0 = fd.ops.where(ne, nv_target, zero_scalar)
+    where = fd.ops.broadcast_in_dim(where_0, shape=[nv_target.shape()[-1], 1], broadcast_dims=[0])
+    gather0 = fd.ops.take_along_axis(nv_a, where, dim=1)
+    gather = fd.ops.reshape(gather0, new_shape=[nv_target.shape()[-1]])
+
+    # compute log (sum(exp(A - max(A, dim=1), dim=1))
+    max = fd.ops.max(nv_a, 1)
+    max2 = fd.ops.broadcast_in_dim(max, shape=[nv_target.shape()[-1], 1], broadcast_dims=[0])
+    sub = fd.ops.sub(nv_a, max2)
+    exp = fd.ops.exp(sub)
+    sum_1 = fd.ops.sum(exp, 1)
+    log = fd.ops.log(sum_1)
+
+    # compute S = POST_GATHER(A) - max(A, dim=1) - log(sum(exp(A - max(A, dim=1), dim=1))
+    gather_sub = fd.ops.sub(gather, max)
+    log_softmax_post_gather = fd.ops.sub(gather_sub, log)
+
+    # set the values for ignore index to 0
+    neg = fd.ops.neg(log_softmax_post_gather)
+    where_1 = fd.ops.where(ne, neg, zero_scalar)
+
+    # sum_2_cvt computes the number of valid indices
+    sum_2 = fd.ops.sum(ne)
+    sum_2_cvt = fd.ops.cast(sum_2, dtype=DataType.Float)
+
+    # compute the mean
+    sum_3 = fd.ops.sum(where_1)
+    div = fd.ops.div(sum_3, sum_2_cvt)
+    return div, max, log, sum_2_cvt
+
+
+nv_cross_entropy_fwd = ex.register_operator(
+    "nv_cross_entropy_fwd",
+    meta=cross_entropy_fwd_meta,
+)
+register_supported(nv_cross_entropy_fwd.id, cross_entropy_fwd, None)
+
+
+def cross_entropy_bwd_meta(
+    g: TensorLike,
+    a: TensorLike,
+    *,
+    target: TensorLike,
+    a_max: TensorLike,
+    max_log_sum_exp: TensorLike,
+    valid_indices: TensorLike,
+    ignore_index: int = -100,
+    label_smoothing: float = 0.0,
+) -> Any:
+    return TensorProxy(like=a)
+
+
+def cross_entropy_bwd(
+    g: TensorLike,
+    a: TensorLike,
+    *,
+    target: TensorLike,
+    a_max: TensorLike,
+    max_log_sum_exp: TensorLike,
+    valid_indices: TensorLike,
+    ignore_index: int = -100,
+    label_smoothing: float = 0.0,
+    fd: FusionDefinition,
+    lc_to_nv_map: dict,
+) -> Any:
+    nv_a = getnv(a, fd, lc_to_nv_map)
+    nv_target = getnv(target, fd, lc_to_nv_map)
+    nv_ignore_index = getnv(ignore_index, fd, lc_to_nv_map)
+    nv_g = getnv(g, fd, lc_to_nv_map)
+    nv_valid_indices = getnv(valid_indices, fd, lc_to_nv_map)
+    nv_a_max = getnv(a_max, fd, lc_to_nv_map)
+    nv_max_log_sum_exp = getnv(max_log_sum_exp, fd, lc_to_nv_map)
+
+    zero = fd.define_scalar(0, dtype=DataType.Int)
+    one = fd.define_scalar(1, dtype=DataType.Int)
+
+    # scatter the gradients (negative) - this is backward of nll loss
+    iotas = fd.ops.iota(nv_a.shape()[-1], zero, one, dtype=DataType.Int)
+    iotas_bcast = fd.ops.broadcast_in_dim(iotas, shape=nv_a.shape(), broadcast_dims=[nv_a.ndim - 1])
+    neg_gradients = fd.ops.neg(nv_g)
+    neg_gradients_mod = fd.ops.div(neg_gradients, nv_valid_indices)
+
+    target_bcast = fd.ops.broadcast_in_dim(nv_target, shape=nv_a.shape(), broadcast_dims=[nv_target.ndim - 1])
+    mask = fd.ops.eq(iotas_bcast, target_bcast)
+    neg_gradients_mod_bcast = fd.ops.broadcast_in_dim(neg_gradients_mod, shape=nv_a.shape(), broadcast_dims=[])
+    scattered_vals = fd.ops.where(mask, neg_gradients_mod_bcast, zero)
+
+    ne = fd.ops.ne(target_bcast, nv_ignore_index)
+    new_target_bcast = fd.ops.where(ne, neg_gradients_mod_bcast, zero)
+
+    # build the softmax
+    nv_a_max_bcast = fd.ops.broadcast_in_dim(nv_a_max, shape=nv_a.shape(), broadcast_dims=[nv_a_max.ndim - 1])
+    input_minus_max = fd.ops.sub(nv_a, nv_a_max_bcast)
+    nv_max_log_sum_exp_bcast = fd.ops.broadcast_in_dim(
+        nv_max_log_sum_exp, shape=nv_a.shape(), broadcast_dims=[nv_max_log_sum_exp.ndim - 1]
+    )
+    log_softmax = fd.ops.sub(input_minus_max, nv_max_log_sum_exp_bcast)
+    recomputed_softmax = fd.ops.exp(log_softmax)
+
+    # this should be gradient - softmax * gradient_sum
+    softmax_mul_grad_sum = fd.ops.mul(recomputed_softmax, new_target_bcast)
+    difference = fd.ops.sub(scattered_vals, softmax_mul_grad_sum)
+
+    return difference
+
+
+nv_cross_entropy_bwd = ex.register_operator(
+    "nv_cross_entropy_bwd",
+    meta=cross_entropy_bwd_meta,
+)
+
+register_supported(nv_cross_entropy_bwd.id, cross_entropy_bwd, None)
+
+
+def cross_entropy_transform(
+    a: TensorLike,
+    /,
+    target: TensorLike,
+    weight: None | TensorLike = None,
+    size_average: None | Any = None,
+    ignore_index: int = -100,
+    reduce: None | Any = None,
+    reduction: str = "mean",
+    label_smoothing: float = 0.0,
+) -> Any:
+    result, _, _, _ = nv_cross_entropy_fwd(
+        a, target, weight, size_average, ignore_index, reduce, reduction, label_smoothing
+    )
+    return result
+
+
+def cross_entropy_grad(
+    a: TensorLike,
+    /,
+    target: TensorLike,
+    weight: None | TensorLike = None,
+    size_average: None | Any = None,
+    ignore_index: int = -100,
+    reduce: None | Any = None,
+    reduction: str = "mean",
+    label_smoothing: float = 0.0,
+) -> Any:
+
+    fwd, max, log_sum_exp, valid_indices = nv_cross_entropy_fwd(
+        a, target, weight, size_average, ignore_index, reduce, reduction, label_smoothing
+    )
+
+    grad_out = get_grad(fwd)
+
+    a_grad = nv_cross_entropy_bwd(
+        grad_out,
+        a,
+        target=target,
+        a_max=max,
+        max_log_sum_exp=log_sum_exp,
+        valid_indices=valid_indices,
+        ignore_index=ignore_index,
+        label_smoothing=label_smoothing,
+    )
+    put_grads(a, a_grad)
+
+    return fwd
+
+
+ex.register_supported(
+    ltorch.cross_entropy,
+    execution_transform=cross_entropy_transform,
+    grad_transform=cross_entropy_grad,
+    checker=_cross_entropy_check_,
+)
 
 
 # At module/class level

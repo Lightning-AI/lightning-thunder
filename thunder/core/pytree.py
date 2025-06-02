@@ -69,6 +69,7 @@ def tree_flatten(args, namespace=OPTREE_NAMESPACE):
             torch.device,
             torch.autograd.function.FunctionCtx,
             immutable_list,
+            *torch.types.py_sym_types,
         }
         and not isinstance(args, (ProxyInterface))
         and not is_likely_from_collections_namedtuple(args)

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ARG UBUNTU_VERSION="22.04"
+ARG UBUNTU_VERSION="24.04"
 ARG CUDA_VERSION="12.6.3"
 # select devel | runtime
 ARG IMAGE_TYPE="devel"
@@ -108,7 +108,7 @@ RUN \
         git checkout "${TORCH_VERSION}" && \
         git submodule sync && \
         git submodule update --init --recursive && \
-        pip install cmake==3.31.6 && \
+        pip install "cmake==3.31.6" -r requirements.txt && \
         pip install . && \
         pip install "pytorch-triton==$(cat .ci/docker/triton_version.txt)" --index-url="https://download.pytorch.org/whl/nightly/" && \
         cd .. && \
@@ -130,15 +130,7 @@ ENV NVFUSER_BUILD_NO_TEST=1
 ENV NVFUSER_BUILD_NO_BENCHMARK=1
 
 RUN \
-    if [ "${TORCH_INSTALL}" == "source" ]; then \
-        # building nvFuser from source
-        git clone --recursive https://github.com/NVIDIA/Fuser.git && \
-        cd Fuser && \
-        pip install -r requirements.txt && \
-        pip install -v --no-build-isolation python/ && \
-        cd .. && \
-        rm -rf Fuser ; \
-    elif [ "${TORCH_INSTALL}" == "test" ]; then \
+    if [ "${TORCH_INSTALL}" == "source" ] || [ "${TORCH_INSTALL}" == "test" ]; then \
         # building nvFuser from source
         git clone --recursive https://github.com/NVIDIA/Fuser.git && \
         cd Fuser && \
