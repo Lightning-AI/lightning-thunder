@@ -792,8 +792,10 @@ tensor and return them as slices of that tensor.
     return primal
 
 
+cudnn_ex: OperatorExecutor = OperatorExecutor("cudnn", version=cudnn_backend_version)
+
+
 if cudnn_available():
-    cudnn_ex: OperatorExecutor = OperatorExecutor("cudnn", version=cudnn_backend_version)
     register_executor(cudnn_ex)
     cudnn_sdpa_fwd = cudnn_ex.register_operator(
         "cudnn_sdpa_fwd",
