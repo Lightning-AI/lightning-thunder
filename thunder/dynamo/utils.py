@@ -439,7 +439,7 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
     # in `_torch_to_thunder_function_map` (eg. `float`)
     # For these method, we try to look them up with `torchctx` language context.
     # NOTE: We pass `node.target` which is a `str` (and not `target` from above which is actually function object).
-    if torchctx.has_method(node.target):
+    if torchctx.has_method(target):
         # `torchctx.get_method` requires args and kwargs to resolve which overload of the method is picked.
         try:
             args, kwargs = get_proxy_inputs_from_node(node)
@@ -450,14 +450,14 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
                 exception=str(e),
             )
         # NOTE: `get_method` may throw if relevant method is not found, so we have guarded it with `has_method`.
-        method = torchctx.get_method(node.target, args, kwargs)
+        method = torchctx.get_method(target, args, kwargs)
         did_run, opt_split_reason = try_execute_thunder_symbol(method, node)
         return did_run, opt_split_reason
 
     # We found no automatic fallback registration and no mapping to thunder symbol.
     split_reason = SplitReason(
         SplitReasonType.MISSING_OP_SUPPORT,
-        info=f"node with name: {node.name} and target: {node.target} didn't have any mapping in thunder.",
+        info=f"node with name: {node.name} and target: {target} didn't have any mapping in thunder.",
     )
     return False, split_reason
 
