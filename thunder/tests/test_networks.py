@@ -543,13 +543,13 @@ def test_hf_llama():
 
 
 # Both attn implementation have almost same memory requirements
-# Default - 3596010496
-# eager - 3596534784
+# Default - 697805312
+# eager - 698067456
 @requiresCUDA
-@requiresDeviceMemory(required_memory_bytes=int(3.6 * 1024 * 1024 * 1024))
+@requiresDeviceMemory(required_memory_bytes=int(0.7 * 1024 * 1024 * 1024))
 @pytest.mark.parametrize("attn_implementation", [None, "eager"])
 def test_hf_phi3_vision(attn_implementation):
-    # This test takes around 3597163520 bytes (~3.59GB) of memory.
+    # This test takes around 697805312 bytes (~0.7GB) of memory.
     # Shapes for data generated with help of the following script
     # https://github.com/microsoft/PhiCookBook/blob/main/code/03.Finetuning/Phi-3-vision-Trainingscript.py
     from transformers import AutoModelForCausalLM, AutoConfig
@@ -563,13 +563,18 @@ def test_hf_phi3_vision(attn_implementation):
     # trust_remote_code=True is required else you get the following error:
     # ValueError: Loading microsoft/Phi-3-vision-128k-instruct requires you to execute the configuration file in that repo on your local machine.
     cfg = AutoConfig.from_pretrained("microsoft/Phi-3-vision-128k-instruct", trust_remote_code=True)
+
+    # Scale down the model similar to `test_hf_for_nemo`
     cfg.num_hidden_layers = 1
+    cfg.vocab_size = 16
+    cfg.pad_token_id = 15
+    cfg.hidden_size = cfg.num_attention_heads
 
     with torch.device("cuda"):
         model = AutoModelForCausalLM.from_config(
             cfg, trust_remote_code=True, torch_dtype=torch.bfloat16, attn_implementation=attn_implementation
         )
-        input_ids = torch.randint(0, 100, (1, 256))
+        input_ids = torch.randint(0, 15, (1, 256))
         pixel_values = torch.randint(0, 254, (1, 256, 256, 3), dtype=torch.uint8)
         labels = input_ids.clone().detach()
 
