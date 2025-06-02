@@ -115,6 +115,9 @@ class CudnnexLRUCache(OrderedDict):
         super().__setitem__(key, value)
 
 
+_cudnnex_cache = CudnnexLRUCache(maxlen=1024)
+
+
 def _make_cudnn_sdpa_forward_graph(
     query, key, value, attn_mask, dropout_p, is_causal, query_stride, key_stride, value_stride
 ):
@@ -792,7 +795,6 @@ tensor and return them as slices of that tensor.
 if cudnn_available():
     cudnn_ex: OperatorExecutor = OperatorExecutor("cudnn", version=cudnn_backend_version)
     register_executor(cudnn_ex)
-    _cudnnex_cache = CudnnexLRUCache(maxlen=1024)
     cudnn_sdpa_fwd = cudnn_ex.register_operator(
         "cudnn_sdpa_fwd",
         meta=_cudnn_sdpa_forward_meta,
