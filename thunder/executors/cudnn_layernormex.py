@@ -123,7 +123,7 @@ def layer_norm_checker(a, normalized_shape, weight=None, bias=None, eps=1e-5):
 if cudnn_available():
     from thunder.extend import OperatorExecutor, register_executor
     import cudnn
-    
+
     cudnn_layernorm_ex: OperatorExecutor = OperatorExecutor("cudnn_layernorm", version=cudnn.backend_version())
     register_executor(cudnn_layernorm_ex)
 
