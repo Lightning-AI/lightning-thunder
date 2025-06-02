@@ -4,6 +4,7 @@ from thunder.core.functionalization import is_in_place_op, replace_args_with_ali
 import thunder.core.prims as prims
 from thunder.core.proxies import TensorProxy, variableify, unvariableify
 from thunder.core.trace import from_trace, tracectx, TraceCtx as Trace, TraceProvenance
+from thunder.torch import setitem_
 
 
 def _update_swap_map(swap_map, old_alias, new_alias):
@@ -54,6 +55,25 @@ def _involves_viewed_args(bsym, viewed):
     return any(isinstance(p, TensorProxy) and variableify(p) in viewed for p in bsym.flat_proxy_args)
 
 
+def _add_output_to_setitem(trace: Trace) -> Trace:
+    def helper(bsym):
+        if bsym.sym is not setitem_:
+            return bsym
+        sym = bsym.sym
+        new_bsym = sym.bind(
+            *bsym.args,
+            **bsym.kwargs,
+            output=bsym.subsymbols[0].output,
+            subsymbols=bsym.subsymbols,
+            _call_ctx=bsym._call_ctx,
+        )
+        return new_bsym
+
+    new_symbols = [helper(bound_symbol) for bound_symbol in trace.bound_symbols]
+    trace.bound_symbols = new_symbols
+    return trace
+
+
 def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[list[int]]) -> Trace:
     if not any(is_in_place_op(bsym) for bsym in computation_trace.bound_symbols):
         return computation_trace
@@ -64,6 +84,7 @@ def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[li
     # First pass: identify inputs which are views of each other and swap them out with a default,
     # reshaping if necessary.
     computation_trace, _ = replace_args_with_alias_map(computation_trace, alias_tensor_indices)
+    # computation_trace = _add_output_to_setitem(computation_trace)
 
     # Second pass: identify views, their originals, and operands involved in inplace ops
     view_groups = []
