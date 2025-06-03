@@ -1265,3 +1265,45 @@ def test_slice_dynamic_extent(executor, device: str, dtype: dtypes.dtype):
 
     outside_fusion_syms = ["unpack_trivial", "python_return"]
     assert {el.sym.name for el in fw_trace.bound_symbols if not el.sym.is_fusion} == set(outside_fusion_syms)
+
+
+@instantiate(
+    executors=(nvFuserExecutor,),
+    dtypes=NOTHING,
+)
+def test_moe_infer_scatter(executor, device: str, dtype: dtypes.dtype):
+    def foo(inputs: list):
+        bmm_out: torch.Tensor  # [seq*top_k, hidden]
+        idxs: torch.Tensor  # [seq*top_k]
+        topk_weight: torch.Tensor  # [seq , top_k]]
+        bmm_out, idxs, topk_weight = inputs
+        out = bmm_out.index_put([idxs], bmm_out)  # [seq*top_k, hidden]
+        out = out.reshape(*topk_weight.shape, -1)  # [seq, top_k, hidden]
+        out = out * topk_weight.unsqueeze(-1)  # [seq, top_k, hidden]
+        return out.sum(dim=1)  # [seq, hidden]
+
+    seq_length = 4096
+    topk_hidden = (8, 7168)
+    hidden_states = torch.randn(
+        (seq_length * topk_hidden[0], topk_hidden[1]), device="cuda", requires_grad=True
+    )
+    logits = torch.randn(seq_length * topk_hidden[0], device="cuda")
+    idxs = logits.argsort()
+    topk_weight = torch.randn((seq_length, topk_hidden[0]), device="cuda")
+
+    # NOTE nv_enable_scatter to allow scatter operation to go through nvfuser
+    jfoo = thunder.jit(foo, nv_enable_scatter=True)
+
+    inputs = [hidden_states, idxs, topk_weight]
+
+    actual = fwd_fn(inputs)
+    expected = scatter_reduce(inputs)
+    torch.testing.assert_close(actual, expected)
+
+    fw_trace = thunder.last_traces(jfoo)[-1]
+    fusion_bsyms = tuple(filter(lambda a: a.sym.is_fusion, fw_trace.bound_symbols))
+
+    # assert that everything is merged as a single nvfuser operation
+    assert len(fusion_bsyms) == 1
+    outside_fusion_syms = ["unpack_trivial", "python_return"]
+    assert {el.sym.name for el in fw_trace.bound_symbols if not el.sym.is_fusion} == set(outside_fusion_syms)
