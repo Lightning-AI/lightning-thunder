@@ -792,7 +792,7 @@ tensor and return them as slices of that tensor.
     return primal
 
 
-cudnn_ex: OperatorExecutor = OperatorExecutor("cudnn", version=cudnn_backend_version)
+cudnn_ex: None | OperatorExecutor = None
 
 
 if cudnn_available():

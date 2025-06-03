@@ -12,6 +12,7 @@ import thunder.core.dtypes as dtypes
 from thunder.core.proxies import TensorProxy
 
 from thunder.executors.cudnnex import torch_to_cudnn_dtype, cudnn_available
+from thunder.extend import OperatorExecutor
 
 
 @dataclass(frozen=True)
@@ -120,8 +121,10 @@ def layer_norm_checker(a, normalized_shape, weight=None, bias=None, eps=1e-5):
     return True
 
 
+cudnn_layernorm_ex: None | OperatorExecutor = None
+
 if cudnn_available():
-    from thunder.extend import OperatorExecutor, register_executor
+    from thunder.extend import register_executor
     import cudnn
 
     cudnn_layernorm_ex: OperatorExecutor = OperatorExecutor("cudnn_layernorm", version=cudnn.backend_version())
