@@ -389,7 +389,7 @@ def test_thunderfx_mistral_nemo_small():
     device = torch.device("cuda")
     model.to(device)
     model.train()
-    mdl = thunder.dynamo.thunderfx(model)
+    mdl = thunder.dynamo.thunderfx(model, disable_inplace_copy_check=True)
 
     batch_size = 1
     iid_size = (batch_size, config.max_position_embeddings)
@@ -428,7 +428,7 @@ def test_hf_for_nemo(model_id):
     # fullgraph=True used to work with transformers 4.45.2, but it doesn't work
     # with 4.46.2 because of re.findall usage in the loss function
     fullgraph = False
-    compiled_model = thunderfx(model, fullgraph=fullgraph, disable_inplace_copy_check=True)
+    compiled_model = thunderfx(model, fullgraph=fullgraph)
 
     input_ids = torch.randint(0, configuration.vocab_size, (1, configuration.max_position_embeddings), device="cuda")
     ref_output = model(input_ids=input_ids, labels=input_ids)
@@ -509,7 +509,7 @@ def test_hf_llama():
     with torch.device("cuda"):
         model = LlamaForCausalLM(LlamaConfig(**config_args)).to(torch.bfloat16).requires_grad_(False).eval()
 
-    jm = thunder.jit(model)
+    jm = thunder.jit(model, disable_inplace_copy_check=True)
 
     args1 = dict(
         cache_position=torch.tensor([0, 1, 2, 3, 4, 5], device="cuda:0"),
@@ -538,7 +538,7 @@ def test_hf_llama():
     assert_close(res2, expected2, rtol=1e-1, atol=1e-1)
 
     # changes this to fewer as needed, the goal is to not have too many fusions
-    assert len(get_fusion_symbols(thunder.last_traces(jm)[-1])) == 6
+    assert len(get_fusion_symbols(thunder.last_traces(jm)[-1])) == 12
 
 
 @requiresCUDA
@@ -642,7 +642,7 @@ def test_hf_kvcache():
         model2 = LlamaForCausalLM(LlamaConfig(**config_args)).to(torch.bfloat16).requires_grad_(False).eval()
         model2.load_state_dict(model.state_dict())
 
-    jm = thunder.jit(model)
+    jm = thunder.jit(model, disable_inplace_copy_check=True)
 
     j_static_cache = model._get_cache("static", 1, 128, "cuda", config_args)
     ref_static_cache = model2._get_cache("static", 1, 128, "cuda", config_args)

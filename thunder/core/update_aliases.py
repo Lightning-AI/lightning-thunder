@@ -63,7 +63,7 @@ def _add_output_to_setitem(trace: Trace) -> Trace:
         new_bsym = sym.bind(
             *bsym.args,
             **bsym.kwargs,
-            output=bsym.subsymbols[0].output,
+            output=bsym.subsymbols[1].output,
             subsymbols=bsym.subsymbols,
             _call_ctx=bsym._call_ctx,
         )
