@@ -256,8 +256,10 @@ def _splitter(
 
             trace_structured_artifact(
                 name=f"thunder_module_{thunder_module_count}_original",
-                encoding="python",
-                payload_fn=lambda gm=graph_module: str(gm.graph),
+                encoding="string",
+                payload_fn=lambda gm=graph_module: gm.print_readable(
+                    print_output=False, include_stride=True, include_device=True
+                ),
             )
 
             # Replace PyTorch operators within the checkpointed function with the corresponding Thunder operators
@@ -300,8 +302,10 @@ def _splitter(
 
             trace_structured_artifact(
                 name=f"inductor_module_{inductor_module_count}_original",
-                encoding="python",
-                payload_fn=lambda gm=graph_module: str(gm.graph),
+                encoding="string",
+                payload_fn=lambda gm=graph_module: gm.print_readable(
+                    print_output=False, include_stride=True, include_device=True
+                ),
             )
 
             compile_start_time = time.time()

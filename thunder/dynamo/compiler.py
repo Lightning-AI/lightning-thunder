@@ -123,7 +123,11 @@ class ThunderCompiler:
             },
         )
 
-        trace_structured_artifact(name="thunder_original_graph", encoding="python", payload_fn=lambda: str(gm.graph))
+        trace_structured_artifact(
+            name="thunder_original_graph",
+            encoding="string",
+            payload_fn=lambda: gm.print_readable(print_output=False, include_stride=True, include_device=True),
+        )
 
         # Dynamo uses lazy generation of the underlying Python code, so we need to
         # force recompilation of the GraphModule before passing it to Thunder.
@@ -155,7 +159,11 @@ class ThunderCompiler:
         )
 
         trace_structured_artifact(
-            name="thunder_split_graph", encoding="python", payload_fn=lambda: str(split_module.graph)
+            name="thunder_split_graph",
+            encoding="string",
+            payload_fn=lambda: split_module.print_readable(
+                print_output=False, include_stride=True, include_device=True
+            ),
         )
 
         if subgraph_info.split_reasons:
