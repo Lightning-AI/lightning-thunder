@@ -50,7 +50,7 @@ def main(gh_run_id: str = ""):
         print("=" * 80)
         print(job.logs)
         print("=" * 80)
-        time.sleep(1)
+        time.sleep(3)
         raise RuntimeError(f"Benchmark HF job {job.status}")
     # clean up
     job.delete()
