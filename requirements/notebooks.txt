@@ -1,5 +1,5 @@
 ipython[all] ~=8.37.0
 numpy
-liger-kernel == 0.4.0
+liger-kernel == 0.5.10
 cuda-python
 litgpt == 0.5.1
