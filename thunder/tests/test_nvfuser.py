@@ -1296,8 +1296,8 @@ def test_moe_infer_scatter(executor, device: str, dtype: dtypes.dtype):
 
     inputs = [hidden_states, idxs, topk_weight]
 
-    actual = fwd_fn(inputs)
-    expected = scatter_reduce(inputs)
+    actual = jfoo(inputs)
+    expected = foo(inputs)
     torch.testing.assert_close(actual, expected)
 
     fw_trace = thunder.last_traces(jfoo)[-1]
