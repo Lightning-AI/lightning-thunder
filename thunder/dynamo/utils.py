@@ -7,6 +7,7 @@ import inspect
 import itertools
 import copy
 from types import NoneType
+import time
 from collections import defaultdict
 from collections import namedtuple
 
@@ -14,6 +15,7 @@ import torch
 from torch.nn.modules.module import _addindent
 from torch._subclasses.fake_tensor import FakeTensor
 from torch.utils.weak import TensorWeakRef
+from torch._logging._internal import trace_structured
 
 if torch.distributed.is_available():
     from torch.distributed.tensor import DTensor
@@ -268,6 +270,17 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
     from thunder.common import CompileData, CompileStats
     from thunder.core.transforms import value_and_grad
 
+    execute_start_time = time.time()
+    trace_structured(
+        "thunder_execute_symbol_attempt",
+        metadata_fn=lambda s=thunder_symbol, n=node: {
+            "node_name": n.name,
+            "node_target": str(n.target),
+            "thunder_symbol": str(s),
+            "timestamp": execute_start_time,
+        },
+    )
+
     # This is required for verifying `_enter_autocast`
     # which pushes state onto `CompileData.autocast_stack`.
     cd = CompileData(fn=lambda x: x, disable_preprocessing=True)
@@ -290,6 +303,15 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
     args, _ = tree_flatten((node.args, node.kwargs))
     requires_grad = any(map(get_requires_grad, args))
 
+    trace_structured(
+        "thunder_execute_symbol_requires_grad",
+        metadata_fn=lambda rg=requires_grad, n=node: {
+            "node_name": n.name,
+            "requires_grad": rg,
+            "timestamp": time.time(),
+        },
+    )
+
     @compile_data_and_stats(cd, cs)
     @thunder._with_cache_info_ctx
     def _run_with_cache_info():
@@ -303,8 +325,34 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
         cache_info["default_device"] = torch.get_default_device()
 
         try:
+            proxy_creation_start = time.time()
             proxy_args, proxy_kwargs = get_proxy_inputs_from_node(node)
+            proxy_creation_end = time.time()
+
+            trace_structured(
+                "thunder_execute_symbol_proxies_created",
+                metadata_fn=lambda n=node, start=proxy_creation_start, end=proxy_creation_end: {
+                    "node_name": n.name,
+                    "num_args": len(proxy_args) if proxy_args else 0,
+                    "num_kwargs": len(proxy_kwargs) if proxy_kwargs else 0,
+                    "timestamp": end,
+                    "duration_seconds": end - start,
+                },
+            )
+
         except Exception as e:
+            proxy_creation_end = time.time()
+            trace_structured(
+                "thunder_execute_symbol_proxy_creation_failed",
+                metadata_fn=lambda n=node, exc=str(e), start=execute_start_time, end=proxy_creation_end: {
+                    "node_name": n.name,
+                    "node_target": str(n.target),
+                    "exception": exc,
+                    "timestamp": end,
+                    "duration_seconds": end - start,
+                },
+            )
+
             return False, SplitReason(
                 SplitReasonType.EXCEPTION_PROXY_THUNDER_OP,
                 f"Failed while creating proxy for node with name: {node.name} and target: {node.target}, see exception field",
@@ -312,11 +360,51 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
             )
 
         function_to_run = value_and_grad(thunder_symbol) if requires_grad else thunder_symbol
+
+        trace_structured(
+            "thunder_execute_symbol_function",
+            metadata_fn=lambda f=function_to_run, rg=requires_grad: {
+                "function": str(f),
+                "with_grad": rg,
+                "timestamp": time.time(),
+            },
+        )
+
         # We need to be under trace context to generate proxies.
+        execute_fn_start = time.time()
         with thunder.core.trace.tracectx(TraceCtx()):
             try:
                 function_to_run(*proxy_args, **proxy_kwargs)
+                execute_fn_end = time.time()
+
+                trace_structured(
+                    "thunder_execute_symbol_success",
+                    metadata_fn=lambda n=node, s=thunder_symbol, start=execute_fn_start, end=execute_fn_end, total=execute_start_time: {
+                        "node_name": n.name,
+                        "node_target": str(n.target),
+                        "thunder_symbol": str(s),
+                        "timestamp": end,
+                        "execution_duration_seconds": end - start,
+                        "total_duration_seconds": end - total,
+                    },
+                )
+
             except Exception as e:
+                execute_fn_end = time.time()
+                trace_structured(
+                    "thunder_execute_symbol_failed",
+                    metadata_fn=lambda n=node, exc=str(
+                        e
+                    ), start=execute_fn_start, end=execute_fn_end, total=execute_start_time: {
+                        "node_name": n.name,
+                        "node_target": str(n.target),
+                        "exception": exc,
+                        "timestamp": end,
+                        "execution_duration_seconds": end - start,
+                        "total_duration_seconds": end - total,
+                    },
+                )
+
                 return False, SplitReason(
                     SplitReasonType.EXCEPTION_META_THUNDER_OP,
                     f"Failed while running meta for node with name: {node.name} and target: {node.target}, see exception field",
@@ -394,9 +482,20 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
     # NOTE: `call_module` should be inlined in dynamo graphs since https://github.com/pytorch/pytorch/pull/131275
     # But there is flag to disable inlining `call_module`. Determining `call_module` support would actually require calling `thunder.jit` on it.
     #
-    # `call_module` applies a module in the module hierarchy’s forward() method to given arguments.
+    # `call_module` applies a module in the module hierarchy's forward() method to given arguments.
     #       name is as previous. target is the fully-qualified name of the module in the module hierarchy to call.
     #       args and kwargs represent the arguments to invoke the module on, excluding the self argument
+
+    check_start_time = time.time()
+    trace_structured(
+        "thunder_check_node_support",
+        metadata_fn=lambda n=node: {
+            "node_name": n.name,
+            "node_op": n.op,
+            "node_target": str(n.target),
+            "timestamp": check_start_time,
+        },
+    )
 
     target = node.target  # Target is the function to call.
     if node.op == "call_method":
@@ -410,6 +509,19 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
             SplitReasonType.MISSING_OP_SUPPORT,
             info=f"node with name: {node.name} and target: {node.target} only has an automatic torch fallback in thunder.",
         )
+
+        check_end_time = time.time()
+        trace_structured(
+            "thunder_node_unsupported_auto_register",
+            metadata_fn=lambda n=node, t=target: {
+                "node_name": n.name,
+                "node_target": str(t),
+                "reason": "Operation only has automatic torch fallback",
+                "timestamp": check_end_time,
+                "duration_seconds": check_end_time - check_start_time,
+            },
+        )
+
         return False, split_reason
 
     # These functions are present in `_torch_to_thunder_function_map` but don't mimic exact behavior.
@@ -419,17 +531,55 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
             SplitReasonType.UNSUPPORTED_NODE,
             info=f"node with name: {node.name} and target: {node.target} has been manually disabled.",
         )
+
+        check_end_time = time.time()
+        trace_structured(
+            "thunder_node_manually_disabled",
+            metadata_fn=lambda n=node, t=target: {
+                "node_name": n.name,
+                "node_target": str(t),
+                "reason": "Operation manually disabled in Thunder",
+                "timestamp": check_end_time,
+                "duration_seconds": check_end_time - check_start_time,
+            },
+        )
+
         return False, split_reason
 
     # The higher order function must be fully supported by Thunder
     if target in (torch.ops.higher_order.tag_activation_checkpoint, torch.ops.higher_order.autograd_function_apply):
         m = node.graph.owning_module
+
+        trace_structured(
+            "thunder_higher_order_function",
+            metadata_fn=lambda n=node, t=target: {
+                "node_name": n.name,
+                "node_target": str(t),
+                "type": "higher_order_function",
+                "timestamp": time.time(),
+            },
+        )
+
         for arg_node in node.args:
             if arg_node.op == "get_attr":
                 called_module = getattr(m, arg_node.target)
                 is_module_supported, split_reason = is_graphmodule_supported_by_thunder(called_module)
                 if not is_module_supported:
+                    check_end_time = time.time()
+                    trace_structured(
+                        "thunder_higher_order_function_unsupported_module",
+                        metadata_fn=lambda n=node, a=arg_node, r=split_reason: {
+                            "node_name": n.name,
+                            "module_name": a.target,
+                            "reason_type": r.reason_type.name if r else "None",
+                            "reason_info": r.info if r else "None",
+                            "timestamp": check_end_time,
+                            "duration_seconds": check_end_time - check_start_time,
+                        },
+                    )
                     return is_module_supported, split_reason
+
+        check_end_time = time.time()
         return True, None
 
     # If thunder has a mapping for this operation, try executing the meta function and see.
@@ -440,7 +590,35 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
     # We try to proxify the arguments and call these operations on them to see if they are supported.
     if target in _torch_to_thunder_function_map or inspect.isbuiltin(target):
         thunder_symbol_or_builtin = _torch_to_thunder_function_map.get(target, target)
+
+        trace_structured(
+            "thunder_node_has_mapping",
+            metadata_fn=lambda n=node, t=target, s=thunder_symbol_or_builtin: {
+                "node_name": n.name,
+                "node_target": str(t),
+                "thunder_symbol": str(s),
+                "is_builtin": inspect.isbuiltin(t),
+                "timestamp": time.time(),
+            },
+        )
+
         did_run, opt_split_reason = try_execute_thunder_symbol(thunder_symbol_or_builtin, node)
+
+        if not did_run:
+            check_end_time = time.time()
+            trace_structured(
+                "thunder_node_mapping_execution_failed",
+                metadata_fn=lambda n=node, r=opt_split_reason: {
+                    "node_name": n.name,
+                    "node_target": str(n.target),
+                    "reason_type": r.reason_type.name if r else "None",
+                    "reason_info": r.info if r else "None",
+                    "exception": r.exception if r and hasattr(r, "exception") else "None",
+                    "timestamp": check_end_time,
+                    "duration_seconds": check_end_time - check_start_time,
+                },
+            )
+
         return did_run, opt_split_reason
 
     # There are few operations which are registered only as method in `torchctx` and hence they don't exist
@@ -448,18 +626,56 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
     # For these method, we try to look them up with `torchctx` language context.
     # NOTE: We pass `node.target` which is a `str` (and not `target` from above which is actually function object).
     if torchctx.has_method(node.target):
+        trace_structured(
+            "thunder_node_has_torchctx_method",
+            metadata_fn=lambda n=node: {
+                "node_name": n.name,
+                "node_target": str(n.target),
+                "timestamp": time.time(),
+            },
+        )
+
         # `torchctx.get_method` requires args and kwargs to resolve which overload of the method is picked.
         try:
             args, kwargs = get_proxy_inputs_from_node(node)
         except Exception as e:
+            check_end_time = time.time()
+            trace_structured(
+                "thunder_node_proxy_creation_failed",
+                metadata_fn=lambda n=node, exc=str(e): {
+                    "node_name": n.name,
+                    "node_target": str(n.target),
+                    "exception": exc,
+                    "timestamp": check_end_time,
+                    "duration_seconds": check_end_time - check_start_time,
+                },
+            )
+
             return False, SplitReason(
                 SplitReasonType.EXCEPTION_PROXY_THUNDER_OP,
                 f"Failed while creating proxy for node with name: {node.name} and target: {node.target}, see exception field",
                 exception=str(e),
             )
+
         # NOTE: `get_method` may throw if relevant method is not found, so we have guarded it with `has_method`.
         method = torchctx.get_method(node.target, args, kwargs)
         did_run, opt_split_reason = try_execute_thunder_symbol(method, node)
+
+        if not did_run:
+            check_end_time = time.time()
+            trace_structured(
+                "thunder_node_torchctx_method_execution_failed",
+                metadata_fn=lambda n=node, r=opt_split_reason: {
+                    "node_name": n.name,
+                    "node_target": str(n.target),
+                    "reason_type": r.reason_type.name if r else "None",
+                    "reason_info": r.info if r else "None",
+                    "exception": r.exception if r and hasattr(r, "exception") else "None",
+                    "timestamp": check_end_time,
+                    "duration_seconds": check_end_time - check_start_time,
+                },
+            )
+
         return did_run, opt_split_reason
 
     # checks einops operators
@@ -479,6 +695,19 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
         SplitReasonType.MISSING_OP_SUPPORT,
         info=f"node with name: {node.name} and target: {node.target} didn't have any mapping in thunder.",
     )
+
+    check_end_time = time.time()
+    trace_structured(
+        "thunder_node_no_mapping",
+        metadata_fn=lambda n=node: {
+            "node_name": n.name,
+            "node_target": str(n.target),
+            "reason": "No mapping to Thunder symbol found",
+            "timestamp": check_end_time,
+            "duration_seconds": check_end_time - check_start_time,
+        },
+    )
+
     return False, split_reason
 
 
