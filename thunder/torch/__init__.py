@@ -29,7 +29,7 @@ import thunder.clang as clang
 import thunder.core.devices as devices
 from thunder.core.devices import to_device
 import thunder.core.dtypes as dtypes
-from thunder.core.dtypes import to_torch_dtype, to_dtype, _thunder_to_torch_dtype_map, _torch_to_thunder_dtype_map
+from thunder.core.dtypes import to_torch_dtype, to_dtype, _torch_to_thunder_dtype_map
 import thunder.core.prims as prims
 import thunder.core.utils as utils
 import thunder.distributed.prims as dist_prims
@@ -6430,7 +6430,7 @@ def _get_fake_arg(inp: Any):
     elif isinstance(inp, TensorProxy):
         return torch.empty(
             inp.shape,
-            dtype=_thunder_to_torch_dtype_map[inp.dtype],
+            dtype=to_torch_dtype(inp.dtype),
             requires_grad=inp.requires_grad,
             device=devices.to_torch_device(inp.device),
         )
@@ -6458,7 +6458,7 @@ def _fake_type_to_thunder(inp: Any):
         return TensorProxy(
             shape=inp.shape,
             device=to_device(inp.device),
-            dtype=_torch_to_thunder_dtype_map[inp.dtype],
+            dtype=to_dtype(inp.dtype),
             requires_grad=inp.requires_grad,
         )
     elif isinstance(inp, torch.Size):
@@ -6466,7 +6466,7 @@ def _fake_type_to_thunder(inp: Any):
     elif isinstance(inp, torch.device):
         return to_device(inp)
     elif isinstance(inp, torch.dtype):
-        return _torch_to_thunder_dtype_map[inp]
+        return to_dtype(inp)
     elif isinstance(inp, (str, bool, int, float, complex)):
         return inp
     else:
