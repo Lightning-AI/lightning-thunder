@@ -422,7 +422,7 @@ def split_into_forward_and_backward(joint_trace: TraceCtx):
 
         # get grad is always part of the input, record the grad_out (will be part of the "cotangents" list)
         if bsym.sym == prims.get_grad:
-            grad_outs[output_pos[bsym.args[0].name]] = bsym.output
+            grad_outs[output_pos[bsym.args[0].name].pop(0)] = bsym.output
             continue
 
         # unpack_trivial is always a (forward trace) argument, the backward inputs are from get_grad
@@ -440,11 +440,6 @@ def split_into_forward_and_backward(joint_trace: TraceCtx):
                 bsym_rec = (bsym.from_bsym(), bsym_out_names)
                 backward_part_bsyms_recomputed.update((n, bsym_rec) for n in bsym_out_names)
 
-            continue
-
-        # get grad is always part of the input, record the grad_out (will be part of the "cotangents" list)
-        if bsym.sym == prims.get_grad:
-            grad_outs[output_pos[bsym.args[0].name].pop(0)] = bsym.output
             continue
 
         # copy_ updating a forward proxy is special regardless of the output
@@ -503,7 +498,7 @@ def split_into_forward_and_backward(joint_trace: TraceCtx):
         prims.python_return(fw_output_dict, (saved_for_backward_tensors, saved_for_backward_other))
 
     if len(backward_part_bsyms) == 0 and not any(
-        [True if arg is not None else False for arg in return_bsym.args[0]["grad_flat_args"]]
+        [True if arg is not None else False for arg in return_bsym.args[0]["output"]]
     ):
         return forward_trace, None
 
