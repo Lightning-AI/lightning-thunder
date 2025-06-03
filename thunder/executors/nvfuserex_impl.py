@@ -2737,6 +2737,36 @@ register_supported(PrimIDs.EMBEDDING, embedding, _embedding_check)
 register_supported(ltorch.embedding, embedding, _embedding_check)
 
 
+def _index_put_check(a: TensorProxy, /, indices: Sequence[TensorProxy], values: TensorProxy, accumulate: bool) -> bool:
+    if len(indices) != 1:
+        return False;
+
+    if accumulate == True:
+        return False;
+
+    return True
+
+def index_put(a: TensorProxy, /, indices: Sequence[TensorProxy], values: TensorProxy, accumulate: bool,
+    *,
+    fd: FusionDefinition,
+    lc_to_nv_map: dict,
+) -> any:
+    nva = getnv(a, fd, lc_to_nv_map)
+    nvi = getnv(indices[0], fd, lc_to_nv_map)
+    shapes = nva.shape()
+    flag = [-1]
+    for i in range(1, nva.ndim):
+        flag += [shapes[i]]
+    nvi_b = fd.ops.broadcast_in_dim(nvi, flag, [0])
+
+    nvs = getnv(values, fd, lc_to_nv_map)
+
+    return fd.ops.scatter(nva, nvi_b, nvs, 0)
+
+register_supported(PrimIDs.INDEX_PUT, index_put, _index_put_check)
+
+
+
 def _cross_entropy_check_(
     a: TensorLike,
     /,
