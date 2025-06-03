@@ -796,6 +796,7 @@ cudnn_ex: None | OperatorExecutor = None
 
 
 if cudnn_available():
+    cudnn_ex = OperatorExecutor("cudnn", version=cudnn_backend_version)
     register_executor(cudnn_ex)
     cudnn_sdpa_fwd = cudnn_ex.register_operator(
         "cudnn_sdpa_fwd",
