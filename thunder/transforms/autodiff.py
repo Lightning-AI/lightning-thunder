@@ -351,7 +351,7 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
     joint_trace = dce(joint_trace)
     # group get_grad symbols together for torch compile fusions
     # !!! is it preferable to do this here or in the torch compile fusion pass?
-    _group_get_grad_bsyms(trace)
+    _group_get_grad_bsyms(joint_trace)
 
     end_time_ns = time.perf_counter_ns()
     elapsed_time_ns = end_time_ns - start_time_ns
