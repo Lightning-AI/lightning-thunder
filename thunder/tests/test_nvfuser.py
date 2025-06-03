@@ -1284,9 +1284,7 @@ def test_moe_infer_scatter(executor, device: str, dtype: dtypes.dtype):
 
     seq_length = 4096
     topk_hidden = (8, 7168)
-    hidden_states = torch.randn(
-        (seq_length * topk_hidden[0], topk_hidden[1]), device="cuda", requires_grad=True
-    )
+    hidden_states = torch.randn((seq_length * topk_hidden[0], topk_hidden[1]), device="cuda", requires_grad=True)
     logits = torch.randn(seq_length * topk_hidden[0], device="cuda")
     idxs = logits.argsort()
     topk_weight = torch.randn((seq_length, topk_hidden[0]), device="cuda")

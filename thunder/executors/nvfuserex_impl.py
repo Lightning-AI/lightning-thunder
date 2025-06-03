@@ -2744,14 +2744,20 @@ def _index_put_check(a: TensorProxy, /, indices: Sequence[TensorProxy], values: 
 
     # TODO: limited support inside nvfuser. remove this when codegen support is generalized.
     if len(indices) != 1 or indices[0].ndim != 1 or a.ndim != 2:
-        return False;
+        return False
 
     if accumulate == True:
-        return False;
+        return False
 
     return True
 
-def index_put(a: TensorProxy, /, indices: Sequence[TensorProxy], values: TensorProxy, accumulate: bool,
+
+def index_put(
+    a: TensorProxy,
+    /,
+    indices: Sequence[TensorProxy],
+    values: TensorProxy,
+    accumulate: bool,
     *,
     fd: FusionDefinition,
     lc_to_nv_map: dict,
@@ -2768,6 +2774,7 @@ def index_put(a: TensorProxy, /, indices: Sequence[TensorProxy], values: TensorP
     nvs = getnv(values, fd, lc_to_nv_map)
 
     return fd.ops.scatter(nva, nvi_b, nvs, 0)
+
 
 register_supported(PrimIDs.INDEX_PUT, index_put, _index_put_check)
 
