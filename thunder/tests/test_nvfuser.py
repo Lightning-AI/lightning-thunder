@@ -1105,6 +1105,7 @@ def test_cross_entropy(executor, device: str, thunder_dtype: dtypes.dtype, ignor
 
     assert "nv_cross_entropy_fwd" in fwd_fusion[-1][-1].name
     assert "nv_cross_entropy_bwd" in bwd_fusion[-1][-1].name
+    assert "nv_cross_entropy_fwd" not in bwd_fusion[-1][-1].name
 
     ref_inputs = [inp.clone().detach() for inp in inputs]
     # logits needs to be requires_grad=True for backward
