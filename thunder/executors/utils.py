@@ -196,13 +196,13 @@ def _input_dtype_check_fused_scaled_dot_product_attention(
 
 # This helper function converts Thunder Proxy to PyTorch Meta Tensor
 def _convert_to_meta_tensor(a: None | TensorProxy) -> None | torch.Tensor:
-    from thunder.torch import _thunder_to_torch_dtype_map
+    from thunder.core.dtypes import to_torch_dtype
 
     if a is None:
         return None
     return torch.empty(
         a.shape,
-        dtype=_thunder_to_torch_dtype_map[a.dtype],
+        dtype=to_torch_dtype(a.dtype),
         requires_grad=a.requires_grad,
         device="meta",
     )
