@@ -276,7 +276,7 @@ def test_te_frozen_weights():
             torch.nn.Linear(64, 32, bias=False),
             torch.nn.Linear(32, 64, bias=False),
             torch.nn.Linear(64, 32, bias=False),
-            )
+        )
         x = torch.randn(32, 32, requires_grad=True)
 
     for idx, parameters in enumerate(model.parameters()):
