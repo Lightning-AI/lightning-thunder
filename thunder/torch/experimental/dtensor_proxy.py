@@ -53,6 +53,14 @@ class DTensorProxy(TensorProxy):
             self.spec = spec
             self.local_tensor = local_tensor
 
+    @property
+    def placements(self):
+        return self.spec._o.placements
+    
+    @property
+    def device_mesh(self):
+        return self.spec._o.device_mesh
+
     def type_string(self):
         return f"DTensor {self.device.device_str()} {self.dtype.shortname()}{list(self._shape)} mesh={self.spec._o.mesh}, placements={self.spec._o.placements}"
 

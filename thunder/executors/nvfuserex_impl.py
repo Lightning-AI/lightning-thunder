@@ -244,7 +244,7 @@ def get_translator(bsym: BoundSymbol) -> Callable:
     return _translation_map[bsym.sym.id]
 
 
-def get_methods_for_dtensor_fd(in_dtensors):
+def get_methods_for_dtensor_fd(in_dtensors: list[DTensorProxy]) -> tuple[Callable]:
     def _find_tensor_by_index(self, index: int) -> nvfuser.Tensor:
         for t in self.sched.tensors():
             if t.index == index:
@@ -256,16 +256,16 @@ def get_methods_for_dtensor_fd(in_dtensors):
             in_tensor = self._find_tensor_by_index(in_tensor_index)
 
             # Set the device mesh.
-            assert in_dtensor.spec._o.device_mesh.ndim == 1, "nvFuser's Python API only supports 1D meshes."
-            mesh = nvfuser.DeviceMesh(in_dtensor.spec._o.device_mesh.mesh.tolist())
+            assert in_dtensor.device_mesh.ndim == 1, "nvFuser's Python API only supports 1D meshes."
+            mesh = nvfuser.DeviceMesh(in_dtensor.device_mesh.mesh.tolist())
 
             self.sched._set_device_mesh(in_tensor, mesh)
 
             # Split and parallelize.
-            assert len(in_dtensor.spec._o.placements) == 1, "Expect a 1D mesh"
+            assert len(in_dtensor.placements) == 1, "Expect a 1D mesh"
             # When the mesh is multi-dimensional, iterate through the
             # placements in descending order of Placement.dim.
-            placement: Placement = in_dtensor.spec._o.placements[0]
+            placement: Placement = in_dtensor.placements[0]
             if placement.is_shard():
                 dim = cast(Shard, placement).dim
                 self.sched.split(in_tensor, dim, mesh.size, False)
@@ -275,7 +275,7 @@ def get_methods_for_dtensor_fd(in_dtensors):
     return _find_tensor_by_index, multidevice_schedule
 
 
-def bind(instance, func, as_name=None):
+def bind(instance: object, func: Callable, as_name: Optional[str]=None):
     """
     Bind the function *func* to *instance*, with either provided name *as_name*
     or the existing name of *func*. The provided *func* should accept the
@@ -285,7 +285,6 @@ def bind(instance, func, as_name=None):
         as_name = func.__name__
     bound_method = func.__get__(instance, instance.__class__)
     setattr(instance, as_name, bound_method)
-    return bound_method
 
 
 def create_fd(
