@@ -749,6 +749,24 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
         lambda: f"Advanced indexing currently only supports keys that are ellipses, integer tensors or sequences, but got {key=}",
     )
 
+    # Handle None indices first by unsqueezing
+    if isinstance(key, tuple) and any(x is None for x in key):
+        # Count positions of None indices
+        none_positions = []
+        filtered_key = []
+        for i, k in enumerate(key):
+            if k is None:
+                none_positions.append(i)
+            else:
+                filtered_key.append(k)
+
+        # Unsqueeze at None positions
+        if none_positions:
+            a = unsqueeze(a, none_positions)
+
+        # Continue with filtered key
+        key = tuple(filtered_key) if len(filtered_key) > 1 else filtered_key[0] if filtered_key else ()
+
     def _to_tensorproxies(x: list, device: devices.DeviceType):
         # Convert list of numbers to tensor if possible
         for idx, val in enumerate(x):
@@ -939,10 +957,10 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
 
     # Build the final output shape
     if has_ellipsis:
-        # Fill from back: remaining_shape + broadcasted index shape
+        # Fill from back: remaining_shape + broadcast index shape
         new_shape = remaining_shape + list(new_shape)
     else:
-        # Fill from front: broadcasted index shape + remaining_shape
+        # Fill from front: broadcast index shape + remaining_shape
         new_shape = list(new_shape) + remaining_shape
 
     # Flatten the index tensor before calling take (required for n-dim advanced indexing)
@@ -1025,6 +1043,12 @@ def getitem(a: TensorLike, /, key) -> TensorLike:
                 return a
 
     if isinstance(key, TensorLike) or (isinstance(key, Sequence) and not isinstance(key, tuple)):
+        return _advanced_indexing(a, key)
+
+    # Check if we have mixed basic/advanced indexing
+    if sig.advanced and sig.unsqueeze:
+        # Handle mixed indexing by passing the full key to _advanced_indexing
+        # which now handles None indices properly
         return _advanced_indexing(a, key)
 
     # perform basic indexing first
