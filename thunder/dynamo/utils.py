@@ -10,12 +10,13 @@ from types import NoneType
 import time
 from collections import defaultdict
 from collections import namedtuple
+import traceback
 
 import torch
 from torch.nn.modules.module import _addindent
 from torch._subclasses.fake_tensor import FakeTensor
 from torch.utils.weak import TensorWeakRef
-from torch._logging._internal import trace_structured
+from torch._logging._internal import trace_structured, trace_structured_artifact
 
 if torch.distributed.is_available():
     from torch.distributed.tensor import DTensor
@@ -342,14 +343,16 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
 
         except Exception as e:
             proxy_creation_end = time.time()
-            trace_structured(
-                "thunder_execute_symbol_proxy_creation_failed",
-                metadata_fn=lambda n=node, exc=str(e), start=execute_start_time, end=proxy_creation_end: {
+            trace_structured_artifact(
+                name="thunder_execute_symbol_proxy_creation_failed",
+                encoding="json",
+                payload_fn=lambda n=node, exc=str(e), start=execute_start_time, end=proxy_creation_end: {
                     "node_name": n.name,
                     "node_target": str(n.target),
                     "exception": exc,
                     "timestamp": end,
                     "duration_seconds": end - start,
+                    "traceback": traceback.format_exc(),
                 },
             )
 
@@ -640,14 +643,16 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
             args, kwargs = get_proxy_inputs_from_node(node)
         except Exception as e:
             check_end_time = time.time()
-            trace_structured(
-                "thunder_node_proxy_creation_failed",
-                metadata_fn=lambda n=node, exc=str(e): {
+            trace_structured_artifact(
+                name="thunder_node_proxy_creation_failed",
+                encoding="json",
+                payload_fn=lambda n=node, exc=str(e), cs=check_start_time, ce=check_end_time: {
                     "node_name": n.name,
                     "node_target": str(n.target),
                     "exception": exc,
-                    "timestamp": check_end_time,
-                    "duration_seconds": check_end_time - check_start_time,
+                    "timestamp": ce,
+                    "duration_seconds": ce - cs,
+                    "traceback": traceback.format_exc(),
                 },
             )
 
