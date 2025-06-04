@@ -724,30 +724,33 @@ def _basic_indexing(a: TensorLike, /, key) -> TensorLike:
 # NOTE Advanced indexing with boolean tensors has data-dependent metadata (it is akin to indexing with nonzero)
 @clangop()
 def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
-    # Advanced indexing supports:
-    #   - n-dimensional integer tensor indices (not just 0D/1D)
-    #   - Broadcasting of multiple index tensors to a common shape
-    #   - At most one ellipsis (must be the first element if present)
-    #   - Sequences of integer tensor indices (with or without ellipsis)
-    #
-    # Not yet supported:
-    #   - Boolean tensor indices (these require data-dependent metadata, like nonzero)
-    #   - Mixing basic and advanced indexing except for the special case of a single 1-length sequence
-    #
-    # Modeling:
-    #   - All index tensors are broadcasted to a common shape
-    #   - Indices are flattened and used with `take` to gather elements
-    #   - The result is reshaped to match the broadcasted index shape and any remaining dimensions
-    #   - Permutations are applied to match PyTorch/NumPy semantics
-    #   - Negative indices are wrapped as in PyTorch/NumPy
+    """
+    Implements advanced indexing for Thunder tensors.
+
+    Supports:
+      - n-dimensional integer tensor indices (not just 0D/1D)
+      - Broadcasting of multiple index tensors to a common shape
+      - At most one ellipsis (must be the first element if present)
+      - Sequences of integer tensor indices (with or without ellipsis)
+
+    Not yet supported:
+      - Boolean tensor indices (these require data-dependent metadata, like nonzero)
+      - Mixing basic and advanced indexing except for the special case of a single 1-length sequence
+
+    Modeling:
+      - All index tensors are broadcast to a common shape
+      - Indices are flattened and used with `take` to gather elements
+      - The result is reshaped to match the broadcast index shape and any remaining dimensions
+      - Permutations are applied to match PyTorch/NumPy semantics
+      - Negative indices are wrapped as in PyTorch/NumPy
+    """
     utils.check(
         isinstance(key, (TensorLike, Sequence)),
         lambda: f"Advanced indexing currently only supports keys that are ellipses, integer tensors or sequences, but got {key=}",
     )
 
     def _to_tensorproxies(x: list, device: devices.DeviceType):
-        # convert list to tensor
-        # e.g. [1, 2] -> tensor.Tensor([1, 2])
+        # Convert list of numbers to tensor if possible
         for idx, val in enumerate(x):
             if isinstance(val, (NumberProxy)):
                 x[idx] = utils.get_numberlike_value(val)
@@ -807,7 +810,6 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
             key_ = []
             for key_idx, x in enumerate(key):
                 if isinstance(x, list):
-                    # is it possible to have list of tensors here?
                     x = _to_tensorproxies(x, a.device)
                     key_.append(x)
                     advanced_keys.append((key_idx, x))
@@ -816,7 +818,6 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
                     if isinstance(x, TensorLike):
                         advanced_keys.append((key_idx, x))
                 else:
-                    # basic indices
                     key_.append(None)
                     basic_keys.append((key_idx, None))
             key = tuple(key_)
@@ -868,12 +869,12 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
 
     # Only apply permutation if there are multiple advanced or basic keys and not the single-tensor-tuple case
     if (len(advanced_keys) + len(basic_keys) > 1) and not is_single_tensor_tuple:
-        # transpose so that we have basic keys first
+        # Transpose so that we have basic keys first
         if has_ellipsis:
             del modified_key[0]
             permute_shape = [x + len(list(a.shape[: a.ndim - (seq_len - 1)])) - 1 for x in permute_shape]
             permute_shape = list(range(a.ndim - (seq_len - 1))) + permute_shape
-            # check if we need to permute
+            # Check if we need to permute
             if permute_shape != list(range(a.ndim)):
                 a = transpose(a, tuple(permute_shape))
                 key = tuple(permute_key)
@@ -883,9 +884,9 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
             dim = -1
             flattened = flatten(a, a.ndim - (seq_len - 1), -1)
         else:
-            # NOTE No ellipsis case
+            # No ellipsis case
             permute_shape = permute_shape + list(range(len(key), len(a.shape)))
-            # check if we need to permute
+            # Check if we need to permute
             if permute_shape != list(range(a.ndim)):
                 a = transpose(a, tuple(permute_shape))
                 key = tuple(permute_key)
@@ -901,51 +902,52 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
         dim = 0
         flattened = flatten(a, 0, 0)
 
-    # Broadcast all index tensors to the same shape
-    broadcast_indices = []
+    # Collect all index tensors from the key
+    index_tensors = []
     for k in modified_key:
         if isinstance(k, TensorLike):
-            broadcast_indices.append(k)
+            index_tensors.append(k)
 
-    if broadcast_indices:
-        # All index tensors are broadcasted to a common shape
-        broadcast_indices = maybe_broadcast(*broadcast_indices, treat_cpu_scalar_tensors_as_numbers=False)
+    # Broadcast all index tensors to the same shape
+    if index_tensors:
+        broadcast_indices = maybe_broadcast(*index_tensors, treat_cpu_scalar_tensors_as_numbers=False)
         broadcast_shape = broadcast_indices[0].shape
+    else:
+        broadcast_indices = []
+        broadcast_shape = ()
 
-    # Canonicalizes tensor indices, wrapping negative indices like -5
-    # NOTE This does not check if the indices are valid. In PyTorch invalid indices
-    #   will trigger a device-side assertion.
+    # Canonicalize tensor indices, wrapping negative indices like -5
     def wrap_tensor(t: TensorLike, dim_length: int) -> TensorLike:
         return t + where(t < 0, dim_length, 0)
 
     # Compute the flattened index for n-dimensional tensors
     l = subtensor_shape[-1]
-    flattened_idx = wrap_tensor(broadcast_indices[-1], l)
-    new_shape = []  # Initialize new_shape before the conditional
-    if len(flattened_idx.shape) > 0:
+    flattened_idx = wrap_tensor(broadcast_indices[-1], l) if broadcast_indices else None
+    new_shape = []  # Output shape after advanced indexing
+    if flattened_idx is not None and len(flattened_idx.shape) > 0:
         new_shape = list(broadcast_shape)
-    else:
-        # For 0-dimensional indices, use an empty shape
+    elif flattened_idx is not None:
         new_shape = []
 
     accum: int = l
-    for j, (k, l) in enumerate(zip(reversed(broadcast_indices[:-1]), reversed(subtensor_shape[:-1])), 2):
+    for j, (k, l_) in enumerate(zip(reversed(broadcast_indices[:-1]), reversed(subtensor_shape[:-1])), 2):
         if k is not None:
-            wrapped = wrap_tensor(k, l)
+            wrapped = wrap_tensor(k, l_)
             # Flatten indices for multi-dimensional advanced indexing
             flattened_idx = flattened_idx + wrapped * accum
-            accum *= l
+            accum *= l_
 
+    # Build the final output shape
     if has_ellipsis:
-        # fill from back
+        # Fill from back: remaining_shape + broadcasted index shape
         new_shape = remaining_shape + list(new_shape)
     else:
-        # fill from front
+        # Fill from front: broadcasted index shape + remaining_shape
         new_shape = list(new_shape) + remaining_shape
 
-    # Flatten the index tensor before calling take
-    flattened_idx_1d = reshape(flattened_idx, (-1,))
-    res = take(flattened, flattened_idx_1d, dim=dim)
+    # Flatten the index tensor before calling take (required for n-dim advanced indexing)
+    flattened_idx_1d = reshape(flattened_idx, (-1,)) if flattened_idx is not None else None
+    res = take(flattened, flattened_idx_1d, dim=dim) if flattened_idx_1d is not None else flattened
     # Reshape the result to the correct output shape
     res = reshape(res, tuple(new_shape))
 
@@ -956,7 +958,7 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
         if res.shape[dim] == 1:
             res = squeeze(res, (dim,))
     res = reshape(res, tuple(new_shape))
-    # check if we need to permute
+    # Check if we need to permute back to the original shape
     if (len(advanced_keys) + len(basic_keys) > 1) and not is_single_tensor_tuple:
         perm = tuple(permute_shape[: len(new_shape)])
         if (
@@ -964,7 +966,7 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
             and set(perm) == set(range(res.ndim))
             and perm != tuple(range(res.ndim))
         ):
-            # permute back to original shape
+            # Permute back to original shape
             res = transpose(res, perm)
 
     return res
