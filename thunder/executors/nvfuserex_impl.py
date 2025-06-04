@@ -493,7 +493,10 @@ def to_runtime_descriptors(args) -> tuple:
     Returns:
         Tuple: The runtime descriptors of the arguments.
     """
-    return tuple(compute_contiguity(arg.shape, arg.stride()) + (make_key_from_dtensor(arg),) if isinstance(arg, Tensor) else None for arg in args)
+    return tuple(
+        compute_contiguity(arg.shape, arg.stride()) + (make_key_from_dtensor(arg),) if isinstance(arg, Tensor) else None
+        for arg in args
+    )
 
 
 # TODO Consider making this just a function, because it's faster to call a function than a callable class

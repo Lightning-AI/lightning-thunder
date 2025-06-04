@@ -19,7 +19,12 @@ from torch.testing._internal import common_utils
 from thunder.tests.distributed.helper import executors_map
 
 
-functions_to_test = {"torch.mul": lambda x, w: torch.mul(x, w), "x.mul(w)": lambda x, w: torch.Tensor.mul(x, w), "x * w":lambda x, w: x * w}
+functions_to_test = {
+    "torch.mul": lambda x, w: torch.mul(x, w),
+    "x.mul(w)": lambda x, w: torch.Tensor.mul(x, w),
+    "x * w": lambda x, w: x * w,
+}
+
 
 @unittest.skipUnless(
     torch.cuda.is_available() and torch.distributed.is_nccl_available(),
@@ -122,6 +127,7 @@ class DTensorTest(DistributedParallelTestCase):
 
         with pytest.raises(RuntimeError, match="has changed for cotangent between tracing and runtime"):
             torch.autograd.grad(actual, (in_dtensor, w_dtensor), g_o)
+
 
 common_utils.instantiate_parametrized_tests(DTensorTest)
 
