@@ -192,7 +192,7 @@ class TELinear(TransformerEngineBaseModule):
         else:
             self.pg = None
 
-    def forward(self, inp, weight, bias, *, is_grad_enabled: bool = False, weight_requires_grad, bias_requires_grad):
+    def forward(self, inp, weight, bias, *, input_requires_grad, weight_requires_grad, bias_requires_grad):
         # NOTE: Backward FP8 metadata sync
         # TransformerEngine v1.6 onwards, we control the sync and update of FP8 metadata for FP8 tensors
         # tied to backward pass (i.e. the gradient tensors)
@@ -202,13 +202,17 @@ class TELinear(TransformerEngineBaseModule):
         # We consume the `is_first_fp8_module` so that the automatic sync for FP8 metadata is disabled.
         FP8GlobalStateManager.is_first_fp8_module()  # Consume first module token.
 
-        enable_grad_inputs = (inp,)
+        enable_grad_inputs = ()
 
         # For PEFT scenarios, weights maybe frozen i.e. weight_requires_grad=False.
+        if input_requires_grad:
+            enable_grad_inputs += (inp,)
         if weight_requires_grad:
             enable_grad_inputs += (weight,)
         if bias_requires_grad:
             enable_grad_inputs += (bias,)
+
+        is_grad_enabled = input_requires_grad or weight_requires_grad or bias_requires_grad
 
         # See [NOTE] Enable grad within context
         # TE backward depends on `requires_grad` to compute grads but thunder wraps it's execution trace with `no_grad`,
@@ -325,9 +329,9 @@ transformer_engine_ex = OperatorExecutor("transformer_engine")
 register_executor(transformer_engine_ex)
 
 
-def make_te_linear_meta(is_grad_enabled: bool = False, weight_requires_grad: bool = True):
+def make_te_linear_meta(i_requires_grad, w_requires_grad):
     def _te_functional_linear_meta(
-        a: TensorProxy, w: TensorProxy, bias: None | TensorProxy, *, weight_requires_grad: bool, bias_requires_grad: bool
+        a: TensorProxy, w: TensorProxy, bias: None | TensorProxy, *, input_requires_grad: bool, weight_requires_grad: bool, bias_requires_grad: bool
     ) -> tuple[TensorProxy, AnyProxy | None]:
         from thunder.core.dtypes import float8_e4m3fn, uint8
 
@@ -335,7 +339,7 @@ def make_te_linear_meta(is_grad_enabled: bool = False, weight_requires_grad: boo
         # Output Shape : (*, Hout) where * is any number of dims including None.
         output_shape = list(a.shape)
         output_shape[-1] = w.shape[0]
-        if is_grad_enabled:
+        if i_requires_grad or w_requires_grad:
             global LINEAR_CALLS_COUNTER
             ctx_dict = AnyProxy(object(), prefix=f"ctx_te_{LINEAR_CALLS_COUNTER}")
 
@@ -343,7 +347,7 @@ def make_te_linear_meta(is_grad_enabled: bool = False, weight_requires_grad: boo
             # saved_tensors since they are not used in Thunder's meta functions.
             saved_tensors = tuple(
                 TensorProxy(like=a, shape=a.shape)
-                for _ in range(_get_num_saved_tensors(get_recipe_from_options_or_default_recipe(), weight_requires_grad))
+                for _ in range(_get_num_saved_tensors(get_recipe_from_options_or_default_recipe(), w_requires_grad))
             )
 
             return TensorProxy(like=a, shape=output_shape), saved_tensors, ctx_dict
@@ -363,6 +367,7 @@ def _te_functional_linear_backward_impl(
     saved_tensors: Sequence[torch.Tensor],
     g: torch.Tensor,
     *,
+    input_requires_grad: bool,
     weight_requires_grad: bool,
     bias_requires_grad: bool,
 ) -> [torch.Tensor, torch.Tensor, None | torch.Tensor]:
@@ -381,11 +386,12 @@ def _te_functional_linear_backward_meta(
     saved_tensors: Sequence[TensorProxy],
     g: TensorProxy,
     *,
+    input_requires_grad: bool,
     weight_requires_grad: bool,
     bias_requires_grad: bool
 ) -> [TensorProxy, TensorProxy, None | TensorProxy]:
     return (
-        TensorProxy(like=g, shape=a_shape),
+        TensorProxy(like=g, shape=a_shape) if input_requires_grad else None,
         TensorProxy(like=g, shape=w_shape) if weight_requires_grad else None,
         TensorProxy(like=g, shape=b_shape) if bias_requires_grad else None,
     )
@@ -416,11 +422,10 @@ def get_recipe_from_options_or_default_recipe():
 
 
 def _create_fp8_linear_bound_symbol(
-    a: TensorProxy, w: TensorProxy, b: TensorProxy, is_grad_enabled=False, weight_requires_grad=True
+    a: TensorProxy, w: TensorProxy, b: TensorProxy, input_requires_grad=True, weight_requires_grad=True
 ) -> tuple[torch.Tensor, AnyProxy | None]:
     linear_fn = partial(
         TELinear(w.shape[1], w.shape[0]),
-        is_grad_enabled=is_grad_enabled,
     )
     global LINEAR_CALLS_COUNTER
     name = f"te_linear_{LINEAR_CALLS_COUNTER}"
@@ -434,7 +439,7 @@ def _create_fp8_linear_bound_symbol(
         bsym._import_ctx: dict[str, Any] = {IMPORT_CTX_TE_KEY: te}
         bsym._object_ctx: dict[str, Any] = {FP8_RECIPE_KEY: fp8_recipe}
 
-    meta_fn = make_te_linear_meta(is_grad_enabled=is_grad_enabled, weight_requires_grad=weight_requires_grad)
+    meta_fn = make_te_linear_meta(input_requires_grad, weight_requires_grad)
     sym = Symbol(
         name=name,
         meta=meta_fn,
@@ -449,16 +454,18 @@ def _create_fp8_linear_bound_symbol(
 
 # Creates a new stateful operator for each invocation of `linear`.
 def _insert_fp8_linear_bound_symbol_in_current_trace(
-    a: TensorProxy, w: TensorProxy, b: TensorProxy, is_grad_enabled=True, weight_requires_grad=True
+    a: TensorProxy, w: TensorProxy, b: TensorProxy, input_requires_grad=True, weight_requires_grad=True
 ) -> tuple[torch.Tensor, AnyProxy | None]:
-    sym, meta_fn = _create_fp8_linear_bound_symbol(a, w, b, is_grad_enabled, weight_requires_grad)
+    is_grad_enabled = input_requires_grad or weight_requires_grad
+    sym, meta_fn = _create_fp8_linear_bound_symbol(a, w, b, input_requires_grad, weight_requires_grad)
 
-    # Value for `weight_requires_grad` and `bias_requires_grad` are default.
+    # Value for `input_requires_grad`, `weight_requires_grad` and `bias_requires_grad` are default.
     # The correct values are set by looking at the backward trace.
     # See NOTE: Implementation of _transformer_engine_set_requires_grad
     bsym = sym.bind(
-        a, w, b, output=meta_fn(a, w, b, weight_requires_grad=weight_requires_grad, bias_requires_grad=True if b is not None else False),
-        weight_requires_grad=weight_requires_grad, bias_requires_grad=True if b is not None else False
+        a, w, b,
+        output=meta_fn(a, w, b, input_requires_grad=input_requires_grad, weight_requires_grad=weight_requires_grad, bias_requires_grad=True if b is not None else False),
+        input_requires_grad=input_requires_grad, weight_requires_grad=weight_requires_grad, bias_requires_grad=True if b is not None else False
     )
 
     # Now we need to append the BoundSymbol to the current trace.
@@ -520,7 +527,7 @@ def _linear_checker(
 
 
 def linear_forward_rule(a, w, bias):
-    out, saved_tensors, ctx = _insert_fp8_linear_bound_symbol_in_current_trace(a, w, bias, is_grad_enabled=True)
+    out, saved_tensors, ctx = _insert_fp8_linear_bound_symbol_in_current_trace(a, w, bias)
     primal = out
     saved_for_backward = (
         a.shape,
@@ -528,7 +535,8 @@ def linear_forward_rule(a, w, bias):
         bias.shape if bias is not None else None,
         ctx,
         saved_tensors,
-        True,
+        True,  # Dummy default for input_requires_grad updated in `_transformer_engine_set_requires_grad`
+        True,  # Dummy default for weight_requires_grad in `_transformer_engine_set_requires_grad`
         True if bias is not None else False,
     )
     return primal, saved_for_backward
@@ -536,16 +544,17 @@ def linear_forward_rule(a, w, bias):
 
 # Translate calls from torch.nn.functional.linear to te.Linear (when the checker above returns True)
 def _linear_transform(a: TensorProxy, w: TensorProxy, b: TensorProxy) -> torch.Tensor:
-    return _insert_fp8_linear_bound_symbol_in_current_trace(a, w, b, is_grad_enabled=False)
+    return _insert_fp8_linear_bound_symbol_in_current_trace(a, w, b, input_requires_grad=False, weight_requires_grad=False)
 
 
 @disable_caching_split_forward_and_backward
 def _linear_grad(a: TensorProxy, w: TensorProxy, b: TensorProxy) -> TensorProxy:
     out, saved_for_backward = linear_forward_rule(a, w, b)
-    weight_requires_grad, bias_requires_grad = saved_for_backward[-2:]
+    input_requires_grad, weight_requires_grad, bias_requires_grad = saved_for_backward[-3:]
     g = prims.get_grad(out)
-    ga, gw, gb = te_functional_linear_backward(*saved_for_backward[:-2], g, weight_requires_grad=weight_requires_grad, bias_requires_grad=bias_requires_grad)
-    prims.put_grad(a, ga)
+    ga, gw, gb = te_functional_linear_backward(*saved_for_backward[:-3], g, input_requires_grad=input_requires_grad, weight_requires_grad=weight_requires_grad, bias_requires_grad=bias_requires_grad)
+    if input_requires_grad:
+        prims.put_grad(a, ga)
     if weight_requires_grad:
         prims.put_grad(w, gw)
     if bias_requires_grad:
@@ -591,18 +600,18 @@ te_sync_fp8_meta_bwd = transformer_engine_ex.register_operator(
 
 def _transformer_engine_set_requires_grad(fw_extrace: TraceCtx, bw_extrace: TraceCtx) -> tuple[TraceCtx, TraceCtx]:
     # NOTE: Implementation of _transformer_engine_set_requires_grad
-    # This function determines the requires_grad for weight and bias based on whether the
+    # This function determines the requires_grad for input, weight and bias based on whether the
     # gradients are returned from the backward trace.
-    # 1. First, it analyzes the backward trace to determine which gradients (weight and bias)
+    # 1. First, it analyzes the backward trace to determine which gradients (input, weight and bias)
     #    are actually needed. This information is stored in a mapping from
-    #    context names to (weight_requires_grad, bias_requires_grad) tuples.
+    #    context names to (input_requires_grad, weight_requires_grad, bias_requires_grad) tuples.
     # 2. Then, it updates the forward trace's corresponding bound symbols to pass the correct requires_grad flags.
     #    It also updates the relevant BoundSymbol's output to pass the correct saved_tensors.
     # 3. Finally, it updates the backward trace to pass the correct saved_tensors and update the `te_functional_linear_backward` to
     #    consume the correct saved_tensors.
-    # This is required in `PEFT` settings to avoiding unncessary weight and bias gradients computation.
+    # This is required in `PEFT` settings to avoiding unncessary input, weight and bias gradients computation.
 
-    # Step 1: Analyze the backward trace to determine which gradients (weight and bias) are actually needed.
+    # Step 1: Analyze the backward trace to determine which gradients (input, weight and bias) are actually needed.
     updated_fw_extrace = from_trace(fw_extrace)
     updated_bw_extrace = from_trace(bw_extrace)
     ctx_to_requires_grad = {}
@@ -611,15 +620,17 @@ def _transformer_engine_set_requires_grad(fw_extrace: TraceCtx, bw_extrace: Trac
     UNPACK_SEQUENCE_BSYM_IDX = 4
     for bsym in bw_extrace.bound_symbols:
         if bsym.sym.name == "te_functional_linear_backward":
-            # Check if `w_requires_grad` and `b_requires_grad` are used or not.
+            # Check if `i_requires_grad`, `w_requires_grad` and `b_requires_grad` are used or not.
             # If they are unused, they would show up as `None` in the output of the BoundSymbol.
             dgrad, wgrad, bgrad = bsym.output
+            i_requires_grad = True if dgrad is not None else False
             w_requires_grad = True if wgrad is not None else False
             b_requires_grad = True if bgrad is not None else False
 
             # Update the BoundSymbol to take the correct flags as input.
-            ctx_to_requires_grad[bsym.args[CTX_ARG_IDX].name] = (w_requires_grad, b_requires_grad)
+            ctx_to_requires_grad[bsym.args[CTX_ARG_IDX].name] = (i_requires_grad, w_requires_grad, b_requires_grad)
             args = list(bsym.args)
+            bsym.kwargs["input_requires_grad"] = i_requires_grad
             bsym.kwargs["weight_requires_grad"] = w_requires_grad
             bsym.kwargs["bias_requires_grad"] = b_requires_grad
             bsym.args = tuple(args)
@@ -632,22 +643,24 @@ def _transformer_engine_set_requires_grad(fw_extrace: TraceCtx, bw_extrace: Trac
     for bsym in fw_extrace.bound_symbols:
         if "te_linear" in bsym.sym.name:
             # Update the BoundSymbol to correctly pass the requires_grad flags to the `TELinear` module.
-            w_requires_grad, b_requires_grad = ctx_to_requires_grad[bsym.output[-1].name]
+            i_requires_grad, w_requires_grad, b_requires_grad = ctx_to_requires_grad[bsym.output[-1].name]
             args = list(bsym.args)
+            org_i_requires_grad = bsym.kwargs["input_requires_grad"]
             org_w_requires_grad = bsym.kwargs["weight_requires_grad"]
             org_b_requires_grad = bsym.kwargs["bias_requires_grad"]
+            bsym.kwargs["input_requires_grad"] = i_requires_grad
             bsym.kwargs["weight_requires_grad"] = w_requires_grad
             bsym.kwargs["bias_requires_grad"] = b_requires_grad
             args = tuple(args)
             bsym.args = tuple(args)
 
             # NOTE: Changing the requires_grad on bias doesn't change the number of saved_tensors.
-            if org_w_requires_grad != w_requires_grad:
+            if (org_i_requires_grad, org_w_requires_grad, org_b_requires_grad) != (i_requires_grad, w_requires_grad, b_requires_grad):
                 with tracectx(updated_fw_extrace):
-                    new_args = (args[:3]+(True, args[-2]))
-                    _, meta_fn = _create_fp8_linear_bound_symbol(*new_args)
                     a, w, b = args[:3]
-                    output = meta_fn(a, w, b, weight_requires_grad=w_requires_grad, bias_requires_grad=b_requires_grad)
+                    new_args = (a, w, b, i_requires_grad, w_requires_grad)
+                    _, meta_fn = _create_fp8_linear_bound_symbol(*new_args)
+                    output = meta_fn(a, w, b, input_requires_grad=i_requires_grad, weight_requires_grad=w_requires_grad, bias_requires_grad=b_requires_grad)
 
                 o, saved_tensors, ctx = bsym.output
                 _, new_saved_tensors, _ = output
@@ -667,8 +680,9 @@ def _transformer_engine_set_requires_grad(fw_extrace: TraceCtx, bw_extrace: Trac
     new_saved_tensors = [tensor for tensor in saved_tensors if tensor.name not in tensors_to_remove]
     set_saved_for_backward_tensors(updated_fw_extrace, new_saved_tensors)
 
+    # Update the backward trace's unpack_sequence for saved tensors to unpack the new sequence of saved tensors.
     assert updated_bw_extrace.bound_symbols[UNPACK_SEQUENCE_BSYM_IDX].sym.id == prims.PrimIDs.UNPACK_SEQUENCE
-    assert updated_bw_extrace.bound_symbols[UNPACK_SEQUENCE_BSYM_IDX].args[0].name == "C0"# Update the backward trace's unpack_sequence for saved tensors to unpack the new sequence of saved tensors.
+    assert updated_bw_extrace.bound_symbols[UNPACK_SEQUENCE_BSYM_IDX].args[0].name == "C0"
     updated_bw_extrace.bound_symbols[UNPACK_SEQUENCE_BSYM_IDX].args = (updated_bw_extrace.bound_symbols[UNPACK_SEQUENCE_BSYM_IDX].args[0], len(new_saved_tensors))
     updated_bw_extrace.bound_symbols[UNPACK_SEQUENCE_BSYM_IDX].output = new_saved_tensors
 
