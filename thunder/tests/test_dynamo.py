@@ -1611,5 +1611,5 @@ def test_spliter_bwd():
     assert len(reason) == 1
     assert "Failed while running meta for node with name: setitem" in reason[0].info
     assert "Advanced indexing" in reason[0].exception and reason[0].exception.endswith(
-        "found a tensor with dtype thunder.dtypes.bool8 and 3 dimensions"
+        "found a tensor with dtype thunder.dtypes.bool8"
     )
