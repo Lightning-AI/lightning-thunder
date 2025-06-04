@@ -785,7 +785,10 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
         seq_len = 1
         num_ellipses = 0
         utils.check(key is not None, lambda: f"Advanced indexing expected a non-empty tensor key, but got {key=}")
-        utils.check(dtypes.is_nonboolean_integer_dtype(key.dtype), lambda: f"Advanced indexing currently only supports integer tensors, but found a tensor with dtype {key.dtype}")
+        utils.check(
+            dtypes.is_nonboolean_integer_dtype(key.dtype),
+            lambda: f"Advanced indexing currently only supports integer tensors, but found a tensor with dtype {key.dtype}",
+        )
         has_ellipsis = False
     else:
         if isinstance(key, list):
@@ -796,14 +799,21 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
                 modified_key = [key]
                 seq_len = 1
                 num_ellipses = 0
-                utils.check(key is not None, lambda: f"Advanced indexing expected a non-empty tensor key, but got {key=}")
-                utils.check(dtypes.is_nonboolean_integer_dtype(key.dtype), lambda: f"Advanced indexing currently only supports integer tensors, but found a tensor with dtype {key.dtype}")
+                utils.check(
+                    key is not None, lambda: f"Advanced indexing expected a non-empty tensor key, but got {key=}"
+                )
+                utils.check(
+                    dtypes.is_nonboolean_integer_dtype(key.dtype),
+                    lambda: f"Advanced indexing currently only supports integer tensors, but found a tensor with dtype {key.dtype}",
+                )
                 has_ellipsis = False
             else:
                 for ii, i in enumerate(key):
                     advanced_keys.append((ii, i))
                 modified_key = list(key)
-                utils.check(len(key) > 0, lambda: f"Advanced indexing expected a non-empty sequence for a key, but got {key=}")
+                utils.check(
+                    len(key) > 0, lambda: f"Advanced indexing expected a non-empty sequence for a key, but got {key=}"
+                )
                 seq_len = len(key)
                 num_ellipses = 0
                 for x in key:
@@ -840,7 +850,9 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
                     basic_keys.append((key_idx, None))
             key = tuple(key_)
             modified_key = list(key_)
-            utils.check(len(key) > 0, lambda: f"Advanced indexing expected a non-empty sequence for a key, but got {key=}")
+            utils.check(
+                len(key) > 0, lambda: f"Advanced indexing expected a non-empty sequence for a key, but got {key=}"
+            )
             seq_len = len(key)
             num_ellipses = 0
             for x in key:
@@ -879,11 +891,7 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
         permute_key.append(key_val)
 
     # Special case: tuple of length 1 with a single tensor index
-    is_single_tensor_tuple = (
-        isinstance(key, tuple)
-        and len(key) == 1
-        and isinstance(key[0], TensorLike)
-    )
+    is_single_tensor_tuple = isinstance(key, tuple) and len(key) == 1 and isinstance(key[0], TensorLike)
 
     # Only apply permutation if there are multiple advanced or basic keys and not the single-tensor-tuple case
     if (len(advanced_keys) + len(basic_keys) > 1) and not is_single_tensor_tuple:
@@ -979,11 +987,7 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
     # Check if we need to permute back to the original shape
     if (len(advanced_keys) + len(basic_keys) > 1) and not is_single_tensor_tuple:
         perm = tuple(permute_shape[: len(new_shape)])
-        if (
-            len(perm) == res.ndim
-            and set(perm) == set(range(res.ndim))
-            and perm != tuple(range(res.ndim))
-        ):
+        if len(perm) == res.ndim and set(perm) == set(range(res.ndim)) and perm != tuple(range(res.ndim)):
             # Permute back to original shape
             res = transpose(res, perm)
 
