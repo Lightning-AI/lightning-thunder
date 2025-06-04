@@ -131,9 +131,10 @@ def _splitter(
             )
             split_reasons.append(split_reason)
 
-            trace_structured(
-                "thunder_unsupported_ctx",
-                metadata_fn=lambda n=node, r=split_reason: {
+            trace_structured_artifact(
+                name="thunder_unsupported_ctx_regions",
+                encoding="json",
+                payload_fn=lambda n=node, r=split_reason: {
                     "node_name": n.name,
                     "node_target": str(n.target),
                     "reason_type": r.reason_type.name,
@@ -145,9 +146,10 @@ def _splitter(
             if split_reason is not None:
                 split_reasons.append(split_reason)
 
-                trace_structured(
-                    "thunder_unsupported_node",
-                    metadata_fn=lambda n=node, r=split_reason: {
+                trace_structured_artifact(
+                    name="thunder_unsupported_node",
+                    encoding="json",
+                    payload_fn=lambda n=node, r=split_reason: {
                         "node_name": n.name,
                         "node_target": str(n.target),
                         "reason_type": r.reason_type.name,
@@ -257,7 +259,9 @@ def _splitter(
                 name=f"thunder_module_{thunder_module_count}_original",
                 encoding="string",
                 payload_fn=lambda gm=graph_module: gm.print_readable(
-                    print_output=False, include_stride=True, include_device=True
+                    print_output=False,
+                    include_stride=True,
+                    include_device=True,
                 ),
             )
 
@@ -265,10 +269,12 @@ def _splitter(
             checkpoint_converter(split_gm, graph_module)
 
             trace_structured_artifact(
-                name=f"thunder_module_{thunder_module_count}_post_checkpoint",
+                name=f"thunder_module_{thunder_module_count}_post_checkpoint_converter_applied",
                 encoding="string",
                 payload_fn=lambda gm=graph_module: gm.print_readable(
-                    print_output=False, include_stride=True, include_device=True
+                    print_output=False,
+                    include_stride=True,
+                    include_device=True,
                 ),
             )
 
@@ -316,7 +322,9 @@ def _splitter(
                 name=f"inductor_module_{inductor_module_count}_original",
                 encoding="string",
                 payload_fn=lambda gm=graph_module: gm.print_readable(
-                    print_output=False, include_stride=True, include_device=True
+                    print_output=False,
+                    include_stride=True,
+                    include_device=True,
                 ),
             )
 
