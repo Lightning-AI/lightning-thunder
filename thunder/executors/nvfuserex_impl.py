@@ -9,7 +9,8 @@ import time
 from copy import copy
 from itertools import chain, filterfalse
 import warnings
-from typing import Callable, cast, TypeAlias
+from typing import cast, TypeAlias
+from collections.abc import Callable
 
 from looseversion import LooseVersion
 import torch
@@ -255,9 +256,7 @@ def get_methods_for_dtensor_fd(in_dtensors):
             in_tensor = self._find_tensor_by_index(in_tensor_index)
 
             # Set the device mesh.
-            assert (
-                in_dtensor.spec._o.device_mesh.ndim == 1
-            ), "nvFuser's Python API only supports 1D meshes."
+            assert in_dtensor.spec._o.device_mesh.ndim == 1, "nvFuser's Python API only supports 1D meshes."
             mesh = nvfuser.DeviceMesh(in_dtensor.spec._o.device_mesh.mesh.tolist())
 
             self.sched._set_device_mesh(in_tensor, mesh)
@@ -270,11 +269,9 @@ def get_methods_for_dtensor_fd(in_dtensors):
             if placement.is_shard():
                 dim = cast(Shard, placement).dim
                 self.sched.split(in_tensor, dim, mesh.size, False)
-                self.sched.parallelize(
-                    in_tensor, dim, nvfuser.ParallelType.mesh_x
-                )
+                self.sched.parallelize(in_tensor, dim, nvfuser.ParallelType.mesh_x)
                 self.sched.set_allocation_as_loop(in_tensor)
-    
+
     return _find_tensor_by_index, multidevice_schedule
 
 
@@ -379,8 +376,9 @@ def create_fd(
     is_multigpu_fd = False
     if any(map(lambda t: isinstance(t, DTensorProxy), sorted_unique_inputs)):
         # multi-GPU path
-        assert all(map(lambda t: isinstance(t, DTensorProxy), sorted_unique_inputs)), \
-            "Currently we only support Fusion region with all DTensor inputs or all Tensor inputs but not a mix"
+        assert all(
+            map(lambda t: isinstance(t, DTensorProxy), sorted_unique_inputs)
+        ), "Currently we only support Fusion region with all DTensor inputs or all Tensor inputs but not a mix"
         _find_tensor_by_index, multidevice_schedule = get_methods_for_dtensor_fd(sorted_unique_inputs)
 
         bind(fd, multidevice_schedule, "multidevice_schedule")
