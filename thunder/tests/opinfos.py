@@ -4088,6 +4088,27 @@ def getitem_sample_generator(op, device, dtype, requires_grad, **kwargs):
     idx = make_idx(5, 9)
     yield SampleInput(a, idx)
 
+    # n-dimensional tensor advanced indexing cases
+    def make_nd_idx(dim_length: int, indices: int, ndim: int):
+        shape = (indices,) * ndim
+        return make_tensor(shape, low=-dim_length, high=dim_length, device=device, dtype=torch.int64)
+
+    # 2D tensor index
+    a = make((5, 4, 7))
+    idx = make_nd_idx(5, 3, 2)  # shape (3, 3)
+    yield SampleInput(a, idx)
+
+    # 3D tensor index
+    a = make((5, 4, 7, 3))
+    idx = make_nd_idx(5, 2, 3)  # shape (2, 2, 2)
+    yield SampleInput(a, idx)
+
+    # Broadcasting n-dim indices
+    a = make((5, 4, 7, 3))
+    idx1 = make_nd_idx(5, 2, 2)  # shape (2, 2)
+    idx2 = make_nd_idx(4, 1, 2)  # shape (1, 2), will broadcast
+    yield SampleInput(a, (idx1, idx2))
+
     # Sequence cases
 
     # Fully specified
