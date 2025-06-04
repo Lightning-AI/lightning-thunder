@@ -324,7 +324,7 @@ def create_fd(
                 lc_to_nv_map[x] = nv
             elif isinstance(x, TensorProxy):
                 utils.check_type(y, tuple)
-                contiguity, stride_order = y
+                contiguity, stride_order, dtensor_metadata = y
                 symbolic_shape = compute_symbolic_shape(x._shape, x._shape)
                 nvdtype = lcdtype_to_nvdtype(x.dtype)
                 is_cpu = x.device == cpu
@@ -474,6 +474,14 @@ def compute_contiguity(
     return tuple(tuple(x) for x in nv_compute_td(shape, stride))
 
 
+def make_key_from_dtensor(dtensor: DTensor) -> tuple[str]:
+    if isinstance(dtensor, DTensor):
+        key = (repr(dtensor.device_mesh), repr(dtensor.placements))
+    else:
+        key = ()
+    return key
+
+
 def to_runtime_descriptors(args) -> tuple:
     """
     Converts the arguments to their runtime descriptors.
@@ -487,7 +495,7 @@ def to_runtime_descriptors(args) -> tuple:
     Returns:
         Tuple: The runtime descriptors of the arguments.
     """
-    return tuple(compute_contiguity(arg.shape, arg.stride()) if isinstance(arg, Tensor) else None for arg in args)
+    return tuple(compute_contiguity(arg.shape, arg.stride()) + (make_key_from_dtensor(arg),) if isinstance(arg, Tensor) else None for arg in args)
 
 
 # TODO Consider making this just a function, because it's faster to call a function than a callable class
