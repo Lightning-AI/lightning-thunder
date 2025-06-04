@@ -56,7 +56,7 @@ class DTensorProxy(TensorProxy):
     @property
     def placements(self):
         return self.spec._o.placements
-    
+
     @property
     def device_mesh(self):
         return self.spec._o.device_mesh

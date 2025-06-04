@@ -275,7 +275,7 @@ def get_methods_for_dtensor_fd(in_dtensors: list[DTensorProxy]) -> tuple[Callabl
     return _find_tensor_by_index, multidevice_schedule
 
 
-def bind(instance: object, func: Callable, as_name: Optional[str]=None):
+def bind(instance: object, func: Callable, as_name: str | None = None):
     """
     Bind the function *func* to *instance*, with either provided name *as_name*
     or the existing name of *func*. The provided *func* should accept the
