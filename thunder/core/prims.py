@@ -2818,7 +2818,7 @@ def _where_meta(pred: Number | TensorProxy, a: Number | TensorProxy, b: Number |
     # Checks devices and determines result device
     utils.check_same_device(pred, a, b)
     resultdevice = devices.cpu
-    devices_ = tuple(x.device for x in (pred, a, b) if isinstance(x, TensorProxy))
+    devices_ = tuple(x.device for x in (pred, a, b) if isinstance(x, TensorProxy) and not utils.is_cpu_scalar_tensor(x))
     if len(devices_) > 0:
         resultdevice = devices_[0]
 
@@ -2831,19 +2831,8 @@ def _where_meta(pred: Number | TensorProxy, a: Number | TensorProxy, b: Number |
 
     # Determines output shape
     # NOTE Assumes at least one of pred, a, and b is a TensorProxy because of prior check for Number x Number x Number
-    shapes = tuple(x.shape for x in (pred, a, b) if isinstance(x, TensorProxy))
-    # It's possible that `pred` is a CPU bool scalar tensor and either or both of `a` and `b` are a CUDA tensor.
-    # In that case, `shapes[0]`, i.e., `pred.shape` should not be the result shape.
-    if (
-        len(shapes) > 1
-        and isinstance(pred, TensorProxy)
-        and pred.numel == 1
-        and pred.device.devicetype is devices.DeviceType.CPU
-        and (isinstance(a, TensorProxy) or isinstance(b, TensorProxy))
-    ):
-        resultshape = shapes[1]
-    else:
-        resultshape = shapes[0]
+    shapes = tuple(x.shape for x in (pred, a, b) if isinstance(x, TensorProxy) and not utils.is_cpu_scalar_tensor(x))
+    resultshape = shapes[0]
 
     return TensorProxy(shape=resultshape, device=resultdevice, dtype=dtype)
 
