@@ -269,7 +269,14 @@ def test_te_frozen_weights():
     # Test to verify that setting `requires_grad` on weights is respected by the TE executor
     # and we don't compute gradients for the same.
     with torch.device("cuda"):
-        model = torch.nn.Sequential(*(torch.nn.Linear(32, 32, bias=False) for _ in range(6)))
+        model = torch.nn.Sequential(
+            torch.nn.Linear(32, 64, bias=False),
+            torch.nn.Linear(64, 128, bias=False),
+            torch.nn.Linear(128, 64, bias=False),
+            torch.nn.Linear(64, 32, bias=False),
+            torch.nn.Linear(32, 64, bias=False),
+            torch.nn.Linear(64, 32, bias=False),
+            )
         x = torch.randn(32, 32, requires_grad=True)
 
     for idx, parameters in enumerate(model.parameters()):
