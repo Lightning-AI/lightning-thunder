@@ -2861,6 +2861,7 @@ def cross_entropy_fwd(
 nv_cross_entropy_fwd = ex.register_operator(
     "nv_cross_entropy_fwd",
     meta=cross_entropy_fwd_meta,
+    tags=[prims.OpTags.REDUCTION_OP],
 )
 register_supported(nv_cross_entropy_fwd.id, cross_entropy_fwd, None)
 
