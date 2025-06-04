@@ -162,7 +162,9 @@ class ThunderCompiler:
             name="thunder_split_graph",
             encoding="string",
             payload_fn=lambda: split_module.print_readable(
-                print_output=False, include_stride=True, include_device=True
+                print_output=False,
+                include_stride=True,
+                include_device=True,
             ),
         )
 
