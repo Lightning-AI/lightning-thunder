@@ -4197,6 +4197,52 @@ def getitem_sample_generator(op, device, dtype, requires_grad, **kwargs):
     a = make((5, 5))
     yield SampleInput(a, ([1, 2], 1))
 
+    # Additional n-dimensional and None index test cases
+
+    # None with n-dimensional advanced indexing
+    a = make((5, 5, 7))
+    idx = make_nd_idx(5, 2, 2)  # shape (2, 2)
+    yield SampleInput(a, (None, idx))  # None before n-dim index
+    yield SampleInput(a, (idx, None))  # None after n-dim index
+
+    # Multiple None with advanced indexing
+    a = make((5, 5, 7))
+    yield SampleInput(a, (None, [1, 2], None))
+    yield SampleInput(a, (None, None, [1, 2]))
+
+    # None with multiple advanced indices
+    a = make((5, 5, 7, 3))
+    idx1 = make_idx(5, 3)
+    idx2 = make_idx(5, 3)
+    yield SampleInput(a, (None, idx1, idx2))
+    yield SampleInput(a, (idx1, None, idx2))
+    yield SampleInput(a, (idx1, idx2, None))
+
+    # None with n-dimensional indices
+    a = make((10, 10, 10))
+    idx = make_nd_idx(10, 3, 3)  # shape (3, 3, 3)
+    yield SampleInput(a, (None, idx, None))
+
+    # Complex mixed indexing
+    a = make((5, 5, 7, 3))
+    yield SampleInput(a, (None, slice(1, 4), [1, 2], None))
+    yield SampleInput(a, (slice(1, 4), None, [1, 2]))
+
+    # None with list indexing
+    a = make((5, 5, 7))
+    yield SampleInput(a, (None, [0, 2, 4]))
+    yield SampleInput(a, ([0, 2, 4], None, None))
+
+    # Edge case: all None except one advanced index
+    a = make((5, 5, 7))
+    yield SampleInput(a, (None, None, [1]))
+
+    # Broadcasting with None
+    a = make((5, 5, 7))
+    idx1 = make_idx(5, 1)  # shape (1,)
+    idx2 = make_idx(5, 3)  # shape (3,)
+    yield SampleInput(a, (None, idx1, idx2))  # Will broadcast to (1, 3)
+
 
 # NOTE getitem intentionally defines 3 references, since advanced indexing is probably
 #   the most complicated operation that any framework implements, and there's a good chance
