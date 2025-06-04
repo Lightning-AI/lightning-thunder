@@ -29,7 +29,7 @@ import thunder.clang as clang
 import thunder.core.devices as devices
 from thunder.core.devices import to_device
 import thunder.core.dtypes as dtypes
-from thunder.core.dtypes import to_torch_dtype, to_dtype, _torch_to_thunder_dtype_map
+from thunder.core.dtypes import to_torch_dtype, to_dtype
 import thunder.core.prims as prims
 import thunder.core.utils as utils
 import thunder.distributed.prims as dist_prims
