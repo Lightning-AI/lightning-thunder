@@ -286,8 +286,8 @@ def test_te_frozen_weights():
     #        for the first linear at the end.
     for bsym in reversed(bwd_trc.bound_symbols):
         if bsym.sym.name.startswith("te_functional_linear"):
-            weight_requires_grad = bsym.args[3]
-            bias_requires_grad = bsym.args[4]
+            weight_requires_grad = bsym.kwargs["weight_requires_grad"]
+            bias_requires_grad = bsym.kwargs["bias_requires_grad"]
             if te_linear_cnt % 2 == 0:
                 assert not weight_requires_grad
                 assert not bias_requires_grad
