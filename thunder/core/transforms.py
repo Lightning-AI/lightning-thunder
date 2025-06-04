@@ -3128,7 +3128,8 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
 
     def ones_like(x):
         if isinstance(x, TensorProxy):
-            return full_like(x, fill_value=1)
+            # NOTE: x could be a subclass of TensorProxy and that should be preserved.
+            return type(x)(like=x)
         elif isinstance(x, NumberProxy):
             return type(x.value)(1)
         else:
