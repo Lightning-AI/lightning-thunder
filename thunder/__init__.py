@@ -82,6 +82,7 @@ import torch as pytorch
 
 import thunder.clang as clang
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
+import thunder.transforms as transforms
 
 # Imports executors (to populate default executors and make them accessible)
 import thunder.executors.pythonex
@@ -97,6 +98,7 @@ _PROJECT_ROOT = os.path.dirname(_PACKAGE_ROOT)
 
 # TODO RC1 Review exposed names
 __all__ = [
+    "transforms",
     # dtype aliases
     "bool8",
     "uint8",
