@@ -11,7 +11,6 @@ from thunder.core.trace import tracectx
 from thunder.core.trace import TraceProvenance
 from thunder.core.transform_common import Transform
 from thunder.core.module import ThunderModule
-from thunder.distributed import copy_default_process_group
 import torch
 from torch.utils.weak import WeakTensorKeyDictionary
 import torch.distributed as tdist

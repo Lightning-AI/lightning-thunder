@@ -1,5 +1,3 @@
-from typing import Any
-
 import pytest
 import torch
 from torch.testing import assert_close

@@ -1,12 +1,8 @@
-from collections.abc import Iterable, Iterator, Sequence
-from functools import partial, wraps
-from itertools import product
+from functools import partial
 from contextlib import nullcontext
 
 import operator
 import sys
-import dis
-from collections.abc import Callable
 
 import pytest
 import torch
@@ -15,16 +11,12 @@ from torch.testing import assert_close
 from lightning_utilities import compare_version
 
 import thunder
-from thunder.core.interpreter import is_jitting, InterpreterError
 
-from thunder.tests.framework import version_between, requiresCUDA, IS_WINDOWS
-import thunder.clang as clang
+from thunder.tests.framework import requiresCUDA, IS_WINDOWS
 from thunder.core.options import CACHE_OPTIONS
-import thunder.torch as ltorch
 import thunder.core.prims as prims
 from thunder import pytorch_executor, nvfuser_executor
 from thunder.executors.sdpaex import sdpa_ex
-from thunder.core.jit_ext import JITSharpEdgeError
 from thunder.core.transforms import Transform
 
 
