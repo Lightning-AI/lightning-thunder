@@ -3,6 +3,13 @@ name: Run Model Coverage Test
 on:
   workflow_dispatch: {}
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
   coverage-test:
@@ -17,11 +24,16 @@ jobs:
         with:
           python-version: "3.10"
 
+      - name: Build Thunder Package
+        run: |
+          pip install -U build
+          python -m build --sdist --wheel --outdir dist/
+          ls -l dist/
+
       - name: Install Dependencies
         run: |
           pip install -U pip
           pip install torch transformers lightning_sdk
-          pip install .
 
       - name: Run Coverage Trace Test
         run: |
