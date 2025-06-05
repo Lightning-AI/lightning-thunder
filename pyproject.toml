@@ -154,6 +154,16 @@ select = [
 ignore = [
     "E731",  # Do not assign a lambda expression, use a def
     "E501",  # todo: Line too long (235 > 120 characters)
+    # TODO(crcrpar): Resolves the following ignores. (num_cases, error_spec)
+    "F841",  # 135 https://docs.astral.sh/ruff/rules/unused-variable/
+    "F821",  # 84  https://docs.astral.sh/ruff/rules/undefined-name/
+    "E402",  # 51  https://docs.astral.sh/ruff/rules/module-import-not-at-top-of-file/
+    "F401",  # 46  https://docs.astral.sh/ruff/rules/unused-import/
+    "F405",  # 32  https://docs.astral.sh/ruff/rules/undefined-local-with-import-star-usage/
+    "E712",  # 17  https://docs.astral.sh/ruff/rules/true-false-comparison/
+    "E711",  # 16  https://docs.astral.sh/ruff/rules/none-comparison/
+    "E721",  # 11  https://docs.astral.sh/ruff/rules/type-comparison/
+    "E722",  # 11  https://docs.astral.sh/ruff/rules/bare-except/
 ]
 
 [tool.ruff.lint.per-file-ignores]
