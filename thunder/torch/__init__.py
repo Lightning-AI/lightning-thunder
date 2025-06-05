@@ -3085,6 +3085,28 @@ def _sum_grad(
 register_grad(sum, _sum_grad)
 
 
+@torchsymbol(torch.repeat_interleave, is_method=True)
+def repeat_interleave(
+    input: TensorProxy, repeats: TensorProxy | int, dim: int | None = None, *, output_size: int | None = None
+):
+    if output_size is not None:
+        raise NotImplementedError("thunder.torch.repeat_interleave does not support dim argument yet")
+    if isinstance(repeats, TensorProxy):
+        raise NotImplementedErrror("thunder.torch.repeat_interleave does not support tensor repeats yet")
+    if dim is None:
+        return input.reshape((-1, 1)).expand(-1, repeats).reshape(-1)
+
+    if dim < 0:
+        dim += len(input.shape)
+
+    intermediate_shape = list(input.shape)
+    intermediate_shape.insert(dim + 1, repeats)
+    new_shape = list(input.shape)
+    new_shape[dim] *= repeats
+
+    return input.unsqueeze(dim + 1).expand(intermediate_shape).reshape(new_shape)
+
+
 # NOTE This decomposition can not be efficiently fused, so make it primitive
 @torchsymbol(torch.cumsum, is_method=True, is_prim=True)
 def cumsum(a: TensorLike, dim: int, *, dtype: None | dtypeLike = None) -> TensorLike:
