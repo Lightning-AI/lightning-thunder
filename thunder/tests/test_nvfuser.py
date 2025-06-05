@@ -1105,6 +1105,7 @@ def test_cross_entropy(executor, device: str, thunder_dtype: dtypes.dtype, ignor
 
     assert "nv_cross_entropy_fwd" in fwd_fusion[-1][-1].name
     assert "nv_cross_entropy_bwd" in bwd_fusion[-1][-1].name
+    assert "nv_cross_entropy_fwd" not in bwd_fusion[-1][-1].name
 
     ref_inputs = [inp.clone().detach() for inp in inputs]
     # logits needs to be requires_grad=True for backward
@@ -1229,7 +1230,7 @@ def test_embedding(
         return torch.nn.functional.embedding(*inputs)
 
     for sample in embedding_opinfo.sample_inputs(device, dtype):
-        compiled_func = thunder.jit(embedding_fn, executors_list=executor.executors_list(), nv_enable_embedding=True)
+        compiled_func = thunder.jit(embedding_fn, executors_list=executor.executors_list())
         out = compiled_func(sample.args)
         expected_out = torch.nn.functional.embedding(*sample.args)
         fwd_trace = thunder.last_traces(compiled_func)[-1]

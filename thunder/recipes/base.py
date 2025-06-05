@@ -51,6 +51,23 @@ Alternatively, switch to the torch.compile fuser with `fuser="torch.compile"`.
 
 
 class BaseRecipe(Recipe):
+    """
+    Compilation recipe with Thunder defaults. The recipe wires a set of executors, transforms
+    and debug options, while providing a single switch to pick the
+    fusion backend (“nvfuser” or “torch.compile”). Should be used as a template to extend.
+
+    Args:
+        show_progress: bool, default False
+            Print interpreter-side progress bars.
+        fuser: {"nvfuser", "torch.compile"}, default "nvfuser"
+            Fusion backend to register. Adjusts ``self.executor_names`` so the
+            chosen backend is present and any mutually-exclusive one is removed.
+        interpreter: str, default "thunder.jit"
+            Interpreter identifier forwarded to :class:`Recipe`.
+        plugins: Iterable | None
+            Extra Thunder plugins to enable.
+    """
+
     def __init__(
         self,
         show_progress=False,
@@ -65,16 +82,37 @@ class BaseRecipe(Recipe):
         self.show_progress = show_progress
 
     def setup_config(self) -> dict[str, Any]:
+        """
+        Build the per-run configuration dictionary.
+
+
+        Returns:
+            dict[str, Any]: ``{}`` when ``show_progress`` is *False*;
+            otherwise ``{"debug_options": DebugOptions(show_interpreter_progress=True)}``.
+        """
         if not self.show_progress:
             return {}
         return dict(debug_options=DebugOptions(show_interpreter_progress=True))
 
     def setup_transforms(self) -> list[Transform]:
+        """
+        Constructs the list of graph-level transforms.
+
+        Returns:
+            list[Transform]: Currently ``[PrunePrologueChecks()]``; extend as needed.
+        """
         transforms = [PrunePrologueChecks()]
 
         return transforms
 
     def setup_fuser(self) -> None:
+        """
+        Reconciles the requested fusion backend with ``self.executor_names``.
+
+        Raises:
+            NotImplementedError: If *fuser* is not ``"nvfuser"`` or ``"torch.compile"``.
+        """
+
         if self.fuser == "nvfuser":
             if "nvfuser" not in self.executor_names:
                 self.executor_names.append("nvfuser")
@@ -89,6 +127,17 @@ class BaseRecipe(Recipe):
             )
 
     def setup_executors(self) -> list[Executor]:
+        """
+        Resolves executor names to concrete :class:`Executor` objects.
+
+        Returns:
+            list[Executor]: Instantiated executors in the order given by
+            ``self.executor_names``.
+
+        Raises:
+            TypeError: If ``self.executor_names`` is not a list.
+            ValueError: If a non-nvfuser executor cannot be found.
+        """
         if not isinstance(self.executor_names, list):
             raise TypeError(
                 f"self.executor_names must be a list of executor names, got {type(self.executor_names).__name__}"
