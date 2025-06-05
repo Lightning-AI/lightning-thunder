@@ -141,7 +141,6 @@ exclude = [
     "examples",
     "notebooks",
 ]
-ignore-init-module-imports = true
 
 [tool.ruff.lint]
 # Enable Pyflakes `E` and `F` codes by default.
@@ -155,21 +154,34 @@ ignore = [
     "E731",  # Do not assign a lambda expression, use a def
     "E501",  # todo: Line too long (235 > 120 characters)
     # TODO(crcrpar): Resolves the following ignores. (num_cases, error_spec)
-    "F841",  # 135 https://docs.astral.sh/ruff/rules/unused-variable/
-    "F821",  # 84  https://docs.astral.sh/ruff/rules/undefined-name/
-    "E402",  # 51  https://docs.astral.sh/ruff/rules/module-import-not-at-top-of-file/
-    "F401",  # 46  https://docs.astral.sh/ruff/rules/unused-import/
-    "F405",  # 32  https://docs.astral.sh/ruff/rules/undefined-local-with-import-star-usage/
-    "E712",  # 17  https://docs.astral.sh/ruff/rules/true-false-comparison/
-    "E711",  # 16  https://docs.astral.sh/ruff/rules/none-comparison/
-    "E721",  # 11  https://docs.astral.sh/ruff/rules/type-comparison/
-    "E722",  # 11  https://docs.astral.sh/ruff/rules/bare-except/
+    "F841",  # https://docs.astral.sh/ruff/rules/unused-variable/
+    "F821",  # https://docs.astral.sh/ruff/rules/undefined-name/
+    "E402",  # https://docs.astral.sh/ruff/rules/module-import-not-at-top-of-file/
+    "F401",  # https://docs.astral.sh/ruff/rules/unused-import/
+    "F405",  # https://docs.astral.sh/ruff/rules/undefined-local-with-import-star-usage/
+    "E712",  # https://docs.astral.sh/ruff/rules/true-false-comparison/
+    "E711",  # https://docs.astral.sh/ruff/rules/none-comparison/
+    "E721",  # https://docs.astral.sh/ruff/rules/type-comparison/
+    "E722",  # https://docs.astral.sh/ruff/rules/bare-except/
+    "F403",  # https://docs.astral.sh/ruff/rules/undefined-local-with-import-star/
+    "F601",  # https://docs.astral.sh/ruff/rules/multi-value-repeated-key-literal/
+    "F822",  # https://docs.astral.sh/ruff/rules/undefined-export/
+    "F842",  # https://docs.astral.sh/ruff/rules/unused-annotation/
+    "F722",  # https://docs.astral.sh/ruff/rules/forward-annotation-syntax-error/
+    "E702",  # https://docs.astral.sh/ruff/rules/multiple-statements-on-one-line-semicolon/
+    "E741",  # https://docs.astral.sh/ruff/rules/ambiguous-variable-name/
+    "W293",  # https://docs.astral.sh/ruff/rules/blank-line-with-whitespace/
+    "F811",  # https://docs.astral.sh/ruff/rules/redefined-while-unused/
+    "W291",  # https://docs.astral.sh/ruff/rules/trailing-whitespace/
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "setup.py" = ["D100", "SIM115"]
 "__about__.py" = ["D100"]
 "__init__.py" = ["D100"]
+# The default is `true` and this option is deprecated as per
+# https://docs.astral.sh/ruff/settings/#lint_ignore-init-module-imports
+# "ignore-init-module-imports" = true
 
 [tool.ruff.lint.pydocstyle]
 # Use Google-style docstrings.
