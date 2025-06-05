@@ -1,0 +1,40 @@
+name: Coverage Test
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  coverage-test:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Build Thunder Package
+        run: |
+          pip install -U build
+          python -m build --sdist --wheel --outdir dist/
+          ls -l dist/
+
+      - name: Install Dependencies
+        run: |
+          pip install -U pip
+          pip install torch transformers lightning_sdk
+
+      - name: Run Coverage Trace Test
+        run: |
+          python thunder/tests/coverage_trace.py
