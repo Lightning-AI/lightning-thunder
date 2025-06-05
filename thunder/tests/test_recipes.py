@@ -5,6 +5,8 @@ import thunder
 import transformers
 import torch
 
+from transformers.models.qwen2 import Qwen2Config, Qwen2ForCausalLM
+from transformers.models.llama import LlamaConfig, LlamaForCausalLM
 from thunder.extend import deregister_executor
 from torch.testing import assert_close, make_tensor
 from thunder.recipes import HFTransformers
@@ -77,6 +79,46 @@ def test_recipe_basic_bert_fx():
     assert_close(actual, expected)
 
     # cleanup after test
+    deregister_executor("inplace_index_copy_ex")
+
+
+@pytest.mark.skipif(not nvfuser_available(), reason="nvFuser is not available")
+@pytest.mark.parametrize(
+    "model_cls, config_cls",
+    [
+        (Qwen2ForCausalLM, Qwen2Config),
+        (LlamaForCausalLM, LlamaConfig),
+    ],
+)
+def test_recipe_model_with_cache(model_cls, config_cls):
+    config = config_cls(
+        num_hidden_layers=1,
+        hidden_size=1024,
+        intermediate_size=4096,
+        num_attention_heads=16,
+        num_key_value_heads=16,
+        vocab_size=32000,
+        max_position_embeddings=128,
+        use_cache=True,
+        tie_word_embeddings=False,
+    )
+
+    model = model_cls(config)
+    model.eval()
+
+    inp = {
+        "input_ids": torch.randint(0, config.vocab_size, (1, 32)),
+        "attention_mask": torch.ones(1, 32, dtype=torch.long),
+    }
+
+    torch.manual_seed(0)
+    expected = model.generate(**inp, max_new_tokens=10, do_sample=False, cache_implementation="static")
+
+    thunder_model = thunder.compile(model, recipe=HFTransformers())
+    torch.manual_seed(0)
+    actual = thunder_model.generate(**inp, max_new_tokens=10, do_sample=False, cache_implementation="static")
+
+    assert_close(actual, expected)
     deregister_executor("inplace_index_copy_ex")
 
 
