@@ -7342,7 +7342,7 @@ def _run_frame(
                             runtimectx.exception_stack[-1] = current_exception
                             with frame.interpreter_stack.set_cur_instruction(PseudoInst.EXCEPTION_HANDLER):
                                 frame.interpreter_stack.append(
-                                    current_exception.__traceback__ if exc is not None else None
+                                    current_exception.__traceback__ if current_exception is not None else None
                                 )
                                 frame.interpreter_stack.append(current_exception)
                                 # Python distinguishes explicit exc_type present or NULL/None
