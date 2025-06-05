@@ -3720,6 +3720,15 @@ diagonal_opinfo = OpInfo(
         # thunder.torch.diagonal meta function is not correctly implemented for
         # input case ((1, 2, 0, 3), -1, 0, -1)
         DecorateInfo(pytest.mark.xfail(strict=True), "test_vjp_correctness"),
+        # See: [Fix runtime-trace shape/dtype/device mismatch]
+        # In https://github.com/Lightning-AI/lightning-thunder/pull/2069,
+        # torch-consistency test checks the parity of shape/dtype/device
+        # between runtime and trace. This needs to be a temporary decorator
+        # and we are working on resolving the mismatches.
+        DecorateInfo(
+            pytest.mark.xfail(strict=True),
+            "test_core_vs_torch_consistency",
+        ),
     ),
 )
 shape_ops.append(diagonal_opinfo)
@@ -3920,6 +3929,13 @@ unfold_opinfo = OpInfo(
     sample_input_generator=unfold_sample_generator,
     error_input_generator=unfold_error_generator,
     torch_reference=torch.Tensor.unfold,
+    test_directives=(
+        # See [Fix runtime-trace shape/dtype/device mismatch]
+        DecorateInfo(
+            pytest.mark.xfail(strict=True),
+            "test_core_vs_torch_consistency",
+        ),
+    ),
 )
 
 shape_ops.append(unfold_opinfo)
@@ -4203,6 +4219,11 @@ getitem_opinfo = OpInfo(
         DecorateInfo(
             pytest.mark.xfail,
             "test_vjp_correctness",
+        ),
+        # See [Fix runtime-trace shape/dtype/device mismatch]
+        DecorateInfo(
+            pytest.mark.xfail(strict=True),
+            "test_core_vs_torch_consistency",
         ),
     ),
 )
@@ -4501,6 +4522,22 @@ view_as_opinfo = OpInfo(
     torch_reference=torch.Tensor.view_as,
 )
 shape_ops.append(view_as_opinfo)
+
+
+def repeat_interleave_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    yield SampleInput(make(), repeats=2)
+    yield SampleInput(make(2, 3, 4), repeats=2)
+    yield SampleInput(make(2, 3, 4), repeats=2, dim=1)
+
+
+repeat_interleave_opinfo = OpInfo(
+    ltorch.repeat_interleave,
+    sample_input_generator=repeat_interleave_sample_generator,
+    torch_reference=torch.Tensor.repeat_interleave,
+)
+shape_ops.append(repeat_interleave_opinfo)
 
 
 def repeat_sample_generator(op, device, dtype, requires_grad, **kwargs):
@@ -9199,11 +9236,6 @@ cross_entropy_opinfo = OpInfo(
     torch_reference=torch.nn.functional.cross_entropy,
     dtypes=(datatypes.floating,),
     test_directives=(
-        # take_along_axis is disabled with nvfuser, which this operator relies on.
-        DecorateInfo(
-            pytest.mark.skip,
-            executors=("nvfuser",),
-        ),
         # TODO Investigate why CPU torch executor tests fail in CI (but not locally)
         DecorateInfo(
             pytest.mark.skip,

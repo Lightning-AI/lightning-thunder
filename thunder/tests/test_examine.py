@@ -1,6 +1,7 @@
 import thunder.examine
 import torch
 import pytest
+from thunder.executors import nvfuser_available
 
 
 def test_examine_fn():
@@ -15,7 +16,7 @@ def test_examine_jfn():
     def foo(x):
         x[0] = 5 * x[1]
 
-    jfoo = thunder.compile(foo)
+    jfoo = thunder.jit(foo)
     x = torch.ones(2, 2)
     thunder.examine.examine(jfoo, x)
 

@@ -1,13 +1,17 @@
 import glob
 import json
+import sys
+import time
 from datetime import datetime
 
 from lightning_sdk import Studio, Job, Machine, Status
 
 
-def main():
+def main(gh_run_id: str = ""):
+    if not gh_run_id:
+        gh_run_id = datetime.now().strftime("%Y-%m-%d|%H:%M:%S")
     print("Creating studio...")
-    s = Studio("thunder-benchmark", "oss-thunder", org="lightning-ai", create_ok=True)
+    s = Studio(f"thunder-benchmark-run{gh_run_id}", "oss-thunder", org="lightning-ai", create_ok=True)
 
     print("Uploading package and benchmark script...")
     s.upload_folder("dist", remote_path="dist")
@@ -20,9 +24,8 @@ def main():
     s.run(f"pip install {pkg_path} -U transformers 'numpy<2.0' 'nvfuser_cu128_torch27==0.2.27.dev20250501'")
 
     print("Running HF benchmark script...")
-    timestamp = datetime.now().strftime("%Y-%m-%d|%H:%M:%S")
     job = Job.run(
-        name=f"benchmark-hf-{timestamp}",
+        name=f"benchmark-run{gh_run_id}",
         command="pip list && python benchmarks/benchmark_hf.py",
         studio=s,
         machine=Machine.L40S,
@@ -30,7 +33,6 @@ def main():
     )
 
     print("Stopping studio...")
-    s.run("rm -rf dist/")
     s.stop()
 
     print("Waiting for job to finish...")
@@ -44,12 +46,18 @@ def main():
 
     if job.status != Status.Completed:
         print("=" * 80)
-        print("===== benchmark_hf.py FAILED =====")
+        print(f"===== benchmark_hf.py -> {job.status} =====")
         print("=" * 80)
         print(job.logs)
         print("=" * 80)
-        raise RuntimeError("Benchmark HF job failed")
+        time.sleep(3)
+        raise RuntimeError(f"Benchmark HF job {job.status}")
+    # clean up
+    job.delete()
+    s.delete()
 
 
 if __name__ == "__main__":
-    main()
+    # parse command line arguments
+    args = sys.argv[1:]
+    main(*args)

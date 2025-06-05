@@ -16,7 +16,7 @@ from collections.abc import Sequence
 import thunder.core.baseutils as baseutils
 import thunder.core.codeutils as codeutils
 from thunder.core.codeutils import Printable, Positions
-from thunder.core.baseutils import BoundSymbolInterface, ProxyInterface
+from thunder.core.baseutils import BoundSymbolInterface, ProxyInterface, TagBase
 from thunder.core.utils import FrozenDict, make_hashable
 from thunder.core.pytree import tree_flatten_with_dataclass, tree_unflatten, tree_map
 import thunder.core.dtypes as dtypes
@@ -98,6 +98,12 @@ def default_python_printer(
 
     return s
 
+
+class BoundSymbolTag(TagBase):
+    pass
+
+
+BoundSymbolTag.register_tag("RECOMPUTE_IN_BACKWARD")
 
 # A symbol represents a function and how it can be transformed
 
@@ -321,9 +327,8 @@ class Symbol:
             # vjp transform (applied later).
             def tag_tensorproxy_output_as_detached(proxy):
                 if isinstance(proxy, TensorProxy):
-                    # We need to remove name from trace, otherwise replace will return a proxy with new name.
-                    trace.names.remove(proxy.name)
-                    return proxy.replace(tags=(ProxyTag.DETACHED_AUTOGRAD_GRAPH,))
+                    proxy.tags.add(ProxyTag.DETACHED_AUTOGRAD_GRAPH)
+
                 return proxy
 
             result = tree_map(tag_tensorproxy_output_as_detached, result)
@@ -366,6 +371,7 @@ class BoundSymbol(BoundSymbolInterface):
     header: str | list[str] = ""
     source_filename: str | None = None
     source_positions: Positions | None = None
+    tags: set[BoundSymbolTag] = field(default_factory=set)
 
     _call_ctx: None | dict[str, Any] = None
 
@@ -398,6 +404,7 @@ class BoundSymbol(BoundSymbolInterface):
             "header": self.header,
             "source_filename": self.source_filename,
             "source_positions": self.source_positions,
+            "tags": self.tags.copy(),
             "_call_ctx": self._call_ctx,
             "_import_ctx": self._import_ctx,
             "_object_ctx": self._object_ctx,
@@ -713,8 +720,9 @@ class BoundSymbol(BoundSymbolInterface):
         return "\n".join(self.python(indent=0, print_depth=-1))
 
 
-def gather_tags(bsym: BoundSymbol) -> set[OpTags]:
+def gather_tags(bsym: BoundSymbol) -> set[OpTags | BoundSymbolTags]:
     tags = set(bsym.sym.tags) if bsym.sym.tags is not None else set()
+    tags |= bsym.tags
 
     for sbsym in bsym.subsymbols:
         tags |= gather_tags(sbsym)
@@ -722,7 +730,7 @@ def gather_tags(bsym: BoundSymbol) -> set[OpTags]:
     return tags
 
 
-def has_tags(bsym: BoundSymbol, tags: set[OpTags]) -> bool:
+def has_tags(bsym: BoundSymbol, tags: set[OpTags | BoundSymbolTags]) -> bool:
     """:obj:`True` if `bsym` and its subsymbols has any of ``tags``."""
     return not tags.isdisjoint(gather_tags(bsym))
 

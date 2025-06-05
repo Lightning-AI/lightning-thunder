@@ -38,19 +38,39 @@ class InplaceIndexCopyTransform(thunder.Transform):
 
 
 class HFTransformers(BaseRecipe):
+    """
+    Recipe tuned for Hugging Face ``transformers`` models.
+
+    Args:
+        show_progress (bool, optional): Forwarded to :class:`BaseRecipe`.
+        interpreter (str, optional): Thunder interpreter to use.
+        plugins (Iterable | None, optional): Extra Thunder plugins.
+    """
+
     def __init__(
         self,
         show_progress=False,
-        fuser="nvfuser",
         interpreter="thunder.jit",
         plugins=None,
     ):
-        super().__init__(show_progress=show_progress, fuser=fuser, interpreter=interpreter, plugins=plugins)
+        super().__init__(show_progress=show_progress, interpreter=interpreter, plugins=plugins)
+
         # for kv-cache inplace ops
         self.inplace_index_copy_transform = InplaceIndexCopyTransform()
+        self.executor_names.append(self.inplace_index_copy_transform.executor.name)
 
     @classmethod
     def validate(cls, model):
+        """
+        Emit warnings (or errors) if *model* falls outside the supported
+        transformer versions or base classes.
+
+        Args:
+            model (transformers.PreTrainedModel): Model instance to vet.
+
+        Raises:
+            ValueError: If *model* is not a ``PreTrainedModel``.
+        """
         import transformers
 
         version = LooseVersion(transformers.__version__)
@@ -79,11 +99,26 @@ class HFTransformers(BaseRecipe):
             raise ValueError(f"The model must be an instance of PreTrainedModel, found {type(model)}")
 
     def setup_config(self):
+        """
+        Enable NV-kernelised linear, matmul and SDPA ops on top of the
+        base recipe’s debug configuration.
+
+        Returns:
+            dict[str, Any]: Thunder config dictionary augmented with
+            ``nv_enable_*`` flags.
+        """
         config = super().setup_config()
         config.update(nv_enable_linear=True, nv_enable_matmul=True, nv_enable_sdpa=True)
         return config
 
     def setup_lookasides(self):
+        """
+        Swap out the warning helper when running under
+        the non Thunder-FX interpreter.
+
+        Returns:
+            list[thunder.core.recipe.Lookaside] | None
+        """
         if self.interpreter == thunder.core.recipe.Interpreter.THUNDER_FX:
             return None
 
@@ -97,14 +132,28 @@ class HFTransformers(BaseRecipe):
         return [warn_lookaside]
 
     def setup_transforms(self):
+        """
+        Prepend the ``InplaceIndexCopyTransform`` to the default
+        transform list.
+
+        Returns:
+            list[thunder.Transform]: transform list.
+        """
         transforms = super().setup_transforms()
         return [self.inplace_index_copy_transform] + transforms
 
-    def setup_executors(self):
-        executors = super().setup_executors()
-        return [self.inplace_index_copy_transform.get_executor()] + executors
-
     def apply(self, model):
+        """
+        Apply the recipe (compile the model) and patch ``generate`` / ``_sample``
+        so they work after tracing.
+
+        Args:
+            model (transformers.PreTrainedModel): The model to compile.
+
+        Returns:
+            transformers.PreTrainedModel: Thunder-compiled model ready
+            for inference.
+        """
         thunder_model = super().apply(model)
 
         if getattr(thunder_model, "generate", None):
