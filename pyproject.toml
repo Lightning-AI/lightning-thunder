@@ -153,7 +153,7 @@ select = [
 ignore = [
     "E731",  # Do not assign a lambda expression, use a def
     "E501",  # todo: Line too long (235 > 120 characters)
-    # TODO(crcrpar): Resolves the following ignores. (num_cases, error_spec)
+    # TODO(crcrpar): Resolves the following ignores as these are added while enabling ruff check in pre-commit
     "F841",  # https://docs.astral.sh/ruff/rules/unused-variable/
     "F821",  # https://docs.astral.sh/ruff/rules/undefined-name/
     "E402",  # https://docs.astral.sh/ruff/rules/module-import-not-at-top-of-file/
