@@ -981,7 +981,7 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
     # If all keys are 0-dim, this dim has to be squeezed.
     if all(k.ndim == 0 for k in modified_key if isinstance(k, TensorLike)):
         # Only squeeze if the dimension is of length 1
-        if res.shape[dim] == 1:
+        if res.shape and res.shape[dim] == 1:
             res = squeeze(res, (dim,))
     res = reshape(res, tuple(new_shape))
     # Check if we need to permute back to the original shape
