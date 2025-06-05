@@ -2309,15 +2309,6 @@ copysign_opinfo = OpInfo(
             pytest.mark.xfail,
             "test_vjp_correctness",
         ),
-        # TODO(crcrpar): [Fix runtime-trace shape/dtype/device mismatch]
-        # In https://github.com/Lightning-AI/lightning-thunder/pull/2069,
-        # torch-consistency test checks the parity of shape/dtype/device
-        # between runtime and trace. This needs to be a temporary decorator
-        # and we are working on resolving the mismatches.
-        DecorateInfo(
-            pytest.mark.xfail(strict=True),
-            "test_core_vs_torch_consistency",
-        ),
     ),
 )
 elementwise_binary_ops.append(copysign_opinfo)
@@ -2377,12 +2368,6 @@ floor_divide_opinfo = OpInfo(
             skip,
             "test_core_vs_torch_consistency",
             dtypes=(datatypes.bool8,),
-        ),
-        # See [Fix runtime-trace shape/dtype/device mismatch]
-        DecorateInfo(
-            pytest.mark.xfail(strict=True),
-            "test_core_vs_torch_consistency",
-            dtypes=datatypes.float_math_dtypes,
         ),
     ),
 )
@@ -3736,6 +3721,10 @@ diagonal_opinfo = OpInfo(
         # input case ((1, 2, 0, 3), -1, 0, -1)
         DecorateInfo(pytest.mark.xfail(strict=True), "test_vjp_correctness"),
         # See: [Fix runtime-trace shape/dtype/device mismatch]
+        # In https://github.com/Lightning-AI/lightning-thunder/pull/2069,
+        # torch-consistency test checks the parity of shape/dtype/device
+        # between runtime and trace. This needs to be a temporary decorator
+        # and we are working on resolving the mismatches.
         DecorateInfo(
             pytest.mark.xfail(strict=True),
             "test_core_vs_torch_consistency",

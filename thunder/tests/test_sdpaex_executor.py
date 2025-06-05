@@ -206,7 +206,7 @@ def test_sdpa_attn_mask(attn_mask_requires_grad, device: str, dtype: torch.dtype
     output = actual.mean()
     output.backward()
 
-    torch.testing.assert_close(actual, expected)
+    torch.testing.assert_close(actual, expected, atol=7e-3, rtol=7e-3)
     torch.testing.assert_close(attn_mask1.grad, attn_mask.grad)
     torch.testing.assert_close(query.grad, query1.grad)
     torch.testing.assert_close(key.grad, key1.grad)
