@@ -231,7 +231,6 @@ torch_auto_registered_ops = {
         torch.randint_like,
         torch.ravel,
         torch.renorm,
-        torch.repeat_interleave,
         torch.resolve_conj,
         torch.resolve_neg,
         # torch.rms_norm, # only in torch>=2.4
@@ -539,7 +538,6 @@ torch_auto_registered_ops = {
         torch.Tensor.refine_names,
         torch.Tensor.rename,
         torch.Tensor.renorm,
-        torch.Tensor.repeat_interleave,
         torch.Tensor.reshape_as,
         torch.Tensor.resize,
         torch.Tensor.resize_as,
