@@ -1,4 +1,4 @@
-name: Run Model Coverage Test
+name: Coverage Test
 
 on:
   workflow_dispatch: {}
