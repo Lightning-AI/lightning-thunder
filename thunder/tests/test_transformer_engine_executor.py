@@ -13,20 +13,27 @@ from transformer_engine.common import recipe
 import transformer_engine.pytorch as te
 
 # FP8 is supported on compute arch 8.9 onwards.
+# MXFP8 is supported on compute arch 10.0 onwards.
 # Skip the tests if current hardware is not supported.
-is_supported, msg = te.fp8.check_fp8_support()
-if not is_supported:
-    pytest.skip(msg, allow_module_level=True)
+is_fp8_supported, msg_fp8 = te.fp8.check_fp8_support()
+is_mxfp8_supported, msg_mxfp8 = te.fp8.check_mxfp8_support()
+if not is_fp8_supported:
+    pytest.skip(msg_fp8, allow_module_level=True)
 
-hybrid_fp8_recipe = recipe.DelayedScaling(fp8_format=recipe.Format.HYBRID)
+hybrid_fp8_delayed_scaling_recipe = recipe.DelayedScaling()
+mxfp8_e4m3_recipe = recipe.MXFP8BlockScaling()
 
 # `None` is used to test the default recipe.
-recipes = (None, hybrid_fp8_recipe)
+recipes = (None, hybrid_fp8_delayed_scaling_recipe, mxfp8_e4m3_recipe)
+recipe_ids = ("default", "delayed_scaling", "mxfp8_e4m3")
 
 
 @requiresCUDA
-@pytest.mark.parametrize("fp8_recipe", recipes)
-def test_te_linear_forward_backward(fp8_recipe):
+@pytest.mark.parametrize("fp8_recipe", recipes, ids=recipe_ids)
+def test_te_linear_forward_backward(fp8_recipe: recipe.Recipe):
+    if fp8_recipe and not (fp8_recipe.delayed() or is_mxfp8_supported):
+        pytest.skip(msg_mxfp8)
+
     # Test Description:
     # Verify that `torch.nn.functional.linear` is replaced with `te_linear_*`
     # and the output as well as the gradients match for thunder compiled code.
@@ -79,8 +86,11 @@ def test_te_linear_forward_backward(fp8_recipe):
 
 
 @requiresCUDA
-@pytest.mark.parametrize("fp8_recipe", recipes)
+@pytest.mark.parametrize("fp8_recipe", recipes, ids=recipe_ids)
 def test_te_linear_forward_backward_multiple_iteration(fp8_recipe):
+    if fp8_recipe and not (fp8_recipe.delayed() or is_mxfp8_supported):
+        pytest.skip(msg_mxfp8)
+
     # Test Description:
     # In this test, we verify whether a model using TransformerEngine Linear
     # and transformer_engine executor converge to same state.
@@ -98,13 +108,16 @@ def test_te_linear_forward_backward_multiple_iteration(fp8_recipe):
     te_linear1 = te.Linear(4096, 4096, params_dtype=dtype)
     te_linear2 = te.Linear(4096, 2048, params_dtype=dtype)
 
+    torch.nn.init.kaiming_uniform_(te_linear1.weight)
+    torch.nn.init.kaiming_uniform_(te_linear2.weight)
+
     def clone_params(*params):
         return tuple(param.detach().clone() for param in params)
 
     # Parameters for thunder to optimize
     w1, w2, b1, b2 = clone_params(te_linear1.weight, te_linear2.weight, te_linear1.bias, te_linear2.bias)
 
-    target_value = torch.tensor(42, dtype=dtype, device=device)
+    target_value = torch.ones(768, 2048, dtype=dtype, device=device)
 
     inputs = tuple(torch.rand(*input_shape, device=device, dtype=dtype) for _ in range(iterations))
 
@@ -113,7 +126,7 @@ def test_te_linear_forward_backward_multiple_iteration(fp8_recipe):
         for iter_n in range(iterations):
             x = inputs[iter_n]
             result = model(x)
-            loss = torch.nn.functional.mse_loss(result.sum(), target_value)
+            loss = torch.nn.functional.mse_loss(result, target_value)
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
@@ -251,43 +264,23 @@ def test_te_trace_metadata_propagation():
     assert any(bsym.sym.name.startswith("te_linear") for bsym in fwd_traces[-1].bound_symbols)
 
 
-@requiresCUDA
-def test_te_frozen_weights():
-    # Test to verify that setting `requires_grad` on weights is respected by the TE executor
-    # and we don't compute gradients for the same.
+def test_te_grad_computation_with_intermediate():
+    # Test for issue - https://github.com/Lightning-AI/lightning-thunder/issues/1966
+    def fn(x, w):
+        # Due to autocast, trace becomes something like this
+        # t4 = prims.convert_element_type(x, dtypes.bfloat16)  # t4: "cuda:0 bf16[32, 32]"
+        # t5 = prims.convert_element_type(w, dtypes.bfloat16)  # t5: "cuda:0 bf16[32, 32]"
+        # t6 = prims.linear(t4, t5, None)  # t6: "cuda:0 bf16[32, 32]"
+        with torch.autocast("cuda", torch.bfloat16):
+            return torch.nn.functional.linear(x, w)
+
     with torch.device("cuda"):
-        model = torch.nn.Sequential(*(torch.nn.Linear(32, 32, bias=False) for _ in range(6)))
         x = torch.randn(32, 32, requires_grad=True)
+        w = torch.randn(32, 32, requires_grad=True)
 
-    for idx, parameters in enumerate(model.parameters()):
-        # Every even linear layer's weight is frozen.
-        if idx % 2 == 0:
-            parameters.requires_grad = False
+        tfn = thunder.jit(fn, executors=(transformer_engine_ex,))
 
-    tmodel = thunder.jit(model, executors=[transformer_engine_ex])
-    o = tmodel(x)
+        o = tfn(x, w)
+        o.sum().backward()
 
-    bwd_trc = thunder.last_backward_traces(tmodel)[-1]
-    te_linear_cnt = 0
-    # NOTE - `reversed(bwd_trc.bound_symbols)` because we will compute gradients for last linear first and similarly
-    #        for the first linear at the end.
-    for bsym in reversed(bwd_trc.bound_symbols):
-        if bsym.sym.name.startswith("te_functional_linear"):
-            weight_requires_grad = bsym.args[3]
-            bias_requires_grad = bsym.args[4]
-            if te_linear_cnt % 2 == 0:
-                assert not weight_requires_grad
-                assert not bias_requires_grad
-            else:
-                assert weight_requires_grad
-                assert not bias_requires_grad
-
-            te_linear_cnt += 1
-
-    o.sum().backward()
-
-    for idx, parameters in enumerate(model.parameters()):
-        if idx % 2 != 0:
-            assert parameters.grad is not None and isinstance(parameters.grad, torch.Tensor)
-        else:
-            assert parameters.grad is None
+        assert w.grad is not None

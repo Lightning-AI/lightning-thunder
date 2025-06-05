@@ -1378,7 +1378,8 @@ def test_bound_symbol_header_context(executor, device: str, dtype: dtypes.dtype)
     assert sin_symbol.sym.name == "sin"
     assert "# Testing\n# This symbol's\n# Header\nt0 = prims.sin(x)" in str(sin_symbol)
     assert "\n  # Testing\n  # This symbol's\n  # Header\n  t0 = prims.sin(x)" in str(trace)
-    assert str(trace).count("Testing") == 1
+    # the unbind, the sin and the return all have the header
+    assert str(trace).count("Testing") == 3
 
 
 # Check to verify the issue in "KeyError thrown in thunder.executor.utils.Region
@@ -3279,3 +3280,21 @@ def test_prims_pack_list():
     expected = [a, b]
 
     assert isinstance(actual, list) and actual == expected
+
+
+def test_enum_printing():
+    from enum import Enum
+
+    def fn():
+        pass
+
+    class A(Enum):
+        VALUE = 1
+
+    trc = thunder.TraceCtx(fn)
+    with thunder.core.trace.tracectx(trc):
+        thunder.core.prims.python_return(A.VALUE)
+
+    # the important bit here is that A_VALUE is there, so we can see
+    # the enum constant's value
+    assert "return _A_VALUE" in str(trc)

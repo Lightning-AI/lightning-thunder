@@ -6,17 +6,22 @@ import dataclasses
 import inspect
 import itertools
 import copy
+from collections import defaultdict
+from collections import namedtuple
 
 import torch
 from torch.nn.modules.module import _addindent
 from torch._subclasses.fake_tensor import FakeTensor
+from torch.utils.weak import TensorWeakRef
 
 from thunder.torch.default_torch_ops import torch_auto_registered_ops
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.torch.langctx import torchctx
 from thunder.core.utils import check
+from thunder.core.pytree import tree_flatten
 
 if TYPE_CHECKING:
+    from numbers import Number
     from thunder.core.symbol import Symbol
     import os
     from typing import Any
@@ -95,8 +100,8 @@ class ExampleInputMetaData:
     strides: list[int]
     is_contiguous: bool
     _storage_offset: int
-    min_val: int | None = None
-    max_val: int | None = None
+    min_val: int | None = dataclasses.field(default=None, compare=False, hash=False)
+    max_val: int | None = dataclasses.field(default=None, compare=False, hash=False)
 
     def stride(self) -> list[int]:
         return self.strides
@@ -133,6 +138,31 @@ class SubgraphInfo:
     thunder_compiled_fns_example_inputs: list[list[ExampleInputMetaData]] | None
     submodule_to_compiled_functions: dict[torch.fx.GraphModule, CompiledFunction]
     split_reasons: list | None = None
+
+
+class _ThunderSplitGraphModule:
+    def __init__(self, split_graph_module, supported_partitions):
+        self.split_graph_module = split_graph_module
+        self.supported_indexes: set[int] = supported_partitions
+
+    def is_thunder_supported_partition(self, node: torch.fx.Node) -> bool:
+        return node.name.startswith("submod") and int(node.name.replace("submod_", "")) in self.supported_indexes
+
+
+@dataclasses.dataclass()
+class ProfileStats:
+    """
+    A dataclass that stores profiling statistics for a GraphModule.
+
+    Attributes:
+        gm: The GraphModule being profiled.
+        input_meta_to_called_times: A dictionary mapping input metadata to the number of times the input has been called.
+    """
+
+    gm: torch.fx.GraphModule
+    input_meta_to_called_times: dict[tuple[ExampleInputMetaData, Number], int] = dataclasses.field(
+        default_factory=lambda: defaultdict(int)
+    )
 
 
 def _concrete_value(vals: torch.Size | Sequence):
@@ -227,11 +257,29 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
     from thunder.core.trace import TraceCtx
     from thunder.core.compile_data import compile_data_and_stats
     from thunder.common import CompileData, CompileStats
+    from thunder.core.transforms import value_and_grad
 
     # This is required for verifying `_enter_autocast`
     # which pushes state onto `CompileData.autocast_stack`.
     cd = CompileData(fn=lambda x: x, disable_preprocessing=True)
     cs = CompileStats()
+
+    def get_requires_grad(arg_node):
+        if not isinstance(arg_node, torch.fx.Node):
+            return False
+
+        if "example_value" not in arg_node.meta:
+            return False
+
+        example_value = arg_node.meta["example_value"]
+        flattened_example_value, _ = tree_flatten(example_value)
+        for x in flattened_example_value:
+            if isinstance(x, torch.Tensor) and x.requires_grad:
+                return True
+        return False
+
+    args, _ = tree_flatten((node.args, node.kwargs))
+    requires_grad = any(map(get_requires_grad, args))
 
     @compile_data_and_stats(cd, cs)
     @thunder._with_cache_info_ctx
@@ -255,10 +303,11 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
                 exception=str(e),
             )
 
+        function_to_run = value_and_grad(thunder_symbol) if requires_grad else thunder_symbol
         # We need to be under trace context to generate proxies.
         with thunder.core.trace.tracectx(TraceCtx()):
             try:
-                thunder_symbol(*proxy_args, **proxy_kwargs)
+                function_to_run(*proxy_args, **proxy_kwargs)
             except Exception as e:
                 return False, SplitReason(
                     SplitReasonType.EXCEPTION_META_THUNDER_OP,
@@ -311,6 +360,7 @@ def is_graphmodule_supported_by_thunder(gm):
                 info=f"node with name: {node.name} and target: {node.target} is not supported probably because it is in unsupported context.",
             )
             return False, split_reason
+
         is_thunder_supported, split_reason = is_node_supported_by_thunder(node)
         if not is_thunder_supported:
             return False, split_reason
@@ -458,13 +508,19 @@ def _get_storage_shape(t: torch.Tensor):
     return (storage_size,)
 
 
+def _get_min_and_val(t: torch.Tensor) -> tuple[Number | None, Number | None]:
+    if isinstance(t, FakeTensor) or t.device.type == "meta" or t.numel() == 0:
+        return None, None
+    if t.dtype in (torch.float8_e4m3fn, torch.float8_e4m3fnuz, torch.float8_e5m2, torch.float8_e5m2fnuz):
+        t = t.to(torch.float32)
+    minmax: tuple[torch.Tensor, torch.Tensor] = torch.aminmax(t)
+    min_val = minmax[0].detach().cpu().item()
+    max_val = minmax[1].detach().cpu().item()
+    return min_val, max_val
+
+
 def _get_example_input_tensor_metadata(t: torch.Tensor) -> ExampleInputMetaData:
-    min_val = None
-    max_val = None
-    if not isinstance(t, FakeTensor) and t.device.type != "meta" and t.numel() != 0:
-        minmax: tuple[torch.Tensor, torch.Tensor] = torch.aminmax(t)
-        min_val = minmax[0].cpu().item()
-        max_val = minmax[1].cpu().item()
+    min_val, max_val = _get_min_and_val(t)
     meta_ev = ExampleInputMetaData(
         t.requires_grad,
         t.layout,
@@ -500,7 +556,7 @@ def example_input_meta_to_input(meta):
     elif isinstance(meta, (int, bool, float)):
         return meta
     elif isinstance(meta, Sequence):
-        return [example_input_meta_to_input(i) for i in meta]
+        return tuple(example_input_meta_to_input(i) for i in meta)
     else:
         raise TypeError(f"Unsupported input type: {type(meta)}")
 
@@ -513,7 +569,7 @@ def input_to_example_input_meta(input):
     elif isinstance(input, torch.types.py_sym_types):
         return input.node.hint
     elif isinstance(input, Sequence):
-        return [input_to_example_input_meta(i) for i in input]
+        return tuple(input_to_example_input_meta(i) for i in input)
     else:
         raise TypeError(f"Unsupported input type: {type(input)}")
 
@@ -741,9 +797,17 @@ def get_env() -> tuple[str, str]:
         torch_env += f"  {i}: {torch.cuda.get_device_name(i)}\n"
     torch_env += f"CUDA version: {torch.version.cuda}\n"
     _, packages = get_pip_packages(run)
-    torch_env += packages
+    if packages is not None:
+        torch_env += packages
     _, thunder_packages = get_pip_packages(run, {"lightning-thunder", "nvfuser"})
-    return torch_env, thunder_packages
+    return (
+        torch_env,
+        (
+            thunder_packages
+            if thunder_packages is not None
+            else "pip list failed. Might be related to https://github.com/pytorch/pytorch/issues/144615"
+        ),
+    )
 
 
 def thunder_options_to_str(thunder_options: dict) -> str:
@@ -824,3 +888,144 @@ def get_torch_compile_kwargs(**kwargs) -> dict:
     torch.compile = inspect.unwrap(torch.compile)
     torch_compile_kwarg_names = inspect.getfullargspec(torch.compile).kwonlyargs
     return {k: v for k, v in kwargs.items() if k in torch_compile_kwarg_names}
+
+
+class ThunderAoTOptimizer:
+    """
+    Helper class that keeps track of profiling data used by the Ahead-of-Time (AoT) optimization process.
+
+    This class maintains mappings between graph module IDs and their corresponding:
+    - dispatch functions (dispatch_map)
+    - original graph modules (id_to_gm_map)
+    - profiling statistics (id_to_profile_stats)
+
+    It also tracks whether profiling is currently active via the is_profiling flag.
+    """
+
+    def __init__(self):
+        self.is_profiling = True
+        self.dispatch_map: dict = {}
+        self.id_to_gm_map: dict = {}
+        self.id_to_profile_stats = {}
+
+
+def has_symbolic_input(gm: torch.fx.GraphModule) -> bool:
+    from torch._inductor.utils import is_symbolic
+
+    placeholders = [n for n in gm.graph.nodes if n.op == "placeholder"]
+    for placeholder in placeholders:
+        example_value = placeholder.meta.get("example_value", None)
+        if example_value is not None and is_symbolic(example_value):
+            return True
+    return False
+
+
+def default_filter(fn: Callable, cutoff: int = 2) -> set[int]:
+    """
+    Default filter function that selects which FX graphs to optimize based on profiling data.
+
+    This function examines the FX graphs collected during profiling and selects only those
+    that have been called at least 'cutoff' times for optimization.
+
+    Args:
+        fn: The profiling callable containing collected statistics
+        cutoff: Minimum number of times a graph must be called to be selected for optimization (default: 2)
+
+    Returns:
+        A set of graph IDs that should be optimized
+    """
+    choosen = set()
+    id_to_profile_stats = fn._tao.id_to_profile_stats
+    for idx, stats in id_to_profile_stats.items():
+        total_calls = sum(stats.input_meta_to_called_times.values())
+        if total_calls >= cutoff:
+            choosen.add(idx)
+
+    return choosen
+
+
+def get_or_create_example_inputs_from_placeholders(placeholders: list[torch.fx.Node]) -> list[torch.Tensor]:
+    """
+    Gets the weakref of the inputs if possible, otherwise create inputs for benchmarking
+    """
+    outs = []
+    for p in placeholders:
+        try:
+            # Ref: https://github.com/pytorch/pytorch/blob/8f3d7972ad3e41ce4dcb1e9ff7bd1a3b0a671977/torch/_dynamo/variables/builder.py#L311
+            input: TensorWeakRef | torch.SymInt = p.meta["grapharg"].example
+            if isinstance(input, torch.SymInt):
+                input = input.node.hint
+        except (KeyError, AssertionError) as e:
+            # needs to create a new example input
+            outs.append(_get_example_inputs_from_placeholder(p, only_metadata=False))
+        else:
+            outs.append(input)
+    return outs
+
+
+def default_optimizer(gm: torch.fx.GraphModule, stats: ProfileStats) -> Callable:
+    """
+    Default optimizer function that optimizes a GraphModule based on profiling statistics.
+
+    This function:
+    1. Checks if the GraphModule has symbolic inputs and raises NotImplementedError if it does
+    2. Benchmarks the GraphModule with inductor, thunderfx, and eager
+    3. Returns the GraphModule compiled with the fastest backend
+
+    Args:
+        gm: The GraphModule to optimize
+        stats: ProfileStats object containing profiling information for the GraphModule
+
+    Returns:
+        The optimized GraphModule
+    """
+    from thunder.dynamo.report import FXGraphReport
+    from thunder.dynamo.benchmark_utils import (
+        TorchInductorSpecification,
+        TorchEagerSpecification,
+        ThunderCompilerOnGraphModuleSpecification,
+        WallTime,
+    )
+
+    if has_symbolic_input(stats.gm):
+        raise NotImplementedError("Optimizing graph module with symbolic inputs is not supported yet.")
+
+    placeholders = [n for n in stats.gm.graph.nodes if n.op == "placeholder"]
+    example_inputs_meta = [_get_example_inputs_from_placeholder(p, only_metadata=True) for p in placeholders]
+    example_inputs = get_or_create_example_inputs_from_placeholders(placeholders)
+
+    report = FXGraphReport(gm, "gm", example_inputs_meta)
+    torcheager = TorchEagerSpecification()
+    torchinductor = TorchInductorSpecification()
+    thunder_compiler_on_gm = ThunderCompilerOnGraphModuleSpecification(nv_skip_cache=True)
+
+    def get_compiled_fn_and_timing(report, compile_fn, timer_fn):
+        try:
+            compiled_fn, *measurement = report.run_benchmark(
+                compile_fn,
+                timer_fn,
+                reset_torch_dynamo=False,
+                example_inputs=example_inputs,
+                measure_fwd_bwd_together=True,
+            )
+        except Exception as e:
+            return str(e), float("inf")
+        return compiled_fn, sum(m.median for m in measurement if m is not None)
+
+    CompilerMeasurement = namedtuple("CompilerMeasurement", ["name", "compiled_fn", "time"])
+    compiled_gm_to_measurement = []
+    compiled_gm_to_measurement.append(
+        CompilerMeasurement("thunderfx", *get_compiled_fn_and_timing(report, thunder_compiler_on_gm, WallTime))
+    )
+    compiled_gm_to_measurement.append(
+        CompilerMeasurement("torchinductor", *get_compiled_fn_and_timing(report, torchinductor, WallTime))
+    )
+    compiled_gm_to_measurement.append(
+        CompilerMeasurement("torcheager", *get_compiled_fn_and_timing(report, torcheager, WallTime))
+    )
+
+    sorted_compiled_gm_to_measurement = sorted(compiled_gm_to_measurement, key=lambda x: x.time)
+    if sorted_compiled_gm_to_measurement[0].time == float("inf"):
+        err_msg = ", ".join([f"{x.name} raised exception: {x.compiled_fn}" for x in sorted_compiled_gm_to_measurement])
+        raise RuntimeError(f"No compiler was able to compile the graph module, {err_msg}")
+    return sorted_compiled_gm_to_measurement[0].compiled_fn

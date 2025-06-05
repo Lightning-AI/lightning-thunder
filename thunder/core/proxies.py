@@ -137,8 +137,20 @@ class Proxy(VariableInterface, ProxyInterface):
         kwargs.update(changes)
         return Proxy(**kwargs)
 
-    def replace_name(self, name: str | None = None):
+    def replace_name(self, name: str | None = None, *, disambiguate=False):
         """Return a copy of this proxy with the given name."""
+        if disambiguate:
+            trc = get_tracectx()
+        else:
+            trc = None
+
+        if trc is not None:
+            name_prefix = name
+            cnt = 0
+            while trc.has_name(name):
+                name = f"{name_prefix}_{cnt}"
+                cnt += 1
+
         return self.replace(name=name)
 
     def __repr__(self) -> str:
@@ -1282,8 +1294,8 @@ def _infer_tensor_properties(
         )
 
     # NOTE for simplicity functions that want to reason about weak dtypes should explicitly request
-    #   the true_dtype property
-    _true_dtype = _dtype
+    # the true_dtype property. When the tensor is a scalar tensor, we treat it as having a weak dtype.
+    _true_dtype = _dtype if len(_shape) > 0 else dtypes.to_weak_dtype(_dtype)
     _dtype = dtypes.to_strong_dtype(_dtype)
 
     return (
@@ -1887,6 +1899,15 @@ class TensorProxy(Proxy, TensorProxyInterface):
     @property
     def real(self):
         method = resolve_method("real", self)
+        return method(self)
+
+    #
+    # Imag
+    #
+
+    @property
+    def imag(self):
+        method = resolve_method("imag", self)
         return method(self)
 
 

@@ -26,43 +26,12 @@ from thunder.executors.torchex import ex as pytorch_ex
 _TORCH_GREATER_EQUAL_2_3 = compare_version("torch", operator.ge, "2.3.0", use_base_version=True)
 
 
-def to_torch_translator(bsym: BoundSymbol) -> Callable:
-    """Translates a BoundSymbol to a corresponding traceable by Thunder and
-    executable by PyTorch callable.
-
-    Args:
-        bsym: The BoundSymbol to translate.
-
-    Returns:
-        A callable that can be executed by PyTorch after being traced by Thunder.
-    """
-
-    def _to_torch(*args, **kwargs) -> Any:
-        impl_info = pytorch_ex.implmap.get(bsym.sym.id)
-        torch_op = None
-        if impl_info is not None:
-            torch_op = impl_info.symbol
-            if impl_info.execution_transform is not None:
-                return impl_info.execution_transform(*args, **kwargs)
-
-        if torch_op is None:
-            torch_op = pytorch_ex.opmap.get(bsym.sym.name)
-
-        # this should be really rare, but type_as has this,
-        # ideally we would be also handling more subsymbols here
-        if torch_op is None and len(bsym.subsymbols) == 1:
-            torch_op = pytorch_ex.opmap.get(bsym.subsymbols[0].sym.name)
-
-        if torch_op is None:
-            raise RuntimeError(f"op not found for {bsym.sym.name}")
-
-        return torch_op(*args, **kwargs)
-
-    return _to_torch
-
-
 def make_compiled(
-    bsyms: list[BoundSymbol], sorted_unique_inputs: list[Proxy], sorted_unique_outputs: list[Proxy]
+    bsyms: list[BoundSymbol],
+    sorted_unique_inputs: list[Proxy],
+    sorted_unique_outputs: list[Proxy],
+    *,
+    mode: str | None = None,
 ) -> Callable:
     from thunder.executors.torchex import no_autocast
     from thunder.core.codeutils import SigInfo
@@ -102,7 +71,7 @@ def make_compiled(
     )
     if torch_compile_fullgraph is None:
         torch_compile_fullgraph = True
-    compiled_func = torch.compile(trace_callable, fullgraph=torch_compile_fullgraph)
+    compiled_func = torch.compile(trace_callable, mode=mode, fullgraph=torch_compile_fullgraph)
     # For each of `@torch.no_grad(), and `torch.autocast(device_type="cpu"|"cuda")` torch.compile
     # create caches with a guard for the wrapped function. Since the torch.compile caches are per code object, not
     # frame, all the dynamic copies of these context managers share the same code cache.
@@ -130,9 +99,18 @@ def make_compiled(
 
 
 class TorchCompileExecutor(FusionExecutor):
-    def __init__(self, name: Hashable, required_ops: set | None = None):
+    """Fusion executor using torch.compile as the backend.
+
+    Args:
+        name: unique name of the executor
+        required_ops: set of syms to fuse
+        mode (str, optional) mode to pass to torch.compile
+    """
+
+    def __init__(self, name: Hashable, required_ops: set | None = None, *, mode: str | None = None):
         super().__init__(name, version=torch.__version__)
         self.required_ops = required_ops
+        self.mode = mode
 
     def fuse(self, region: Region, fusion_counter: int) -> BoundSymbol:
         def keyfn(x: Variable) -> str:
@@ -141,7 +119,9 @@ class TorchCompileExecutor(FusionExecutor):
         sorted_unique_inputs: list[Proxy] = [unvariableify(x) for x in region.inputs]
         sorted_unique_outputs: list[Proxy] = [unvariableify(x) for x in region.outputs]
 
-        compiled: Callable = make_compiled(region.bound_symbols, sorted_unique_inputs, sorted_unique_outputs)
+        compiled: Callable = make_compiled(
+            region.bound_symbols, sorted_unique_inputs, sorted_unique_outputs, mode=self.mode
+        )
 
         fusion_name = f"TorchCompile{fusion_counter}"
 

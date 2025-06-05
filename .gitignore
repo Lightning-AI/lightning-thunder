@@ -143,8 +143,13 @@ scripts/build
 # Profiler traces
 benchmarks/traces
 
+# benchmark results
+.results
+
 .ruff_cache/
 
 # come CI artifacts
 notebooks/all.txt
 notebooks/ci.txt
+
+quickstart_report.json

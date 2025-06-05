@@ -1,10 +1,10 @@
-from collections.abc import Callable
-
 import pytest
 import torch.testing
 
+import thunder
+from thunder.examine import get_fusions
 import thunder.core.dtypes as dtypes
-from thunder.tests.make_tensor import make_tensor
+from thunder.tests.make_tensor import make_tensor, make_tensor_like
 from thunder.tests.framework import instantiate, ops, NOTHING, TorchExecutor, TorchCompileExecutor, nvFuserExecutor
 from thunder.tests.test_inplace_functionalization import _inplace_opinfos
 
@@ -261,3 +261,164 @@ def test_write_to_intermediate_result(executor, device, dtype):
     actual = jfn(a)
     expected = fn(a)
     torch.testing.assert_close(actual, expected)
+
+
+@instantiate(
+    dtypes=(dtypes.float32,),
+)
+def test_inplace_to_alias_func_args(executor, device, dtype):
+    shape = (2, 2)
+    torch_dtype = dtypes.to_torch_dtype(dtype)
+
+    # copied from https://github.com/Lightning-AI/lightning-thunder/issues/738
+    def f(a, b):
+        return a.exp_() + b.tanh_(), a
+
+    jitted_f = executor.make_callable(
+        f, skip_inplace_alias_updates=False, skip_inplace_functionalization=True, disable_inplace_copy_check=True
+    )
+
+    a = make_tensor(shape, device=device, dtype=torch_dtype)
+    b = make_tensor(shape, device=device, dtype=torch_dtype)
+    a_ref, b_ref = a.clone().detach(), b.clone().detach()
+
+    res_of_a, a_out = jitted_f(a, a)
+    ref_res_of_a, ref_a_out = f(a_ref, a_ref)
+
+    fds = get_fusions(thunder.last_traces(jitted_f)[-1])
+    for _, fd in fds:
+        print(fd.last_used.repro_script_for())
+
+    assert (thunder.cache_hits(jitted_f), thunder.cache_misses(jitted_f)) == (0, 1)
+    torch.testing.assert_close(res_of_a, ref_res_of_a)
+    torch.testing.assert_close(a, a_ref)
+    assert a_out.data_ptr() == a.data_ptr()
+
+    a = make_tensor_like(a)
+    a_ref = a.clone().detach()
+    res_of_a_and_b, _ = jitted_f(a, b)
+    ref_res_of_a_and_b, _ = f(a_ref, b_ref)
+    assert (thunder.cache_hits(jitted_f), thunder.cache_misses(jitted_f)) == (0, 2)
+    torch.testing.assert_close(res_of_a_and_b, ref_res_of_a_and_b)
+
+    res_of_b, _ = jitted_f(b, b)
+    ref_res_of_b, _ = f(b_ref, b_ref)
+    assert (thunder.cache_hits(jitted_f), thunder.cache_misses(jitted_f)) == (1, 2)
+    torch.testing.assert_close(res_of_b, ref_res_of_b)
+    torch.testing.assert_close(b, b_ref)
+
+    b = make_tensor_like(b)
+    b_ref = b.clone().detach()
+    res_of_b_and_a, _ = jitted_f(b, a)
+    ref_res_of_b_and_a, _ = f(b_ref, a_ref)
+    assert (thunder.cache_hits(jitted_f), thunder.cache_misses(jitted_f)) == (2, 2)
+    torch.testing.assert_close(res_of_b_and_a, ref_res_of_b_and_a)
+
+    def f(a, b):
+        return a.exp() + b.tanh()
+
+    jitted_f = executor.make_callable(
+        f, skip_inplace_alias_updates=False, skip_inplace_functionalization=True, disable_inplace_copy_check=True
+    )
+    jitted_f(a, a)
+    assert (thunder.cache_hits(jitted_f), thunder.cache_misses(jitted_f)) == (0, 1)
+    jitted_f(a, b)
+    assert (thunder.cache_hits(jitted_f), thunder.cache_misses(jitted_f)) == (0, 2)
+    jitted_f(b, a)
+    assert (thunder.cache_hits(jitted_f), thunder.cache_misses(jitted_f)) == (1, 2)
+    jitted_f(b, b)
+    assert (thunder.cache_hits(jitted_f), thunder.cache_misses(jitted_f)) == (2, 2)
+
+    def f(a, b, c):
+        d = a.exp_()
+        e = b.tanh_()
+        f = c.cosh_()
+        return d + e + f
+
+    a = make_tensor(shape, device=device, dtype=torch_dtype)
+    a_expected = a.exp().tanh().cosh()
+
+    jitted_f = executor.make_callable(
+        f, skip_inplace_alias_updates=False, skip_inplace_functionalization=True, disable_inplace_copy_check=True
+    )
+    out = jitted_f(a, a, a)
+
+    torch.testing.assert_close(a, a_expected)
+    torch.testing.assert_close(out, 3 * a_expected)
+
+    a, b = make_tensor_like(a), make_tensor_like(a)
+    a_ref, b_ref = a.clone().detach(), b.clone().detach()
+    out, out_ref = jitted_f(a, b, b), f(a_ref, b_ref, b_ref)
+    torch.testing.assert_close(out, out_ref)
+    torch.testing.assert_close((a, b), (a_ref, b_ref))
+
+    a, b = make_tensor_like(a), make_tensor_like(a)
+    a_ref, b_ref = a.clone().detach(), b.clone().detach()
+    out, out_ref = jitted_f(a, b, a), f(a_ref, b_ref, a_ref)
+    torch.testing.assert_close(out, out_ref)
+    torch.testing.assert_close((a, b), (a_ref, b_ref))
+
+    def f(a):
+        return a.zero_()
+
+    a = make_tensor(shape, device=device, dtype=torch_dtype)
+    out_expected = torch.zeros_like(a)
+
+    jitted_f = executor.make_callable(
+        f, skip_inplace_alias_updates=False, skip_inplace_functionalization=True, disable_inplace_copy_check=True
+    )
+    out = jitted_f(a)
+
+    torch.testing.assert_close(out, out_expected)
+
+
+@instantiate(
+    dtypes=(dtypes.float32,),
+)
+def test_higher_order_inplace_alias_update(executor, device, dtype):
+    torch_dtype = dtypes.to_torch_dtype(dtype)
+
+    class Sin(torch.autograd.Function):
+        @staticmethod
+        def forward(ctx, x):
+            ctx.save_for_backward(x)
+            y = x * 1
+            y.sin_()
+            return y
+
+        @staticmethod
+        def backward(ctx, g):
+            (x,) = ctx.saved_tensors
+            y = g * x
+            y.cos_()
+            return y
+
+    def foo(x):
+        return Sin.apply(x)
+
+    a = torch.ones(2, device=device, dtype=torch_dtype, requires_grad=True)
+    b = torch.ones(2, device=device, dtype=torch_dtype, requires_grad=True)
+    c = torch.ones(2, device=device, dtype=torch_dtype, requires_grad=True)
+
+    g = torch.rand_like(a)
+
+    jfoo = thunder.jit(foo, executors=executor.executors_list())
+    actual_jit = jfoo(a)
+
+    from thunder.dynamo import thunderfx
+
+    cfoo = thunderfx(foo, executors=executor.executors_list())
+    actual_fx = cfoo(b)
+
+    expected = foo(c)
+
+    # Checking both paths in jit_ext.py
+    torch.testing.assert_close(actual_jit, expected)
+    torch.testing.assert_close(actual_fx, expected)
+
+    actual_grad_jit = torch.autograd.grad(actual_jit, a, g)
+    actual_grad_fx = torch.autograd.grad(actual_fx, b, g)
+
+    expected_grad = torch.autograd.grad(expected, c, g)
+    torch.testing.assert_close(actual_grad_fx, expected_grad)
+    torch.testing.assert_close(actual_grad_jit, expected_grad)

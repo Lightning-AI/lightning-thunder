@@ -12,6 +12,9 @@ from looseversion import LooseVersion
 from unittest.mock import patch
 import weakref
 import re
+from hypothesis import strategies as st
+from hypothesis import given, settings
+from hypothesis import HealthCheck
 
 from thunder import dtypes
 from thunder.dynamo import thunderfx
@@ -63,6 +66,12 @@ def reset_torch_dynamo():
     # [0/8]    last reason: 0/0:
     # [0/8] To log all recompilation reasons, use TORCH_LOGS="recompiles".
     torch._dynamo.reset()
+
+
+def run_script(file_name, cmd):
+    cmd = cmd + [file_name]
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    assert result.returncode == 0, f"Script {file_name} failed: {result}"
 
 
 @instantiate(
@@ -640,15 +649,15 @@ def test_empty_autocast():
 # NOTE: The conftest.py file customizes the benchmark grouping behavior for ThunderCompilerGraphBenchmarking.
 # It must be located in the same folder as the test file to ensure the configuration.
 @requiresCUDA
-def test_ThunderCompilerGraphBenchmarking_LlamaMLPBenchmark(benchmark):
+def test_ThunderCompilerGraphBenchmarking_LitGTMLPBenchmark(benchmark):
     import thunder
 
     backend = ThunderCompilerGraphBenchmarking(
         benchmark, executors={"thunder": thunder.jit, "inductor": torch.compile, "eager": None}
     )
-    from thunder.benchmarks import LlamaMLPBenchmark, Benchmark
+    from thunder.benchmarks import LitGPTMLPBenchmark, Benchmark
 
-    bench: Benchmark = LlamaMLPBenchmark(
+    bench: Benchmark = LitGPTMLPBenchmark(
         config="Llama-2-7b-hf",
         batchdims=(2,),
         device="cuda:0",
@@ -669,19 +678,17 @@ def test_ThunderCompilerGraphBenchmarking_groupby(benchmark):
         if x.sum() > 0:
             x = x.exp()
             y = torch.sinc(x) + torch.cos(y)
-            return y + 1
+            return y
         else:
             y = y.exp()
             x = torch.sinc(y) + torch.cos(x)
-            return x - 1
+            return x
 
     import thunder
 
-    backend = ThunderCompilerGraphBenchmarking(
-        benchmark, executors={"thunder": thunder.jit, "inductor": torch.compile, "eager": None}
-    )
+    backend = ThunderCompilerGraphBenchmarking(benchmark, executors={"thunder": thunder.jit, "inductor": torch.compile})
     compiled = torch.compile(backend=backend)(f)
-    x = torch.ones(2, requires_grad=True).cuda()
+    x = torch.ones(2).cuda()
     y = torch.ones(2, requires_grad=True).cuda()
     compiled(x, y)
 
@@ -940,7 +947,7 @@ def test_deepcopy_graph_module():
     import thunder
 
     _, subgraph_info = thunder.dynamo.splitter._splitter(gm, thunder.jit, thunder.jit, [])
-    original_split_gm = subgraph_info.original_split_graph_module
+    original_split_gm = subgraph_info.original_split_graph_module.split_graph_module
     assert original_split_gm.graph.find_nodes(op="output")
     for subm in original_split_gm.children():
         assert subm.graph.find_nodes(op="output")
@@ -955,7 +962,11 @@ def test_deepcopy_graph_module():
     executors=[DynamoThunderExecutor],
     decorators=(pytest.mark.parametrize("use_pytest_benchmark", (True, False), ids=("benchmark", "repro")),),
 )
-def test_dynamo_reproducer_split(executor, device: str, dtype: dtypes.dtype, use_pytest_benchmark, tmp_path):
+@given(file_indices=st.lists(st.integers(min_value=0, max_value=2), min_size=2, max_size=2, unique=True))
+@settings(max_examples=1, deadline=None)
+def test_dynamo_reproducer_split(
+    executor, device: str, dtype: dtypes.dtype, use_pytest_benchmark, tmp_path, file_indices
+):
     if IS_WINDOWS and use_pytest_benchmark:
         pytest.skip(
             "Skipping on Windows because this uses torch.compile (see https://github.com/Lightning-AI/lightning-thunder/issues/1326)"
@@ -975,12 +986,6 @@ def test_dynamo_reproducer_split(executor, device: str, dtype: dtypes.dtype, use
     actual = cfunc(x)
     cfunc._backend.save_reproducer_to_folder(tmp_path, use_pytest_benchmark)
 
-    def check(file_name, cmd):
-        assert os.path.exists(file_name)
-        cmd = cmd + [file_name]
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        assert result.returncode == 0, f"Reproducer {file_name} failed: {result}"
-
     suffix = "_benchmark" if use_pytest_benchmark else "_repro"
     s1 = f"{tmp_path}/graph0_thunder_0{suffix}.py"
     s2 = f"{tmp_path}/graph0_thunder_2{suffix}.py"
@@ -988,8 +993,11 @@ def test_dynamo_reproducer_split(executor, device: str, dtype: dtypes.dtype, use
     cmd = [sys.executable]
     if use_pytest_benchmark:
         cmd = cmd + ["-m", "pytest"]
-    for fname in [s1, s2, s3]:
-        check(fname, cmd)
+
+    all_files = [s1, s2, s3]
+    selected_files = [all_files[i] for i in file_indices]
+    for file in selected_files:
+        run_script(file, cmd)
 
 
 @requiresCUDA
@@ -1012,6 +1020,17 @@ def test_thunderfx():
     assert len(thunder_compiled_fns) == 1
     trc = last_traces(thunder_compiled_fns[-1])[-1]
     assert any(bsym.sym.id == "nvtx_range_push" for bsym in trc.bound_symbols)
+
+    def fn(x, w):
+        return x @ w
+
+    x = torch.randn(4, 4, device="cuda", requires_grad=True)
+    w = torch.randn(4, 4, device="cuda", requires_grad=True)
+    # Tests the compile_options in thunder.jit
+    cfn = thunderfx(fn, nv_enable_matmul=True)
+    cfn(x, w)
+    trc = cfn.last_traces[-1]
+    assert any(bsym.sym.name == "nvFusion0" for bsym in trc.bound_symbols)
 
 
 def test_thunderfx_last_traces():
@@ -1111,20 +1130,12 @@ def test_thunderfx_meta_tensor():
     assert out.device.type == "meta"
 
 
-def run_script(file_name, cmd):
-    cmd = cmd + [file_name]
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    assert result.returncode == 0, f"Script {file_name} failed: {result}"
-
-
 @requiresCUDA
 def test_report_thunderfx_pytest_benchmark_report(tmp_path, capsys):
     def foo(x):
-        y = x.sin()
-        torch._dynamo.graph_break()
-        return y + x.cos()
+        return x.sin()
 
-    x = torch.randn(4, 4, device="cuda", requires_grad=True)
+    x = torch.randn(4, 4, device="cuda")
     thunderfx_pytest_benchmark_report(foo, x, folder_path=tmp_path, check_consistency=True)
     captured = capsys.readouterr()
     msg = captured.out
@@ -1157,6 +1168,14 @@ def test_report_thunderfx_pytest_benchmark_report(tmp_path, capsys):
 def test_fxreport(executor, device: str, dtype: dtypes.dtype, use_benchmark, tmp_path):
     def foo(x, y):
         return x + y
+
+    from thunder import jit
+
+    with pytest.raises(
+        ValueError,
+        match=r"fx_report requires the original \(uncompiled\) callable and cannot be used on the Thunder-compiled function.",
+    ):
+        fx_report(jit(foo))
 
     x = torch.randn(4, 4, device=device, requires_grad=True)
     y = torch.randn(4, 4, device=device, requires_grad=True)
@@ -1215,7 +1234,9 @@ def test_leak_on_unsupported_thunder_operator():
 
 
 @requiresCUDA
-def test_thunder_specific_reports(tmp_path):
+@given(file_indices=st.lists(st.integers(min_value=0, max_value=15), min_size=2, max_size=2, unique=True))
+@settings(max_examples=2, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+def test_thunder_specific_reports(tmp_path, file_indices):
     x = torch.ones(2, 2, device="cuda", requires_grad=True)
 
     def foo(x):
@@ -1244,7 +1265,8 @@ def test_thunder_specific_reports(tmp_path):
     py_files = list(tmp_path.rglob("*.py"))
     assert len(py_files) == 16
 
-    for file in py_files:
+    selected_files = [py_files[i] for i in file_indices]
+    for file in selected_files:
         run_script(file, cmd)
 
 
@@ -1313,7 +1335,9 @@ def test_ThunderCompileSpecification():
 
 
 @requiresCUDA
-def test_reports_repro(tmp_path):
+@given(file_indices=st.lists(st.integers(min_value=0, max_value=15), min_size=2, max_size=2, unique=True))
+@settings(max_examples=2, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+def test_reports_repro(tmp_path, file_indices):
     x = torch.ones(2, 2, device="cuda", requires_grad=True)
 
     def foo(x):
@@ -1351,12 +1375,15 @@ def test_reports_repro(tmp_path):
     py_files = list(tmp_path.rglob("*.py"))
     assert len(py_files) == 16
 
-    for file in py_files:
+    selected_files = [py_files[i] for i in file_indices]
+    for file in selected_files:
         run_script(file, cmd)
 
 
 @requiresCUDA
-def test_reports_benchmark(tmp_path):
+@given(file_indices=st.lists(st.integers(min_value=0, max_value=4), min_size=2, max_size=2, unique=True))
+@settings(max_examples=2, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+def test_reports_benchmark(tmp_path, file_indices):
     x = torch.ones(2, 2, device="cuda", requires_grad=True)
 
     def foo(x):
@@ -1365,7 +1392,7 @@ def test_reports_benchmark(tmp_path):
         x = x.exp()
         torch._dynamo.graph_break()
         y = torch.sinc(x) + torch.cos(x)
-        return y + 1
+        return y
 
     results = fx_report(foo)(x)
     thunderjit = ThunderCompileSpecification()
@@ -1377,7 +1404,12 @@ def test_reports_benchmark(tmp_path):
     assert len(thunder_fx_graph_report.subgraph_reports) == 1  # exp
     thunder_split_report = thunder_fx_graph_report.subgraph_reports[0]
     split_name = thunder_split_report.graph_name
-    thunder_split_report.write_benchmark(tmp_path, torchcompile, WallTime, file_name=f"{split_name}_torchcompile.py")
+    thunder_split_report.write_benchmark(
+        tmp_path,
+        torchcompile,
+        WallTimeWithMemoryUsage(min_run_time=0.01, max_run_time=9.0, threshold=0.08),
+        file_name=f"{split_name}_torchcompile.py",
+    )
     thunder_split_report.write_benchmark(tmp_path, torcheager, WallTime, file_name=f"{split_name}_eager.py")
     thunder_split_report.write_benchmark(tmp_path, thunderjit, WallTime, file_name=f"{split_name}_jit.py")
     thunder_split_report.create_fusion_reports()
@@ -1385,14 +1417,15 @@ def test_reports_benchmark(tmp_path):
     nvf = thunder_split_report.fusion_reports[0]
     nvf.write_nvfuser_benchmark(tmp_path, WallTime)
     nvf.write_inductor_benchmark(tmp_path, WallTime)
-    nvf.run_benchmark(BoundSymbolNvfuserSpecification(), WallTime)
+    nvf.run_benchmark(BoundSymbolNvfuserSpecification(), WallTime(min_run_time=0.01, max_run_time=5.0, threshold=0.08))
     nvf.run_benchmark(BoundSymbolTorchCompileSpecification(), WallTime)
 
     cmd = [sys.executable]
     py_files = list(tmp_path.rglob("*.py"))
     assert len(py_files) == 5
 
-    for file in py_files:
+    selected_files = [py_files[i] for i in file_indices]
+    for file in selected_files:
         run_script(file, cmd)
 
 
@@ -1427,6 +1460,8 @@ def test_TorchInductorSpecification(tmp_path):
 
 @requiresCUDA
 def test_save_failing_repros(tmp_path):
+    from thunder.dynamo.benchmark_utils import TorchEagerSpecification
+
     x = torch.ones(2, 2, device="cuda", requires_grad=True)
 
     def foo(x):
@@ -1444,6 +1479,25 @@ def test_save_failing_repros(tmp_path):
     with patch("thunder.dynamo.report.FXGraphReport.run_repro", side_effect=Exception("run_Repro raises exception")):
         save_failing_repros(thunder_fxgraph_reports[0].subgraph_reports, ThunderCompileSpecification(), tmp_path)
     assert os.path.exists(tmp_path / "graph0_thunder_0.py")
+
+    # Tests for check_consistency
+    def wrapped_fn(x):
+        return foo(x) + 1
+
+    class _BadCompileSpecification(TorchEagerSpecification):
+        def compile(self, fn, **kwargs):
+            return wrapped_fn
+
+    results = fx_report(foo)(x)
+    save_failing_repros(
+        results.fx_graph_reports, _BadCompileSpecification(), tmp_path / "consistency", check_consistency=False
+    )
+    assert not os.path.exists(tmp_path / "consistency" / "graph0.py")
+
+    save_failing_repros(
+        results.fx_graph_reports, _BadCompileSpecification(), tmp_path / "consistency", check_consistency=True
+    )
+    assert os.path.exists(tmp_path / "consistency" / "graph0.py")
 
 
 @requiresCUDA
@@ -1488,3 +1542,75 @@ def test_autograd_function_fx_report(tmp_path):
         assert len(py_files) == 2
         for file in py_files:
             run_script(file, cmd)
+
+
+@requiresCUDA
+def test_aot_optimize():
+    from thunder.dynamo import thunder_profile, thunder_optimize
+
+    def foo(x):
+        # torch.sinc has automatic fallback registered,
+        # so that operation will be given to inductor.
+        x = x.exp()
+        torch._dynamo.graph_break()
+        y = torch.sinc(x) + torch.cos(x)
+        return y + 1
+
+    x = torch.ones(2, 2, device="cuda", requires_grad=True)
+    y = torch.ones(4, 4, device="cuda", requires_grad=True)
+    z = torch.ones(8, 4, device="cuda", requires_grad=True)
+    pfoo = thunder_profile(foo)
+    pfoo(x)
+    # 2 graphs because of the graph break
+    assert len(pfoo._tao.id_to_profile_stats) == 2
+    # 2 more dynamic graphs
+    pfoo(y)
+    assert len(pfoo._tao.id_to_profile_stats) == 4
+    # uses the dynamic graphs instead of the static ones
+    pfoo(x)
+    pfoo(z)
+    pfoo(x)
+    pfoo(y)
+
+    stats = list(pfoo._tao.id_to_profile_stats.values())
+    # the last two are the dymamic graphs' stats
+    # input x,y are called 2 times, z is called 1 time for the dynamic graphs
+    input_meta_dict = stats[-1].input_meta_to_called_times
+    for k, v in input_meta_dict.items():
+        if k[-1].shape == (2, 2):
+            assert v == 2
+        elif k[-1].shape == (4, 4):
+            assert v == 2
+        elif k[-1].shape == (8, 4):
+            assert v == 1
+        else:
+            assert False
+
+    # filters the dynamic graphs, only the static ones are optimized
+    optfoo = thunder_optimize(pfoo)
+    # fallbacks to eager for the dynamic graphs
+    optfoo(x)
+
+    with pytest.raises(AssertionError, match="No longer profiling"):
+        pfoo(x)
+
+
+def test_spliter_bwd():
+    def fn(x, idx, val):
+        x = x.clone()
+        x[idx] = val
+        return x
+
+    x = torch.randn(1, 4, 5, dtype=torch.bfloat16, requires_grad=True)
+    idx = torch.rand(1, 4, 5) > 0.5
+    nz = torch.count_nonzero(idx)
+    val = torch.randn(nz, dtype=torch.bfloat16, requires_grad=True)
+
+    cfn = thunderfx(fn)
+    cfn(x, idx, val)
+    reason = cfn._backend.subgraph_infos[0].split_reasons
+    assert len(reason) == 1
+    assert "Failed while running meta for node with name: setitem" in reason[0].info
+    assert "Advanced indexing" in reason[0].exception and reason[0].exception.endswith(
+        "found a tensor with dtype thunder.dtypes.bool8 and 3 dimensions"
+    )

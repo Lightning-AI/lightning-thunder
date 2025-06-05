@@ -252,6 +252,7 @@ class Benchmark_litGPT:
         use_torchao_fp8_precompute_scale_for_fsdp: bool = False,
         fp8_shard_intermediate_activation: bool = False,
         use_sdpa: bool = False,
+        use_hf: bool = False,
     ):
         seed = 1337
         torch.manual_seed(seed)
@@ -288,6 +289,7 @@ class Benchmark_litGPT:
         self.fp8_shard_intermediate_activation = fp8_shard_intermediate_activation
 
         self.use_sdpa = use_sdpa
+        self.use_hf = use_hf
 
         if self.use_sdpa and sdpa_available and self.compile not in ["eager", "inductor"]:
             warnings.warn(
@@ -424,8 +426,42 @@ class Benchmark_litGPT:
 
     def init_model(self):
         init_device = torch.device("meta") if self.distributed_mode in FSDP_MODES else self.device
-        with init_device:
-            model = GPT(self.config)
+        if self.use_hf:
+            warnings.warn(
+                f"HuggingFace transformers mode is experimental, many options do not apply. Preliminary testing  with transformers==4.50.3."
+            )
+
+            # for the materialization, we need reset_parameters
+            def RotaryEmbedding_reset_parameters(self):
+                inv_freq, self.attention_scaling = self.rope_init_fn(self.config, self.inv_freq.device)
+                with torch.no_grad():
+                    self.inv_freq.copy_(inv_freq)
+
+            from transformers.models.qwen2.modeling_qwen2 import Qwen2RotaryEmbedding
+            from transformers.models.llama.modeling_llama import LlamaRotaryEmbedding
+
+            Qwen2RotaryEmbedding.reset_parameters = RotaryEmbedding_reset_parameters
+            LlamaRotaryEmbedding.reset_parameters = RotaryEmbedding_reset_parameters
+
+            def RMSNorm_reset_parameters(self):
+                with torch.no_grad():
+                    self.weight.fill_(1)
+
+            from transformers.models.qwen2.modeling_qwen2 import Qwen2RMSNorm
+            from transformers.models.llama.modeling_llama import LlamaRMSNorm
+
+            Qwen2RMSNorm.reset_parameters = RMSNorm_reset_parameters
+            LlamaRMSNorm.reset_parameters = RMSNorm_reset_parameters
+
+            import transformers
+
+            hf_model_name = f"{self.config.hf_config['org']}/{self.config.hf_config['name']}"
+            hf_cfg = transformers.AutoConfig.from_pretrained(hf_model_name)
+            with init_device:
+                model = transformers.AutoModel.from_config(hf_cfg)
+        else:
+            with init_device:
+                model = GPT(self.config)
 
         # Handle fp8 related Linear layer swapping (for torchao or TransformerEngine)
         model = self._torchao_fp8_handler.convert_model_to_fp8(model)
@@ -580,6 +616,8 @@ class Benchmark_litGPT:
             model = torch.compile(model)
         elif "thunder" in self.compile:
             executors = list(thunder.get_default_executors())
+            transforms = []
+
             if "inductor_cat" in self.compile:
                 from thunder.executors.torch_compile import torch_compile_cat_ex as torch_compile_ex
 
@@ -589,7 +627,17 @@ class Benchmark_litGPT:
 
                 executors.insert(0, torch_compile_ex)
 
-            if "transformerengine" in self.compile:
+            if "transformerengine_v2" in self.compile:
+
+                from thunder.executors.transformer_engine_v2ex import (
+                    transformer_engine_v2_ex,
+                    TransformerEngineTransformV2,
+                )
+
+                executors.insert(0, transformer_engine_v2_ex)
+                transforms.insert(0, TransformerEngineTransformV2())
+
+            elif "transformerengine" in self.compile:
                 from thunder.executors.transformer_engineex import transformer_engine_ex
 
                 executors.insert(0, transformer_engine_ex)
@@ -601,7 +649,7 @@ class Benchmark_litGPT:
 
                     dynamo_config.cache_size_limit = 64
 
-                self.backend = ThunderCompiler(executors=executors)
+                self.backend = ThunderCompiler(executors=executors, transforms=transforms)
                 # Because Lightning Fabric is imported in this script it monkey patches the torch.compile function
                 # https://github.com/Lightning-AI/pytorch-lightning/blob/828fd998961f6a60f92c35254bb94d6e049ad069/src/lightning/fabric/wrappers.py#L421
                 # using __wrapped__ to access the original torch.compile function did not work
@@ -610,8 +658,7 @@ class Benchmark_litGPT:
             else:
                 jit_options = {}
                 jit_options["fp8_shard_intermediate_activation"] = self.fp8_shard_intermediate_activation
-                model = thunder.jit(model, executors=executors, **jit_options)
-
+                model = thunder.jit(model, executors=executors, transforms=transforms, **jit_options)
         elif self.compile != "eager":
             raise ValueError(f"Invalid compile option: {self.compile}")
 
@@ -690,6 +737,8 @@ class Benchmark_litGPT:
                             logits = self.model(input_ids)
                     else:
                         logits = self.model(input_ids)
+                    if not isinstance(logits, torch.Tensor):
+                        logits = logits["last_hidden_state"]
                     logits = logits.reshape(-1, logits.size(-1))
                     targets = targets.reshape(-1)
                     loss = (
@@ -706,6 +755,8 @@ class Benchmark_litGPT:
                     logits = self.model(input_ids)
             else:
                 logits = self.model(input_ids)
+            if not isinstance(logits, torch.Tensor):
+                logits = logits["last_hidden_state"]
             # This information is accurate only in the case when torch.compile
             # uses a single graph for the entire forward pass In the case of
             # torch.compile using multiple graphs, the saved_tensors will be
@@ -836,14 +887,23 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
 
         attention_ctx = sdpa_kernel(backends, **kwargs)
 
-    with attention_ctx:
+    te_autocast_ctx = nullcontext()
+
+    if "transformerengine_v2" in benchmark.compile:
+        from transformer_engine.pytorch.fp8 import fp8_autocast
+
+        te_autocast_ctx = fp8_autocast(enabled=True)
+
+    with attention_ctx, te_autocast_ctx:
         benchmark.train()
 
     if global_rank in [0, None]:
         benchmark.add_perf_metrics()
-
+        model_name = benchmark.model_name
+        if benchmark.use_hf:
+            model_name += "_hf"
         print(
-            f"Model name: {benchmark.model_name}\nSeq Length: {benchmark.config.block_size}\nMicro BS: {benchmark.micro_batch_size}\nGlobal BS: {benchmark.global_batch_size}"
+            f"Model name: {model_name}\nSeq Length: {benchmark.config.block_size}\nMicro BS: {benchmark.micro_batch_size}\nGlobal BS: {benchmark.global_batch_size}"
         )
         print(
             f"Number of Layers: {benchmark.config.n_layer}\nNumber of parameters: {sum(p.numel() for p in benchmark.model.parameters() if p.requires_grad) / 1e9:.02f}B"

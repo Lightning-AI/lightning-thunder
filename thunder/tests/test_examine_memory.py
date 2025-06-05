@@ -116,4 +116,4 @@ def test_nanogpt_block():
     assert max_mem_fw[0] == 381754368
     assert sum(max_mem_fw[1].values()) == 375462912
     assert max_mem_bw[0] == 437292032
-    assert sum(max_mem_bw[1].values()) == 40934400
+    assert sum(max_mem_bw[1].values()) == 34642944

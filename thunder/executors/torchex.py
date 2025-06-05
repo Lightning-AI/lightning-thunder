@@ -41,7 +41,6 @@ add_always_executor(ex)
 
 # Common annotations
 TensorLike = TensorProxy
-FutureTensorLike = FutureTensorProxy
 DeviceLike = str | devices.Device | torch.device
 dtypeLike = dtypes.dtype | torch.dtype
 
@@ -186,6 +185,8 @@ ones_like = _register_torch_operation("ones_like")
 tensor_from_sequence = _register_torch_operation("tensor")
 zeros = _register_torch_operation("zeros")
 zeros_like = _register_torch_operation("zeros_like")
+rand = _register_torch_operation("rand")
+randint = _register_torch_operation("randint")
 randn = _register_torch_operation("randn")
 empty = _register_torch_operation("empty")
 einsum = _register_torch_operation("einsum")
@@ -428,6 +429,19 @@ def _zeros_like_transform(
     return zeros_like(a, device=torch_device, dtype=torch_dtype)
 
 
+def _randint_prims_transform(
+    low: int,
+    high: int,
+    shape: tuple[int, ...],
+    *,
+    device: devices.Device,
+    dtype: dtypes.dtype,
+) -> TensorLike:
+    torch_device: torch.device = to_torch_device(device)
+    torch_dtype: torch.dtype = to_torch_dtype(dtype)
+    return randint(low, high, shape, device=torch_device, dtype=torch_dtype)
+
+
 def _randn_prims_transform(
     shape: tuple[int, ...],
     *,
@@ -493,6 +507,7 @@ _register_implementation(
     prims.uniform_philox, checker=_uniform_philox_prim_checker, execution_transform=_uniform_philox_prim_transform
 )
 _register_implementation(prims.get_and_update_rng_state, get_and_update_rng_state_impl, checker=_always_executable)
+_register_implementation(prims.randint, checker=_always_executable, execution_transform=_randint_prims_transform)
 _register_implementation(prims.randn, checker=_always_executable, execution_transform=_randn_prims_transform)
 _register_implementation(prims.empty, checker=_always_executable, execution_transform=_empty_prims_transform)
 _register_implementation(prims.clone, checker=_always_executable, execution_transform=_clone_prims_transform)
@@ -702,7 +717,10 @@ exp = _register_torch_operation("exp")
 exp2 = _register_torch_operation("exp2")
 expm1 = _register_torch_operation("expm1")
 floor = _register_torch_operation("floor")
+frexp = _register_torch_operation("frexp")
 isfinite = _register_torch_operation("isfinite")
+isinf = _register_torch_operation("isinf")
+isnan = _register_torch_operation("isnan")
 lgamma = _register_torch_operation("lgamma")
 log = _register_torch_operation("log")
 log10 = _register_torch_operation("log10")
@@ -727,6 +745,7 @@ tan = _register_torch_operation("tan")
 tanh = _register_torch_operation("tanh")
 trunc = _register_torch_operation("trunc")
 real = _register_torch_operation("real")
+imag = _register_torch_operation("imag")
 
 
 def _elementwise_unary_checker(a: Number | TensorLike) -> bool:
@@ -781,6 +800,7 @@ _register_elementwise_unary_implementation(prims.tan, tan)
 _register_elementwise_unary_implementation(prims.tanh, tanh)
 _register_elementwise_unary_implementation(prims.trunc, trunc)
 _register_elementwise_unary_implementation(prims.real, real)
+_register_elementwise_unary_implementation(prims.imag, imag)
 
 _register_elementwise_unary_implementation(ltorch.abs, torch_abs)
 _register_elementwise_unary_implementation(ltorch.acos, acos)
@@ -802,6 +822,8 @@ _register_elementwise_unary_implementation(ltorch.exp2, exp2)
 _register_elementwise_unary_implementation(ltorch.expm1, expm1)
 _register_elementwise_unary_implementation(ltorch.floor, floor)
 _register_elementwise_unary_implementation(ltorch.isfinite, isfinite)
+_register_elementwise_unary_implementation(ltorch.isinf, isinf)
+_register_elementwise_unary_implementation(ltorch.isnan, isnan)
 _register_elementwise_unary_implementation(ltorch.lgamma, lgamma)
 _register_elementwise_unary_implementation(ltorch.log, log)
 _register_elementwise_unary_implementation(ltorch.log10, log10)
@@ -822,6 +844,17 @@ _register_elementwise_unary_implementation(ltorch.tan, tan)
 _register_elementwise_unary_implementation(ltorch.tanh, tanh)
 _register_elementwise_unary_implementation(ltorch.trunc, trunc)
 _register_elementwise_unary_implementation(ltorch.real, real)
+_register_elementwise_unary_implementation(ltorch.imag, imag)
+
+
+def _frexp_transform(a: TensorProxy):
+    return frexp(a)
+
+
+_register_implementation(prims.frexp, checker=_always_executable, execution_transform=_frexp_transform)
+
+_register_implementation(ltorch.frexp, checker=_always_executable, execution_transform=_frexp_transform)
+
 
 # nn.functional elementwise unary
 celu = _register_torch_operation("celu", module=torch.nn.functional)
@@ -833,14 +866,17 @@ hardtanh = _register_torch_operation("hardtanh", module=torch.nn.functional)
 leaky_relu = _register_torch_operation("leaky_relu", module=torch.nn.functional)
 logsigmoid = _register_torch_operation("logsigmoid", module=torch.nn.functional)
 mish = _register_torch_operation("mish", module=torch.nn.functional)
+prelu = _register_torch_operation("prelu", module=torch.nn.functional)
 relu = _register_torch_operation("relu", module=torch.nn.functional)
 relu6 = _register_torch_operation("relu6", module=torch.nn.functional)
+rrelu = _register_torch_operation("rrelu", module=torch.nn.functional)
 selu = _register_torch_operation("selu", module=torch.nn.functional)
 silu = _register_torch_operation("silu", module=torch.nn.functional)
 softplus = _register_torch_operation("softplus", module=torch.nn.functional)
 softshrink = _register_torch_operation("softshrink", module=torch.nn.functional)
 softsign = _register_torch_operation("softsign", module=torch.nn.functional)
 tanhshrink = _register_torch_operation("tanhshrink", module=torch.nn.functional)
+threshold = _register_torch_operation("threshold", module=torch.nn.functional)
 
 
 def _elementwise_unary_with_inplace_checker(a: TensorProxy, /, inplace: bool = False) -> bool:
@@ -855,14 +891,19 @@ _register_elementwise_unary_implementation(ltorch.hardswish, hardswish, checker=
 _register_elementwise_unary_implementation(ltorch.hardtanh, hardtanh, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.leaky_relu, leaky_relu, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.mish, mish, checker=_elementwise_unary_with_inplace_checker)
+_register_elementwise_unary_implementation(ltorch.prelu, prelu, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.relu, relu, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.relu6, relu6, checker=_elementwise_unary_with_inplace_checker)
+_register_elementwise_unary_implementation(ltorch.rrelu, rrelu, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.selu, selu, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.silu, silu, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.softplus, softplus, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.softshrink, softshrink, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.softsign, softsign, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.tanhshrink, tanhshrink, checker=_always_executable)
+_register_elementwise_unary_implementation(ltorch.threshold, threshold, checker=_always_executable)
+
+
 #
 # Elementwise binary operations
 #
@@ -882,6 +923,7 @@ gt = _register_torch_operation("gt")
 logical_and = _register_torch_operation("logical_and")
 logical_or = _register_torch_operation("logical_or")
 logical_xor = _register_torch_operation("logical_xor")
+ldexp = _register_torch_operation("ldexp")
 le = _register_torch_operation("le")
 lt = _register_torch_operation("lt")
 maximum = _register_torch_operation("maximum")
@@ -1007,6 +1049,7 @@ _register_elementwise_binary_implementation(ltorch.gt, gt)
 _register_elementwise_binary_implementation(ltorch.logical_and, logical_and)
 _register_elementwise_binary_implementation(ltorch.logical_or, logical_or)
 _register_elementwise_binary_implementation(ltorch.logical_xor, logical_xor)
+_register_elementwise_binary_implementation(ltorch.ldexp, ldexp)
 _register_elementwise_binary_implementation(ltorch.le, le)
 _register_elementwise_binary_implementation(ltorch.lt, lt)
 _register_elementwise_binary_implementation(ltorch.maximum, maximum)
@@ -1172,9 +1215,13 @@ sum = _register_torch_operation("sum")
 cumsum = _register_torch_operation("cumsum")
 var = _register_torch_operation("var")
 var_mean = _register_torch_operation("var_mean")
+std = _register_torch_operation("std")
 argmax = _register_torch_operation("argmax")
 argmin = _register_torch_operation("argmin")
 topk = _register_torch_operation("topk")
+atleast_1d = _register_torch_operation("atleast_1d")
+atleast_2d = _register_torch_operation("atleast_2d")
+atleast_3d = _register_torch_operation("atleast_3d")
 
 
 #
@@ -1211,6 +1258,10 @@ def _var_mean_prim_transform(a: TensorProxy, /, dims: Sequence[int], *, correcti
     return var_mean(a, dims, correction=correction)
 
 
+def _std_prim_transform(a: TensorProxy, /, dims: Sequence[int], *, correction: Number) -> TensorProxy:
+    return std(a, dims, correction=correction)
+
+
 def _cumsum_transform(a: TensorProxy, dim: int, *, dtype: None | dtypeLike = None) -> TensorProxy:
     if dtype is None:
         return cumsum(a, dim)
@@ -1229,13 +1280,11 @@ def _argmin_transform(a: TensorProxy, /, dim: int):
 
 # NOTE This transform translates number proxies to boolean values
 # and handles dim = None
-def _topk_transform(
-    a: TensorProxy, /, k: int, dim: int | None = None, largest: Number = 1, sorted: Number = 1, *, out=None
-):
+def _topk_transform(a: TensorProxy, /, k: int, dim: int | None = None, largest: Number = 1, sorted: Number = 1):
     if dim is None:
         dim = a.ndim - 1 if a.ndim > 0 else 0
 
-    return topk(a, k, dim, bool(largest), bool(sorted), out=out)
+    return topk(a, k, dim, bool(largest), bool(sorted))
 
 
 _register_implementation(prims.amax, checker=_always_executable, execution_transform=_amax_prim_transform)
@@ -1244,6 +1293,7 @@ _register_implementation(prims.prod, checker=_always_executable, execution_trans
 _register_implementation(prims.sum, checker=_always_executable, execution_transform=_sum_prim_transform)
 _register_implementation(prims.var, checker=_always_executable, execution_transform=_var_prim_transform)
 _register_implementation(prims.var_mean, checker=_always_executable, execution_transform=_var_mean_prim_transform)
+_register_implementation(prims.std, checker=_always_executable, execution_transform=_std_prim_transform)
 _register_implementation(prims.argmax, checker=_always_executable, execution_transform=_argmax_transform)
 _register_implementation(prims.argmin, checker=_always_executable, execution_transform=_argmin_transform)
 _register_implementation(prims.topk, checker=_always_executable, execution_transform=_topk_transform)
@@ -1256,9 +1306,13 @@ _register_implementation(ltorch.sum, sum, checker=_always_executable)
 _register_implementation(ltorch.cumsum, checker=_always_executable, execution_transform=_cumsum_transform)
 _register_implementation(ltorch.var, var, checker=_always_executable)
 _register_implementation(ltorch.var_mean, var_mean, checker=_always_executable)
+_register_implementation(ltorch.std, std, checker=_always_executable)
 _register_implementation(ltorch.argmax, argmax, checker=_always_executable)
 _register_implementation(ltorch.argmin, argmin, checker=_always_executable)
 _register_implementation(ltorch.topk, topk, checker=_always_executable, execution_transform=_topk_transform)
+_register_implementation(ltorch.atleast_1d, atleast_1d, checker=_always_executable)
+_register_implementation(ltorch.atleast_2d, atleast_2d, checker=_always_executable)
+_register_implementation(ltorch.atleast_3d, atleast_3d, checker=_always_executable)
 
 
 #
@@ -1268,14 +1322,12 @@ _register_implementation(ltorch.topk, topk, checker=_always_executable, executio
 
 # NOTE this transform translates number proxies to boolean values
 # and handles dim = None
-def _sort_transform(
-    a: TensorProxy, /, dim: int | None = None, descending: bool = False, stable: bool = False, *, out=None
-):
+def _sort_transform(a: TensorProxy, /, dim: int | None = None, descending: bool = False, stable: bool = False):
     if dim is None:
         dim = a.ndim - 1 if a.ndim > 0 else 0
 
     # NOTE: args past `a` are passed as kwargs to avoid issues with multiple `torch.sort` overloadings
-    return sort(a, dim=dim, descending=bool(descending), stable=bool(stable), out=out)
+    return sort(a, dim=dim, descending=bool(descending), stable=bool(stable))
 
 
 _register_implementation(prims.sort, checker=_always_executable, execution_transform=_sort_transform)
@@ -1431,11 +1483,16 @@ _register_implementation(ltorch.outer, outer, checker=_always_executable)
 # Normalization operations
 #
 
-layer_norm = _register_torch_operation("layer_norm", module=torch.nn.functional)
 batch_norm = _register_torch_operation("batch_norm", module=torch.nn.functional)
+instance_norm = _register_torch_operation("instance_norm", module=torch.nn.functional)
 
-_register_implementation(ltorch.layer_norm, layer_norm, checker=_always_executable)
+layer_norm = _register_torch_operation("layer_norm", module=torch.nn.functional)
+local_response_norm = _register_torch_operation("local_response_norm", module=torch.nn.functional)
+
 _register_implementation(ltorch.batch_norm, batch_norm, checker=_always_executable)
+_register_implementation(ltorch.instance_norm, instance_norm, checker=_always_executable)
+_register_implementation(ltorch.layer_norm, layer_norm, checker=_always_executable)
+_register_implementation(ltorch.local_response_norm, local_response_norm, checker=_always_executable)
 
 #
 # NN operations
@@ -1467,6 +1524,7 @@ adaptive_avg_pool2d = _register_torch_operation("adaptive_avg_pool2d", module=to
 adaptive_avg_pool2d_backward = _register_torch_operation(
     "torch.ops.aten._adaptive_avg_pool2d_backward", like=ltorch.adaptive_avg_pool2d_backward
 )
+multi_dot = _register_torch_operation("torch.linalg.multi_dot", like=ltorch.multi_dot)
 
 
 def _max_pool_with_indices_helper(

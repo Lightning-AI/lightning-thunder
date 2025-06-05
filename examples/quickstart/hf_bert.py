@@ -15,17 +15,20 @@ def main():
     tokenizer = transformers.AutoTokenizer.from_pretrained(model_name)
 
     with torch.device(device):
-        model = transformers.AutoModelForCausalLM.from_pretrained(
-            model_name, torch_dtype=torch.bfloat16
-        )
+        model = transformers.AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.bfloat16)
         model.requires_grad_(False)
         model.eval()
+        # apparently, Transformers 4.51.3 does not instantiate models on the default device
+        model.to(device)
 
-        inp = tokenizer(["Hello world!"], return_tensors='pt')
+        inp = tokenizer(["Hello world!"], return_tensors="pt")
 
     print(f"Eager: {benchmark(model, **inp):.2f}ms")
 
-    thunder_model = thunder.compile(model)
+    thunder_model = thunder.compile(
+        model,
+        recipe="hf-transformers",
+    )
 
     print(f"Thunder: {benchmark(thunder_model, **inp):.2f}ms")
 

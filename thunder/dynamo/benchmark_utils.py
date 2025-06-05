@@ -1,11 +1,13 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 import sys
+import inspect
 from pathlib import Path
 import torch
 from torch.utils.benchmark import Timer as TorchBenchmarkTimer
 from torch.profiler import profile, ProfilerActivity
 from thunder.dynamo.utils import thunder_options_to_str
+from thunder.core.utils import check
 from torch.utils.benchmark.utils.common import select_unit as select_time_unit
 
 if TYPE_CHECKING:
@@ -71,6 +73,19 @@ class ThunderCompileSpecification(CompileSpecificationInterface):
         return ["import thunder"]
 
 
+class ThunderCompilerOnGraphModuleSpecification(CompileSpecificationInterface):
+    def __init__(self, specification_name="thunderfx", **kwargs):
+        self.name = specification_name
+        self.thunder_options: dict = kwargs
+
+    def compile(self, gm, **kwargs):
+        from thunder.dynamo import ThunderCompiler
+
+        thunder_compiler = ThunderCompiler(**kwargs)
+        split_gm = thunder_compiler(gm, sample_args=None)
+        return split_gm
+
+
 class TorchCompileSpecification(CompileSpecificationInterface):
     """
     A compile specification for :func:`torch.compile`.
@@ -116,20 +131,24 @@ class TorchInductorSpecification(CompileSpecificationInterface):
     https://github.com/Lightning-AI/lightning-thunder/issues/1521
     """
 
-    def __init__(self, specification_name="inductor_backend"):
+    def __init__(self, specification_name="inductor_backend", *, skip_symbolic_trace=True):
         self.name: str = specification_name
+        # self.skip_symbolic_trace decides whether to skip symbolic trace for self.compile
+        self.skip_symbolic_trace = skip_symbolic_trace
 
     @staticmethod
-    def torch_inductor(fn, inputs):
+    def torch_inductor(fn, inputs, *, skip_symbolic_trace=False):
         from torch._inductor import compile as inductor_compile
         from torch.fx import symbolic_trace
 
-        fx_graph = symbolic_trace(fn)
-        return inductor_compile(fx_graph, inputs)
+        if not skip_symbolic_trace:
+            fn = symbolic_trace(fn)
+        return inductor_compile(fn, inputs)
 
     def compile(self, fn, *, inputs, **kwargs):
-        return self.torch_inductor(fn, inputs)
+        return self.torch_inductor(fn, inputs, skip_symbolic_trace=self.skip_symbolic_trace)
 
+    # to_source will always use symbolic trace
     def to_source(self, fn_name):
         return f"TorchInductorSpecification.torch_inductor({fn_name}, inputs)"
 
@@ -305,25 +324,40 @@ class TorchBenchmarkTimerSpecification(TimerInterface):
     See: :class:`torch.utils.benchmark.utils.timer.Timer` for more details.
     """
 
-    def __init__(self, name, inner_timer=torch.utils.benchmark.utils.timer.timer):
+    def __init__(
+        self,
+        name: str = "TorchBenchmarkTimerSpecification",
+        inner_timer: Callable = torch.utils.benchmark.utils.timer.timer,
+        *,
+        threshold: float | None = None,
+        min_run_time: float | None = None,
+        max_run_time: float | None = None,
+    ):
         self.inner_timer = inner_timer
         self.name = name
 
-    def time(self, stmt="pass", setup="pass", globals=None, min_run_time: float = 0.2) -> Measurement:
+        default_params = inspect.signature(TorchBenchmarkTimer.adaptive_autorange).parameters
+
+        self.threshold = threshold if threshold is not None else default_params["threshold"].default
+        self.min_run_time = min_run_time if min_run_time is not None else default_params["min_run_time"].default
+        self.max_run_time = max_run_time if max_run_time is not None else default_params["max_run_time"].default
+
+    def time(self, stmt="pass", setup="pass", globals=None) -> Measurement:
         """
-        Measures execution time using PyTorch's :func:`torch.utils.benchmark.Timer.blocked_autorange()`.
+        Measures execution time using PyTorch's :func:`torch.utils.benchmark.Timer.adaptive_autorange()`.
 
         Args:
             stmt (str, optional): Code snippet to be run in a loop and timed.
             setup (str, optional): Optional setup code. Used to define variables used in `stmt`
             globals (dict, optional): A dictionary of global variables for the executed code. Defaults to `None`.
-            min_run_time (float, optional): The minimum execution time (in seconds) to determine the number of runs. Defaults to `0.2`.
 
         Returns:
             Measurement: A benchmarking result containing execution time statistics, see :class:`torch.utils.benchmark.utils.common.Measurement`.
         """
         t = TorchBenchmarkTimer(stmt=stmt, setup=setup, globals=globals, timer=self.inner_timer)
-        measurement = t.blocked_autorange(min_run_time=min_run_time)
+        measurement = t.adaptive_autorange(
+            threshold=self.threshold, min_run_time=self.min_run_time, max_run_time=self.max_run_time
+        )
         if hasattr(self.inner_timer, "max_allocated_memory"):
             measurement.max_allocated_memory = self.inner_timer.max_allocated_memory
         return measurement
@@ -331,8 +365,26 @@ class TorchBenchmarkTimerSpecification(TimerInterface):
     def import_str(self):
         return [f"from thunder.dynamo.benchmark_utils import {self.name}"]
 
+    def __repr__(self):
+        return f"{self.name}(threshold={self.threshold}, min_run_time={self.min_run_time}, max_run_time={self.max_run_time})"
+
     def to_source(self, fn_name, inputs_name):
-        return f'{self.name}.time("{fn_name}(*{inputs_name})", globals={{"{fn_name}":{fn_name}, "{inputs_name}": {inputs_name}}})'
+        return f'{self.__repr__()}.time("{fn_name}(*{inputs_name})", globals={{"{fn_name}":{fn_name}, "{inputs_name}": {inputs_name}}})'
+
+    def __call__(
+        self,
+        *,
+        threshold: float | None = None,
+        min_run_time: float | None = None,
+        max_run_time: float | None = None,
+    ):
+        return self.__class__(
+            name=self.name,
+            inner_timer=self.inner_timer,
+            threshold=threshold if threshold is not None else self.threshold,
+            min_run_time=min_run_time if min_run_time is not None else self.min_run_time,
+            max_run_time=max_run_time if max_run_time is not None else self.max_run_time,
+        )
 
 
 WallTime = TorchBenchmarkTimerSpecification("WallTime")
@@ -456,12 +508,12 @@ def check_metrics(
             stream.write(msg)
             failed_folder = folder_path / "failed"
             report.write_benchmark(
-                failed_folder, compile_fn, timer_fn, file_name=f"failed_{filename1}", extra_comment_str=msg
+                failed_folder, compile_fn, timer_fn, file_name=f"failed_{filename}", extra_comment_str=msg
             )
             return None
 
-    measure1 = try_and_log_benchmark(compile_fn1, filename1)
-    measure2 = try_and_log_benchmark(compile_fn2, filename2)
+    _, *measure1 = try_and_log_benchmark(compile_fn1, filename1)
+    _, *measure2 = try_and_log_benchmark(compile_fn2, filename2)
 
     if measure1 is None or measure2 is None:
         return measure1, measure2
@@ -470,6 +522,12 @@ def check_metrics(
     memory_record = False
     log_strs = ""
     for m1, m2, name in zip(measure1, measure2, ("forward", "backward")):
+        check(
+            (m1 is None) == (m2 is None),
+            f"{name} measurement for the two compilation methods should either both be None or both not None, but got {m1} and {m2}",
+        )
+        if m1 is None:
+            continue
         if timer_fn.name == "WallTimeWithMemoryUsage":
             memory_ret = check_memory_usage(
                 m1.max_allocated_memory,

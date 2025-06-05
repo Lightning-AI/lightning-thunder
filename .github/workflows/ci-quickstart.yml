@@ -1,0 +1,65 @@
+name: CI quickstart
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - ".github/workflows/ci-quickstart.yml"
+      - ".github/run-quickstart-as-lit-jobs.py"
+      - ".github/load-quickstart-report.py"
+      - "examples/quickstart/*"
+  workflow_dispatch: {}
+  schedule:
+    - cron: "0 0 * * *" # every midnight
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.head_ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  launcher-quickstart:
+    runs-on: "ubuntu-22.04"
+    #timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Build package
+        run: |
+          pip install -U build
+          python -m build --sdist --wheel --outdir dist/
+          ls -l dist/
+
+      - name: Run scripts in jobs
+        env:
+          LIGHTNING_USER_ID: ${{ secrets.LIGHTNING_USER_ID }}
+          LIGHTNING_API_KEY: ${{ secrets.LIGHTNING_API_KEY }}
+        run: |
+          pip install lightning_sdk -U -q
+          python .github/run-quickstart-as-lit-jobs.py ${{ github.run_id }}
+
+      - name: Load report
+        if: always()
+        id: load-report
+        run: |
+          report=$(python .github/load-quickstart-report.py)
+          echo "REPORT<<EOF" >> $GITHUB_ENV
+          echo "$report" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - uses: act10ns/slack@v2
+        if: always() && github.event_name != 'pull_request' && steps.load-report.conclusion == 'success'
+        with:
+          webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
+          status: ${{ job.status }}
+          message: |
+            *Quickstart CI* - [${{ job.status }}]
+            ${{ env.REPORT }}
+            ref: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
