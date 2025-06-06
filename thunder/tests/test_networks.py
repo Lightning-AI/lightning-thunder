@@ -21,6 +21,7 @@ import thunder.tests.hf_bart_self_attn as hf_bart_self_attn
 
 from transformers.models.qwen2 import Qwen2Config, Qwen2ForCausalLM
 from transformers.models.phi3 import Phi3Config, Phi3ForCausalLM
+
 #
 # nanoGPT tests
 #
@@ -410,10 +411,12 @@ def _get_model_config_pairs():
 
     def phi3():
         from transformers.models.phi3 import Phi3ForCausalLM, Phi3Config
+
         return Phi3ForCausalLM, Phi3Config
 
     def qwen2():
         from transformers.models.qwen2 import Qwen2ForCausalLM, Qwen2Config
+
         return Qwen2ForCausalLM, Qwen2Config
 
     return [phi3(), qwen2()]
@@ -434,7 +437,7 @@ def test_hf_for_nemo(model_cls, config_cls):
         max_position_embeddings=128,
         use_cache=True,
         tie_word_embeddings=False,
-        pad_token_id=15
+        pad_token_id=15,
     )
 
     with torch.device("cuda"):
