@@ -112,6 +112,4 @@ def debug_execution_trace(cfn, pre_callback: Callable | None = None, post_callba
             "debug_execution_trace: Both `pre_callback` and `post_callback` were None, expected atleast one of them to not be None."
         )
     _debug_transform = DebugTransform(pre_callback=pre_callback, post_callback=post_callback)
-    from thunder import jit
-
-    return jit(cfn, transforms=[_debug_transform])
+    return thunder.core.transforms.add_transform(cfn, transform=_debug_transform)

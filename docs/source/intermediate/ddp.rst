@@ -3,7 +3,21 @@ Distributed Data Parallel (DDP)
 
 Thunder has its own Distributed Data Parallel (DDP) transform that we recommend using, although compiled modules also work with PyTorch's DDP transform.
 
-You can wrap a model in Thunder's ddp like this::
+You can wrap a model in Thunder's ddp in two ways:
+
+1. Preferred way (using transforms directly):
+   ::
+
+     from thunder.distributed.transforms.ddp_v2 import DDPTransform
+     from thunder import jit
+
+     model = MyModel()
+     process_group = copy_default_process_group()
+     transform = DDPTransform(process_group=process_group)
+     cmodel = jit(model, transforms=[transform])
+
+2. Deprecated way (using ddp function):
+   ::
 
   from thunder.distributed import ddp
 

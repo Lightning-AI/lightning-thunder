@@ -221,10 +221,10 @@ def row_parallel(
             x = torch.randn(4, n_in, device=device)
             out = tp_model(x)  # shape: [4, n_out]
     """
+    from thunder.core.transforms import add_transform
     from thunder.core.module import ThunderModule
     from thunder.distributed import copy_default_process_group
     from thunder.transforms import MaterializationTransform
-    from thunder import jit
 
     utils.check_type(thunder_module, ThunderModule)
     if process_group is None:
@@ -236,9 +236,10 @@ def row_parallel(
     else:
         utils.check_type(device, torch.device)
         utils.check(device.index == rank, lambda: f"{device.index=} expected to match {rank=} of {process_group=}")
-    rowwise_thunder_module = jit(
+
+    rowwise_thunder_module = add_transform(
         thunder_module,
-        transforms=[
+        transform=[
             TransformForRowWiseParallel(
                 rank=rank,
                 world_size=world_size,
@@ -251,4 +252,5 @@ def row_parallel(
             ),
         ],
     )
+    
     return rowwise_thunder_module

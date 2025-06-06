@@ -514,6 +514,16 @@ class _NoopTransform(Transform):
 
 
 def noop(cfn: Callable) -> Callable:
+    """
+    DEPRECATED: Use thunder.jit(..., transforms=[_NoopTransform()]) instead.
+    """
+    import warnings
+    warnings.warn(
+        "noop() is deprecated and will be removed in a future release. "
+        "Use thunder.jit(..., transforms=[_NoopTransform()]) instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     _noop_transform = _NoopTransform()
     return add_transform(cfn, transform=_noop_transform)
 
@@ -547,6 +557,16 @@ class _CommentFusionsTransform(Transform):
 
 
 def comment_fusions(cfn: Callable) -> Callable:
+    """
+    DEPRECATED: Use thunder.jit(..., transforms=[_CommentFusionsTransform()]) instead.
+    """
+    import warnings
+    warnings.warn(
+        "comment_fusions() is deprecated and will be removed in a future release. "
+        "Use thunder.jit(..., transforms=[_CommentFusionsTransform()]) instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     return add_transform(cfn, _CommentFusionsTransform)
 
 
@@ -1525,6 +1545,16 @@ def _get_gradfn_and_executor(
 def grad(
     cfn,
 ) -> Callable:
+    """
+    DEPRECATED: Use thunder.jit(..., transforms=[_GradTransform()]) instead.
+    """
+    import warnings
+    warnings.warn(
+        "grad() is deprecated and will be removed in a future release. "
+        "Use thunder.jit(..., transforms=[_GradTransform()]) instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     def grad(func):
         @wraps(func)
         def grad_func(*args, **kwargs):
