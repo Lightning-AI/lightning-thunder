@@ -393,8 +393,7 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
 
     # run through DCE in case some of the gradients of intermediates are not needed.
     joint_trace = dce(joint_trace)
-    # group get_grad symbols together for torch compile fusions
-    # !!! is it preferable to do this here or in the torch compile fusion pass?
+    # group get_grad symbols together for torch compile fusions and to make clear boundary for cse
     _group_get_grad_bsyms(joint_trace)
 
     end_time_ns = time.perf_counter_ns()
