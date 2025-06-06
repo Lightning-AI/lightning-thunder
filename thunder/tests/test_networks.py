@@ -416,7 +416,7 @@ def _get_model_config_pairs():
         from transformers.models.qwen2 import Qwen2ForCausalLM, Qwen2Config
         return Qwen2ForCausalLM, Qwen2Config
 
-    return [qwen2(), phi3()]
+    return [phi3(), qwen2()]
 
 
 @thunder.tests.framework.requiresCUDA
@@ -434,10 +434,8 @@ def test_recipe_model_hf_for_nemo(model_cls, config_cls):
         max_position_embeddings=128,
         use_cache=True,
         tie_word_embeddings=False,
+        pad_token_id=15
     )
-
-    if "phi" in model_cls.__name__.lower():
-        config.pad_token_id = 15
 
     with torch.device("cuda"):
         model = model_cls(config).to(torch.bfloat16)
@@ -472,8 +470,7 @@ def test_recipe_model_hf_for_nemo(model_cls, config_cls):
     grads_compiled = torch.autograd.grad(compiled_loss, model.parameters(), grad_outputs=loss_grad)
     torch.testing.assert_close(grads_ref, grads_compiled, rtol=1e-2, atol=1e-2)
 
-    if hasattr(torch, 'compile'):
-        torch.compile.reset()  # torch 2.3+
+    torch._dynamo.reset()
 
 
 LLAMA_3_2_1B_CFG = {
