@@ -300,7 +300,6 @@ def compile(
             recipe = thunder.recipes.HFTransformers()
         else:
             recipe = thunder.recipes.BaseRecipe()
-        print(recipe)
 
     if recipe == "auto":
         raise NotImplementedError
