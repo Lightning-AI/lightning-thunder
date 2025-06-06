@@ -122,6 +122,28 @@ def test_recipe_model_with_cache(model_cls, config_cls):
     deregister_executor("inplace_index_copy_ex")
 
 
+def test_recipe_hf_meta():
+    config = LlamaConfig(
+        num_hidden_layers=1,
+        hidden_size=1024,
+        intermediate_size=4096,
+        num_attention_heads=16,
+        num_key_value_heads=16,
+        vocab_size=32000,
+        max_position_embeddings=128,
+        tie_word_embeddings=False,
+        use_cache=False,
+    )
+
+    with torch.device("meta"):
+        model = LlamaForCausalLM(config)
+        inp = torch.randint(0, config.vocab_size, (1, 32))
+
+    thunder_model = thunder.compile(model, recipe=HFTransformers())
+    # see that this works
+    ce, pro_to_comp, pro_to_epi = thunder.compile_data(thunder_model).get_computation_and_inputs(inp)
+
+
 @pytest.mark.skipif(not nvfuser_available(), reason="nvFuser is not available")
 def test_recipe_mlp():
     model = torch.nn.Sequential(torch.nn.Linear(2048, 4096), torch.nn.ReLU(), torch.nn.Linear(4096, 64))

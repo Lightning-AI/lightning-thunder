@@ -129,7 +129,22 @@ class HFTransformers(BaseRecipe):
             replace_with=lambda *args: None,
         )
 
-        return [warn_lookaside]
+        # HF transformers (4.52.4) wraps something in autocast(device, enabled=False)
+        # but PyTorch (2.7) does not like this call when device is meta.
+        # So to trace on the meta device and because don't care about much about the autocast,
+        # we replace it with the nullcontext.
+        # We might allow more cases (call autocast if iot is nt with meta or not enabled=False?)
+        def autocast_lookaside(*args, enabled=True, **kwargs):
+            from contextlib import nullcontext
+
+            if enabled:
+                raise RuntimeError("don't do autocast")
+            return nullcontext()
+
+        import torch
+
+        autocast_lookaside = thunder.core.recipe.Lookaside(fn=torch.autocast, replace_with=autocast_lookaside)
+        return [warn_lookaside, autocast_lookaside]
 
     def setup_transforms(self):
         """
