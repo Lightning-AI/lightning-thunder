@@ -428,14 +428,11 @@ def test_hf_for_nemo(model_fn):
 
     config = config_cls(
         num_hidden_layers=1,
-        hidden_size=1024,
-        intermediate_size=4096,
+        hidden_size=16,
         num_attention_heads=16,
         num_key_value_heads=16,
         vocab_size=32,
         max_position_embeddings=16,
-        use_cache=True,
-        tie_word_embeddings=False,
         pad_token_id=15,
     )
 
