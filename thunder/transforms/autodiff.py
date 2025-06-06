@@ -151,6 +151,9 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                             else:
                                 # all other symbols are just computation, but we may also need to add in the symbols from forward which should be recomputed
                                 backward_part_bsyms = [nbsym.from_bsym_swap_proxies(self.swap_map)]
+                                # we insert the recomputed symbols just before where they are needed.
+                                # as this inserts into the list during processing, we use a while loop rather than
+                                # a for loop
                                 bw_idx = 0
                                 while bw_idx < len(backward_part_bsyms):
                                     backward_part_bsym = backward_part_bsyms[bw_idx]
@@ -166,10 +169,6 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                                     if not modified:
                                         bw_idx += 1
                                 self.add_processed_bsyms(backward_part_bsyms)
-
-                # we insert the recomputed symbols just before where they are needed.
-                # as this inserts into the list during processing, we use a while loop rather than
-                # a for loop
 
                 self.collected_bw_part_bsyms.clear()
                 self.backward_recomputed_proxy_names.clear()
