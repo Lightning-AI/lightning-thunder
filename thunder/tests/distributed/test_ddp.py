@@ -1,7 +1,6 @@
 import os
 import unittest
 from itertools import product
-from collections.abc import Callable
 
 import pytest
 import torch
@@ -40,7 +39,6 @@ if TE_AVAILABLE:
         get_default_fp8_recipe,
     )
     from transformer_engine.common.recipe import MXFP8BlockScaling
-    import transformer_engine
 
     is_fp8_supported, fp8_support_reason = check_fp8_support()
 
@@ -160,7 +158,6 @@ class DDPTest(DistributedParallelTestCase):
         # If they are different, it'd be impossible to keep replicas identical.
         from thunder.common import CACHE_OPTIONS
         from thunder.distributed import ddp
-        from thunder.distributed import get_skip_data_parallel_grad_sync
 
         def get_model_and_optimizer(device):
             m = ToyModel().to(device)

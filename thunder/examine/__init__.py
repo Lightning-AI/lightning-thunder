@@ -190,7 +190,7 @@ def examine(fn: Callable, *args, show_call_stack: bool | int = False, **kwargs):
     #   warn about this
 
     # TODO Consider returning additional information
-    print(f"The function appears to be working as expected")
+    print("The function appears to be working as expected")
 
 
 def warn_fusions() -> bool:

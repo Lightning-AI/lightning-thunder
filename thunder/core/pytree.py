@@ -8,7 +8,6 @@ from torch.fx.immutable_collections import immutable_list
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
 from thunder.core.baseutils import ProxyInterface, is_likely_from_collections_namedtuple
-from types import FunctionType
 
 OPTREE_NAMESPACE = "thunder"
 

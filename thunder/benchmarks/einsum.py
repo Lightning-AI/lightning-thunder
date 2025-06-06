@@ -1,9 +1,7 @@
 from collections.abc import Callable
-from functools import partial, wraps
 from collections.abc import Sequence
 
 import pytest
-import torch
 import thunder
 
 from thunder.benchmarks import EinsumBenchmark
