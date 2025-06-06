@@ -50,6 +50,7 @@ Alternatively, switch to the torch.compile fuser with `fuser="torch.compile"`.
 """
 
 
+@Recipe.register("")
 class BaseRecipe(Recipe):
     """
     Compilation recipe with Thunder defaults. The recipe wires a set of executors, transforms

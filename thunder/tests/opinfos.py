@@ -4524,6 +4524,22 @@ view_as_opinfo = OpInfo(
 shape_ops.append(view_as_opinfo)
 
 
+def repeat_interleave_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    yield SampleInput(make(), repeats=2)
+    yield SampleInput(make(2, 3, 4), repeats=2)
+    yield SampleInput(make(2, 3, 4), repeats=2, dim=1)
+
+
+repeat_interleave_opinfo = OpInfo(
+    ltorch.repeat_interleave,
+    sample_input_generator=repeat_interleave_sample_generator,
+    torch_reference=torch.Tensor.repeat_interleave,
+)
+shape_ops.append(repeat_interleave_opinfo)
+
+
 def repeat_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
