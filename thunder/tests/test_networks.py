@@ -421,7 +421,7 @@ def _get_model_config_pairs():
 
 @thunder.tests.framework.requiresCUDA
 @pytest.mark.parametrize("model_cls, config_cls", _get_model_config_pairs())
-def test_recipe_model_hf_for_nemo(model_cls, config_cls):
+def test_hf_for_nemo(model_cls, config_cls):
     from thunder.dynamo import thunderfx
 
     config = config_cls(
