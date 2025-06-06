@@ -19,9 +19,6 @@ from thunder.tests.framework import (
 import thunder.tests.nanogpt_model as nanogpt_model
 import thunder.tests.hf_bart_self_attn as hf_bart_self_attn
 
-from transformers.models.qwen2 import Qwen2Config, Qwen2ForCausalLM
-from transformers.models.phi3 import Phi3Config, Phi3ForCausalLM
-
 #
 # nanoGPT tests
 #
@@ -408,7 +405,6 @@ def test_thunderfx_mistral_nemo_small():
 
 
 def _get_model_config_pairs():
-
     def phi3():
         from transformers.models.phi3 import Phi3ForCausalLM, Phi3Config
 
@@ -419,13 +415,16 @@ def _get_model_config_pairs():
 
         return Qwen2ForCausalLM, Qwen2Config
 
-    return [phi3(), qwen2()]
+    return [(phi3), (qwen2)]
 
 
 @thunder.tests.framework.requiresCUDA
-@pytest.mark.parametrize("model_cls, config_cls", _get_model_config_pairs())
-def test_hf_for_nemo(model_cls, config_cls):
+@pytest.mark.parametrize("model_fn", _get_model_config_pairs())
+def test_hf_for_nemo(model_fn):
     from thunder.dynamo import thunderfx
+    import torch
+
+    model_cls, config_cls = model_fn()
 
     config = config_cls(
         num_hidden_layers=1,
@@ -433,8 +432,8 @@ def test_hf_for_nemo(model_cls, config_cls):
         intermediate_size=4096,
         num_attention_heads=16,
         num_key_value_heads=16,
-        vocab_size=32000,
-        max_position_embeddings=128,
+        vocab_size=32,
+        max_position_embeddings=16,
         use_cache=True,
         tie_word_embeddings=False,
         pad_token_id=15,
