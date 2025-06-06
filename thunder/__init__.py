@@ -441,6 +441,7 @@ def jit(
                 kwargs,
                 ad_hoc_executor=ad_hoc_executor,
                 sharp_edges=cd.sharp_edges,
+                skip_check_tensor_shape_and_metadata=compile_options.get("skip_check_tensor_shape_and_metadata", False),
             )
             prologue_trc = jit_results.prologue_trace
             computation_trc = jit_results.computation_trace

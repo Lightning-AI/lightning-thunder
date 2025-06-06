@@ -96,7 +96,6 @@ class ThunderCompiler:
             ...         return x - 1
             >>> out = func(x)
         """
-        from thunder import jit
 
         if LooseVersion(torch.__version__) < LooseVersion("2.4.0"):
             # NOTE: PyTorch 2.3 or lower has bug in `split_module` function used in splitter.
@@ -119,19 +118,31 @@ class ThunderCompiler:
             "thunderfx_disable_split_autograd", _DEFAULT_THUNDERFX_DISABLE_SPLIT_AUTOGRAD
         )
         self.thunder_options = thunder_options
-        self._thunder_jit = partial(jit, **thunder_options)
         self._torch_compile = torch.compile
 
     def __call__(self, gm: torch.fx.GraphModule, sample_args: list[torch.SymInt, torch.Tensor]):
-        gm = remove_empty_autocast(gm)
+        from thunder import jit
 
+        gm = remove_empty_autocast(gm)
         # Dynamo uses lazy generation of the underlying Python code, so we need to
         # force recompilation of the GraphModule before passing it to Thunder.
         recompile_graph(gm)
 
         # The whole graph may not be supported by `thunder`, so we split it in `thunder` supported sections
         # and unsupported sections which are passed to `torch.compile(backend='inductor')`
-        split_module, subgraph_info = _splitter(gm, self._thunder_jit, self._torch_compile, sample_args)
+        skip_check_tensor_shape_and_metadata = is_in_torch_compile() and (not is_dynamic_inputs(sample_args))
+        split_module, subgraph_info = _splitter(
+            gm,
+            partial(
+                jit,
+                **(
+                    self.thunder_options
+                    | {"skip_check_tensor_shape_and_metadata": skip_check_tensor_shape_and_metadata}
+                ),
+            ),
+            self._torch_compile,
+            sample_args,
+        )
         self.subgraph_infos.append(subgraph_info)
         return split_module
 

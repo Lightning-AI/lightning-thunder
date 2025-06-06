@@ -163,6 +163,7 @@ class JitCtx:
         executor_lookasides,
         ad_hoc_executor,
         show_interpreter_progress: bool = False,
+        skip_check_tensor_shape_and_metadata: bool,
     ):
         self._sharp_edges: SHARP_EDGES_OPTIONS = sharp_edges
         self._prologue_trace = prologue_trace
@@ -173,6 +174,7 @@ class JitCtx:
         self._executor_lookasides: dict[Callable, Callable] = executor_lookasides
         self._ad_hoc_executor = ad_hoc_executor
         self._show_interpreter_progress = show_interpreter_progress
+        self._skip_check_tensor_shape_and_metadata = skip_check_tensor_shape_and_metadata
         self._last_printed_progress = -1
         self._progress_interval = 10
 
@@ -276,10 +278,12 @@ class JitCtx:
             # TODO: other caching modes
             co: CACHE_OPTIONS = get_cache_option()
             if co is CACHE_OPTIONS.CONSTANT_VALUES:
-                self.add_constraint((clang.check_tensor_shape_and_metadata, p))
+                if not self._skip_check_tensor_shape_and_metadata:
+                    self.add_constraint((clang.check_tensor_shape_and_metadata, p))
             elif co is CACHE_OPTIONS.SYMBOLIC_VALUES:
                 # TODO: establish guarding logic to allow non-broadcast shape change
-                self.add_constraint((clang.check_tensor_shape_and_metadata, p))
+                if not self._skip_check_tensor_shape_and_metadata:
+                    self.add_constraint((clang.check_tensor_shape_and_metadata, p))
             elif co not in (CACHE_OPTIONS.SAME_INPUT, CACHE_OPTIONS.NO_CACHING):
                 raise NotImplementedError(f"Unsupported cache option {co}")
             return p
@@ -2087,6 +2091,7 @@ def thunder_general_jit(
     *,
     sharp_edges: SHARP_EDGES_OPTIONS,
     ad_hoc_executor,
+    skip_check_tensor_shape_and_metadata: bool,
 ) -> TraceResults:
     # TODO: move into wrap_callback or so
     if isinstance(fn, torch.nn.parallel.DistributedDataParallel):
@@ -2117,6 +2122,7 @@ def thunder_general_jit(
         executor_lookasides=executor_lookasides,
         ad_hoc_executor=ad_hoc_executor,
         show_interpreter_progress=compile_data.debug_options.show_interpreter_progress,
+        skip_check_tensor_shape_and_metadata=skip_check_tensor_shape_and_metadata,
     )
     jfn = interpret(
         fn,
