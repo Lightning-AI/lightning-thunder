@@ -1,7 +1,7 @@
 sphinx ==5.3.0
 myst-parser ==1.0.0
 nbsphinx ~=0.9.7
-ipython[all] ~=8.36.0
+ipython[all] ~=8.37.0
 pandoc ==2.4
 docutils >=0.16
 sphinxcontrib-fulltoc @ git+https://github.com/t-vi/sphinx-contrib-fulltoc@master
@@ -11,7 +11,7 @@ sphinx-autodoc-typehints ==1.23.0
 sphinx-paramlinks ==0.6.0
 sphinx-togglebutton ==0.3.2
 sphinx-copybutton ==0.5.2
-snowballstemmer < 3
+snowballstemmer < 4
 
 # installed from S3 location and fetched in advance
 lai-sphinx-theme
