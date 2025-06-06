@@ -1,4 +1,6 @@
+from __future__ import annotations
 from typing import Any
+from typing import TYPE_CHECKING
 
 import torch
 import numpy as np
@@ -6,6 +8,10 @@ import random
 
 from lightning_utilities.core.imports import package_available
 from looseversion import LooseVersion
+from thunder.core.proxies import pyval
+
+if TYPE_CHECKING:
+    from thunder.core.proxies import FloatProxy, IntegerProxy
 
 
 #
@@ -359,10 +365,10 @@ def _cudnn_sdpa_checker(
     key: TensorLike,
     value: TensorLike,
     attn_mask: TensorLike | None = None,
-    dropout_p: float = 0.0,
-    is_causal: bool = False,
+    dropout_p: FloatProxy | float = 0.0,
+    is_causal: IntegerProxy | bool = False,
     *,
-    scale: float | None = None,
+    scale: FloatProxy | float | None = None,
 ) -> bool:
     # TODO(#58): make the checker more conservative.
     if cudnn is None:
@@ -384,6 +390,10 @@ def _cudnn_sdpa_checker(
         if d % 8 != 0 or d > 128:
             return False
 
+    dropout_p = pyval(dropout_p)
+    is_causal = pyval(is_causal)
+    if scale is not None:
+        scale = pyval(scale)
     try:
         # TensorProxy do not contain stride information, but cudnn graph requires them.
         # Assume row major layout for now. If the strides during execution are different, a new graph will be built.
