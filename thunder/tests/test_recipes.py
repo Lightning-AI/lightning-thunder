@@ -122,6 +122,8 @@ def test_recipe_model_with_cache(model_cls, config_cls):
     deregister_executor("inplace_index_copy_ex")
 
 
+@pytest.mark.skipif(not nvfuser_available(), reason="nvFuser is not available")
+@pytest.mark.skipif(IS_WINDOWS, reason="slow on Windows")
 def test_recipe_hf_meta():
     config = LlamaConfig(
         num_hidden_layers=1,
