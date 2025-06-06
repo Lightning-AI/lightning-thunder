@@ -649,14 +649,14 @@ class Benchmark_litGPT:
 
                     dynamo_config.cache_size_limit = 64
 
-                self.backend = ThunderCompiler(executors=executors, transforms=transforms)
+                self.backend = ThunderCompiler(executors=executors, transforms=transforms, delay_trace_split=False)
                 # Because Lightning Fabric is imported in this script it monkey patches the torch.compile function
                 # https://github.com/Lightning-AI/pytorch-lightning/blob/828fd998961f6a60f92c35254bb94d6e049ad069/src/lightning/fabric/wrappers.py#L421
                 # using __wrapped__ to access the original torch.compile function did not work
                 # so we are using the lower level torch._dynamo.optimize function
                 model = torch._dynamo.optimize(backend=self.backend)(model)
             else:
-                jit_options = {}
+                jit_options = {"delay_trace_split": False}
                 jit_options["fp8_shard_intermediate_activation"] = self.fp8_shard_intermediate_activation
                 model = thunder.jit(model, executors=executors, transforms=transforms, **jit_options)
         elif self.compile != "eager":
