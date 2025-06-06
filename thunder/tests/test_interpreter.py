@@ -3559,3 +3559,22 @@ def test_tuple_mul():
     res = jfn(x)
     expected = fn(x)
     assert_close(res, expected)
+
+
+def test_reraise_traceback():
+    import traceback
+
+    def bar():
+        print("A" * "A")
+
+    def fn():
+        try:
+            bar()
+        finally:
+            pass
+
+    jfn = thunder.jit(fn)
+    try:
+        jfn()
+    except Exception as e:
+        assert 'print("A" * "A")' in "\n".join(traceback.format_tb(e.__traceback__))

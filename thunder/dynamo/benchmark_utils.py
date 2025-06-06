@@ -73,6 +73,19 @@ class ThunderCompileSpecification(CompileSpecificationInterface):
         return ["import thunder"]
 
 
+class ThunderCompilerOnGraphModuleSpecification(CompileSpecificationInterface):
+    def __init__(self, specification_name="thunderfx", **kwargs):
+        self.name = specification_name
+        self.thunder_options: dict = kwargs
+
+    def compile(self, gm, **kwargs):
+        from thunder.dynamo import ThunderCompiler
+
+        thunder_compiler = ThunderCompiler(**kwargs)
+        split_gm = thunder_compiler(gm, sample_args=None)
+        return split_gm
+
+
 class TorchCompileSpecification(CompileSpecificationInterface):
     """
     A compile specification for :func:`torch.compile`.
@@ -118,20 +131,24 @@ class TorchInductorSpecification(CompileSpecificationInterface):
     https://github.com/Lightning-AI/lightning-thunder/issues/1521
     """
 
-    def __init__(self, specification_name="inductor_backend"):
+    def __init__(self, specification_name="inductor_backend", *, skip_symbolic_trace=True):
         self.name: str = specification_name
+        # self.skip_symbolic_trace decides whether to skip symbolic trace for self.compile
+        self.skip_symbolic_trace = skip_symbolic_trace
 
     @staticmethod
-    def torch_inductor(fn, inputs):
+    def torch_inductor(fn, inputs, *, skip_symbolic_trace=False):
         from torch._inductor import compile as inductor_compile
         from torch.fx import symbolic_trace
 
-        fx_graph = symbolic_trace(fn)
-        return inductor_compile(fx_graph, inputs)
+        if not skip_symbolic_trace:
+            fn = symbolic_trace(fn)
+        return inductor_compile(fn, inputs)
 
     def compile(self, fn, *, inputs, **kwargs):
-        return self.torch_inductor(fn, inputs)
+        return self.torch_inductor(fn, inputs, skip_symbolic_trace=self.skip_symbolic_trace)
 
+    # to_source will always use symbolic trace
     def to_source(self, fn_name):
         return f"TorchInductorSpecification.torch_inductor({fn_name}, inputs)"
 
@@ -495,8 +512,8 @@ def check_metrics(
             )
             return None
 
-    measure1 = try_and_log_benchmark(compile_fn1, filename1)
-    measure2 = try_and_log_benchmark(compile_fn2, filename2)
+    _, *measure1 = try_and_log_benchmark(compile_fn1, filename1)
+    _, *measure2 = try_and_log_benchmark(compile_fn2, filename2)
 
     if measure1 is None or measure2 is None:
         return measure1, measure2

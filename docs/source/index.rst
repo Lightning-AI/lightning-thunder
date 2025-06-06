@@ -147,6 +147,7 @@ API reference
    reference/extend/index
    reference/transforms/index
    reference/dynamo/index
+   reference/recipes/index
 
 
 Indices and tables
