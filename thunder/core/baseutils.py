@@ -4,7 +4,7 @@
 from __future__ import annotations
 from collections.abc import Sequence
 from enum import Enum
-from types import MappingProxyType, ModuleType, CodeType, EllipsisType, FunctionType, MethodType
+from types import MappingProxyType, CodeType, EllipsisType, FunctionType, MethodType
 from typing import TYPE_CHECKING
 import collections.abc
 import dis

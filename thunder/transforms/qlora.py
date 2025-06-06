@@ -2,7 +2,6 @@ import thunder
 from thunder.core.proxies import TensorProxy
 from thunder.core.transform_common import Transform
 from thunder.core import prims
-from .quantization import trace_with_replaced_proxy_metadata
 import torch
 import math
 
@@ -98,8 +97,8 @@ class LORATransform(Transform):
         self.init_lora_linear(lora_a, lora_b)
 
         state_dict = state_dict.copy()
-        state_dict[f"weight.lora_a"] = lora_a
-        state_dict[f"weight.lora_b"] = lora_b
+        state_dict["weight.lora_a"] = lora_a
+        state_dict["weight.lora_b"] = lora_b
 
         return state_dict
 

@@ -1,6 +1,5 @@
 import torch
 from torch.testing import assert_close
-from lightning_utilities.core.imports import package_available
 import pytest
 
 import thunder
@@ -448,9 +447,7 @@ def test_constant_folding():
                 2,
             )
             + 1
-        )[
-            0
-        ]  # 1
+        )[0]  # 1
         return x + getitem + getitem_2
 
     jforward = thunder.jit(forward, transforms=[ConstantFolding()])
@@ -589,9 +586,6 @@ def test_disable_params_and_buffer_check():
 
 
 def test_disable_params_check_thunderfx():
-    from thunder.tests.litgpt_model import Config
-    from litgpt.model import GPT
-    from thunder.transforms.extraction_only_prologue_transform import ExtractionOnlyPrologueTransform
     from thunder.dynamo import thunderfx
 
     class Model(torch.nn.Module):
@@ -634,8 +628,6 @@ def test_buffer_dtype_casting():
     import torch.nn as nn
     import itertools
 
-    from typing import Any, Optional, Tuple, Union, List
-
     class CastBuffers(thunder.core.transform_common.Transform):
         def __init__(self):
             self.cast_states = {}
@@ -654,7 +646,6 @@ def test_buffer_dtype_casting():
 
         def transform_traces_pre_prologue(self, prologue_trace, computation_trace, epilogue_trace, **kwargs):
             tm = self.thunder_module
-            from thunder.core.trace import tracectx
 
             checks = thunder.transforms.utils.get_checks(prologue_trace)
 

@@ -2,7 +2,6 @@ from __future__ import annotations
 from functools import partial
 from functools import wraps
 from typing import ClassVar, TYPE_CHECKING
-import inspect
 import math
 import os
 import sys
@@ -37,7 +36,7 @@ __all__ = [
     "run_test_no_sync_grad_accumulation",
     "SmallModel",
     "ToyModel",
-    "DataParallelTestCase",
+    "DistributedParallelTestCase",
 ]
 
 

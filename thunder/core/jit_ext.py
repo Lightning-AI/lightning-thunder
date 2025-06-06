@@ -30,7 +30,6 @@ import torch.utils.checkpoint
 import thunder
 from thunder.core.compile_data import get_cache_option, get_compile_data
 import thunder.clang as clang
-import thunder.core.transforms
 import thunder.core.baseutils as baseutils
 import thunder.core.codeutils as codeutils
 from thunder.core.proxies import (
@@ -108,9 +107,7 @@ class JITSharpEdgeError(RuntimeError):
 def _general_jit_sharp_edge(desc: str, value: Any, /) -> Any | INTERPRETER_SIGNALS:
     sharp_edges: SHARP_EDGES_OPTIONS = get_jit_ctx().sharp_edges
 
-    s: str = (
-        f"{desc} This is currently considered a sharp edge even with interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON. For cases in which we are overly strict, please file an issue. Thank you!"
-    )
+    s: str = f"{desc} This is currently considered a sharp edge even with interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON. For cases in which we are overly strict, please file an issue. Thank you!"
 
     if sharp_edges is SHARP_EDGES_OPTIONS.ERROR:
         return do_raise(JITSharpEdgeError(s))
@@ -1681,9 +1678,9 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             name = ".".join(name)
             if typ == "_parameters":
                 bsym = prims.unpack_parameter.bind(root_module, name, output=output)
-                assert (
-                    ProxyTag.STATIC_MEMORY_LOCATION in output.tags
-                ), "Parameter was not tagged with STATIC_MEMORY_LOCATION"
+                assert ProxyTag.STATIC_MEMORY_LOCATION in output.tags, (
+                    "Parameter was not tagged with STATIC_MEMORY_LOCATION"
+                )
             elif typ == "_buffers":
                 bsym = prims.unpack_buffer.bind(root_module, name, output=output)
                 output.tags.add(ProxyTag.STATIC_MEMORY_LOCATION)
@@ -1727,7 +1724,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             fn = provenance.inputs[0]
             args = provenance.inputs[1]
             if fn.inst != PseudoInst.CONSTANT:
-                raise NotImplementedError(f"unpacking from nonconstant opaque function")
+                raise NotImplementedError("unpacking from nonconstant opaque function")
             if fn.value.__name__ == "__getitem__":
                 idx, obj = args.inputs
                 # This should be solved in the JIT...
@@ -2091,7 +2088,7 @@ def thunder_general_jit(
     # TODO: move into wrap_callback or so
     if isinstance(fn, torch.nn.parallel.DistributedDataParallel):
         raise NotImplementedError(
-            f"jitting DistributedDataParallel modules is not supported compile the module and then wrap in DDP"
+            "jitting DistributedDataParallel modules is not supported compile the module and then wrap in DDP"
         )
 
     co: CACHE_OPTIONS = get_cache_option()

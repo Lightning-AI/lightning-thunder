@@ -23,7 +23,6 @@ from thunder.core.pytree import tree_flatten
 if TYPE_CHECKING:
     from numbers import Number
     from thunder.core.symbol import Symbol
-    import os
     from typing import Any
     from collections.abc import Sequence
 
@@ -225,7 +224,7 @@ def get_proxy_inputs_from_node(node: torch.fx.Node) -> tuple[tuple, dict]:
                     )
                 else:
                     # NOTE - This will be caught and be part of the SplitReason.
-                    raise TypeError(f"`make_input_proxy` received example_value which wasn't Tensor or Tuple")
+                    raise TypeError("`make_input_proxy` received example_value which wasn't Tensor or Tuple")
                 return proxy(example_value)
 
             # This is int, float, etc.
@@ -284,7 +283,6 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
     @compile_data_and_stats(cd, cs)
     @thunder._with_cache_info_ctx
     def _run_with_cache_info():
-
         # We need cache info here as the default dtype and device support
         # for factory functions like ones, zeros, etc expects these details to be present.
         # TODO: Move this to CompileData as well?
@@ -480,14 +478,14 @@ def update_node_and_submodule(
         new_name (str): The new name to assign to the node and the submodule.
         new_callable (Callable): The new callable to be used as the target for the submodule.
     """
-    assert graph_module.delete_submodule(
-        node.name
-    ), f"Didn't find a submodule named {node.name} in graph_module {graph_module}"
+    assert graph_module.delete_submodule(node.name), (
+        f"Didn't find a submodule named {node.name} in graph_module {graph_module}"
+    )
     node.name = new_name
     node.target = new_name
-    assert graph_module.add_submodule(
-        node.name, new_callable
-    ), f"Adding submodule with name {node.name} in graph_module {graph_module} failed"
+    assert graph_module.add_submodule(node.name, new_callable), (
+        f"Adding submodule with name {node.name} in graph_module {graph_module} failed"
+    )
 
 
 def recompile_graph(gm: torch.fx.GraphModule):
@@ -581,7 +579,7 @@ def _get_example_inputs_from_placeholder(
     - When `only_metadata` is `False`: Generates and returns a random example tensor based on the node's expected shape and data type, etc.
     - When `only_metadata` is `True`: Returns only the tensor's metadata (e.g., shape, data type) without generating an actual tensor.
     """
-    check(node.op == "placeholder", lambda: f"The node must be placeholder type", ValueError)
+    check(node.op == "placeholder", lambda: "The node must be placeholder type", ValueError)
     # Prefers to use actual example value in GraphArg if available
     if "grapharg" in node.meta:
         try:
@@ -742,9 +740,9 @@ def _readable(
     """Modified from `torch.fx.graph_module._print_readable` (https://github.com/pytorch/pytorch/blob/3192bdeea428f2bf3a95274ee59ea41c4f8e31e9/torch/fx/graph_module.py#L297).
     Note: the include_stride and include_device take effects only when verbose is True."""
     graph = module.graph
-    assert graph is not None and isinstance(
-        graph, torch.fx.Graph
-    ), "print_readable must be used on a module with a graph"
+    assert graph is not None and isinstance(graph, torch.fx.Graph), (
+        "print_readable must be used on a module with a graph"
+    )
 
     verbose_python_code = graph.python_code(
         root_module="self",
@@ -831,7 +829,7 @@ def get_split_reasons_string(subgraph_info: SubgraphInfo) -> str:
         num_thunder_submodules = len(subgraph_info.thunder_compiled_fns)
         split_reason_str += f"The original graph is split into {num_submodules} subgraphs, {num_thunder_submodules} of which are run by Thunder.\n"
         split_reason_str += f"The structure of the split module:\n{subgraph_info.split_graph_module}\n"
-        split_reason_str += f"Split Reasons:\n"
+        split_reason_str += "Split Reasons:\n"
         for id, split_reason in enumerate(subgraph_info.split_reasons):
             split_reason_str += f"  Split Reason {id}:\n    {split_reason.info}\n"
     else:
@@ -955,7 +953,7 @@ def get_or_create_example_inputs_from_placeholders(placeholders: list[torch.fx.N
             input: TensorWeakRef | torch.SymInt = p.meta["grapharg"].example
             if isinstance(input, torch.SymInt):
                 input = input.node.hint
-        except (KeyError, AssertionError) as e:
+        except (KeyError, AssertionError):
             # needs to create a new example input
             outs.append(_get_example_inputs_from_placeholder(p, only_metadata=False))
         else:
