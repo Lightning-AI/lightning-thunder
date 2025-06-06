@@ -129,7 +129,7 @@ class Recipe:
         executors = []
 
         if self._lookaside_executor is not None:
-            executors.append(_lookaside_executor)
+            executors.append(self._lookaside_executor)
 
         for plugin in pre_plugins:
             executors.extend(plugin.setup_executors() or [])
