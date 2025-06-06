@@ -295,7 +295,12 @@ def compile(
     plugins = plugins_
 
     if recipe is None:
-        recipe = thunder.recipes.BaseRecipe()
+        model_class = getattr(fn, "__class__", None)
+        if model_class is not None and "transformers" in model_class.__module__:
+            recipe = thunder.recipes.HFTransformers()
+        else:
+            recipe = thunder.recipes.BaseRecipe()
+        print(recipe)
 
     if recipe == "auto":
         raise NotImplementedError
