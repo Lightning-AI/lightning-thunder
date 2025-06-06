@@ -72,8 +72,7 @@ class Recipe:
 
     @classmethod
     def validate(cls, model):
-        # this is expected to raise if validation fails
-        pass
+        return True
 
     def setup_lookasides(self) -> list[Lookaside] | None:
         return None
@@ -104,17 +103,13 @@ class Recipe:
         for i in range(len(parts), 0, -1):
             key = ".".join(parts[:i])
             recipe_cls = cls._registry.get(key)
-            if recipe_cls and recipe_cls.is_applicable(model):
+            if recipe_cls and recipe_cls.validate(model):
                 return recipe_cls()
 
         default_recipe_cls = cls._registry.get("")
         if default_recipe_cls:
             return default_recipe_cls()
         raise RuntimeError("No applicable recipe found and no default registered.")
-
-    @classmethod
-    def is_applicable(cls, model):
-        return True  # override for stricter matching
 
     def apply(self, model):
         with pretty_warnings():
