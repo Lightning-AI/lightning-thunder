@@ -41,6 +41,8 @@ class DTensorTest(DistributedParallelTestCase):
             actual_g = torch.autograd.grad(actual, (in_dtensor, w_dtensor), g_o)
 
             torch.testing.assert_close(actual_g, expected_g)
+            if compile_fn is thunderfx:
+                assert len(tmodel._backend.subgraph_infos[0].split_reasons) == 0
 
         w_dtensor = distribute_tensor(torch.randn(dim_size, dim_size, requires_grad=True), mesh, [Shard(0)])
         in_dtensor = distribute_tensor(torch.randn(dim_size, dim_size, requires_grad=True), mesh, [Shard(0)])
