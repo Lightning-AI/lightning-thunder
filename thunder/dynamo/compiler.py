@@ -7,6 +7,7 @@ from pathlib import Path
 import copy
 
 import torch
+from torch._guards import CompileContext as TorchCompileContext
 
 from thunder.dynamo.utils import (
     recompile_graph,
@@ -41,6 +42,20 @@ _DEFAULT_THUNDER_FUSION_TYPE = "dataflow"
 # leading to NCCL hang-up due to collective mismatch.
 # TODO(kshitij12345): Investigate more and understand if the bug is in PyTorch or elsewhere.
 _DEFAULT_THUNDERFX_DISABLE_SPLIT_AUTOGRAD = True
+
+
+def is_in_torch_compile() -> bool:
+    """Returns :obj:`True` if :func:`torch.compile` is active."""
+    return TorchCompileContext.current_compile_id() is not None
+
+
+def is_dynamic_inputs(example_inputs):
+    from torch.utils import _pytree as pytree
+
+    flat_example_inputs, _ = pytree.tree_flatten(example_inputs)
+    return any(
+        isinstance(a, torch.SymInt) or any(isinstance(s, torch.SymInt) for s in a.shape) for a in flat_example_inputs
+    )
 
 
 def _add_prologue_pruning(options: dict):
