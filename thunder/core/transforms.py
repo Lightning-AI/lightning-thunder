@@ -35,7 +35,7 @@ from thunder.core.compile_data import get_compile_data
 from thunder.core.langctxs import langctx, Languages
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten, tree_flatten_with_dataclass
 from thunder.core.symbol import BoundSymbol, BoundSymbolInterface, Symbol, has_tags
-from thunder.core.trace import TraceCtx as Trace
+from thunder.core.trace import TraceCtx as Trace, get_tracectx
 from thunder.core.trace import VariableInterface as Variable
 from thunder.core.trace import (
     detached_trace,
@@ -2961,8 +2961,7 @@ def value_and_grad(func):
 
     def ones_like(x):
         if isinstance(x, TensorProxy):
-            # NOTE: `x` could be a TensorProxy subclass and it's type should be preserved.
-            return type(x)(like=x)
+            return full_like(x, fill_value=1)
         elif isinstance(x, NumberProxy):
             return type(x.value)(1)
         else:
