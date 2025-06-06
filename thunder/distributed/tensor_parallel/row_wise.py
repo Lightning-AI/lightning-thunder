@@ -227,12 +227,12 @@ def row_parallel(
     from thunder.transforms import MaterializationTransform
 
     utils.check_type(thunder_module, ThunderModule)
-    
+
     if process_group is None:
         process_group = copy_default_process_group()
     rank = distributed_c10d.get_rank(process_group)
     world_size = distributed_c10d.get_world_size(process_group)
-    
+
     if device is None:
         device = torch.device(f"cuda:{rank}")
     else:
