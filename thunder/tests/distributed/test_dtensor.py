@@ -25,9 +25,9 @@ class DTensorTest(DistributedParallelTestCase):
 
         dim_size = 16
 
-        def _helper(fn, in_dtensor, w_dtensor):
+        def _helper(fn, in_dtensor, w_dtensor, compile_fn):
             expected = torch.compile(fn)(in_dtensor, w_dtensor)
-            tmodel = thunder.jit(fn)
+            tmodel = compile_fn(fn)
             actual = tmodel(in_dtensor, w_dtensor)
 
             torch.testing.assert_close(actual, expected)
@@ -46,13 +46,16 @@ class DTensorTest(DistributedParallelTestCase):
         in_dtensor = distribute_tensor(torch.randn(dim_size, dim_size, requires_grad=True), mesh, [Shard(0)])
 
         # Verify torch API works
-        _helper(lambda x, w: torch.mul(x, w), in_dtensor, w_dtensor)
+        _helper(lambda x, w: torch.mul(x, w), in_dtensor, w_dtensor, compile_fn=thunder.jit)
+        _helper(lambda x, w: torch.mul(x, w), in_dtensor, w_dtensor, compile_fn=thunderfx)
 
         # Verify calling method works
-        _helper(lambda x, w: torch.Tensor.mul(x, w), in_dtensor, w_dtensor)
+        _helper(lambda x, w: torch.Tensor.mul(x, w), in_dtensor, w_dtensor, compile_fn=thunder.jit)
+        _helper(lambda x, w: torch.Tensor.mul(x, w), in_dtensor, w_dtensor, compile_fn=thunderfx)
 
         # # Verify calling special method works
-        _helper(lambda x, w: x * w, in_dtensor, w_dtensor)
+        _helper(lambda x, w: x * w, in_dtensor, w_dtensor, compile_fn=thunder.jit)
+        _helper(lambda x, w: x * w, in_dtensor, w_dtensor, compile_fn=thunderfx)
 
     def test_dtensor_unsupported(self):
         num_devices = self.world_size

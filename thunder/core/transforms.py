@@ -2963,7 +2963,8 @@ def value_and_grad(func):
 
     def ones_like(x):
         if isinstance(x, TensorProxy):
-            return full_like(x, fill_value=1)
+            # NOTE: `x` could be a TensorProxy subclass and it's type should be preserved.
+            return type(x)(like=x)
         elif isinstance(x, NumberProxy):
             return type(x.value)(1)
         else:
