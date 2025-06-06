@@ -6,7 +6,7 @@ import warnings
 import torch
 
 from thunder.core.transform_common import Transform
-from thunder.extend import Executor
+from thunder.extend import Executor, TemporaryExecutor
 
 
 @contextmanager
@@ -64,6 +64,7 @@ class Recipe:
                     f"Invalid interpreter {interpreter}. Supported interpreters: ['thunder.jit', 'thunder.fx']."
                 )
         self.interpreter = interpreter
+        self._lookaside_executor = None
 
     def add_plugins(self, plugins: list[Plugin]):
         self.plugins.extend(plugins)
@@ -107,9 +108,10 @@ class Recipe:
         from thunder.core import jit_ext, interpreter
 
         if lookasides is not None:
+            self._lookaside_executor = TemporaryExecutor()
             for lookaside in lookasides:
                 wrapped_replacement_fn = interpreter.interpreter_needs_wrap(lookaside._replace_with)
-                jit_ext._general_jit_lookaside_map[lookaside._fn] = wrapped_replacement_fn
+                self._lookaside_executor._lookasides[lookaside._fn] = wrapped_replacement_fn
 
         self.lookasides = lookasides
 
@@ -125,6 +127,10 @@ class Recipe:
         self.transforms = transforms
 
         executors = []
+
+        if self._lookaside_executor is not None:
+            executors.append(_lookaside_executor)
+
         for plugin in pre_plugins:
             executors.extend(plugin.setup_executors() or [])
 
