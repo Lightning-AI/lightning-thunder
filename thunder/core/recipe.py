@@ -8,6 +8,8 @@ import torch
 from thunder.core.transform_common import Transform
 from thunder.extend import Executor
 
+_RECIPE_REGISTRY: dict[str, type["Recipe"]] = {}
+
 
 @contextmanager
 def pretty_warnings():
@@ -84,6 +86,35 @@ class Recipe:
 
     def setup_config(self) -> dict[str, Any]:
         return {}
+
+    _registry = _RECIPE_REGISTRY  # optional alias for clarity
+
+    @classmethod
+    def register(cls, key: str):
+        def decorator(subcls):
+            cls._registry[key] = subcls
+            return subcls
+
+        return decorator
+
+    @classmethod
+    def get_for_model(cls, model):
+        module_path = f"{model.__class__.__module__}.{model.__class__.__name__}"
+        parts = module_path.split(".")
+        for i in range(len(parts), 0, -1):
+            key = ".".join(parts[:i])
+            recipe_cls = cls._registry.get(key)
+            if recipe_cls and recipe_cls.is_applicable(model):
+                return recipe_cls()
+
+        default_recipe_cls = cls._registry.get("")
+        if default_recipe_cls:
+            return default_recipe_cls()
+        raise RuntimeError("No applicable recipe found and no default registered.")
+
+    @classmethod
+    def is_applicable(cls, model):
+        return True  # override for stricter matching
 
     def apply(self, model):
         with pretty_warnings():

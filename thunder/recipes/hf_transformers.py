@@ -4,6 +4,7 @@ import warnings
 
 import thunder
 from thunder.recipes import BaseRecipe
+from thunder import Recipe
 
 
 class InplaceIndexCopyTransform(thunder.Transform):
@@ -37,6 +38,7 @@ class InplaceIndexCopyTransform(thunder.Transform):
         return pro, comp_new, epi
 
 
+@Recipe.register("transformers")
 class HFTransformers(BaseRecipe):
     """
     Recipe tuned for Hugging Face ``transformers`` models.
