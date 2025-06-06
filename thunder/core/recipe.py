@@ -110,8 +110,7 @@ class Recipe:
         if lookasides is not None:
             self._lookaside_executor = TemporaryExecutor()
             for lookaside in lookasides:
-                wrapped_replacement_fn = interpreter.interpreter_needs_wrap(lookaside._replace_with)
-                self._lookaside_executor._lookasides[lookaside._fn] = wrapped_replacement_fn
+                self._lookaside_executor._lookasides[lookaside._fn] = lookaside._replace_with
 
         self.lookasides = lookasides
 
