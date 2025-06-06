@@ -24,8 +24,10 @@ from thunder.dynamo.utils import (
 from thunder.dynamo.splitter import _splitter
 from thunder.dynamo.benchmark_utils import ThunderCompileSpecification
 from thunder.transforms.extraction_only_prologue_transform import ExtractionOnlyPrologueTransform
+from thunder.transforms.prune_prologue_checks import PrunePrologueChecks
 
 if TYPE_CHECKING:
+    from typing import Any
     from thunder.dynamo.utils import SubgraphInfo
     from thunder.core.transform_common import Transform
     from thunder.core.trace import TraceCtx as Trace
@@ -48,6 +50,7 @@ def is_in_torch_compile() -> bool:
 
 
 def is_dynamic_inputs(example_inputs):
+    """Check if inputs dynamic or not by checking the presence of :class:`torch.SymInt`."""
     from torch.utils import _pytree as pytree
 
     flat_example_inputs, _ = pytree.tree_flatten(example_inputs)
@@ -56,18 +59,26 @@ def is_dynamic_inputs(example_inputs):
     )
 
 
-def _add_prologue_pruning(options: dict):
-    """
-    Add a transform to prune prologue checks to the list of transforms in the given options dictionary.
+def _with_prologue_pruning_transform(
+    *,
+    current_thunder_options: dict[str, Any],
+    is_torch_compile_without_dynamic: bool,
+) -> dict[str, Any]:
+    """Add prologue pruning transform to thunder_options
 
-    Args:
-        options: The dictionary of options to modify
+    When `torch.compile` is running with `dynamic=False`, then we can rely on TorchDynamo
+    instead of prologue to check inputs metadata.
+    Otherwise, we only skip :func:`thunder.core.prims.check_tensor_shape_and_metadata` of
+    parameters and buffers of a model with ``ProxyTag.STATIC_MEMORY_LOCATION``.
     """
-    transforms: list[Transform] | None = options.get("transforms", None)
-    if transforms is None:
-        transforms = []
-    transforms.append(ExtractionOnlyPrologueTransform())
-    options["transforms"] = transforms
+    thunder_options = current_thunder_options.copy()
+    current_transforms = thunder_options.get("transforms", [])
+    if is_torch_compile_without_dynamic:
+        current_transforms.append(PrunePrologueChecks(prune_all_checks=True))
+    else:
+        current_transforms.append(ExtractionOnlyPrologueTransform())
+    thunder_options["transforms"] = current_transforms
+    return thunder_options
 
 
 class ThunderCompiler:
@@ -94,8 +105,6 @@ class ThunderCompiler:
             ...         return x - 1
             >>> out = func(x)
         """
-        from thunder import jit
-
         if LooseVersion(torch.__version__) < LooseVersion("2.4.0"):
             # NOTE: PyTorch 2.3 or lower has bug in `split_module` function used in splitter.
             # See https://github.com/Lightning-AI/lightning-thunder/pull/1075#issuecomment-2324918409
@@ -112,15 +121,15 @@ class ThunderCompiler:
         thunder_options["fusion_type"] = thunder_options.get("fusion_type", _DEFAULT_THUNDER_FUSION_TYPE)
         # NOTE: Dynamo already adds guards for modules by default (see flag `torch._dynamo.config.guard_nn_modules`), so thunder can avoid adding extra metadata checks for parameters
         #       in prologue.
-        _add_prologue_pruning(thunder_options)
         thunder_options["thunderfx_disable_split_autograd"] = thunder_options.get(
             "thunderfx_disable_split_autograd", _DEFAULT_THUNDERFX_DISABLE_SPLIT_AUTOGRAD
         )
         self.thunder_options = thunder_options
-        self._thunder_jit = partial(jit, **thunder_options)
         self._torch_compile = torch.compile
 
     def __call__(self, gm: torch.fx.GraphModule, sample_args: list[torch.SymInt, torch.Tensor]):
+        from thunder import jit
+
         gm = remove_empty_autocast(gm)
 
         # Dynamo uses lazy generation of the underlying Python code, so we need to
@@ -129,7 +138,16 @@ class ThunderCompiler:
 
         # The whole graph may not be supported by `thunder`, so we split it in `thunder` supported sections
         # and unsupported sections which are passed to `torch.compile(backend='inductor')`
-        split_module, subgraph_info = _splitter(gm, self._thunder_jit, self._torch_compile, sample_args)
+        thunder_options = _with_prologue_pruning_transform(
+            current_thunder_options=self.thunder_options,
+            is_torch_compile_without_dynamic=is_in_torch_compile() and (not is_dynamic_inputs(sample_args)),
+        )
+        split_module, subgraph_info = _splitter(
+            gm,
+            partial(jit, **thunder_options),
+            self._torch_compile,
+            sample_args,
+        )
         self.subgraph_infos.append(subgraph_info)
         return split_module
 
