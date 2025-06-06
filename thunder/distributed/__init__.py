@@ -306,6 +306,7 @@ def ddp(
 
     """
     import warnings
+
     warnings.warn(
         "ddp() is deprecated and will be removed in a future release. "
         "Use thunder.jit(..., transforms=[DDPTransform(...)]) instead.",
@@ -446,6 +447,7 @@ def fsdp(
 
     """
     import warnings
+
     warnings.warn(
         "fsdp() is deprecated and will be removed in a future release. "
         "Use thunder.jit(..., transforms=[FSDPTransform(...)]) instead.",

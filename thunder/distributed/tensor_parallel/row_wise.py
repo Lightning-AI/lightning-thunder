@@ -252,5 +252,5 @@ def row_parallel(
             ),
         ],
     )
-    
+
     return rowwise_thunder_module
