@@ -2,6 +2,8 @@ from __future__ import annotations
 from functools import partial
 from looseversion import LooseVersion
 from typing import TYPE_CHECKING
+from typing import Any
+from typing import overload
 import warnings
 from pathlib import Path
 import copy
@@ -58,7 +60,28 @@ def _add_prologue_pruning(options: dict):
 
 
 class ThunderCompiler:
-    def __init__(self, **thunder_options):
+
+    # Migration source
+    @overload
+    def __init__(
+        self,
+        **thunder_options,
+    ) -> None: ...
+
+    # Migration destination
+    @overload
+    def __init__(
+        self,
+        torch_compile_options: dict[str, Any],
+        thunder_options: dict[str, Any],
+    ) -> None: ...
+
+    def __init__(
+        self,
+        torch_compile_options: dict[str, Any] | None = None,
+        thunder_options: dict[str, Any] | None = None,
+        **kwargs,
+    ):
         """
         A class that compiles a :class:`torch.fx.GraphModule` to a :class:`thunder.ThunderModule`.
         This class is meant to be used as a backend for the :func:`torch.compile`
@@ -96,6 +119,8 @@ class ThunderCompiler:
         # Ref to the documentation of `SubgraphInfo` to know more about the information it contains.
         self.subgraph_infos: list[SubgraphInfo] = []
 
+        if thunder_options is None:
+            thunder_options = kwargs
         thunder_options["fusion_type"] = thunder_options.get("fusion_type", _DEFAULT_THUNDER_FUSION_TYPE)
         # NOTE: Dynamo already adds guards for modules by default (see flag `torch._dynamo.config.guard_nn_modules`), so thunder can avoid adding extra metadata checks for parameters
         #       in prologue.
@@ -105,7 +130,7 @@ class ThunderCompiler:
         )
         self.thunder_options = thunder_options
         self._thunder_jit = partial(jit, **thunder_options)
-        self._torch_compile = torch.compile
+        self._torch_compile = partial(torch.compile, **(torch_compile_options or {}))
 
     def __call__(self, gm: torch.fx.GraphModule, sample_args: list[torch.SymInt, torch.Tensor]):
         gm = remove_empty_autocast(gm)
@@ -221,6 +246,10 @@ def thunderfx(fn: Callable, /, **kwargs) -> Callable:
 
     from thunder.dynamo.utils import get_torch_compile_kwargs
 
+    check(
+        "backend" not in kwargs,
+        lambda: f"`kwargs` has backend of {kwargs['backend']=} but not supported by thunderfx",
+    )
     torch_compile_kwargs = get_torch_compile_kwargs(**kwargs)
     thunder_jit_kwargs = {k: v for k, v in kwargs.items() if k not in torch_compile_kwargs}
 
