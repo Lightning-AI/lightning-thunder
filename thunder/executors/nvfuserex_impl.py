@@ -2741,12 +2741,13 @@ register_supported(ltorch.embedding, embedding, _embedding_check)
 
 
 def _index_put_check(a: TensorProxy, /, indices: Sequence[TensorProxy], values: TensorProxy, accumulate: bool) -> bool:
+    # temporary flag to allow scatter-like operations to be consumed by nvfuserex
     enable_scatter: None | bool = get_compile_option("nv_enable_scatter", "Enable nvFuser scatter-like operations.")
     if not enable_scatter:
         return False
 
     # TODO: limited support inside nvfuser. remove this when codegen support is generalized.
-    if len(indices) != 1 or indices[0].ndim != 1 or a.ndim != 2:
+    if len(indices) != 1 or indices[0].ndim != 1:
         return False
 
     if accumulate == True:
@@ -2765,8 +2766,11 @@ def index_put(
     fd: FusionDefinition,
     lc_to_nv_map: dict,
 ) -> any:
+    utils.check(not accumulate, lambda: f"Unsupported accumulate in index_put by nvfuserex", exception_type=AssertionError)
     nva = getnv(a, fd, lc_to_nv_map)
     nvi = getnv(indices[0], fd, lc_to_nv_map)
+    # construct the shape of broadcast indices tensor as
+    # [-1, *a.shape[1:]]
     shapes = nva.shape()
     flag = [-1]
     for i in range(1, nva.ndim):
@@ -2776,6 +2780,7 @@ def index_put(
 
     nvs = getnv(values, fd, lc_to_nv_map)
 
+    # index_put is translated to scatter in nvfuser
     return fd.ops.scatter(nva, nvi_b, nvs, 0)
 
 

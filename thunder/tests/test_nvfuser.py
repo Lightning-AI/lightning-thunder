@@ -1285,9 +1285,10 @@ def test_moe_infer_scatter(executor, device: str, dtype: dtypes.dtype):
     seq_length = 4096
     topk_hidden = (8, 7168)
     hidden_states = torch.randn((seq_length * topk_hidden[0], topk_hidden[1]), device="cuda", requires_grad=True)
+    topk_weight = torch.randn((seq_length, topk_hidden[0]), device="cuda")
+    # use logits.argsort() to generate unique indices
     logits = torch.randn(seq_length * topk_hidden[0], device="cuda")
     idxs = logits.argsort()
-    topk_weight = torch.randn((seq_length, topk_hidden[0]), device="cuda")
 
     # NOTE nv_enable_scatter to allow scatter operation to go through nvfuser
     jfoo = thunder.jit(foo, nv_enable_scatter=True)
