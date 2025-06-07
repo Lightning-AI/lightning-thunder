@@ -9,6 +9,7 @@ You can wrap a model in Thunder's ddp in two ways:
    ::
 
      from thunder.distributed.transforms.ddp_v2 import DDPTransform
+     from thunder.distributed import copy_default_process_group
      from thunder import jit
 
      model = MyModel()
