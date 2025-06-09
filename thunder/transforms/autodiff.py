@@ -477,7 +477,6 @@ def split_into_forward_and_backward(joint_trace: TraceCtx):
             forward_proxy_names.update(bsym_arg_names)
             forward_proxy_names.update(bsym_out_names)
 
-            # if we need to recompute this, we also add the bound symbol to backward_part_bsyms_recomputed
             if _should_recompute_bsym_in_backward(bsym):
                 backward_recomputed_proxy_names.update(bsym_out_names)
 
