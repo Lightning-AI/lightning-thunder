@@ -7,3 +7,5 @@ thunder.dynamo
     :toctree:
 
     ThunderCompiler
+    thunderfx
+    ThunderfxCompiledObject
