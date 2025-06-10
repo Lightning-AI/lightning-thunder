@@ -1199,7 +1199,6 @@ def test_forward_and_backward_from_trace(executor, device, _):
     dtypes=NOTHING,
 )
 def test_update_forward_with_new_saved_for_backward_numberproxy(executor, device, _):
-
     def foo(t, ab):
         return t * ab * 0.5
 
@@ -1299,7 +1298,6 @@ def test_backward_none_propagation(executor, device, _):
 
 
 def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp):
-
     args, kwargs = sample.args, sample.kwargs
 
     def is_output_differentiable(x):

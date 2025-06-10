@@ -111,7 +111,6 @@ def check_and_update_config_for_te_if_needed(config: Config) -> None:
 
 
 def swap_linear_layers_for_te(model: torch.nn.Module, device: Any, swap_layernorm: bool = True) -> None:
-
     def parameters_cnt(model: torch.nn.Module) -> int:
         return sum(p.numel() for p in model.parameters())
 
@@ -298,7 +297,6 @@ class Benchmark_litGPT:
             self.use_sdpa = False
 
         if use_torchao_fp8_linear:
-
             if not torchao_available:
                 raise ValueError("`torchao` is not available")
             if self.distributed_mode not in ("none", "fsdp2"):
@@ -628,7 +626,6 @@ class Benchmark_litGPT:
                 executors.insert(0, torch_compile_ex)
 
             if "transformerengine_v2" in self.compile:
-
                 from thunder.executors.transformer_engine_v2ex import (
                     transformer_engine_v2_ex,
                     TransformerEngineTransformV2,
@@ -913,7 +910,7 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
             print(f"Sharding Mode: {benchmark.shard_mode}\nBucketing: {benchmark.bucketing_mode}")
             if benchmark.sharding_size is not None:
                 print(
-                    f"Sharding Size: {benchmark.sharding_size}\nReplicate DP Groups: {int(world_size/benchmark.sharding_size)}"
+                    f"Sharding Size: {benchmark.sharding_size}\nReplicate DP Groups: {int(world_size / benchmark.sharding_size)}"
                 )
             if benchmark.bucketing_mode == "size":
                 print(f"Bucketing Number Params: {benchmark.fsdp_bucket_params}")

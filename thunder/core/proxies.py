@@ -736,7 +736,6 @@ class NumberProxy(Proxy, NumberProxyInterface):
     # fn is the function to call if executing outside a language context
     @staticmethod
     def _elementwise_unary_helper(a, name, fn, type_promotion_kind=None):
-
         vala = pyval(a)
 
         trace: None | TraceCtx = get_tracectx()

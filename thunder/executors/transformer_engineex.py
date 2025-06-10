@@ -318,7 +318,6 @@ def make_te_linear_meta(is_grad_enabled: bool = False):
     def _te_functional_linear_meta(
         a: TensorProxy, w: TensorProxy, bias: None | TensorProxy
     ) -> tuple[TensorProxy, AnyProxy | None]:
-
         # Input Shape : (*, Hin)
         # Output Shape : (*, Hout) where * is any number of dims including None.
         output_shape = list(a.shape)

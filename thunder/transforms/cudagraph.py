@@ -90,7 +90,6 @@ class CUDAGraphRunner:
     def build_cuda_graph(
         self, fn: Callable, args: list[any], static_args_mask: tuple[bool, ...]
     ) -> tuple[torch.cuda.CUDAGraph, Sequence[torch.Tensor | Any], Sequence[torch.Tensor | Any]]:
-
         static_inputs = tuple(
             self.get_static_buffer(arg) if not is_static else arg for arg, is_static in zip(args, static_args_mask)
         )
@@ -170,7 +169,6 @@ class CUDAGraphRunner:
         inputs: list[Proxy],
         outputs: list[Proxy],
     ) -> Callable:
-
         from inspect import Parameter, Signature
 
         region_fn_params = (

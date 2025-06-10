@@ -1184,7 +1184,6 @@ class InterpreterFrame:
             return self.code._varname_from_oparg(idx)  # type: ignore
 
     def get_or_make_python_frame(self) -> FrameType:
-
         assert self.positions is not None
         lineno = self.positions.lineno
         if lineno is None:
@@ -1423,7 +1422,6 @@ def _enumerate_lookaside(obj: Iterable, start: int = 0):
 
 
 def _zip_lookaside(*obj: Iterable, strict=False):
-
     if not obj:
         return
 
@@ -1451,13 +1449,13 @@ def _zip_lookaside(*obj: Iterable, strict=False):
         if result:
             i = len(result)
             plural = " " if i == 1 else "s 1-"
-            msg = f"zip() argument {i+1} is shorter than argument{plural}{i}"
+            msg = f"zip() argument {i + 1} is shorter than argument{plural}{i}"
             raise ValueError(msg)
         sentinel = object()
         for i, iterator in enumerate(iterators[1:], 1):
             if next(iterator, sentinel) is not sentinel:
                 plural = " " if i == 1 else "s 1-"
-                msg = f"zip() argument {i+1} is longer than argument{plural}{i}"
+                msg = f"zip() argument {i + 1} is longer than argument{plural}{i}"
                 raise ValueError(msg)
 
     return _interpret_call(zip, *obj, strict=wrap_const(strict))
@@ -5197,7 +5195,6 @@ def _make_cell_handler(inst: dis.Instruction, /, frame: InterpreterFrame, **kwar
 def _make_function_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, globals_dict: dict[str, Any], **kwargs
 ) -> None:
-
     assert type(inst.arg) is int
     flag: int = inst.arg
 
@@ -5265,7 +5262,6 @@ def _make_function_handler(
 def _make_function_handler_313(
     inst: dis.Instruction, /, stack: InterpreterStack, globals_dict: dict[str, Any], **kwargs
 ) -> None:
-
     fn_co: CodeType = unwrap(stack.pop_wrapped())
     name = fn_co.co_name
 
@@ -5287,7 +5283,6 @@ def _make_function_handler_313(
 def _set_function_attribute_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, globals_dict: dict[str, Any], **kwargs
 ) -> None:
-
     assert type(inst.arg) is int
     flag: int = inst.arg
 
@@ -6325,7 +6320,6 @@ def _store_subscr_handler(inst: dis.Instruction, /, stack: InterpreterStack, **k
 def _to_bool_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, frame: InterpreterFrame, **kwargs
 ) -> None | INTERPRETER_SIGNALS:
-
     value = stack.pop_wrapped()
 
     bool_value = _interpret_call(bool, value)
@@ -7055,7 +7049,7 @@ def _setup_frame_and_run_python_function(
     if pos_arguments_in_kwargs:
         return do_raise(
             TypeError(
-                f"{fn}() got some positional-only arguments passed as keyword arguments: {', ' .join(pos_arguments_in_kwargs)}"
+                f"{fn}() got some positional-only arguments passed as keyword arguments: {', '.join(pos_arguments_in_kwargs)}"
             )
         )
 
@@ -7102,7 +7096,6 @@ def _setup_frame_and_run_python_function(
             unconsumed_kwargs = wrap_kwargs(unconsumed_kwargs)
         locals_dict[code.co_varnames[idx]] = unconsumed_kwargs
     elif unconsumed_kwargs:
-
         return do_raise(TypeError(f"{fn}() got unexpected keyword arguments: {','.join(unconsumed_kwargs)}"))
 
     # And that's it! We have all local vars in locals_dict.
@@ -7537,9 +7530,7 @@ def interpret(
                 # TODO Highlight the portion of the line that originated the opcode on Python versions that include
                 #      the line offset information in the instruction
                 traceback_str = os.linesep.join(f.format_with_source() for f in runtimectx.frame_stack)
-                msg = (
-                    f"Encountered exception {type(e).__name__}: {e} while tracing {fn}:{os.linesep}" f"{traceback_str}"
-                )
+                msg = f"Encountered exception {type(e).__name__}: {e} while tracing {fn}:{os.linesep}{traceback_str}"
                 # nested try ... raise to delete e from locals
                 try:
                     raise InterpreterError(msg) from e

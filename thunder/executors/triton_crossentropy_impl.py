@@ -249,11 +249,11 @@ def _class_probs_forward(
 @triton.autotune(
     configs=[
         # fmt: off
-        triton.Config({'BLOCK': 1024}, num_stages=FORWARD_NUM_STAGES, num_warps=1),
-        triton.Config({'BLOCK': 2048}, num_stages=FORWARD_NUM_STAGES, num_warps=8),
-        triton.Config({'BLOCK': 4096}, num_stages=FORWARD_NUM_STAGES, num_warps=8),
-        triton.Config({'BLOCK': 8192}, num_stages=FORWARD_NUM_STAGES, num_warps=16),
-        triton.Config({'BLOCK': 16384}, num_stages=FORWARD_NUM_STAGES, num_warps=16),
+        triton.Config({"BLOCK": 1024}, num_stages=FORWARD_NUM_STAGES, num_warps=1),
+        triton.Config({"BLOCK": 2048}, num_stages=FORWARD_NUM_STAGES, num_warps=8),
+        triton.Config({"BLOCK": 4096}, num_stages=FORWARD_NUM_STAGES, num_warps=8),
+        triton.Config({"BLOCK": 8192}, num_stages=FORWARD_NUM_STAGES, num_warps=16),
+        triton.Config({"BLOCK": 16384}, num_stages=FORWARD_NUM_STAGES, num_warps=16),
         # fmt: on
     ],
     key=[
@@ -322,11 +322,11 @@ def _forward(
 @triton.autotune(
     configs=[
         # fmt: off
-        triton.Config({'BLOCK': 1024}, num_stages=1, num_warps=1),
-        triton.Config({'BLOCK': 2048}, num_stages=1, num_warps=8),
-        triton.Config({'BLOCK': 4096}, num_stages=1, num_warps=8),
-        triton.Config({'BLOCK': 8192}, num_stages=1, num_warps=16),
-        triton.Config({'BLOCK': 16384}, num_stages=1, num_warps=16),
+        triton.Config({"BLOCK": 1024}, num_stages=1, num_warps=1),
+        triton.Config({"BLOCK": 2048}, num_stages=1, num_warps=8),
+        triton.Config({"BLOCK": 4096}, num_stages=1, num_warps=8),
+        triton.Config({"BLOCK": 8192}, num_stages=1, num_warps=16),
+        triton.Config({"BLOCK": 16384}, num_stages=1, num_warps=16),
         # fmt: on
     ],
     key=[

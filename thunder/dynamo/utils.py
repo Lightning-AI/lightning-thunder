@@ -283,7 +283,6 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
     @compile_data_and_stats(cd, cs)
     @thunder._with_cache_info_ctx
     def _run_with_cache_info():
-
         # We need cache info here as the default dtype and device support
         # for factory functions like ones, zeros, etc expects these details to be present.
         # TODO: Move this to CompileData as well?

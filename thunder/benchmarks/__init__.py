@@ -395,7 +395,7 @@ def _prettyprint_stats(
         if rank_mem_info:
             short_printout += "\n    " + "*" * 20 + " Memory Usage " + "*" * 20
             for rank, (memory_allocated, memory_reserved) in rank_mem_info.items():
-                short_printout += f"\n    rank-{rank} - peak allocated memory {memory_allocated/1024/1024:.2f}MB, peak reserved: {memory_reserved/1024/1024:.2f}MB"
+                short_printout += f"\n    rank-{rank} - peak allocated memory {memory_allocated / 1024 / 1024:.2f}MB, peak reserved: {memory_reserved / 1024 / 1024:.2f}MB"
             short_printout += "\n"
 
         print(short_printout)
@@ -415,7 +415,7 @@ def _prettyprint_stats(
     if rank_mem_info:
         short_printout += "\n    " + "*" * 20 + " Memory Usage " + "*" * 20
         for rank, (memory_allocated, memory_reserved) in rank_mem_info.items():
-            short_printout += f"\n    rank-{rank} - peak allocated memory {memory_allocated/1024/1024:.2f}MB, peak reserved: {memory_reserved/1024/1024:.2f}MB"
+            short_printout += f"\n    rank-{rank} - peak allocated memory {memory_allocated / 1024 / 1024:.2f}MB, peak reserved: {memory_reserved / 1024 / 1024:.2f}MB"
         short_printout += "\n"
     if median_benchmark_stat.has_extended_stats:
         # NOTE At this point in the program extended statistics are available
