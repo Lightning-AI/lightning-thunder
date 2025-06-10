@@ -25,6 +25,7 @@ ARG PYTHON_VERSION="3.10"
 ARG TORCH_VERSION="2.2.1"
 ARG TRITON_VERSION="2.2.0"
 ARG TORCH_INSTALL="stable"
+ARG MAX_ALLOWED_NCCL=2.26.0
 
 SHELL ["/bin/bash", "-c"]
 # https://techoverflow.net/2019/05/18/how-to-fix-configuring-tzdata-interactive-input-when-building-docker-images/
@@ -39,6 +40,10 @@ ENV \
 
 RUN \
     apt-get update -qq --fix-missing && \
+    NCCL_VER=$(dpkg -s libnccl2 | grep '^Version:' | awk -F ' ' '{print $2}' | awk -F '-' '{print $1}' | grep -ve '^\s*$') && \
+    echo "NCCL version found: $NCCL_VER" && \
+    TO_INSTALL_NCCL=$(echo -e "$MAX_ALLOWED_NCCL\n$NCCL_VER" | sort -V  | head -n1)-1+cuda${CUDA_VERSION_MM} && \
+    echo "NCCL version to install: $TO_INSTALL_NCCL" && \
     apt-get install -y --no-install-recommends --allow-downgrades --allow-change-held-packages \
         build-essential \
         ca-certificates \
@@ -54,8 +59,8 @@ RUN \
         liblapack-dev \
         openmpi-bin \
         graphviz \
-        libnccl2 \
-        libnccl-dev \
+        libnccl2=$TO_INSTALL_NCCL \
+        libnccl-dev=$TO_INSTALL_NCCL && \
         ssh \
     && \
     # Install python
