@@ -1976,6 +1976,28 @@ def minimum(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefin
 register_supported(PrimIDs.MINIMUM, minimum, _elementwise_binary_check)
 
 
+def bitwise_left_shift(
+    a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict
+) -> Any:
+    nva = getnv(a, fd, lc_to_nv_map)
+    nvb = getnv(b, fd, lc_to_nv_map)
+
+    return fd.ops.bitwise_left_shift(nva, nvb)
+
+
+def bitwise_right_shift(
+    a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict
+) -> Any:
+    nva = getnv(a, fd, lc_to_nv_map)
+    nvb = getnv(b, fd, lc_to_nv_map)
+
+    return fd.ops.bitwise_right_shift(nva, nvb)
+
+
+register_supported(PrimIDs.BITWISE_LEFT_SHIFT, bitwise_left_shift, _elementwise_binary_check)
+register_supported(PrimIDs.BITWISE_RIGHT_SHIFT, bitwise_right_shift, _elementwise_binary_check)
+
+
 #
 # Elementwise ternary operations
 #

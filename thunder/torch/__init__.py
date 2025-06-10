@@ -2245,7 +2245,7 @@ def div_(
     return _copy_(a, div(a, b))
 
 
-@torchsymbol(torch.eq, is_method=True)
+@torchsymbol(torch.eq, torch.Tensor.__eq__, is_method=True)
 def eq(a, b, /):
     return clang.eq(a, b)
 
@@ -2485,6 +2485,16 @@ def true_divide_(a: TensorLike, b: NumberLike | TensorLike, /) -> TensorLike:
 @torchsymbol(torch.special.zeta)
 def zeta(a, b, /):
     return clang.zeta(a, b)
+
+
+@torchsymbol(torch.bitwise_left_shift, torch.Tensor.__lshift__, is_method=True)
+def bitwise_left_shift(a, b):
+    return clang.bitwise_left_shift(a, b)
+
+
+@torchsymbol(torch.bitwise_right_shift, torch.Tensor.__rshift__, is_method=True)
+def bitwise_right_shift(a, b):
+    return clang.bitwise_right_shift(a, b)
 
 
 #
