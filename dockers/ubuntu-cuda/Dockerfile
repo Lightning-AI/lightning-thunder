@@ -155,7 +155,8 @@ RUN \
     pip install nvidia-cudnn-frontend==${CUDNN_FRONTEND_VERSION}
 
 RUN \
-    # Show what we have
+    # Show what we have \
+    dpkg-query -W -f='${Package} ${Version}\n' libnccl2 libnccl-dev && \
     pip --version && \
     pip list && \
     python -c "import sys; ver = sys.version_info ; assert f'{ver.major}.{ver.minor}' == '$PYTHON_VERSION', ver" && \
