@@ -2245,7 +2245,7 @@ def div_(
     return _copy_(a, div(a, b))
 
 
-@torchsymbol(torch.eq, is_method=True)
+@torchsymbol(torch.eq, torch.Tensor.__eq__, is_method=True)
 def eq(a, b, /):
     return clang.eq(a, b)
 
