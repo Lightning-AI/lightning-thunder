@@ -43,6 +43,8 @@ repos:
     hooks:
       - id: ruff-check
         args: ["--fix"]
+      - id: ruff-format
+        types_or: [python]
 
   - repo: https://github.com/psf/black
     rev: 25.1.0
