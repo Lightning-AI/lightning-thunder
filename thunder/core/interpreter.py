@@ -957,7 +957,10 @@ class ProvenanceRecord:
             self.ext_flag = 0
 
     def __hash__(self):
-        return hash((self.inst, *self.inputs))
+        inst = self.inst
+        if isinstance(inst, dis.Instruction):
+            inst = str(inst)
+        return hash((inst, *self.inputs))
 
     def __str__(self):
         counter = 0
@@ -965,7 +968,7 @@ class ProvenanceRecord:
         known = {}
 
         def recurse_str(self):
-            if self in known:
+            if self in known:  # Instruction is not usually hashable
                 return known[self]
             if self.inst == PseudoInst.CONSTANT:
                 if isinstance(self.value, (int, str, bool, NoneType)):
@@ -1763,6 +1766,7 @@ def _setattr_lookaside(obj: Any, name: str, value: Any):
 
 def _getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
     """Emulate slot_tp_getattr_hook()."""
+
     result = _object_getattribute_lookaside(obj, name)
 
     ctx: InterpreterRuntimeCtx = get_interpreterruntimectx()
@@ -1772,6 +1776,7 @@ def _getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
     if result is not INTERPRETER_SIGNALS.EXCEPTION_RAISED or not isinstance(ctx.curexc, AttributeError):
         if result is not INTERPRETER_SIGNALS.EXCEPTION_RAISED and compilectx._with_provenance_tracking:
             result = wrap_attribute(result, obj, name)
+
         return result
 
     # `__getattr__` is only triggered if `__getattribute__` fails.
@@ -2042,6 +2047,16 @@ def _super_lookaside(cls=Py_NULL(), obj=None):
     check_self(obj, sup)
 
     return sup
+
+
+def partial_call_lookaside(partial_object, *args, **kwargs):
+    print("'#########partial####", partial_object.provenance)
+
+    def partial_call_impl(partial_function, /, *args, **kwargs):
+        print("########x", len(args), len(partial_function.args))
+        return partial_function.func(*partial_function.args, *args, **(partial_function.keywords | kwargs))
+
+    return _interpret_call(partial_call_impl, partial_object, *args, **kwargs)
 
 
 @interpreter_needs_wrap
@@ -2800,6 +2815,9 @@ def _type_call_lookaside(wrapped_typ, *args, **kwargs):
     obj = _interpret_call(typ.__new__, wrapped_typ, *args, **kwargs)
     if obj is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return obj
+    wrapped_typ.provenance.value = typ
+    obj.provenance = ProvenanceRecord(PseudoInst.NEW, inputs=[wrapped_typ.provenance])
+
     wrapped_init = _interpret_call(getattr, obj, wrap_const("__init__"))
     assert not isinstance(wrapped_init, INTERPRETER_SIGNALS)
     populate_attribute_wrapper(wrapped_init, "__self__", obj)
@@ -2832,6 +2850,7 @@ _default_lookaside_map: dict[Callable, Callable] = {
     super: _super_lookaside,
     type: _type_lookaside,
     type.__call__: _type_call_lookaside,
+    functools.partial.__call__: partial_call_lookaside,
     isinstance: _isinstance_lookaside,
     functools.reduce: _functools_reduce_lookaside,
     operator.getitem: _getitem_lookaside,
@@ -6944,20 +6963,6 @@ def _call_dispatch(
         runtimectx.record_lookaside(lookaside_fn)
         res = lookaside_fn(*args, **kwargs)
         return res
-
-    # TODO: disabled as partial is just like any other class
-    # (3) Handles partial objects
-    if isinstance(fn, functools.partial):
-
-        def partial_call_impl(partial_function, /, *args, **kwargs):
-            return partial_function.func(*(partial_function.args + args), **(partial_function.keywords | kwargs))
-
-        return _interpret_call(partial_call_impl, wrapped_fn, *args, **kwargs)
-
-    if isinstance(fn, functools.partialmethod):
-        raise NotImplementedError(
-            "functools.partialmethod objects like {fn} are not currently supported, please file an issue requesting support"
-        )
 
     # (4) Handles opaque functions
     if is_opaque(fn):

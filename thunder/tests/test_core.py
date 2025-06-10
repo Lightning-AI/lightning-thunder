@@ -552,10 +552,12 @@ def test_partial_args(executor, device, dtype):
     b = make_tensor((2, 2), device=device, dtype=torch_dtype)
 
     pfoo = partial(foo, a)
+    jpfoo = executor.make_callable(pfoo)
 
-    with pytest.raises(NotImplementedError):
-        cpfoo = executor.make_callable(pfoo)
-        cpfoo(b)
+    res = jpfoo(b)
+    expected = pfoo(b)
+
+    assert_close(res, expected)
 
 
 @instantiate(dtypes=(thunder.float32,))

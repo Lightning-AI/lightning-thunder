@@ -12,6 +12,7 @@ import sys
 import time
 import warnings
 from types import (
+    BuiltinFunctionType,
     BuiltinMethodType,
     CellType,
     FunctionType,
@@ -124,7 +125,7 @@ def _general_jit_sharp_edge(desc: str, value: Any, /) -> Any | INTERPRETER_SIGNA
 
 def _infer_name_postfix_from_provenance(pr: ProvenanceRecord) -> str:
     # Instructions that are considered terminal for recursions below
-    terminal_instructions = {PseudoInst.INPUT_ARGS, PseudoInst.INPUT_FN}
+    terminal_instructions = (PseudoInst.INPUT_ARGS, PseudoInst.INPUT_FN)
 
     def get_postfix(pr: ProvenanceRecord):
         if pr.inst in terminal_instructions:
@@ -737,6 +738,7 @@ def _general_jit_dict_setitem(d, key, value):
         ctx: JitCtx = get_jit_ctx()
         if d.original_value is d.nothing:
             ctx.proxify(d)
+        print("#setitem####", d.provenance)
         ctx._additional_outputs[d].append((PseudoInst.STORE_SUBSCR, d, key, value))
 
     return dict_setitem_lookaside(d, key, value)
@@ -1675,6 +1677,30 @@ def _general_jit_wrap_callback(value):
 
     ctx.show_progress_if_verbose()
     uvalue = value.value
+
+    # print("########", value.provenance)
+    if (  # value.provenance.inst is PseudoInst.LOAD_ATTR and
+        value.provenance.inst is PseudoInst.OPAQUE
+        and value.provenance.inputs[0].inst is PseudoInst.CONSTANT
+        and isinstance(value.provenance.inputs[0].value, BuiltinFunctionType)
+        and value.provenance.inputs[0].value == object.__new__
+    ):
+
+        s = str(value.provenance)
+        if (
+            s
+            == """ProvenanceRecord(
+  i1 = PseudoInst.INPUT_FN()
+  i2 = PseudoInst.LOAD_ATTR(i1, '_modules')
+  i3 = PseudoInst.BINARY_SUBSCR(i2, 'l')
+  i4 = PseudoInst.LOAD_ATTR(i3, '__class__')
+  i5 = PseudoInst.BUILD_TUPLE(i4)
+  i6 = PseudoInst.OPAQUE(PseudoInst.CONSTANT(<built-in method __new__ of type object at 0x9f8d80>), i5, PseudoInst.CONSTANT({}))
+)"""
+        ):
+            # value.provenance.inouts[0][0]):
+            print("###########", value.provenance)
+
     # for modules, rewrite m.__dict__["key"] to m.key
     if (
         value.provenance.inst is PseudoInst.BINARY_SUBSCR
@@ -1966,6 +1992,17 @@ def process_recorded_modifications(ctx, epilogue_trace):
                     if (
                         modified_object.provenance.inst is PseudoInst.LOAD_ATTR
                         and modified_object.provenance.inputs[0].inst is PseudoInst.NEW
+                        and modified_object.provenance.inputs[1].inst is PseudoInst.CONSTANT
+                        and modified_object.provenance.inputs[1].value == "_modules"
+                    ):
+                        # This is for slices of ModuleList. We might have to revisit if we want to return those
+                        pass
+                    elif (
+                        modified_object.provenance.inst is PseudoInst.BINARY_SUBSCR
+                        and modified_object.provenance.inputs[0].inst is PseudoInst.LOAD_ATTR
+                        and modified_object.provenance.inputs[0].inputs[0].inst is PseudoInst.NEW
+                        and modified_object.provenance.inputs[0].inputs[1].inst is PseudoInst.CONSTANT
+                        and modified_object.provenance.inputs[0].inputs[1].value == "__dict__"
                         and modified_object.provenance.inputs[1].inst is PseudoInst.CONSTANT
                         and modified_object.provenance.inputs[1].value == "_modules"
                     ):
