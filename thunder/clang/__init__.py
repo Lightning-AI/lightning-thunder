@@ -2115,6 +2115,26 @@ def zeta(a, b):
     )
 
 
+@clangop()
+def bitwise_left_shift(a, b):
+    return _elementwise_binary_wrapper(
+        a,
+        b,
+        prim=prims.bitwise_left_shift,
+        type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.PRESERVE,
+    )
+
+
+@clangop()
+def bitwise_right_shift(a, b):
+    return _elementwise_binary_wrapper(
+        a,
+        b,
+        prim=prims.bitwise_right_shift,
+        type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.PRESERVE,
+    )
+
+
 #
 # Elementwise ternary operations
 #

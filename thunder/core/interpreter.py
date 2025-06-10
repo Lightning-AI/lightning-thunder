@@ -958,7 +958,7 @@ class ProvenanceRecord:
 
     def __hash__(self):
         inst = self.inst
-        if isinstance(inst, dis.Instruction):
+        if isinstance(inst, dis.Instruction):  # dis.Instruction instances are not generally hashable
             inst = str(inst)
         return hash((inst, *self.inputs))
 
@@ -968,7 +968,7 @@ class ProvenanceRecord:
         known = {}
 
         def recurse_str(self):
-            if self in known:  # Instruction is not usually hashable
+            if self in known:
                 return known[self]
             if self.inst == PseudoInst.CONSTANT:
                 if isinstance(self.value, (int, str, bool, NoneType)):
@@ -1584,17 +1584,17 @@ def _object_getattribute_lookaside(obj: Any, name: str):
     objtype = type(uobj)
     null = cls_var = descr_get = object()
 
-    uname = unwrap(name)
-    if not isinstance(uname, str):
+    name = unwrap(name)
+    if not isinstance(name, str):
         return do_raise(TypeError("getattr(): attribute name must be string"))
 
     # TODO: classes and super have a slightly different resolution behavior
     #   https://docs.python.org/3/howto/descriptor.html#invocation-from-a-class
     #   https://docs.python.org/3/howto/descriptor.html#invocation-from-super
     if isinstance(uobj, (type, super)):
-        result = getattr(uobj, uname, null)
+        result = getattr(uobj, name, null)
         if result is null:
-            return do_raise(AttributeError(uname))
+            return do_raise(AttributeError(name))
         else:
             return result
 
@@ -1603,10 +1603,10 @@ def _object_getattribute_lookaside(obj: Any, name: str):
     #   1)  Some builtin C types have `__get__` methods but act like simple namespaces.
     #   2)  If `obj` has a metaclass, the dunder methods might be dynamic.
     # So for now we just fall back to the builtin `getattr` for these bedrock lookups.
-    if DUNDER_PATTERN.match(uname) or isinstance(uobj, (type, super)):
+    if DUNDER_PATTERN.match(name) or isinstance(uobj, (type, super)):
         return (
-            do_raise(AttributeError(f"'{type(uobj).__name__}' object has no attribute '{uname}'"))
-            if (result := getattr(uobj, uname, null)) is null
+            do_raise(AttributeError(f"'{type(uobj).__name__}' object has no attribute '{name}'"))
+            if (result := getattr(uobj, name, null)) is null
             else result
         )
 
@@ -1629,7 +1629,7 @@ def _object_getattribute_lookaside(obj: Any, name: str):
 
     # Check for class variables.
     for base in objtype.__mro__:
-        if (cls_var := vars(base).get(uname, null)) is not null:
+        if (cls_var := vars(base).get(name, null)) is not null:
             descr_get = lookup_descriptor_field("__get__")
             break
 
@@ -1661,12 +1661,11 @@ def _object_getattribute_lookaside(obj: Any, name: str):
         # Even if `obj_dict` is a subclass (which only happens in the corner case that `__dict__` has
         # been manually assigned) Python appears to reinterpret it as a simple dict for the purpose of
         # attribute resolution.
-        # it would be a cool otpimization to avoid interpreting into dict.get if obj_dict is a plain dict to
-        # avoid creating a wrapper for it, but we ran into trouble with Tensor attributes of modules (see
-        # https://github.com/Lightning-AI/lightning-thunder/issues/2009 , which has happened when we special
-        # cased if type(uobj_dict) == dict: instance_value = uobj_dict.get(uname, null)
-        # here
-        instance_value = _interpret_call_with_unwrapping(dict.get, obj_dict, uname, null)
+        # we avoid interpreting into dict.get if obj_dict is a plain dict to avoid creating a wrapper for it.
+        if type(uobj_dict) == dict:
+            instance_value = uobj_dict.get(name, null)
+        else:
+            instance_value = _interpret_call_with_unwrapping(dict.get, obj_dict, name, null)
         if instance_value is not null:
             return instance_value
 
@@ -1677,7 +1676,7 @@ def _object_getattribute_lookaside(obj: Any, name: str):
     if cls_var is not null:
         return cls_var
 
-    return do_raise(AttributeError(uname))
+    return do_raise(AttributeError(name))
 
 
 def check_self(obj, potential_method):
@@ -1766,7 +1765,6 @@ def _setattr_lookaside(obj: Any, name: str, value: Any):
 
 def _getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
     """Emulate slot_tp_getattr_hook()."""
-
     result = _object_getattribute_lookaside(obj, name)
 
     ctx: InterpreterRuntimeCtx = get_interpreterruntimectx()
@@ -1776,7 +1774,6 @@ def _getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
     if result is not INTERPRETER_SIGNALS.EXCEPTION_RAISED or not isinstance(ctx.curexc, AttributeError):
         if result is not INTERPRETER_SIGNALS.EXCEPTION_RAISED and compilectx._with_provenance_tracking:
             result = wrap_attribute(result, obj, name)
-
         return result
 
     # `__getattr__` is only triggered if `__getattribute__` fails.
@@ -2050,10 +2047,7 @@ def _super_lookaside(cls=Py_NULL(), obj=None):
 
 
 def partial_call_lookaside(partial_object, *args, **kwargs):
-    print("'#########partial####", partial_object.provenance)
-
     def partial_call_impl(partial_function, /, *args, **kwargs):
-        print("########x", len(args), len(partial_function.args))
         return partial_function.func(*partial_function.args, *args, **(partial_function.keywords | kwargs))
 
     return _interpret_call(partial_call_impl, partial_object, *args, **kwargs)
@@ -2815,9 +2809,6 @@ def _type_call_lookaside(wrapped_typ, *args, **kwargs):
     obj = _interpret_call(typ.__new__, wrapped_typ, *args, **kwargs)
     if obj is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return obj
-    wrapped_typ.provenance.value = typ
-    obj.provenance = ProvenanceRecord(PseudoInst.NEW, inputs=[wrapped_typ.provenance])
-
     wrapped_init = _interpret_call(getattr, obj, wrap_const("__init__"))
     assert not isinstance(wrapped_init, INTERPRETER_SIGNALS)
     populate_attribute_wrapper(wrapped_init, "__self__", obj)
@@ -6818,13 +6809,11 @@ def _interpret_call(fn: Callable, /, *args, **kwargs) -> Any | INTERPRETER_SIGNA
 #       (1a) The callable is a bound method (implemented in Python), in which case it's canonicalized
 #       (1b) The callable is a builtin method, in which case we try to unbind it
 #   (2) The callable has a lookaside, in which case it's used to execute the operation
-#   (3) The callable is a partial object, in which case it's recursively unwrapped
-#           Note that this case is after (1), which allows for lookasides on partial objects
-#   (4) The callable is opaque, in which case it's executed by the CPython interpreter and its
+#   (3) The callable is opaque, in which case it's executed by the CPython interpreter and its
 #           result returned
-#   (5) The callable is a type object, in which case it is instantiated with __new__ and initialized with __init__
-#   (6) The callable is a callable object, in which case its __call__ attribute is called recursively
-#   (7) The callable is a FunctionType, in which case it's recursively interpretered by the interpreter
+#   (4) The callable is a type object, in which case it is instantiated with __new__ and initialized with __init__
+#   (5) The callable is a callable object, in which case its __call__ attribute is called recursively
+#   (6) The callable is a FunctionType, in which case it's recursively interpretered by the interpreter
 #
 # TODO Consider refactoring this into one function for each case
 def _call_dispatch(
@@ -6964,7 +6953,7 @@ def _call_dispatch(
         res = lookaside_fn(*args, **kwargs)
         return res
 
-    # (4) Handles opaque functions
+    # (3) Handles opaque functions
     if is_opaque(fn):
         # TODO: Deeper unwrapping?
         args_ = tuple(unwrap(a) for a in args)
@@ -6984,13 +6973,13 @@ def _call_dispatch(
             opaque_result = wrap(opaque_result, provenance=pr)
         return opaque_result
 
-    # (5) Handle types
+    # (4) Handle types
     if isinstance(fn, type):
         tt = type(fn)  # could be type itself, or a metaclass
         obj = _interpret_call(tt.__call__, wrapped_fn, *args, **kwargs)
         return obj
 
-    # (6) Handles callable objects (with a dunder call method)
+    # (5) Handles callable objects (with a dunder call method)
     if not isinstance(fn, (FunctionType, MethodType)):
         if not hasattr(fn, "__call__"):
             raise NotImplementedError(
@@ -7002,7 +6991,7 @@ def _call_dispatch(
         populate_attribute_wrapper(wrapped_call, "__self__", wrapped_fn)
         return _interpret_call(wrapped_call, *args, **kwargs)
 
-    # (7) interprets into the function
+    # (6) interprets into the function
     assert isinstance(fn, FunctionType), f"{fn=} had an unexpected type ({type(fn)}"
     return _setup_frame_and_run_python_function(compilectx, runtimectx, wrapped_fn, *args, **kwargs)
 

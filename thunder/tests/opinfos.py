@@ -2859,6 +2859,24 @@ div_opinfo = OpInfo(
 )
 elementwise_binary_ops.append(div_opinfo)
 
+
+bitwise_left_shift_opinfo = OpInfo(
+    ltorch.bitwise_left_shift,
+    sample_input_generator=elementwise_binary_generator,
+    dtypes=(datatypes.signedinteger, datatypes.unsignedinteger),
+    torch_reference=torch.bitwise_left_shift,
+)
+elementwise_binary_ops.append(bitwise_left_shift_opinfo)
+
+
+bitwise_right_shift_opinfo = OpInfo(
+    ltorch.bitwise_right_shift,
+    sample_input_generator=elementwise_binary_generator,
+    dtypes=(datatypes.signedinteger, datatypes.unsignedinteger),
+    torch_reference=torch.bitwise_right_shift,
+)
+elementwise_binary_ops.append(bitwise_left_shift_opinfo)
+
 # Puts all opinfos into the "opinfos" list
 opinfos.extend(elementwise_binary_ops)
 

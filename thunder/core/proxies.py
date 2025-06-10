@@ -1851,19 +1851,19 @@ class TensorProxy(Proxy, TensorProxyInterface):
     #
 
     def __lshift__(self, other):
-        method = resolve_method("lshift", self, other)
+        method = resolve_method("bitwise_left_shift", self, other)
         return method(self, other)
 
     def __rlshift__(self, other):
-        method = resolve_method("lshift", other, self)
+        method = resolve_method("bitwise_left_shift", other, self)
         return method(other, self)
 
     def __rshift__(self, other):
-        method = resolve_method("rshift", self, other)
+        method = resolve_method("bitwise_right_shift", self, other)
         return method(self, other)
 
     def __rrshift__(self, other):
-        method = resolve_method("rshift", other, self)
+        method = resolve_method("bitwise_right_shift", other, self)
         return method(other, self)
 
     #

@@ -1588,3 +1588,84 @@ def test_modulelist_idx():
     expected = m(x)
     res = jm(x)
     assert_close(res, expected)
+
+
+def test_partial_method():
+    import functools
+
+    def capture(*args, **kwargs):
+        return args, kwargs
+
+    class A:
+        nothing = functools.partialmethod(capture)
+        positional = functools.partialmethod(capture, 1)
+        keywords = functools.partialmethod(capture, a=2)
+        both = functools.partialmethod(capture, 3, b=4)
+        spec_keywords = functools.partialmethod(capture, self=1, func=2)
+
+        nested = functools.partialmethod(positional, 5)
+
+        over_partial = functools.partialmethod(functools.partial(capture, c=6), 7)
+
+        static = functools.partialmethod(staticmethod(capture), 8)
+        cls = functools.partialmethod(classmethod(capture), d=9)
+
+    a = A()
+
+    test_cases = [
+        lambda: a.nothing(),
+        lambda: a.nothing(5),
+        lambda: a.nothing(c=6),
+        lambda: a.nothing(5, c=6),
+        lambda: a.positional(),
+        lambda: a.positional(5),
+        lambda: a.positional(c=6),
+        lambda: a.positional(5, c=6),
+        lambda: a.keywords(),
+        lambda: a.keywords(5),
+        lambda: a.keywords(c=6),
+        lambda: a.keywords(5, c=6),
+        lambda: a.both(),
+        lambda: a.both(5),
+        lambda: a.both(c=6),
+        lambda: a.both(5, c=6),
+        lambda: A.both(a, 5, c=6),
+        lambda: a.spec_keywords(),
+        lambda: a.nested(),
+        lambda: a.nested(6),
+        lambda: a.nested(d=7),
+        lambda: a.nested(6, d=7),
+        lambda: A.nested(a, 6, d=7),
+        # These don't work because the unpacking does not work.
+        # lambda: a.over_partial(),
+        # lambda: a.over_partial(5),
+        # lambda: a.over_partial(d=8),
+        # lambda: a.over_partial(5, d=8),
+        # lambda: A.over_partial(a, 5, d=8),
+        lambda: A.static(),
+        lambda: A.static(5),
+        lambda: A.static(d=8),
+        lambda: A.static(5, d=8),
+        lambda: A.cls(),
+        lambda: A.cls(5),
+        lambda: A.cls(c=8),
+        lambda: A.cls(5, c=8),
+        lambda: a.static(),
+        lambda: a.static(5),
+        lambda: a.static(d=8),
+        lambda: a.static(5, d=8),
+        lambda: a.cls(),
+        lambda: a.cls(5),
+        lambda: a.cls(c=8),
+        lambda: a.cls(5, c=8),
+        lambda: a.keywords(a=3),
+        lambda: A.keywords(a, a=3),
+    ]
+
+    for fn in test_cases:
+        import inspect
+
+        print("testing", inspect.getsource(fn))
+        jfn = thunder.jit(fn)
+        print(fn(), jfn())
+        assert fn() == jfn()

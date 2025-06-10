@@ -1677,30 +1677,6 @@ def _general_jit_wrap_callback(value):
 
     ctx.show_progress_if_verbose()
     uvalue = value.value
-
-    # print("########", value.provenance)
-    if (  # value.provenance.inst is PseudoInst.LOAD_ATTR and
-        value.provenance.inst is PseudoInst.OPAQUE
-        and value.provenance.inputs[0].inst is PseudoInst.CONSTANT
-        and isinstance(value.provenance.inputs[0].value, BuiltinFunctionType)
-        and value.provenance.inputs[0].value == object.__new__
-    ):
-
-        s = str(value.provenance)
-        if (
-            s
-            == """ProvenanceRecord(
-  i1 = PseudoInst.INPUT_FN()
-  i2 = PseudoInst.LOAD_ATTR(i1, '_modules')
-  i3 = PseudoInst.BINARY_SUBSCR(i2, 'l')
-  i4 = PseudoInst.LOAD_ATTR(i3, '__class__')
-  i5 = PseudoInst.BUILD_TUPLE(i4)
-  i6 = PseudoInst.OPAQUE(PseudoInst.CONSTANT(<built-in method __new__ of type object at 0x9f8d80>), i5, PseudoInst.CONSTANT({}))
-)"""
-        ):
-            # value.provenance.inouts[0][0]):
-            print("###########", value.provenance)
-
     # for modules, rewrite m.__dict__["key"] to m.key
     if (
         value.provenance.inst is PseudoInst.BINARY_SUBSCR
