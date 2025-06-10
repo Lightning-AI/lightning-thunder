@@ -2487,6 +2487,16 @@ def zeta(a, b, /):
     return clang.zeta(a, b)
 
 
+@torchsymbol(torch.bitwise_left_shift, torch.Tensor.__lshift__, is_method=True)
+def bitwise_left_shift(a, b):
+    return clang.bitwise_left_shift(a, b)
+
+
+@torchsymbol(torch.bitwise_right_shift, torch.Tensor.__rshift__, is_method=True)
+def bitwise_right_shift(a, b):
+    return clang.bitwise_right_shift(a, b)
+
+
 #
 # Elementwise Ternary operations
 #

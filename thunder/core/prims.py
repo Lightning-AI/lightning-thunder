@@ -242,6 +242,8 @@ class PrimIDs(Enum):
     REMAINDER = auto()
     SUB = auto()
     ZETA = auto()
+    BITWISE_LEFT_SHIFT = auto()
+    BITWISE_RIGHT_SHIFT = auto()
     # Elementwise ternary prims
     LERP = auto()
     WHERE = auto()
@@ -2756,6 +2758,20 @@ zeta = _make_elementwise_binary_prim(
     PrimIDs.ZETA,
     "zeta",
     supported_input_dtypes=fp_math_dtypes,
+)
+
+
+bitwise_left_shift = _make_elementwise_binary_prim(
+    PrimIDs.BITWISE_LEFT_SHIFT,
+    "bitwise_left_shift",
+    supported_input_dtypes=dtypes.integer_dtypes,
+)
+
+
+bitwise_right_shift = _make_elementwise_binary_prim(
+    PrimIDs.BITWISE_RIGHT_SHIFT,
+    "bitwise_right_shift",
+    supported_input_dtypes=dtypes.integer_dtypes,
 )
 
 #
