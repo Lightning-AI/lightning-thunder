@@ -2885,7 +2885,7 @@ bitwise_right_shift_opinfo = OpInfo(
     dtypes=(datatypes.signedinteger, datatypes.unsignedinteger),
     torch_reference=torch.bitwise_right_shift,
 )
-elementwise_binary_ops.append(bitwise_left_shift_opinfo)
+elementwise_binary_ops.append(bitwise_right_shift_opinfo)
 
 # Puts all opinfos into the "opinfos" list
 opinfos.extend(elementwise_binary_ops)
