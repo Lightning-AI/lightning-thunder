@@ -60,7 +60,7 @@ RUN \
         openmpi-bin \
         graphviz \
         libnccl2=$TO_INSTALL_NCCL \
-        libnccl-dev=$TO_INSTALL_NCCL && \
+        libnccl-dev=$TO_INSTALL_NCCL \
         ssh \
     && \
     # Install python
