@@ -2240,7 +2240,9 @@ def thunder_general_jit(
         return restricted_proxy_swapmap
 
     # Update prologue trace by renaming proxies which are passed from prologue to the computation trace
-    ctx._prologue_stack[-1] = _apply_trace_proxy_rename(ctx._prologue_stack[-1], restrict_proxy_swapmap(pro_to_comp_proxies))
+    ctx._prologue_stack[-1] = _apply_trace_proxy_rename(
+        ctx._prologue_stack[-1], restrict_proxy_swapmap(pro_to_comp_proxies)
+    )
 
     update_tags(ctx._proxy_swapmap)
 
