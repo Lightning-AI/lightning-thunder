@@ -182,28 +182,29 @@ class JitCtx:
         # param_ordering[id(proxy] is a list that contains either finite numbers or (strings preceded by math.inf)
         self._param_ordering: dict[int, list] = {}
         self._prologue_orig_modules: dict[int, Proxy] = {}
+        self._prologue_stack = []
+        self.push_prologue_trace(fn, args, kwargs)
 
-        self.init_prologue_trace(fn, args, kwargs)
-
-    def init_prologue_trace(self, fn, args, kwargs):
-        self._prologue_trace: TraceCtx = TraceCtx(fn)
+    def push_prologue_trace(self, fn, args, kwargs):
+        prologue_trace: TraceCtx = TraceCtx(fn)
         si = SigInfo("prologue")
         si.varargs = ("args", None)
         si.varkwargs = ("kwargs", None)
-        self._prologue_trace._siginfo = si
+        prologue_trace._siginfo = si
 
-        with tracectx(self._prologue_trace):
+        with tracectx(prologue_trace):
             for n, l in (("args", len(args)), ("kwargs", len(kwargs))):
                 output = Proxy(name=n)
                 bsym = prims.unpack_trivial.bind(output, output=output, name=n)
-                self._prologue_trace.bound_symbols.append(bsym)
+                prologue_trace.bound_symbols.append(bsym)
                 bsym = prims.check_len.bind(output, l, output=None)
-                self._prologue_trace.bound_symbols.append(bsym)
+                prologue_trace.bound_symbols.append(bsym)
                 if n == "args":
                     self._prologue_args_proxy = output
                 else:
                     assert n == "kwargs"
                     self._prologue_kwargs_proxy = output
+        self._prologue_stack.append(prologue_trace)
 
     def show_progress_if_verbose(self):
         if not self._show_interpreter_progress:
@@ -232,7 +233,7 @@ class JitCtx:
 
     @property
     def prologue_trace(self) -> TraceCtx:
-        return self._prologue_trace
+        return self._prologue_stack[-1]
 
     @property
     def computation_trace(self) -> TraceCtx:
@@ -269,8 +270,8 @@ class JitCtx:
             return p
 
         # Adds the name to the prologue trace
-        if not self._prologue_trace.has_name(p.name):
-            self._prologue_trace.add_name(p.name)
+        if not self.prologue_trace.has_name(p.name):
+            self.prologue_trace.add_name(p.name)
 
         def from_input(provenance, *, new_output=False):
             if provenance.inst == PseudoInst.INPUT_ARGS:
@@ -293,7 +294,7 @@ class JitCtx:
                 self._param_ordering[id(output)] = (output, [3])
                 provenance.proxy = output
                 bsym = prims.unpack_function_obj.bind(output, output=output)
-                self._prologue_trace.bound_symbols.append(bsym)
+                self.prologue_trace.bound_symbols.append(bsym)
                 return output
             assert False
 
@@ -313,7 +314,7 @@ class JitCtx:
                 self._param_ordering[id(orig_obj)][1] + [math.inf, "." + str(name)],
             )
             bsym = prims.unpack_attr.bind(obj, name, output=output)
-            self._prologue_trace.bound_symbols.append(bsym)
+            self.prologue_trace.bound_symbols.append(bsym)
             return output
 
         def from_constant(provenance, *, new_output=False):
@@ -355,7 +356,7 @@ class JitCtx:
                 bsym = prims.unpack_submodule.bind(root_module, name, output=output)
             else:
                 assert False
-            self._prologue_trace.bound_symbols.append(bsym)
+            self.prologue_trace.bound_symbols.append(bsym)
             return output
 
         def from_binary_subscr(provenance, *, new_output=False):
@@ -382,7 +383,7 @@ class JitCtx:
                     idx = str(idx)
                 self._param_ordering[id(output)] = (output, self._param_ordering[id(obj)][1] + [math.inf, "[", idx])
                 bsym = prims.unpack_getitem.bind(obj, idx, output=output)
-                self._prologue_trace.bound_symbols.append(bsym)
+                self.prologue_trace.bound_symbols.append(bsym)
             else:
                 raise NotImplementedError(f"Unpacking from BINARY_SUBSCR with elaborate inputs {inputs=} {provenance}")
             return output
@@ -442,13 +443,13 @@ class JitCtx:
             res = unpack_fn(provenance, new_output=new_output)
 
             if provenance.ext_flag & EXT_FLAG_IS_MODULE:
-                assert self._prologue_trace.bound_symbols[-1].output is res
-                if self._prologue_trace.bound_symbols[-1].sym != prims.unpack_submodule:
+                assert self.prologue_trace.bound_symbols[-1].output is res
+                if self.prologue_trace.bound_symbols[-1].sym != prims.unpack_submodule:
                     orig_module = Proxy(prefix="module")
-                    self._prologue_trace.bound_symbols[-1].output = orig_module
+                    self.prologue_trace.bound_symbols[-1].output = orig_module
                     bsym = prims.unpack_thunder_module.bind(orig_module, output=res)
                     self._prologue_orig_modules[id(res)] = orig_module
-                    self._prologue_trace.bound_symbols.append(bsym)
+                    self.prologue_trace.bound_symbols.append(bsym)
 
             provenance.proxy = res
             return res
@@ -463,7 +464,7 @@ class JitCtx:
         # and unpack(p.grad) attaches new proxies to all its sub-histories, including p.history
         p.history.proxy = None
 
-        with tracectx(self._prologue_trace):
+        with tracectx(self.prologue_trace):
             try:
                 from_provenance(p.history)
             except Exception as e:
@@ -1909,7 +1910,7 @@ def unpack_inputs(ctx, pro_to_comp_inps, pro_to_epi_inps, args, kwargs):
         sorted((ctx.unpack_variable_or_proxy(v) for v in pro_to_comp_inps), key=lambda x: ctx._param_ordering[id(x)][1])
     )
 
-    with tracectx(ctx._prologue_trace):
+    with tracectx(ctx.prologue_trace):
         for prim, *args in ctx._constraints:
             for a in args:
                 if isinstance(a, Proxy):
@@ -1927,11 +1928,11 @@ def unpack_inputs(ctx, pro_to_comp_inps, pro_to_epi_inps, args, kwargs):
         if cache_info:
             cache_info_p = Proxy(name="cache_info")
             bsym = prims.unpack_cache_info.bind(cache_info_p, output=cache_info_p)
-            ctx._prologue_trace.bound_symbols.append(bsym)
+            ctx.prologue_trace.bound_symbols.append(bsym)
             for k, v in cache_info.items():
                 p = proxy(v, name=f"cache_info_{k}", history=None)
                 bsym = prims.unpack_getitem.bind(cache_info_p, k, output=p)
-                ctx._prologue_trace.bound_symbols.append(bsym)
+                ctx.prologue_trace.bound_symbols.append(bsym)
 
                 if isinstance(v, str):
                     clang.check_string_value(p, v)
@@ -2239,7 +2240,7 @@ def thunder_general_jit(
         return restricted_proxy_swapmap
 
     # Update prologue trace by renaming proxies which are passed from prologue to the computation trace
-    ctx._prologue_trace = _apply_trace_proxy_rename(ctx._prologue_trace, restrict_proxy_swapmap(pro_to_comp_proxies))
+    ctx._prologue_stack[-1] = _apply_trace_proxy_rename(ctx._prologue_stack[-1], restrict_proxy_swapmap(pro_to_comp_proxies))
 
     update_tags(ctx._proxy_swapmap)
 
@@ -2250,4 +2251,4 @@ def thunder_general_jit(
     epilogue_trace = _apply_trace_proxy_rename(
         epilogue_trace, restrict_proxy_swapmap(pro_to_epi_proxies + comp_to_epi_proxies), "epilogue"
     )
-    return TraceResults(ctx._prologue_trace, computation_trace, epilogue_trace, last_interpreter_log)
+    return TraceResults(ctx.prologue_trace, computation_trace, epilogue_trace, last_interpreter_log)

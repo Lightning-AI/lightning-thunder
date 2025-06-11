@@ -2810,6 +2810,7 @@ def _type_call_lookaside(wrapped_typ, *args, **kwargs):
     obj = _interpret_call(typ.__new__, wrapped_typ, *args, **kwargs)
     if obj is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return obj
+    obj.provenance = ProvenanceRecord(PseudoInst.NEW, inputs=[wrap_const(typ).provenance])
     wrapped_init = _interpret_call(getattr, obj, wrap_const("__init__"))
     assert not isinstance(wrapped_init, INTERPRETER_SIGNALS)
     populate_attribute_wrapper(wrapped_init, "__self__", obj)
