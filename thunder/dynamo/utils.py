@@ -462,6 +462,13 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
         did_run, opt_split_reason = try_execute_thunder_symbol(method, node)
         return did_run, opt_split_reason
 
+    # checks einops operators
+    if target.__module__ == "einops.einops":
+        from thunder.executors.torchex import has_einops
+
+        if has_einops:
+            return True, None
+
     # We found no automatic fallback registration and no mapping to thunder symbol.
     split_reason = SplitReason(
         SplitReasonType.MISSING_OP_SUPPORT,
