@@ -74,9 +74,8 @@ from thunder.core.trace import TraceCtx, TraceResults
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.clang import _clang_fn_set
 from thunder.core.pytree import tree_map, tree_iter
-from thunder.torch.experimental.dtensor_torch_and_prims import register_dtensor_torch_and_prims
 from thunder.torch.experimental.dtensor_proxy import is_dtensor_proxy
-from thunder.torch.experimental.dtensor_torch_and_prims import check_dtensor_spec_repr
+from thunder.torch.experimental.dtensor_torch_and_prims import check_dtensor_spec_repr, register_dtensor_torch_and_prims
 
 # TODO: Find a better place to register these ops (mostly in thunder/torch/__init__.py but without cyclical dependency).
 register_dtensor_torch_and_prims()
