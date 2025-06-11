@@ -478,14 +478,14 @@ def update_node_and_submodule(
         new_name (str): The new name to assign to the node and the submodule.
         new_callable (Callable): The new callable to be used as the target for the submodule.
     """
-    assert graph_module.delete_submodule(
-        node.name
-    ), f"Didn't find a submodule named {node.name} in graph_module {graph_module}"
+    assert graph_module.delete_submodule(node.name), (
+        f"Didn't find a submodule named {node.name} in graph_module {graph_module}"
+    )
     node.name = new_name
     node.target = new_name
-    assert graph_module.add_submodule(
-        node.name, new_callable
-    ), f"Adding submodule with name {node.name} in graph_module {graph_module} failed"
+    assert graph_module.add_submodule(node.name, new_callable), (
+        f"Adding submodule with name {node.name} in graph_module {graph_module} failed"
+    )
 
 
 def recompile_graph(gm: torch.fx.GraphModule):
@@ -740,9 +740,9 @@ def _readable(
     """Modified from `torch.fx.graph_module._print_readable` (https://github.com/pytorch/pytorch/blob/3192bdeea428f2bf3a95274ee59ea41c4f8e31e9/torch/fx/graph_module.py#L297).
     Note: the include_stride and include_device take effects only when verbose is True."""
     graph = module.graph
-    assert graph is not None and isinstance(
-        graph, torch.fx.Graph
-    ), "print_readable must be used on a module with a graph"
+    assert graph is not None and isinstance(graph, torch.fx.Graph), (
+        "print_readable must be used on a module with a graph"
+    )
 
     verbose_python_code = graph.python_code(
         root_module="self",

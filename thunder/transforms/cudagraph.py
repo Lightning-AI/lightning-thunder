@@ -102,9 +102,9 @@ class CUDAGraphRunner:
                 if isinstance(arg, torch.Tensor):
                     cur_device_index = arg.device.index
                     break
-                assert (
-                    cur_device_index is not None
-                ), "No tensor found in static inputs, cannot infer which stream to use for graph capture"
+                assert cur_device_index is not None, (
+                    "No tensor found in static inputs, cannot infer which stream to use for graph capture"
+                )
             stream = self.stream[cur_device_index]
             pool = self.mem_pool[cur_device_index]
         else:

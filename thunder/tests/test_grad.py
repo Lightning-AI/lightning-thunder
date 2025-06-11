@@ -259,9 +259,9 @@ def _dot(x, y):
         torch.Tensor: The dot product.
     """
     x, y = _replace_none_with_zero(x, y)
-    assert all(
-        isinstance(a, torch.Tensor) and isinstance(b, torch.Tensor) for a, b in zip(x, y)
-    ), "Not all elements are torch.Tensor"
+    assert all(isinstance(a, torch.Tensor) and isinstance(b, torch.Tensor) for a, b in zip(x, y)), (
+        "Not all elements are torch.Tensor"
+    )
     return sum([_tensor_dot(a, b) for a, b in zip(x, y)])
 
 
@@ -1344,14 +1344,14 @@ def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp):
         )
 
     grads = []
-    assert isinstance(torch_result, torch.Tensor) or isinstance(
-        torch_result, Sequence
-    ), "Expected a single torch tensor or a sequence of torch tensors when testing phantom grad torch consistency"
+    assert isinstance(torch_result, torch.Tensor) or isinstance(torch_result, Sequence), (
+        "Expected a single torch tensor or a sequence of torch tensors when testing phantom grad torch consistency"
+    )
     if isinstance(torch_result, Sequence):
         for x in torch_result:
-            assert isinstance(
-                x, torch.Tensor
-            ), "Expected a single torch tensor or a sequence of torch tensors when testing phantom grad torch consistency"
+            assert isinstance(x, torch.Tensor), (
+                "Expected a single torch tensor or a sequence of torch tensors when testing phantom grad torch consistency"
+            )
             if is_output_differentiable(x):
                 grads.append(torch.ones_like(x))
     else:

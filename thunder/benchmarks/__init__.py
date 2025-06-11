@@ -617,9 +617,9 @@ def run_multiprocess_benchmark(
     print(f"Running distributed benchmark {benchmark.name} with {world_size=}")
     _print_benchmark_arguments(benchmark)
 
-    assert (
-        torch.distributed.is_available()
-    ), "Trying to run a distributed benchmark, but torch.distributed is not available"
+    assert torch.distributed.is_available(), (
+        "Trying to run a distributed benchmark, but torch.distributed is not available"
+    )
 
     # Ensures the benchmark is running on a single CUDA device (which is overridden later)
     assert (
@@ -629,14 +629,14 @@ def run_multiprocess_benchmark(
 
     # Ensures the benchmark returns a module (because ddp is only supported on modules)
     benchmark_fn = benchmark.fn()
-    assert isinstance(
-        benchmark_fn, torch.nn.Module
-    ), "Distributed benchmarking currently only supports module benchmarks"
+    assert isinstance(benchmark_fn, torch.nn.Module), (
+        "Distributed benchmarking currently only supports module benchmarks"
+    )
 
     # Validates world size
-    assert (
-        world_size <= torch.cuda.device_count()
-    ), f"Requested world size of {world_size} is greater than the number of available cuda devices {torch.cuda.device_count()}"
+    assert world_size <= torch.cuda.device_count(), (
+        f"Requested world size of {world_size} is greater than the number of available cuda devices {torch.cuda.device_count()}"
+    )
 
     FILE_SCHEMA: str = "file://"
     if sys.platform == "win32":

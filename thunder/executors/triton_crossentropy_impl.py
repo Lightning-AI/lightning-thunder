@@ -11,9 +11,9 @@ min_triton_version = "2.1"
 
 triton_version: None | str = triton_utils.triton_version()
 TRITON_AVAILABLE: bool = triton_utils.is_triton_version_at_least(min_triton_version)
-assert (
-    TRITON_AVAILABLE
-), f"Trying to import a Triton executor, but it requires Triton version {min_triton_version} or greater, and the current Triton version is {triton_version}"
+assert TRITON_AVAILABLE, (
+    f"Trying to import a Triton executor, but it requires Triton version {min_triton_version} or greater, and the current Triton version is {triton_version}"
+)
 
 triton_ex: OperatorExecutor = OperatorExecutor("triton", version=triton_version)
 register_executor(triton_ex)

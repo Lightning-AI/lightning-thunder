@@ -311,18 +311,18 @@ class Benchmark_litGPT:
 
         # Clarify benchmark assumptions
         if self.sharding_size is not None:
-            assert (
-                "thunder" not in self.compile
-            ), "Hybrid Sharding (FSDP/DP) using --sharding_size is not yet supported for Thunder. Coming soon."
+            assert "thunder" not in self.compile, (
+                "Hybrid Sharding (FSDP/DP) using --sharding_size is not yet supported for Thunder. Coming soon."
+            )
 
             assert self.shard_mode in [
                 "hybrid_zero2",
                 "hybrid_zero3",
             ], "Sharding Size is only used with Hybrid FSDP/DP style parallelism."
 
-            assert (
-                world_size % self.sharding_size == 0
-            ), f"World size {world_size} is not divisible by the sharding size {self.sharding_size}"
+            assert world_size % self.sharding_size == 0, (
+                f"World size {world_size} is not divisible by the sharding size {self.sharding_size}"
+            )
 
         if self.bucketing_mode is not None and self.distributed_mode not in FSDP_MODES:
             warnings.warn(
@@ -330,9 +330,9 @@ class Benchmark_litGPT:
                 f" it is only used for FSDP style parallelism but running {self.distributed_mode}"
             )
 
-        assert not (
-            "thunder" in self.compile and self.bucketing_mode == "size"
-        ), "'size' bucketing mode is not supported for Thunder. Please use 'none' or 'block'."
+        assert not ("thunder" in self.compile and self.bucketing_mode == "size"), (
+            "'size' bucketing mode is not supported for Thunder. Please use 'none' or 'block'."
+        )
 
         if self.fsdp_bucket_params is not None:
             if self.distributed_mode not in FSDP_MODES:
@@ -359,15 +359,15 @@ class Benchmark_litGPT:
             self.global_batch_size = (
                 self.micro_batch_size * world_size if world_size is not None else self.micro_batch_size
             )
-        assert (
-            self.global_batch_size % self.micro_batch_size == 0
-        ), f"Global Batch Size {self.global_batch_size} should be a multiple of Micro Batch Size {self.micro_batch_size}."
+        assert self.global_batch_size % self.micro_batch_size == 0, (
+            f"Global Batch Size {self.global_batch_size} should be a multiple of Micro Batch Size {self.micro_batch_size}."
+        )
         self.gradient_accumulation_steps = int(self.global_batch_size / self.micro_batch_size)
         if world_size:
             self.gradient_accumulation_steps = int(self.gradient_accumulation_steps / world_size)
-            assert (
-                self.global_batch_size % self.micro_batch_size * world_size == 0
-            ), f"Global Batch Size {self.global_batch_size} should be a multiple Micro Batch Size {self.micro_batch_size} * World Size {world_size}."
+            assert self.global_batch_size % self.micro_batch_size * world_size == 0, (
+                f"Global Batch Size {self.global_batch_size} should be a multiple Micro Batch Size {self.micro_batch_size} * World Size {world_size}."
+            )
 
         self.skip_data_sync = skip_data_sync
 

@@ -176,9 +176,9 @@ class WrappedValue:
 
     def register_proxy(self, proxy):
         # note: the proxy is responsible for capturing all the existing attributes/values
-        assert (
-            self.original_value is self.nothing
-        ), "cannot proxy multiple times, please file an issue to discuss your use-case"
+        assert self.original_value is self.nothing, (
+            "cannot proxy multiple times, please file an issue to discuss your use-case"
+        )
         self.original_value = self.value
         self.value = proxy
 
@@ -251,9 +251,9 @@ def wrap(value: Any, /, *, provenance: ProvenanceRecord) -> WrappedValue:
     if isinstance(value, WrappedValue):
         if isinstance(value.value, list):
             assert isinstance(value.item_wrappers, Sized)
-            assert len(value.value) == len(
-                value.item_wrappers
-            ), f"{len(value.value)} {len(value.item_wrappers)} {value.provenance}"
+            assert len(value.value) == len(value.item_wrappers), (
+                f"{len(value.value)} {len(value.item_wrappers)} {value.provenance}"
+            )
         if isinstance(value.value, dict):
             assert value.item_wrappers is not None
             assert len(value.item_wrappers) == len(value.key_wrappers), f"{value.value}"
@@ -321,9 +321,9 @@ def populate_attribute_wrapper(wrapped_object, name, wrapped_attribute):
     assert isinstance(wrapped_object, WrappedValue)
     assert isinstance(wrapped_attribute, WrappedValue)
 
-    assert (
-        getattr(wrapped_object.value, name) is wrapped_attribute.value
-    ), f"{getattr(wrapped_object.value, name)}, {wrapped_attribute.value}"
+    assert getattr(wrapped_object.value, name) is wrapped_attribute.value, (
+        f"{getattr(wrapped_object.value, name)}, {wrapped_attribute.value}"
+    )
 
     wrapped_object.attribute_wrappers[name] = wrapped_attribute
 
@@ -1263,9 +1263,9 @@ class register_opcode_handler:
         ):
             assert self.name not in _default_opcode_handler_map, self.name
             assert self.name in dis.opmap, self.name
-            assert (
-                self.name.lower() in fn.__name__
-            ), f"opcode handler name mismatch {self.name.lower()} vs. {fn.__name__}"
+            assert self.name.lower() in fn.__name__, (
+                f"opcode handler name mismatch {self.name.lower()} vs. {fn.__name__}"
+            )
             _default_opcode_handler_map[self.name] = fn
             return fn
         return _default_opcode_handler_map.get(self.name, fn)
@@ -1710,9 +1710,9 @@ def wrap_attribute(plain_result, obj, name):
     # note: there are cases where "is" will always fail (e.g. BuiltinMethods
     #       are recreated every time)
     if known_wrapper is not None:
-        assert plausibly_wrapper_of(
-            known_wrapper, plain_result
-        ), f"attribute {name.value} of {type(obj.value).__name__} object out of sync: {known_wrapper.value} vs. {plain_result}"
+        assert plausibly_wrapper_of(known_wrapper, plain_result), (
+            f"attribute {name.value} of {type(obj.value).__name__} object out of sync: {known_wrapper.value} vs. {plain_result}"
+        )
         return known_wrapper
 
     pr = ProvenanceRecord(PseudoInst.LOAD_ATTR, inputs=[obj.provenance, name.provenance])
@@ -3102,9 +3102,9 @@ def freevar_callback(name: str, cell: CellType, /, *, fn: Callable, idx: int) ->
     if not ctx._with_provenance_tracking:
         return new_contents
 
-    assert not isinstance(
-        new_contents, (WrappedValue, CellType)
-    ), "freevar_callback should return a plain value, not a WrappedValue or a CellType"
+    assert not isinstance(new_contents, (WrappedValue, CellType)), (
+        "freevar_callback should return a plain value, not a WrappedValue or a CellType"
+    )
 
     if new_contents is not old_contents:
         register_cell_proxy(cell, new_contents)
@@ -6754,24 +6754,24 @@ def _interpret_call_with_unwrapping(fn: Callable, /, *args, **kwargs) -> Any | I
         assert all(isinstance(a, WrappedValue) for a in args)
         assert all(isinstance(a, WrappedValue) for a in kwargs.values())
         if isinstance(res.value, list):
-            assert len(res.value) == len(
-                res.item_wrappers
-            ), f"{len(res.value)} {len(res.item_wrappers)} {res.value} {res.item_wrappers} {fn}"
+            assert len(res.value) == len(res.item_wrappers), (
+                f"{len(res.value)} {len(res.item_wrappers)} {res.value} {res.item_wrappers} {fn}"
+            )
         if isinstance(res.value, dict):
-            assert len(res.key_wrappers) == len(
-                res.item_wrappers
-            ), f"{len(res.value)} {len(res.item_wrappers)} {len(res.key_wrappers)} {res.value} {res.item_wrappers} {fn}"
+            assert len(res.key_wrappers) == len(res.item_wrappers), (
+                f"{len(res.value)} {len(res.item_wrappers)} {len(res.key_wrappers)} {res.value} {res.item_wrappers} {fn}"
+            )
         for a in args:
             if isinstance(a.value, list):
                 assert isinstance(a.item_wrappers, Sized)
-                assert len(a.value) == len(
-                    a.item_wrappers
-                ), f"{len(a.value)} {len(a.item_wrappers)} {a.value} {a.item_wrappers} {fn}"
+                assert len(a.value) == len(a.item_wrappers), (
+                    f"{len(a.value)} {len(a.item_wrappers)} {a.value} {a.item_wrappers} {fn}"
+                )
             if isinstance(a.value, dict):
                 assert isinstance(a.item_wrappers, Sized)
-                assert len(a.key_wrappers) == len(
-                    a.item_wrappers
-                ), f"{len(a.value)} {len(a.item_wrappers)} {len(a.key_wrappers)} {a.value} {a.item_wrappers} {fn}"
+                assert len(a.key_wrappers) == len(a.item_wrappers), (
+                    f"{len(a.value)} {len(a.item_wrappers)} {len(a.key_wrappers)} {a.value} {a.item_wrappers} {fn}"
+                )
 
     return unwrap(res)
 
@@ -6823,9 +6823,9 @@ def _call_dispatch(
         assert all(isinstance(a, WrappedValue) for a in kwargs.values())
         for a in args:
             if isinstance(a.value, list):
-                assert len(a.value) == len(
-                    a.item_wrappers
-                ), f"{len(a.value)} {len(a.item_wrappers)} {a.value} {a.item_wrappers}"
+                assert len(a.value) == len(a.item_wrappers), (
+                    f"{len(a.value)} {len(a.item_wrappers)} {a.value} {a.item_wrappers}"
+                )
 
     # (1) Already (interpreter wrapped)
     if hasattr(fn, "__thunder_interpreter_orig_fn"):
@@ -7389,17 +7389,17 @@ def _run_frame(
                     # PRECALL stack effect (3.11) has a -inst.arg stack effect in the function that we only see during CALL
                     if inst.opname == "PRECALL":
                         assert type(inst.arg) is int
-                        assert (
-                            expected_stack_effect == -inst.arg
-                        ), f"precall with stack effect {expected_stack_effect}, {inst}"
+                        assert expected_stack_effect == -inst.arg, (
+                            f"precall with stack effect {expected_stack_effect}, {inst}"
+                        )
                         expected_stack_effect = 0
                     elif inst.opname == "CALL":
                         assert type(inst.arg) is int
                         assert expected_stack_effect == -1, f"call with stack effect {expected_stack_effect}, {inst}"
                         expected_stack_effect = -inst.arg - 1
-                assert (
-                    actual_stack_effect == expected_stack_effect
-                ), f"Unexpected stack effect from {inst.opname}: expected {expected_stack_effect}, but the actual effect was {actual_stack_effect} at {inst}"
+                assert actual_stack_effect == expected_stack_effect, (
+                    f"Unexpected stack effect from {inst.opname}: expected {expected_stack_effect}, but the actual effect was {actual_stack_effect} at {inst}"
+                )
 
 
 # Special signals for the interpreter
