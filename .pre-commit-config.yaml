@@ -45,12 +45,6 @@ repos:
         args: ["--fix"]
       - id: ruff-format
         types_or: [python]
-
-  - repo: https://github.com/psf/black
-    rev: 25.1.0
-    hooks:
-      - id: black
-        name: Black code
         exclude: "examples"
 
   - repo: https://github.com/executablebooks/mdformat
