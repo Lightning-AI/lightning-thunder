@@ -242,6 +242,8 @@ class PrimIDs(Enum):
     REMAINDER = auto()
     SUB = auto()
     ZETA = auto()
+    BITWISE_LEFT_SHIFT = auto()
+    BITWISE_RIGHT_SHIFT = auto()
     # Elementwise ternary prims
     LERP = auto()
     WHERE = auto()
@@ -2758,6 +2760,20 @@ zeta = _make_elementwise_binary_prim(
     supported_input_dtypes=fp_math_dtypes,
 )
 
+
+bitwise_left_shift = _make_elementwise_binary_prim(
+    PrimIDs.BITWISE_LEFT_SHIFT,
+    "bitwise_left_shift",
+    supported_input_dtypes=dtypes.integer_dtypes,
+)
+
+
+bitwise_right_shift = _make_elementwise_binary_prim(
+    PrimIDs.BITWISE_RIGHT_SHIFT,
+    "bitwise_right_shift",
+    supported_input_dtypes=dtypes.integer_dtypes,
+)
+
 #
 # Elementwise ternary prims
 #
@@ -2818,7 +2834,7 @@ def _where_meta(pred: Number | TensorProxy, a: Number | TensorProxy, b: Number |
     # Checks devices and determines result device
     utils.check_same_device(pred, a, b)
     resultdevice = devices.cpu
-    devices_ = tuple(x.device for x in (pred, a, b) if isinstance(x, TensorProxy))
+    devices_ = tuple(x.device for x in (pred, a, b) if isinstance(x, TensorProxy) and not utils.is_cpu_scalar_tensor(x))
     if len(devices_) > 0:
         resultdevice = devices_[0]
 
@@ -2831,7 +2847,9 @@ def _where_meta(pred: Number | TensorProxy, a: Number | TensorProxy, b: Number |
 
     # Determines output shape
     # NOTE Assumes at least one of pred, a, and b is a TensorProxy because of prior check for Number x Number x Number
-    shapes = tuple(x.shape for x in (pred, a, b) if isinstance(x, TensorProxy))
+    shapes = tuple(x.shape for x in (pred, a, b) if isinstance(x, TensorProxy) and not utils.is_cpu_scalar_tensor(x))
+    if not shapes:
+        shapes = (pred.shape,)
     resultshape = shapes[0]
 
     return TensorProxy(shape=resultshape, device=resultdevice, dtype=dtype)

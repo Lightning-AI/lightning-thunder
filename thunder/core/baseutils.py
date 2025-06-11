@@ -439,7 +439,7 @@ def print_type(typ: type, /, *, with_quotes: bool = True) -> str:
     if with_quotes:
         return f"'{result.group(1)}'"
 
-    return result.group(1).replace(".", "_")
+    return result.group(1).replace(".", "_").replace("<", "_").replace(">", "_")
 
 
 _printable_literals = {

@@ -1,15 +1,15 @@
-coverage ~=7.6.8
+coverage ~=7.8.2
 pytest ==8.3.5
 pytest-benchmark ==5.1.0
-pytest-timeout ==2.3.1
+pytest-timeout ==2.4.0
 pytest-cov ==6.1.1
-pytest-xdist ==3.6.1
+pytest-xdist ==3.7.0
 pytest-random-order ==1.1.1
 pytest-timestamper ==0.0.10
 graphviz ==0.20.3
 fdm ==0.5.0
 expecttest ==0.3.0  # for test_ddp.py
-hypothesis ~=6.131.9  # for test_ddp.py
+hypothesis ~=6.133.0  # for test_ddp.py
 numpy
 einops  # for test_einops.py
 litgpt==0.5.0  # for the model definition in tests and benchmarks  # todo: need update to latest
@@ -19,7 +19,7 @@ xlsxwriter # thunder/benchmarks/test_benchmark_litgpt.py
 jsonargparse # thunder/benchmarks/benchmark_litgpt.py
 bitsandbytes>=0.42,<0.43; sys_platform=='darwin'
 bitsandbytes>=0.45.2,<0.45.5; sys_platform!='darwin'
-transformers==4.50.3 # for test_networks.py
+transformers==4.52.4 # for test_networks.py
 
 # Installs JAX on Linux and MacOS
 jaxlib; sys_platform == 'linux' or sys_platform == 'darwin'  # required for jax, see https://github.com/google/jax#installation

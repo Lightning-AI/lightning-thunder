@@ -29,7 +29,7 @@ import thunder.clang as clang
 import thunder.core.devices as devices
 from thunder.core.devices import to_device
 import thunder.core.dtypes as dtypes
-from thunder.core.dtypes import to_torch_dtype, to_dtype, _thunder_to_torch_dtype_map, _torch_to_thunder_dtype_map
+from thunder.core.dtypes import to_torch_dtype, to_dtype, _torch_to_thunder_dtype_map
 import thunder.core.prims as prims
 import thunder.core.utils as utils
 import thunder.distributed.prims as dist_prims
@@ -2245,7 +2245,7 @@ def div_(
     return _copy_(a, div(a, b))
 
 
-@torchsymbol(torch.eq, is_method=True)
+@torchsymbol(torch.eq, torch.Tensor.__eq__, is_method=True)
 def eq(a, b, /):
     return clang.eq(a, b)
 
@@ -2485,6 +2485,16 @@ def true_divide_(a: TensorLike, b: NumberLike | TensorLike, /) -> TensorLike:
 @torchsymbol(torch.special.zeta)
 def zeta(a, b, /):
     return clang.zeta(a, b)
+
+
+@torchsymbol(torch.bitwise_left_shift, torch.Tensor.__lshift__, is_method=True)
+def bitwise_left_shift(a, b):
+    return clang.bitwise_left_shift(a, b)
+
+
+@torchsymbol(torch.bitwise_right_shift, torch.Tensor.__rshift__, is_method=True)
+def bitwise_right_shift(a, b):
+    return clang.bitwise_right_shift(a, b)
 
 
 #
@@ -3083,6 +3093,28 @@ def _sum_grad(
 
 
 register_grad(sum, _sum_grad)
+
+
+@torchsymbol(torch.repeat_interleave, is_method=True)
+def repeat_interleave(
+    input: TensorProxy, repeats: TensorProxy | int, dim: int | None = None, *, output_size: int | None = None
+):
+    if output_size is not None:
+        raise NotImplementedError("thunder.torch.repeat_interleave does not support dim argument yet")
+    if isinstance(repeats, TensorProxy):
+        raise NotImplementedErrror("thunder.torch.repeat_interleave does not support tensor repeats yet")
+    if dim is None:
+        return input.reshape((-1, 1)).expand(-1, repeats).reshape(-1)
+
+    if dim < 0:
+        dim += len(input.shape)
+
+    intermediate_shape = list(input.shape)
+    intermediate_shape.insert(dim + 1, repeats)
+    new_shape = list(input.shape)
+    new_shape[dim] *= repeats
+
+    return input.unsqueeze(dim + 1).expand(intermediate_shape).reshape(new_shape)
 
 
 # NOTE This decomposition can not be efficiently fused, so make it primitive
@@ -6430,7 +6462,7 @@ def _get_fake_arg(inp: Any):
     elif isinstance(inp, TensorProxy):
         return torch.empty(
             inp.shape,
-            dtype=_thunder_to_torch_dtype_map[inp.dtype],
+            dtype=to_torch_dtype(inp.dtype),
             requires_grad=inp.requires_grad,
             device=devices.to_torch_device(inp.device),
         )
@@ -6458,7 +6490,7 @@ def _fake_type_to_thunder(inp: Any):
         return TensorProxy(
             shape=inp.shape,
             device=to_device(inp.device),
-            dtype=_torch_to_thunder_dtype_map[inp.dtype],
+            dtype=to_dtype(inp.dtype),
             requires_grad=inp.requires_grad,
         )
     elif isinstance(inp, torch.Size):
@@ -6466,7 +6498,7 @@ def _fake_type_to_thunder(inp: Any):
     elif isinstance(inp, torch.device):
         return to_device(inp)
     elif isinstance(inp, torch.dtype):
-        return _torch_to_thunder_dtype_map[inp]
+        return to_dtype(inp)
     elif isinstance(inp, (str, bool, int, float, complex)):
         return inp
     else:

@@ -139,6 +139,27 @@ def test_cudnn_sdpa():
         assert any(bsym.sym.name == "cudnn_sdpa_fwd" for bsym in last_trace.bound_symbols)
 
 
+@requiresCUDA
+def test_cudnn_sdpa_NumberProxy_dropout():
+    _maybe_xfail()
+
+    # expect sdpa to fail for 8.9.2 and below
+    if cudnn.backend_version() <= 8902:
+        pytest.xfail("Only interleaved layout is supported pre 8.9.2.")
+    shape = (4, 8, 16, 16)
+    q = torch.rand(shape, dtype=torch.bfloat16, device="cuda", requires_grad=True)
+    k = torch.rand(shape, dtype=torch.bfloat16, device="cuda", requires_grad=True)
+    v = torch.rand(shape, dtype=torch.bfloat16, device="cuda", requires_grad=True)
+
+    def func(q, k, v, dropout_p):
+        return torch.nn.functional.scaled_dot_product_attention(q, k, v, dropout_p=dropout_p)
+
+    cf = thunder.jit(func, cache="symbolic values", executors=[cudnn_ex])
+    out = cf(q, k, v, dropout_p=0.5)
+    last_trace = thunder.last_traces(cf)[-1]
+    assert any(bsym.sym.name == "cudnn_sdpa_fwd" for bsym in last_trace.bound_symbols)
+
+
 # NOTE These wrappers are necessary because preprocessing cannot compile the function directly
 def layer_norm_wrapper(*args, **kwargs):
     return thunder.torch.layer_norm(*args, **kwargs)

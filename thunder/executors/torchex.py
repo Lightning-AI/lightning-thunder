@@ -938,6 +938,8 @@ sub = _register_torch_operation("sub")
 true_divide = _register_torch_operation("true_divide")
 zeta = _register_torch_operation("zeta", module=torch.special)
 div = _register_torch_operation("div")
+bitwise_left_shift = _register_torch_operation("bitwise_left_shift")
+bitwise_right_shift = _register_torch_operation("bitwise_right_shift")
 
 
 # NOTE PyTorch elementwise operations require at least one input to be a tensor
@@ -1034,6 +1036,8 @@ _register_elementwise_binary_implementation(prims.pow, pow)
 _register_elementwise_binary_implementation(prims.remainder, remainder)
 _register_elementwise_binary_implementation(prims.sub, sub)
 _register_elementwise_binary_implementation(prims.zeta, zeta)
+_register_elementwise_binary_implementation(prims.bitwise_left_shift, bitwise_left_shift)
+_register_elementwise_binary_implementation(prims.bitwise_right_shift, bitwise_right_shift)
 
 _register_elementwise_binary_implementation(ltorch.add, checker=_add_sub_checker, execution_transform=_add_transform)
 _register_elementwise_binary_implementation(ltorch.atan2, atan2)
@@ -1064,6 +1068,8 @@ _register_elementwise_binary_implementation(ltorch.sub, checker=_add_sub_checker
 _register_elementwise_binary_implementation(ltorch.true_divide, true_divide)
 _register_elementwise_binary_implementation(ltorch.zeta, zeta)
 _register_elementwise_binary_implementation(ltorch.div, checker=_div_checker, execution_transform=_div_transform)
+_register_elementwise_binary_implementation(ltorch.bitwise_left_shift, bitwise_left_shift)
+_register_elementwise_binary_implementation(ltorch.bitwise_right_shift, bitwise_right_shift)
 
 #
 # Elementwise ternary operations
@@ -2338,6 +2344,7 @@ def _shape_impl(t):
 
 shape = ex.register_operator("shape", meta=prims.shape_meta, fn=_shape_impl)
 _register_implementation(prims.shape, shape, checker=_always_executable)
+
 
 shallow_copy = ex.register_operator("shallow_copy", meta=prims.shallow_copy, fn=lambda x: x)
 _register_implementation(prims.shallow_copy, shallow_copy, checker=_always_executable)

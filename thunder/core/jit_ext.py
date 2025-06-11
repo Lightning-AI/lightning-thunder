@@ -12,6 +12,7 @@ import sys
 import time
 import warnings
 from types import (
+    BuiltinFunctionType,
     BuiltinMethodType,
     CellType,
     FunctionType,
@@ -824,6 +825,11 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     trace_of_augmented_fwd._siginfo = SigInfo.from_name_and_args(custom_fwd_sym.name, unwrapped_custom_forward_args)
     trace_of_augmented_fwd.args = unwrapped_custom_forward_args
 
+    from thunder.core.update_aliases import insert_alias_updates
+
+    alias_tensor_indices = [[i] for i in range(len(trace_of_augmented_fwd.args))]
+    aliased_trace_of_augmented_fwd = insert_alias_updates(trace_of_augmented_fwd, alias_tensor_indices)
+
     # Backward definition
     custom_backward = custom_autograd_function_cls.backward
     grads = tree_map(
@@ -855,9 +861,12 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     )
     bwd_trace_impl.args = tuple(ctx_proxy.saved_consts + ctx_proxy.saved_tensors + grads)
 
+    alias_tensor_indices = [[i] for i in range(len(bwd_trace_impl.args))]
+    aliased_bwd_trace_impl = insert_alias_updates(bwd_trace_impl, alias_tensor_indices)
+
     @wraps(bwd_trace_impl.python_callable())
     def bwd_impl_callable(*args, **kwargs):
-        return thunder.core.trace_interpreter.interpret_trace(bwd_trace_impl, *args, **kwargs)
+        return thunder.core.trace_interpreter.interpret_trace(aliased_bwd_trace_impl, *args, **kwargs)
 
     @wraps(core_of_forward)
     def grad_transform(*args, **kwargs):
@@ -866,7 +875,7 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
         from thunder.core.trace_interpreter import interpret_trace
 
         check(not kwargs, lambda: f"{kwargs=} should be empty")
-        primal, residuals = interpret_trace(trace_of_augmented_fwd, *args, **kwargs)
+        primal, residuals = interpret_trace(aliased_trace_of_augmented_fwd, *args, **kwargs)
         check(len(primal) == 1, lambda: f"{primal=} has {len(primal)} proxies but expected 1")
         grads = tree_map(lambda t: get_grad(t), primal)
         bwd_args = ctx_proxy.saved_consts + tuple(sequencify(residuals)) + grads
@@ -932,7 +941,12 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
     aug_fwd_result = aug_fwd_trace.output
     output, saved_values = unwrap(aug_fwd_result)
 
-    trace_of_forward = from_trace(aug_fwd_trace)
+    from thunder.core.update_aliases import insert_alias_updates
+
+    alias_tensor_indices = [[i] for i in range(len(aug_fwd_trace.args))]
+    aliased_aug_fwd_trace = insert_alias_updates(aug_fwd_trace, alias_tensor_indices)
+
+    trace_of_forward = from_trace(aliased_aug_fwd_trace)
     for bsym in aug_fwd_trace.bound_symbols:
         if bsym.sym.id == prims.PrimIDs.RETURN:
             continue
@@ -942,7 +956,7 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
 
     # See NOTE: `autograd_function_apply` and `no_grad` interaction for details about
     # `thunder.torch.call_higher_order_function_and_consider_outer_autograd_setting`
-    @wraps(aug_fwd_trace.python_callable())
+    @wraps(aliased_aug_fwd_trace.python_callable())
     @thunder.torch.call_higher_order_function_and_consider_outer_autograd_setting
     def forward(*args, **kwargs):
         return interpret_trace(trace_of_forward, *args, **kwargs)
@@ -966,14 +980,19 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
     ]
     bwd_trace.bound_symbols = bwd_unpack_bsyms + bwd_trace.bound_symbols
 
+    from thunder.core.update_aliases import insert_alias_updates
+
+    alias_tensor_indices = [[i] for i in range(len(bwd_trace.args))]
+    aliased_bwd_trace = insert_alias_updates(bwd_trace, alias_tensor_indices)
+
     @wraps(forward)
     def grad_transform(*args, **kwargs):
         from thunder.core.transforms import get_grad, put_grads
 
-        primal, residuals = interpret_trace(aug_fwd_trace, *args, **kwargs)
+        primal, residuals = interpret_trace(aliased_aug_fwd_trace, *args, **kwargs)
         grads = tree_map(lambda t: get_grad(t), sequencify(primal))
         bwd_args = (None,) + tuple(grads) + tuple(sequencify(residuals))
-        result = interpret_trace(bwd_trace, *bwd_args)
+        result = interpret_trace(aliased_bwd_trace, *bwd_args)
         put_grads(args[1:], result)
 
         return primal
