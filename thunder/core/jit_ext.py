@@ -31,7 +31,6 @@ import torch.utils.checkpoint
 import thunder
 from thunder.core.compile_data import get_cache_option, get_compile_data
 import thunder.clang as clang
-import thunder.core.transforms
 import thunder.core.baseutils as baseutils
 import thunder.core.codeutils as codeutils
 from thunder.core.proxies import (
@@ -1728,7 +1727,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             fn = provenance.inputs[0]
             args = provenance.inputs[1]
             if fn.inst != PseudoInst.CONSTANT:
-                raise NotImplementedError(f"unpacking from nonconstant opaque function")
+                raise NotImplementedError("unpacking from nonconstant opaque function")
             if fn.value.__name__ == "__getitem__":
                 idx, obj = args.inputs
                 # This should be solved in the JIT...
@@ -2092,7 +2091,7 @@ def thunder_general_jit(
     # TODO: move into wrap_callback or so
     if isinstance(fn, torch.nn.parallel.DistributedDataParallel):
         raise NotImplementedError(
-            f"jitting DistributedDataParallel modules is not supported compile the module and then wrap in DDP"
+            "jitting DistributedDataParallel modules is not supported compile the module and then wrap in DDP"
         )
 
     co: CACHE_OPTIONS = get_cache_option()

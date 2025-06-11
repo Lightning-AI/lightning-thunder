@@ -1,6 +1,5 @@
 from __future__ import annotations
 from collections.abc import Callable
-from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING
 
@@ -180,7 +179,6 @@ def test_parse_resnet18(executor, device, dtype, turn_off_tf32_and_set_seed, tra
     dtypes=NOTHING,
 )
 def test_inplace_to_views(executor, device, _):
-    import thunder
 
     def f(a: torch.Tensor, b: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         c = torch.exp(a)
@@ -276,7 +274,6 @@ def test_inplace_to_args_with_nvfuser(executor, device, _):
     dtypes=NOTHING,
 )
 def test_error_of_inplace_to_views(executor, device, _):
-    import thunder
 
     def f(a: torch.Tensor, b: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         c = torch.exp(a)
