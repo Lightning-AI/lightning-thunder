@@ -76,6 +76,7 @@ from thunder.clang import _clang_fn_set
 from thunder.core.pytree import tree_map, tree_iter
 from thunder.torch.experimental.dtensor_torch_and_prims import register_dtensor_torch_and_prims
 from thunder.torch.experimental.dtensor_proxy import is_dtensor_proxy
+from thunder.torch.experimental.dtensor_torch_and_prims import check_dtensor_spec_repr
 
 # TODO: Find a better place to register these ops (mostly in thunder/torch/__init__.py but without cyclical dependency).
 register_dtensor_torch_and_prims()
@@ -279,13 +280,11 @@ class JitCtx:
             if p is not uvalue:
                 value.register_proxy(p)
 
-            from thunder.torch.experimental import dtensor_torch_and_prims
-
             # TODO: other caching modes
             co: CACHE_OPTIONS = get_cache_option()
             if co is CACHE_OPTIONS.CONSTANT_VALUES:
                 if is_dtensor_proxy(p):
-                    self.add_constraint((dtensor_torch_and_prims.check_dtensor_spec_repr, p, uvalue._spec))
+                    self.add_constraint((check_dtensor_spec_repr, p, uvalue._spec))
                 self.add_constraint((clang.check_tensor_shape_and_metadata, p))
             elif co is CACHE_OPTIONS.SYMBOLIC_VALUES:
                 # TODO: establish guarding logic to allow non-broadcast shape change
