@@ -280,7 +280,6 @@ def test_hf_bert():
 
 @requiresCUDA
 @pytest.mark.skipif(not BITSANDBYTES_AVAILABLE, reason="`bitsandbytes` is not available")
-@pytest.mark.xfail(ValueError, reason="Likely Fabric issue with `bitsandbytes`")  # ToDo - fixme in Thunder
 def test_quantization():
     from thunder.tests import litgpt_model
     from lightning.fabric.plugins import BitsandbytesPrecision

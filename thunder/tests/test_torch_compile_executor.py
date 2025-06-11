@@ -64,7 +64,6 @@ def test_torch_compile_cat_nvfuser_phi2_tanh():
 @requiresCUDA
 @pytest.mark.skipif(not is_inductor_supported(), reason="inductor unsupported")
 @pytest.mark.skipif(not device_supports_bf16(torch.device("cuda")), reason="bf16 is not supported")
-@pytest.mark.xfail(ValueError, reason="cos must be three-dimensional, but shape is (8192, 128)")  # ToDo: fix
 def test_torch_compile_cat_rope_single_fusion():
     from thunder.benchmarks import LlamaQKVSplitRopeBenchmark
     from thunder.examine import get_fusions
