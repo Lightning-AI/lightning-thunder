@@ -2,7 +2,6 @@ from collections.abc import Sequence
 from typing import Any
 
 import torch
-from torch._guards import TracingContext
 from torch.distributed.tensor import DTensor
 
 from thunder.core.pytree import tree_map
@@ -17,10 +16,9 @@ from thunder.core.symbol import Symbol
 from thunder.core.trace import from_trace
 
 from torch._subclasses.fake_tensor import FakeTensorMode
-from torch._guards import TracingContext, tracing
 
 
-def _run_with_fake(torch_op, *args, **kwargs):
+def _run_with_fake(torch_op, fake_mode, *args, **kwargs):
     """
     Run a torch operation with fake tensors.
 
@@ -35,9 +33,6 @@ def _run_with_fake(torch_op, *args, **kwargs):
 
     def f(*args, **kwargs):
         return torch_op(*args, **kwargs)
-
-    tracing_ctx = TracingContext.try_get()
-    fake_mode = tracing_ctx.fake_mode
 
     with fake_mode:
 
@@ -76,8 +71,8 @@ def run_with_fake_tensor(torch_op, *args, **kwargs):
     Returns:
         The output of the torch operation executed with fake tensors
     """
-    with tracing(TracingContext(FakeTensorMode())):
-        output = _run_with_fake(torch_op, *args, **kwargs)
+    with FakeTensorMode() as fake_mode:
+        output = _run_with_fake(torch_op, fake_mode, *args, **kwargs)
     return output
 
 
