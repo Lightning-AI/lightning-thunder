@@ -5,7 +5,7 @@ from itertools import chain
 from typing import TYPE_CHECKING
 import time
 
-from thunder.core.proxies import Proxy, variableify, unvariableify, Variable, CollectionProxy
+from thunder.core.proxies import Proxy, variableify, CollectionProxy
 from thunder.core.pytree import tree_flatten
 from thunder.core.trace import from_trace, TraceProvenance
 from thunder.core.trace_interpreter import TraceSubstitutionProcessor

@@ -8,7 +8,7 @@ from thunder.tests.framework import requiresCUDA
 
 # flash attn 3
 try:
-    from flash_attn_interface import _flash_attn_forward, _flash_attn_backward, flash_attn_func
+    from flash_attn_interface import flash_attn_func
 
     HAS_FA3 = True
 except:

@@ -7,7 +7,6 @@ from thunder.core import dtypes, prims, devices
 from thunder.core.pytree import tree_map, tree_flatten
 from thunder.core.proxies import TensorProxy
 from thunder.core.symbol import BoundSymbolInterface, Symbol
-from thunder.core.proxies import TensorProxy
 from thunder.core.transforms import construct_trace, eval_trace
 from thunder.clang import (
     maybe_convert_to_dtype,

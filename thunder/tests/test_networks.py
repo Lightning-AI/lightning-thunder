@@ -605,7 +605,6 @@ def test_checkpointing_thunderfx():
     from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
         apply_activation_checkpointing,
         checkpoint_wrapper,
-        CheckpointWrapper,
     )
 
     def forward_backward_peak(m, inp):
