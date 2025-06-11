@@ -2810,7 +2810,8 @@ def _type_call_lookaside(wrapped_typ, *args, **kwargs):
     obj = _interpret_call(typ.__new__, wrapped_typ, *args, **kwargs)
     if obj is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return obj
-    obj.provenance = ProvenanceRecord(PseudoInst.NEW, inputs=[wrap_const(typ).provenance])
+    if isinstance(obj, WrappedValue):
+        obj.provenance = ProvenanceRecord(PseudoInst.NEW, inputs=[wrap_const(typ).provenance])
     wrapped_init = _interpret_call(getattr, obj, wrap_const("__init__"))
     assert not isinstance(wrapped_init, INTERPRETER_SIGNALS)
     populate_attribute_wrapper(wrapped_init, "__self__", obj)
@@ -4208,8 +4209,8 @@ def _dict_merge_handler(
     a = stack.pop_wrapped()
     b = stack.getitem_wrapped(-1)
     # TODO: Raise inside interpreter
-    assert wrapped_isinstance(b, MutableMapping), b
-    assert wrapped_isinstance(a, Mapping), a
+    assert wrapped_isinstance(b, MutableMapping), unwrap(b)
+    assert wrapped_isinstance(a, Mapping), unwrap(a)
     if overlap := unwrap(b).keys() & unwrap(a):
         return do_raise(KeyError(f"{co.co_name} got multiple values for keyword argument {next(iter(overlap))}"))
     res = _interpret_call(lambda a, b: b.update(a), a, b)
