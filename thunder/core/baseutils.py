@@ -380,6 +380,7 @@ _torch_dtype_to_str_map = {
     torch.float8_e4m3fnuz: "torch.float8_e4m3fnuz",
     torch.float8_e5m2: "torch.float8_e5m2",
     torch.float8_e5m2fnuz: "torch.float8_e5m2fnuz",
+    torch.float8_e8m0fnu: "torch.float8_e8m0fnu",
     torch.float16: "torch.float16",
     torch.float32: "torch.float32",
     torch.float64: "torch.float64",
