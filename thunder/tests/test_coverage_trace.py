@@ -1,7 +1,13 @@
 import torch
 import traceback
 import thunder
+import os
 import pytest
+
+
+if os.getenv("ALLOW_COVERAGE_TRACE") != "1":
+    pytest.skip("Skipping test_coverage_trace.py in regular CI", allow_module_level=True)
+
 
 from transformers import (
     AutoConfig,
