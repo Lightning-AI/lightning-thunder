@@ -3,7 +3,6 @@ from typing import Any
 
 import torch
 from torch._guards import TracingContext
-from functorch.compile import aot_function
 from torch.distributed.tensor import DTensor
 
 from thunder.core.pytree import tree_map
@@ -21,18 +20,17 @@ from torch._subclasses.fake_tensor import FakeTensorMode
 from torch._guards import TracingContext, tracing
 
 
-def get_fx_graph_and_output(torch_op, *args, **kwargs) -> tuple[torch.fx.GraphModule, Sequence[Any]]:
+def _run_with_fake(torch_op, *args, **kwargs):
     """
-    Generate a Torch FX graph and the corresponding output by tracing a TraceCtx object.
+    Run a torch operation with fake tensors.
 
     Args:
-        trc (TraceCtx): Trace which will be used to generate the FX Graph
-        args_for_fx (Sequence[Any]): A sequence of input arguments to be passed during the FX tracing.
+        torch_op: The torch operation to execute
+        *args: Arguments to pass to the torch operation
+        **kwargs: Keyword arguments to pass to the torch operation
 
     Returns:
-        tuple[torch.fx.GraphModule, Sequence[Any]]:
-            - A `torch.fx.GraphModule` object representing the traced computation graph in FX.
-            - Output(s) from evaluating the graph with the given inputs.
+        The output of the torch operation executed with fake tensors
     """
 
     def f(*args, **kwargs):
@@ -44,7 +42,7 @@ def get_fx_graph_and_output(torch_op, *args, **kwargs) -> tuple[torch.fx.GraphMo
     with fake_mode:
 
         def materialize_fake_tensors(t):
-            # `aot_function` can't handle these proxy types.
+            # Convert proxy types to fake tensors.
             if isinstance(t, NumberProxy):
                 return t.value
 
@@ -63,33 +61,7 @@ def get_fx_graph_and_output(torch_op, *args, **kwargs) -> tuple[torch.fx.GraphMo
 
         args, kwargs = tree_map(materialize_fake_tensors, (args, kwargs))
 
-    def aot_wrapped_fn(*args, **kwargs):
-        return f(*args, **kwargs)
-
-    fwd_graph = None
-
-    def get_graph(name):
-        def f(fx_g: torch.fx.GraphModule, inps):
-            nonlocal fwd_graph
-            assert name != "backward", "aot shouldn't have reached backward as it will be handled by thunder"
-            if name == "forward":
-                fwd_graph = fx_g
-            return fx_g
-
-        return f
-
-    aot_output = aot_function(aot_wrapped_fn, fw_compiler=get_graph("forward"), bw_compiler=get_graph("backward"))(
-        *args, **kwargs
-    )
-    # Example value of `fwd_graph`
-    # def forward(self, arg0_1, arg1_1):
-    #   mul = torch.ops.aten.mul.Tensor(arg0_1, arg1_1);  arg0_1 = arg1_1 = None
-    #   return (mul,)
-
-    # Example value of `aot_output`
-    # DTensor(local_tensor=FakeTensor(..., device='cuda:0', size=(8, 16)), device_mesh=DeviceMesh('cuda', [0, 1]), placements=(Shard(dim=0),))
-
-    return fwd_graph, aot_output
+    return f(*args, **kwargs)
 
 
 def run_with_fake_tensor(torch_op, *args, **kwargs):
@@ -105,7 +77,7 @@ def run_with_fake_tensor(torch_op, *args, **kwargs):
         The output of the torch operation executed with fake tensors
     """
     with tracing(TracingContext(FakeTensorMode())):
-        _, output = get_fx_graph_and_output(torch_op, *args, **kwargs)
+        output = _run_with_fake(torch_op, *args, **kwargs)
     return output
 
 
