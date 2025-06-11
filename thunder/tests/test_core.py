@@ -2418,7 +2418,7 @@ def test_refine_source_location(executor, device: str, dtype: dtypes.dtype):
     assert str(trace_thunder).count("return _softmax(a, dim=dim, dtype=dtype)") == 0
     assert str(trace_thunder).count("return thunder.torch.softmax(x, 0)") == 1
     # torch.softmax should be traced as usual
-    assert str(trace_torch).count(f"return torch.softmax(x, 0)") == 1
+    assert str(trace_torch).count("return torch.softmax(x, 0)") == 1
 
 
 def test_torch_device():

@@ -92,7 +92,7 @@ class Region:
         self.outputs = utils.OrderedSet(sorted(outputs, key=lambda p: proxy_order[p.proxy.name]))
 
     def __repr__(self) -> str:
-        s = f"[Region:"
+        s = "[Region:"
 
         for bsym in self.bound_symbols:
             s += f"\n{str(bsym)}"

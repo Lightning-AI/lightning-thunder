@@ -1583,7 +1583,7 @@ def _max_pool_with_indices_helper(
         dilation_ = get_maybe_ith_entry("dilation", dilation, i)
         utils.check(
             kernel_ is not None and stride_ is not None and pad_ is not None and dilation_ is not None,
-            lambda: f"max_pool argument extraction failed.",
+            lambda: "max_pool argument extraction failed.",
         )
         out_sizes.append(pooling_output_shape(in_, kernel_, pad_, stride_, dilation_, ceil_mode))
 

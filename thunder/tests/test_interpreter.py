@@ -1549,7 +1549,7 @@ def test_locals_lookaside_pre_313(jit):
 
             # Deletions in localsplus are deleted in locals
             del l
-            assert not "l" in locals().keys(), locals()
+            assert "l" not in locals().keys(), locals()
 
             # The objects stored in variables are the same as those in locals
             b = object()
@@ -1587,7 +1587,7 @@ def test_locals_lookaside_313(jit):
 
             # Deletions in localsplus are deleted in locals
             del l
-            assert not "l" in locals().keys(), locals()
+            assert "l" not in locals().keys(), locals()
 
             # The objects stored in variables are the same as those in locals
             b = object()
@@ -1849,7 +1849,7 @@ def test_len_lookaside(jit):
 
     o = mycls(-1)
 
-    with pytest.raises(ValueError, match="__len__\(\) should return >= 0"):
+    with pytest.raises(ValueError, match=r"__len__\(\) should return >= 0"):
         jfoo(o)
 
     o = mycls(0.42)

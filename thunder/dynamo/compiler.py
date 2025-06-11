@@ -324,7 +324,7 @@ def thunder_profile(fn):
         if tao.is_profiling:
             return cfn(*args, **kwargs)
 
-        raise AssertionError(f"No longer profiling")
+        raise AssertionError("No longer profiling")
 
     profiling_callable._compiled_fn = cfn
     profiling_callable._tao = tao

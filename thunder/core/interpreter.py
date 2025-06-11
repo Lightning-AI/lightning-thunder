@@ -2386,7 +2386,7 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
             return do_raise(IndexError(f"pop on empty {type(uself)}"))
 
         if uindex < -len(uself) or uindex >= len(uself):
-            return do_raise(IndexError(f"pop index out of range"))
+            return do_raise(IndexError("pop index out of range"))
 
         res = _interpret_call(lambda l, i: l[i], self, index)
 
@@ -4412,7 +4412,7 @@ def _format_value_handler(inst: dis.Instruction, /, stack: InterpreterStack, **k
         elif _case == FVC_REPR:
             value = repr(value)
         else:
-            assert _case == FVC_ASCII, f"Unknown FVC_MASK in FORMAT_VALUE"
+            assert _case == FVC_ASCII, "Unknown FVC_MASK in FORMAT_VALUE"
             value = ascii(value)
 
         formatted: str = format(value, fmt_spec) if fmt_spec is not None else format(value)
@@ -5386,7 +5386,7 @@ def _match_class_impl(kw_names, typ, subject, count) -> tuple | None:
         match_self = True
         match_args = ()
 
-    if not type(match_args) is tuple:
+    if type(match_args) is not tuple:
         raise TypeError(f"{typ.__name__}.__match_args__ must be a tuple (got {type(match_args)})")
 
     allowed = 1 if match_self else len(match_args)
@@ -5825,7 +5825,7 @@ def do_raise(exc: Any = Py_NULL(), cause: Any = Py_NULL()) -> Literal[INTERPRETE
         elif cause is None:
             fixed_cause = None
         else:
-            return do_raise(TypeError(f"exception causes must derive from BaseException"))
+            return do_raise(TypeError("exception causes must derive from BaseException"))
 
         value.__cause__ = fixed_cause
 

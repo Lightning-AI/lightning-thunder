@@ -293,7 +293,7 @@ class FXGraphReport:
     def _get_input_str(self, folder, inputs, serialize_inputs):
         input_str = ""
         if any(arg is None for arg in inputs):
-            input_str += f"# Warning: The inputs that cannot be inferred are set to None, requiring the user to manually give inputs according to the code\n"
+            input_str += "# Warning: The inputs that cannot be inferred are set to None, requiring the user to manually give inputs according to the code\n"
         if serialize_inputs:
             example_inputs = self.make_example_inputs()
             input_file_name = folder / f"{self.graph_name}_inputs.pt"
@@ -672,7 +672,7 @@ class FXReport:
                 output += "    User Stack:\n"
                 for frame_summary in reason.user_stack:
                     output += f"      {frame_summary}\n"
-        output += f"Graph information:\n"
+        output += "Graph information:\n"
         for idx, graph_report in enumerate(self.fx_graph_reports):
             output += textwrap.indent(f"{graph_report}\n", "  ")
         return output
@@ -1146,7 +1146,7 @@ def check_torch_compile_runnability(fn: Callable, stream: TextIO = sys.stdout, *
             run_forward_backward(torch_compiled, *args, **kwargs)
         except Exception as e:
             stream.write(f"Failed to run the function using torch.compile with exception: {e}")
-            stream.write(f"Trying with Torch eager...")
+            stream.write("Trying with Torch eager...")
             try:
                 run_forward_backward(fn, *args, **kwargs)
             except Exception as e:

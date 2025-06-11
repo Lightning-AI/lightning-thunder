@@ -658,7 +658,8 @@ class FSDPDDPHybridTest(DistributedParallelTestCase):
 
     @pytest.mark.skipif(torch.cuda.device_count() < 4, reason="Requires 4 devices")
     def test_fsdp_ddp_hybrid(self):
-        import torch, thunder
+        import torch
+        import thunder
         import torch.distributed
         from torch.testing import assert_close
         from thunder.distributed.transforms.fsdp_v2 import FSDPTransform
@@ -694,7 +695,8 @@ class FSDPDDPHybridTest(DistributedParallelTestCase):
 
     @pytest.mark.skipif(torch.cuda.device_count() < 4, reason="Requires 4 devices")
     def test_fsdp_ddp_plugin(self):
-        import torch, thunder
+        import torch
+        import thunder
         import torch.distributed
         from thunder.plugins import FSDP
         from torch.testing import assert_close

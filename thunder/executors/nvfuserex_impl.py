@@ -2242,7 +2242,7 @@ def remove_redundant_casts(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
         if len(bsym.args) == 2:
             a, dtyp = bsym.args
         elif len(bsym.args) == 1:
-            utils.check(len(bsym.kwargs) == 1, lambda: f"Expected two arguments for convert element type")
+            utils.check(len(bsym.kwargs) == 1, lambda: "Expected two arguments for convert element type")
             (a,) = bsym.args
             dtyp = bsym.kwargs["dtype"]
         else:
@@ -2334,7 +2334,7 @@ def remove_redundant_casts(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
             nbsyms.append(nbsym)
             utils.check(
                 nbsym.subsymbols is None or len(nbsym.subsymbols) == 0,
-                lambda: f"Expected no subsymbols when creating a new BoundSymbol in the remove redundant casts pass",
+                lambda: "Expected no subsymbols when creating a new BoundSymbol in the remove redundant casts pass",
                 exception_type=AssertionError,
             )
 

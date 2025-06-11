@@ -2983,7 +2983,7 @@ def _get_and_update_rng_state_meta(
         utils.check_type(offset, (IntegerProxy, int))
     utils.check(
         device.devicetype is devices.DeviceType.CUDA,
-        lambda: f"get_and_update_rng_state is supported for CUDA only",
+        lambda: "get_and_update_rng_state is supported for CUDA only",
         exception_type=NotImplementedError,
     )
     return numberproxy(int, None), numberproxy(int, None)
@@ -3197,7 +3197,7 @@ def _multinomial_meta(
 
     utils.check(
         input.numel != 0,
-        lambda: f"Expected probability weights to be non-empty",
+        lambda: "Expected probability weights to be non-empty",
     )
     utils.check(
         0 < input.ndim <= 2,
@@ -3551,7 +3551,7 @@ index_add = make_prim(PrimIDs.INDEX_ADD, "index_add", meta=index_add_meta)
 def index_copy_meta(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
     utils.check(
         dtypes.to_dtype(index) is dtypes.int64,
-        lambda: f"index_copy: only indices of type int64 are supported",
+        lambda: "index_copy: only indices of type int64 are supported",
     )
     return index_add_meta(a, index, value, dim)
 
@@ -3868,7 +3868,7 @@ def _argmin_argmax_meta(a: TensorProxy, /, dim: int | None) -> TensorProxy:
     utils.check_type(dim, (int, IntegerProxy, NoneType))
 
     if a.numel == 0:
-        utils.check(dim is not None, lambda: f"Expected reduction dim to be specified for a.numel() == 0.")
+        utils.check(dim is not None, lambda: "Expected reduction dim to be specified for a.numel() == 0.")
 
     if dim is not None and a.ndim > 0:
         utils.check(a.shape[dim], lambda: f"Expected reduction dim {dim} to have non-zero size.")

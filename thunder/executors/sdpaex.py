@@ -90,12 +90,12 @@ def _attention_mask_memory_efficient_helper(attn_mask: None | torch.Tensor, quer
 
     utils.check(
         head_dim > 0,
-        lambda: f"Expected head dimension to be greater than 0.",
+        lambda: "Expected head dimension to be greater than 0.",
     )
 
     utils.check(
         key_seq_len > 0,
-        lambda: f"Expected key-value sequence length to be greater than 0.",
+        lambda: "Expected key-value sequence length to be greater than 0.",
     )
 
     # Pad and slice attention mask to ensure correct alignment.

@@ -715,8 +715,8 @@ class NumberProxy(Proxy, NumberProxyInterface):
         return self.value is not None
 
     def make_static_constrained(self):
-        baseutils.check(self.constraint != CONSTRAINT.DYNAMIC, lambda: f"dynamic NumberProxy cannot be made static")
-        baseutils.check(self.value is not None, lambda: f"static NumberProxy needs to have value")
+        baseutils.check(self.constraint != CONSTRAINT.DYNAMIC, lambda: "dynamic NumberProxy cannot be made static")
+        baseutils.check(self.value is not None, lambda: "static NumberProxy needs to have value")
         self.constraint = CONSTRAINT.STATIC
 
     def make_constrainable(self):
@@ -1265,7 +1265,7 @@ def _infer_tensor_properties(
         thunder_fsdp_padding_size if thunder_fsdp_padding_size is not None else _thunder_fsdp_padding_size
     )
 
-    baseutils.check(_shape is not None, lambda: f"_shape cannot be None when creating TensorProxy")
+    baseutils.check(_shape is not None, lambda: "_shape cannot be None when creating TensorProxy")
     if not using_symbolic_values():
         _shape = tuple(pyval(x) for x in _shape)
         # Computes derived properties

@@ -366,7 +366,7 @@ class TraceCtx:
 
             # ... and from the signature
             if self._siginfo is None and self.fn is None:
-                signature_str = f"# No signature available"
+                signature_str = "# No signature available"
             else:
                 si = self.siginfo()
                 signature_str = si.prettyprint(trace=self, import_ctx=import_ctx, object_ctx=object_ctx)

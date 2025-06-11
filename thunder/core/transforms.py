@@ -118,10 +118,10 @@ class Node:
         return str(self.bsym)
 
     def __hash__(self) -> int:
-        utils.check(False, lambda: f"Trying to hash a Node. Hash its bsym instead.")
+        utils.check(False, lambda: "Trying to hash a Node. Hash its bsym instead.")
 
     def __eq__(self, other) -> bool:
-        utils.check(False, lambda: f"Trying to compare Nodes for equality. Compare their bsyms' instead.")
+        utils.check(False, lambda: "Trying to compare Nodes for equality. Compare their bsyms' instead.")
 
 
 # TODO Think about how to model nodes likes comments -- maybe comments should be associated with
@@ -152,7 +152,7 @@ def bsym_list_to_dag(
         if bsym.sym.id is prims.PrimIDs.RETURN:
             utils.check(
                 return_node is None,
-                lambda: f"Found multiple RETURN nodes while converting a list of bound symbols to a dag",
+                lambda: "Found multiple RETURN nodes while converting a list of bound symbols to a dag",
             )
             return_node = node
 
@@ -443,7 +443,7 @@ def add_transform(
 
     cd: None | Any = getattr(cfn, "_lc_cd", None)
 
-    utils.check(cd is not None, lambda: f"Can only transform compiled thunder functions")
+    utils.check(cd is not None, lambda: "Can only transform compiled thunder functions")
     utils.check(isinstance(cd, CompileData), lambda: f"Found an unknown compile data attribute {cd}")
     if isinstance(transform, Transform):
         transform = [transform]
@@ -913,7 +913,7 @@ register_grad(pids.INDEX_COPY, _index_copy_grad)
 def _scatter_add_prim_grad(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
     utils.check(
         not value._requires_grad or value.shape == index.shape,
-        lambda: f"The gradient for the value Tensor is implemented only when value.shape == index.shape. "
+        lambda: "The gradient for the value Tensor is implemented only when value.shape == index.shape. "
         "value shape is {value.shape} while index shape is {index.shape}",
     )
 

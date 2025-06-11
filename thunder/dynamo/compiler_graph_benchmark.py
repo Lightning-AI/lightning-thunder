@@ -76,10 +76,10 @@ class ThunderCompilerGraphBenchmarking(ThunderCompiler):
         """
         super().__init__()
         self.bench = bench
-        check(isinstance(executors, dict) and executors, lambda: f"'executors' must be a non-empty dictionary.")
+        check(isinstance(executors, dict) and executors, lambda: "'executors' must be a non-empty dictionary.")
         check(
             not any("-" in k for k in executors.keys()),
-            lambda: f"Executor names cannot contain '-' as it conflicts with the 'benchmark-group-by' function. Please rename it using a different character.",
+            lambda: "Executor names cannot contain '-' as it conflicts with the 'benchmark-group-by' function. Please rename it using a different character.",
         )
         self.executors = executors
         self._get_debug_options(**debug_options)
