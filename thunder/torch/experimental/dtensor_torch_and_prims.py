@@ -105,7 +105,7 @@ def handle_check_dtensor_spec_in_prologue(prim, prologue_trace, args) -> bool:
 
 
 def dtensor_mul_meta(a, b):
-    _, output = run_with_fake_tensor(torch.mul, a, b)
+    output = run_with_fake_tensor(torch.mul, a, b)
     local_tensor_proxy = TensorProxy(like=a.local_tensor)
     spec = output._spec
     spec_proxy = AnyProxy(spec, history=a.history)

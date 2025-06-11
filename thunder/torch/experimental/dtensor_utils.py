@@ -93,9 +93,20 @@ def get_fx_graph_and_output(torch_op, *args, **kwargs) -> tuple[torch.fx.GraphMo
 
 
 def run_with_fake_tensor(torch_op, *args, **kwargs):
+    """
+    Run a torch operation with fake tensors and return the output.
+
+    Args:
+        torch_op: The torch operation to execute
+        *args: Arguments to pass to the torch operation
+        **kwargs: Keyword arguments to pass to the torch operation
+
+    Returns:
+        The output of the torch operation executed with fake tensors
+    """
     with tracing(TracingContext(FakeTensorMode())):
-        fx_graph, output = get_fx_graph_and_output(torch_op, *args, **kwargs)
-    return fx_graph, output
+        _, output = get_fx_graph_and_output(torch_op, *args, **kwargs)
+    return output
 
 
 def check_dtensor_cotangent_metadata(dtensor, metadata):
