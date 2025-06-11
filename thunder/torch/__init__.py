@@ -13,12 +13,6 @@ from functools import partial, reduce, wraps
 from numbers import Number
 from types import NoneType, ModuleType
 from typing import Any, overload
-import builtins
-import collections
-import itertools
-import math
-import operator
-import re
 
 import opt_einsum
 

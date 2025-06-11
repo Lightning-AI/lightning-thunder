@@ -13,7 +13,6 @@ from looseversion import LooseVersion
 
 import torch
 from thunder.core.pytree import tree_flatten
-from thunder.core.baseutils import check
 from thunder.core.utils import sequencify, create_python_callable_from_bsym
 from thunder.dynamo.compiler import thunderfx
 from thunder.dynamo.utils import (
@@ -23,7 +22,6 @@ from thunder.dynamo.utils import (
     get_env,
     get_split_reasons_string,
     CompilerType,
-    example_input_meta_to_input,
     recompile_graph,
     has_higher_order_operator,
     input_to_example_input_meta,
@@ -1334,7 +1332,7 @@ def thunderfx_benchmark_report(
     thunderfx_benchmark_report_from_splits(thunder_fxgraph_reports, folder_path, compare_fusion=True)
     ```
     """
-    from thunder.dynamo.utils import get_thunder_jit_kwargs, get_torch_compile_kwargs
+    from thunder.dynamo.utils import get_torch_compile_kwargs
 
     folder_path = Path(folder_path)
     folder_path.mkdir(exist_ok=True, parents=True)

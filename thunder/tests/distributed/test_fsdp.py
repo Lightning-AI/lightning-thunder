@@ -2,7 +2,6 @@ import os
 import unittest
 import weakref
 from itertools import product
-from collections.abc import Callable
 
 import pytest
 import torch
@@ -580,7 +579,6 @@ class FSDPTest(DistributedParallelTestCase):
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
     def test_fsdpv2_with_1layer_llama_meta_init(self):
-        import re
         from thunder.tests.litgpt_model import Config, GPT
 
         device = torch.device("cuda", self.rank)
@@ -613,7 +611,6 @@ class FSDPTest(DistributedParallelTestCase):
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
     def test_fsdpv2_no_grad(self):
-        import re
         from thunder.tests.litgpt_model import Config, GPT
 
         device = torch.device("cuda", self.rank)

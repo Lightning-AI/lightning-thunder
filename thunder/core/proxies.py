@@ -14,7 +14,7 @@ import math
 
 import torch
 
-from thunder.core.compile_data import using_symbolic_values, using_jit, get_cache_option, CACHE_OPTIONS
+from thunder.core.compile_data import using_symbolic_values, get_cache_option, CACHE_OPTIONS
 from thunder.core.interpreter import is_jitting, ProvenanceRecord, PseudoInst
 from thunder.core.trace import (
     VariableInterface,
@@ -1984,7 +1984,7 @@ _cls_to_number_proxy_map = {
 
 # TODO: move this function to jit_ext.py
 def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple = None) -> TensorProxy:
-    from thunder.core.interpreter import ProvenanceRecord, PseudoInst, wrap_const
+    from thunder.core.interpreter import wrap_const
 
     if hasattr(t, "_thunder_device"):
         torch_device = t._thunder_device

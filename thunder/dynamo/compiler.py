@@ -21,7 +21,6 @@ from thunder.dynamo.utils import (
     input_to_example_input_meta,
 )
 from thunder.dynamo.splitter import _splitter
-from thunder.core.utils import check
 from thunder.dynamo.benchmark_utils import ThunderCompileSpecification
 from thunder.transforms.extraction_only_prologue_transform import ExtractionOnlyPrologueTransform
 
@@ -31,7 +30,6 @@ if TYPE_CHECKING:
     from thunder.core.trace import TraceCtx as Trace
     from os import PathLike
     from collections.abc import Callable
-    from thunder.core.trace import TraceCtx as Trace
 
 
 _DEFAULT_THUNDER_FUSION_TYPE = "dataflow"

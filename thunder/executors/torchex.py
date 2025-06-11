@@ -6,18 +6,16 @@ from numbers import Number
 from typing import TYPE_CHECKING
 from collections.abc import Callable
 from collections.abc import Hashable, Sequence
-from collections.abc import Sequence
 from types import ModuleType
 
 import torch
 
-from thunder.core.compile_data import get_compile_data
 import thunder.core.dtypes as dtypes
 from thunder.core.dtypes import to_torch_dtype, to_dtype
 import thunder.core.devices as devices
 from thunder.core.devices import to_torch_device, to_device
 import thunder.core.prims as prims
-from thunder.core.proxies import NumberProxy, TensorProxy, FutureTensorProxy, pytype
+from thunder.core.proxies import NumberProxy, TensorProxy, pytype
 from thunder.core.symbol import Symbol
 from thunder.distributed.prims import DistributedReduceOps
 import thunder.distributed.prims as dist_prims

@@ -10,7 +10,7 @@ import torch
 
 from thunder.tests.framework import requiresCUDA, TorchExecutor, instantiate, NOTHING
 from thunder.tests.make_tensor import make_tensor
-from thunder.tests.opinfos import get_opinfo, OpInfo
+from thunder.tests.opinfos import get_opinfo
 from thunder.tests.test_einops import skipIfNoCUDA
 from torch.testing._internal.common_device_type import skipCPUIfNoLapack, skipCUDAIfNoMagma
 from torch.testing._internal.common_methods_invocations import op_db

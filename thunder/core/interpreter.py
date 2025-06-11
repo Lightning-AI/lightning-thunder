@@ -15,9 +15,8 @@ import re
 import sys
 import traceback
 import weakref
-import torch
 from typing import Any, Literal, TypedDict
-from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence, Set, Sized
+from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence, Sized
 import collections
 import operator
 
@@ -25,13 +24,11 @@ from io import StringIO
 
 from types import (
     CellType,
-    ClassMethodDescriptorType,
     CodeType,
     CoroutineType,
     FrameType,
     FunctionType,
     MethodType,
-    MethodDescriptorType,
     ModuleType,
     NoneType,
     BuiltinFunctionType,

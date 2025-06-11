@@ -1,5 +1,4 @@
 import math
-from looseversion import LooseVersion
 
 import torch
 
@@ -19,7 +18,6 @@ from thunder.core.transforms import (
 )
 from thunder.extend import OperatorExecutor, register_executor
 
-from enum import Enum
 
 from thunder.executors.utils import (
     _input_dtype_check_fused_scaled_dot_product_attention,

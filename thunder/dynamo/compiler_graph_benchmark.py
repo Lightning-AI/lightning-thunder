@@ -1,5 +1,4 @@
 from __future__ import annotations
-from itertools import chain
 from pytest_benchmark.fixture import BenchmarkFixture
 from typing import TYPE_CHECKING
 from looseversion import LooseVersion

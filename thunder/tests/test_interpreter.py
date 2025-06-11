@@ -1,7 +1,6 @@
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Sequence
 from contextlib import redirect_stdout
 from functools import partial, wraps
-from itertools import product
 
 import io
 import sys
@@ -1494,7 +1493,6 @@ def test_import(jit):
     assert jfoo(2, 7) == foo(2, 7)
 
     def foo(a):
-        import torch.nn as nn
         from torch.nn.functional import relu
 
         return relu(a)

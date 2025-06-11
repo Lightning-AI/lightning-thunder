@@ -58,7 +58,6 @@ from thunder.core.utils import (
 )
 import thunder.clang as clang
 from thunder.clang import (
-    empty,
     full_like,
     unsqueeze,
     squeeze,
