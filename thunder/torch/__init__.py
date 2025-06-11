@@ -1021,7 +1021,7 @@ def empty_like(
 
 
 # TODO Update this to take a *args series of tensors or a sequence of tensors
-@torchsymbol(torch.cat)
+@torchsymbol(torch.cat, torch.concat, torch.concatenate, id="torch.cat", is_method=True)
 def cat(tensors: Sequence[TensorLike], dim: int = 0) -> TensorLike:
     return clang.cat(tensors, dim)
 
@@ -1096,7 +1096,9 @@ def diagonal(a: TensorLike, /, offset: int = 0, dim1: int = 0, dim2: int = 1) ->
     return clang.diagonal(a, offset, dim1, dim2)
 
 
-@torchsymbol(torch.Tensor.expand, is_method=True)
+@torchsymbol(
+    torch.Tensor.expand, torch.broadcast_to, torch.Tensor.broadcast_to, id="torch.Tensor.expand", is_method=True
+)
 def expand(a: TensorLike, /, *shape: int) -> TensorLike:
     return clang.expand(a, *shape)
 
@@ -1910,7 +1912,7 @@ def tan_(a):
     return _copy_(a, tan(a))
 
 
-@torchsymbol(torch.tanh, is_method=True)
+@torchsymbol(torch.tanh, torch.nn.functional.tanh, id="torch.tanh", is_method=True)
 def tanh(a):
     return clang.tanh(a)
 
