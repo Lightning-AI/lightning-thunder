@@ -1,6 +1,7 @@
 import torch
 import traceback
 import thunder
+import pytest
 
 from transformers import (
     AutoConfig,
@@ -52,7 +53,8 @@ def get_dummy_input(model_name, config):
         return {"input_ids": torch.randint(0, 1000, (1, 16), device="cpu")}
 
 
-def try_model(model_name):
+@pytest.mark.parametrize("model_name", MODEL_LIST)
+def test_model_trace(model_name):
     print(f"\n=== Testing {model_name} ===")
 
     try:
@@ -60,22 +62,17 @@ def try_model(model_name):
         model_class = get_model_class(model_name, config)
         model = model_class.from_config(config).to("meta")
         input_sample = get_dummy_input(model_name, config)
-
-    except Exception as setup_err:
+    except Exception:
         print(f"[SKIPPED] {model_name} - model setup failed")
         traceback.print_exc()
-        return
+        pytest.skip(f"Model setup failed for {model_name}")
 
     try:
         jmodel = thunder.jit(model)
         ce, pro_to_comp, pro_to_epi = run_prologue(jmodel, **input_sample)
         print(f"[SUCCESS] {model_name} Trace acquired!")
-
-    except Exception as thunder_err:
+    except Exception:
         print(f"[FAILURE] {model_name} - Thunder trace acquisition failed")
         traceback.print_exc()
+        assert False, f"Thunder trace acquisition failed for {model_name}"
 
-
-if __name__ == "__main__":
-    for model in MODEL_LIST:
-        try_model(model)
