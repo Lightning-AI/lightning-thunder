@@ -75,4 +75,3 @@ def test_model_trace(model_name):
         print(f"[FAILURE] {model_name} - Thunder trace acquisition failed")
         traceback.print_exc()
         assert False, f"Thunder trace acquisition failed for {model_name}"
-
