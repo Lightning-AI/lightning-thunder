@@ -1,26 +1,21 @@
 import operator
 import os
 import tempfile
-import traceback
 from functools import partial, reduce
-from itertools import product
 import dataclasses
 import re
 import weakref
 
 import pytest
 import torch
-from looseversion import LooseVersion
 from torch.testing import assert_close, make_tensor
-from types import FunctionType
 
 import thunder
-from thunder import last_traces, cache_option, cache_hits, cache_misses
+from thunder import cache_option, cache_hits, cache_misses
 import thunder.core.proxies
 import thunder.examine as examine
 import thunder.clang as clang
 import thunder.core.profile
-import thunder.core.proxies as proxies
 import thunder.tests.bf16
 import thunder.torch as ltorch
 
@@ -552,10 +547,12 @@ def test_partial_args(executor, device, dtype):
     b = make_tensor((2, 2), device=device, dtype=torch_dtype)
 
     pfoo = partial(foo, a)
+    jpfoo = executor.make_callable(pfoo)
 
-    with pytest.raises(NotImplementedError):
-        cpfoo = executor.make_callable(pfoo)
-        cpfoo(b)
+    res = jpfoo(b)
+    expected = pfoo(b)
+
+    assert_close(res, expected)
 
 
 @instantiate(dtypes=(thunder.float32,))
@@ -1265,7 +1262,7 @@ def test_detached_trace(executor, device: str, _):
     # This test ensures that the detached_trace context manager works as expected.
     #   It should be possible to enter a detached trace, and then exit it, and
     #   the trace should be restored to its original state.
-    from thunder.core.trace import set_tracectx, get_tracectx, TraceCtx, reset_tracectx, detached_trace
+    from thunder.core.trace import get_tracectx, TraceCtx, detached_trace
 
     try:
         new_trace = TraceCtx(None)
@@ -1637,7 +1634,7 @@ def test_eval_trace(executor, device, _):
     #   and that all the symbols in the trace are properly evaluated.
 
     from thunder.core.transforms import eval_trace
-    from thunder.core.trace import TraceCtx, reset_tracectx, set_tracectx, maybe_start_trace
+    from thunder.core.trace import TraceCtx
     from thunder.core.proxies import TensorProxy
 
     def foo(a, b, *, c=5):
@@ -2416,7 +2413,7 @@ def test_refine_source_location(executor, device: str, dtype: dtypes.dtype):
     assert str(trace_thunder).count("return _softmax(a, dim=dim, dtype=dtype)") == 0
     assert str(trace_thunder).count("return thunder.torch.softmax(x, 0)") == 1
     # torch.softmax should be traced as usual
-    assert str(trace_torch).count(f"return torch.softmax(x, 0)") == 1
+    assert str(trace_torch).count("return torch.softmax(x, 0)") == 1
 
 
 def test_torch_device():
@@ -3215,7 +3212,6 @@ def test_apply_autograd_memory(thunderfx_disable_split_autograd):
 
 
 def test_thunder_jit_parts():
-    from thunder.tests import litgpt_model
 
     m = torch.nn.Sequential(
         torch.nn.Linear(64, 128),

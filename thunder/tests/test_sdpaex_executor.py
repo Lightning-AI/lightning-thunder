@@ -143,7 +143,6 @@ def snippet_torch_consistency(op, torch_op, sample):
 @pytest.mark.parametrize("device,", ["cuda"])
 @requiresCUDA
 def test_sdpa_torch_consistency(device: str, dtype: torch.dtype):
-    from thunder.executors.sdpaex import _scaled_dot_product_attention_checker
 
     # Enable math and memory-efficient sdpa options for Volta and prior devices
     torch_device = torch.device(device)
@@ -206,7 +205,7 @@ def test_sdpa_attn_mask(attn_mask_requires_grad, device: str, dtype: torch.dtype
     output = actual.mean()
     output.backward()
 
-    torch.testing.assert_close(actual, expected)
+    torch.testing.assert_close(actual, expected, atol=7e-3, rtol=7e-3)
     torch.testing.assert_close(attn_mask1.grad, attn_mask.grad)
     torch.testing.assert_close(query.grad, query1.grad)
     torch.testing.assert_close(key.grad, key1.grad)

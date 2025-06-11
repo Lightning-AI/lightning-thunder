@@ -4,6 +4,7 @@ import warnings
 
 import thunder
 from thunder.recipes import BaseRecipe
+from thunder import Recipe
 
 
 class InplaceIndexCopyTransform(thunder.Transform):
@@ -37,7 +38,17 @@ class InplaceIndexCopyTransform(thunder.Transform):
         return pro, comp_new, epi
 
 
+@Recipe.register("transformers")
 class HFTransformers(BaseRecipe):
+    """
+    Recipe tuned for Hugging Face ``transformers`` models.
+
+    Args:
+        show_progress (bool, optional): Forwarded to :class:`BaseRecipe`.
+        interpreter (str, optional): Thunder interpreter to use.
+        plugins (Iterable | None, optional): Extra Thunder plugins.
+    """
+
     def __init__(
         self,
         show_progress=False,
@@ -52,6 +63,16 @@ class HFTransformers(BaseRecipe):
 
     @classmethod
     def validate(cls, model):
+        """
+        Emit warnings (or errors) if *model* falls outside the supported
+        transformer versions or base classes.
+
+        Args:
+            model (transformers.PreTrainedModel): Model instance to vet.
+
+        Raises:
+            ValueError: If *model* is not a ``PreTrainedModel``.
+        """
         import transformers
 
         version = LooseVersion(transformers.__version__)
@@ -80,11 +101,26 @@ class HFTransformers(BaseRecipe):
             raise ValueError(f"The model must be an instance of PreTrainedModel, found {type(model)}")
 
     def setup_config(self):
+        """
+        Enable NV-kernelised linear, matmul and SDPA ops on top of the
+        base recipe’s debug configuration.
+
+        Returns:
+            dict[str, Any]: Thunder config dictionary augmented with
+            ``nv_enable_*`` flags.
+        """
         config = super().setup_config()
         config.update(nv_enable_linear=True, nv_enable_matmul=True, nv_enable_sdpa=True)
         return config
 
     def setup_lookasides(self):
+        """
+        Swap out the warning helper when running under
+        the non Thunder-FX interpreter.
+
+        Returns:
+            list[thunder.core.recipe.Lookaside] | None
+        """
         if self.interpreter == thunder.core.recipe.Interpreter.THUNDER_FX:
             return None
 
@@ -95,13 +131,46 @@ class HFTransformers(BaseRecipe):
             replace_with=lambda *args: None,
         )
 
-        return [warn_lookaside]
+        # HF transformers (4.52.4) wraps something in autocast(device, enabled=False)
+        # but PyTorch (2.7) does not like this call when device is meta.
+        # So to trace on the meta device and because don't care about much about the autocast,
+        # we replace it with the nullcontext.
+        # We might allow more cases (call autocast if iot is nt with meta or not enabled=False?)
+        def autocast_lookaside(*args, enabled=True, **kwargs):
+            from contextlib import nullcontext
+
+            if enabled:
+                raise RuntimeError("don't do autocast")
+            return nullcontext()
+
+        import torch
+
+        autocast_lookaside = thunder.core.recipe.Lookaside(fn=torch.autocast, replace_with=autocast_lookaside)
+        return [warn_lookaside, autocast_lookaside]
 
     def setup_transforms(self):
+        """
+        Prepend the ``InplaceIndexCopyTransform`` to the default
+        transform list.
+
+        Returns:
+            list[thunder.Transform]: transform list.
+        """
         transforms = super().setup_transforms()
         return [self.inplace_index_copy_transform] + transforms
 
     def apply(self, model):
+        """
+        Apply the recipe (compile the model) and patch ``generate`` / ``_sample``
+        so they work after tracing.
+
+        Args:
+            model (transformers.PreTrainedModel): The model to compile.
+
+        Returns:
+            transformers.PreTrainedModel: Thunder-compiled model ready
+            for inference.
+        """
         thunder_model = super().apply(model)
 
         if getattr(thunder_model, "generate", None):

@@ -1,11 +1,9 @@
 from numbers import Number
 
-import pytest
 import torch
-from torch.testing import assert_close, make_tensor
 
 import thunder
-from thunder.core.patterns import Pattern, bind_names, numbered_ancestors
+from thunder.core.patterns import Pattern, bind_names
 from thunder.core.proxies import TensorProxy
 from thunder.core.symbol import BoundSymbol
 

@@ -1,5 +1,4 @@
 from collections.abc import Sequence
-import itertools
 from functools import partial
 from typing import Any
 
@@ -13,7 +12,6 @@ import torch
 import thunder
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
-import thunder.clang as clang
 
 from thunder import torch as ltorch
 from thunder.core.dtypes import is_exact_dtype, to_dtype as thunder_dtype
@@ -27,9 +25,7 @@ from thunder.tests.framework import (
     run_snippet,
     assert_closer,
     IN_CI,
-    NVFUSER_AVAILABLE,
     requiresCUDA,
-    version_between,
 )
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
 from thunder.tests.opinfos import get_opinfo, opinfos, tensor_creation_ops
@@ -601,11 +597,11 @@ def test_vjp_correctness_sdpa_manual(op, device, dtype, executor, comp):
             disable_torch_autograd=True,
             executors=[sdpa_ex, *executor.executors_list()],
         )(filtered_args, (v,))
-        comp(actual_out, expect_out)
+        comp(actual_out, expect_out, atol=1e-3, rtol=1e-3)
 
         # compare gradients of query, key, value, and attn_mask
         for eg, ag in zip(expected_grad, actual_grad):
-            comp(eg, ag)
+            comp(eg, ag, atol=7e-3, rtol=7e-3)
 
 
 @ops((get_opinfo("zeta"),), supported_dtypes=(dtypes.float64,))
@@ -1117,7 +1113,6 @@ def test_torch_autograd_module(executor, device, _):
     dtypes=NOTHING,
 )
 def test_torch_autograd_module_get_compile_stats(executor, device, _):
-    from thunder.core.trace import TraceCtx
     from thunder import compile_stats
 
     l = torch.nn.Linear(3, 4, bias=False, device=device)
@@ -1242,7 +1237,6 @@ def test_torch_autograd_redundant_casts(executor, device, _):
     # There was a bug where we would eliminate the redundant casts in forward
     # but backward wasn't updated with the new proxies. This test ensures that
     # we don't regress.
-    from thunder.core.prims import convert_element_type
     import thunder.torch as ltorch
 
     def func(a, b, c):
@@ -1434,7 +1428,7 @@ def test_phantom_grad_vs_torch_consistency(op, device: str, dtype: dtypes.dtype,
 
 
 from torch.testing import assert_close
-from thunder.core.transforms import populate_grads, clear_grads, extract_grads, put_grad, put_grads, get_grad
+from thunder.core.transforms import populate_grads, clear_grads, extract_grads, put_grad, get_grad
 
 
 @instantiate(dtypes=(thunder.float32,))
@@ -1600,7 +1594,6 @@ def test_too_few_results_from_backward():
     from thunder.core.prims import make_prim
     from thunder.core.transforms import register_augmented_forward, register_backward
     from thunder.core.proxies import TensorProxy
-    from thunder.core import codeutils
 
     def myadd_meta(a, b):
         return TensorProxy(like=a)

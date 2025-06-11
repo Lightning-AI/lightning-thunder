@@ -1,8 +1,7 @@
 from dataclasses import dataclass, replace
 from functools import partial, lru_cache
 from numbers import Number
-from typing import Union, List, Any, Optional, Dict, Set, Tuple, Type
-from types import NoneType
+from typing import Any
 from collections.abc import Callable, Mapping, Hashable, Sequence
 import os
 import time
@@ -31,15 +30,13 @@ from thunder.core.proxies import (
     Variable,
     pyval,
 )
-from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
+from thunder.core.pytree import tree_map
 from thunder.core.rematerialization import rematerialize
-from thunder.core.utils import OrderedSet, check, check_same_dtype
+from thunder.core.utils import check
 from thunder.core.trace import TraceCtx, from_trace, TraceProvenance
 from thunder.core.symbol import BoundSymbol, BoundSymbolRHS, Symbol, has_tags
 from thunder.core.devices import Device, DeviceType, cpu
-import thunder.core.codeutils as codeutils
-from thunder.core.codeutils import Printable
-from thunder.core.transform_common import dce, cse_single_bsym, replace_redundant_inputs, NON_FUNCTIONAL_OPS
+from thunder.core.transform_common import dce, cse_single_bsym, replace_redundant_inputs
 from thunder.core.profile import annotate_for_profile
 from thunder.core.compile_data import get_compile_option
 
@@ -62,7 +59,7 @@ from thunder.executors.utils import (
 )
 
 from thunder.executors.passes import update_fusion_call_ctx
-from thunder.extend import FUEL_LEVEL, FusionExecutor, register_executor, add_default_executor
+from thunder.extend import FUEL_LEVEL, FusionExecutor, register_executor
 from thunder.executors.nvfuserex import nvfuser_version
 
 # NOTE This impl file is here because nvFuser may not be available, so it's imported conditionally
@@ -255,6 +252,10 @@ def create_fd(
     # TODO Review splititng very large fusions or removing the max length restriction completely
     #   See "Very large nvFuser fusions hit max_length"
     fd = FusionDefinition(max_length=9999)
+
+    # Device may be set in one of the "factory" methods like full, iota, or uniform
+    fd._selected_device = None
+
     with fd:
         # NOTE Adding constants is disabled for the moment in favor of definining them inline
         # 0) Adds constants
@@ -428,7 +429,7 @@ def to_runtime_descriptors(args) -> tuple:
 
 
 # TODO Consider making this just a function, because it's faster to call a function than a callable class
-@dataclass
+@dataclass(slots=True)
 class FusionDefinitionWrapper:
     """
     A callable object wrapping a nvFuser fusion definition.
@@ -456,16 +457,13 @@ class FusionDefinitionWrapper:
         if self.store_inputs:
             self.last_inputs = args
 
-        kwargs = {}
-        if self.save_fake_inputs:
-            kwargs["save_repro_inputs"] = True
-        # Set device if set in one of the "factory" methods like full, iota, or uniform
-        if hasattr(fd, "_selected_device"):
-            kwargs["device"] = fd._selected_device
-
         with annotate_for_profile(self.name):
             return fd.execute(
-                args, _enable_options=self.enable_options, _disable_options=self.disable_options, **kwargs
+                args,
+                device=fd._selected_device,
+                save_repro_inputs=self.save_fake_inputs,
+                _enable_options=self.enable_options,
+                _disable_options=self.disable_options,
             )
 
     def __repr__(self):
@@ -1012,7 +1010,7 @@ def _select_device(fd: FusionDefinition, device: None | Device):
         return
 
     utils.check(
-        not hasattr(fd, "_selected_device") or fd._selected_device == device.index,
+        fd._selected_device is None or fd._selected_device == device.index,
         lambda: f"Found multiple requested devices: {fd._selected_device} and {device.index}",
     )
 
@@ -1975,6 +1973,28 @@ def minimum(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefin
 register_supported(PrimIDs.MINIMUM, minimum, _elementwise_binary_check)
 
 
+def bitwise_left_shift(
+    a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict
+) -> Any:
+    nva = getnv(a, fd, lc_to_nv_map)
+    nvb = getnv(b, fd, lc_to_nv_map)
+
+    return fd.ops.bitwise_left_shift(nva, nvb)
+
+
+def bitwise_right_shift(
+    a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict
+) -> Any:
+    nva = getnv(a, fd, lc_to_nv_map)
+    nvb = getnv(b, fd, lc_to_nv_map)
+
+    return fd.ops.bitwise_right_shift(nva, nvb)
+
+
+register_supported(PrimIDs.BITWISE_LEFT_SHIFT, bitwise_left_shift, _elementwise_binary_check)
+register_supported(PrimIDs.BITWISE_RIGHT_SHIFT, bitwise_right_shift, _elementwise_binary_check)
+
+
 #
 # Elementwise ternary operations
 #
@@ -2219,7 +2239,7 @@ def remove_redundant_casts(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
         if len(bsym.args) == 2:
             a, dtyp = bsym.args
         elif len(bsym.args) == 1:
-            utils.check(len(bsym.kwargs) == 1, lambda: f"Expected two arguments for convert element type")
+            utils.check(len(bsym.kwargs) == 1, lambda: "Expected two arguments for convert element type")
             (a,) = bsym.args
             dtyp = bsym.kwargs["dtype"]
         else:
@@ -2311,7 +2331,7 @@ def remove_redundant_casts(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
             nbsyms.append(nbsym)
             utils.check(
                 nbsym.subsymbols is None or len(nbsym.subsymbols) == 0,
-                lambda: f"Expected no subsymbols when creating a new BoundSymbol in the remove redundant casts pass",
+                lambda: "Expected no subsymbols when creating a new BoundSymbol in the remove redundant casts pass",
                 exception_type=AssertionError,
             )
 
@@ -2686,8 +2706,10 @@ def _embedding_check(
     if nvfuser_version() < LooseVersion("0.2.25"):
         return False
     enable_embedding: None | bool = get_compile_option("nv_enable_embedding", "Enable nvFuser embedding.")
-    if not enable_embedding:
-        return False
+    if enable_embedding is not None:
+        warnings.warn(
+            "nv_enable_embedding is no longer used. embedding through nvfuserex is enabled by default, option nv_enable_embedding is ignored"
+        )
     # Verify input and weight are supported tensors.
     if not are_supported_tensors(input, weight) or (weight.ndim != 2):
         return False
@@ -2861,6 +2883,7 @@ def cross_entropy_fwd(
 nv_cross_entropy_fwd = ex.register_operator(
     "nv_cross_entropy_fwd",
     meta=cross_entropy_fwd_meta,
+    tags=[prims.OpTags.REDUCTION_OP],
 )
 register_supported(nv_cross_entropy_fwd.id, cross_entropy_fwd, None)
 

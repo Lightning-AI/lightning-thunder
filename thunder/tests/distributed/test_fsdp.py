@@ -2,7 +2,6 @@ import os
 import unittest
 import weakref
 from itertools import product
-from collections.abc import Callable
 
 import pytest
 import torch
@@ -133,8 +132,8 @@ class FSDPTest(DistributedParallelTestCase):
         #       in the original trace and are inputs to all_gather, the unshard are the outputs fo the corresponding wait
         #       If you fix this to be dynamically discerned, you'll be my hero.
         sharded_param_names = ("t_net1_weight", "t_net2_weight")
-        # t30 and t84 are all-gather'ed t_net1_weight and t_net2_weight, respectively.
-        unshard_param_names = ("t30", "t84")
+        # t103 and t107 are all-gather'ed t_net1_weight and t_net2_weight, respectively.
+        unshard_param_names = ("t103", "t107")
         result_saved_for_bwd = [x.name for x in fwd_trc.bound_symbols[-1].args[1][0]]
         self.assertTrue(all(t not in sharded_param_names for t in result_saved_for_bwd))
         self.assertTrue(all(t in result_saved_for_bwd for t in unshard_param_names))
@@ -145,10 +144,12 @@ class FSDPTest(DistributedParallelTestCase):
 
         # check allgather is inserted in backward trace
         from thunder.distributed.prims import PrimIDs
+        from thunder.executors.torchex import all_gather_prim_impl
 
         self.assertTrue(all(bsym.sym.id != PrimIDs.ALL_GATHER for bsym in bwd_trc.bound_symbols))
-        self.assertTrue(any(bsym.sym.id == PrimIDs.ALL_GATHER for bsym in result_bwd_trc.bound_symbols))
+        self.assertTrue(any(bsym.sym.id == all_gather_prim_impl.id for bsym in result_bwd_trc.bound_symbols))
 
+    @pytest.mark.xfail(strict=True, reason="This is not updated yet for joint forward-backward trace")
     @common_utils.parametrize(
         "executor,bucketing_strategy,fsdptype",
         product(
@@ -186,6 +187,7 @@ class FSDPTest(DistributedParallelTestCase):
         run_test_no_sync_grad_accumulation(self, get_model_and_optimizer, is_comm, dataset_size=2)
 
     # TODO(crcrpar): Add torch compile to executors_list
+    @pytest.mark.xfail(strict=True, reason="This is not updated yet for joint forward-backward trace")
     @common_utils.parametrize(
         "executor,bucketing_strategy,fsdptype",
         product(
@@ -395,6 +397,11 @@ class FSDPTest(DistributedParallelTestCase):
         # buffers were moved too
         assert model.buf.device.type == "cuda"
 
+    # This is not updated yet for joint forward-backward trace
+    @common_utils.decorateIf(
+        unittest.expectedFailure,
+        lambda params: params["bucketing_strategy"] in (FSDPBucketingStrategy.LAYER, FSDPBucketingStrategy.BLOCK),
+    )
     @common_utils.parametrize(
         "executor,bucketing_strategy,fsdptype",
         product(
@@ -447,7 +454,7 @@ class FSDPTest(DistributedParallelTestCase):
 
         # get the trace before sorting
         fwd_trc = thunder.last_traces(cm)[-2]
-        bwd_trc = thunder.last_backward_traces(cm)[-2]
+        bwd_trc = thunder.last_backward_traces(cm)[-1]
 
         from thunder.distributed.utils import limit_in_flight_allgathers
 
@@ -572,7 +579,6 @@ class FSDPTest(DistributedParallelTestCase):
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
     def test_fsdpv2_with_1layer_llama_meta_init(self):
-        import re
         from thunder.tests.litgpt_model import Config, GPT
 
         device = torch.device("cuda", self.rank)
@@ -605,7 +611,6 @@ class FSDPTest(DistributedParallelTestCase):
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
     def test_fsdpv2_no_grad(self):
-        import re
         from thunder.tests.litgpt_model import Config, GPT
 
         device = torch.device("cuda", self.rank)
@@ -650,7 +655,8 @@ class FSDPDDPHybridTest(DistributedParallelTestCase):
 
     @pytest.mark.skipif(torch.cuda.device_count() < 4, reason="Requires 4 devices")
     def test_fsdp_ddp_hybrid(self):
-        import torch, thunder
+        import torch
+        import thunder
         import torch.distributed
         from torch.testing import assert_close
         from thunder.distributed.transforms.fsdp_v2 import FSDPTransform
@@ -686,7 +692,8 @@ class FSDPDDPHybridTest(DistributedParallelTestCase):
 
     @pytest.mark.skipif(torch.cuda.device_count() < 4, reason="Requires 4 devices")
     def test_fsdp_ddp_plugin(self):
-        import torch, thunder
+        import torch
+        import thunder
         import torch.distributed
         from thunder.plugins import FSDP
         from torch.testing import assert_close

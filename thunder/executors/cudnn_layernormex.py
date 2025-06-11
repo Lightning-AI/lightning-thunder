@@ -8,8 +8,6 @@ import numpy as np
 from dataclasses import dataclass
 from functools import lru_cache
 
-import thunder.core.dtypes as dtypes
-from thunder.core.proxies import TensorProxy
 
 from thunder.executors.cudnnex import torch_to_cudnn_dtype, cudnn_available
 from thunder.extend import OperatorExecutor
