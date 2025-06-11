@@ -18,9 +18,9 @@ from thunder.core.trace import from_trace
 from torch._subclasses.fake_tensor import FakeTensorMode
 
 
-def _run_with_fake(torch_op, *args, **kwargs):
+def run_with_fake_tensor(torch_op, *args, **kwargs):
     """
-    Run a torch operation with fake tensors.
+    Run a torch operation with fake tensors and return the output.
 
     Args:
         torch_op: The torch operation to execute
@@ -57,21 +57,6 @@ def _run_with_fake(torch_op, *args, **kwargs):
         args, kwargs = tree_map(materialize_fake_tensors, (args, kwargs))
 
     return f(*args, **kwargs)
-
-
-def run_with_fake_tensor(torch_op, *args, **kwargs):
-    """
-    Run a torch operation with fake tensors and return the output.
-
-    Args:
-        torch_op: The torch operation to execute
-        *args: Arguments to pass to the torch operation
-        **kwargs: Keyword arguments to pass to the torch operation
-
-    Returns:
-        The output of the torch operation executed with fake tensors
-    """
-    return _run_with_fake(torch_op, *args, **kwargs)
 
 
 def check_dtensor_cotangent_metadata(dtensor, metadata):
