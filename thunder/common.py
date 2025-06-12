@@ -2,8 +2,6 @@ import dis
 from typing import Any
 from collections.abc import Callable, Generator, Hashable, Sequence
 from collections import deque, defaultdict
-import time
-from functools import wraps
 from io import StringIO
 from weakref import WeakValueDictionary
 
@@ -14,9 +12,8 @@ from thunder.core.options import (
     resolve_sharp_edges_option,
     DebugOptions,
 )
-from thunder.core.utils import check, is_collection, AutocastStack
-from thunder.core.pytree import tree_flatten, tree_map
-from thunder.core.compile_data import compile_data_and_stats
+from thunder.core.utils import is_collection, AutocastStack
+from thunder.core.pytree import tree_map
 import thunder.core.langctxs as langctxs
 from thunder.core.langctxs import set_langctx, reset_langctx, LanguageContext, resolve_language, Languages
 from thunder.core.codeutils import get_siginfo
@@ -38,10 +35,8 @@ from thunder.core.proxies import (
 )
 import thunder.core.prims as prims
 import thunder.distributed as dist
-import thunder.torch as ltorch  # we need to import thunder.torch before the below for import ordering...
-from thunder.extend import Executor, get_default_executors, get_always_executors, OperatorExecutor, add_executor_lists
+from thunder.extend import Executor, get_default_executors, get_always_executors, add_executor_lists
 import thunder.executors as executors
-from thunder.transforms.autocast import autocast
 from thunder.core.dtypes import to_dtype
 
 import torch as torch

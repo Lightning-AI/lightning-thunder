@@ -18,8 +18,7 @@ from thunder.core.trace import get_tracectx
 from thunder.core.symbol import Symbol, BoundSymbol
 import thunder.core.devices as devices
 import thunder.core.prims as prims
-from thunder.core.proxies import TensorProxy, AnyProxy
-from thunder.core.symbol import Symbol
+from thunder.core.proxies import AnyProxy
 from thunder.core.vjp_utils import disable_caching_split_forward_and_backward
 from thunder.extend import OperatorExecutor, register_executor
 from thunder.core.compile_data import get_compile_option, get_compile_data
@@ -43,7 +42,6 @@ te: None | Any = None
 if TE_AVAILABLE:
     try:
         import transformer_engine.pytorch as te
-        from transformer_engine.common import recipe
         from transformer_engine.common.recipe import MXFP8BlockScaling, DelayedScaling
         from transformer_engine.pytorch.constants import MXFP8_BLOCK_SCALING_SIZE
         from transformer_engine.pytorch.module.linear import _Linear
@@ -320,7 +318,6 @@ def make_te_linear_meta(is_grad_enabled: bool = False):
     def _te_functional_linear_meta(
         a: TensorProxy, w: TensorProxy, bias: None | TensorProxy
     ) -> tuple[TensorProxy, AnyProxy | None]:
-        from thunder.core.dtypes import float8_e4m3fn, uint8
 
         # Input Shape : (*, Hin)
         # Output Shape : (*, Hout) where * is any number of dims including None.

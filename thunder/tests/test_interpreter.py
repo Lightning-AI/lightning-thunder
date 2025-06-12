@@ -1,7 +1,6 @@
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Sequence
 from contextlib import redirect_stdout
 from functools import partial, wraps
-from itertools import product
 
 import io
 import sys
@@ -1494,7 +1493,6 @@ def test_import(jit):
     assert jfoo(2, 7) == foo(2, 7)
 
     def foo(a):
-        import torch.nn as nn
         from torch.nn.functional import relu
 
         return relu(a)
@@ -1549,7 +1547,7 @@ def test_locals_lookaside_pre_313(jit):
 
             # Deletions in localsplus are deleted in locals
             del l
-            assert not "l" in locals().keys(), locals()
+            assert "l" not in locals().keys(), locals()
 
             # The objects stored in variables are the same as those in locals
             b = object()
@@ -1587,7 +1585,7 @@ def test_locals_lookaside_313(jit):
 
             # Deletions in localsplus are deleted in locals
             del l
-            assert not "l" in locals().keys(), locals()
+            assert "l" not in locals().keys(), locals()
 
             # The objects stored in variables are the same as those in locals
             b = object()
@@ -1849,7 +1847,7 @@ def test_len_lookaside(jit):
 
     o = mycls(-1)
 
-    with pytest.raises(ValueError, match="__len__\(\) should return >= 0"):
+    with pytest.raises(ValueError, match=r"__len__\(\) should return >= 0"):
         jfoo(o)
 
     o = mycls(0.42)

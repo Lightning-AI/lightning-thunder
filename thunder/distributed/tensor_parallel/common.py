@@ -1,12 +1,10 @@
 from __future__ import annotations
 from abc import ABC
 from abc import abstractmethod
-import copy
 from enum import Enum
 from enum import auto
 from dataclasses import dataclass
 from dataclasses import field
-from itertools import chain
 from typing import TYPE_CHECKING
 
 import torch
@@ -22,7 +20,6 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from typing import Any
     from torch.distributed import ProcessGroup
-    from thunder.common import CompileData
     from thunder.core.module import ThunderModule
     from thunder.core.proxies import ProxyInterface
     from thunder.core.symbol import BoundSymbol

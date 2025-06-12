@@ -4,7 +4,6 @@ import sys
 import platform
 from functools import wraps, singledispatchmethod, partial
 from itertools import product
-from typing import List, Optional
 from collections.abc import Callable, Sequence, Iterable
 import packaging.version
 import contextlib
@@ -16,7 +15,7 @@ from torch.testing import assert_close
 
 from lightning_utilities.core.imports import package_available
 
-from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
+from thunder.core.pytree import tree_flatten, tree_map
 import thunder.core.dtypes as datatypes
 import thunder.core.devices as devices
 import thunder.executors as executors
