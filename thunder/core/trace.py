@@ -421,6 +421,7 @@ class TraceCtx:
                 # the FP8 scales/inverses. So this decorator should be applied before `torch.no_grad` (so that
                 # it is in grad enabled part).
                 from thunder.executors.transformer_engineex import _is_te_linear_enabled, _get_te_wrapper_string
+
                 if TraceTag.AUGMENTED_FORWARD and _is_te_linear_enabled(import_ctx, object_ctx):
                     program.append(_get_te_wrapper_string())
 

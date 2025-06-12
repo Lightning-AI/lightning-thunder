@@ -545,6 +545,7 @@ def split_into_forward_and_backward(joint_trace: TraceCtx):
     # Importing here to avoid cyclical dependencies in future.
     # NOTE: This is required only for v1 executor.
     from thunder.executors.transformer_engineex import transformer_engine_v1_bwd_fp8_meta_sync
+
     transformer_engine_v1_bwd_fp8_meta_sync(forward_trace, backward_trace)
 
     return forward_trace, backward_trace
