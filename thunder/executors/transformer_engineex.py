@@ -548,7 +548,7 @@ te_sync_fp8_meta_bwd = transformer_engine_ex.register_operator(
 )
 
 
-def _transformer_engine_bwd_fp8_meta_sync(fw_extrace, bw_extrace):
+def _transformer_engine_bwd_fp8_meta_sync(unused_fw_extrace, bw_extrace):
     # See doc of `_insert_bwd_fp8_meta_sync` for more details.
     _insert_bwd_fp8_meta_sync(bw_extrace)
 
@@ -559,3 +559,9 @@ def _insert_bwd_fp8_meta_sync(bw_extrace):
     # See NOTE: Backward FP8 metadata sync
     bwd_idx = len(bw_extrace.bound_symbols) - 1
     bw_extrace.bound_symbols.insert(bwd_idx, te_sync_fp8_meta_bwd.bind(output=None))
+
+
+def transformer_engine_v1_bwd_fp8_meta_sync(forward_trace, backward_trace):
+    if transformer_engine_ex in get_compile_data().executors_list:
+        # NOTE: `_transformer_engine_bwd_fp8_meta_sync` may mutate `fw_extrace` or `bw_extrace`.
+        _transformer_engine_bwd_fp8_meta_sync(forward_trace, backward_trace)

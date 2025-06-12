@@ -210,7 +210,7 @@ def test_te_with_autocast():
 
 
 # NOTE: strict=False as it passes on Blackwell.
-@pytest.mark.xfail(strict=False, raises=(RuntimeError, TypeError), reason="Retain graph is not supported by TE")
+@pytest.mark.xfail(strict=False, raises=(ValueError), reason="See https://github.com/Lightning-AI/lightning-thunder/issues/2221")
 @requiresCUDA
 def test_te_with_retain_graph():
     def foo(x, w):
