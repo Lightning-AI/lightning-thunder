@@ -266,7 +266,7 @@ def wrap(value: Any, /, *, provenance: ProvenanceRecord) -> WrappedValue:
         cached = runtimectx._known_wrappers.get(id(value))
         if cached is not None:
             potential_wrap = cached[0]()
-            if potential_wrap is not None:
+            if potential_wrap is not None and potential_wrap.value is value:
                 # Note: we want to cache mutable objects to not run into trouble
                 #       with multiple accesses to the same.
                 #       As the cache only holds a weakref to the WrappedValue instance
@@ -954,7 +954,10 @@ class ProvenanceRecord:
             self.ext_flag = 0
 
     def __hash__(self):
-        return hash((self.inst, *self.inputs))
+        inst = self.inst
+        if isinstance(inst, dis.Instruction):  # dis.Instruction instances are not generally hashable
+            inst = str(inst)
+        return hash((inst, *self.inputs))
 
     def __str__(self):
         counter = 0
@@ -1578,17 +1581,17 @@ def _object_getattribute_lookaside(obj: Any, name: str):
     objtype = type(uobj)
     null = cls_var = descr_get = object()
 
-    name = unwrap(name)
-    if not isinstance(name, str):
+    uname = unwrap(name)
+    if not isinstance(uname, str):
         return do_raise(TypeError("getattr(): attribute name must be string"))
 
     # TODO: classes and super have a slightly different resolution behavior
     #   https://docs.python.org/3/howto/descriptor.html#invocation-from-a-class
     #   https://docs.python.org/3/howto/descriptor.html#invocation-from-super
     if isinstance(uobj, (type, super)):
-        result = getattr(uobj, name, null)
+        result = getattr(uobj, uname, null)
         if result is null:
-            return do_raise(AttributeError(name))
+            return do_raise(AttributeError(uname))
         else:
             return result
 
@@ -1597,10 +1600,10 @@ def _object_getattribute_lookaside(obj: Any, name: str):
     #   1)  Some builtin C types have `__get__` methods but act like simple namespaces.
     #   2)  If `obj` has a metaclass, the dunder methods might be dynamic.
     # So for now we just fall back to the builtin `getattr` for these bedrock lookups.
-    if DUNDER_PATTERN.match(name) or isinstance(uobj, (type, super)):
+    if DUNDER_PATTERN.match(uname) or isinstance(uobj, (type, super)):
         return (
-            do_raise(AttributeError(f"'{type(uobj).__name__}' object has no attribute '{name}'"))
-            if (result := getattr(uobj, name, null)) is null
+            do_raise(AttributeError(f"'{type(uobj).__name__}' object has no attribute '{uname}'"))
+            if (result := getattr(uobj, uname, null)) is null
             else result
         )
 
@@ -1623,7 +1626,7 @@ def _object_getattribute_lookaside(obj: Any, name: str):
 
     # Check for class variables.
     for base in objtype.__mro__:
-        if (cls_var := vars(base).get(name, null)) is not null:
+        if (cls_var := vars(base).get(uname, null)) is not null:
             descr_get = lookup_descriptor_field("__get__")
             break
 
@@ -1655,11 +1658,12 @@ def _object_getattribute_lookaside(obj: Any, name: str):
         # Even if `obj_dict` is a subclass (which only happens in the corner case that `__dict__` has
         # been manually assigned) Python appears to reinterpret it as a simple dict for the purpose of
         # attribute resolution.
-        # we avoid interpreting into dict.get if obj_dict is a plain dict to avoid creating a wrapper for it.
-        if type(uobj_dict) == dict:
-            instance_value = uobj_dict.get(name, null)
-        else:
-            instance_value = _interpret_call_with_unwrapping(dict.get, obj_dict, name, null)
+        # it would be a cool otpimization to avoid interpreting into dict.get if obj_dict is a plain dict to
+        # avoid creating a wrapper for it, but we ran into trouble with Tensor attributes of modules (see
+        # https://github.com/Lightning-AI/lightning-thunder/issues/2009 , which has happened when we special
+        # cased if type(uobj_dict) == dict: instance_value = uobj_dict.get(uname, null)
+        # here
+        instance_value = _interpret_call_with_unwrapping(dict.get, obj_dict, uname, null)
         if instance_value is not null:
             return instance_value
 
@@ -1670,7 +1674,7 @@ def _object_getattribute_lookaside(obj: Any, name: str):
     if cls_var is not null:
         return cls_var
 
-    return do_raise(AttributeError(name))
+    return do_raise(AttributeError(uname))
 
 
 def check_self(obj, potential_method):
@@ -2803,6 +2807,8 @@ def _type_call_lookaside(wrapped_typ, *args, **kwargs):
     obj = _interpret_call(typ.__new__, wrapped_typ, *args, **kwargs)
     if obj is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return obj
+    if isinstance(obj, WrappedValue):
+        obj.provenance = ProvenanceRecord(PseudoInst.NEW, inputs=[wrap_const(typ).provenance])
     wrapped_init = _interpret_call(getattr, obj, wrap_const("__init__"))
     assert not isinstance(wrapped_init, INTERPRETER_SIGNALS)
     populate_attribute_wrapper(wrapped_init, "__self__", obj)
@@ -4200,8 +4206,8 @@ def _dict_merge_handler(
     a = stack.pop_wrapped()
     b = stack.getitem_wrapped(-1)
     # TODO: Raise inside interpreter
-    assert wrapped_isinstance(b, MutableMapping), b
-    assert wrapped_isinstance(a, Mapping), a
+    assert wrapped_isinstance(b, MutableMapping), unwrap(b)
+    assert wrapped_isinstance(a, Mapping), unwrap(a)
     if overlap := unwrap(b).keys() & unwrap(a):
         return do_raise(KeyError(f"{co.co_name} got multiple values for keyword argument {next(iter(overlap))}"))
     res = _interpret_call(lambda a, b: b.update(a), a, b)
