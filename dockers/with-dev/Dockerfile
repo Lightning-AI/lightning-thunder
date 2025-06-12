@@ -22,9 +22,8 @@ COPY requirements/ requirements/
 
 RUN \
     ls -lh requirements/ && \
-    CUDA_VERSION_MM=${CUDA_VERSION%.*} && \
     MAKEFLAGS="-j$(( $(nproc) / 4 ))" && \
-    pip install -U -r requirements/test.txt && \
+    pip install -U -r requirements/test.txt "nvidia-nccl-cu${CUDA_VERSION%%.*} !=2.26.*" && \
     rm -rf requirements/
 
 RUN \
