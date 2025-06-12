@@ -6728,6 +6728,19 @@ randn_like_opinfo = OpInfo(
 tensor_creation_ops.append(randn_like_opinfo)
 
 
+def torch_rand_like_and_zero(*args, **kwargs):
+    return ltorch.full_like(ltorch.rand_like(*args, **kwargs), 0)
+
+
+rand_like_opinfo = OpInfo(
+    torch_rand_like_and_zero,
+    sample_input_generator=fixed_value_like_tensor_creation_op_sample_generator,
+    torch_reference=lambda *args, **kwargs: torch.rand_like(*args, **kwargs).fill_(0),
+    dtypes=(datatypes.floating, datatypes.complexfloating),
+)
+tensor_creation_ops.append(rand_like_opinfo)
+
+
 def torch_empty_like_and_zero(*args, **kwargs):
     return ltorch.full_like(ltorch.empty_like(*args, **kwargs), 0)
 
