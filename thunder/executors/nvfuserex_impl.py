@@ -2786,7 +2786,7 @@ def index_put(
     lc_to_nv_map: dict,
 ) -> any:
     utils.check(
-        not accumulate, lambda: f"Unsupported accumulate in index_put by nvfuserex", exception_type=AssertionError
+        not accumulate, lambda: "Unsupported accumulate in index_put by nvfuserex", exception_type=AssertionError
     )
     nva = getnv(a, fd, lc_to_nv_map)
     nvi = getnv(indices[0], fd, lc_to_nv_map)
