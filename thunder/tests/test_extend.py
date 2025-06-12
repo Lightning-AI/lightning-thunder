@@ -135,6 +135,7 @@ def test_get_all_executors_includes_all_native_executors():
         "torchcompile_xentropy",
         "python",
         "transformer_engine",
+        "transformer_engine_v2",
     }
     if package_available("triton"):
         # `triton` maybe installed on a system without GPU.
