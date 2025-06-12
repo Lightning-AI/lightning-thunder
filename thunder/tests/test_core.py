@@ -9,6 +9,7 @@ import weakref
 import pytest
 import torch
 from torch.testing import assert_close, make_tensor
+from lightning_utilities import compare_version
 
 import thunder
 from thunder import cache_option, cache_hits, cache_misses
@@ -2816,6 +2817,7 @@ def test_change_default_device_in_jitted_fn():
 
 @requiresCUDA
 @pytest.mark.xfail(
+    compare_version("torch", operator.le, "2.7.1", use_base_version=True),
     reason="When using device as context in PyTorch, it doesn't reflect in torch.get_default_device - see https://github.com/pytorch/pytorch/issues/131328",
     strict=True,
 )
