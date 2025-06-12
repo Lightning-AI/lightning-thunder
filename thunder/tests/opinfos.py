@@ -2193,7 +2193,15 @@ def elementwise_binary_prims_generator(op, device, dtype, requires_grad, **kwarg
 
 # TODO Extend this generator
 def elementwise_binary_generator(
-    op, device, dtype, requires_grad, *, no_rhs_numbers: bool = False, no_weak_dtypes: bool = False, **kwargs
+    op,
+    device,
+    dtype,
+    requires_grad,
+    *,
+    no_rhs_numbers: bool = False,
+    no_weak_dtypes: bool = False,
+    no_rhs_negative_numbers: bool = False,
+    **kwargs,
 ):
     yield from elementwise_binary_prims_generator(op, device, dtype, requires_grad, **kwargs)
 
@@ -2209,6 +2217,8 @@ def elementwise_binary_generator(
         # Tests tensor x number
         c = make((2, 2), **kwargs)
         d = number(**kwargs)
+        if no_rhs_negative_numbers:
+            d = abs(d)
         yield SampleInput(c, d)
 
     if not no_weak_dtypes:
@@ -2862,7 +2872,7 @@ elementwise_binary_ops.append(div_opinfo)
 
 bitwise_left_shift_opinfo = OpInfo(
     ltorch.bitwise_left_shift,
-    sample_input_generator=elementwise_binary_generator,
+    sample_input_generator=partial(elementwise_binary_generator, no_rhs_negative_numbers=True),
     dtypes=(datatypes.signedinteger, datatypes.unsignedinteger),
     torch_reference=torch.bitwise_left_shift,
 )
@@ -2871,7 +2881,7 @@ elementwise_binary_ops.append(bitwise_left_shift_opinfo)
 
 bitwise_right_shift_opinfo = OpInfo(
     ltorch.bitwise_right_shift,
-    sample_input_generator=elementwise_binary_generator,
+    sample_input_generator=partial(elementwise_binary_generator, no_rhs_negative_numbers=True),
     dtypes=(datatypes.signedinteger, datatypes.unsignedinteger),
     torch_reference=torch.bitwise_right_shift,
 )
