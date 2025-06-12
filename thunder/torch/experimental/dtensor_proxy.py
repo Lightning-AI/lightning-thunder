@@ -146,8 +146,8 @@ def create_dtensor_proxy_from_proxies(local_tensor: TensorProxy, spec: AnyProxy,
     Returns:
         DTensorProxy: A new distributed tensor proxy combining the local tensor and distribution spec.
     """
-    assert isinstance(local_tensor, TensorProxy)
-    assert isinstance(spec, AnyProxy)
+    utils.check_type(local_tensor, TensorProxy)
+    utils.check_type(spec, AnyProxy)
     return DTensorProxy(
         local_tensor=local_tensor,
         spec=spec,
