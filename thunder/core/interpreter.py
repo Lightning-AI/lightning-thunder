@@ -267,6 +267,8 @@ def wrap(value: Any, /, *, provenance: ProvenanceRecord) -> WrappedValue:
         if cached is not None:
             potential_wrap = cached[0]()
             if potential_wrap is not None:
+                assert potential_wrap.value is value or potential_wrap.original_value is value
+
                 # Note: we want to cache mutable objects to not run into trouble
                 #       with multiple accesses to the same.
                 #       As the cache only holds a weakref to the WrappedValue instance
@@ -2136,7 +2138,8 @@ class SequenceWrapperMethods(WrappedValue):
         res = _interpret_call(list.extend, l, iterable)
         if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
             return res
-        self.value = self.python_typ(l.value)
+        assert type(self.value) is self.python_typ
+        self.value[:] = l.value[:]
         self.item_wrappers = l.item_wrappers[:]
         return wrap_const(None)
 
