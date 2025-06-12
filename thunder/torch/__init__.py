@@ -909,6 +909,44 @@ def empty(
     return clang.empty(size, device=device, dtype=dtype)
 
 
+@torchsymbol(torch.empty_like)
+def empty_like(
+    a: TensorLike,
+    /,
+    *,
+    dtype: None | dtypeLike = None,
+    layout: None | torch.layout = None,
+    device: None | DeviceLike = None,
+    requires_grad: bool = False,
+    memory_format: torch.memory_format = torch.preserve_format,
+) -> TensorLike:
+
+    utils.check(
+        memory_format == torch.preserve_format,
+        lambda: "preserve_format!=torch.preserve_format is not supported within thunder.jit",
+        NotImplementedError,
+    )
+    utils.check(
+        layout is None or layout == torch.strided, lambda: "Only torch.strided layout is supported", NotImplementedError
+    )
+    utils.check(
+        not requires_grad, lambda: "requires_grad=True is not yet supported within thunder.jit", NotImplementedError
+    )
+
+    # Use the input tensor's properties as defaults
+    if dtype is None:
+        dtype = a.dtype
+    if device is None:
+        device = a.device
+
+    return empty(
+        a.shape,
+        dtype=dtype,
+        device=device,
+        requires_grad=requires_grad,
+    )
+
+
 #
 # Shape operations
 #

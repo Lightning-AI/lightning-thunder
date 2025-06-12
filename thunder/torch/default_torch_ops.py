@@ -95,7 +95,6 @@ torch_auto_registered_ops = {
         torch.dstack,
         torch.embedding,
         torch.embedding_bag,
-        torch.empty_like,
         torch.equal,
         torch.expand_copy,
         torch.fake_quantize_per_channel_affine,
