@@ -74,7 +74,7 @@ RUN \
     update-alternatives --install /usr/bin/python${PYTHON_VERSION%%.*} python${PYTHON_VERSION%%.*} /usr/bin/python${PYTHON_VERSION} 1 && \
     update-alternatives --install /usr/bin/python python /usr/bin/python${PYTHON_VERSION} 1 && \
     curl https://bootstrap.pypa.io/get-pip.py | python${PYTHON_VERSION} && \
-    pip install "numpy >=1.23.0,<2" && \
+    pip install "numpy >=1.23.0,<2" "nvidia-nccl-cu${CUDA_VERSION%%.*} !=2.26.*" && \
     # Cleaning
     apt-get autoremove -y && \
     apt-get clean && \
@@ -115,7 +115,7 @@ RUN \
         git submodule sync && \
         git submodule update --init --recursive && \
         pip install "cmake==3.31.6" -r requirements.txt && \
-        pip install . "pytorch-triton==$(cat .ci/docker/triton_version.txt)" --index-url="https://download.pytorch.org/whl/nightly/" && \
+        pip install . "pytorch-triton==$(cat .ci/docker/triton_version.txt)" --extra-index-url="https://download.pytorch.org/whl/nightly/" && \
         cd .. && \
         rm -rf pytorch; \
     elif [ "${TORCH_INSTALL}" == "test" ]; then \
