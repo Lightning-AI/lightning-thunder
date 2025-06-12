@@ -298,7 +298,7 @@ def test_vjp_correctness_cudnn_sdpa(dtype, may_cat_grad_qkv):
 
 
 def test_compute_row_major_strides():
-    from thunder.executors.cudnnex import _compute_row_major_strides
+    from thunder.executors.cudnn_sdpa import _compute_row_major_strides
 
     # Test case 1: 2D tensor
     shape = (3, 4)
