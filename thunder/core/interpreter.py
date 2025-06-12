@@ -266,7 +266,7 @@ def wrap(value: Any, /, *, provenance: ProvenanceRecord) -> WrappedValue:
         cached = runtimectx._known_wrappers.get(id(value))
         if cached is not None:
             potential_wrap = cached[0]()
-            if potential_wrap is not None:
+            if potential_wrap is not None and (potential_wrap.value is value or potential_wrap.original_value is value):
                 # Note: we want to cache mutable objects to not run into trouble
                 #       with multiple accesses to the same.
                 #       As the cache only holds a weakref to the WrappedValue instance
