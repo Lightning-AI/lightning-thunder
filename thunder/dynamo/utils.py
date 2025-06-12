@@ -463,7 +463,7 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
         return did_run, opt_split_reason
 
     # checks einops operators
-    if target.__module__ == "einops.einops":
+    if hasattr(target, "__module__") and target.__module__ == "einops.einops":
         from thunder.executors.torchex import has_einops
 
         if has_einops:

@@ -1619,3 +1619,17 @@ def test_get_proxy_inputs_from_node_symtype_hint():
     cfn(x, idx)
 
     assert cfn._backend.subgraph_infos[0].split_reasons == []
+
+
+@requiresCUDA
+def test_spliter_einops():
+    einops = pytest.importorskip("einops")
+
+    def f(input, expr):
+        return einops.rearrange(input, expr)
+
+    fc = thunderfx(f)
+    input = torch.randn(2, 3, 4, 5, device="cuda")
+    fc(input, "b c h w -> b (c h w)")
+
+    assert len(fc._backend.subgraph_infos[0].split_reasons) == 0
