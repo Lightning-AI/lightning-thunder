@@ -29,7 +29,6 @@ from thunder.core.pytree import tree_flatten
 if TYPE_CHECKING:
     from numbers import Number
     from thunder.core.symbol import Symbol
-    import os
     from typing import Any
     from collections.abc import Sequence
 
@@ -231,7 +230,7 @@ def get_proxy_inputs_from_node(node: torch.fx.Node) -> tuple[tuple, dict]:
                     )
                 else:
                     # NOTE - This will be caught and be part of the SplitReason.
-                    raise TypeError(f"`make_input_proxy` received example_value which wasn't Tensor or Tuple")
+                    raise TypeError("`make_input_proxy` received example_value which wasn't Tensor or Tuple")
                 return proxy(example_value)
 
             # This is int, float, etc.
@@ -588,7 +587,7 @@ def _get_example_inputs_from_placeholder(
     - When `only_metadata` is `False`: Generates and returns a random example tensor based on the node's expected shape and data type, etc.
     - When `only_metadata` is `True`: Returns only the tensor's metadata (e.g., shape, data type) without generating an actual tensor.
     """
-    check(node.op == "placeholder", lambda: f"The node must be placeholder type", ValueError)
+    check(node.op == "placeholder", lambda: "The node must be placeholder type", ValueError)
     # Prefers to use actual example value in GraphArg if available
     if "grapharg" in node.meta:
         try:
@@ -838,7 +837,7 @@ def get_split_reasons_string(subgraph_info: SubgraphInfo) -> str:
         num_thunder_submodules = len(subgraph_info.thunder_compiled_fns)
         split_reason_str += f"The original graph is split into {num_submodules} subgraphs, {num_thunder_submodules} of which are run by Thunder.\n"
         split_reason_str += f"The structure of the split module:\n{subgraph_info.split_graph_module}\n"
-        split_reason_str += f"Split Reasons:\n"
+        split_reason_str += "Split Reasons:\n"
         for id, split_reason in enumerate(subgraph_info.split_reasons):
             split_reason_str += f"  Split Reason {id}:\n    {split_reason.info}\n"
     else:
@@ -962,7 +961,7 @@ def get_or_create_example_inputs_from_placeholders(placeholders: list[torch.fx.N
             input: TensorWeakRef | torch.SymInt = p.meta["grapharg"].example
             if isinstance(input, torch.SymInt):
                 input = input.node.hint
-        except (KeyError, AssertionError) as e:
+        except (KeyError, AssertionError):
             # needs to create a new example input
             outs.append(_get_example_inputs_from_placeholder(p, only_metadata=False))
         else:

@@ -15,9 +15,8 @@ import re
 import sys
 import traceback
 import weakref
-import torch
 from typing import Any, Literal, TypedDict
-from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence, Set, Sized
+from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence, Sized
 import collections
 import operator
 
@@ -25,13 +24,11 @@ from io import StringIO
 
 from types import (
     CellType,
-    ClassMethodDescriptorType,
     CodeType,
     CoroutineType,
     FrameType,
     FunctionType,
     MethodType,
-    MethodDescriptorType,
     ModuleType,
     NoneType,
     BuiltinFunctionType,
@@ -2043,6 +2040,13 @@ def _super_lookaside(cls=Py_NULL(), obj=None):
     return sup
 
 
+def partial_call_lookaside(partial_object, *args, **kwargs):
+    def partial_call_impl(partial_function, /, *args, **kwargs):
+        return partial_function.func(*partial_function.args, *args, **(partial_function.keywords | kwargs))
+
+    return _interpret_call(partial_call_impl, partial_object, *args, **kwargs)
+
+
 @interpreter_needs_wrap
 def _type_lookaside(obj):
     return type(unwrap(obj))
@@ -2375,7 +2379,7 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
             return do_raise(IndexError(f"pop on empty {type(uself)}"))
 
         if uindex < -len(uself) or uindex >= len(uself):
-            return do_raise(IndexError(f"pop index out of range"))
+            return do_raise(IndexError("pop index out of range"))
 
         res = _interpret_call(lambda l, i: l[i], self, index)
 
@@ -2831,6 +2835,7 @@ _default_lookaside_map: dict[Callable, Callable] = {
     super: _super_lookaside,
     type: _type_lookaside,
     type.__call__: _type_call_lookaside,
+    functools.partial.__call__: partial_call_lookaside,
     isinstance: _isinstance_lookaside,
     functools.reduce: _functools_reduce_lookaside,
     operator.getitem: _getitem_lookaside,
@@ -4398,7 +4403,7 @@ def _format_value_handler(inst: dis.Instruction, /, stack: InterpreterStack, **k
         elif _case == FVC_REPR:
             value = repr(value)
         else:
-            assert _case == FVC_ASCII, f"Unknown FVC_MASK in FORMAT_VALUE"
+            assert _case == FVC_ASCII, "Unknown FVC_MASK in FORMAT_VALUE"
             value = ascii(value)
 
         formatted: str = format(value, fmt_spec) if fmt_spec is not None else format(value)
@@ -5372,7 +5377,7 @@ def _match_class_impl(kw_names, typ, subject, count) -> tuple | None:
         match_self = True
         match_args = ()
 
-    if not type(match_args) is tuple:
+    if type(match_args) is not tuple:
         raise TypeError(f"{typ.__name__}.__match_args__ must be a tuple (got {type(match_args)})")
 
     allowed = 1 if match_self else len(match_args)
@@ -5811,7 +5816,7 @@ def do_raise(exc: Any = Py_NULL(), cause: Any = Py_NULL()) -> Literal[INTERPRETE
         elif cause is None:
             fixed_cause = None
         else:
-            return do_raise(TypeError(f"exception causes must derive from BaseException"))
+            return do_raise(TypeError("exception causes must derive from BaseException"))
 
         value.__cause__ = fixed_cause
 
@@ -6798,13 +6803,11 @@ def _interpret_call(fn: Callable, /, *args, **kwargs) -> Any | INTERPRETER_SIGNA
 #       (1a) The callable is a bound method (implemented in Python), in which case it's canonicalized
 #       (1b) The callable is a builtin method, in which case we try to unbind it
 #   (2) The callable has a lookaside, in which case it's used to execute the operation
-#   (3) The callable is a partial object, in which case it's recursively unwrapped
-#           Note that this case is after (1), which allows for lookasides on partial objects
-#   (4) The callable is opaque, in which case it's executed by the CPython interpreter and its
+#   (3) The callable is opaque, in which case it's executed by the CPython interpreter and its
 #           result returned
-#   (5) The callable is a type object, in which case it is instantiated with __new__ and initialized with __init__
-#   (6) The callable is a callable object, in which case its __call__ attribute is called recursively
-#   (7) The callable is a FunctionType, in which case it's recursively interpretered by the interpreter
+#   (4) The callable is a type object, in which case it is instantiated with __new__ and initialized with __init__
+#   (5) The callable is a callable object, in which case its __call__ attribute is called recursively
+#   (6) The callable is a FunctionType, in which case it's recursively interpretered by the interpreter
 #
 # TODO Consider refactoring this into one function for each case
 def _call_dispatch(
@@ -6944,21 +6947,7 @@ def _call_dispatch(
         res = lookaside_fn(*args, **kwargs)
         return res
 
-    # TODO: disabled as partial is just like any other class
-    # (3) Handles partial objects
-    if isinstance(fn, functools.partial):
-
-        def partial_call_impl(partial_function, /, *args, **kwargs):
-            return partial_function.func(*(partial_function.args + args), **(partial_function.keywords | kwargs))
-
-        return _interpret_call(partial_call_impl, wrapped_fn, *args, **kwargs)
-
-    if isinstance(fn, functools.partialmethod):
-        raise NotImplementedError(
-            "functools.partialmethod objects like {fn} are not currently supported, please file an issue requesting support"
-        )
-
-    # (4) Handles opaque functions
+    # (3) Handles opaque functions
     if is_opaque(fn):
         # TODO: Deeper unwrapping?
         args_ = tuple(unwrap(a) for a in args)
@@ -6978,13 +6967,13 @@ def _call_dispatch(
             opaque_result = wrap(opaque_result, provenance=pr)
         return opaque_result
 
-    # (5) Handle types
+    # (4) Handle types
     if isinstance(fn, type):
         tt = type(fn)  # could be type itself, or a metaclass
         obj = _interpret_call(tt.__call__, wrapped_fn, *args, **kwargs)
         return obj
 
-    # (6) Handles callable objects (with a dunder call method)
+    # (5) Handles callable objects (with a dunder call method)
     if not isinstance(fn, (FunctionType, MethodType)):
         if not hasattr(fn, "__call__"):
             raise NotImplementedError(
@@ -6996,7 +6985,7 @@ def _call_dispatch(
         populate_attribute_wrapper(wrapped_call, "__self__", wrapped_fn)
         return _interpret_call(wrapped_call, *args, **kwargs)
 
-    # (7) interprets into the function
+    # (6) interprets into the function
     assert isinstance(fn, FunctionType), f"{fn=} had an unexpected type ({type(fn)}"
     return _setup_frame_and_run_python_function(compilectx, runtimectx, wrapped_fn, *args, **kwargs)
 

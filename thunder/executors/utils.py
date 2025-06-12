@@ -1,10 +1,6 @@
 from __future__ import annotations
 
-from enum import Enum, auto
-from typing import List, Set, Dict, Optional
-from collections.abc import Callable
-from itertools import chain
-from collections.abc import Sequence
+from enum import Enum
 from contextlib import contextmanager
 
 import torch
@@ -12,9 +8,7 @@ from looseversion import LooseVersion
 
 import thunder.core.utils as utils
 from thunder.core.symbol import BoundSymbol
-from thunder.core.trace import TraceCtx, from_trace, TraceProvenance
-from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
-from thunder.core.proxies import Variable, variableify, Proxy, unvariableify
+from thunder.core.proxies import variableify, Proxy, unvariableify
 from thunder.core.prims import PrimIDs
 from thunder.core.transform_common import order_proxies
 from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode
@@ -92,7 +86,7 @@ class Region:
         self.outputs = utils.OrderedSet(sorted(outputs, key=lambda p: proxy_order[p.proxy.name]))
 
     def __repr__(self) -> str:
-        s = f"[Region:"
+        s = "[Region:"
 
         for bsym in self.bound_symbols:
             s += f"\n{str(bsym)}"

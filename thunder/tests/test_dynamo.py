@@ -29,7 +29,6 @@ from thunder.tests.framework import (
     DynamoThunderExecutor,
     IS_WINDOWS,
     requiresCUDA,
-    version_between,
 )
 from thunder.tests.make_tensor import make_tensor
 from thunder.dynamo.report import (
@@ -852,7 +851,6 @@ def test_dynamo_reproducer_2graph(executor, device: str, dtype: dtypes.dtype, us
             "Skipping on Windows because this uses torch.compile (see https://github.com/Lightning-AI/lightning-thunder/issues/1326)"
         )
 
-    from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform
     from thunder import nvfuser_executor
     from thunder.transforms import ConstantFolding
 

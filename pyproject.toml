@@ -121,23 +121,12 @@ line_length = 120
 line-length = 120
 # Always generate Python 3.10-compatible code.
 target-version = "py310"
-# Enable Pyflakes `E` and `F` codes by default.
-select = [
-    "E", "W",  # see: https://pypi.org/project/pycodestyle
-    "F",  # see: https://pypi.org/project/pyflakes
-#    "D",  # see: https://pypi.org/project/pydocstyle
-#    "N",  # see: https://pypi.org/project/pep8-naming
-]
 #extend-select = [
 #    "C4",  # see: https://pypi.org/project/flake8-comprehensions
 #    "PT",  # see: https://pypi.org/project/flake8-pytest-style
 #    "RET",  # see: https://pypi.org/project/flake8-return
 #    "SIM",  # see: https://pypi.org/project/flake8-simplify
 #]
-ignore = [
-    "E731",  # Do not assign a lambda expression, use a def
-    "E501",  # todo: Line too long (235 > 120 characters)
-]
 # Exclude a variety of commonly ignored directories.
 exclude = [
     ".eggs",
@@ -148,23 +137,60 @@ exclude = [
     "_build",
     "build",
     "dist",
-    "docs"
+    "docs",
+    "examples",
+    "notebooks",
 ]
-ignore-init-module-imports = true
 
-[tool.ruff.per-file-ignores]
+[tool.ruff.lint]
+# Enable Pyflakes `E` and `F` codes by default.
+select = [
+    "E", "W",  # see: https://pypi.org/project/pycodestyle
+    "F",  # see: https://pypi.org/project/pyflakes
+#    "D",  # see: https://pypi.org/project/pydocstyle
+#    "N",  # see: https://pypi.org/project/pep8-naming
+]
+ignore = [
+    "E731",  # Do not assign a lambda expression, use a def
+    "E501",  # todo: Line too long (235 > 120 characters)
+    # TODO(crcrpar): Resolves the following ignores as these are added while enabling ruff check in pre-commit
+    "F841",  # https://docs.astral.sh/ruff/rules/unused-variable/
+    "F821",  # https://docs.astral.sh/ruff/rules/undefined-name/
+    "E402",  # https://docs.astral.sh/ruff/rules/module-import-not-at-top-of-file/
+    "F401",  # https://docs.astral.sh/ruff/rules/unused-import/
+    "F405",  # https://docs.astral.sh/ruff/rules/undefined-local-with-import-star-usage/
+    "E712",  # https://docs.astral.sh/ruff/rules/true-false-comparison/
+    "E711",  # https://docs.astral.sh/ruff/rules/none-comparison/
+    "E721",  # https://docs.astral.sh/ruff/rules/type-comparison/
+    "E722",  # https://docs.astral.sh/ruff/rules/bare-except/
+    "F403",  # https://docs.astral.sh/ruff/rules/undefined-local-with-import-star/
+    "F601",  # https://docs.astral.sh/ruff/rules/multi-value-repeated-key-literal/
+    "F822",  # https://docs.astral.sh/ruff/rules/undefined-export/
+    "F842",  # https://docs.astral.sh/ruff/rules/unused-annotation/
+    "F722",  # https://docs.astral.sh/ruff/rules/forward-annotation-syntax-error/
+    "E702",  # https://docs.astral.sh/ruff/rules/multiple-statements-on-one-line-semicolon/
+    "E741",  # https://docs.astral.sh/ruff/rules/ambiguous-variable-name/
+    "W293",  # https://docs.astral.sh/ruff/rules/blank-line-with-whitespace/
+    "F811",  # https://docs.astral.sh/ruff/rules/redefined-while-unused/
+    "W291",  # https://docs.astral.sh/ruff/rules/trailing-whitespace/
+]
+
+[tool.ruff.lint.per-file-ignores]
 "setup.py" = ["D100", "SIM115"]
 "__about__.py" = ["D100"]
 "__init__.py" = ["D100"]
+# The default is `true` and this option is deprecated as per
+# https://docs.astral.sh/ruff/settings/#lint_ignore-init-module-imports
+# "ignore-init-module-imports" = true
 
-[tool.ruff.pydocstyle]
+[tool.ruff.lint.pydocstyle]
 # Use Google-style docstrings.
 convention = "google"
 
 #[tool.ruff.pycodestyle]
 #ignore-overlong-task-comments = true
 
-[tool.ruff.mccabe]
+[tool.ruff.lint.mccabe]
 # Unlike Flake8, default to a complexity level of 10.
 max-complexity = 10
 
