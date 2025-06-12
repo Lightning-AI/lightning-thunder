@@ -6,18 +6,16 @@ from numbers import Number
 from typing import TYPE_CHECKING
 from collections.abc import Callable
 from collections.abc import Hashable, Sequence
-from collections.abc import Sequence
 from types import ModuleType
 
 import torch
 
-from thunder.core.compile_data import get_compile_data
 import thunder.core.dtypes as dtypes
 from thunder.core.dtypes import to_torch_dtype, to_dtype
 import thunder.core.devices as devices
 from thunder.core.devices import to_torch_device, to_device
 import thunder.core.prims as prims
-from thunder.core.proxies import NumberProxy, TensorProxy, FutureTensorProxy, pytype
+from thunder.core.proxies import NumberProxy, TensorProxy, pytype
 from thunder.core.symbol import Symbol
 from thunder.distributed.prims import DistributedReduceOps
 import thunder.distributed.prims as dist_prims
@@ -938,6 +936,8 @@ sub = _register_torch_operation("sub")
 true_divide = _register_torch_operation("true_divide")
 zeta = _register_torch_operation("zeta", module=torch.special)
 div = _register_torch_operation("div")
+bitwise_left_shift = _register_torch_operation("bitwise_left_shift")
+bitwise_right_shift = _register_torch_operation("bitwise_right_shift")
 
 
 # NOTE PyTorch elementwise operations require at least one input to be a tensor
@@ -1034,6 +1034,8 @@ _register_elementwise_binary_implementation(prims.pow, pow)
 _register_elementwise_binary_implementation(prims.remainder, remainder)
 _register_elementwise_binary_implementation(prims.sub, sub)
 _register_elementwise_binary_implementation(prims.zeta, zeta)
+_register_elementwise_binary_implementation(prims.bitwise_left_shift, bitwise_left_shift)
+_register_elementwise_binary_implementation(prims.bitwise_right_shift, bitwise_right_shift)
 
 _register_elementwise_binary_implementation(ltorch.add, checker=_add_sub_checker, execution_transform=_add_transform)
 _register_elementwise_binary_implementation(ltorch.atan2, atan2)
@@ -1064,6 +1066,8 @@ _register_elementwise_binary_implementation(ltorch.sub, checker=_add_sub_checker
 _register_elementwise_binary_implementation(ltorch.true_divide, true_divide)
 _register_elementwise_binary_implementation(ltorch.zeta, zeta)
 _register_elementwise_binary_implementation(ltorch.div, checker=_div_checker, execution_transform=_div_transform)
+_register_elementwise_binary_implementation(ltorch.bitwise_left_shift, bitwise_left_shift)
+_register_elementwise_binary_implementation(ltorch.bitwise_right_shift, bitwise_right_shift)
 
 #
 # Elementwise ternary operations
@@ -1577,7 +1581,7 @@ def _max_pool_with_indices_helper(
         dilation_ = get_maybe_ith_entry("dilation", dilation, i)
         utils.check(
             kernel_ is not None and stride_ is not None and pad_ is not None and dilation_ is not None,
-            lambda: f"max_pool argument extraction failed.",
+            lambda: "max_pool argument extraction failed.",
         )
         out_sizes.append(pooling_output_shape(in_, kernel_, pad_, stride_, dilation_, ceil_mode))
 
@@ -2338,6 +2342,7 @@ def _shape_impl(t):
 
 shape = ex.register_operator("shape", meta=prims.shape_meta, fn=_shape_impl)
 _register_implementation(prims.shape, shape, checker=_always_executable)
+
 
 shallow_copy = ex.register_operator("shallow_copy", meta=prims.shallow_copy, fn=lambda x: x)
 _register_implementation(prims.shallow_copy, shallow_copy, checker=_always_executable)

@@ -1,7 +1,6 @@
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from functools import partial
-from itertools import chain, product, takewhile
-from typing import Optional, Tuple, Union, Dict
+from itertools import chain, takewhile
 from collections.abc import Callable
 from collections.abc import Sequence
 from collections import defaultdict
@@ -12,8 +11,8 @@ import networkx as nx
 from thunder.core import prims, utils
 from thunder.core.baseutils import BoundSymbolInterface, ProxyInterface
 from thunder.core.prims import PrimIDs
-from thunder.core.proxies import TensorProxy, variableify, NumberProxy, CollectionProxy, Proxy
-from thunder.core.pytree import tree_flatten, tree_unflatten
+from thunder.core.proxies import TensorProxy, variableify, NumberProxy, Proxy
+from thunder.core.pytree import tree_flatten
 from thunder.core.symbol import has_tags
 from thunder.core.trace import from_trace, TraceCtx, TraceProvenance
 from thunder.core.transforms import bsym_list_to_dag, toposort_bsym_dag, TOPOSORT_ORDER
@@ -504,6 +503,7 @@ def rematerialize_all_gather(fw_trace: TraceCtx, bw_trace: TraceCtx) -> tuple[Tr
         for a in all_args
         if producers.get(a, None) is None
         and a.name not in (y.name for y in tree_flatten(bw_trace.args[1])[0] if isinstance(y, ProxyInterface))
+        and a.name not in ("saved_for_backward", "cotangents", "C0", "C1")
     )
     new_required_for_backward = tuple(
         sorted({x.name: x for x in new_required_for_backward}.values(), key=lambda a: a.name)

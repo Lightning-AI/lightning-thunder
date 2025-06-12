@@ -82,6 +82,7 @@ import torch as pytorch
 
 import thunder.clang as clang
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
+import thunder.transforms as transforms
 
 # Imports executors (to populate default executors and make them accessible)
 import thunder.executors.pythonex
@@ -97,6 +98,7 @@ _PROJECT_ROOT = os.path.dirname(_PACKAGE_ROOT)
 
 # TODO RC1 Review exposed names
 __all__ = [
+    "transforms",
     # dtype aliases
     "bool8",
     "uint8",
@@ -268,9 +270,8 @@ CacheEntry = namedtuple(
 )
 
 
-# TODO implement registration + "auto" recipe
 def compile(
-    fn: Callable, recipe: Recipe | str | None = None, plugins: Plugin | list[Plugin] | str | list[str] | None = None
+    fn: Callable, recipe: Recipe | str = "auto", plugins: Plugin | list[Plugin] | str | list[str] | None = None
 ):
     import thunder.recipes
     import thunder.plugins
@@ -294,11 +295,8 @@ def compile(
             plugins_.append(plugin)
     plugins = plugins_
 
-    if recipe is None:
-        recipe = thunder.recipes.BaseRecipe()
-
     if recipe == "auto":
-        raise NotImplementedError
+        recipe = Recipe.get_for_model(fn)
 
     if isinstance(recipe, str):
         recipe_cls = thunder.recipes.get_recipe_class(recipe)
@@ -551,16 +549,26 @@ def jit(
             else:
                 requires_grad = False
 
-            if requires_grad:
-                # Currently split_forward_backward also includes
-                # transform_for_execution and various sorting of symbols,
-                # applying transform_for_execution after this would be
-                # breaking the order of operations
-                computation_trc, backward_trc = split_forward_backward(computation_trc, cd, cs, *computation_trc.args)
-                # Note computation_trc and backward_trc have been appended to cs.last_(backward_)traces
-                # by split_forward_backward
+            delay_trace_split = compile_options.get("delay_trace_split", True)
 
-            if not requires_grad:
+            if requires_grad:
+                if delay_trace_split:
+
+                    from thunder.transforms.autodiff import grad_transform_on_trace
+
+                    computation_trc = grad_transform_on_trace(computation_trc)
+                else:
+                    # Currently split_forward_backward also includes
+                    # transform_for_execution and various sorting of symbols,
+                    # applying transform_for_execution after this would be
+                    # breaking the order of operations
+                    computation_trc, backward_trc = split_forward_backward(
+                        computation_trc, cd, cs, *computation_trc.args
+                    )
+                    # Note computation_trc and backward_trc have been appended to cs.last_(backward_)traces
+                    # by split_forward_backward
+
+            if backward_trc is None:
                 from thunder.executors.passes import transform_for_execution as transform_for_execution_pass
                 from thunder.executors.passes import _transform_for_operator_executor_execution
                 from thunder.distributed.utils import maybe_sort_waits
@@ -576,9 +584,18 @@ def jit(
                     executors_list=cd.executors_list,
                     use_del_last_used=False,
                 )
-                computation_traces.extend(extraces)
-                computation_trc = computation_traces[-1]
-                computation_trc = thunder.executors.passes.del_last_used(computation_trc)
+                computation_trc = extraces[-1]
+
+            if requires_grad and delay_trace_split:
+                from thunder.transforms.autodiff import split_into_forward_and_backward
+
+                computation_trc, backward_trc = split_into_forward_and_backward(computation_trc)
+
+            computation_trc = thunder.executors.passes.del_last_used(computation_trc)
+            computation_traces.append(computation_trc)
+            if backward_trc is not None:
+                backward_trc = thunder.executors.passes.del_last_used(backward_trc, clear_mutable_collections=True)
+                backward_traces.append(backward_trc)
 
             if not compile_options.get("disable_inplace_copy_check", False):
                 thunder.core.transform_common._inplace_copy_sanity_check(computation_trc)

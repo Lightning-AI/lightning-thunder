@@ -252,6 +252,9 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     # the forward trace and inputs of the backward trace.
     fw_trace, bw_trace = forward_and_backward_from_trace(primal_trace, torch_autograd=True)
 
+    if bw_trace is None:
+        return fw_trace, None
+
     fw_traces = [fw_trace]
     bw_traces = [bw_trace]
 

@@ -2,7 +2,7 @@ from functools import partial
 from typing import Any
 
 from thunder.core import prims
-from thunder.core.pytree import tree_map, tree_flatten_with_dataclass
+from thunder.core.pytree import tree_map
 from thunder.core.trace import VariableInterface, from_trace, tracectx
 from thunder.core.baseutils import ProxyInterface, TensorProxyInterface
 from thunder.core.utils import safe_map_flat, sequencify

@@ -14,7 +14,7 @@ import math
 
 import torch
 
-from thunder.core.compile_data import using_symbolic_values, using_jit, get_cache_option, CACHE_OPTIONS
+from thunder.core.compile_data import using_symbolic_values, get_cache_option, CACHE_OPTIONS
 from thunder.core.interpreter import is_jitting, ProvenanceRecord, PseudoInst
 from thunder.core.trace import (
     VariableInterface,
@@ -715,8 +715,8 @@ class NumberProxy(Proxy, NumberProxyInterface):
         return self.value is not None
 
     def make_static_constrained(self):
-        baseutils.check(self.constraint != CONSTRAINT.DYNAMIC, lambda: f"dynamic NumberProxy cannot be made static")
-        baseutils.check(self.value is not None, lambda: f"static NumberProxy needs to have value")
+        baseutils.check(self.constraint != CONSTRAINT.DYNAMIC, lambda: "dynamic NumberProxy cannot be made static")
+        baseutils.check(self.value is not None, lambda: "static NumberProxy needs to have value")
         self.constraint = CONSTRAINT.STATIC
 
     def make_constrainable(self):
@@ -1265,7 +1265,7 @@ def _infer_tensor_properties(
         thunder_fsdp_padding_size if thunder_fsdp_padding_size is not None else _thunder_fsdp_padding_size
     )
 
-    baseutils.check(_shape is not None, lambda: f"_shape cannot be None when creating TensorProxy")
+    baseutils.check(_shape is not None, lambda: "_shape cannot be None when creating TensorProxy")
     if not using_symbolic_values():
         _shape = tuple(pyval(x) for x in _shape)
         # Computes derived properties
@@ -1851,19 +1851,19 @@ class TensorProxy(Proxy, TensorProxyInterface):
     #
 
     def __lshift__(self, other):
-        method = resolve_method("lshift", self, other)
+        method = resolve_method("bitwise_left_shift", self, other)
         return method(self, other)
 
     def __rlshift__(self, other):
-        method = resolve_method("lshift", other, self)
+        method = resolve_method("bitwise_left_shift", other, self)
         return method(other, self)
 
     def __rshift__(self, other):
-        method = resolve_method("rshift", self, other)
+        method = resolve_method("bitwise_right_shift", self, other)
         return method(self, other)
 
     def __rrshift__(self, other):
-        method = resolve_method("rshift", other, self)
+        method = resolve_method("bitwise_right_shift", other, self)
         return method(other, self)
 
     #
@@ -1984,7 +1984,7 @@ _cls_to_number_proxy_map = {
 
 # TODO: move this function to jit_ext.py
 def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple = None) -> TensorProxy:
-    from thunder.core.interpreter import ProvenanceRecord, PseudoInst, wrap_const
+    from thunder.core.interpreter import wrap_const
 
     if hasattr(t, "_thunder_device"):
         torch_device = t._thunder_device

@@ -1,6 +1,7 @@
 import glob
 import json
 import sys
+import time
 from datetime import datetime
 
 from lightning_sdk import Studio, Job, Machine, Status
@@ -45,14 +46,15 @@ def main(gh_run_id: str = ""):
 
     if job.status != Status.Completed:
         print("=" * 80)
-        print("===== benchmark_hf.py FAILED =====")
+        print(f"===== benchmark_hf.py -> {job.status} =====")
         print("=" * 80)
         print(job.logs)
         print("=" * 80)
-        raise RuntimeError("Benchmark HF job failed")
-    else:  # clean up
-        job.delete()
-        s.delete()
+        time.sleep(3)
+        raise RuntimeError(f"Benchmark HF job {job.status}")
+    # clean up
+    job.delete()
+    s.delete()
 
 
 if __name__ == "__main__":
