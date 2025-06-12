@@ -62,6 +62,7 @@ def run_prologue(jfn, *args, **kwargs):
         pro_to_comp, pro_to_epi = cache_entry.prologue_fn(*args, **kwargs)
     return cache_entry, pro_to_comp, pro_to_epi
 
+
 @instantiate(dtypes=NOTHING, decorators=(_parametrize_decorator,))
 def test_instantiate_and_pytest_parametrize(executor, device: str, dtype: dtypes.dtype, num: int, s: str):
     assert isinstance(num, int)
