@@ -1614,3 +1614,17 @@ def test_spliter_bwd():
     assert "Advanced indexing" in reason[0].exception and reason[0].exception.endswith(
         "found a tensor with dtype thunder.dtypes.bool8 and 3 dimensions"
     )
+
+
+@requiresCUDA
+def test_spliter_einops():
+    einops = pytest.importorskip("einops")
+
+    def f(input, expr):
+        return einops.rearrange(input, expr)
+
+    fc = thunderfx(f)
+    input = torch.randn(2, 3, 4, 5, device="cuda")
+    fc(input, "b c h w -> b (c h w)")
+
+    assert len(fc._backend.subgraph_infos[0].split_reasons) == 0
