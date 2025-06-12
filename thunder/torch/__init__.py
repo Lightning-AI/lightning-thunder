@@ -1021,7 +1021,7 @@ def empty_like(
 
 
 # TODO Update this to take a *args series of tensors or a sequence of tensors
-@torchsymbol(torch.cat, torch.concat, torch.concatenate, id="torch.cat", is_method=True)
+@torchsymbol(torch.cat, torch.concat, torch.concatenate, id="torch.cat")
 def cat(tensors: Sequence[TensorLike], dim: int = 0) -> TensorLike:
     return clang.cat(tensors, dim)
 
