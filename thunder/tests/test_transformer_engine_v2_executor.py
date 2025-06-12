@@ -164,7 +164,6 @@ def test_te_linear_forward_backward_multiple_iteration(fp8_recipe: recipe.Recipe
     def thunder_model(x):
         return cfn(x, w1, w2, b1, b2)
 
-
     train_model(thunder_model, thunder_sgd_optimizer)
 
     # Verify that the weights and biases converge to same value after few iterations.
@@ -449,6 +448,7 @@ def test_te_trace_correctness(fp8_recipe: recipe.Recipe):
     # If all the elements appear in order in the trace then the list is empty
     assert len(bwd_te_trace_op_names) == 0
 
+
 @requiresCUDA
 @pytest.mark.parametrize("fp8_recipe", recipes, ids=recipe_ids)
 def test_te_activation_checkpointing_trace(fp8_recipe: recipe.Recipe):
@@ -467,6 +467,7 @@ def test_te_activation_checkpointing_trace(fp8_recipe: recipe.Recipe):
         return torch.nn.functional.linear(a, w2)
 
     from thunder.dynamo import thunderfx
+
     cfn = thunderfx(fn, executors=[transformer_engine_v2_ex], transforms=[TransformerEngineTransformV2()])
 
     device = "cuda"
@@ -480,7 +481,8 @@ def test_te_activation_checkpointing_trace(fp8_recipe: recipe.Recipe):
     fwd_trace = cfn.last_traces[-1]
 
     from thunder.core.vjp_utils import get_saved_for_backward_tensors
-    saved_tensors = set(p.name for p in get_saved_for_backward_tensors(fwd_trace))
+
+    saved_tensors = {p.name for p in get_saved_for_backward_tensors(fwd_trace)}
     assert len(saved_tensors) == 4
     # only the first linear is checkpointed, so only the first two are saved for backward
     assert len({"l_x_", "l_w_"} - saved_tensors) == 0
@@ -488,7 +490,7 @@ def test_te_activation_checkpointing_trace(fp8_recipe: recipe.Recipe):
 
 @requiresCUDA
 @pytest.mark.parametrize("fp8_recipe", recipes, ids=recipe_ids)
-@pytest.mark.filterwarnings("ignore::FutureWarning") # Coming from TE v2.3
+@pytest.mark.filterwarnings("ignore::FutureWarning")  # Coming from TE v2.3
 def test_te_activation_checkpointing_correctness(fp8_recipe: recipe.Recipe):
     if not fp8_recipe:
         pytest.skip(
@@ -518,15 +520,15 @@ def test_te_activation_checkpointing_correctness(fp8_recipe: recipe.Recipe):
     inputs = tuple(torch.rand(*input_shape, device=device, dtype=dtype, requires_grad=True) for _ in range(iterations))
 
     def train_model(model, optimizer, loss_hist):
-            for iter_n in range(iterations):
-                x = inputs[iter_n]
-                with te.fp8_autocast(enabled=True,fp8_recipe=fp8_recipe):
-                    result = model(x)
-                loss = torch.nn.functional.mse_loss(result.sum(), target_value)
-                loss_hist.append(loss.item())
-                loss.backward()
-                optimizer.step()
-                optimizer.zero_grad()
+        for iter_n in range(iterations):
+            x = inputs[iter_n]
+            with te.fp8_autocast(enabled=True, fp8_recipe=fp8_recipe):
+                result = model(x)
+            loss = torch.nn.functional.mse_loss(result.sum(), target_value)
+            loss_hist.append(loss.item())
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
 
     def te_model(x):
         # Enable autocasting for the forward pass
