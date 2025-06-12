@@ -3,6 +3,7 @@ from torch.distributed._tensor import DTensor
 from thunder.core.proxies import proxy
 import thunder.core.devices as devices
 import thunder.core.dtypes as dtypes
+import thunder.core.utils as utils
 
 
 # Inherit from TensorProxy as DTensor also supports
@@ -43,13 +44,13 @@ class DTensorProxy(TensorProxy):
             thunder_fsdp_padding_size=thunder_fsdp_padding_size,
         )
         if like is not None:
-            assert isinstance(like.spec if spec is None else spec, AnyProxy)
-            assert isinstance(like.local_tensor if local_tensor is None else local_tensor, TensorProxy)
+            utils.check_type(like.spec if spec is None else spec, AnyProxy)
+            utils.check_type(like.local_tensor if local_tensor is None else local_tensor, TensorProxy)
             self.spec = like.spec if spec is None else spec
             self.local_tensor = like.local_tensor if local_tensor is None else local_tensor
         else:
-            assert isinstance(spec, AnyProxy)
-            assert isinstance(local_tensor, TensorProxy)
+            utils.check_type(spec, AnyProxy)
+            utils.check_type(local_tensor, TensorProxy)
             self.spec = spec
             self.local_tensor = local_tensor
 

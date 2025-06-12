@@ -14,13 +14,15 @@ def populate_object_ctx_for_dtensor_spec(x: Any, object_ctx: dict[str, Any]) -> 
         bool: True if `x` is DTensorSpec (and also updates `object_ctx`) otherwise False.
     """
     if isinstance(x, DTensorSpec):
-        object_ctx["DTensorSpec"] = DTensorSpec
-        object_ctx["DeviceMesh"] = DeviceMesh
-        object_ctx["Placement"] = Placement
-        object_ctx["Replicate"] = Replicate
-        object_ctx["Shard"] = Shard
-        object_ctx["Partial"] = Partial
-        object_ctx["TensorMeta"] = TensorMeta
+        object_ctx.update({
+            "DTensorSpec": DTensorSpec,
+            "DeviceMesh": DeviceMesh,
+            "Placement": Placement,
+            "Replicate": Replicate,
+            "Shard": Shard,
+            "Partial": Partial,
+            "TensorMeta": TensorMeta,
+        })
         return True
     return False
 

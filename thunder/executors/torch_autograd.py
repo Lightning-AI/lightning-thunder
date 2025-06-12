@@ -447,7 +447,6 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     # We only want the forward function to be called with `te.fp8_autocast` manager.
     bw_extrace._include_te_fp8_autocast = False
 
-    # Should this be a post optmization transform?
     # We only want to apply it on backward trace.
     from thunder.torch.experimental.dtensor_utils import check_dtensor_cotangent_metadata_in_backward
 

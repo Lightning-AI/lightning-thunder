@@ -24,7 +24,6 @@ from thunder.core import baseutils
 from thunder.core import utils
 from thunder import clang
 
-
 import torch
 
 dtensor_torchsymbol = partial(torchsymbol, allow_tensor_subclass_proxy=True)
@@ -35,7 +34,7 @@ def dispatch_to_impl(single_device_symbol, dtensor_symbol):
     def wrapper(*args, **kwargs):
         filter_tensor_proxies = list(filter(lambda t: isinstance(t, TensorProxy), tree_flatten((args, kwargs))[0]))
         # number only variant of the operator.
-        if filter_tensor_proxies == []:
+        if not filter_tensor_proxies:
             return single_device_symbol(*args, **kwargs)
 
         dtensor_tensor_proxies = map(lambda t: isinstance(t, DTensorProxy), filter_tensor_proxies)
@@ -105,7 +104,7 @@ def handle_check_dtensor_spec_in_prologue(prim, prologue_trace, args) -> bool:
 
 
 def dtensor_mul_meta(a, b):
-    _, output = run_with_fake_tensor(torch.mul, a, b)
+    output = run_with_fake_tensor(torch.mul, a, b)
     local_tensor_proxy = TensorProxy(like=a.local_tensor)
     spec = output._spec
     spec_proxy = AnyProxy(spec, history=a.history)
