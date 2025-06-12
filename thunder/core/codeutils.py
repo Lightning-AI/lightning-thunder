@@ -243,7 +243,7 @@ def prettyprint(
 
     from thunder.torch.experimental.dtensor_codeutils import prettyprint_dtensor_spec
 
-    if (dtensor_repr := prettyprint_dtensor_spec(x)):
+    if dtensor_repr := prettyprint_dtensor_spec(x):
         return m(dtensor_repr)
 
     if dataclasses.is_dataclass(x):
