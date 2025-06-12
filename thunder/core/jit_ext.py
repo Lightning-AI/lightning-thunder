@@ -1349,7 +1349,7 @@ def _general_jit_torch_checkpoint_lookaside(
     tree_map(add_input_output_proxy_name, unwrap(res))
 
     new_bsyms = jit_ctx.computation_trace.pop_scope()
-    jit_ctx.computation_trace.bound_symbols.extend(new_bsyms)
+    jit_ctx.computation_trace.peek_scope().extend(new_bsyms)
 
     for bsym in new_bsyms:
         for o in bsym.flat_proxy_outs:
@@ -1790,6 +1790,7 @@ def propagate_constraints(ctx, inputs, intermediates, computation_trace):
             ctx.add_constraint((clang.check_number_type_and_value, u_inp, u_inp.value))
             static_np_set.add(inp)
 
+    # TODO: scopes?
     producers = utils.producers(computation_trace.bound_symbols, _map_to_numbers=False)
     # add static constraints propagated from intermediates.
     for intermediate in intermediates:
@@ -1858,7 +1859,6 @@ def get_parameter_or_buffer_or_submodule_name_and_root(provenance):
 
 
 def unpack_inputs(ctx, pro_to_comp_inps, pro_to_epi_inps, args, kwargs):
-
     def is_variableified_tensorproxy(v: Variable | Proxy) -> Proxy:
         p: Proxy
         if isinstance(v, Proxy):
