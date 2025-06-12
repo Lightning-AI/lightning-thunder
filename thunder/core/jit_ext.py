@@ -738,7 +738,7 @@ def _general_jit_dict_setitem(d, key, value):
         ctx: JitCtx = get_jit_ctx()
         if d.original_value is d.nothing:
             ctx.proxify(d)
-        print("#setitem####", d.provenance)
+        print("#setitem####", d.provenance, unwrap(key))
         ctx._additional_outputs[d].append((PseudoInst.STORE_SUBSCR, d, key, value))
 
     return dict_setitem_lookaside(d, key, value)
@@ -791,6 +791,7 @@ _TORCH_DYNAMIC_TYPES = {
     torch.amp.autocast_mode.autocast,
     torch.autograd.grad_mode.set_grad_enabled,
     torch.autograd.grad_mode.no_grad,
+    torch.autograd.grad_mode.enable_grad,
 }
 
 
