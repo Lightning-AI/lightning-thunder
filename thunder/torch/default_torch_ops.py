@@ -224,7 +224,6 @@ torch_auto_registered_ops = {
         torch.qr,
         torch.quantile,
         torch.rad2deg,
-        torch.rand_like,
         torch.randint_like,
         torch.ravel,
         torch.renorm,

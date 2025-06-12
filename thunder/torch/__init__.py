@@ -764,6 +764,37 @@ def rand(
     return clang.uniform(shape, 0, 1, device=device, dtype=dtype)
 
 
+@torchsymbol(torch.rand_like)
+def rand_like(
+    a,
+    /,
+    *,
+    dtype: None | dtypeLike = None,
+    layout: None | torch.layout = None,
+    device: None | DeviceLike = None,
+    requires_grad: bool = False,
+    memory_format: torch.memory_format = torch.preserve_format,
+):
+    utils.check(
+        not requires_grad, lambda: "requires_grad=True is not supported within thunder.jit", NotImplementedError
+    )
+    utils.check(
+        layout is None or layout == torch.strided, lambda: "Only torch.strided layout is supported", NotImplementedError
+    )
+    utils.check(
+        memory_format == torch.preserve_format,
+        lambda: "preserve_format!=torch.preserve_format is not supported within thunder.jit",
+        NotImplementedError,
+    )
+
+    if dtype is None:
+        dtype = a.dtype
+
+    if device is None:
+        device = a.device
+    return rand(a.shape, dtype=dtype, device=device)
+
+
 @torchsymbol(torch.randint)
 def randint(
     *args,
@@ -922,8 +953,8 @@ def empty_like(
 ) -> TensorLike:
 
     utils.check(
-        memory_format == torch.preserve_format,
-        lambda: "preserve_format!=torch.preserve_format is not supported within thunder.jit",
+        memory_format == torch.preserve_format or memory_format == torch.contiguous_format,
+        lambda: f"{memory_format} is not supported within thunder.jit",
         NotImplementedError,
     )
     utils.check(
