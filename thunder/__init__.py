@@ -411,7 +411,7 @@ def jit(
             #
             # isinstance(t, pytorch.Tensor) or pytorch.is_tensor(t) will match all Tensor objects including
             # subclasses.
-            if type(t) is pytorch.Tensor and t.layout == pytorch.strided:
+            if type(t) is pytorch.Tensor and t.layout is pytorch.strided:
                 data_ptr = t.untyped_storage().data_ptr()
                 if data_ptr not in data_ptr_to_tensor_group_index:
                     data_ptr_to_tensor_group_index[data_ptr] = len(data_ptr_to_tensor_group_index)
