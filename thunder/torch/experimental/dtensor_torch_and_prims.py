@@ -30,7 +30,6 @@ dtensor_torchsymbol = partial(torchsymbol, allow_tensor_subclass_proxy=True)
 
 
 def dispatch_to_impl(single_device_symbol, dtensor_symbol):
-
     def wrapper(*args, **kwargs):
         filter_tensor_proxies = list(filter(lambda t: isinstance(t, TensorProxy), tree_flatten((args, kwargs))[0]))
         # number only variant of the operator.

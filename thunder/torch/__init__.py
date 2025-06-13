@@ -168,9 +168,9 @@ class torchsymbol:
                 filter_tensor_proxies = list(
                     filter(lambda t: isinstance(t, TensorProxy), tree_flatten((args, kwargs))[0])
                 )
-                assert all(
-                    map(lambda t: type(t) is TensorProxy, filter_tensor_proxies)
-                ), f"Expected all inputs to be TensorProxy but found {list(map(lambda t: type(t), filter_tensor_proxies))}"
+                assert all(map(lambda t: type(t) is TensorProxy, filter_tensor_proxies)), (
+                    f"Expected all inputs to be TensorProxy but found {list(map(lambda t: type(t), filter_tensor_proxies))}"
+                )
                 return _fn(*args, **kwargs)
 
         else:
