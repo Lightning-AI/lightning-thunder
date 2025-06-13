@@ -59,6 +59,14 @@ jobs:
         run: |
           sudo apt-get install -y graphviz
 
+      - name: Build bitsandbytes for macOS # no macOS-compatible wheel on PyPI
+        if: runner.os == 'macOS'
+        run: |
+          curl https://github.com/bitsandbytes-foundation/bitsandbytes/archive/refs/tags/0.46.0.tar.gz -o bitsandbytes-0.46.0.tar.gz
+          tar xzf bitsandbytes-0.46.0.tar.gz
+          cd bitsandbytes-0.46.0
+          python setup.py install
+
       - name: Set min. dependencies
         if: matrix.requires == 'oldest'
         run: |
