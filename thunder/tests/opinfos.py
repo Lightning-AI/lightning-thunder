@@ -7375,6 +7375,9 @@ def baddbmm_sample_generator(op, device, dtype, requires_grad, **kwargs):
             for alpha, beta in float_constants_cases:
                 yield SampleInput(make(shape_in), make(shape_batch1), make(shape_batch2), alpha=alpha, beta=beta)
 
+    if isinstance(to_dtype(dtype), datatypes.exact):
+        yield SampleInput(make(3, 5, 6), batch1=make(3, 5, 0), batch2=make(3, 0, 6), alpha=2, beta=2)
+
 
 def baddbmm_error_generator(op, device, dtype=torch.int32, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype)
