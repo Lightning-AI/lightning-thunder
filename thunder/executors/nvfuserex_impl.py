@@ -379,9 +379,9 @@ def create_fd(
     is_multigpu_fd = False
     if any(map(lambda t: isinstance(t, DTensorProxy), sorted_unique_inputs)):
         # multi-GPU path
-        assert all(
-            map(lambda t: isinstance(t, DTensorProxy), sorted_unique_inputs)
-        ), "Currently we only support Fusion region with all DTensor inputs or all Tensor inputs but not a mix"
+        assert all(map(lambda t: isinstance(t, DTensorProxy), sorted_unique_inputs)), (
+            "Currently we only support Fusion region with all DTensor inputs or all Tensor inputs but not a mix"
+        )
         _find_tensor_by_index, multidevice_schedule = get_methods_for_dtensor_fd(sorted_unique_inputs)
 
         bind(fd, multidevice_schedule, "multidevice_schedule")

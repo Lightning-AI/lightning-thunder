@@ -31,7 +31,6 @@ functions_to_test = {
     "DTensor test requires CUDA and NCCL `torch.distributed` backend",
 )
 class DTensorTest(DistributedParallelTestCase):
-
     @common_utils.parametrize("executor, fn_key", product(tuple(executors_map.keys()), functions_to_test.keys()))
     def test_dtensor_basic_op(self, executor, fn_key):
         num_devices = self.world_size
