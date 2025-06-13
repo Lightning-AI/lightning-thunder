@@ -29,7 +29,6 @@ if TYPE_CHECKING:
 
 # `SampleInput`s of ops with `inplace` argument do not seem to come with `inplace` arg, so give it to them.
 def sample_generator_wrapper(sample_generator):
-
     def f(*args, **kwargs):
         for sample in sample_generator(*args, **kwargs):
             sample.kwargs["inplace"] = True
@@ -179,7 +178,6 @@ def test_parse_resnet18(executor, device, dtype, turn_off_tf32_and_set_seed, tra
     dtypes=NOTHING,
 )
 def test_inplace_to_views(executor, device, _):
-
     def f(a: torch.Tensor, b: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         c = torch.exp(a)
         d = torch.tanh(b)
@@ -247,7 +245,6 @@ def test_inplace_to_views(executor, device, _):
 )
 @requiresCUDA
 def test_inplace_to_args_with_nvfuser(executor, device, _):
-
     def func(a: torch.Tensor, b: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         a += b
         c = torch.exp(a)
@@ -274,7 +271,6 @@ def test_inplace_to_args_with_nvfuser(executor, device, _):
     dtypes=NOTHING,
 )
 def test_error_of_inplace_to_views(executor, device, _):
-
     def f(a: torch.Tensor, b: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         c = torch.exp(a)
         d = torch.tanh(b)
@@ -310,7 +306,6 @@ def test_error_of_inplace_to_views(executor, device, _):
     dtypes=NOTHING,
 )
 def test_multiple_inplace_to_args(executor, device, _):
-
     def f(a):
         a.exp_()
         a.sin_()
@@ -430,7 +425,6 @@ def test_multiple_views_before_inplace_to_base(executor, device, _):
     dtypes=NOTHING,
 )
 def test_multiple_inplace_to_multiple_args(executor, device, _):
-
     def f(xs, ys, z):
         for i in range(len(xs)):
             ys[i].add_(xs[i].exp_().sin_())
@@ -490,7 +484,6 @@ def test_inplace_to_tensors_with_grad(executor, device, _):
     executors=(TorchExecutor, TorchCompileExecutor, nvFuserExecutor),
 )
 def test_single_tensor_adam_like(executor, device, _):
-
     def single_tensor_adam(
         params: list[torch.Tensor],
         grads: list[torch.Tensor],
@@ -542,7 +535,6 @@ def test_single_tensor_adam_like(executor, device, _):
     dtypes=NOTHING,
 )
 def test_inplace_to_arg_return_value(executor, device, _):
-
     def f(a, b):
         c = a + b
         b.mul_(c)
@@ -564,7 +556,6 @@ def test_inplace_to_arg_return_value(executor, device, _):
     dtypes=NOTHING,
 )
 def test_no_self_repeat_in_subsymbols(executor, device, _):
-
     def f(a, b, c):
         a.add_(b, alpha=c)
         return a.add_(b, alpha=c)
@@ -593,7 +584,6 @@ def test_no_self_repeat_in_subsymbols(executor, device, _):
     dtypes=NOTHING,
 )
 def test_inplace_copy_on_fusion_inputs_issue_791(executor, device, _):
-
     def f(x, y, idx, src):
         x.index_copy_(0, idx, src)
         z = x + 1
@@ -718,7 +708,6 @@ def test_inplace_to_alias_func_args(executor, device, dtype):
 
 @instantiate(dtypes=NOTHING)
 def test_reshape_flatten_error_out(executor, device, _):
-
     def f(x):
         y = x.reshape(6, 4)
         y.add_(1)
@@ -755,7 +744,6 @@ def test_reshape_flatten_error_out(executor, device, _):
 
 @instantiate(dtypes=NOTHING)
 def test_aliases_and_functionalizable_inplace(executor, device, _):
-
     def f(a, x, y):
         return a.exp().add_(x) + y.exp()
 
@@ -773,7 +761,6 @@ def test_aliases_and_functionalizable_inplace(executor, device, _):
 # ref: https://github.com/Lightning-AI/lightning-thunder/issues/1236
 @instantiate(dtypes=NOTHING)
 def test_unused_view_input(executor, device, _):
-
     def f(a, x, unused):
         return a.exp().add_(x)
 
@@ -790,7 +777,6 @@ def test_unused_view_input(executor, device, _):
 
 @instantiate(dtypes=NOTHING)
 def test_inplace_on_to(executor, device, _):
-
     def f_self_result(a):
         return a.to().sin_()
 

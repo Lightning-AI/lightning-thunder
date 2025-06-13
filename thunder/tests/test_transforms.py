@@ -447,9 +447,7 @@ def test_constant_folding():
                 2,
             )
             + 1
-        )[
-            0
-        ]  # 1
+        )[0]  # 1
         return x + getitem + getitem_2
 
     jforward = thunder.jit(forward, transforms=[ConstantFolding()])

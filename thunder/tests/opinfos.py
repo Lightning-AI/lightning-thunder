@@ -199,7 +199,6 @@ class SampleInput:
         return SampleInput(*args, **kwargs)
 
     def remove_singularities(self, op, eps):
-
         singularity_fn = op.singularity_fn_producer(self)
         if singularity_fn is None:
             return self
@@ -292,9 +291,9 @@ class DecorateInfo:
 
         if devicetypes is not None:
             for x in devicetypes:
-                assert isinstance(
-                    x, devices.DeviceType
-                ), f"Found non-devicetype {x} when initializing a DecorateInfo's devicetypes"
+                assert isinstance(x, devices.DeviceType), (
+                    f"Found non-devicetype {x} when initializing a DecorateInfo's devicetypes"
+                )
 
         self.dtypes = None if dtypes is None else datatypes.resolve_dtypes(dtypes)
         self.active_if = active_if
@@ -2222,7 +2221,6 @@ def elementwise_binary_generator(
         yield SampleInput(c, d)
 
     if not no_weak_dtypes:
-
         # Test tensor x scalar tensor with a different dtype
         # We first convert the dtype to its base and then use
         # the table to get the reference dtype.
@@ -4499,7 +4497,7 @@ def unflatten_error_generator(op, device, dtype=torch.float32, **kwargs):
     yield (
         SampleInput(input_tensor, dim, (2, 2)),
         IndexError,
-        rf"Dimension out of range \(expected to be in range of \[{-len(input_tensor.shape)}, {len(input_tensor.shape)-1}\], but got {dim}\)",
+        rf"Dimension out of range \(expected to be in range of \[{-len(input_tensor.shape)}, {len(input_tensor.shape) - 1}\], but got {dim}\)",
     )
 
 

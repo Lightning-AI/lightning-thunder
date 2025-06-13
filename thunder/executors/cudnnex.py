@@ -285,7 +285,6 @@ def _cudnn_sdpa_fwd_impl(
     *,
     scale: float | None = None,
 ) -> tuple[torch.tensor, torch.tensor, torch.tensor, torch.tensor]:
-
     query = _sdpa_enforce_input_tensor_contiguity(query)
     key = _sdpa_enforce_input_tensor_contiguity(key)
     value = _sdpa_enforce_input_tensor_contiguity(value)

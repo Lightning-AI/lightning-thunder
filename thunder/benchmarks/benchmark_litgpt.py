@@ -111,7 +111,6 @@ def check_and_update_config_for_te_if_needed(config: Config) -> None:
 
 
 def swap_linear_layers_for_te(model: torch.nn.Module, device: Any, swap_layernorm: bool = True) -> None:
-
     def parameters_cnt(model: torch.nn.Module) -> int:
         return sum(p.numel() for p in model.parameters())
 
@@ -298,7 +297,6 @@ class Benchmark_litGPT:
             self.use_sdpa = False
 
         if use_torchao_fp8_linear:
-
             if not torchao_available:
                 raise ValueError("`torchao` is not available")
             if self.distributed_mode not in ("none", "fsdp2"):
@@ -313,18 +311,18 @@ class Benchmark_litGPT:
 
         # Clarify benchmark assumptions
         if self.sharding_size is not None:
-            assert (
-                "thunder" not in self.compile
-            ), "Hybrid Sharding (FSDP/DP) using --sharding_size is not yet supported for Thunder. Coming soon."
+            assert "thunder" not in self.compile, (
+                "Hybrid Sharding (FSDP/DP) using --sharding_size is not yet supported for Thunder. Coming soon."
+            )
 
             assert self.shard_mode in [
                 "hybrid_zero2",
                 "hybrid_zero3",
             ], "Sharding Size is only used with Hybrid FSDP/DP style parallelism."
 
-            assert (
-                world_size % self.sharding_size == 0
-            ), f"World size {world_size} is not divisible by the sharding size {self.sharding_size}"
+            assert world_size % self.sharding_size == 0, (
+                f"World size {world_size} is not divisible by the sharding size {self.sharding_size}"
+            )
 
         if self.bucketing_mode is not None and self.distributed_mode not in FSDP_MODES:
             warnings.warn(
@@ -332,9 +330,9 @@ class Benchmark_litGPT:
                 f" it is only used for FSDP style parallelism but running {self.distributed_mode}"
             )
 
-        assert not (
-            "thunder" in self.compile and self.bucketing_mode == "size"
-        ), "'size' bucketing mode is not supported for Thunder. Please use 'none' or 'block'."
+        assert not ("thunder" in self.compile and self.bucketing_mode == "size"), (
+            "'size' bucketing mode is not supported for Thunder. Please use 'none' or 'block'."
+        )
 
         if self.fsdp_bucket_params is not None:
             if self.distributed_mode not in FSDP_MODES:
@@ -361,15 +359,15 @@ class Benchmark_litGPT:
             self.global_batch_size = (
                 self.micro_batch_size * world_size if world_size is not None else self.micro_batch_size
             )
-        assert (
-            self.global_batch_size % self.micro_batch_size == 0
-        ), f"Global Batch Size {self.global_batch_size} should be a multiple of Micro Batch Size {self.micro_batch_size}."
+        assert self.global_batch_size % self.micro_batch_size == 0, (
+            f"Global Batch Size {self.global_batch_size} should be a multiple of Micro Batch Size {self.micro_batch_size}."
+        )
         self.gradient_accumulation_steps = int(self.global_batch_size / self.micro_batch_size)
         if world_size:
             self.gradient_accumulation_steps = int(self.gradient_accumulation_steps / world_size)
-            assert (
-                self.global_batch_size % self.micro_batch_size * world_size == 0
-            ), f"Global Batch Size {self.global_batch_size} should be a multiple Micro Batch Size {self.micro_batch_size} * World Size {world_size}."
+            assert self.global_batch_size % self.micro_batch_size * world_size == 0, (
+                f"Global Batch Size {self.global_batch_size} should be a multiple Micro Batch Size {self.micro_batch_size} * World Size {world_size}."
+            )
 
         self.skip_data_sync = skip_data_sync
 
@@ -628,7 +626,6 @@ class Benchmark_litGPT:
                 executors.insert(0, torch_compile_ex)
 
             if "transformerengine_v2" in self.compile:
-
                 from thunder.executors.transformer_engine_v2ex import (
                     transformer_engine_v2_ex,
                     TransformerEngineTransformV2,
@@ -913,7 +910,7 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
             print(f"Sharding Mode: {benchmark.shard_mode}\nBucketing: {benchmark.bucketing_mode}")
             if benchmark.sharding_size is not None:
                 print(
-                    f"Sharding Size: {benchmark.sharding_size}\nReplicate DP Groups: {int(world_size/benchmark.sharding_size)}"
+                    f"Sharding Size: {benchmark.sharding_size}\nReplicate DP Groups: {int(world_size / benchmark.sharding_size)}"
                 )
             if benchmark.bucketing_mode == "size":
                 print(f"Bucketing Number Params: {benchmark.fsdp_bucket_params}")
