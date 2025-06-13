@@ -1,5 +1,4 @@
 import itertools
-import platform
 
 import pytest
 import torch
@@ -9,7 +8,6 @@ import thunder
 import thunder.tests.bf16
 import thunder.torch as ltorch
 from thunder.core import dtypes
-from thunder.executors.torchex import no_autocast
 from thunder.tests.framework import instantiate, TorchExecutor, requiresCUDA
 
 

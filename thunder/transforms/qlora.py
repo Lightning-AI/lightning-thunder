@@ -98,8 +98,8 @@ class LORATransform(Transform):
         self.init_lora_linear(lora_a, lora_b)
 
         state_dict = state_dict.copy()
-        state_dict[f"weight.lora_a"] = lora_a
-        state_dict[f"weight.lora_b"] = lora_b
+        state_dict["weight.lora_a"] = lora_a
+        state_dict["weight.lora_b"] = lora_b
 
         return state_dict
 
@@ -229,6 +229,11 @@ class LORATransform(Transform):
                         prims.add.bind(original_weight, lora_scaled, output=original_proxy_output)
                     )
                     new_scope = new_computation_trace.pop_scope()
+            elif bsym.sym == prims.python_return:
+                assert len(bsym.args) == 1 and isinstance(bsym.args[0], dict)
+                new_return_dict = bsym.args[0].copy()
+                new_return_dict["flat_args"] = list(new_computation_trace.args)  # we know that the args are flat
+                new_computation_trace.bound_symbols.append(bsym.from_bsym(args=(new_return_dict,)))
             else:
                 new_computation_trace.bound_symbols.append(bsym.from_bsym())
         new_computation_trace.set_provenance(thunder.core.trace.TraceProvenance("lora linear pass"))

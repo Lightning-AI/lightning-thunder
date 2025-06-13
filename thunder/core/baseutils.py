@@ -4,7 +4,7 @@
 from __future__ import annotations
 from collections.abc import Sequence
 from enum import Enum
-from types import MappingProxyType, ModuleType, CodeType, EllipsisType, FunctionType, MethodType
+from types import MappingProxyType, CodeType, EllipsisType, FunctionType, MethodType
 from typing import TYPE_CHECKING
 import collections.abc
 import dis
@@ -439,7 +439,7 @@ def print_type(typ: type, /, *, with_quotes: bool = True) -> str:
     if with_quotes:
         return f"'{result.group(1)}'"
 
-    return result.group(1).replace(".", "_")
+    return result.group(1).replace(".", "_").replace("<", "_").replace(">", "_")
 
 
 _printable_literals = {

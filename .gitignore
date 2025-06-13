@@ -143,6 +143,9 @@ scripts/build
 # Profiler traces
 benchmarks/traces
 
+# benchmark results
+.results
+
 .ruff_cache/
 
 # come CI artifacts

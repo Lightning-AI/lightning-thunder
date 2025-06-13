@@ -54,7 +54,6 @@ def fa3_bwd_meta(
     causal: bool = False,
     softmax_scale: None | float = None,
 ):
-
     grads = (thunder.TensorProxy(like=q), thunder.TensorProxy(like=k), thunder.TensorProxy(like=v))
     return grads
 

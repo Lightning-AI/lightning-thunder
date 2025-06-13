@@ -1,5 +1,4 @@
 import pytest
-from collections import defaultdict
 import pytest_benchmark
 from thunder.dynamo.compiler_graph_benchmark import GRAPH_BY_GRAPH_BENCHMARK_PARAMS_KEYS
 
@@ -37,3 +36,7 @@ def pytest_benchmark_group_stats(config, benchmarks, group_by):
 
     result = pytest_benchmark.plugin.pytest_benchmark_group_stats(config, benchmarks, group_by)
     outcome.force_result(result)
+
+
+def pytest_collection_modifyitems(items):
+    items.sort(key=lambda item: item.name)

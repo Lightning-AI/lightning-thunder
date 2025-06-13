@@ -283,6 +283,30 @@ thunder_model = thunder.compile(model)
 out = thunder_model(inp)
 ```
 
+### Benchmarking HF models
+
+The script `examples/quickstart/hf_benchmarks.py` demonstrates how to benchmark a model for text generation, forward pass, forward pass with loss, and a full forward + backward computation.
+
+On an H100 with torch=2.7.0 and nvfuser-cu126-torch27, running deepseek-ai/DeepSeek-R1-Distill-Llama-1.5B, the thunder executors (NVFuser and torch.compile) achieve the following speedups:
+
+```
+Text generation:
+Thunder (nvfuser): 3.36× faster
+Thunder (torch.compile): 3.42× faster
+
+Forward pass:
+Thunder (nvfuser): 1.51× faster
+Thunder (torch.compile): 1.63× faster
+
+Forward pass + loss:
+Thunder (nvfuser): 1.55× faster
+Thunder (torch.compile): 1.64× faster
+
+Forward + backward:
+Thunder (nvfuser): 1.51× faster
+Thunder (torch.compile): 1.69× faster
+```
+
 ## Plugins
 
 Plugins are a way to apply optimizations to a model, such as parallelism and quantization.

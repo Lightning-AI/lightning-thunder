@@ -1,9 +1,5 @@
 """Taken from https://github.com/Lightning-AI/litgpt/blob/main/litgpt/model.py"""
 
-import torch
-import torch.nn as nn
-
-
 configs = [
     # diverse sample of configs FOR TESTING that cover all major checkpoints variants architecturally but with reduced
     # size

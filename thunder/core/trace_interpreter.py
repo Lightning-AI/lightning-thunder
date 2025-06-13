@@ -2,7 +2,7 @@ from functools import partial
 from typing import Any
 
 from thunder.core import prims
-from thunder.core.pytree import tree_map, tree_flatten_with_dataclass
+from thunder.core.pytree import tree_map
 from thunder.core.trace import VariableInterface, from_trace, tracectx
 from thunder.core.baseutils import ProxyInterface, TensorProxyInterface
 from thunder.core.utils import safe_map_flat, sequencify
@@ -282,6 +282,8 @@ class TraceSubstitutionProcessor:
                 # Duplicates are allowed and not overwritten
                 return
             raise ValueError(f"Variable {v.name} is being overwritten this is not allowed")
+        # inherit tags
+        val.tags.update(v.tags)
         self.env[v.name] = val
 
     def add_to_swap_map(self, old, new):
@@ -370,7 +372,6 @@ class TraceSubstitutionProcessor:
                     assert self.replacement_result is not self.NULL, "Need to call set_result if producing new bsyms"
 
                 if self.replacement_result is not self.NULL:
-
                     # TODO: if inputs are returned, the old outputs should be mapped on the new ones (= the inputs) instead of the other way round
                     if not self.new_bsyms:
                         # empty result means we want to swap references to the old
@@ -414,3 +415,17 @@ class TraceSubstitutionProcessor:
                         ) from e
 
         return self.new_trace, tree_map(self.read, self.trace.output)
+
+
+def rerun_trace(trace):  # rerun trace to fix metadata
+    class RerunProcessor(TraceSubstitutionProcessor):
+        def process_bsym(self, bsym):
+            if bsym.sym == prims.unpack_trivial:
+                self.add_processed_bsyms([bsym.from_bsym()])
+                self.set_result(bsym.output)
+                return
+            bsym = bsym.from_bsym_swap_proxies(self.swap_map)
+            self.add_bsyms_from_function(bsym.sym, *bsym.args, **bsym.kwargs)
+
+    new_trace, _ = RerunProcessor(trace)()
+    return new_trace

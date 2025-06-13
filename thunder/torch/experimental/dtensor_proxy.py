@@ -3,6 +3,7 @@ from torch.distributed._tensor import DTensor
 from thunder.core.proxies import proxy
 import thunder.core.devices as devices
 import thunder.core.dtypes as dtypes
+import thunder.core.utils as utils
 
 
 # Inherit from TensorProxy as DTensor also supports
@@ -43,26 +44,26 @@ class DTensorProxy(TensorProxy):
             thunder_fsdp_padding_size=thunder_fsdp_padding_size,
         )
         if like is not None:
-            assert isinstance(like.spec if spec is None else spec, AnyProxy)
-            assert isinstance(like.local_tensor if local_tensor is None else local_tensor, TensorProxy)
+            utils.check_type(like.spec if spec is None else spec, AnyProxy)
+            utils.check_type(like.local_tensor if local_tensor is None else local_tensor, TensorProxy)
             self.spec = like.spec if spec is None else spec
             self.local_tensor = like.local_tensor if local_tensor is None else local_tensor
         else:
-            assert isinstance(spec, AnyProxy)
-            assert isinstance(local_tensor, TensorProxy)
+            utils.check_type(spec, AnyProxy)
+            utils.check_type(local_tensor, TensorProxy)
             self.spec = spec
             self.local_tensor = local_tensor
+
+    def type_string(self):
+        return f"DTensor {self.device.device_str()} {self.dtype.shortname()}{list(self._shape)} mesh={self.spec._o.mesh}, placements={self.spec._o.placements}"
 
     @property
     def placements(self):
         return self.spec._o.placements
-    
+
     @property
     def device_mesh(self):
         return self.spec._o.device_mesh
-
-    def type_string(self):
-        return f"DTensor {self.device.device_str()} {self.dtype.shortname()}{list(self._shape)} mesh={self.spec._o.mesh}, placements={self.spec._o.placements}"
 
     def replace(self, **changes):
         r"""Return a copy of the TensorProxy object with new values for the specified fields as given to the constructor as arguments.
@@ -153,8 +154,8 @@ def create_dtensor_proxy_from_proxies(local_tensor: TensorProxy, spec: AnyProxy,
     Returns:
         DTensorProxy: A new distributed tensor proxy combining the local tensor and distribution spec.
     """
-    assert isinstance(local_tensor, TensorProxy)
-    assert isinstance(spec, AnyProxy)
+    utils.check_type(local_tensor, TensorProxy)
+    utils.check_type(spec, AnyProxy)
     return DTensorProxy(
         local_tensor=local_tensor,
         spec=spec,

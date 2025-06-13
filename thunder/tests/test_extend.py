@@ -125,10 +125,8 @@ def test_get_all_executors_includes_all_native_executors():
     actual = {e.name for e in executors}
     expected = {
         "apex",
-        "cudnn",
         "fa3",
         "torch",
-        "cudnn_layernorm",
         "sdpa",
         "torchcompile",
         "torchcompile_cat",
@@ -141,6 +139,8 @@ def test_get_all_executors_includes_all_native_executors():
         expected.update({"triton"})
     if torch.cuda.is_available():
         expected.update({"nvfuser"})
+        expected.update({"cudnn"})
+        expected.update({"cudnn_layernorm"})
     assert actual == expected
 
 

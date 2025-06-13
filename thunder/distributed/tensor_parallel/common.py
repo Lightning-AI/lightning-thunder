@@ -1,12 +1,10 @@
 from __future__ import annotations
 from abc import ABC
 from abc import abstractmethod
-import copy
 from enum import Enum
 from enum import auto
 from dataclasses import dataclass
 from dataclasses import field
-from itertools import chain
 from typing import TYPE_CHECKING
 
 import torch
@@ -16,12 +14,12 @@ from thunder.core.proxies import DistParallelType
 from thunder.core.proxies import TensorProxy
 from thunder.core.proxies import variableify
 from thunder.core.transform_common import Transform
+from thunder.core.trace_interpreter import rerun_trace
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from typing import Any
     from torch.distributed import ProcessGroup
-    from thunder.common import CompileData
     from thunder.core.module import ThunderModule
     from thunder.core.proxies import ProxyInterface
     from thunder.core.symbol import BoundSymbol
@@ -172,7 +170,6 @@ class ComputationTraceTransformVisitorForTensorParallel:
 class TransformForTensorParallel(Transform):
     rank: int
     world_size: int
-    compile_data: CompileData
     process_group: ProcessGroup
     target_modules: Sequence[str]
     chunked_param_name_to_layer_type: dict[str, Any] = field(init=False, default_factory=dict)
@@ -180,12 +177,6 @@ class TransformForTensorParallel(Transform):
     dim_to_shard: int = field(init=False, default=-1)
 
     def __post_init__(self):
-        from thunder.common import CompileData
-        from thunder.core import utils
-
-        utils.check_type(self.compile_data, CompileData)
-        if getattr(self.compile_data, "use_fsdp", False) or getattr(self.compile_data.fn, "use_fsdp", False):
-            raise NotImplementedError("Currently thunder does not support the combination of fsdp and tensor parallel")
         self.device = torch.device("cuda", self.rank)
 
         if self.dim_to_shard == -1:
@@ -203,6 +194,16 @@ class TransformForTensorParallel(Transform):
     @property
     @abstractmethod
     def distparallel_type(self) -> DistParallelType: ...
+
+    def transform_module(self, thunder_module):
+        from thunder.core import utils
+        from thunder.core.compile_data import get_compile_data
+        from thunder.common import CompileData
+
+        compile_data = get_compile_data()
+        utils.check_type(compile_data, CompileData)
+        if getattr(compile_data, "use_fsdp", False) or getattr(compile_data.fn, "use_fsdp", False):
+            raise NotImplementedError("Currently thunder does not support the combination of fsdp and tensor parallel")
 
     def transform_traces_pre_prologue(
         self,
@@ -237,7 +238,6 @@ class TransformForTensorParallel(Transform):
                 if (
                     proxy_like_param_name := f"""t_{param_name.replace(".", "_")}"""
                 ) in self.chunked_param_name_to_layer_type:
-
                     orig_shape = list(pro_out_p._shape)
                     new_shape = self._calc_new_shape(orig_shape)
                     pro_out_p._shape = new_shape
@@ -274,12 +274,14 @@ class TransformForTensorParallel(Transform):
             visit=visit,
             provenance=provenance,
         )
-        if not visit.eligible_for_comm_optimization:
-            return prologue_trace, new_computation_trace, epilogue_trace
-        else:
+        if visit.eligible_for_comm_optimization:
             from thunder.distributed.tensor_parallel.optimize_comm import remove_redundant_comms
 
-            return prologue_trace, remove_redundant_comms(new_computation_trace), epilogue_trace
+            new_computation_trace = remove_redundant_comms(new_computation_trace)
+
+        # fix shapes
+        new_computation_trace = rerun_trace(new_computation_trace)
+        return prologue_trace, new_computation_trace, epilogue_trace
 
     def transform_module(self, model: ThunderModule) -> None:
         import torch.nn as nn
@@ -303,7 +305,6 @@ class TransformForTensorParallel(Transform):
 
         # Modify module
         for name, param in model.named_parameters():
-
             orig_param: torch.Tensor | None
             try:
                 orig_param = model._model.get_parameter(name)

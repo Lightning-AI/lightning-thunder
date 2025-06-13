@@ -71,7 +71,6 @@ def remove_redundant_comms(trace: TraceCtx) -> TraceCtx:
         # For row-parallel linear: preprocessed -> col-parallel linear output
         swap_map: dict[VariableInterface, ProxyInterface] = {}
         for col_postprocess_bsym, row_preprocess_bsym in interesting_pairs:
-
             col_liinear_output: TensorProxy = col_postprocess_bsym.flat_proxy_args[0]
             utils.check_type(col_liinear_output, TensorProxy)
 

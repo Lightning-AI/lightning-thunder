@@ -22,7 +22,6 @@ from thunder.core.trace import TraceCtx
 from thunder.examine import get_fusions
 from thunder.tests.framework import instantiate, NOTHING, nvFuserExecutor, TorchExecutor, requiresCUDA
 from thunder.tests.make_tensor import make_tensor
-import thunder.torch as ltorch
 
 
 @value_and_grad

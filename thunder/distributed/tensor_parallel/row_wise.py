@@ -221,7 +221,6 @@ def row_parallel(
             x = torch.randn(4, n_in, device=device)
             out = tp_model(x)  # shape: [4, n_out]
     """
-    from thunder import compile_data as get_compile_data
     from thunder.core.transforms import add_transform
     from thunder.core.module import ThunderModule
     from thunder.distributed import copy_default_process_group
@@ -246,7 +245,6 @@ def row_parallel(
             TransformForRowWiseParallel(
                 rank=rank,
                 world_size=world_size,
-                compile_data=get_compile_data(thunder_module),
                 process_group=process_group,
                 target_modules=target_modules,
             ),

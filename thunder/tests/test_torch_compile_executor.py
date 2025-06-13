@@ -26,7 +26,6 @@ def test_supported_ops_are_in_pytorch_executor():
 # appropriate visual studio config.
 @pytest.mark.skipif(not is_inductor_supported() or platform.system() == "Windows", reason="inductor unsupported")
 def test_torch_compile_litgpt():
-    from thunder.tests.litgpt_model import Config
     from litgpt.model import GPT
 
     model = GPT.from_name("llama1-like", n_layer=1)
@@ -102,7 +101,7 @@ def test_transform_for_execution_for_callable():
 @requiresCUDA
 @pytest.mark.skipif(not device_supports_bf16(torch.device("cuda")), reason="bf16 is not supported")
 def test_litgpt_fabric_for_callable():
-    from typing import Any, Optional, Tuple, Union, List, Dict
+    from typing import Any
     from collections.abc import Callable
     from litgpt.model import Config, GPT
     import torch.nn as nn

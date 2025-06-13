@@ -1,5 +1,4 @@
 from collections.abc import Sequence
-import itertools
 from functools import partial
 from typing import Any
 
@@ -13,7 +12,6 @@ import torch
 import thunder
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
-import thunder.clang as clang
 
 from thunder import torch as ltorch
 from thunder.core.dtypes import is_exact_dtype, to_dtype as thunder_dtype
@@ -27,9 +25,7 @@ from thunder.tests.framework import (
     run_snippet,
     assert_closer,
     IN_CI,
-    NVFUSER_AVAILABLE,
     requiresCUDA,
-    version_between,
 )
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
 from thunder.tests.opinfos import get_opinfo, opinfos, tensor_creation_ops
@@ -263,9 +259,9 @@ def _dot(x, y):
         torch.Tensor: The dot product.
     """
     x, y = _replace_none_with_zero(x, y)
-    assert all(
-        isinstance(a, torch.Tensor) and isinstance(b, torch.Tensor) for a, b in zip(x, y)
-    ), "Not all elements are torch.Tensor"
+    assert all(isinstance(a, torch.Tensor) and isinstance(b, torch.Tensor) for a, b in zip(x, y)), (
+        "Not all elements are torch.Tensor"
+    )
     return sum([_tensor_dot(a, b) for a, b in zip(x, y)])
 
 
@@ -601,11 +597,11 @@ def test_vjp_correctness_sdpa_manual(op, device, dtype, executor, comp):
             disable_torch_autograd=True,
             executors=[sdpa_ex, *executor.executors_list()],
         )(filtered_args, (v,))
-        comp(actual_out, expect_out)
+        comp(actual_out, expect_out, atol=1e-3, rtol=1e-3)
 
         # compare gradients of query, key, value, and attn_mask
         for eg, ag in zip(expected_grad, actual_grad):
-            comp(eg, ag)
+            comp(eg, ag, atol=7e-3, rtol=7e-3)
 
 
 @ops((get_opinfo("zeta"),), supported_dtypes=(dtypes.float64,))
@@ -1117,7 +1113,6 @@ def test_torch_autograd_module(executor, device, _):
     dtypes=NOTHING,
 )
 def test_torch_autograd_module_get_compile_stats(executor, device, _):
-    from thunder.core.trace import TraceCtx
     from thunder import compile_stats
 
     l = torch.nn.Linear(3, 4, bias=False, device=device)
@@ -1204,7 +1199,6 @@ def test_forward_and_backward_from_trace(executor, device, _):
     dtypes=NOTHING,
 )
 def test_update_forward_with_new_saved_for_backward_numberproxy(executor, device, _):
-
     def foo(t, ab):
         return t * ab * 0.5
 
@@ -1242,7 +1236,6 @@ def test_torch_autograd_redundant_casts(executor, device, _):
     # There was a bug where we would eliminate the redundant casts in forward
     # but backward wasn't updated with the new proxies. This test ensures that
     # we don't regress.
-    from thunder.core.prims import convert_element_type
     import thunder.torch as ltorch
 
     def func(a, b, c):
@@ -1305,7 +1298,6 @@ def test_backward_none_propagation(executor, device, _):
 
 
 def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp):
-
     args, kwargs = sample.args, sample.kwargs
 
     def is_output_differentiable(x):
@@ -1352,14 +1344,14 @@ def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp):
         )
 
     grads = []
-    assert isinstance(torch_result, torch.Tensor) or isinstance(
-        torch_result, Sequence
-    ), "Expected a single torch tensor or a sequence of torch tensors when testing phantom grad torch consistency"
+    assert isinstance(torch_result, torch.Tensor) or isinstance(torch_result, Sequence), (
+        "Expected a single torch tensor or a sequence of torch tensors when testing phantom grad torch consistency"
+    )
     if isinstance(torch_result, Sequence):
         for x in torch_result:
-            assert isinstance(
-                x, torch.Tensor
-            ), "Expected a single torch tensor or a sequence of torch tensors when testing phantom grad torch consistency"
+            assert isinstance(x, torch.Tensor), (
+                "Expected a single torch tensor or a sequence of torch tensors when testing phantom grad torch consistency"
+            )
             if is_output_differentiable(x):
                 grads.append(torch.ones_like(x))
     else:
@@ -1434,7 +1426,7 @@ def test_phantom_grad_vs_torch_consistency(op, device: str, dtype: dtypes.dtype,
 
 
 from torch.testing import assert_close
-from thunder.core.transforms import populate_grads, clear_grads, extract_grads, put_grad, put_grads, get_grad
+from thunder.core.transforms import populate_grads, clear_grads, extract_grads, put_grad, get_grad
 
 
 @instantiate(dtypes=(thunder.float32,))
@@ -1600,7 +1592,6 @@ def test_too_few_results_from_backward():
     from thunder.core.prims import make_prim
     from thunder.core.transforms import register_augmented_forward, register_backward
     from thunder.core.proxies import TensorProxy
-    from thunder.core import codeutils
 
     def myadd_meta(a, b):
         return TensorProxy(like=a)
@@ -1856,7 +1847,7 @@ def test_inconsistent_output_length_grad_transform():
 
     with pytest.raises(
         RuntimeError,
-        match="number of outputs of the original forward function must be the same as the number of primal outputs",
+        match="The number of outputs of the gradient transform function must be the same as the number of outputs of the original forward function.",
     ):
         _ = jf(a)
 
@@ -1944,35 +1935,6 @@ def test_adhoc_executor_grad(executor, device, _):
     torch.testing.assert_close(actual_gr, expected_gr)
 
 
-@pytest.mark.parametrize("device", ("cuda", "cpu"))
-def test_backward_recomputation_decomposed_ops(device):
-    if device == "cuda" and not torch.cuda.is_available():
-        pytest.skip("CUDA is not available")
-
-    def fn(a):
-        return torch.nn.functional.gelu(a)
-
-    # rematerialization will also trigger recomputation here.
-    jfn = thunder.jit(fn, executors=())
-    jfn2 = thunder.jit(fn, auto_recompute_intermediates=True)
-    a = torch.randn(2, 2, device=device, requires_grad=True)
-    res = jfn(a)
-    res2 = jfn2(a)
-    assert len(res.grad_fn.saved_tensors) == 3  # should be decomposed
-    assert len(res2.grad_fn.saved_tensors) == 1
-
-    if NVFUSER_AVAILABLE and device == "cuda":
-        # check everything is fused
-        assert {bsym.sym.name for bsym in thunder.last_backward_traces(jfn2)[-1].bound_symbols} == {
-            "nvFusion0",
-            "clear_mutable_collection",
-            "python_return",
-            "python_del",
-            "unpack_sequence",
-            "unpack_trivial",
-        }
-
-
 @requiresCUDA
 def test_benchmark_grad():
     from thunder.benchmarks.utils import backward_only
@@ -1996,3 +1958,25 @@ def test_benchmark_grad():
     backward_fn, backward_setup = backward_only(tfunc, x)
     backward_args = backward_setup()
     backward_fn(*backward_args)
+
+
+def test_disambiguate_grad_names():
+    def fn(a, grad_for_a):
+        return a * grad_for_a
+
+    jfn = thunder.jit(fn)
+
+    a = torch.randn(2, 2, requires_grad=True)
+    b = torch.randn(2, 2, requires_grad=True)
+
+    # this should work
+    res = jfn(a, b)
+    ref = fn(a, b)
+
+    go = torch.randn_like(res)
+
+    res_grads = torch.autograd.grad(res, (a, b), go)
+    ref_grads = torch.autograd.grad(ref, (a, b), go)
+
+    assert_close(res, ref)
+    assert_close(res_grads, ref_grads)

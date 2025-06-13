@@ -122,12 +122,6 @@ def test_nanogpt_complete_cudagraphs(executor, device, dtype):
 @instantiate(
     dtypes=(thunder.float32,),
     devicetypes=(thunder.devices.DeviceType.CUDA,),
-    decorators=(
-        pytest.mark.skipif(
-            version_between(torch.__version__, min_ver="2.7.0dev0", max_ver="2.7.0a99"),
-            reason="https://github.com/lightning-ai/lightning-thunder/pull/1629",
-        ),
-    ),
 )
 def test_nanogpt_complete_cudagraphs_autograd(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
@@ -284,10 +278,6 @@ def test_hf_bert():
     assert_close(actual, expected)
 
 
-@pytest.mark.skipif(
-    version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
-    reason="https://github.com/bitsandbytes-foundation/bitsandbytes/pull/1413",
-)
 @pytest.mark.skipif(not BITSANDBYTES_AVAILABLE, reason="`bitsandbytes` is not available")
 @requiresCUDA
 def test_quantization():
@@ -364,10 +354,6 @@ def test_quantization():
         assert_close(v, sd2[k])
 
 
-@pytest.mark.skipif(
-    version_between(torch.__version__, min_ver="2.7.0dev0", max_ver="2.7.0a99"),
-    reason="https://github.com/bitsandbytes-foundation/bitsandbytes/pull/1629",
-)
 @thunder.tests.framework.requiresCUDA
 def test_thunderfx_mistral_nemo_small():
     """
@@ -418,24 +404,40 @@ def test_thunderfx_mistral_nemo_small():
     assert mdl._backend.subgraph_infos, "Should have at least 1 subgraph"
 
 
-@thunder.tests.framework.requiresCUDA
-@pytest.mark.skip(reason="assertion error occurs for transformers==4.50.2")  # TODO
-@pytest.mark.parametrize("model_id", ["Qwen/Qwen2.5-7B-Instruct", "microsoft/Phi-3-mini-128k-instruct"])
-def test_hf_for_nemo(model_id):
-    from thunder.dynamo import thunderfx
-    from transformers import AutoConfig, AutoModelForCausalLM
+def _get_model_config_pairs():
+    def phi3():
+        from transformers.models.phi3 import Phi3ForCausalLM, Phi3Config
 
-    configuration = AutoConfig.from_pretrained(
-        model_id,
-        # Scaled down for testing
-        vocab_size=16,
-        pad_token_id=15,
-        max_position_embeddings=32,
+        return Phi3ForCausalLM, Phi3Config
+
+    def qwen2():
+        from transformers.models.qwen2 import Qwen2ForCausalLM, Qwen2Config
+
+        return Qwen2ForCausalLM, Qwen2Config
+
+    return [(phi3), (qwen2)]
+
+
+@thunder.tests.framework.requiresCUDA
+@pytest.mark.parametrize("model_fn", _get_model_config_pairs())
+def test_hf_for_nemo(model_fn):
+    from thunder.dynamo import thunderfx
+    import torch
+
+    model_cls, config_cls = model_fn()
+
+    config = config_cls(
         num_hidden_layers=1,
+        hidden_size=16,
+        num_attention_heads=16,
+        num_key_value_heads=16,
+        vocab_size=32,
+        max_position_embeddings=16,
+        pad_token_id=15,
     )
-    configuration.hidden_size = configuration.num_attention_heads
+
     with torch.device("cuda"):
-        model = AutoModelForCausalLM.from_config(configuration).to(torch.bfloat16)
+        model = model_cls(config).to(torch.bfloat16)
 
     # thunder.jit doesn't work with Qwen2, so we use torch.compile
     # https://github.com/Lightning-AI/lightning-thunder/issues/1405
@@ -445,7 +447,7 @@ def test_hf_for_nemo(model_id):
     fullgraph = False
     compiled_model = thunderfx(model, fullgraph=fullgraph)
 
-    input_ids = torch.randint(0, configuration.vocab_size, (1, configuration.max_position_embeddings), device="cuda")
+    input_ids = torch.randint(0, config.vocab_size, (1, config.max_position_embeddings), device="cuda")
     ref_output = model(input_ids=input_ids, labels=input_ids)
     ref_loss = ref_output.loss
 
@@ -458,14 +460,16 @@ def test_hf_for_nemo(model_id):
     torch.testing.assert_close(compiled_loss, ref_loss, rtol=1e-2, atol=1e-2)
 
     if fullgraph:
-        assert (
-            len(compiled_model._backend.subgraph_infos) == 1
-        ), "Should have exactly 1 subgraph because of fullgraph=True"
+        assert len(compiled_model._backend.subgraph_infos) == 1, (
+            "Should have exactly 1 subgraph because of fullgraph=True"
+        )
     loss_grad = torch.randn_like(compiled_loss)
 
     grads_ref = torch.autograd.grad(ref_loss, model.parameters(), grad_outputs=loss_grad)
     grads_compiled = torch.autograd.grad(compiled_loss, model.parameters(), grad_outputs=loss_grad)
     torch.testing.assert_close(grads_ref, grads_compiled, rtol=1e-2, atol=1e-2)
+
+    torch._dynamo.reset()
 
 
 LLAMA_3_2_1B_CFG = {
@@ -592,6 +596,52 @@ def test_memory_litgpt_llama3():
     }
 
     assert mem_thunder < mem_eager
+
+
+@requiresCUDA
+def test_checkpointing_thunderfx():
+    from thunder.dynamo import thunderfx
+    from thunder.tests import litgpt_model
+    from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
+        apply_activation_checkpointing,
+        checkpoint_wrapper,
+    )
+
+    def forward_backward_peak(m, inp):
+        torch.cuda.reset_peak_memory_stats(device=None)
+        mem_before = torch.cuda.max_memory_allocated()
+        res = m(inp)
+        res.sum().backward()
+        mem_after = torch.cuda.max_memory_allocated()
+        return (mem_after - mem_before) / 2**20
+
+    with torch.device("cuda"):
+        m = litgpt_model.GPT.from_name("llama2-like")
+        inp = torch.ones((1, 2048), dtype=torch.int64)
+
+    check_fn = lambda submodule: isinstance(submodule, litgpt_model.Block)
+    apply_activation_checkpointing(m, checkpoint_wrapper_fn=checkpoint_wrapper, check_fn=check_fn)
+
+    # warmup, allocate grads etc.
+    forward_backward_peak(m, inp)
+    forward_backward_peak(m, inp)
+    jm = thunderfx(m)
+    forward_backward_peak(jm, inp)
+    forward_backward_peak(jm, inp)
+
+    mem_thunder = forward_backward_peak(jm, inp)
+    mem_eager = forward_backward_peak(m, inp)
+
+    assert mem_thunder < 105  # this ~35% is more than eager, in isolation 100 vs. 74
+
+    ref = m(inp)
+    grads_ref = torch.autograd.grad(ref.sum(), [*m.parameters()])
+
+    res = jm(inp)
+    grads_res = torch.autograd.grad(res.sum(), [*m.parameters()])
+
+    assert_close(res, ref)
+    assert_close(grads_res, grads_ref, atol=1e-3, rtol=1e-3)
 
 
 @requiresCUDA

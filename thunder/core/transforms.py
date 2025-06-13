@@ -35,7 +35,7 @@ from thunder.core.compile_data import get_compile_data
 from thunder.core.langctxs import langctx, Languages
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten, tree_flatten_with_dataclass
 from thunder.core.symbol import BoundSymbol, BoundSymbolInterface, Symbol, has_tags
-from thunder.core.trace import TraceCtx as Trace
+from thunder.core.trace import TraceCtx as Trace, get_tracectx
 from thunder.core.trace import VariableInterface as Variable
 from thunder.core.trace import (
     detached_trace,
@@ -58,7 +58,6 @@ from thunder.core.utils import (
 )
 import thunder.clang as clang
 from thunder.clang import (
-    empty,
     full_like,
     unsqueeze,
     squeeze,
@@ -118,10 +117,10 @@ class Node:
         return str(self.bsym)
 
     def __hash__(self) -> int:
-        utils.check(False, lambda: f"Trying to hash a Node. Hash its bsym instead.")
+        utils.check(False, lambda: "Trying to hash a Node. Hash its bsym instead.")
 
     def __eq__(self, other) -> bool:
-        utils.check(False, lambda: f"Trying to compare Nodes for equality. Compare their bsyms' instead.")
+        utils.check(False, lambda: "Trying to compare Nodes for equality. Compare their bsyms' instead.")
 
 
 # TODO Think about how to model nodes likes comments -- maybe comments should be associated with
@@ -152,7 +151,7 @@ def bsym_list_to_dag(
         if bsym.sym.id is prims.PrimIDs.RETURN:
             utils.check(
                 return_node is None,
-                lambda: f"Found multiple RETURN nodes while converting a list of bound symbols to a dag",
+                lambda: "Found multiple RETURN nodes while converting a list of bound symbols to a dag",
             )
             return_node = node
 
@@ -443,7 +442,7 @@ def add_transform(
 
     cd: None | Any = getattr(cfn, "_lc_cd", None)
 
-    utils.check(cd is not None, lambda: f"Can only transform compiled thunder functions")
+    utils.check(cd is not None, lambda: "Can only transform compiled thunder functions")
     utils.check(isinstance(cd, CompileData), lambda: f"Found an unknown compile data attribute {cd}")
     if isinstance(transform, Transform):
         transform = [transform]
@@ -466,6 +465,7 @@ def add_transform(
         sharp_edges=cd.sharp_edges,
         # cache, interpretation?
         transforms=transforms,
+        debug_options=cd.debug_options,
         disable_torch_autograd=cd.disable_torch_autograd_support or disable_torch_autograd_support,
         **cd.compile_options,
     )
@@ -912,7 +912,7 @@ register_grad(pids.INDEX_COPY, _index_copy_grad)
 def _scatter_add_prim_grad(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
     utils.check(
         not value._requires_grad or value.shape == index.shape,
-        lambda: f"The gradient for the value Tensor is implemented only when value.shape == index.shape. "
+        lambda: "The gradient for the value Tensor is implemented only when value.shape == index.shape. "
         "value shape is {value.shape} while index shape is {index.shape}",
     )
 
@@ -1847,8 +1847,9 @@ def pad_backward(a, padding_config, g):
 
     # Un-pad by padding with zero values
     zero_padding_config = [(-lo, -hi, 0) for lo, hi, _ in padding_config]
+    zero_value = dtypes.dtype_to_numbertype(g.dtype)(0)
 
-    g = prims.pad(g, 0.0, zero_padding_config)
+    g = prims.pad(g, zero_value, zero_padding_config)
 
     # Un-slice by slicing with a stride of value (dilation + 1)
     for dim, (_, _, d) in enumerate(padding_config):
@@ -2263,9 +2264,8 @@ def split_backward(dim, dtype, device, out_shapes, *grads):
     return cat(grads, dim)
 
 
-@register_augmented_forward("torch.nn.functional.embedding")
-def embedding_aug_fwd(
-    a: Proxy,
+def _embedding_grad(
+    idx: Proxy,
     weight: Proxy,
     padding_idx: int | None,
     max_norm: float | None,
@@ -2273,10 +2273,10 @@ def embedding_aug_fwd(
     scale_grad_by_freq: bool,
     sparse: bool,
 ) -> VJPDual:
-    from thunder.torch import embedding
+    from thunder.torch import embedding, embedding_backward
 
-    primal = embedding(
-        a,
+    out = embedding(
+        idx,
         weight,
         padding_idx=padding_idx,
         max_norm=max_norm,
@@ -2284,17 +2284,14 @@ def embedding_aug_fwd(
         scale_grad_by_freq=scale_grad_by_freq,
         sparse=sparse,
     )
-    residuals = (a, weight.shape[0], padding_idx, scale_grad_by_freq, sparse)
-    return VJPDual(primal, residuals)
-
-
-@register_backward("torch.nn.functional.embedding")
-def embedding_backward(a, num_weights, padding_idx, scale_grad_by_freq, sparse, g):
-    from thunder.torch import embedding_backward
-
     padding_idx = -1 if padding_idx is None else padding_idx
-    gweight = embedding_backward(g, a, num_weights, padding_idx, scale_grad_by_freq, sparse)
-    return gweight
+    g_out = get_grad(out)
+    g_weight = embedding_backward(g_out, idx, weight.shape[0], padding_idx, scale_grad_by_freq, sparse)
+    put_grad(weight, g_weight)
+    return out
+
+
+register_grad("torch.nn.functional.embedding", _embedding_grad)
 
 
 @register_augmented_forward("torch.cumsum")
@@ -3293,9 +3290,10 @@ def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace) -> tuple[Tr
 
     from thunder.core.rematerialization import match_fw_and_bw_saved_for_bw_proxies
 
-    new_required_for_backward_fw_to_bw_map, new_required_for_backward_bw_to_fw_map = (
-        match_fw_and_bw_saved_for_bw_proxies(fwd_trace, bwd_trace)
-    )
+    (
+        new_required_for_backward_fw_to_bw_map,
+        new_required_for_backward_bw_to_fw_map,
+    ) = match_fw_and_bw_saved_for_bw_proxies(fwd_trace, bwd_trace)
     all_recomputable_proxies = all_recomputable_proxies.union(
         OrderedSet(
             (

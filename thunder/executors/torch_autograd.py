@@ -6,7 +6,7 @@ import torch
 import thunder.core.utils as utils
 from thunder.core.prims import PrimIDs
 from thunder.core.proxies import TensorProxy, variableify
-from thunder.core.pytree import tree_flatten
+from thunder.core.pytree import tree_flatten, tree_map
 from thunder.core.symbol import BoundSymbol
 from thunder.core.trace import TraceCtx, from_trace, set_tracectx, reset_tracectx
 from thunder.core.transform_common import replace_redundant_inputs
@@ -48,12 +48,18 @@ def rename_bwd_trace_outputs(bwd_trace: TraceCtx, fwd_trace: TraceCtx) -> TraceC
 
     for fwd_arg, bwd_out in zip(fwd_inputs, bwd_outputs):
         if isinstance(bwd_out, TensorProxy):
-            swap_map[variableify(bwd_out)] = bwd_out.replace_name(f"grad_for_{fwd_arg.name}")
+            swap_map[variableify(bwd_out)] = bwd_out.replace_name(f"grad_for_{fwd_arg.name}", disambiguate=True)
     reset_tracectx(trace_tok)
 
     renamed_bwd_trace = from_trace(bwd_trace)
     renamed_bwd_trace.bound_symbols = []
 
+    def swap_as_needed(a):
+        if not isinstance(a, TensorProxy):
+            return a
+        return swap_map.get(variableify(a), a)
+
+    renamed_bwd_trace.args = tree_map(swap_as_needed, renamed_bwd_trace.args)
     bsym: BoundSymbol
     for bsym in bwd_trace.bound_symbols:
         renamed_bwd_trace.bound_symbols.append(bsym.from_bsym_swap_proxies(swap_map=swap_map))
@@ -219,7 +225,7 @@ def connect_to_autograd(
 
 def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stats, /, *flat_args):
     from thunder.core.rematerialization import rematerialize_all_gather, rematerialize_forward_and_backward
-    from thunder.core.transforms import forward_and_backward_from_trace
+    from thunder.transforms.autodiff import forward_and_backward_from_trace
     from thunder.distributed.transforms import FSDPCommBucketing
     from thunder.distributed.utils import sort_data_parallel_syncs, sort_waits, sort_communication_ops
     from thunder.executors.passes import del_last_used, transform_for_execution
@@ -245,6 +251,9 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     # not any other container type. So we need to flatten the outputs of
     # the forward trace and inputs of the backward trace.
     fw_trace, bw_trace = forward_and_backward_from_trace(primal_trace, torch_autograd=True)
+
+    if bw_trace is None:
+        return fw_trace, None
 
     fw_traces = [fw_trace]
     bw_traces = [bw_trace]
@@ -426,7 +435,8 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     bw_extrace = del_last_used(bw_extrace, clear_mutable_collections=True)
     bw_traces.append(bw_extrace)
 
-    bw_trace = rename_bwd_trace_outputs(bw_extrace, fw_extrace)
+    bw_extrace = rename_bwd_trace_outputs(bw_extrace, fw_extrace)
+    bw_traces.append(bw_extrace)
 
     if compile_stats is not None:
         compile_stats.last_traces += fw_traces
@@ -437,7 +447,6 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     # We only want the forward function to be called with `te.fp8_autocast` manager.
     bw_extrace._include_te_fp8_autocast = False
 
-    # Should this be a post optmization transform?
     # We only want to apply it on backward trace.
     from thunder.torch.experimental.dtensor_utils import check_dtensor_cotangent_metadata_in_backward
 

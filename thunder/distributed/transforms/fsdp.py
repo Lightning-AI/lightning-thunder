@@ -720,7 +720,7 @@ class FSDPCommBucketing:
         if get_skip_data_parallel_grad_sync():
             utils.check(
                 self.index_to_fqn,
-                lambda: f"`computation_trc` passed to the dunder init expected to be a `TraceCtx`",
+                lambda: "`computation_trc` passed to the dunder init expected to be a `TraceCtx`",
             )
             if self.requires_bwd_bucketing_allgather:
                 fsdp_bwd_trace = self._apply_bucketing_to_backward_all_gather(fsdp_bwd_trace)

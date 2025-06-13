@@ -13,7 +13,6 @@ from looseversion import LooseVersion
 
 import torch
 from thunder.core.pytree import tree_flatten
-from thunder.core.baseutils import check
 from thunder.core.utils import sequencify, create_python_callable_from_bsym
 from thunder.dynamo.compiler import thunderfx
 from thunder.dynamo.utils import (
@@ -23,7 +22,6 @@ from thunder.dynamo.utils import (
     get_env,
     get_split_reasons_string,
     CompilerType,
-    example_input_meta_to_input,
     recompile_graph,
     has_higher_order_operator,
     input_to_example_input_meta,
@@ -69,13 +67,15 @@ if TYPE_CHECKING:
     from thunder.dynamo.benchmark_utils import CompileSpecificationInterface, TimerInterface
 
 
-def run_forward_backward(fn, *args, **kwargs):
+def run_forward_backward(fn, *args, benchmark=False, **kwargs):
     result = fn(*args, **kwargs)
     result = sequencify(result)
 
     differentiable_tensor_result = list(filter(lambda x: isinstance(x, torch.Tensor) and x.requires_grad, result))
 
     if not differentiable_tensor_result:
+        if benchmark:
+            return
         return result, None
 
     forward_inputs = tree_flatten((args, kwargs))[0]
@@ -94,6 +94,10 @@ def run_forward_backward(fn, *args, **kwargs):
         i.grad = None
 
     torch.autograd.backward(differentiable_tensor_result, output_grads, inputs=inputs_requires_grad)
+    if benchmark:
+        for i in inputs_requires_grad:
+            i.grad = None
+        return
     return result, [t.grad for t in inputs_requires_grad]
 
 
@@ -190,7 +194,9 @@ def thunderfx_pytest_benchmark_report(
                     filtered_bench, key=lambda x: x["extra_info"].get("max_allocated_memory_MB", 0)
                 )
                 for bk in filtered_bench_sorted:
-                    print(f"{bk['name'].lstrip('test_')}: {bk['extra_info'].get('max_allocated_memory_MB', 0)/1000} GB")
+                    print(
+                        f"{bk['name'].lstrip('test_')}: {bk['extra_info'].get('max_allocated_memory_MB', 0) / 1000} GB"
+                    )
                 print("\n")
 
             print_sorted_memory_info("forward")
@@ -287,7 +293,7 @@ class FXGraphReport:
     def _get_input_str(self, folder, inputs, serialize_inputs):
         input_str = ""
         if any(arg is None for arg in inputs):
-            input_str += f"# Warning: The inputs that cannot be inferred are set to None, requiring the user to manually give inputs according to the code\n"
+            input_str += "# Warning: The inputs that cannot be inferred are set to None, requiring the user to manually give inputs according to the code\n"
         if serialize_inputs:
             example_inputs = self.make_example_inputs()
             input_file_name = folder / f"{self.graph_name}_inputs.pt"
@@ -451,13 +457,16 @@ class FXGraphReport:
     ):
         torch._dynamo.reset()
         example_inputs = self.make_example_inputs()
+        # ref: https://github.com/pytorch/pytorch/blob/0ef5ba43a6e7fe806ea9f27929bf4328ffd1ebf4/torch/_inductor/compile_fx.py#L1921-L1922
+        # The compile_fn may mutate the GraphModule, so we need to deepcopy it
+        graph = copy.deepcopy(self.graph)
         # To avoid the AssertionError: attribute nodes of Graph object out of sync
-        recompile_graph(self.graph)
-        compiled_model = compile_fn.compile(self.graph, inputs=example_inputs)
+        recompile_graph(graph)
+        compiled_model = compile_fn.compile(graph, inputs=example_inputs)
         result = run_forward_backward(compiled_model, *example_inputs)
 
         if check_consistency:
-            eager_result = run_forward_backward(self.graph, *example_inputs)
+            eager_result = run_forward_backward(graph, *example_inputs)
             torch.testing.assert_close(result, eager_result)
         return result
 
@@ -516,7 +525,13 @@ class FXGraphReport:
         format_python_file(folder / file_name)
 
     def run_benchmark(
-        self, compile_fn: CompileSpecificationInterface, time_fn: TimerInterface, *, reset_torch_dynamo=True
+        self,
+        compile_fn: CompileSpecificationInterface,
+        time_fn: TimerInterface,
+        *,
+        reset_torch_dynamo=True,
+        example_inputs=None,
+        measure_fwd_bwd_together=False,
     ):
         # From torch.compile docs - https://pytorch.org/docs/stable/generated/torch.compile.html
         # > Multiple compiled results can be associated with a frame up to torch._dynamo.config.cache_size_limit, which defaults to 8; at which point we will fall back to eager.
@@ -525,11 +540,25 @@ class FXGraphReport:
         # Sets the `reset_torch_dynamo` to True when you need to reset Dynamo's state *as if* you had started a fresh process invocation.
         if reset_torch_dynamo:
             torch._dynamo.reset()
-        example_inputs = self.make_example_inputs()
+        if example_inputs is None:
+            example_inputs = self.make_example_inputs()
+        # ref: https://github.com/pytorch/pytorch/blob/0ef5ba43a6e7fe806ea9f27929bf4328ffd1ebf4/torch/_inductor/compile_fx.py#L1921-L1922
+        # The compile_fn may mutate the GraphModule, so we need to deepcopy it
+        graph = copy.deepcopy(self.graph)
         # To avoid the AssertionError: attribute nodes of Graph object out of sync
-        recompile_graph(self.graph)
-        compiled_fn = compile_fn.compile(self.graph, inputs=example_inputs)
+        recompile_graph(graph)
+        compiled_fn = compile_fn.compile(graph, inputs=example_inputs)
 
+        if measure_fwd_bwd_together:
+            fwd_bwd_measurement = time_fn.time(
+                "run_forward_backward(compiled_fn, *example_inputs, benchmark=True)",
+                globals={
+                    "run_forward_backward": run_forward_backward,
+                    "compiled_fn": compiled_fn,
+                    "example_inputs": example_inputs,
+                },
+            )
+            return compiled_fn, fwd_bwd_measurement, None
         forward_only = not any(hasattr(arg, "requires_grad") and arg.requires_grad for arg in example_inputs)
         fwd_measurement = time_fn.time(
             "compiled_fn(*example_inputs)", globals={"compiled_fn": compiled_fn, "example_inputs": example_inputs}
@@ -541,7 +570,7 @@ class FXGraphReport:
             bwd_measurement = time_fn.time(
                 "backward_fn(*backward_args)", globals={"backward_fn": backward_fn, "backward_args": backward_args}
             )
-        return fwd_measurement, bwd_measurement
+        return compiled_fn, fwd_measurement, bwd_measurement
 
     def write_benchmark(
         self,
@@ -643,7 +672,7 @@ class FXReport:
                 output += "    User Stack:\n"
                 for frame_summary in reason.user_stack:
                     output += f"      {frame_summary}\n"
-        output += f"Graph information:\n"
+        output += "Graph information:\n"
         for idx, graph_report in enumerate(self.fx_graph_reports):
             output += textwrap.indent(f"{graph_report}\n", "  ")
         return output
@@ -1117,7 +1146,7 @@ def check_torch_compile_runnability(fn: Callable, stream: TextIO = sys.stdout, *
             run_forward_backward(torch_compiled, *args, **kwargs)
         except Exception as e:
             stream.write(f"Failed to run the function using torch.compile with exception: {e}")
-            stream.write(f"Trying with Torch eager...")
+            stream.write("Trying with Torch eager...")
             try:
                 run_forward_backward(fn, *args, **kwargs)
             except Exception as e:
@@ -1305,7 +1334,7 @@ def thunderfx_benchmark_report(
     thunderfx_benchmark_report_from_splits(thunder_fxgraph_reports, folder_path, compare_fusion=True)
     ```
     """
-    from thunder.dynamo.utils import get_thunder_jit_kwargs, get_torch_compile_kwargs
+    from thunder.dynamo.utils import get_torch_compile_kwargs
 
     folder_path = Path(folder_path)
     folder_path.mkdir(exist_ok=True, parents=True)

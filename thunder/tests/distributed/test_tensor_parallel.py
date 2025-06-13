@@ -24,7 +24,6 @@ _name_to_transform = {
 
 
 class TensorParallelTest(DistributedParallelTestCase):
-
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="")
     @common_utils.parametrize("name,bias", product(tuple(_name_to_transform.keys()), (True, False)))
     def test_linear(self, name, bias):
@@ -165,7 +164,7 @@ class TensorParallelTest(DistributedParallelTestCase):
 
         model = Model(bias=bias).to(device)
         model.load_state_dict(ref_state_dict)
-        tp_model = thunder.jit(model)
+        tp_model = thunder.jit(model, debug_options=thunder.DebugOptions(check_traces=True))
 
         column_parallel_layers = ["embed_1", "linear1_0"]
         tp_model = column_parallel(tp_model, column_parallel_layers, process_group)

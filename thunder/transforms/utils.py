@@ -15,9 +15,9 @@ def get_checks(prologue_trace):
             checks = [
                 bsym2 for bsym2 in prologue_consumers[bsym.output] if bsym2.sym == prims.check_tensor_shape_and_metadata
             ]
-            assert (
-                len(checks) == 1
-            ), f"expected each parameter and buffer to have exactly one checker, but {bsym.output} has {len(checks)}"
+            assert len(checks) == 1, (
+                f"expected each parameter and buffer to have exactly one checker, but {bsym.output} has {len(checks)}"
+            )
             assert isinstance(param_name, str)
             check_dict[param_name] = (checks[0], bsym)
     return check_dict

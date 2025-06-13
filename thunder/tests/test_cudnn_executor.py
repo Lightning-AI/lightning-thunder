@@ -1,5 +1,4 @@
 from functools import partial
-from typing import Any
 
 import pytest
 import torch
@@ -11,7 +10,7 @@ import thunder.core.devices as devices
 from thunder import dtypes
 from thunder.core.transforms import vjp
 from thunder.core.utils import flatten_func
-from thunder.tests.framework import instantiate, NOTHING, ops, requiresCUDA, run_snippet, TorchExecutor, version_between
+from thunder.tests.framework import ops, requiresCUDA, run_snippet, TorchExecutor
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
 from thunder.tests.opinfos import get_opinfo, OpInfo
 from thunder.tests.test_grad import _make_differentiable_wrapper
@@ -32,7 +31,6 @@ def _maybe_xfail() -> None:
 # These reference inputs are currently used by cudnnex
 def grad_scaled_dot_product_attention_reference_generator(op, device, dtype, requires_grad, **kwargs):
     """https://pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html"""
-    from thunder.executors.sdpaex import SpdaBackend
     from thunder.tests.opinfos import SampleInput
 
     # TODO: cudnnex seems to produce large mismatches against reference when tensor initialized from the wider default range of [-9,9]
@@ -137,6 +135,27 @@ def test_cudnn_sdpa():
         torch.testing.assert_close(actual, expected, atol=2e-2, rtol=1e-2)
         last_trace = thunder.last_traces(ctest)[-1]
         assert any(bsym.sym.name == "cudnn_sdpa_fwd" for bsym in last_trace.bound_symbols)
+
+
+@requiresCUDA
+def test_cudnn_sdpa_NumberProxy_dropout():
+    _maybe_xfail()
+
+    # expect sdpa to fail for 8.9.2 and below
+    if cudnn.backend_version() <= 8902:
+        pytest.xfail("Only interleaved layout is supported pre 8.9.2.")
+    shape = (4, 8, 16, 16)
+    q = torch.rand(shape, dtype=torch.bfloat16, device="cuda", requires_grad=True)
+    k = torch.rand(shape, dtype=torch.bfloat16, device="cuda", requires_grad=True)
+    v = torch.rand(shape, dtype=torch.bfloat16, device="cuda", requires_grad=True)
+
+    def func(q, k, v, dropout_p):
+        return torch.nn.functional.scaled_dot_product_attention(q, k, v, dropout_p=dropout_p)
+
+    cf = thunder.jit(func, cache="symbolic values", executors=[cudnn_ex])
+    out = cf(q, k, v, dropout_p=0.5)
+    last_trace = thunder.last_traces(cf)[-1]
+    assert any(bsym.sym.name == "cudnn_sdpa_fwd" for bsym in last_trace.bound_symbols)
 
 
 # NOTE These wrappers are necessary because preprocessing cannot compile the function directly
@@ -253,7 +272,7 @@ def test_vjp_correctness_cudnn_sdpa(dtype, may_cat_grad_qkv):
         with compile_data_and_stats(cd, None):
             initial_trace = thunder.trace()(vjp(filtered_op), filtered_args, (v,))
 
-        from thunder.executors.cudnnex import cudnn_sdpa_fwd, cudnn_sdpa_bwd
+        from thunder.executors.cudnn_sdpa import cudnn_sdpa_fwd, cudnn_sdpa_bwd
 
         # This is a workaround for the issue with python_ctx replacing symbols
         # with their "call_ctx" values which are not traceable and accept only
@@ -279,7 +298,7 @@ def test_vjp_correctness_cudnn_sdpa(dtype, may_cat_grad_qkv):
 
 
 def test_compute_row_major_strides():
-    from thunder.executors.cudnnex import _compute_row_major_strides
+    from thunder.executors.cudnn_sdpa import _compute_row_major_strides
 
     # Test case 1: 2D tensor
     shape = (3, 4)

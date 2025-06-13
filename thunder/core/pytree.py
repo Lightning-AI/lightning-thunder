@@ -8,7 +8,6 @@ from torch.fx.immutable_collections import immutable_list
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
 from thunder.core.baseutils import ProxyInterface, is_likely_from_collections_namedtuple
-from types import FunctionType
 
 OPTREE_NAMESPACE = "thunder"
 
@@ -69,6 +68,8 @@ def tree_flatten(args, namespace=OPTREE_NAMESPACE):
             torch.device,
             torch.autograd.function.FunctionCtx,
             immutable_list,
+            *torch.types.py_sym_types,
+            *((torch.distributed._tensor.DTensor,) if torch.distributed.is_available() else ()),
         }
         and not isinstance(args, (ProxyInterface))
         and not is_likely_from_collections_namedtuple(args)
