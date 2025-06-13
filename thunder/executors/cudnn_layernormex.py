@@ -9,8 +9,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 
 
-from thunder.executors.cudnnex import cudnn_available
-from thunder.executors.cudnn_sdpa import torch_to_cudnn_dtype
+from thunder.executors.cudnnex import cudnn_available, torch_to_cudnn_dtype
 from thunder.extend import OperatorExecutor
 
 

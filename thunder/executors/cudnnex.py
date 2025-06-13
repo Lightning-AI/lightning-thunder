@@ -2,7 +2,7 @@ from collections.abc import Callable
 
 from lightning_utilities.core.imports import package_available
 from looseversion import LooseVersion
-from thunder.extend import OperatorExecutor, register_executor
+from thunder.extend import OperatorExecutor
 
 __all__ = ["cudnn_version", "required_cudnn_version", "cudnn_available", "cudnn_ex", "torch_to_cudnn_dtype"]
 
@@ -50,14 +50,11 @@ def cudnn_available() -> bool:
 
 
 cudnn_ex: None | OperatorExecutor = None
-
-torch_to_cudnn_dtype: None | Callable
+torch_to_cudnn_dtype: None | Callable = None
 cudnn = None
 
 if cudnn_available():
     import thunder.executors.cudnn_sdpa as sdpa_impl
-    import cudnn
 
-    sdpa_impl.cudnn = cudnn
     torch_to_cudnn_dtype = sdpa_impl.torch_to_cudnn_dtype
     cudnn_ex = sdpa_impl.cudnn_ex
