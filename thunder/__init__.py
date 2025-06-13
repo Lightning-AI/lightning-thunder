@@ -553,7 +553,6 @@ def jit(
 
             if requires_grad:
                 if delay_trace_split:
-
                     from thunder.transforms.autodiff import grad_transform_on_trace
 
                     computation_trc = grad_transform_on_trace(computation_trc)

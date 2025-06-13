@@ -11,9 +11,9 @@ min_triton_version = "2.1"
 
 triton_version: None | str = triton_utils.triton_version()
 TRITON_AVAILABLE: bool = triton_utils.is_triton_version_at_least(min_triton_version)
-assert (
-    TRITON_AVAILABLE
-), f"Trying to import a Triton executor, but it requires Triton version {min_triton_version} or greater, and the current Triton version is {triton_version}"
+assert TRITON_AVAILABLE, (
+    f"Trying to import a Triton executor, but it requires Triton version {min_triton_version} or greater, and the current Triton version is {triton_version}"
+)
 
 triton_ex: OperatorExecutor = OperatorExecutor("triton", version=triton_version)
 register_executor(triton_ex)
@@ -249,11 +249,11 @@ def _class_probs_forward(
 @triton.autotune(
     configs=[
         # fmt: off
-        triton.Config({'BLOCK': 1024}, num_stages=FORWARD_NUM_STAGES, num_warps=1),
-        triton.Config({'BLOCK': 2048}, num_stages=FORWARD_NUM_STAGES, num_warps=8),
-        triton.Config({'BLOCK': 4096}, num_stages=FORWARD_NUM_STAGES, num_warps=8),
-        triton.Config({'BLOCK': 8192}, num_stages=FORWARD_NUM_STAGES, num_warps=16),
-        triton.Config({'BLOCK': 16384}, num_stages=FORWARD_NUM_STAGES, num_warps=16),
+        triton.Config({"BLOCK": 1024}, num_stages=FORWARD_NUM_STAGES, num_warps=1),
+        triton.Config({"BLOCK": 2048}, num_stages=FORWARD_NUM_STAGES, num_warps=8),
+        triton.Config({"BLOCK": 4096}, num_stages=FORWARD_NUM_STAGES, num_warps=8),
+        triton.Config({"BLOCK": 8192}, num_stages=FORWARD_NUM_STAGES, num_warps=16),
+        triton.Config({"BLOCK": 16384}, num_stages=FORWARD_NUM_STAGES, num_warps=16),
         # fmt: on
     ],
     key=[
@@ -322,11 +322,11 @@ def _forward(
 @triton.autotune(
     configs=[
         # fmt: off
-        triton.Config({'BLOCK': 1024}, num_stages=1, num_warps=1),
-        triton.Config({'BLOCK': 2048}, num_stages=1, num_warps=8),
-        triton.Config({'BLOCK': 4096}, num_stages=1, num_warps=8),
-        triton.Config({'BLOCK': 8192}, num_stages=1, num_warps=16),
-        triton.Config({'BLOCK': 16384}, num_stages=1, num_warps=16),
+        triton.Config({"BLOCK": 1024}, num_stages=1, num_warps=1),
+        triton.Config({"BLOCK": 2048}, num_stages=1, num_warps=8),
+        triton.Config({"BLOCK": 4096}, num_stages=1, num_warps=8),
+        triton.Config({"BLOCK": 8192}, num_stages=1, num_warps=16),
+        triton.Config({"BLOCK": 16384}, num_stages=1, num_warps=16),
         # fmt: on
     ],
     key=[

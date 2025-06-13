@@ -199,7 +199,6 @@ class SampleInput:
         return SampleInput(*args, **kwargs)
 
     def remove_singularities(self, op, eps):
-
         singularity_fn = op.singularity_fn_producer(self)
         if singularity_fn is None:
             return self
@@ -292,9 +291,9 @@ class DecorateInfo:
 
         if devicetypes is not None:
             for x in devicetypes:
-                assert isinstance(
-                    x, devices.DeviceType
-                ), f"Found non-devicetype {x} when initializing a DecorateInfo's devicetypes"
+                assert isinstance(x, devices.DeviceType), (
+                    f"Found non-devicetype {x} when initializing a DecorateInfo's devicetypes"
+                )
 
         self.dtypes = None if dtypes is None else datatypes.resolve_dtypes(dtypes)
         self.active_if = active_if
@@ -2193,7 +2192,15 @@ def elementwise_binary_prims_generator(op, device, dtype, requires_grad, **kwarg
 
 # TODO Extend this generator
 def elementwise_binary_generator(
-    op, device, dtype, requires_grad, *, no_rhs_numbers: bool = False, no_weak_dtypes: bool = False, **kwargs
+    op,
+    device,
+    dtype,
+    requires_grad,
+    *,
+    no_rhs_numbers: bool = False,
+    no_weak_dtypes: bool = False,
+    no_rhs_negative_numbers: bool = False,
+    **kwargs,
 ):
     yield from elementwise_binary_prims_generator(op, device, dtype, requires_grad, **kwargs)
 
@@ -2209,10 +2216,11 @@ def elementwise_binary_generator(
         # Tests tensor x number
         c = make((2, 2), **kwargs)
         d = number(**kwargs)
+        if no_rhs_negative_numbers:
+            d = abs(d)
         yield SampleInput(c, d)
 
     if not no_weak_dtypes:
-
         # Test tensor x scalar tensor with a different dtype
         # We first convert the dtype to its base and then use
         # the table to get the reference dtype.
@@ -2862,7 +2870,7 @@ elementwise_binary_ops.append(div_opinfo)
 
 bitwise_left_shift_opinfo = OpInfo(
     ltorch.bitwise_left_shift,
-    sample_input_generator=elementwise_binary_generator,
+    sample_input_generator=partial(elementwise_binary_generator, no_rhs_negative_numbers=True),
     dtypes=(datatypes.signedinteger, datatypes.unsignedinteger),
     torch_reference=torch.bitwise_left_shift,
 )
@@ -2871,11 +2879,11 @@ elementwise_binary_ops.append(bitwise_left_shift_opinfo)
 
 bitwise_right_shift_opinfo = OpInfo(
     ltorch.bitwise_right_shift,
-    sample_input_generator=elementwise_binary_generator,
+    sample_input_generator=partial(elementwise_binary_generator, no_rhs_negative_numbers=True),
     dtypes=(datatypes.signedinteger, datatypes.unsignedinteger),
     torch_reference=torch.bitwise_right_shift,
 )
-elementwise_binary_ops.append(bitwise_left_shift_opinfo)
+elementwise_binary_ops.append(bitwise_right_shift_opinfo)
 
 # Puts all opinfos into the "opinfos" list
 opinfos.extend(elementwise_binary_ops)
@@ -4489,7 +4497,7 @@ def unflatten_error_generator(op, device, dtype=torch.float32, **kwargs):
     yield (
         SampleInput(input_tensor, dim, (2, 2)),
         IndexError,
-        rf"Dimension out of range \(expected to be in range of \[{-len(input_tensor.shape)}, {len(input_tensor.shape)-1}\], but got {dim}\)",
+        rf"Dimension out of range \(expected to be in range of \[{-len(input_tensor.shape)}, {len(input_tensor.shape) - 1}\], but got {dim}\)",
     )
 
 
@@ -7366,6 +7374,9 @@ def baddbmm_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
             for alpha, beta in float_constants_cases:
                 yield SampleInput(make(shape_in), make(shape_batch1), make(shape_batch2), alpha=alpha, beta=beta)
+
+    if isinstance(to_dtype(dtype), datatypes.exact):
+        yield SampleInput(make(3, 5, 6), batch1=make(3, 5, 0), batch2=make(3, 0, 6), alpha=2, beta=2)
 
 
 def baddbmm_error_generator(op, device, dtype=torch.int32, **kwargs):

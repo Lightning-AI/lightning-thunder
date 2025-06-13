@@ -65,7 +65,6 @@ from torch.testing._internal import common_utils
     "FSDP test requires CUDA and NCCL `torch.distributed` backend",
 )
 class FSDPTest(DistributedParallelTestCase):
-
     @common_utils.parametrize("executor", tuple(executors_map.keys()))
     def test_sort_waits(self, executor):
         from thunder.distributed.utils import sort_waits
@@ -266,7 +265,7 @@ class FSDPTest(DistributedParallelTestCase):
             (FSDPType.ZERO2, FSDPType.ZERO3),
         ),
         name_fn=lambda bucketing_strategy, fsdptype: (
-            f"bucketing_{str(bucketing_strategy).split('.')[1].lower()}_" f"{(str(fsdptype).lower().split('.')[1])}"
+            f"bucketing_{str(bucketing_strategy).split('.')[1].lower()}_{(str(fsdptype).lower().split('.')[1])}"
         ),
     )
     def test_fsdp_with_padding(
@@ -274,7 +273,6 @@ class FSDPTest(DistributedParallelTestCase):
         bucketing_strategy: FSDPBucketingStrategy,
         fsdptype: FSDPType,
     ):
-
         from thunder.core.prims import PrimIDs
         from thunder.core.transforms import unwrap_one_level_of_subsymbols
         from thunder.executors.torchex import pad_prim_impl

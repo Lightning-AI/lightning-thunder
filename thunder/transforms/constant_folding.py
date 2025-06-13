@@ -178,7 +178,6 @@ class ConstantFolding(thunder.Transform):
                 if (
                     new_concrete_output is not None
                 ):  # Might happen for `python_return` as it won't have mapping in `_thunder_to_torch_map`.
-
                     # Create a new symbol with same output proxy but which will now represent the computed constant value.
                     # eg.
                     # known_tensor = torch.tensor(2)
