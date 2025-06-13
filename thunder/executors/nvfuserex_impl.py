@@ -8,7 +8,7 @@ import time
 from copy import copy
 from itertools import chain, filterfalse
 import warnings
-from typing import cast, TypeAlias
+from typing import cast
 from collections.abc import Callable
 
 from looseversion import LooseVersion
@@ -532,19 +532,16 @@ class FusionDefinitionWrapper:
         if self.store_inputs:
             self.last_inputs = args
 
-        kwargs = {}
-        if self.save_fake_inputs:
-            kwargs["save_repro_inputs"] = True
-        # Set device if set in one of the "factory" methods like full, iota, or uniform
-        if hasattr(fd, "_selected_device"):
-            kwargs["device"] = fd._selected_device
-
         if self.is_multigpu_fd:
-            # TODO: Assert the placements (metadata) for in_dtensor is same as the one used during tracing.
-            in_tensors = [in_dtensor.to_local() for in_dtensor in args]
             with annotate_for_profile(self.name):
+                # TODO: Assert the placements (metadata) for in_dtensor is same as the one used during tracing.
+                in_tensors = [in_dtensor.to_local() for in_dtensor in args]
                 out_tensors, out_shardings = fd.execute(
-                    in_tensors, _enable_options=self.enable_options, _disable_options=self.disable_options, **kwargs
+                    in_tensors,
+                    device=fd._selected_device,
+                    save_repro_inputs=self.save_fake_inputs,
+                    _enable_options=self.enable_options,
+                    _disable_options=self.disable_options,
                 )
 
                 assert len(out_tensors) == len(out_shardings)

@@ -20,11 +20,6 @@ if torch.distributed.is_available():
 else:
     DTensor = NoneType
 
-if torch.distributed.is_available():
-    from torch.distributed.tensor import DTensor
-else:
-    DTensor = NoneType
-
 from thunder.torch.default_torch_ops import torch_auto_registered_ops
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.torch.langctx import torchctx
