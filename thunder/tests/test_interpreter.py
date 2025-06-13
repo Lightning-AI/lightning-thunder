@@ -781,7 +781,6 @@ def test_cross_function_exceptions(jit):
 
 
 def test_stop_exception_no_leak(jit):
-
     class Identity(torch.nn.Module):
         def forward(self, x):
             for p in self.parameters():
@@ -802,7 +801,6 @@ def test_stop_exception_no_leak(jit):
 
 
 def test_exception_no_leak(jit):
-
     class Identity(torch.nn.Module):
         @staticmethod
         def raises():
@@ -829,7 +827,6 @@ def test_exception_no_leak(jit):
 
 
 def test_uncaught_exception_no_leak():
-
     class Identity(torch.nn.Module):
         def forward(self, x):
             raise RuntimeError("FOOBAR")
@@ -3546,7 +3543,6 @@ def test_freeing_of_tensors():
 
 
 def test_tuple_mul():
-
     def fn(x):
         d = x.dim() + 3
         return x.shape[0:2] + (1,) * d + x.shape[2:]
