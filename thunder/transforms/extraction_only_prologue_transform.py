@@ -20,7 +20,7 @@ class ExtractionOnlyPrologueTransform(Transform):
             Otherwise, remove the checks of tensor proxies with ``ProxyTag.STATIC_MEMORY_LOCATION``.
     """
 
-    def __init__(self, skip_check_on_input_tensors: bool):
+    def __init__(self, skip_check_on_input_tensors: bool = False):
         self.skip_check_on_input_tensors = skip_check_on_input_tensors
 
     def transform_traces_pre_prologue(self, prologue_trace, computation_trace, epilogue_trace, **kwargs):
