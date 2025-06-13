@@ -10,6 +10,7 @@ from thunder.core.prims import OpTags
 from thunder.core.transforms import get_grad, put_grad, put_grads
 import thunder.core.dtypes as dtypes
 import thunder.torch as ltorch
+from thunder.core.proxies import pyval
 
 from thunder.extend import OperatorExecutor
 
