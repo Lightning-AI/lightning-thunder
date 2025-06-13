@@ -1,6 +1,12 @@
+from thunder.core.prims import PrimIDs
 from thunder.core.proxies import ProxyTag
 from thunder.core.trace import from_trace
 from thunder.core.transform_common import Transform
+
+
+__all__ = [
+    "ExtractionOnlyPrologueTransform",
+]
 
 
 class ExtractionOnlyPrologueTransform(Transform):
@@ -25,7 +31,7 @@ class ExtractionOnlyPrologueTransform(Transform):
             # NOTE - We assume TensorProxy's tagged with `STATIC_MEMORY_LOCATION` to
             #        be Parameters or Buffer. It should be safe to disable check for
             #        tensors we deem to be static.
-            if bsym.sym.id == thunder.prims.PrimIDs.CHECK_TENSOR_SHAPE_AND_METADATA and (
+            if bsym.sym.id == PrimIDs.CHECK_TENSOR_SHAPE_AND_METADATA and (
                 self.skip_check_on_input_tensors or ProxyTag.STATIC_MEMORY_LOCATION in bsym.args[0].tags
             ):
                 continue
