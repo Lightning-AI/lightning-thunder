@@ -49,12 +49,19 @@ def is_in_torch_compile() -> bool:
     return TorchCompileContext.current_compile_id() is not None
 
 
+def _symint_or_dynamic_tensor_check(a: Any) -> bool:
+    if not isinstance(a, (torch.SymInt, torch.Tensor)):
+        return False
+    elif isinstance(a, torch.Tensor):
+        return any(isinstance(s, torch.SymInt) for s in a.shape)
+    else:
+        return True
+
+
 def is_dynamic_inputs(example_inputs):
     """Check if inputs dynamic or not by checking the presence of :class:`torch.SymInt`."""
     flat_example_inputs, _ = torch_pytree.tree_flatten(example_inputs)
-    return any(
-        isinstance(a, torch.SymInt) or any(isinstance(s, torch.SymInt) for s in a.shape) for a in flat_example_inputs
-    )
+    return any(_symint_or_dynamic_tensor_check(a) for a in flat_example_inputs)
 
 
 def _with_prologue_pruning_transform(
