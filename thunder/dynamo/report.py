@@ -1448,11 +1448,15 @@ def save_thunderfx_repros(
             graph_folder = folder_path / thunder_fxgraph_report.graph_name
             graph_folder.mkdir(exist_ok=True, parents=True)
             for split_report in thunder_fxgraph_report.subgraph_reports:
-                if check_runnability or save_trace:
+                if check_runnability or save_trace or save_fusion:
                     try:
-                        split_report._create_thunder_traces()
+                        split_report.create_fusion_reports()
                     except Exception as e:
                         stream.write(f"Failed to run the {split_report.graph_name} using Thunder with exception: {e}\n")
+                        split_report.write_repro(
+                            graph_folder, thunderjit, file_name=f"failed_{split_report.graph_name}.py"
+                        )
+                        continue
                     else:
                         stream.write(f"Successfully ran the {split_report.graph_name} using Thunder\n")
                 if use_benchmark:
@@ -1465,7 +1469,6 @@ def save_thunderfx_repros(
                     with open(graph_folder / f"{split_report.graph_name}_bwd_trace.py", "w") as f:
                         f.write(str(split_report.bwd_trc))
                 if save_fusion:
-                    split_report.create_fusion_reports()
                     fusion_folder = graph_folder / "fusion_reports"
                     fusion_folder.mkdir(exist_ok=True, parents=True)
                     for fusion_report in split_report.fusion_reports:
