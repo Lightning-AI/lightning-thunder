@@ -3037,7 +3037,6 @@ def topk_transform(
     fd: FusionDefinition,
     lc_to_nv_map: dict,
 ) -> any:
-
     nva = getnv(a, fd, lc_to_nv_map)
     nvk = getnv(k, fd, lc_to_nv_map)
     return fd.ops.topk(nva, nvk, dim, bool(largest), bool(sorted))
@@ -3047,6 +3046,6 @@ register_supported(prims.topk, topk_transform, _topk_check_)
 
 # At module/class level
 NVFUSER_SUPPORTS_OPTIONS = nvfuser_version() >= LooseVersion("0.2.23")
-assert (
-    NVFUSER_SUPPORTS_OPTIONS
-), f"Installed version of nvFuser {nvfuser_version()} is not supported, please upgrade to 0.2.23 or later."
+assert NVFUSER_SUPPORTS_OPTIONS, (
+    f"Installed version of nvFuser {nvfuser_version()} is not supported, please upgrade to 0.2.23 or later."
+)
