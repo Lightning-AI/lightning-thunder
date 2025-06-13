@@ -37,6 +37,35 @@ import thunder
 from transformers import AutoConfig, AutoModelForCausalLM
 
 
+# Standard benchmark scenarios following the three-scenario methodology
+BENCHMARK_SCENARIOS = {
+    "summarization": {
+        "name": "Summarization (Prefill-Heavy)",
+        "input_length": 4000,
+        "output_length": 1000,
+        "description": "4,000 input → 1,000 output tokens (80% prefill, 20% decode)",
+        "workload_balance": "80% prefill, 20% decode computational cost",
+        "hardware_focus": "Compute optimization provides maximum impact"
+    },
+    "chat": {
+        "name": "Chat (Balanced)", 
+        "input_length": 1000,
+        "output_length": 1000,
+        "description": "1,000 input → 1,000 output tokens (50% prefill, 50% decode)",
+        "workload_balance": "50% prefill, 50% decode computational cost",
+        "hardware_focus": "Mixed optimization requirements"
+    },
+    "reasoning": {
+        "name": "Reasoning (Decode-Heavy)",
+        "input_length": 1000, 
+        "output_length": 4000,
+        "description": "1,000 input → 4,000 output tokens (20% prefill, 80% decode)",
+        "workload_balance": "20% prefill, 80% decode computational cost",
+        "hardware_focus": "Memory bandwidth optimization dominates"
+    }
+}
+
+
 @dataclass
 class InferenceBenchmarkConfig:
     """Configuration for inference benchmarking following SemiAnalysis methodology"""
@@ -55,9 +84,11 @@ class InferenceBenchmarkConfig:
     num_iterations: int = 100
     warmup_iterations: int = 10
     device: str = "cuda"
-    compile_mode: str = "thunder"  # "thunder", "inductor", "eager", "thunderfx" TODO
+    mode: str = "thunder"  # "thunder", "eager", "inductor"
+    thunder_executors: str | None = None  # Optional Thunder executor configuration when mode="thunder"
     measure_ttft: bool = True
     measure_tbot: bool = True
+    scenario: str | None = None  # Standard scenario name if using predefined configurations
 
     # Cost calculation parameters (per GPU hour) # optional
     h100_cost_per_hour: float = 1.58
@@ -128,10 +159,10 @@ class SemiAnalysisInferenceBenchmark:
 
 
     def _compile_model(self, model):
-        if self.config.compile_mode == "eager":
+        if self.config.mode == "eager":
             return model
 
-        if self.config.compile_mode == "inductor":
+        if self.config.mode == "inductor":
             print("Resetting cache size for torch.compile")
             import torch._dynamo.config as dynamo_config
 
@@ -139,37 +170,43 @@ class SemiAnalysisInferenceBenchmark:
 
             return torch.compile(model)
 
-        if "thunder" in self.config.compile_mode:
+        if self.config.mode == "thunder":
             executors = list(thunder.get_default_executors())
             transforms = []
 
-            if "inductor_cat" in self.config.compile_mode:
-                from thunder.executors.torch_compile import torch_compile_cat_ex as torch_compile_ex
-                executors.insert(0, torch_compile_ex)
-            elif "inductor" in self.config.compile_mode:
-                from thunder.executors.torch_compile import torch_compile_ex
-                executors.insert(0, torch_compile_ex)
+            # Apply Thunder executor configuration if specified
+            if self.config.thunder_executors:
+                executor_config = self.config.thunder_executors
 
-            elif "transformerengine_v2" in self.config.compile_mode:
-                from thunder.executors.transformer_engine_v2ex import (
-                    transformer_engine_v2_ex,
-                    TransformerEngineTransformV2,
-                )
-                executors.insert(0, transformer_engine_v2_ex)
-                transforms.insert(0, TransformerEngineTransformV2())
+                if "inductor_cat" in executor_config:
+                    from thunder.executors.torch_compile import torch_compile_cat_ex as torch_compile_ex
+                    executors.insert(0, torch_compile_ex)
+                elif "inductor" in executor_config:
+                    from thunder.executors.torch_compile import torch_compile_ex
+                    executors.insert(0, torch_compile_ex)
 
-            elif "transformerengine" in self.config.compile_mode:
-                from thunder.executors.transformer_engineex import transformer_engine_ex
-                executors.insert(0, transformer_engine_ex)
+                elif "transformerengine_v2" in executor_config:
+                    from thunder.executors.transformer_engine_v2ex import (
+                        transformer_engine_v2_ex,
+                        TransformerEngineTransformV2,
+                    )
+                    executors.insert(0, transformer_engine_v2_ex)
+                    transforms.insert(0, TransformerEngineTransformV2())
 
-            # Setup executors DONE
-            if "dynamo" in self.config.compile_mode:
-                from thunder.dynamo import thunderfx
-                return thunderfx(model, executors=executors, transforms=transforms)
+                elif "transformerengine" in executor_config:
+                    from thunder.executors.transformer_engineex import transformer_engine_ex
+                    executors.insert(0, transformer_engine_ex)
 
-            else:
-                jit_options = {}
-                return thunder.jit(model, executors=executors, transforms=transforms, **jit_options)
+                # Setup executors DONE
+                if "dynamo" in executor_config:
+                    from thunder.dynamo import thunderfx
+                    return thunderfx(model, executors=executors, transforms=transforms)
+
+            # Default Thunder JIT compilation
+            jit_options = {}
+            return thunder.jit(model, executors=executors, transforms=transforms, **jit_options)
+
+        raise ValueError(f"Unknown mode: {self.config.mode}")
 
     def _load_model(self) -> torch.nn.Module:
         """Load the model based on configuration"""
@@ -367,7 +404,9 @@ class SemiAnalysisInferenceBenchmark:
         print(f"Input length: {self.config.input_length}")
         print(f"Output length: {self.config.output_length}")
         print(f"Device: {self.device}")
-        print(f"Compile mode: {self.config.compile_mode}")
+        print(f"Mode: {self.config.mode}")
+        if self.config.thunder_executors:
+            print(f"Thunder executors: {self.config.thunder_executors}")
 
         # Warmup iterations
         print(f"\nWarming up with {self.config.warmup_iterations} iterations...")
@@ -466,6 +505,9 @@ class SemiAnalysisInferenceBenchmark:
         """Print benchmark results in a formatted way"""
         print("\n" + "=" * 60)
         print(f"BENCHMARK RESULTS - {self.config.model_name}")
+        if self.config.scenario:
+            scenario_config = BENCHMARK_SCENARIOS[self.config.scenario]
+            print(f"SCENARIO: {scenario_config['name']}")
         print("=" * 60)
 
         print("\nThroughput Metrics:")
@@ -535,10 +577,26 @@ def run_semianalysis_benchmark(
     output_length: int = 1024, # default 1k -> 1k
     num_iterations: int = 100,
     num_layers: int | None = None,
-    compile_mode: str = "thunder",
-    save_results: bool = True
+    mode: str = "thunder",
+    thunder_executors: str | None = None,
+    save_results: bool = True,
+    scenario: str | None = None
 ):
     """Main function to run the benchmark"""
+
+    # Apply scenario configuration if specified
+    if scenario is not None:
+        if scenario not in BENCHMARK_SCENARIOS:
+            raise ValueError(f"Unknown scenario '{scenario}'. Available scenarios: {list(BENCHMARK_SCENARIOS.keys())}")
+        
+        scenario_config = BENCHMARK_SCENARIOS[scenario]
+        input_length = scenario_config["input_length"]
+        output_length = scenario_config["output_length"]
+        
+        print(f"\nUsing standardized scenario: {scenario_config['name']}")
+        print(f"Configuration: {scenario_config['description']}")
+        print(f"Workload balance: {scenario_config['workload_balance']}")
+        print(f"Hardware focus: {scenario_config['hardware_focus']}")
 
     config = InferenceBenchmarkConfig(
         model_name=model_name,
@@ -547,8 +605,10 @@ def run_semianalysis_benchmark(
         input_length=input_length,
         output_length=output_length,
         num_iterations=num_iterations,
-        compile_mode=compile_mode,
-        num_layers=num_layers
+        mode=mode,
+        thunder_executors=thunder_executors,
+        num_layers=num_layers,
+        scenario=scenario
     )
 
     benchmark = SemiAnalysisInferenceBenchmark(config)
@@ -558,15 +618,47 @@ def run_semianalysis_benchmark(
 
     if save_results:
         timestamp = time.strftime("%Y%m%d_%H%M%S")
-        filename = f"thunder_semianalysis_{model_name}_{precision}_{timestamp}.json"
+        scenario_suffix = f"_{scenario}" if scenario else ""
+        filename = f"thunder_semianalysis_{model_name}_{precision}{scenario_suffix}_{timestamp}.json"
         benchmark.save_results(filename)
 
     return metrics
 
 
+def list_scenarios():
+    """Print available benchmark scenarios"""
+    print("\nAvailable Standard Benchmark Scenarios:")
+    print("=" * 50)
+    for key, config in BENCHMARK_SCENARIOS.items():
+        print(f"\n{key.upper()}:")
+        print(f"  Name: {config['name']}")
+        print(f"  Configuration: {config['description']}")
+        print(f"  Workload Balance: {config['workload_balance']}")
+        print(f"  Hardware Focus: {config['hardware_focus']}")
+    print("\n" + "=" * 50)
+    print("Use --scenario <scenario_name> to select a standard scenario")
+    print("Or use --input-length and --output-length for custom configurations")
+
+
 def main():
     """Command line interface for the benchmark"""
-    parser = argparse.ArgumentParser(description="Thunder Inference Benchmark following SemiAnalysis Methodology")
+    parser = argparse.ArgumentParser(
+        description="Thunder Inference Benchmark following SemiAnalysis Methodology",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Standard Benchmark Scenarios:
+  summarization  - Prefill-Heavy: 4,000 input → 1,000 output tokens
+  chat          - Balanced: 1,000 input → 1,000 output tokens  
+  reasoning     - Decode-Heavy: 1,000 input → 4,000 output tokens
+
+Use --list-scenarios for detailed scenario descriptions.
+
+Examples:
+  python inference_bmk.py --scenario chat --model-name llama3.1-8b
+  python inference_bmk.py --scenario reasoning --mode thunder --thunder-executors inductor
+  python inference_bmk.py --input-length 2048 --output-length 512 --model-name llama3.1-8b --mode eager
+        """
+    )
 
     # Model configuration
     parser.add_argument(
@@ -584,13 +676,23 @@ def main():
         help="Model to benchmark",
     )
     parser.add_argument(
-        "--precision", type=str, default="bf16", choices=["fp16", "fp8", "bf16"], help="Model precision"
+        "--precision", type=str, default="bf16", choices=["fp16", "bf16"], help="Model precision"
     )
 
-    # Benchmark configuration
+    # Scenario configuration (standardized scenarios vs custom)
+    parser.add_argument(
+        "--scenario",
+        type=str,
+        choices=list(BENCHMARK_SCENARIOS.keys()),
+        help="Use standardized benchmark scenario. Available: " + 
+             ", ".join([f"{k} ({v['description']})" for k, v in BENCHMARK_SCENARIOS.items()]) +
+             ". If specified, overrides --input-length and --output-length."
+    )
+
+    # Benchmark configuration (for custom experimentation when not using scenarios)
     parser.add_argument("--batch-size", type=int, default=1, help="Batch size for inference")
-    parser.add_argument("--input-length", type=int, default=2048, help="Input sequence length")
-    parser.add_argument("--output-length", type=int, default=128, help="Output sequence length")
+    parser.add_argument("--input-length", type=int, default=2048, help="Input sequence length (ignored if --scenario is used)")
+    parser.add_argument("--output-length", type=int, default=128, help="Output sequence length (ignored if --scenario is used)")
     parser.add_argument("--num-iterations", type=int, default=100, help="Number of benchmark iterations")
     parser.add_argument("--warmup-iterations", type=int, default=10, help="Number of warmup iterations")
     parser.add_argument("--num-layers", type=int, help="Number of layers of the moddel")
@@ -598,17 +700,30 @@ def main():
 
     # Execution configuration
     parser.add_argument(
-        "--compile-mode",
+        "--mode",
         type=str,
         default="thunder",
-        help="Compilation mode",
+        choices=["thunder", "eager", "inductor"],
+        help="Compilation mode: thunder (default), eager, or inductor",
+    )
+    parser.add_argument(
+        "--thunder-executors", 
+        type=str,
+        help="Thunder executor configuration (optional, only used with --mode thunder). "
+             "Examples: 'inductor', 'inductor_cat', 'transformerengine', 'transformerengine_v2', 'dynamo'"
     )
 
     # Output configuration
     parser.add_argument("--save-results", action="store_true", help="Save results to JSON file")
     parser.add_argument("--output-dir", type=str, default="./results", help="Directory to save results")
+    parser.add_argument("--list-scenarios", action="store_true", help="List available standard benchmark scenarios and exit")
 
     args = parser.parse_args()
+
+    # Handle list scenarios
+    if args.list_scenarios:
+        list_scenarios()
+        return None
 
     # Create output directory if needed
     if args.save_results:
@@ -623,8 +738,10 @@ def main():
         output_length=args.output_length,
         num_iterations=args.num_iterations,
         num_layers=args.num_layers,
-        compile_mode=args.compile_mode,
+        mode=args.mode,
+        thunder_executors=args.thunder_executors,
         save_results=args.save_results,
+        scenario=args.scenario,
     )
 
     return metrics
