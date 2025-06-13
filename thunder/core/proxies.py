@@ -2070,6 +2070,12 @@ def proxy(x: Any, *, name: str | None = None, history: None | tuple = None) -> A
     if x is ...:
         return AnyProxy(x, name=name, history=history)
 
+    # Import here to avoid cyclical dependency.
+    from thunder.torch.experimental.dtensor_proxy import proxify_dtensor
+
+    if (dtensor_proxy := proxify_dtensor(x, name, history)) is not None:
+        return dtensor_proxy
+
     if isinstance(x, torch.Tensor):
         return tensorproxy(x, name=name, history=history)
 
