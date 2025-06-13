@@ -8,6 +8,7 @@ import copy
 
 import torch
 from torch._guards import CompileContext as TorchCompileContext
+from torch.utils import _pytree as torch_pytree
 
 from thunder.dynamo.utils import (
     recompile_graph,
@@ -50,9 +51,7 @@ def is_in_torch_compile() -> bool:
 
 def is_dynamic_inputs(example_inputs):
     """Check if inputs dynamic or not by checking the presence of :class:`torch.SymInt`."""
-    from torch.utils import _pytree as pytree
-
-    flat_example_inputs, _ = pytree.tree_flatten(example_inputs)
+    flat_example_inputs, _ = torch_pytree.tree_flatten(example_inputs)
     return any(
         isinstance(a, torch.SymInt) or any(isinstance(s, torch.SymInt) for s in a.shape) for a in flat_example_inputs
     )
