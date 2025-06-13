@@ -108,9 +108,7 @@ class JITSharpEdgeError(RuntimeError):
 def _general_jit_sharp_edge(desc: str, value: Any, /) -> Any | INTERPRETER_SIGNALS:
     sharp_edges: SHARP_EDGES_OPTIONS = get_jit_ctx().sharp_edges
 
-    s: str = (
-        f"{desc} This is currently considered a sharp edge even with interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON. For cases in which we are overly strict, please file an issue. Thank you!"
-    )
+    s: str = f"{desc} This is currently considered a sharp edge even with interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON. For cases in which we are overly strict, please file an issue. Thank you!"
 
     if sharp_edges is SHARP_EDGES_OPTIONS.ERROR:
         return do_raise(JITSharpEdgeError(s))
@@ -1681,9 +1679,9 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             name = ".".join(name)
             if typ == "_parameters":
                 bsym = prims.unpack_parameter.bind(root_module, name, output=output)
-                assert (
-                    ProxyTag.STATIC_MEMORY_LOCATION in output.tags
-                ), "Parameter was not tagged with STATIC_MEMORY_LOCATION"
+                assert ProxyTag.STATIC_MEMORY_LOCATION in output.tags, (
+                    "Parameter was not tagged with STATIC_MEMORY_LOCATION"
+                )
             elif typ == "_buffers":
                 bsym = prims.unpack_buffer.bind(root_module, name, output=output)
                 output.tags.add(ProxyTag.STATIC_MEMORY_LOCATION)
