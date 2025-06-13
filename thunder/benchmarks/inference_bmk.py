@@ -28,12 +28,10 @@ import json
 import torch
 import argparse
 from dataclasses import dataclass, field
-from typing import Optional, Dict, List, Tuple, Any
+from typing import Dict, List, Tuple, Any
 import numpy as np
-import warnings
 
 import thunder
-from thunder.distributed import fsdp, FSDPType
 
 # Import model configurations
 from transformers import AutoConfig, AutoModelForCausalLM
@@ -49,16 +47,14 @@ class InferenceBenchmarkConfig:
     # - 70B: ~140GB (requires multi-GPU setup or high-end datacenter GPUs)
     # - 405B: ~810GB (requires large multi-GPU clusters)
     # - 670B: ~1340GB (requires very large multi-GPU clusters)
-    precision: str = "bf16"  # "bf16", "fp16" or "fp8"
+    precision: str = "bf16"  # "bf16", "fp16"
     batch_size: int = 1
     input_length: int = 1024
     output_length: int = 1024
+    num_layers: int | None = None
     num_iterations: int = 100
     warmup_iterations: int = 10
     device: str = "cuda"
-    distributed_mode: str = "none"  # "none", "tp", "pp", "fsdp" TODO
-    tp_size: int = 1
-    pp_size: int = 1
     compile_mode: str = "thunder"  # "thunder", "inductor", "eager", "thunderfx" TODO
     measure_ttft: bool = True
     measure_tbot: bool = True
@@ -74,8 +70,6 @@ class InferenceBenchmarkConfig:
         default_factory=lambda: {
             "H100": {"memory_bandwidth_gb": 3350, "fp16_tflops": 1979, "fp8_tflops": 3958},
             "H200": {"memory_bandwidth_gb": 4800, "fp16_tflops": 1979, "fp8_tflops": 3958},
-            "MI300X": {"memory_bandwidth_gb": 5300, "fp16_tflops": 1307, "fp8_tflops": 2614},
-            "MI325X": {"memory_bandwidth_gb": 6000, "fp16_tflops": 1307, "fp8_tflops": 2614},
             "B200": {"memory_bandwidth_gb": 8000, "fp16_tflops": 2529, "fp8_tflops": 5058},
         }
     )
@@ -132,11 +126,6 @@ class SemiAnalysisInferenceBenchmark:
         # Compile model
         self.model = self._compile_model(self.model)
 
-        # Setup distributed model if needed
-        if config.distributed_mode == "fsdp" and self.world_size > 1:
-            self.model = fsdp(self.model, broadcast_from=0, sharding_strategy=FSDPType.ZERO2)
-        elif config.distributed_mode != "none":
-            raise NotImplementedError("Methods other than fsdp have not been implemetned yet")
 
     def _compile_model(self, model):
         if self.config.compile_mode == "eager":
@@ -202,6 +191,10 @@ class SemiAnalysisInferenceBenchmark:
         if hasattr(config, "text_config"):
             config = config.text_config
 
+        # Set the number of layers
+        if self.config.num_layers:
+            config.num_hidden_layers = self.config.num_layers
+
         # Create model directly on target device with random weights
         with torch.device(self.device):
             model = AutoModelForCausalLM.from_config(config)
@@ -211,8 +204,6 @@ class SemiAnalysisInferenceBenchmark:
             model = model.half()
         elif self.config.precision == "bf16":
             model = model.to(torch.bfloat16)
-        elif self.config.precision == "fp8":
-            raise NotImplementedError("FP8 benchmarking is not yet implemented")
 
         return model
 
@@ -367,6 +358,8 @@ class SemiAnalysisInferenceBenchmark:
 
     def run_benchmark(self) -> InferenceMetrics:
         """Run the full benchmark and collect metrics"""
+        from tqdm import tqdm
+
         print(f"Running inference benchmark for {self.config.model_name}")
 
         print(f"Precision: {self.config.precision}")
@@ -378,7 +371,8 @@ class SemiAnalysisInferenceBenchmark:
 
         # Warmup iterations
         print(f"\nWarming up with {self.config.warmup_iterations} iterations...")
-        for i in range(self.config.warmup_iterations):
+
+        for _ in tqdm(range(self.config.warmup_iterations)):
             input_ids, attention_mask = self.generate_batch()
             _ = self.measure_inference_step(input_ids, attention_mask)
 
@@ -386,9 +380,7 @@ class SemiAnalysisInferenceBenchmark:
         print(f"\nRunning {self.config.num_iterations} benchmark iterations...")
         all_metrics = []
 
-        for i in range(self.config.num_iterations):
-            if i % 2 == 0:
-                print(f"  Iteration {i}/{self.config.num_iterations}")
+        for _ in tqdm(range(self.config.num_iterations)):
 
             input_ids, attention_mask = self.generate_batch()
             iter_metrics = self.measure_inference_step(input_ids, attention_mask)
@@ -542,8 +534,8 @@ def run_semianalysis_benchmark(
     input_length: int = 1024, # default 1k -> 1k
     output_length: int = 1024, # default 1k -> 1k
     num_iterations: int = 100,
+    num_layers: int | None = None,
     compile_mode: str = "thunder",
-    distributed_mode: str = "none",
     save_results: bool = True
 ):
     """Main function to run the benchmark"""
@@ -556,7 +548,7 @@ def run_semianalysis_benchmark(
         output_length=output_length,
         num_iterations=num_iterations,
         compile_mode=compile_mode,
-        distributed_mode=distributed_mode,
+        num_layers=num_layers
     )
 
     benchmark = SemiAnalysisInferenceBenchmark(config)
@@ -601,21 +593,15 @@ def main():
     parser.add_argument("--output-length", type=int, default=128, help="Output sequence length")
     parser.add_argument("--num-iterations", type=int, default=100, help="Number of benchmark iterations")
     parser.add_argument("--warmup-iterations", type=int, default=10, help="Number of warmup iterations")
+    parser.add_argument("--num-layers", type=int, help="Number of layers of the moddel")
+
 
     # Execution configuration
     parser.add_argument(
         "--compile-mode",
         type=str,
         default="thunder",
-        # choices=["thunder", "inductor", "eager", "thunderfx"],
         help="Compilation mode",
-    )
-    parser.add_argument(
-        "--distributed-mode",
-        type=str,
-        default="none",
-        choices=["none", "fsdp", "tp", "pp"],
-        help="Distributed execution mode",
     )
 
     # Output configuration
@@ -636,8 +622,8 @@ def main():
         input_length=args.input_length,
         output_length=args.output_length,
         num_iterations=args.num_iterations,
+        num_layers=args.num_layers,
         compile_mode=args.compile_mode,
-        distributed_mode=args.distributed_mode,
         save_results=args.save_results,
     )
 
