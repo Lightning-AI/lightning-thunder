@@ -1387,3 +1387,91 @@ def save_failing_repros(
             report.write_repro(
                 repros_folder, compile_fn, extra_comment_str=comment, check_consistency=check_consistency
             )
+
+
+def save_thunderfx_repros(
+    fn: Callable,
+    folder_path: str | PathLike,
+    *,
+    use_benchmark: bool = False,
+    check_runnability: bool = False,
+    save_fusion: bool = False,
+    save_trace: bool = False,
+    stream: TextIO = sys.stdout,
+    **compile_kwargs,
+):
+    """
+    Saves reproduction scripts for ThunderFX subgraphs.
+
+    This function:
+    1. Creates a folder structure to organize the repros
+    .
+    └── graph0
+        ├── fusion_reports
+        │   ├── graph0_thunder_0_nvFusion0_forward_repro_nvfuser.py
+        │   ├── graph0_thunder_0_nvFusion1_forward_repro_nvfuser.py
+        │   ├── graph0_thunder_0_nvFusion2_backward_repro_nvfuser.py
+        ├── graph0_thunder_0_bwd_trace.py
+        ├── graph0_thunder_0_fwd_trace.py
+        └── graph0_thunder_0.py
+
+    2. For each Thunder FX graph and its subgraphs:
+        - Checks runnability if requested
+        - Saves benchmark or repro scripts
+        - Saves trace information if requested
+        - Saves nvFusion repros if requested
+
+    Args:
+        fn: The callable to analyze
+        folder_path: Path to save repros to
+        use_benchmark: If True, saves benchmark scripts instead of repros
+        check_runnability: If True, checks if graphs can run with Thunder
+        save_fusion: If True, saves nvFusion repros
+        save_trace: If True, saves trace information
+        stream: Stream to write output log informationto
+        **compile_kwargs: Keyword arguments for Thunder and torch.compile
+
+    Returns:
+        A wrapped function that saves repros when called with inputs
+    """
+    from thunder.dynamo.utils import get_torch_compile_kwargs
+
+    folder_path = Path(folder_path)
+    folder_path.mkdir(exist_ok=True, parents=True)
+    torch_compile_kwargs = get_torch_compile_kwargs(**compile_kwargs)
+    thunder_jit_kwargs = {k: v for k, v in compile_kwargs.items() if k not in torch_compile_kwargs}
+    thunderjit = ThunderCompileSpecification(**thunder_jit_kwargs)
+
+    def inner_fn(*args, **kwargs):
+        thunder_fxgraph_reports = get_thunder_fxgraph_reports(fn, stream=stream, **compile_kwargs)(*args, **kwargs)
+        for thunder_fxgraph_report in thunder_fxgraph_reports:
+            graph_folder = folder_path / thunder_fxgraph_report.graph_name
+            graph_folder.mkdir(exist_ok=True, parents=True)
+            for split_report in thunder_fxgraph_report.subgraph_reports:
+                if check_runnability or save_trace:
+                    try:
+                        split_report._create_thunder_traces()
+                    except Exception as e:
+                        stream.write(f"Failed to run the {split_report.graph_name} using Thunder with exception: {e}\n")
+                    else:
+                        stream.write(f"Successfully ran the {split_report.graph_name} using Thunder\n")
+                if use_benchmark:
+                    split_report.write_benchmark(graph_folder, thunderjit, WallTime)
+                else:
+                    split_report.write_repro(graph_folder, thunderjit)
+                if save_trace:
+                    with open(graph_folder / f"{split_report.graph_name}_fwd_trace.py", "w") as f:
+                        f.write(str(split_report.fwd_trc))
+                    with open(graph_folder / f"{split_report.graph_name}_bwd_trace.py", "w") as f:
+                        f.write(str(split_report.bwd_trc))
+                if save_fusion:
+                    split_report.create_fusion_reports()
+                    fusion_folder = graph_folder / "fusion_reports"
+                    fusion_folder.mkdir(exist_ok=True, parents=True)
+                    for fusion_report in split_report.fusion_reports:
+                        if use_benchmark:
+                            fusion_report.write_nvfuser_benchmark(fusion_folder, WallTime)
+                        else:
+                            fusion_report.write_nvfuser_repro(fusion_folder)
+
+    return inner_fn
