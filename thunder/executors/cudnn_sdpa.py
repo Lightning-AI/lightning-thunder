@@ -732,3 +732,29 @@ tensor and return them as slices of that tensor.
     put_grads((query, key, value), (grad_query, grad_key, grad_value))
 
     return primal
+
+
+cudnn_ex = OperatorExecutor("cudnn", version=cudnn.backend_version())
+register_executor(cudnn_ex)
+cudnn_sdpa_fwd = cudnn_ex.register_operator(
+    "cudnn_sdpa_fwd",
+    meta=sdpa_impl._cudnn_sdpa_forward_meta,
+    fn=sdpa_impl._cudnn_sdpa_fwd_impl,
+    tags=(sdpa_impl.OpTags.DONT_AUTO_RECOMPUTE_IN_BACKWARD,),
+)
+
+cudnn_sdpa_bwd = cudnn_ex.register_operator(
+    "cudnn_sdpa_bwd",
+    meta=sdpa_impl._cudnn_sdpa_bwd_meta,
+    fn=sdpa_impl._cudnn_sdpa_bwd_impl,
+)
+
+sdpa_impl.cudnn_sdpa_fwd = cudnn_sdpa_fwd
+sdpa_impl.cudnn_sdpa_bwd = cudnn_sdpa_bwd
+
+cudnn_ex.register_implementation(
+    sdpa_impl.ltorch.scaled_dot_product_attention,
+    checker=sdpa_impl._cudnn_sdpa_checker,
+    execution_transform=sdpa_impl._cudnn_sdpa_fwd_wrapper,
+    grad_transform=sdpa_impl._cudnn_sdpa_bwd_wrapper,
+)
