@@ -24,7 +24,6 @@ from thunder.dynamo.utils import (
 from thunder.dynamo.splitter import _splitter
 from thunder.dynamo.benchmark_utils import ThunderCompileSpecification
 from thunder.transforms.extraction_only_prologue_transform import ExtractionOnlyPrologueTransform
-from thunder.transforms.prune_prologue_checks import PrunePrologueChecks
 
 if TYPE_CHECKING:
     from typing import Any
@@ -73,10 +72,9 @@ def _with_prologue_pruning_transform(
     """
     thunder_options = current_thunder_options.copy()
     current_transforms = thunder_options.get("transforms", [])
-    if is_torch_compile_without_dynamic:
-        current_transforms.append(PrunePrologueChecks(prune_all_checks=True))
-    else:
-        current_transforms.append(ExtractionOnlyPrologueTransform())
+    current_transforms.append(
+        ExtractionOnlyPrologueTransform(skip_check_on_input_tensors=is_torch_compile_without_dynamic)
+    )
     thunder_options["transforms"] = current_transforms
     return thunder_options
 
