@@ -136,6 +136,7 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                             else:
                                 # all other symbols are just computation
                                 self.add_processed_bsyms([nbsym.from_bsym()])
+
                 self.collected_bw_part_bsyms.clear()
 
                 # we collect the gradients fo the flat args in the output dictionary's 'grad_flat_args'
@@ -300,8 +301,12 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                 new_bsyms = self.new_trace.pop_scope()
 
                 # Let the new bound symbols inherit tags, in particular RECOMPUTE_IN_BACKWARD
+                should_recompute = _should_recompute_bsym_in_backward(bsym)
                 for nbsym in new_bsyms:
                     nbsym.tags |= bsym.tags
+                    if should_recompute:
+                        # potentially taking a recompute proxy tag and making it a bound symbol tag
+                        nbsym.tags.add(BoundSymbolTag.RECOMPUTE_IN_BACKWARD)
 
                 # simple splitting: only compute in forward what is needed for the output
                 forward_part_proxy_names = {o.name for o in tree_iter(result) if isinstance(o, Proxy)}
@@ -342,15 +347,53 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
 
             # end of 4 and end of the bsym processing loop.
 
+    # This processes the bsyms to add duplicate symbols in the backward region for those that
+    # are tagged for recomputation.
+    class InsertRecomputationsProcessor(TraceSubstitutionProcessor):
+        def __init__(self, trace):
+            super().__init__(trace)
+            self.backward_part_bsyms_recomputed = {}
+            self.in_backward_region = False
+
+        def process_bsym(self, bsym: BoundSymbol) -> None:
+            processed_bsyms = [bsym.from_bsym()]
+            if bsym.sym == prims.get_grad:
+                self.in_backward_region = True
+            elif _should_recompute_bsym_in_backward(bsym) and not self.in_backward_region:
+                bsym_out_names = {o.name for o in bsym.flat_proxy_outs}
+                bsym_rec = (bsym.from_bsym(), bsym_out_names)
+                self.backward_part_bsyms_recomputed.update((n, bsym_rec) for n in bsym_out_names)
+            elif self.in_backward_region:
+                # we insert the recomputed symbols just before where they are needed.
+                # as this inserts into the list during processing, we use a while loop rather than
+                # a for loop
+                bw_idx = 0
+                while bw_idx < len(processed_bsyms):
+                    backward_part_bsym = processed_bsyms[bw_idx]
+                    modified = False
+                    for n in reversed(backward_part_bsym.flat_proxy_args):
+                        recomp_bsym_rec = self.backward_part_bsyms_recomputed.get(n.name)
+                        if recomp_bsym_rec is not None:
+                            modified = True
+                            recomp_bsym, recomp_output = recomp_bsym_rec
+                            processed_bsyms.insert(bw_idx, recomp_bsym)
+                            for nn in recomp_output:
+                                del self.backward_part_bsyms_recomputed[nn]
+                    if not modified:
+                        bw_idx += 1
+
+            self.add_processed_bsyms(processed_bsyms)
+            self.set_result(processed_bsyms[-1].output)
+
     start_time_ns = time.perf_counter_ns()
 
     # run the trace through the processor
     joint_trace, _ = AugmentedForwardProcessor(trace)()
+    joint_trace, _ = InsertRecomputationsProcessor(joint_trace)()
 
     # run through DCE in case some of the gradients of intermediates are not needed.
     joint_trace = dce(joint_trace)
-    # group get_grad symbols together for torch compile fusions
-    # !!! is it preferable to do this here or in the torch compile fusion pass?
+    # group get_grad symbols together for torch compile fusions and to make clear boundary for cse
     _group_get_grad_bsyms(joint_trace)
 
     end_time_ns = time.perf_counter_ns()
@@ -434,11 +477,8 @@ def split_into_forward_and_backward(joint_trace: TraceCtx):
             forward_proxy_names.update(bsym_arg_names)
             forward_proxy_names.update(bsym_out_names)
 
-            # if we need to recompute this, we also add the bound symbol to backward_part_bsyms_recomputed
             if _should_recompute_bsym_in_backward(bsym):
                 backward_recomputed_proxy_names.update(bsym_out_names)
-                bsym_rec = (bsym.from_bsym(), bsym_out_names)
-                backward_part_bsyms_recomputed.update((n, bsym_rec) for n in bsym_out_names)
 
             continue
 
@@ -452,25 +492,7 @@ def split_into_forward_and_backward(joint_trace: TraceCtx):
         # if we don't need to have it in the forward, it is part of the backward
         backward_part_bsyms.insert(0, bsym.from_bsym())
 
-    # we insert the recomputed symbols just before where they are needed.
-    # as this inserts into the list during processing, we use a while loop rather than
-    # a for loop
-    bw_idx = 0
-    while bw_idx < len(backward_part_bsyms):
-        bsym = backward_part_bsyms[bw_idx]
-        modified = False
-        for n in reversed(bsym.flat_proxy_args):
-            recomp_bsym_rec = backward_part_bsyms_recomputed.get(n.name)
-            if recomp_bsym_rec is not None:
-                modified = True
-                recomp_bsym, recomp_output = recomp_bsym_rec
-                backward_part_bsyms.insert(bw_idx, recomp_bsym)
-                for nn in recomp_output:
-                    del backward_part_bsyms_recomputed[nn]
-        if not modified:
-            bw_idx += 1
-
-    # collect proxies needing to be saved in the forward for the backward
+    # collect proxies needing to be saved from the forward for the backward
     saved_for_backward = {}
     for bsym in backward_part_bsyms:
         saved_for_backward.update(
