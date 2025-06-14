@@ -2510,7 +2510,6 @@ def _scaled_dot_product_flash_attention_forward(
     fd: FusionDefinition,
     lc_to_nv_map: dict,
 ) -> Any:
-
     inputs = [query, key, value, dropout_p, is_causal, scale]
     nv_inputs = []
     for inp in inputs:
@@ -2545,7 +2544,6 @@ def _scaled_dot_product_flash_attention_backward_meta(
     *,
     scale: None | float = None,
 ) -> tuple[TensorProxy, TensorProxy, TensorProxy]:
-
     batch_size, num_heads, query_seq_len, E = query.shape
     key_seq_len = key.shape[2]
 
@@ -2573,7 +2571,6 @@ def _scaled_dot_product_flash_attention_backward(
     fd: FusionDefinition,
     lc_to_nv_map: dict,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-
     inputs = [grad_out, query, key, value, out, logsumexp, dropout_p, is_causal, philox_seed, philox_offset, scale]
     nv_inputs = []
     for inp in inputs:
@@ -2604,7 +2601,6 @@ def _scaled_dot_product_flash_attention_check(
     *,
     scale: None | float = None,
 ) -> bool:
-
     # fd.ops.sdpfa_fwd and fd.ops.sdpfa_bwd are adding in versions 0.2.9 and 0.2.10 respectively.
     if nvfuser_version() < LooseVersion("0.2.10"):
         return False
@@ -2663,7 +2659,6 @@ def scaled_dot_product_flash_attention_grad(
     *,
     scale: None | float = None,
 ):
-
     (attn_output, logsumexp, philox_seed, philox_offset) = nv_sdpfa_fwd(
         query, key, value, dropout_p, is_causal, scale=scale
     )
@@ -3041,7 +3036,6 @@ def cross_entropy_grad(
     reduction: str = "mean",
     label_smoothing: float = 0.0,
 ) -> Any:
-
     fwd, max, log_sum_exp, valid_indices = nv_cross_entropy_fwd(
         a, target, weight, size_average, ignore_index, reduce, reduction, label_smoothing
     )
@@ -3073,6 +3067,6 @@ ex.register_supported(
 
 # At module/class level
 NVFUSER_SUPPORTS_OPTIONS = nvfuser_version() >= LooseVersion("0.2.23")
-assert (
-    NVFUSER_SUPPORTS_OPTIONS
-), f"Installed version of nvFuser {nvfuser_version()} is not supported, please upgrade to 0.2.23 or later."
+assert NVFUSER_SUPPORTS_OPTIONS, (
+    f"Installed version of nvFuser {nvfuser_version()} is not supported, please upgrade to 0.2.23 or later."
+)

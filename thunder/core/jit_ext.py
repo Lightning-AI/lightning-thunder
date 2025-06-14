@@ -74,6 +74,15 @@ from thunder.core.trace import TraceCtx, TraceResults
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.clang import _clang_fn_set
 from thunder.core.pytree import tree_map, tree_iter
+from thunder.torch.experimental.dtensor_proxy import is_dtensor_proxy
+from thunder.torch.experimental.dtensor_torch_and_prims import (
+    check_dtensor_spec_repr,
+    handle_check_dtensor_spec_in_prologue,
+    register_dtensor_torch_and_prims,
+)
+
+# TODO: Find a better place to register these ops (mostly in thunder/torch/__init__.py but without cyclical dependency).
+register_dtensor_torch_and_prims()
 
 #
 # jit_ext.py implements extensions of thunder's interpreter
@@ -108,9 +117,7 @@ class JITSharpEdgeError(RuntimeError):
 def _general_jit_sharp_edge(desc: str, value: Any, /) -> Any | INTERPRETER_SIGNALS:
     sharp_edges: SHARP_EDGES_OPTIONS = get_jit_ctx().sharp_edges
 
-    s: str = (
-        f"{desc} This is currently considered a sharp edge even with interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON. For cases in which we are overly strict, please file an issue. Thank you!"
-    )
+    s: str = f"{desc} This is currently considered a sharp edge even with interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON. For cases in which we are overly strict, please file an issue. Thank you!"
 
     if sharp_edges is SHARP_EDGES_OPTIONS.ERROR:
         return do_raise(JITSharpEdgeError(s))
@@ -273,9 +280,12 @@ class JitCtx:
 
             if p is not uvalue:
                 value.register_proxy(p)
+
             # TODO: other caching modes
             co: CACHE_OPTIONS = get_cache_option()
             if co is CACHE_OPTIONS.CONSTANT_VALUES:
+                if is_dtensor_proxy(p):
+                    self.add_constraint((check_dtensor_spec_repr, p, uvalue._spec))
                 self.add_constraint((clang.check_tensor_shape_and_metadata, p))
             elif co is CACHE_OPTIONS.SYMBOLIC_VALUES:
                 # TODO: establish guarding logic to allow non-broadcast shape change
@@ -1681,9 +1691,9 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             name = ".".join(name)
             if typ == "_parameters":
                 bsym = prims.unpack_parameter.bind(root_module, name, output=output)
-                assert (
-                    ProxyTag.STATIC_MEMORY_LOCATION in output.tags
-                ), "Parameter was not tagged with STATIC_MEMORY_LOCATION"
+                assert ProxyTag.STATIC_MEMORY_LOCATION in output.tags, (
+                    "Parameter was not tagged with STATIC_MEMORY_LOCATION"
+                )
             elif typ == "_buffers":
                 bsym = prims.unpack_buffer.bind(root_module, name, output=output)
                 output.tags.add(ProxyTag.STATIC_MEMORY_LOCATION)
@@ -1879,6 +1889,10 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
                 for s in a.shape:
                     if isinstance(s, Proxy):
                         unpack(s)
+
+            # Add checks for local tensor, mesh and placment of a DTensor
+            if handle_check_dtensor_spec_in_prologue(prim, prologue_trace, args):
+                continue
 
             prim(*args)
 

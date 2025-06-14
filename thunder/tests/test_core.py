@@ -2724,7 +2724,6 @@ def test_dtype_in_trace():
 
 
 def test_factory_functions_default_dtype():
-
     def fn(x):
         o = torch.ones(x.shape)
         return o.dtype
@@ -2762,7 +2761,6 @@ def test_change_default_dtype_in_jitted_fn():
 
 @requiresCUDA
 def test_factory_functions_default_device():
-
     def fn(x):
         o = torch.ones(x.shape)
         return o.device
@@ -3214,7 +3212,6 @@ def test_apply_autograd_memory(thunderfx_disable_split_autograd):
 
 
 def test_thunder_jit_parts():
-
     m = torch.nn.Sequential(
         torch.nn.Linear(64, 128),
         torch.nn.ReLU(),

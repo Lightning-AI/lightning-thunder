@@ -516,7 +516,6 @@ def _shard_tensor(
     allow_padding_for_fsdp: bool = False,
     dim: int | None = None,
 ) -> tuple[torch.Tensor, int | None]:
-
     dim_to_shard = 0 if dim is None else dim
     if allow_padding_for_fsdp:
         utils.check(dim_to_shard == 0, lambda: f"Invalid {dim=} with {allow_padding_for_fsdp=}, Only 0 is supported")
