@@ -9,6 +9,7 @@ import weakref
 import pytest
 import torch
 from torch.testing import assert_close, make_tensor
+from lightning_utilities import compare_version
 
 import thunder
 from thunder import cache_option, cache_hits, cache_misses
@@ -2723,7 +2724,6 @@ def test_dtype_in_trace():
 
 
 def test_factory_functions_default_dtype():
-
     def fn(x):
         o = torch.ones(x.shape)
         return o.dtype
@@ -2761,7 +2761,6 @@ def test_change_default_dtype_in_jitted_fn():
 
 @requiresCUDA
 def test_factory_functions_default_device():
-
     def fn(x):
         o = torch.ones(x.shape)
         return o.device
@@ -2816,6 +2815,7 @@ def test_change_default_device_in_jitted_fn():
 
 @requiresCUDA
 @pytest.mark.xfail(
+    compare_version("torch", operator.le, "2.7.1", use_base_version=True),
     reason="When using device as context in PyTorch, it doesn't reflect in torch.get_default_device - see https://github.com/pytorch/pytorch/issues/131328",
     strict=True,
 )
@@ -3212,7 +3212,6 @@ def test_apply_autograd_memory(thunderfx_disable_split_autograd):
 
 
 def test_thunder_jit_parts():
-
     m = torch.nn.Sequential(
         torch.nn.Linear(64, 128),
         torch.nn.ReLU(),

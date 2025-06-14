@@ -48,7 +48,9 @@ def _check_tensor_shape_and_metadata_impl(
         and str(t.device) == device
         and t.dtype == dtype
         and t.requires_grad == requires_grad
-    ), f"expected tensor with {shape}, {device}, {dtype}, {requires_grad=}, got {tuple(t.shape)}, {str(t.device)}, {t.dtype}, {t.requires_grad}"
+    ), (
+        f"expected tensor with {shape}, {device}, {dtype}, {requires_grad=}, got {tuple(t.shape)}, {str(t.device)}, {t.dtype}, {t.requires_grad}"
+    )
 
 
 check_tensor_shape_and_metadata = ex.register_operator(

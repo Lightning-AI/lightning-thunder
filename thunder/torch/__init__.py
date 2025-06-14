@@ -139,6 +139,7 @@ class torchsymbol:
         is_prim: bool = False,
         tags: None | list[Any] = None,
         out_of_place: Symbol | None = None,
+        allow_tensor_subclass_proxy: bool = False,
     ):
         self.torchfns = torchfns
         self.is_method = is_method or (method_name is not None)
@@ -151,8 +152,29 @@ class torchsymbol:
         self.tags = tags
         self.out_of_place = out_of_place
 
+        # This flag is used to enable/disable a torchsymbol to accept
+        # TensorProxy subclass as input (eg. DTensorProxy).
+        # By default, this is `False` as we don't want general `torchsymbol`
+        # which are meant for TensorProxy to accept DTensorProxy.
+        self.allow_tensor_subclass_proxy = allow_tensor_subclass_proxy
+
     def __call__(self, fn: Callable) -> Symbol:
         _fn = langctx(Languages.TORCH)(fn)
+
+        if not self.allow_tensor_subclass_proxy:
+
+            @wraps(_fn)
+            def wrapper(*args, **kwargs):
+                filter_tensor_proxies = list(
+                    filter(lambda t: isinstance(t, TensorProxy), tree_flatten((args, kwargs))[0])
+                )
+                assert all(map(lambda t: type(t) is TensorProxy, filter_tensor_proxies)), (
+                    f"Expected all inputs to be TensorProxy but found {list(map(lambda t: type(t), filter_tensor_proxies))}"
+                )
+                return _fn(*args, **kwargs)
+
+        else:
+            wrapper = _fn
 
         id: str
         if self.id is None:
@@ -178,10 +200,10 @@ class torchsymbol:
 
         if self.is_prim:
             sym = Symbol(
-                name=fn.__name__, meta=langctx(Languages.PRIMS)(_fn), id=id, is_prim=self.is_prim, tags=self.tags
+                name=fn.__name__, meta=langctx(Languages.PRIMS)(wrapper), id=id, is_prim=self.is_prim, tags=self.tags
             )
         else:
-            sym = Symbol(name=fn.__name__, meta=_fn, id=id, is_prim=self.is_prim, tags=self.tags)
+            sym = Symbol(name=fn.__name__, meta=wrapper, id=id, is_prim=self.is_prim, tags=self.tags)
 
         if self.is_method:
             method_name: str = self.method_name if self.method_name is not None else fn.__name__
@@ -204,8 +226,9 @@ class torchsymbol:
             if self.id is not None:
                 name = self.id
             _inplace_to_out_of_place[sym] = (
-                self.out_of_place if self.out_of_place is not None else globals()[name[:-1]]
-            ), -1
+                (self.out_of_place if self.out_of_place is not None else globals()[name[:-1]]),
+                -1,
+            )
 
         return sym
 
@@ -321,7 +344,6 @@ def _device_and_dtype_to_old_torch_typestring(device: DeviceLike, dtype: dtypeLi
 
 
 def _old_torch_typestring_to_devicetype_and_dtype(typestring: str) -> tuple[DeviceLike, dtypeLike]:
-
     # Two cases:
     #    - torch.DtypeTensor
     #    - torch.device.DtypeTensor
@@ -574,7 +596,6 @@ def arange(
 
 # Infers dtype from the fill_value and dtype
 def _infer_full_dtype(fill_value: NumberLike, dtype: None | dtypeLike) -> dtypeLike:
-
     # Short-circuits if dtype is explicitly specified
     if dtype is not None:
         return to_dtype(dtype)
@@ -1902,7 +1923,6 @@ def logsigmoid(a: TensorProxy, /) -> TensorLike:
 # TODO Should this use clamp? -- Would that propagate NaNs properly?
 @torchsymbol(torch.relu, torch.nn.functional.relu, id="torch.relu", is_method=True)
 def relu(a: TensorLike, /, inplace: bool = False) -> TensorLike:
-
     out = where(a > 0, a, 0)
     if inplace:
         return _copy_(a, out)
@@ -2030,7 +2050,7 @@ def prelu(a: TensorProxy, /, weight: TensorProxy) -> TensorLike:
         )
     utils.check(
         weight.ndim == 0 or weight.ndim == 1,
-        lambda: f"prelu: Expected `weight` to be a scalar or 1D tensor, but got: " f"ndim = {weight.ndim}",
+        lambda: f"prelu: Expected `weight` to be a scalar or 1D tensor, but got: ndim = {weight.ndim}",
     )
     if a.ndim != 1:
         weight = prims.broadcast_in_dim(weight, a.shape, () if weight.ndim == 0 else (0 if a.ndim == 1 else 1,))
@@ -3218,7 +3238,6 @@ def atleast_1d(*args: Union[TensorLike, Sequence[TensorLike]]) -> Union[TensorLi
 
 @torchsymbol(torch.atleast_2d, is_method=True)
 def atleast_2d(*args: Union[TensorLike, Sequence[TensorLike]]) -> Union[TensorLike, tuple[TensorLike, ...]]:
-
     def _unsqueeze_atleast(a):
         if a.ndim == 0:
             return a.unsqueeze(0).unsqueeze(1)
@@ -3232,7 +3251,6 @@ def atleast_2d(*args: Union[TensorLike, Sequence[TensorLike]]) -> Union[TensorLi
 
 @torchsymbol(torch.atleast_3d, is_method=True)
 def atleast_3d(*args: Union[TensorLike, Sequence[TensorLike]]) -> Union[TensorLike, tuple[TensorLike, ...]]:
-
     def _unsqueeze_atleast(a):
         if a.ndim == 0:
             return a.reshape(1, 1, 1)
@@ -3456,7 +3474,7 @@ def einsum(equation: str, *operands: TensorLike | Sequence[TensorLike]) -> Tenso
             if l == ".":
                 utils.check(
                     not self.seen_ellipsis,
-                    lambda: f"Incorrect subscript for operand #{self.pos}: " "it contains two or more ellipses",
+                    lambda: f"Incorrect subscript for operand #{self.pos}: it contains two or more ellipses",
                     ValueError,
                 )
                 self.seen_ellipsis = True
@@ -4008,7 +4026,8 @@ def multi_dot(tensors: Sequence[TensorLike], *, out: TensorLike | None = None) -
     # check last tensor
     utils.check_type(tensors[-1], TensorProxy)
     utils.check(
-        1 <= tensors[n - 1].dim() <= 2, lambda: f"multi_dot(): the last tensor must be 1D or 2D but got {a[n-1].dim()}D"
+        1 <= tensors[n - 1].dim() <= 2,
+        lambda: f"multi_dot(): the last tensor must be 1D or 2D but got {a[n - 1].dim()}D",
     )
     if tensors[n - 1].dim() == 1:
         a[n - 1] = unsqueeze(tensors[n - 1], -1)
@@ -4400,20 +4419,26 @@ def local_response_norm(
 
 @torchsymbol(torch.baddbmm, is_method=True)
 def baddbmm(
-    a: TensorLike, b1: TensorLike, b2: TensorLike, *, beta: float = 1.0, alpha: float = 1.0, out: TensorLike = None
+    a: TensorLike,
+    batch1: TensorLike,
+    batch2: TensorLike,
+    *,
+    beta: float = 1.0,
+    alpha: float = 1.0,
+    out: TensorLike = None,
 ) -> TensorLike:
     utils.check(out is None, lambda: "Non-None out is not supported", NotImplementedError)
 
-    utils.check_same_dtype(a, b1, b2)
-    utils.check_same_device(a, b1, b2)
-    utils.check(b1.ndim == 3, lambda: f"batch1 must be a 3D tensor, found {b1.ndim} instead.")
-    utils.check(b2.ndim == 3, lambda: f"batch2 must be a 3D tensor, found {b2.ndim} instead.")
+    utils.check_same_dtype(a, batch1, batch2)
+    utils.check_same_device(a, batch1, batch2)
+    utils.check(batch1.ndim == 3, lambda: f"batch1 must be a 3D tensor, found {batch1.ndim} instead.")
+    utils.check(batch2.ndim == 3, lambda: f"batch2 must be a 3D tensor, found {batch2.ndim} instead.")
 
     if a.dtype not in dtypes.inexact_dtypes:
         utils.check_type(beta, int)
         utils.check_type(alpha, int)
 
-    t0 = matmul(b1, b2)
+    t0 = matmul(batch1, batch2)
     t1 = alpha * t0
     return t1 + (beta * a)
 
@@ -4590,7 +4615,7 @@ def _conv_helper(
             else:
                 utils.check(
                     False,
-                    lambda: "padding string values other than ('valid', 'same') " "are not supported, got {padding=}",
+                    lambda: "padding string values other than ('valid', 'same') are not supported, got {padding=}",
                 )
         else:
             return padding, a
@@ -5510,7 +5535,7 @@ def interpolate(
 
     utils.check(
         (size is not None) ^ (scale_factor is not None),
-        lambda: "Only one of `size` or `scale_factor` has to be specified, but " f"got {size=} and {scale_factor=}",
+        lambda: f"Only one of `size` or `scale_factor` has to be specified, but got {size=} and {scale_factor=}",
     )
 
     if size is not None:

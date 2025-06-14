@@ -6,6 +6,7 @@ import dataclasses
 import inspect
 import itertools
 import copy
+from types import NoneType
 from collections import defaultdict
 from collections import namedtuple
 
@@ -13,6 +14,11 @@ import torch
 from torch.nn.modules.module import _addindent
 from torch._subclasses.fake_tensor import FakeTensor
 from torch.utils.weak import TensorWeakRef
+
+if torch.distributed.is_available():
+    from torch.distributed.tensor import DTensor
+else:
+    DTensor = NoneType
 
 from thunder.torch.default_torch_ops import torch_auto_registered_ops
 from thunder.torch import _torch_to_thunder_function_map
@@ -283,7 +289,6 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
     @compile_data_and_stats(cd, cs)
     @thunder._with_cache_info_ctx
     def _run_with_cache_info():
-
         # We need cache info here as the default dtype and device support
         # for factory functions like ones, zeros, etc expects these details to be present.
         # TODO: Move this to CompileData as well?
@@ -479,14 +484,14 @@ def update_node_and_submodule(
         new_name (str): The new name to assign to the node and the submodule.
         new_callable (Callable): The new callable to be used as the target for the submodule.
     """
-    assert graph_module.delete_submodule(
-        node.name
-    ), f"Didn't find a submodule named {node.name} in graph_module {graph_module}"
+    assert graph_module.delete_submodule(node.name), (
+        f"Didn't find a submodule named {node.name} in graph_module {graph_module}"
+    )
     node.name = new_name
     node.target = new_name
-    assert graph_module.add_submodule(
-        node.name, new_callable
-    ), f"Adding submodule with name {node.name} in graph_module {graph_module} failed"
+    assert graph_module.add_submodule(node.name, new_callable), (
+        f"Adding submodule with name {node.name} in graph_module {graph_module} failed"
+    )
 
 
 def recompile_graph(gm: torch.fx.GraphModule):
@@ -508,7 +513,8 @@ def _get_storage_shape(t: torch.Tensor):
 
 
 def _get_min_and_val(t: torch.Tensor) -> tuple[Number | None, Number | None]:
-    if isinstance(t, FakeTensor) or t.device.type == "meta" or t.numel() == 0:
+    # We assume that for TensorSubclass, `aminmax` is not supported which is true for FakeTensor and DTensor.
+    if (isinstance(t, torch.Tensor) and type(t) is not torch.Tensor) or t.device.type == "meta" or t.numel() == 0:
         return None, None
     if t.dtype in (torch.float8_e4m3fn, torch.float8_e4m3fnuz, torch.float8_e5m2, torch.float8_e5m2fnuz):
         t = t.to(torch.float32)
@@ -741,9 +747,9 @@ def _readable(
     """Modified from `torch.fx.graph_module._print_readable` (https://github.com/pytorch/pytorch/blob/3192bdeea428f2bf3a95274ee59ea41c4f8e31e9/torch/fx/graph_module.py#L297).
     Note: the include_stride and include_device take effects only when verbose is True."""
     graph = module.graph
-    assert graph is not None and isinstance(
-        graph, torch.fx.Graph
-    ), "print_readable must be used on a module with a graph"
+    assert graph is not None and isinstance(graph, torch.fx.Graph), (
+        "print_readable must be used on a module with a graph"
+    )
 
     verbose_python_code = graph.python_code(
         root_module="self",

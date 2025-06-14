@@ -272,7 +272,7 @@ def test_vjp_correctness_cudnn_sdpa(dtype, may_cat_grad_qkv):
         with compile_data_and_stats(cd, None):
             initial_trace = thunder.trace()(vjp(filtered_op), filtered_args, (v,))
 
-        from thunder.executors.cudnnex import cudnn_sdpa_fwd, cudnn_sdpa_bwd
+        from thunder.executors.cudnn_sdpa import cudnn_sdpa_fwd, cudnn_sdpa_bwd
 
         # This is a workaround for the issue with python_ctx replacing symbols
         # with their "call_ctx" values which are not traceable and accept only
@@ -298,7 +298,7 @@ def test_vjp_correctness_cudnn_sdpa(dtype, may_cat_grad_qkv):
 
 
 def test_compute_row_major_strides():
-    from thunder.executors.cudnnex import _compute_row_major_strides
+    from thunder.executors.cudnn_sdpa import _compute_row_major_strides
 
     # Test case 1: 2D tensor
     shape = (3, 4)
