@@ -9573,8 +9573,8 @@ def interpolate_sample_generator(op, device, dtype, requires_grad, **kwargs):
     n_spatial_dims_bilinear = (2,)
     for b, c, l, dim in itertools.product(batch, channels, dim_options, n_spatial_dims_bilinear):
         for size in itertools.product(dim_options[l], repeat=dim):
-            spatial_dims = (l,) * dim 
-            a_shape = b + c + spatial_dims 
+            spatial_dims = (l,) * dim
+            a_shape = b + c + spatial_dims
 
             yield SampleInput(make(a_shape), size=size, mode="bilinear")
 

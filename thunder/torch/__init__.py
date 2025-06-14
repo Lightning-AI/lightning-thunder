@@ -5354,25 +5354,24 @@ def _interpolate_scale_factor_helper(
             f"a sequence of strictly positive floating point numbers of length {dim}",
         )
 
-    if(mode == "bilinear"):
+    if mode == "bilinear":
 
         def _bilinear_sampler_2d(
-                t: TensorLike,
-                in_h: int,
-                in_w: int,
-                out_h: int,
-                out_w: int,
-                *,
-                dim_h: int = 2,
-                dim_w : int = 3,
+            t: TensorLike,
+            in_h: int,
+            in_w: int,
+            out_h: int,
+            out_w: int,
+            *,
+            dim_h: int = 2,
+            dim_w: int = 3,
         ) -> TensorLike:
-            
             # The X pass
             x_dst = arange(out_w, device=t.device)
             scale_w = to(in_w / out_w, a.dtype)
-            # The 0.5s come from the fact that we treat each element as a pixel, 
-            # that has its centerpoint at x0 + 0.5. With the formula below we 
-            # make sure that the centerpoints of these "images" align, because align_corners 
+            # The 0.5s come from the fact that we treat each element as a pixel,
+            # that has its centerpoint at x0 + 0.5. With the formula below we
+            # make sure that the centerpoints of these "images" align, because align_corners
             # is not yet implemented
             x_src_f = to((x_dst + 0.5) * scale_w - 0.5, a.dtype)
             x0 = clamp(clang.floor(x_src_f), 0, in_w - 1).to(to_dtype(torch.int64))
@@ -5382,7 +5381,7 @@ def _interpolate_scale_factor_helper(
             v0 = clang.take(t, x0, dim=dim_w)
             v1 = clang.take(t, x1, dim=dim_w)
             # Linear interpolation in the width-direction
-            t_x = v0* (1 - wx) + v1 * wx 
+            t_x = v0 * (1 - wx) + v1 * wx
 
             # The Y pass
             y_dst = arange(out_h, device=t.device)
@@ -5390,23 +5389,22 @@ def _interpolate_scale_factor_helper(
             y_src_f = to((y_dst + 0.5) * scale_h - 0.5, a.dtype)
             y0 = clamp(clang.floor(y_src_f), 0, in_h - 1).to(to_dtype(torch.int64))
             y1 = clamp((y0 + 1), max=in_h - 1)
-            wy = unsqueeze(unsqueeze(unsqueeze((y_src_f - y0.to(y_src_f.dtype)),0 ), 0), -1)
+            wy = unsqueeze(unsqueeze(unsqueeze((y_src_f - y0.to(y_src_f.dtype)), 0), 0), -1)
 
             v0 = clang.take(t_x, y0, dim=dim_h)
-            v1 = clang.take(t_x, y1, dim=dim_h) 
+            v1 = clang.take(t_x, y1, dim=dim_h)
             return v0 * (1 - wy) + v1 * wy
-        
+
         utils.check(
             len(spatial_dims) == 2,
-            lambda: f"bilinear interpolation supports exactly two spatial dims, got {len(spatial_dims)}"
+            lambda: f"bilinear interpolation supports exactly two spatial dims, got {len(spatial_dims)}",
         )
         in_h, in_w = spatial_dims
         out_h = int(in_h * scale_factor[0])
         out_w = int(in_w * scale_factor[1])
-        utils.check(out_h > 0 and out_w > 0,
-                    lambda: f"scale_factor leads to zero-size output ({out_h}x{out_w})")
+        utils.check(out_h > 0 and out_w > 0, lambda: f"scale_factor leads to zero-size output ({out_h}x{out_w})")
         return _bilinear_sampler_2d(a, in_h, in_w, out_h, out_w)
-    elif (mode == "nearest" or mode == "nearest-exact"):
+    elif mode == "nearest" or mode == "nearest-exact":
         # perform nearest up/down-sampling
         def nearest_sampler(
             t: TensorLike,
@@ -5438,7 +5436,7 @@ def _interpolate_scale_factor_helper(
             output_dim = int(scale * input_dim)
             utils.check(
                 output_dim > 0,
-                lambda: f"provided scale_factor value {scale} results " f"in a zero length output at dimension {k + 2}",
+                lambda: f"provided scale_factor value {scale} results in a zero length output at dimension {k + 2}",
             )
             res_output_spatial_dims.append(output_dim)
 
