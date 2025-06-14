@@ -9558,6 +9558,15 @@ def interpolate_sample_generator(op, device, dtype, requires_grad, **kwargs):
             yield SampleInput(make(a_shape), size=size)
             yield SampleInput(make(a_shape), size=size, mode="nearest-exact")
 
+    # mode = "bilinear" supports only 4D inputs in PyTorch, so 2 spatial dimensions
+    n_spatial_dims_bilinear = (2,)
+    for b, c, l, dim in itertools.product(batch, channels, dim_options, n_spatial_dims_bilinear):
+        for size in itertools.product(dim_options[l], repeat=dim):
+            spatial_dims = (l,) * dim 
+            a_shape = b + c + spatial_dims 
+
+            yield SampleInput(make(a_shape), size=size, mode="bilinear")
+
     # Test scale/scale_factor passed as a scalar
     yield SampleInput(make(1, 1, 5, 5), scale_factor=0.5)
     yield SampleInput(make(1, 1, 5, 5), size=10)
@@ -9618,9 +9627,19 @@ def interpolate_error_generator(op, device, dtype=torch.float32, **kwargs):
         "scale_factor(.*?) is expected to be (.*?) a sequence of strictly positive floating point numbers",
     )
     yield (
-        SampleInput(make(1, 1, 1, 1), mode="bilinear"),
+        SampleInput(make(1, 1, 1, 1), mode="trilinear"),
         RuntimeError,
-        "only modes 'nearest' and 'nearest-exact' are supported at the moment, but got mode=(.*?)",
+        "only modes 'nearest', 'nearest-exact' and 'bilinear' are supported at the moment, but got mode=(.*?)",
+    )
+    yield (
+        SampleInput(make(1, 1, 5), scale_factor=2.0, mode="bilinear"),
+        RuntimeError,
+        "bilinear interpolation supports exactly two spatial dims, got 1",
+    )
+    yield (
+        SampleInput(make(1, 1, 5, 5, 5), scale_factor=2.0, mode="bilinear"),
+        RuntimeError,
+        "bilinear interpolation supports exactly two spatial dims, got 3",
     )
 
 

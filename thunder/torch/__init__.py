@@ -5306,9 +5306,9 @@ def _interpolate_scale_factor_helper(
     scale_factor: Sequence[float] | float,
     mode: str = "nearest",
 ) -> TensorLike:
-    if mode not in ("nearest", "nearest-exact"):
+    if mode not in ("nearest", "nearest-exact", "bilinear"):
         raise ValueError(
-            f"_interpolate_scale_factor_helper expected mode to be 'nearest' or 'nearest-exact', but got {mode}"
+            f"_interpolate_scale_factor_helper expected mode to be 'nearest', 'nearest-exact' or 'bilinear', but got {mode}"
         )
 
     # a is assumed to be at least 3D.
@@ -5329,66 +5329,119 @@ def _interpolate_scale_factor_helper(
             f"a sequence of strictly positive floating point numbers of length {dim}",
         )
 
-    # perform nearest up/down-sampling
-    def nearest_sampler(
-        t: TensorLike,
-        input_dim: int,
-        output_dim: int,
-        *,
-        scale: float,
-        dim: int,
-        exact: bool,
-    ) -> TensorLike:
-        # It is expected that output_dim = int(input_dim * scale).
-        # Indices [0, ..., output_dim - 1] are mapped to [0, ..., input_dim - 1]
-        # with the rule i -> int(i * scale) or i -> round((i + 0.5) * scale - 0.5),
-        # corresponding to modes 'nearest' or 'nearest-exact', respectively.
-        # Values at these indices is the result.
-        # References https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/native/UpSample.h
-        selected_idx = arange(0, output_dim, device=a.device)
-        selected_idx = to((selected_idx + exact * 0.5) * scale, selected_idx.dtype)
-        return clang.take(t, selected_idx, dim=dim)
+    if(mode == "bilinear"):
 
-    def dim_expander(t, dim, n_repeats):
-        t = unsqueeze(t, dim + 1)
-        t = expand(t, t.shape[: dim + 1] + (n_repeats,) + t.shape[dim + 2 :])
-        return t
+        def _bilinear_sampler_2d(
+                t: TensorLike,
+                in_h: int,
+                in_w: int,
+                out_h: int,
+                out_w: int,
+                *,
+                dim_h: int = 2,
+                dim_w : int = 3,
+        ) -> TensorLike:
+            
+            # The X pass
+            x_dst = arange(out_w, device=t.device)
+            scale_w = to(in_w / out_w, a.dtype)
+            # The 0.5s come from the fact that we treat each element as a pixel, 
+            # that has its centerpoint at x0 + 0.5. With the formula below we 
+            # make sure that the centerpoints of these "images" align, because align_corners 
+            # is not yet implemented
+            x_src_f = to((x_dst + 0.5) * scale_w - 0.5, a.dtype)
+            x0 = clamp(clang.floor(x_src_f), 0, in_w - 1).to(to_dtype(torch.int64))
+            x1 = clamp((x0 + 1), max=in_w - 1)
+            wx = unsqueeze(unsqueeze((x_src_f - x0.to(x_src_f.dtype)), 0), 0)
 
-    res_output_spatial_dims = []
+            v0 = clang.take(t, x0, dim=dim_w)
+            v1 = clang.take(t, x1, dim=dim_w)
+            # Linear interpolation in the width-direction
+            t_x = v0* (1 - wx) + v1 * wx 
 
-    for k, (scale, input_dim) in enumerate(zip(reversed(scale_factor), reversed(spatial_dims))):
-        output_dim = int(scale * input_dim)
+            # The Y pass
+            y_dst = arange(out_h, device=t.device)
+            scale_h = to(in_h / out_h, a.dtype)
+            y_src_f = to((y_dst + 0.5) * scale_h - 0.5, a.dtype)
+            y0 = clamp(clang.floor(y_src_f), 0, in_h - 1).to(to_dtype(torch.int64))
+            y1 = clamp((y0 + 1), max=in_h - 1)
+            wy = unsqueeze(unsqueeze(unsqueeze((y_src_f - y0.to(y_src_f.dtype)),0 ), 0), -1)
+
+            v0 = clang.take(t_x, y0, dim=dim_h)
+            v1 = clang.take(t_x, y1, dim=dim_h) 
+            return v0 * (1 - wy) + v1 * wy
+        
         utils.check(
-            output_dim > 0,
-            lambda: f"provided scale_factor value {scale} results " f"in a zero length output at dimension {k + 2}",
+            len(spatial_dims) == 2,
+            lambda: f"bilinear interpolation supports exactly two spatial dims, got {len(spatial_dims)}"
         )
-        res_output_spatial_dims.append(output_dim)
+        in_h, in_w = spatial_dims
+        out_h = int(in_h * scale_factor[0])
+        out_w = int(in_w * scale_factor[1])
+        utils.check(out_h > 0 and out_w > 0,
+                    lambda: f"scale_factor leads to zero-size output ({out_h}x{out_w})")
+        return _bilinear_sampler_2d(a, in_h, in_w, out_h, out_w)
+    elif (mode == "nearest" or mode == "nearest-exact"):
+        # perform nearest up/down-sampling
+        def nearest_sampler(
+            t: TensorLike,
+            input_dim: int,
+            output_dim: int,
+            *,
+            scale: float,
+            dim: int,
+            exact: bool,
+        ) -> TensorLike:
+            # It is expected that output_dim = int(input_dim * scale).
+            # Indices [0, ..., output_dim - 1] are mapped to [0, ..., input_dim - 1]
+            # with the rule i -> int(i * scale) or i -> round((i + 0.5) * scale - 0.5),
+            # corresponding to modes 'nearest' or 'nearest-exact', respectively.
+            # Values at these indices is the result.
+            # References https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/native/UpSample.h
+            selected_idx = arange(0, output_dim, device=a.device)
+            selected_idx = to((selected_idx + exact * 0.5) * scale, selected_idx.dtype)
+            return clang.take(t, selected_idx, dim=dim)
 
-        # k iterates from the end, and we skip the first 2
-        # dimenions corresponding to batches and channels.
-        curr_dim = 2 + (len(spatial_dims) - k - 1)
+        def dim_expander(t, dim, n_repeats):
+            t = unsqueeze(t, dim + 1)
+            t = expand(t, t.shape[: dim + 1] + (n_repeats,) + t.shape[dim + 2 :])
+            return t
 
-        exact: bool = mode == "nearest-exact"
-        if output_dim <= input_dim:
-            if output_dim <= input_dim // 2:
-                # scale_factor <= 1 (i.e. output_dim <= input_dim) implies simple slice
-                # when output_dim <= input_dim // 2.
-                stride = input_dim // output_dim
-                end = input_dim - (input_dim % output_dim)
-                a = clang.slice_in_dim(a, 0, end, stride=stride, dim=curr_dim)
+        res_output_spatial_dims = []
+
+        for k, (scale, input_dim) in enumerate(zip(reversed(scale_factor), reversed(spatial_dims))):
+            output_dim = int(scale * input_dim)
+            utils.check(
+                output_dim > 0,
+                lambda: f"provided scale_factor value {scale} results " f"in a zero length output at dimension {k + 2}",
+            )
+            res_output_spatial_dims.append(output_dim)
+
+            # k iterates from the end, and we skip the first 2
+            # dimenions corresponding to batches and channels.
+            curr_dim = 2 + (len(spatial_dims) - k - 1)
+
+            exact: bool = mode == "nearest-exact"
+            if output_dim <= input_dim:
+                if output_dim <= input_dim // 2:
+                    # scale_factor <= 1 (i.e. output_dim <= input_dim) implies simple slice
+                    # when output_dim <= input_dim // 2.
+                    stride = input_dim // output_dim
+                    end = input_dim - (input_dim % output_dim)
+                    a = clang.slice_in_dim(a, 0, end, stride=stride, dim=curr_dim)
+                else:
+                    # In this case slice will not do and explicit downsample is needed.
+                    a = nearest_sampler(a, input_dim, output_dim, scale=1.0 / scale, dim=curr_dim, exact=exact)
             else:
-                # In this case slice will not do and explicit downsample is needed.
-                a = nearest_sampler(a, input_dim, output_dim, scale=1.0 / scale, dim=curr_dim, exact=exact)
-        else:
-            if output_dim % input_dim == 0:
-                # In this case we can just expand dim.
-                n_repeats = output_dim // input_dim
-                a = dim_expander(a, curr_dim, n_repeats)
-            else:
-                # In this case expand will not cut it and explicit upsampling is needed.
-                a = nearest_sampler(a, input_dim, output_dim, scale=1.0 / scale, dim=curr_dim, exact=exact)
+                if output_dim % input_dim == 0:
+                    # In this case we can just expand dim.
+                    n_repeats = output_dim // input_dim
+                    a = dim_expander(a, curr_dim, n_repeats)
+                else:
+                    # In this case expand will not cut it and explicit upsampling is needed.
+                    a = nearest_sampler(a, input_dim, output_dim, scale=1.0 / scale, dim=curr_dim, exact=exact)
 
-    output_shape = [batch, channels] + res_output_spatial_dims[::-1]
+        output_shape = [batch, channels] + res_output_spatial_dims[::-1]
     return reshape(a, output_shape)
 
 
@@ -5432,8 +5485,8 @@ def interpolate(
     antialias: bool = False,
 ) -> TensorLike:
     utils.check(
-        (mode == "nearest" or mode == "nearest-exact"),
-        lambda: f"only modes 'nearest' and 'nearest-exact' are supported at the moment, but got {mode=}",
+        (mode == "nearest" or mode == "nearest-exact" or mode == "bilinear"),
+        lambda: f"only modes 'nearest', 'nearest-exact' and 'bilinear' are supported at the moment, but got {mode=}",
         exception_type=NotImplementedError,
     )
 

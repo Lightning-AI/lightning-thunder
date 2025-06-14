@@ -350,8 +350,8 @@ def test_notimplemented_interpolate_modes():
         return t1
 
     tfoo = thunder.jit(foo)
-    for mode in ["linear", "bilinear", "bicubic", "trilinear", "area"]:
-        match = f"only modes 'nearest' and 'nearest-exact' are supported at the moment, but got mode='{mode}'"
+    for mode in ["linear", "bicubic", "trilinear", "area"]:
+        match = f"only modes 'nearest', 'nearest-exact' and 'bilinear' are supported at the moment, but got mode='{mode}'"
         with pytest.raises(NotImplementedError, match=match):
             tfoo(mode)
 
