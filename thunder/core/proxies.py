@@ -1701,7 +1701,11 @@ class TensorProxy(Proxy, TensorProxyInterface):
         raise NotImplementedError
 
     def __bool__(self):
-        raise NotImplementedError
+        if self.numel() == 0:
+            raise RuntimeError("Boolean value of Tensor with no values is ambiguous")
+        elif self.numel() > 1:
+            raise RuntimeError("Boolean value of Tensor with more than one value is ambiguous")
+        return True
 
     #
     # Elementwise binary operators

@@ -186,6 +186,7 @@ zeros_like = _register_torch_operation("zeros_like")
 rand = _register_torch_operation("rand")
 randint = _register_torch_operation("randint")
 randn = _register_torch_operation("randn")
+normal = _register_torch_operation("normal")
 empty = _register_torch_operation("empty")
 einsum = _register_torch_operation("einsum")
 clone = _register_torch_operation("clone")
@@ -518,6 +519,7 @@ _register_implementation(ltorch.full, checker=_always_executable, execution_tran
 _register_implementation(ltorch.full_like, checker=_always_executable, execution_transform=_full_like_transform)
 _register_implementation(ltorch.ones, checker=_always_executable, execution_transform=_ones_transform)
 _register_implementation(ltorch.ones_like, checker=_always_executable, execution_transform=_ones_like_transform)
+_register_implementation(ltorch.normal, normal, checker=_always_executable)
 _register_implementation(ltorch.uniform, checker=_always_executable, execution_transform=_uniform_transform)
 _register_implementation(
     ltorch.uniform_philox, checker=_uniform_philox_checker, execution_transform=_uniform_philox_transform
