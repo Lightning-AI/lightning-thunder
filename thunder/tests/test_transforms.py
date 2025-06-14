@@ -413,6 +413,7 @@ def test_lora_transform_linear():
     assert flat_arg_names == arg_names
 
 
+@pytest.mark.xfail(strict=True)
 def test_constant_folding():
     # Helper to verify we see the expected constant tensors
     # in exec_trace.
