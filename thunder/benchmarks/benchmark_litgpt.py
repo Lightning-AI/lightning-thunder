@@ -1,6 +1,6 @@
 # =============================================================================
 # (uva39)FIXED: torch._dynamo recompilation warning after 2 iterations
-# - Optimized cache limits: cache_size_limit=32, accumulated_cache_size_limit=512  
+# - Optimized cache limits: cache_size_limit=32, accumulated_cache_size_limit=512
 # - Applied compilation BEFORE FSDP wrapping for better graph capture
 # - Added version-aware dynamo configuration with fallback mechanisms
 # - Resolved FP8 + dynamic shapes conflicts via conditional compilation
@@ -46,6 +46,7 @@ if transformer_engine_available:
 
 try:
     from torch.nn.attention import SDPBackend, sdpa_kernel
+
     sdpa_available = True
 except ImportError:
     sdpa_available = False
@@ -84,15 +85,15 @@ def setup_optimized_environment_for_compile():
     """Setup environment variables for optimal torch.compile + FSDP performance"""
     # Enable dynamic scalar handling
     os.environ.setdefault("TORCHDYNAMO_CAPTURE_SCALAR_OUTPUTS", "1")
-    
+
     # Enable profile-guided optimization for PyTorch 2.5+
     if LooseVersion(torch.__version__) >= LooseVersion("2.5.0"):
         os.environ.setdefault("TORCH_DYNAMO_AUTOMATIC_DYNAMIC_LOCAL_PGO", "1")
-    
+
     # Conditional logging setup
     max_iters = int(os.environ.get("MAX_ITERS", "45"))
     debug_mode = os.environ.get("DEBUG_MODE", "").lower() in ("1", "true")
-    
+
     if max_iters <= 10 or debug_mode:
         os.environ.setdefault("TORCH_LOGS", "recompiles")
     else:
@@ -104,66 +105,64 @@ def setup_dynamo_config_with_version_check():
     """Setup dynamo configuration with version compatibility checks"""
     from packaging import version
     import torch._dynamo.config as dynamo_config
-    
+
     # Base configuration for all versions
     dynamo_config.cache_size_limit = 32
     dynamo_config.accumulated_cache_size_limit = 512
-    
+
     # Version-specific configurations
     if version.parse(torch.__version__) >= version.parse("2.4.0"):
         dynamo_config.fail_on_recompile_limit_hit = False
-    
+
     if version.parse(torch.__version__) >= version.parse("2.5.0"):
         # PyTorch 2.5+ optimizations
-        if hasattr(dynamo_config, 'inline_inbuilt_nn_modules'):
+        if hasattr(dynamo_config, "inline_inbuilt_nn_modules"):
             dynamo_config.inline_inbuilt_nn_modules = True
-        if hasattr(dynamo_config, 'automatic_dynamic_shapes'):
+        if hasattr(dynamo_config, "automatic_dynamic_shapes"):
             dynamo_config.automatic_dynamic_shapes = True
-        if hasattr(dynamo_config, 'run_gc_after_compile'):
+        if hasattr(dynamo_config, "run_gc_after_compile"):
             dynamo_config.run_gc_after_compile = True
-    
+
     return dynamo_config
 
 
 def setup_thunder_dynamo_config():
     """Setup specialized configuration for Thunder + dynamo combination"""
     import torch._dynamo.config as dynamo_config
-    
+
     # Thunder prefers lower cache limits
     dynamo_config.cache_size_limit = 16
     dynamo_config.accumulated_cache_size_limit = 256
-    
-    if hasattr(dynamo_config, 'fail_on_recompile_limit_hit'):
+
+    if hasattr(dynamo_config, "fail_on_recompile_limit_hit"):
         dynamo_config.fail_on_recompile_limit_hit = False
-    
+
     return dynamo_config
 
 
 class CompilationMonitor:
     """Monitor compilation health and provide fallback mechanisms"""
+
     def __init__(self):
         self.recompile_count = 0
         self.compilation_time = 0
         self.start_time = None
-    
+
     def start_compilation_timer(self):
         self.start_time = time.time()
-    
+
     def end_compilation_timer(self):
         if self.start_time:
             self.compilation_time = time.time() - self.start_time
             if self.compilation_time > 60:  # 1 minute threshold
                 warnings.warn(
-                    f"Compilation took {self.compilation_time:.2f}s, "
-                    "consider reducing cache limits or using eager mode"
+                    f"Compilation took {self.compilation_time:.2f}s, consider reducing cache limits or using eager mode"
                 )
         return self.compilation_time
-    
+
     def check_compilation_health(self):
         if self.recompile_count > 10:
-            warnings.warn(
-                "Excessive recompilations detected. Consider falling back to eager mode"
-            )
+            warnings.warn("Excessive recompilations detected. Consider falling back to eager mode")
             return False
         return True
 
@@ -232,7 +231,7 @@ def swap_linear_layers_for_te(model: torch.nn.Module, device, swap_layernorm: bo
     initial_params_cnt = parameters_cnt(model)
     _recursively_swap_linear_layers_for_te(model)
     assert initial_params_cnt == parameters_cnt(model)
-    
+
     for m in model.modules():
         assert not isinstance(m, torch.nn.Linear)
         if swap_layernorm:
@@ -347,10 +346,10 @@ class Benchmark_litGPT:
     ):
         # Setup optimized environment for compilation
         setup_optimized_environment_for_compile()
-        
+
         # Initialize compilation monitor
         self.compilation_monitor = CompilationMonitor()
-        
+
         seed = 1337
         torch.manual_seed(seed)
         torch.cuda.manual_seed(seed)
@@ -399,7 +398,7 @@ class Benchmark_litGPT:
                 raise ValueError("`torchao` is not available")
             if self.distributed_mode not in ("none", "fsdp2"):
                 raise ValueError(f"torchao fp8 requires {self.distributed_mode=} to be `none` or `fsdp2`")
-        
+
         self._torchao_fp8_handler = TorchAOFP8Handler(
             is_fsdp2=self.distributed_mode == "fsdp2",
             use_fp8_linear=use_torchao_fp8_linear,
@@ -489,7 +488,7 @@ class Benchmark_litGPT:
         # Critical: Apply torch.compile BEFORE FSDP wrapping for better performance
         # This is the key change recommended in the documentation
         compile_first = self.compile in ("inductor", "eager") or "dynamo" in self.compile
-        
+
         if compile_first:
             print("Applying compilation before distributed setup for optimal FSDP integration")
             self.model = self.setup_compile(self.model)
@@ -577,6 +576,7 @@ class Benchmark_litGPT:
         if "thunder" in self.compile and "dynamo" not in self.compile:
             if self.distributed_mode == "ddp":
                 from thunder.distributed import ddp
+
                 model = ddp(
                     model,
                     broadcast_from=0,
@@ -678,10 +678,10 @@ class Benchmark_litGPT:
                 }[self.shard_mode]
 
                 torch.cuda.set_device(local_rank)
-                
+
                 # For torch.compile compatibility, use_orig_params=True is essential
                 use_orig_params = "thunder" not in self.compile  # Thunder doesn't support use_orig_params=True
-                
+
                 model = FSDP(
                     model,
                     sharding_strategy=sharding_strategy,
@@ -707,46 +707,48 @@ class Benchmark_litGPT:
     def setup_compile(self, model):
         if self.compile == "inductor":
             print("Optimizing cache configuration for torch.compile with FSDP")
-            
+
             # Setup optimized dynamo configuration
             dynamo_config = setup_dynamo_config_with_version_check()
-            
+
             # Start compilation timing
             self.compilation_monitor.start_compilation_timer()
-            
+
             # Determine if we should use dynamic compilation
             # FP8 + dynamic shapes can cause issues, so disable dynamic for FP8
             use_dynamic = self.dynamic and not (self.use_te_fp8_autocast or self._torchao_fp8_handler._enabled)
-            
+
             if not use_dynamic and (self.use_te_fp8_autocast or self._torchao_fp8_handler._enabled):
                 print("Disabling dynamic shapes due to FP8 usage for better compatibility")
                 # For FP8, disable certain dynamo optimizations that can cause issues
                 dynamo_config.specialize_int = False
-            
+
             try:
                 model = torch.compile(
-                    model, 
+                    model,
                     dynamic=use_dynamic,
-                    mode="default"  # Balanced performance/compilation time
+                    mode="default",  # Balanced performance/compilation time
                 )
                 print("Successfully compiled model with inductor backend")
             except Exception as e:
                 warnings.warn(f"Compilation failed: {e}. Falling back to eager mode.")
                 return model
-            
+
             # End compilation timing
             compilation_time = self.compilation_monitor.end_compilation_timer()
             print(f"Compilation completed in {compilation_time:.2f} seconds")
-            
+
         elif "thunder" in self.compile:
             executors = list(thunder.get_default_executors())
             transforms = []
 
             if "inductor_cat" in self.compile:
                 from thunder.executors.torch_compile import torch_compile_cat_ex as torch_compile_ex
+
                 executors.insert(0, torch_compile_ex)
             elif "inductor" in self.compile:
                 from thunder.executors.torch_compile import torch_compile_ex
+
                 executors.insert(0, torch_compile_ex)
 
             if "transformerengine_v2" in self.compile:
@@ -754,21 +756,23 @@ class Benchmark_litGPT:
                     transformer_engine_v2_ex,
                     TransformerEngineTransformV2,
                 )
+
                 executors.insert(0, transformer_engine_v2_ex)
                 transforms.insert(0, TransformerEngineTransformV2())
 
             elif "transformerengine" in self.compile:
                 from thunder.executors.transformer_engineex import transformer_engine_ex
+
                 executors.insert(0, transformer_engine_ex)
 
             if "dynamo" in self.compile:
                 print("Setting up Thunder as torch.compile backend with optimized configuration")
-                
+
                 # Use specialized Thunder + dynamo configuration
                 setup_thunder_dynamo_config()
-                
+
                 self.backend = ThunderCompiler(executors=executors, transforms=transforms)
-                
+
                 # Use lower level torch._dynamo.optimize for better control
                 # This avoids Lightning Fabric monkey patching issues
                 model = torch._dynamo.optimize(backend=self.backend)(model)
@@ -777,10 +781,10 @@ class Benchmark_litGPT:
                 jit_options = {}
                 jit_options["fp8_shard_intermediate_activation"] = self.fp8_shard_intermediate_activation
                 model = thunder.jit(model, executors=executors, transforms=transforms, **jit_options)
-                
+
         elif self.compile == "eager":
             print("Using eager mode - no compilation applied")
-            
+
         else:
             raise ValueError(f"Invalid compile option: {self.compile}")
 
@@ -854,15 +858,15 @@ class Benchmark_litGPT:
                     input_ids, targets = next(self.train_data_iter)
                     input_ids = input_ids.to(self.device)
                     targets = targets.to(self.device)
-                    
+
                     # Use torch.amp.autocast instead of FSDP mixed precision for better compilation
                     if self.use_te_fp8_autocast:
                         with te.fp8_autocast():
                             logits = self.model(input_ids)
                     else:
-                        with torch.amp.autocast(device_type='cuda', dtype=torch.bfloat16):
+                        with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
                             logits = self.model(input_ids)
-                    
+
                     if not isinstance(logits, torch.Tensor):
                         logits = logits["last_hidden_state"]
                     logits = logits.reshape(-1, logits.size(-1))
@@ -876,17 +880,17 @@ class Benchmark_litGPT:
             input_ids, targets = next(self.train_data_iter)
             input_ids = input_ids.to(self.device)
             targets = targets.to(self.device)
-            
+
             if self.use_te_fp8_autocast:
                 with te.fp8_autocast():
                     logits = self.model(input_ids)
             else:
-                with torch.amp.autocast(device_type='cuda', dtype=torch.bfloat16):
+                with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
                     logits = self.model(input_ids)
-            
+
             if not isinstance(logits, torch.Tensor):
                 logits = logits["last_hidden_state"]
-            
+
             # Monitor saved tensors for memory analysis
             saved_tensors = getattr(logits.grad_fn, "saved_tensors", None)
             saved_tensors_len = None
@@ -897,7 +901,7 @@ class Benchmark_litGPT:
                     sum(t.numel() * t.element_size() for t in saved_tensors if t is not None) / 1024**2
                 )
                 del saved_tensors
-            
+
             logits = logits.reshape(-1, logits.size(-1))
             targets = targets.reshape(-1)
             loss = (
@@ -1014,6 +1018,7 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
 
     if "transformerengine_v2" in benchmark.compile:
         from transformer_engine.pytorch.fp8 import fp8_autocast
+
         te_autocast_ctx = fp8_autocast(enabled=True)
 
     with attention_ctx, te_autocast_ctx:
