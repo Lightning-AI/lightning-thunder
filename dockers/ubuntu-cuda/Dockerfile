@@ -106,7 +106,7 @@ ENV \
 ARG TORCH_INSTALL
 ENV TORCH_USE_CUDA_DSA=1
 
-# Build bitsandbytes 0.47.0-dev0 (0.46.0 has a bug)
+# Build bitsandbytes 0.47.0.dev0 (0.46.0 has a bug)
 RUN git clone https://github.com/bitsandbytes-foundation/bitsandbytes.git && \
         cd bitsandbytes && \
         git checkout 70bbbb9219cb10981c3b7f4457f30376e093d896 && \
