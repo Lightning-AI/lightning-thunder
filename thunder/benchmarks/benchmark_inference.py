@@ -242,13 +242,12 @@ class SemiAnalysisInferenceBenchmark:
         torch.cuda.synchronize()
         start_time = time.perf_counter()
 
-        with torch.no_grad():
-            outputs = self.model(input_ids, attention_mask=attention_mask, past_key_values=past_key_values, use_cache=True)
-            # Handle both HF model output objects and raw logits
-            logits = outputs.logits if hasattr(outputs, "logits") else outputs
-            # Get next token from the last position
-            next_token_logits = logits[:, -1, :]
-            next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
+        outputs = self.model(input_ids, attention_mask=attention_mask, past_key_values=past_key_values, use_cache=True)
+        # Handle both HF model output objects and raw logits
+        logits = outputs.logits if hasattr(outputs, "logits") else outputs
+        # Get next token from the last position
+        next_token_logits = logits[:, -1, :]
+        next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
 
         torch.cuda.synchronize()
         prefill_time = (time.perf_counter() - start_time) * 1000  # Convert to ms
@@ -263,17 +262,16 @@ class SemiAnalysisInferenceBenchmark:
         torch.cuda.synchronize()
         start_time = time.perf_counter()
 
-        with torch.no_grad():
-            # input_pos: [B, 1] One token at the time
-            assert input_ids.shape[-1] == 1, f"Expected shape (B, 1), but found {input_ids.shape}"
+        # input_pos: [B, 1] One token at the time
+        assert input_ids.shape[-1] == 1, f"Expected shape (B, 1), but found {input_ids.shape}"
 
-            outputs = self.model(input_ids, attention_mask=attention_mask, past_key_values=past_key_values, use_cache=True)
+        outputs = self.model(input_ids, attention_mask=attention_mask, past_key_values=past_key_values, use_cache=True)
 
-            # Handle both HF model output objects and raw logits
-            logits = outputs.logits if hasattr(outputs, "logits") else outputs
+        # Handle both HF model output objects and raw logits
+        logits = outputs.logits if hasattr(outputs, "logits") else outputs
 
-            next_token_logits = logits[:, -1, :]
-            next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
+        next_token_logits = logits[:, -1, :]
+        next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
 
         torch.cuda.synchronize()
         decode_time = (time.perf_counter() - start_time) * 1000  # Convert to ms
