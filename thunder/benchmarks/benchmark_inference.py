@@ -159,49 +159,19 @@ class SemiAnalysisInferenceBenchmark:
 
 
     def _compile_model(self, model):
-        if self.config.mode == "eager":
-            return model
+        match self.config.mode:
+            case "eager":
+                return model
+            case "inductor":
+                return torch.compile(model)
+            case "thunder":
+                from thunder.dynamo import thunderfx
+                return thunderfx(model)
+            case "thunderjit":
+                return thunder.jit(model)
+            case _:
+                raise ValueError(f"Unknown mode: {self.config.mode}")
 
-        if self.config.mode == "inductor":
-            return torch.compile(model)
-
-        if self.config.mode == "thunder":
-            executors = list(thunder.get_default_executors())
-            transforms = []
-
-            # Apply Thunder executor configuration if specified
-            if self.config.thunder_executors:
-                executor_config = self.config.thunder_executors
-
-                if "inductor_cat" in executor_config:
-                    from thunder.executors.torch_compile import torch_compile_cat_ex as torch_compile_ex
-                    executors.insert(0, torch_compile_ex)
-                elif "inductor" in executor_config:
-                    from thunder.executors.torch_compile import torch_compile_ex
-                    executors.insert(0, torch_compile_ex)
-
-                elif "transformerengine_v2" in executor_config:
-                    from thunder.executors.transformer_engine_v2ex import (
-                        transformer_engine_v2_ex,
-                        TransformerEngineTransformV2,
-                    )
-                    executors.insert(0, transformer_engine_v2_ex)
-                    transforms.insert(0, TransformerEngineTransformV2())
-
-                elif "transformerengine" in executor_config:
-                    from thunder.executors.transformer_engineex import transformer_engine_ex
-                    executors.insert(0, transformer_engine_ex)
-
-                # Setup executors DONE
-                if "dynamo" in executor_config:
-                    from thunder.dynamo import thunderfx
-                    return thunderfx(model, executors=executors, transforms=transforms)
-
-            # Default Thunder JIT compilation
-            jit_options = {}
-            return thunder.jit(model, executors=executors, transforms=transforms, **jit_options)
-
-        raise ValueError(f"Unknown mode: {self.config.mode}")
 
     def _load_model(self) -> torch.nn.Module:
         """Load the model based on configuration"""
