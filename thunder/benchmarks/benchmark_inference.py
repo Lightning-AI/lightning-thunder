@@ -163,11 +163,6 @@ class SemiAnalysisInferenceBenchmark:
             return model
 
         if self.config.mode == "inductor":
-            print("Resetting cache size for torch.compile")
-            import torch._dynamo.config as dynamo_config
-
-            dynamo_config.cache_size_limit = 64
-
             return torch.compile(model)
 
         if self.config.mode == "thunder":
