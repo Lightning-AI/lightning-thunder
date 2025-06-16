@@ -37,6 +37,7 @@ TENSOR_FACTORY = (
     thunder.torch.zeros.id,
 )
 
+
 def trace_from_bsym_or_bsyms(bsym_or_bsyms: BoundSymbol | Sequence[BoundSymbol]) -> TraceCtx:
     bsyms = list(utils.sequencify(bsym_or_bsyms))
     trace_args = bsyms[0].flat_args
