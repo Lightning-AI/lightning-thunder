@@ -692,11 +692,10 @@ Examples:
 
     # Execution configuration
     parser.add_argument(
-        "--mode",
+        "--compile-mode",
         type=str,
-        default="thunder",
-        choices=["thunder", "eager", "inductor"],
-        help="Compilation mode: thunder (default), eager, or inductor",
+        default="eager",
+        help="Compilation mode: thunder, eager (default), or inductor",
     )
     parser.add_argument(
         "--thunder-executors",
