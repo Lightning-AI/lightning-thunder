@@ -11,7 +11,7 @@ Models:
 - Llama 3.1 405B
 - DeepSeekV3 670B
 - Llama 4 Scout 17B
-- Llama 4 Maverick 
+- Llama 4 Maverick
 
 Key metrics:
 - Throughput (tokens/second)
@@ -48,7 +48,7 @@ BENCHMARK_SCENARIOS = {
         "hardware_focus": "Compute optimization provides maximum impact"
     },
     "chat": {
-        "name": "Chat (Balanced)", 
+        "name": "Chat (Balanced)",
         "input_length": 1000,
         "output_length": 1000,
         "description": "1,000 input → 1,000 output tokens (50% prefill, 50% decode)",
@@ -57,7 +57,7 @@ BENCHMARK_SCENARIOS = {
     },
     "reasoning": {
         "name": "Reasoning (Decode-Heavy)",
-        "input_length": 1000, 
+        "input_length": 1000,
         "output_length": 4000,
         "description": "1,000 input → 4,000 output tokens (20% prefill, 80% decode)",
         "workload_balance": "20% prefill, 80% decode computational cost",
@@ -588,11 +588,11 @@ def run_semianalysis_benchmark(
     if scenario is not None:
         if scenario not in BENCHMARK_SCENARIOS:
             raise ValueError(f"Unknown scenario '{scenario}'. Available scenarios: {list(BENCHMARK_SCENARIOS.keys())}")
-        
+
         scenario_config = BENCHMARK_SCENARIOS[scenario]
         input_length = scenario_config["input_length"]
         output_length = scenario_config["output_length"]
-        
+
         print(f"\nUsing standardized scenario: {scenario_config['name']}")
         print(f"Configuration: {scenario_config['description']}")
         print(f"Workload balance: {scenario_config['workload_balance']}")
@@ -648,7 +648,7 @@ def main():
         epilog="""
 Standard Benchmark Scenarios:
   summarization  - Prefill-Heavy: 4,000 input → 1,000 output tokens
-  chat          - Balanced: 1,000 input → 1,000 output tokens  
+  chat          - Balanced: 1,000 input → 1,000 output tokens
   reasoning     - Decode-Heavy: 1,000 input → 4,000 output tokens
 
 Use --list-scenarios for detailed scenario descriptions.
@@ -684,7 +684,7 @@ Examples:
         "--scenario",
         type=str,
         choices=list(BENCHMARK_SCENARIOS.keys()),
-        help="Use standardized benchmark scenario. Available: " + 
+        help="Use standardized benchmark scenario. Available: " +
              ", ".join([f"{k} ({v['description']})" for k, v in BENCHMARK_SCENARIOS.items()]) +
              ". If specified, overrides --input-length and --output-length."
     )
@@ -707,7 +707,7 @@ Examples:
         help="Compilation mode: thunder (default), eager, or inductor",
     )
     parser.add_argument(
-        "--thunder-executors", 
+        "--thunder-executors",
         type=str,
         help="Thunder executor configuration (optional, only used with --mode thunder). "
              "Examples: 'inductor', 'inductor_cat', 'transformerengine', 'transformerengine_v2', 'dynamo'"
