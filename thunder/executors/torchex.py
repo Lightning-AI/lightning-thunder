@@ -1234,6 +1234,7 @@ atleast_3d = _register_torch_operation("atleast_3d")
 
 
 sort = _register_torch_operation("sort")
+argsort = _register_torch_operation("argsort")
 
 
 # NOTE The following transforms are necessary because thunder uses the parameter name 'dims' while PyTorch
@@ -1338,6 +1339,25 @@ _register_implementation(prims.sort, checker=_always_executable, execution_trans
 
 _register_implementation(ltorch.sort, checker=_always_executable, execution_transform=_sort_transform)
 
+def _argsort_transform(a: TensorProxy, /, dim: int | None = None, descending: bool = False, stable: bool = False):
+    """Transforms argsort operation for execution in torch executor.
+    
+    Args:
+        a: Input tensor
+        dim: Dimension to sort along (defaults to last dim if None)
+        descending: Sort in descending order if True
+        stable: Use stable sorting algorithm if True
+    """
+    if dim is None:
+        dim = a.ndim - 1 if a.ndim > 0 else 0
+    
+    # NOTE: args past `a` are passed as kwargs to avoid issues with multiple `torch.argsort` overloadings
+    return argsort(a, dim=dim, descending=bool(descending), stable=bool(stable))
+
+# Register the implementation
+_register_implementation(prims.argsort, checker=_always_executable, execution_transform=_argsort_transform)
+
+_register_implementation(ltorch.argsort, checker=_always_executable, execution_transform=_argsort_transform)
 
 #
 # Scatter and gather operations

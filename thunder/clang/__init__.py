@@ -2226,3 +2226,22 @@ def sort(
     dim = utils.canonicalize_dim(a.ndim, dim)
 
     return prims.sort(a, dim, descending, stable)
+
+@clangop()
+def argsort(a: TensorProxy, /, dim: None | int = None, descending: bool = False, stable: bool = False) -> TensorProxy:
+    """Returns the indices that would sort a tensor along a given dimension.
+    
+    Args:
+        a: Input tensor 
+        dim: Dimension along which to sort. If None, uses last dimension
+        descending: Sort in descending order if True
+        stable: Maintain relative order of equal elements if True
+    
+    Returns:
+        TensorProxy containing indices that would sort the input tensor
+    """
+    if dim is None:
+        dim = a.ndim - 1 if a.ndim > 0 else 0
+    dim = utils.canonicalize_dim(a.ndim, dim)
+
+    return prims.argsort(a, dim, descending, stable)

@@ -257,6 +257,7 @@ class PrimIDs(Enum):
     TOPK = auto()
     # Sort and dim permutations prims
     SORT = auto()
+    ARGSORT = auto()
     # Scatter and gather prims (Experimental!)
     GATHER = auto()
     SCATTER = auto()
@@ -3719,6 +3720,36 @@ def topk_meta(a: TensorProxy, /, k: int, dim: int, largest: Number, sorted: Numb
 
 
 topk = make_prim(PrimIDs.TOPK, "topk", meta=topk_meta, tags=(OpTags.REDUCTION_OP,))
+
+
+def argsort_meta(a: TensorProxy, /, dim: int, descending: Number, stable: Number) -> TensorProxy:
+    """Meta function for argsort primitive.
+
+    Args:
+        a: Input tensor
+        dim: Dimension along which to sort
+        descending: Sort in descending order if True
+        stable: Maintain relative order of equal elements if True
+
+    Returns:
+        TensorProxy with indices that would sort the tensor
+    """
+    # Validates types
+    utils.check_type(a, TensorProxy)
+    utils.check_type(dim, (int, IntegerProxy))
+    utils.check(pytype(descending) is bool, lambda: f"Expected {descending=} to be a boolean type")
+    utils.check(pytype(stable) is bool, lambda: f"Expected {stable=} to be a boolean type")
+
+    # Returns indices tensor with same shape as input but int64 dtype
+    return TensorProxy(like=a, dtype=dtypes.int64)
+
+
+argsort = make_prim(
+    PrimIDs.ARGSORT,  # Need to add this to PrimIDs enum
+    "argsort",
+    meta=argsort_meta,
+    tags=(OpTags.REDUCTION_OP,),  # Uses same tag as sort
+)
 
 
 def sort_meta(a: TensorProxy, /, dim: int, descending: Number, sorted: Number) -> (TensorProxy, TensorProxy):

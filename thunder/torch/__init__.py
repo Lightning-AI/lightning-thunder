@@ -3339,6 +3339,28 @@ def sort(
     return clang.sort(a, dim, descending, stable)
 
 
+@torchsymbol(torch.argsort, is_method=True)
+def argsort(
+    a: TensorLike, 
+    /, 
+    dim: None | int = -1,
+    descending: bool = False,
+    stable: bool = False
+) -> TensorLike:
+    """Returns the indices that would sort an array along the given dimension.
+
+    Args:
+        a: Input tensor
+        dim: Dimension along which to sort. If None, the array is flattened before sorting
+        descending: If True, sort in descending order
+        stable: Whether to use a stable sorting algorithm
+
+    Returns:
+        Tensor of indices that would sort the array
+    """
+    return clang.argsort(a, dim, descending, stable)
+
+
 #
 # Scatter and gather-related operations
 #
