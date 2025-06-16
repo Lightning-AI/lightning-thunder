@@ -442,6 +442,11 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
         compile_stats.last_traces += fw_traces
         compile_stats.last_backward_traces += bw_traces
 
+    # We only want to apply it on backward trace.
+    from thunder.torch.experimental.dtensor_utils import check_dtensor_cotangent_metadata_in_backward
+
+    bw_extrace = check_dtensor_cotangent_metadata_in_backward(bw_extrace)
+
     if len(bw_extrace.bound_symbols) == 1:
         # only return, no unpacking, so no gradient is calculated
         bw_extrace = None

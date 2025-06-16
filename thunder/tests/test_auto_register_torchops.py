@@ -10,7 +10,7 @@ import torch
 
 from thunder.tests.framework import requiresCUDA, TorchExecutor, instantiate, NOTHING
 from thunder.tests.make_tensor import make_tensor
-from thunder.tests.opinfos import get_opinfo, OpInfo
+from thunder.tests.opinfos import get_opinfo
 from thunder.tests.test_einops import skipIfNoCUDA
 from torch.testing._internal.common_device_type import skipCPUIfNoLapack, skipCUDAIfNoMagma
 from torch.testing._internal.common_methods_invocations import op_db
@@ -48,7 +48,7 @@ def test_torch_ops_trace(device, requires_grad, op_info):
         pytest.skip("op_info.supports_autograd is False")
     if device == "cuda" and torch.float32 not in op_info.dtypesIfCUDA:
         pytest.skip("float32 is not in op_info.dtypesIfCUDA")
-    if device == "cpu" and not torch.float32 in op_info.dtypes:
+    if device == "cpu" and torch.float32 not in op_info.dtypes:
         pytest.skip("float32 is not in op_info.dtypes")
     if op_info.name in ("nonzero_static",) and device == "cuda":
         pytest.skip("Could not run 'aten::nonzero_static' with arguments from the 'CUDA' backend.")
@@ -83,9 +83,9 @@ def test_torch_ops_trace(device, requires_grad, op_info):
                 out = jfun(sample.input, *sample.args, **sample.kwargs)
             except Exception as e:
                 assert isinstance(e, NotImplementedError)
-                assert str(e).startswith(f"Exception encountered when doing automatic registration") or str(
+                assert str(e).startswith("Exception encountered when doing automatic registration") or str(
                     e
-                ).startswith(f"Unsupported type:")
+                ).startswith("Unsupported type:")
                 break
             else:
                 # Get the alias name when testing for alias

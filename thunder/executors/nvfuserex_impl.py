@@ -1,8 +1,7 @@
 from dataclasses import dataclass, replace
 from functools import partial, lru_cache
 from numbers import Number
-from typing import Union, List, Any, Optional, Dict, Set, Tuple, Type
-from types import NoneType
+from typing import Any
 from collections.abc import Callable, Mapping, Hashable, Sequence
 import os
 import time
@@ -31,15 +30,13 @@ from thunder.core.proxies import (
     Variable,
     pyval,
 )
-from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
+from thunder.core.pytree import tree_map
 from thunder.core.rematerialization import rematerialize
-from thunder.core.utils import OrderedSet, check, check_same_dtype
+from thunder.core.utils import check
 from thunder.core.trace import TraceCtx, from_trace, TraceProvenance
 from thunder.core.symbol import BoundSymbol, BoundSymbolRHS, Symbol, has_tags
 from thunder.core.devices import Device, DeviceType, cpu
-import thunder.core.codeutils as codeutils
-from thunder.core.codeutils import Printable
-from thunder.core.transform_common import dce, cse_single_bsym, replace_redundant_inputs, NON_FUNCTIONAL_OPS
+from thunder.core.transform_common import dce, cse_single_bsym, replace_redundant_inputs
 from thunder.core.profile import annotate_for_profile
 from thunder.core.compile_data import get_compile_option
 
@@ -62,7 +59,7 @@ from thunder.executors.utils import (
 )
 
 from thunder.executors.passes import update_fusion_call_ctx
-from thunder.extend import FUEL_LEVEL, FusionExecutor, register_executor, add_default_executor
+from thunder.extend import FUEL_LEVEL, FusionExecutor, register_executor
 from thunder.executors.nvfuserex import nvfuser_version
 
 # NOTE This impl file is here because nvFuser may not be available, so it's imported conditionally
@@ -1976,6 +1973,28 @@ def minimum(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefin
 register_supported(PrimIDs.MINIMUM, minimum, _elementwise_binary_check)
 
 
+def bitwise_left_shift(
+    a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict
+) -> Any:
+    nva = getnv(a, fd, lc_to_nv_map)
+    nvb = getnv(b, fd, lc_to_nv_map)
+
+    return fd.ops.bitwise_left_shift(nva, nvb)
+
+
+def bitwise_right_shift(
+    a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict
+) -> Any:
+    nva = getnv(a, fd, lc_to_nv_map)
+    nvb = getnv(b, fd, lc_to_nv_map)
+
+    return fd.ops.bitwise_right_shift(nva, nvb)
+
+
+register_supported(PrimIDs.BITWISE_LEFT_SHIFT, bitwise_left_shift, _elementwise_binary_check)
+register_supported(PrimIDs.BITWISE_RIGHT_SHIFT, bitwise_right_shift, _elementwise_binary_check)
+
+
 #
 # Elementwise ternary operations
 #
@@ -2220,7 +2239,7 @@ def remove_redundant_casts(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
         if len(bsym.args) == 2:
             a, dtyp = bsym.args
         elif len(bsym.args) == 1:
-            utils.check(len(bsym.kwargs) == 1, lambda: f"Expected two arguments for convert element type")
+            utils.check(len(bsym.kwargs) == 1, lambda: "Expected two arguments for convert element type")
             (a,) = bsym.args
             dtyp = bsym.kwargs["dtype"]
         else:
@@ -2312,7 +2331,7 @@ def remove_redundant_casts(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
             nbsyms.append(nbsym)
             utils.check(
                 nbsym.subsymbols is None or len(nbsym.subsymbols) == 0,
-                lambda: f"Expected no subsymbols when creating a new BoundSymbol in the remove redundant casts pass",
+                lambda: "Expected no subsymbols when creating a new BoundSymbol in the remove redundant casts pass",
                 exception_type=AssertionError,
             )
 
@@ -2491,7 +2510,6 @@ def _scaled_dot_product_flash_attention_forward(
     fd: FusionDefinition,
     lc_to_nv_map: dict,
 ) -> Any:
-
     inputs = [query, key, value, dropout_p, is_causal, scale]
     nv_inputs = []
     for inp in inputs:
@@ -2526,7 +2544,6 @@ def _scaled_dot_product_flash_attention_backward_meta(
     *,
     scale: None | float = None,
 ) -> tuple[TensorProxy, TensorProxy, TensorProxy]:
-
     batch_size, num_heads, query_seq_len, E = query.shape
     key_seq_len = key.shape[2]
 
@@ -2554,7 +2571,6 @@ def _scaled_dot_product_flash_attention_backward(
     fd: FusionDefinition,
     lc_to_nv_map: dict,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-
     inputs = [grad_out, query, key, value, out, logsumexp, dropout_p, is_causal, philox_seed, philox_offset, scale]
     nv_inputs = []
     for inp in inputs:
@@ -2585,7 +2601,6 @@ def _scaled_dot_product_flash_attention_check(
     *,
     scale: None | float = None,
 ) -> bool:
-
     # fd.ops.sdpfa_fwd and fd.ops.sdpfa_bwd are adding in versions 0.2.9 and 0.2.10 respectively.
     if nvfuser_version() < LooseVersion("0.2.10"):
         return False
@@ -2644,7 +2659,6 @@ def scaled_dot_product_flash_attention_grad(
     *,
     scale: None | float = None,
 ):
-
     (attn_output, logsumexp, philox_seed, philox_offset) = nv_sdpfa_fwd(
         query, key, value, dropout_p, is_causal, scale=scale
     )
@@ -2973,7 +2987,6 @@ def cross_entropy_grad(
     reduction: str = "mean",
     label_smoothing: float = 0.0,
 ) -> Any:
-
     fwd, max, log_sum_exp, valid_indices = nv_cross_entropy_fwd(
         a, target, weight, size_average, ignore_index, reduce, reduction, label_smoothing
     )
@@ -3005,6 +3018,6 @@ ex.register_supported(
 
 # At module/class level
 NVFUSER_SUPPORTS_OPTIONS = nvfuser_version() >= LooseVersion("0.2.23")
-assert (
-    NVFUSER_SUPPORTS_OPTIONS
-), f"Installed version of nvFuser {nvfuser_version()} is not supported, please upgrade to 0.2.23 or later."
+assert NVFUSER_SUPPORTS_OPTIONS, (
+    f"Installed version of nvFuser {nvfuser_version()} is not supported, please upgrade to 0.2.23 or later."
+)

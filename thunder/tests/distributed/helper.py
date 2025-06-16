@@ -2,7 +2,6 @@ from __future__ import annotations
 from functools import partial
 from functools import wraps
 from typing import ClassVar, TYPE_CHECKING
-import inspect
 import math
 import os
 import sys

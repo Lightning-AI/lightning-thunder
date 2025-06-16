@@ -5,7 +5,7 @@ from itertools import chain
 from typing import TYPE_CHECKING
 import time
 
-from thunder.core.proxies import Proxy, variableify, unvariableify, Variable, CollectionProxy
+from thunder.core.proxies import Proxy, variableify, CollectionProxy
 from thunder.core.pytree import tree_flatten
 from thunder.core.trace import from_trace, TraceProvenance
 from thunder.core.trace_interpreter import TraceSubstitutionProcessor
@@ -29,7 +29,6 @@ comment_symbols = {prims.PrimIDs.COMMENT, prims.PrimIDs.UNPACK_TRIVIAL}
 # Transforms a trace by determining which execution transforms to call given the list of executors in priority order
 # This pass tries to preserve the original trace and proxies.
 def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: Sequence[Executor]) -> TraceCtx:
-
     # This processes the bsyms to map symbols to operator executors:
     # - if a bsym has a python impl, that will be called, so we can keep it.
     # - in the order of the executor list
