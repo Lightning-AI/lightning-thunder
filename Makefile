@@ -4,6 +4,12 @@
 export SPHINX_MOCK_REQUIREMENTS=0
 
 test: clean
+	git clone https://github.com/bitsandbytes-foundation/bitsandbytes.git && \
+	cd bitsandbytes && \
+	git checkout 70bbbb9219cb10981c3b7f4457f30376e093d896 && \
+	pip install pyproject.toml && \
+	python setup.py install	&& \
+	rm -rf bitsandbytes
 	pip install -q -r requirements.txt -r requirements/test.txt
 
 	# use this to run tests
@@ -28,3 +34,4 @@ clean:
 	rm -rf ./docs/source/**/generated
 	rm -rf ./docs/source/api
 	rm -rf _ckpt_*
+	rm -rf bitsandbytes

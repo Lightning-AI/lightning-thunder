@@ -48,11 +48,6 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Print Python version
-        if: runner.os == 'macOS'
-        run: |
-          python --version
-
       - name: Setup Ubuntu
         if: runner.os == 'ubuntu'
         run: |
