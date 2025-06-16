@@ -3340,13 +3340,7 @@ def sort(
 
 
 @torchsymbol(torch.argsort, is_method=True)
-def argsort(
-    a: TensorLike, 
-    /, 
-    dim: None | int = -1,
-    descending: bool = False,
-    stable: bool = False
-) -> TensorLike:
+def argsort(a: TensorLike, /, dim: None | int = -1, descending: bool = False, stable: bool = False) -> TensorLike:
     """Returns the indices that would sort an array along the given dimension.
 
     Args:
