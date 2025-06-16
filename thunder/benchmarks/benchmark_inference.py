@@ -280,6 +280,7 @@ class SemiAnalysisInferenceBenchmark:
 
         return next_token, decode_time
 
+    @torch.inference_mode()
     def generate(self, input_ids: torch.Tensor, attention_mask: torch.Tensor, max_new_tokens: int) -> Dict[str, Any]:
         """
         Generate tokens using separate prefill and decode phases.
