@@ -42,6 +42,7 @@ def run_with_fake_tensor(torch_op, *args, **kwargs):
     Returns:
         The output of the torch operation executed with fake tensors
     """
+    # To avoid cyclical dependency
     DTensorProxy = lazy_import_dtensor_proxy()
 
     def f(*args, **kwargs):
@@ -90,9 +91,8 @@ def check_dtensor_cotangent_metadata_in_backward(bw_trace: TraceCtx):
 
     # Quick implementation of a symbol to verify
     # that the metadata of the cotangent at runtime as that as during tracing.
-    if torch.distributed.is_available():
-        return bw_trace
 
+    # To avoid cyclical dependency
     DTensorProxy = lazy_import_dtensor_proxy()
 
     check_dtensor_cotangent_metadata_symbol = Symbol(
