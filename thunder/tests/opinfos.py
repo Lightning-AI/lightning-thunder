@@ -291,9 +291,9 @@ class DecorateInfo:
 
         if devicetypes is not None:
             for x in devicetypes:
-                assert isinstance(x, devices.DeviceType), (
-                    f"Found non-devicetype {x} when initializing a DecorateInfo's devicetypes"
-                )
+                assert isinstance(
+                    x, devices.DeviceType
+                ), f"Found non-devicetype {x} when initializing a DecorateInfo's devicetypes"
 
         self.dtypes = None if dtypes is None else datatypes.resolve_dtypes(dtypes)
         self.active_if = active_if
@@ -6422,7 +6422,7 @@ dim_perm_ops.append(sort_opinfo)
 argsort_opinfo = OpInfo(
     clang.argsort,
     name="argsort",
-    supports_grad=True,
+    supports_grad=False,
     sample_input_generator=sort_sample_generator,
     torch_reference=torch.argsort,
     dtypes=(datatypes.bool8, datatypes.signedinteger, datatypes.unsignedinteger, datatypes.floating),

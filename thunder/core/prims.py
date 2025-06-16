@@ -3748,7 +3748,6 @@ argsort = make_prim(
     PrimIDs.ARGSORT,  # Need to add this to PrimIDs enum
     "argsort",
     meta=argsort_meta,
-    tags=(OpTags.REDUCTION_OP,),  # Uses same tag as sort
 )
 
 
