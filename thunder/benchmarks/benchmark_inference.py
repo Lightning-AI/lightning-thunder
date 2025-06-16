@@ -173,7 +173,7 @@ class SemiAnalysisInferenceBenchmark:
             case "eager":
                 return model
             case "inductor":
-                return torch.compile(model)
+                return torch.compile(model, mode="reduce-overhead")
             case "thunder":
                 from thunder.dynamo import thunderfx
                 return thunderfx(model)
