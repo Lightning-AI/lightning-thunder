@@ -117,6 +117,7 @@ def skip_data_parallel_grad_sync() -> Generator[Any, Any, Any]:
 
 
 def _sync_grads(module: torch.nn.Module) -> None:
+    print("#####sync!#")
     import thunder
 
     if hasattr(module, "process_group_for_ddp"):
