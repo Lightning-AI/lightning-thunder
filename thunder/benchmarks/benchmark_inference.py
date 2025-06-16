@@ -296,11 +296,11 @@ class SemiAnalysisInferenceBenchmark:
             "total_tokens": max_new_tokens,
         }
 
-    def measure_inference_step(self, input_ids: torch.Tensor, past_key_values: HybridChunkedCache) -> Dict[str, float]:
+    def measure_inference_step(self, input_ids: torch.Tensor, past_key_values: HybridChunkedCache, max_new_tokens: int) -> Dict[str, float]:
         """Measure a single inference step with detailed timing using separate prefill/decode"""
         with timer() as total_timer:
             # Generate tokens with separate prefill/decode tracking
-            generation_result = self.generate(input_ids, self.config.output_length, past_key_values)
+            generation_result = self.generate(input_ids, max_new_tokens, past_key_values)
         total_time = total_timer()
 
         # Extract metrics
@@ -349,7 +349,7 @@ class SemiAnalysisInferenceBenchmark:
 
         for _ in tqdm(range(self.config.warmup_iterations)):
             input_ids, past_key_values = self.generate_batch()
-            _ = self.measure_inference_step(input_ids, past_key_values)
+            _ = self.measure_inference_step(input_ids, past_key_values, max_new_tokens=1)
 
         # Benchmark iterations
         print(f"\nRunning {self.config.num_iterations} benchmark iterations...")
@@ -358,7 +358,7 @@ class SemiAnalysisInferenceBenchmark:
         for _ in tqdm(range(self.config.num_iterations)):
 
             input_ids, past_key_values = self.generate_batch()
-            iter_metrics = self.measure_inference_step(input_ids, past_key_values)
+            iter_metrics = self.measure_inference_step(input_ids, past_key_values, self.config.output_length)
             all_metrics.append(iter_metrics)
 
             # Track metrics
