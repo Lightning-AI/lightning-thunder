@@ -217,7 +217,7 @@ class SemiAnalysisInferenceBenchmark:
             "llama3.1-405b": "meta-llama/Llama-3.1-405B",
             "deepseekv3-670b": "deepseek-ai/DeepSeek-V3-670B",
             "llama4-scout": "meta-llama/Llama-4-Scout-17B-16E",
-            "llama4-maverick": "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8"
+            "llama4-maverick": "meta-llama/Llama-4-Maverick-17B-128E"
         }
 
         model_id = model_map.get(self.config.model_name.lower(), self.config.model_name)
