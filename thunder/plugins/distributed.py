@@ -11,6 +11,22 @@ from thunder.distributed.transforms.fsdp_v2 import FSDPTransform
 
 
 class DDP(Plugin):
+    """
+    Plugin for enabling Distributed Data Parallel (DDP) training in Thunder.
+
+    This plugin applies the necessary transforms to bucket and synchronize gradients across
+    multiple processes, using a specified process group for communication.
+
+    See https://github.com/pytorch/pytorch/blob/v2.7.0/torch/nn/parallel/distributed.py#L326 for more details.
+
+    Args:
+        bucket_size_in_mb: float, default 25.0
+            Size in megabytes of the gradient bucket in DDP.
+        broadcast_from: int | None, default None
+            Global rank ID to broadcast model parameters from at initialization. If None, no explicit broadcast is performed.
+        process_group: Optional[ProcessGroup], default is the current default process group
+    """
+
     def __init__(
         self,
         bucket_size_in_mb: float = 25.0,
@@ -25,6 +41,12 @@ class DDP(Plugin):
         )
 
     def setup_transforms(self):
+        """
+        Constructs the list of graph-level transforms.
+
+        Returns:
+            list[Transform] contains the DDP transform over the process group.
+        """
         ddp = DDPTransform(
             process_group=self.process_group,
             bucket_size_in_mb=self.bucket_size_in_mb,
@@ -34,6 +56,33 @@ class DDP(Plugin):
 
 
 class FSDP(Plugin):
+    """
+    Plugin for enabling Fully Sharded Data Parallel (FSDP) training in Thunder.
+
+    This plugin shards model parameters across workers using PyTorch's FSDP API,
+    optionally combined with DDP for grouped communication in multi-dimensional meshes.
+    It handles initialization broadcasts, parameter materialization, and state dict management
+    according to specified sharding and bucketing strategies.
+
+    See https://github.com/pytorch/pytorch/blob/v2.7.0/torch/distributed/fsdp/fully_sharded_data_parallel.py#L117 for more details.
+
+    Args:
+        device: torch.device | None, default None
+            Device on which to place sharded modules. If None, modules remain on their existing devices.
+        broadcast_from: int | None, default None
+            Global rank ID to broadcast parameters from before sharding. If None, no broadcast is performed.
+        sharding_strategy: FSDPType, default FSDPType.ZERO2
+            Strategy for parameter sharding (e.g., ZERO2 for sharding both parameters and optimizer state).
+        bucketing_strategy: FSDPBucketingStrategy, default FSDPBucketingStrategy.NONE
+            Bucketing strategy to use when saving or loading FSDP checkpoints.
+        move_state_dict_to_cpu: bool, default False
+            Whether to move the state dict parameters to CPU after serialization to reduce GPU memory usage.
+        ddp_bucket_size_in_mb: float, default 25.0
+            Bucket size in megabytes for the DDP transform when used in a combined mesh with FSDP.
+        process_group: Optional[ProcessGroup or DeviceMesh], default is the current default process group
+            The process group or device mesh to use for distributed communication. If None, uses the default process group.
+    """
+
     def __init__(
         self,
         device: torch.device | None = None,
@@ -56,11 +105,17 @@ class FSDP(Plugin):
         )
 
     def setup_transforms(self):
+        """
+        Constructs the list of graph-level transforms.
+        If the process group is a DeviceMesh that contains both `fsdp` and `ddp` groups it will setup a hybrid DDP-FSDP transform.
+
+        Returns:
+            list[Transform]: contains the parallelism and materialization transforms.
+        """
         pg = self.process_group
         transforms = []
 
         if isinstance(pg, DeviceMesh):
-
             dims = pg.mesh_dim_names
 
             if dims == ("ddp", "fsdp"):

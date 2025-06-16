@@ -9,27 +9,22 @@ from itertools import chain
 from types import ModuleType
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, List, Type, Tuple, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 from collections.abc import Callable, Hashable, Iterable
 from collections.abc import Sequence
 
 import thunder.core.baseutils as baseutils
 import thunder.core.codeutils as codeutils
 from thunder.core.codeutils import Printable, Positions
-from thunder.core.baseutils import BoundSymbolInterface, ProxyInterface, TagBase
+from thunder.core.baseutils import BoundSymbolInterface, TagBase
 from thunder.core.utils import FrozenDict, make_hashable
 from thunder.core.pytree import tree_flatten_with_dataclass, tree_unflatten, tree_map
-import thunder.core.dtypes as dtypes
-import thunder.core.devices as devices
-from thunder.core.proxies import Proxy, TensorProxy, NumberProxy, variableify, CollectionProxy, ProxyTag
+from thunder.core.proxies import Proxy, TensorProxy, variableify, CollectionProxy, ProxyTag
 from thunder.core.compile_data import get_compile_data
 
 from thunder.core.trace import (
     get_tracectx,
-    maybe_reset_trace,
-    maybe_start_trace,
     VariableInterface,
-    wrap_in_trace_variable,
 )
 
 #
@@ -215,9 +210,9 @@ class Symbol:
 
             if sym is None:
                 raise RuntimeError(f"Could not find symbol {name} in executor {executor}.")
-            assert isinstance(
-                sym, Symbol
-            ), f"lookup {name} in executor {executor} gave object of type {type(sym)} instead of Symbol"
+            assert isinstance(sym, Symbol), (
+                f"lookup {name} in executor {executor} gave object of type {type(sym)} instead of Symbol"
+            )
 
         return sym
 
@@ -228,9 +223,9 @@ class Symbol:
             raise ValueError("Cannot serialize a symbol without a module and executor.")
 
         if self.executor is None:
-            assert (
-                getattr(sys.modules[self.module.__name__], self.name, None) is self
-            ), f"{self.module.__name__}.{self.name} is not {self}"
+            assert getattr(sys.modules[self.module.__name__], self.name, None) is self, (
+                f"{self.module.__name__}.{self.name} is not {self}"
+            )
         else:
             assert thunder.get_executor(self.executor.name).opmap.get(self.name) is self
 

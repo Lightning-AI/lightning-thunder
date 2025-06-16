@@ -252,6 +252,9 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     # the forward trace and inputs of the backward trace.
     fw_trace, bw_trace = forward_and_backward_from_trace(primal_trace, torch_autograd=True)
 
+    if bw_trace is None:
+        return fw_trace, None
+
     fw_traces = [fw_trace]
     bw_traces = [bw_trace]
 
@@ -443,6 +446,11 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     fw_extrace._include_te_fp8_autocast = True
     # We only want the forward function to be called with `te.fp8_autocast` manager.
     bw_extrace._include_te_fp8_autocast = False
+
+    # We only want to apply it on backward trace.
+    from thunder.torch.experimental.dtensor_utils import check_dtensor_cotangent_metadata_in_backward
+
+    bw_extrace = check_dtensor_cotangent_metadata_in_backward(bw_extrace)
 
     if len(bw_extrace.bound_symbols) == 1:
         # only return, no unpacking, so no gradient is calculated

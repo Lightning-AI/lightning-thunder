@@ -1,18 +1,22 @@
 from dataclasses import dataclass, replace
 from functools import partial, lru_cache
 from numbers import Number
-from typing import Union, List, Any, Optional, Dict, Set, Tuple, Type
-from types import NoneType
+from typing import Any, Optional
 from collections.abc import Callable, Mapping, Hashable, Sequence
 import os
 import time
 from copy import copy
 from itertools import chain, filterfalse
 import warnings
+from typing import cast
+from collections.abc import Callable
 
 from looseversion import LooseVersion
 import torch
 from torch import Tensor
+from torch.distributed.tensor import DTensor
+from torch.distributed.tensor.placement_types import Placement, Shard, Replicate
+import torch.distributed as dist
 
 import thunder.core.dtypes as dtypes
 import thunder.torch as ltorch
@@ -31,17 +35,17 @@ from thunder.core.proxies import (
     Variable,
     pyval,
 )
-from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
+from thunder.core.pytree import tree_map
 from thunder.core.rematerialization import rematerialize
-from thunder.core.utils import OrderedSet, check, check_same_dtype
+from thunder.core.utils import check
 from thunder.core.trace import TraceCtx, from_trace, TraceProvenance
 from thunder.core.symbol import BoundSymbol, BoundSymbolRHS, Symbol, has_tags
 from thunder.core.devices import Device, DeviceType, cpu
-import thunder.core.codeutils as codeutils
-from thunder.core.codeutils import Printable
-from thunder.core.transform_common import dce, cse_single_bsym, replace_redundant_inputs, NON_FUNCTIONAL_OPS
+from thunder.core.transform_common import dce, cse_single_bsym, replace_redundant_inputs
 from thunder.core.profile import annotate_for_profile
 from thunder.core.compile_data import get_compile_option
+from thunder.torch.experimental.dtensor_torch_and_prims import dtensor_mul_prim
+from thunder.torch.experimental.dtensor_proxy import DTensorProxy
 
 from thunder.core.transforms import (
     get_grad,
@@ -62,7 +66,7 @@ from thunder.executors.utils import (
 )
 
 from thunder.executors.passes import update_fusion_call_ctx
-from thunder.extend import FUEL_LEVEL, FusionExecutor, register_executor, add_default_executor
+from thunder.extend import FUEL_LEVEL, FusionExecutor, register_executor
 from thunder.executors.nvfuserex import nvfuser_version
 
 # NOTE This impl file is here because nvFuser may not be available, so it's imported conditionally
@@ -242,6 +246,49 @@ def get_translator(bsym: BoundSymbol) -> Callable:
     return _translation_map[bsym.sym.id]
 
 
+def get_methods_for_dtensor_fd(in_dtensors: list[DTensorProxy]) -> tuple[Callable]:
+    def _find_tensor_by_index(self, index: int) -> nvfuser.Tensor:
+        for t in self.sched.tensors():
+            if t.index == index:
+                return t
+        return None
+
+    def multidevice_schedule(self) -> None:
+        for in_tensor_index, in_dtensor in zip(self.inputs(), in_dtensors):
+            in_tensor = self._find_tensor_by_index(in_tensor_index)
+
+            # Set the device mesh.
+            assert in_dtensor.device_mesh.ndim == 1, "nvFuser's Python API only supports 1D meshes."
+            mesh = nvfuser.DeviceMesh(in_dtensor.device_mesh.mesh.tolist())
+
+            self.sched._set_device_mesh(in_tensor, mesh)
+
+            # Split and parallelize.
+            assert len(in_dtensor.placements) == 1, "Expect a 1D mesh"
+            # When the mesh is multi-dimensional, iterate through the
+            # placements in descending order of Placement.dim.
+            placement: Placement = in_dtensor.placements[0]
+            if placement.is_shard():
+                dim = cast(Shard, placement).dim
+                self.sched.split(in_tensor, dim, mesh.size, False)
+                self.sched.parallelize(in_tensor, dim, nvfuser.ParallelType.mesh_x)
+                self.sched.set_allocation_as_loop(in_tensor)
+
+    return _find_tensor_by_index, multidevice_schedule
+
+
+def bind(instance: object, func: Callable, as_name: str | None = None):
+    """
+    Bind the function *func* to *instance*, with either provided name *as_name*
+    or the existing name of *func*. The provided *func* should accept the
+    instance as the first argument, i.e. "self".
+    """
+    if as_name is None:
+        as_name = func.__name__
+    bound_method = func.__get__(instance, instance.__class__)
+    setattr(instance, as_name, bound_method)
+
+
 def create_fd(
     bsyms: list[BoundSymbol],
     input_descriptors: Sequence[type | tuple[tuple[int, ...], tuple[bool, ...], tuple[int, ...]]],
@@ -255,11 +302,10 @@ def create_fd(
     # TODO Review splititng very large fusions or removing the max length restriction completely
     #   See "Very large nvFuser fusions hit max_length"
     fd = FusionDefinition(max_length=9999)
-
     # Device may be set in one of the "factory" methods like full, iota, or uniform
     fd._selected_device = None
 
-    with fd:
+    def definition(fd):
         # NOTE Adding constants is disabled for the moment in favor of definining them inline
         # 0) Adds constants
 
@@ -278,7 +324,7 @@ def create_fd(
                 lc_to_nv_map[x] = nv
             elif isinstance(x, TensorProxy):
                 utils.check_type(y, tuple)
-                contiguity, stride_order = y
+                contiguity, stride_order, dtensor_metadata = y
                 symbolic_shape = compute_symbolic_shape(x._shape, x._shape)
                 nvdtype = lcdtype_to_nvdtype(x.dtype)
                 is_cpu = x.device == cpu
@@ -328,7 +374,31 @@ def create_fd(
             nvout = lc_to_nv_map[out]
             fd.add_output(nvout)
 
-    return fd
+    bind(fd, definition, "definition")
+
+    is_multigpu_fd = False
+    if any(map(lambda t: isinstance(t, DTensorProxy), sorted_unique_inputs)):
+        # multi-GPU path
+        assert all(map(lambda t: isinstance(t, DTensorProxy), sorted_unique_inputs)), (
+            "nvfuser: Currently we only support Fusion region with all DTensor inputs or all Tensor inputs but not a mix"
+        )
+
+        def check_dtensor_tracing_and_runtime_metadata(inp):
+            x, y = inp
+            _, _, dtensor_metadata = y
+            runtime_device_mesh_repr = dtensor_metadata[0]
+            runtime_placements_repr = dtensor_metadata[1]
+            return repr(x.device_mesh) == runtime_device_mesh_repr and repr(x.placements) == runtime_placements_repr
+
+        assert all(map(check_dtensor_tracing_and_runtime_metadata, zip(sorted_unique_inputs, input_descriptors))), "nvfuser: Expected runtime and tracing metadata to be the same for DTensor."
+
+        _find_tensor_by_index, multidevice_schedule = get_methods_for_dtensor_fd(sorted_unique_inputs)
+
+        bind(fd, multidevice_schedule, "multidevice_schedule")
+        bind(fd, _find_tensor_by_index, "_find_tensor_by_index")
+        is_multigpu_fd = True
+
+    return fd, is_multigpu_fd
 
 
 def compute_symbolic_shape(
@@ -415,6 +485,14 @@ def compute_contiguity(
     return tuple(tuple(x) for x in nv_compute_td(shape, stride))
 
 
+def make_key_from_dtensor(dtensor: DTensor) -> tuple[str]:
+    if isinstance(dtensor, DTensor):
+        key = (repr(dtensor.device_mesh), repr(dtensor.placements))
+    else:
+        key = ()
+    return key
+
+
 def to_runtime_descriptors(args) -> tuple:
     """
     Converts the arguments to their runtime descriptors.
@@ -428,7 +506,10 @@ def to_runtime_descriptors(args) -> tuple:
     Returns:
         Tuple: The runtime descriptors of the arguments.
     """
-    return tuple(compute_contiguity(arg.shape, arg.stride()) if isinstance(arg, Tensor) else None for arg in args)
+    return tuple(
+        compute_contiguity(arg.shape, arg.stride()) + (make_key_from_dtensor(arg),) if isinstance(arg, Tensor) else None
+        for arg in args
+    )
 
 
 # TODO Consider making this just a function, because it's faster to call a function than a callable class
@@ -450,24 +531,48 @@ class FusionDefinitionWrapper:
     save_fake_inputs: bool = False
     enable_options: None | list[str] = None
     disable_options: None | list[str] = None
+    is_multigpu_fd: None | bool = None
 
     @annotate_for_profile("FusionDefinitionWrapper.__call__")
     def __call__(self, *args):
         if self.use_cache or self.last_used is None:
-            self.last_used = self.get_fd(self.to_descriptors(args))
+            self.last_used, self.is_multigpu_fd = self.get_fd(self.to_descriptors(args))
         fd = self.last_used
 
         if self.store_inputs:
             self.last_inputs = args
 
-        with annotate_for_profile(self.name):
-            return fd.execute(
-                args,
-                device=fd._selected_device,
-                save_repro_inputs=self.save_fake_inputs,
-                _enable_options=self.enable_options,
-                _disable_options=self.disable_options,
-            )
+        if self.is_multigpu_fd:
+            with annotate_for_profile(self.name):
+                in_tensors = [in_dtensor.to_local() for in_dtensor in args]
+                out_tensors, out_shardings = fd.execute(
+                    in_tensors,
+                    device=fd._selected_device,
+                    save_repro_inputs=self.save_fake_inputs,
+                    _enable_options=self.enable_options,
+                    _disable_options=self.disable_options,
+                )
+
+                assert len(out_tensors) == len(out_shardings)
+                out_dtensors: list[DTensor] = []
+                for out_tensor, out_sharding in zip(out_tensors, out_shardings):
+                    mesh = dist.device_mesh.init_device_mesh("cuda", (out_sharding.mesh.size,))
+                    placements: list[Placement] = []
+                    for parallel_type in [nvfuser.ParallelType.mesh_x]:
+                        axis: int = out_sharding.axis_sharded_on(parallel_type)
+                        placements.append(Replicate() if axis == -1 else Shard(axis))
+                    out_dtensors.append(DTensor.from_local(out_tensor, mesh, placements))
+
+                return out_dtensors
+        else:
+            with annotate_for_profile(self.name):
+                return fd.execute(
+                    args,
+                    device=fd._selected_device,
+                    save_repro_inputs=self.save_fake_inputs,
+                    _enable_options=self.enable_options,
+                    _disable_options=self.disable_options,
+                )
 
     def __repr__(self):
         return f"FusionDefinitionWrapper({self.name})"
@@ -578,7 +683,7 @@ def create_fusion_definition_wrapper(
     # TODO (mruberry) We should think how to express "static fusion" that don't need to use
     #   a cache to improve dispatch performance
     @lru_cache(maxsize=2048)
-    def get_fd(input_descriptors) -> FusionDefinition:
+    def get_fd(input_descriptors) -> tuple[FusionDefinition, bool]:
         # A closure over local trace and region
         return create_fd(bsyms, input_descriptors, sorted_unique_inputs, sorted_unique_outputs)
 
@@ -1904,6 +2009,7 @@ def mul(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinitio
 
 
 register_supported(PrimIDs.MUL, mul, _elementwise_binary_check)
+register_supported(dtensor_mul_prim.id, mul, _elementwise_binary_check)
 
 
 def ne(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
@@ -1974,6 +2080,28 @@ def minimum(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefin
 
 
 register_supported(PrimIDs.MINIMUM, minimum, _elementwise_binary_check)
+
+
+def bitwise_left_shift(
+    a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict
+) -> Any:
+    nva = getnv(a, fd, lc_to_nv_map)
+    nvb = getnv(b, fd, lc_to_nv_map)
+
+    return fd.ops.bitwise_left_shift(nva, nvb)
+
+
+def bitwise_right_shift(
+    a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict
+) -> Any:
+    nva = getnv(a, fd, lc_to_nv_map)
+    nvb = getnv(b, fd, lc_to_nv_map)
+
+    return fd.ops.bitwise_right_shift(nva, nvb)
+
+
+register_supported(PrimIDs.BITWISE_LEFT_SHIFT, bitwise_left_shift, _elementwise_binary_check)
+register_supported(PrimIDs.BITWISE_RIGHT_SHIFT, bitwise_right_shift, _elementwise_binary_check)
 
 
 #
@@ -2220,7 +2348,7 @@ def remove_redundant_casts(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
         if len(bsym.args) == 2:
             a, dtyp = bsym.args
         elif len(bsym.args) == 1:
-            utils.check(len(bsym.kwargs) == 1, lambda: f"Expected two arguments for convert element type")
+            utils.check(len(bsym.kwargs) == 1, lambda: "Expected two arguments for convert element type")
             (a,) = bsym.args
             dtyp = bsym.kwargs["dtype"]
         else:
@@ -2312,7 +2440,7 @@ def remove_redundant_casts(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
             nbsyms.append(nbsym)
             utils.check(
                 nbsym.subsymbols is None or len(nbsym.subsymbols) == 0,
-                lambda: f"Expected no subsymbols when creating a new BoundSymbol in the remove redundant casts pass",
+                lambda: "Expected no subsymbols when creating a new BoundSymbol in the remove redundant casts pass",
                 exception_type=AssertionError,
             )
 
@@ -2491,7 +2619,6 @@ def _scaled_dot_product_flash_attention_forward(
     fd: FusionDefinition,
     lc_to_nv_map: dict,
 ) -> Any:
-
     inputs = [query, key, value, dropout_p, is_causal, scale]
     nv_inputs = []
     for inp in inputs:
@@ -2526,7 +2653,6 @@ def _scaled_dot_product_flash_attention_backward_meta(
     *,
     scale: None | float = None,
 ) -> tuple[TensorProxy, TensorProxy, TensorProxy]:
-
     batch_size, num_heads, query_seq_len, E = query.shape
     key_seq_len = key.shape[2]
 
@@ -2554,7 +2680,6 @@ def _scaled_dot_product_flash_attention_backward(
     fd: FusionDefinition,
     lc_to_nv_map: dict,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-
     inputs = [grad_out, query, key, value, out, logsumexp, dropout_p, is_causal, philox_seed, philox_offset, scale]
     nv_inputs = []
     for inp in inputs:
@@ -2585,7 +2710,6 @@ def _scaled_dot_product_flash_attention_check(
     *,
     scale: None | float = None,
 ) -> bool:
-
     # fd.ops.sdpfa_fwd and fd.ops.sdpfa_bwd are adding in versions 0.2.9 and 0.2.10 respectively.
     if nvfuser_version() < LooseVersion("0.2.10"):
         return False
@@ -2644,7 +2768,6 @@ def scaled_dot_product_flash_attention_grad(
     *,
     scale: None | float = None,
 ):
-
     (attn_output, logsumexp, philox_seed, philox_offset) = nv_sdpfa_fwd(
         query, key, value, dropout_p, is_causal, scale=scale
     )
@@ -2973,7 +3096,6 @@ def cross_entropy_grad(
     reduction: str = "mean",
     label_smoothing: float = 0.0,
 ) -> Any:
-
     fwd, max, log_sum_exp, valid_indices = nv_cross_entropy_fwd(
         a, target, weight, size_average, ignore_index, reduce, reduction, label_smoothing
     )
@@ -3005,6 +3127,6 @@ ex.register_supported(
 
 # At module/class level
 NVFUSER_SUPPORTS_OPTIONS = nvfuser_version() >= LooseVersion("0.2.23")
-assert (
-    NVFUSER_SUPPORTS_OPTIONS
-), f"Installed version of nvFuser {nvfuser_version()} is not supported, please upgrade to 0.2.23 or later."
+assert NVFUSER_SUPPORTS_OPTIONS, (
+    f"Installed version of nvFuser {nvfuser_version()} is not supported, please upgrade to 0.2.23 or later."
+)

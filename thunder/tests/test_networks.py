@@ -404,23 +404,40 @@ def test_thunderfx_mistral_nemo_small():
     assert mdl._backend.subgraph_infos, "Should have at least 1 subgraph"
 
 
-@thunder.tests.framework.requiresCUDA
-@pytest.mark.parametrize("model_id", ["Qwen/Qwen2.5-7B-Instruct", "microsoft/Phi-3-mini-128k-instruct"])
-def test_hf_for_nemo(model_id):
-    from thunder.dynamo import thunderfx
-    from transformers import AutoConfig, AutoModelForCausalLM
+def _get_model_config_pairs():
+    def phi3():
+        from transformers.models.phi3 import Phi3ForCausalLM, Phi3Config
 
-    configuration = AutoConfig.from_pretrained(
-        model_id,
-        # Scaled down for testing
-        vocab_size=16,
-        pad_token_id=15,
-        max_position_embeddings=32,
+        return Phi3ForCausalLM, Phi3Config
+
+    def qwen2():
+        from transformers.models.qwen2 import Qwen2ForCausalLM, Qwen2Config
+
+        return Qwen2ForCausalLM, Qwen2Config
+
+    return [(phi3), (qwen2)]
+
+
+@thunder.tests.framework.requiresCUDA
+@pytest.mark.parametrize("model_fn", _get_model_config_pairs())
+def test_hf_for_nemo(model_fn):
+    from thunder.dynamo import thunderfx
+    import torch
+
+    model_cls, config_cls = model_fn()
+
+    config = config_cls(
         num_hidden_layers=1,
+        hidden_size=16,
+        num_attention_heads=16,
+        num_key_value_heads=16,
+        vocab_size=32,
+        max_position_embeddings=16,
+        pad_token_id=15,
     )
-    configuration.hidden_size = configuration.num_attention_heads
+
     with torch.device("cuda"):
-        model = AutoModelForCausalLM.from_config(configuration).to(torch.bfloat16)
+        model = model_cls(config).to(torch.bfloat16)
 
     # thunder.jit doesn't work with Qwen2, so we use torch.compile
     # https://github.com/Lightning-AI/lightning-thunder/issues/1405
@@ -430,7 +447,7 @@ def test_hf_for_nemo(model_id):
     fullgraph = False
     compiled_model = thunderfx(model, fullgraph=fullgraph)
 
-    input_ids = torch.randint(0, configuration.vocab_size, (1, configuration.max_position_embeddings), device="cuda")
+    input_ids = torch.randint(0, config.vocab_size, (1, config.max_position_embeddings), device="cuda")
     ref_output = model(input_ids=input_ids, labels=input_ids)
     ref_loss = ref_output.loss
 
@@ -443,14 +460,16 @@ def test_hf_for_nemo(model_id):
     torch.testing.assert_close(compiled_loss, ref_loss, rtol=1e-2, atol=1e-2)
 
     if fullgraph:
-        assert (
-            len(compiled_model._backend.subgraph_infos) == 1
-        ), "Should have exactly 1 subgraph because of fullgraph=True"
+        assert len(compiled_model._backend.subgraph_infos) == 1, (
+            "Should have exactly 1 subgraph because of fullgraph=True"
+        )
     loss_grad = torch.randn_like(compiled_loss)
 
     grads_ref = torch.autograd.grad(ref_loss, model.parameters(), grad_outputs=loss_grad)
     grads_compiled = torch.autograd.grad(compiled_loss, model.parameters(), grad_outputs=loss_grad)
     torch.testing.assert_close(grads_ref, grads_compiled, rtol=1e-2, atol=1e-2)
+
+    torch._dynamo.reset()
 
 
 LLAMA_3_2_1B_CFG = {
@@ -586,7 +605,6 @@ def test_checkpointing_thunderfx():
     from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
         apply_activation_checkpointing,
         checkpoint_wrapper,
-        CheckpointWrapper,
     )
 
     def forward_backward_peak(m, inp):

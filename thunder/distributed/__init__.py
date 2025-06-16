@@ -426,7 +426,7 @@ def fsdp(
     """
     from thunder.core.module import ThunderModule
 
-    utils.check(isinstance(sharding_strategy, FSDPType), lambda: f"FSDPType.ZERO2 and FSDPType.ZERO3 are supported.")
+    utils.check(isinstance(sharding_strategy, FSDPType), lambda: "FSDPType.ZERO2 and FSDPType.ZERO3 are supported.")
     utils.check(
         tdist.is_available(),
         lambda: "fsdp requires torch distributed to be available (but it's not)",
@@ -516,7 +516,6 @@ def _shard_tensor(
     allow_padding_for_fsdp: bool = False,
     dim: int | None = None,
 ) -> tuple[torch.Tensor, int | None]:
-
     dim_to_shard = 0 if dim is None else dim
     if allow_padding_for_fsdp:
         utils.check(dim_to_shard == 0, lambda: f"Invalid {dim=} with {allow_padding_for_fsdp=}, Only 0 is supported")
