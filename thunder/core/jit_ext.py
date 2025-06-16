@@ -1931,7 +1931,7 @@ def unpack_inputs(ctx, pro_to_comp_inps, pro_to_epi_inps, args, kwargs):
                         ctx.unpack_variable_or_proxy(s)
 
             # Add checks for local tensor, mesh and placment of a DTensor
-            if handle_check_dtensor_spec_in_prologue(prim, prologue_trace, args):
+            if handle_check_dtensor_spec_in_prologue(prim, ctx.prologue_trace, args):
                 continue
 
             prim(*args)
