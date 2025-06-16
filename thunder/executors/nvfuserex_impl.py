@@ -390,7 +390,9 @@ def create_fd(
             runtime_placements_repr = dtensor_metadata[1]
             return repr(x.device_mesh) == runtime_device_mesh_repr and repr(x.placements) == runtime_placements_repr
 
-        assert all(map(check_dtensor_tracing_and_runtime_metadata, zip(sorted_unique_inputs, input_descriptors))), "nvfuser: Expected runtime and tracing metadata to be the same for DTensor."
+        assert all(map(check_dtensor_tracing_and_runtime_metadata, zip(sorted_unique_inputs, input_descriptors))), (
+            "nvfuser: Expected runtime and tracing metadata to be the same for DTensor."
+        )
 
         _find_tensor_by_index, multidevice_schedule = get_methods_for_dtensor_fd(sorted_unique_inputs)
 
