@@ -3044,8 +3044,46 @@ def topk_transform(
 
 register_supported(prims.topk, topk_transform, _topk_check_)
 
+
+def _argsort_check_(a: TensorProxy, /, dim: int | None = None, descending: bool = False, stable: bool = False) -> bool:
+    return True
+
+
+def argsort_transform(
+    a: TensorProxy,
+    /,
+    dim: int | None = None,
+    descending: bool = False,
+    stable: bool = False,
+    *,
+    fd: FusionDefinition,
+    lc_to_nv_map: dict,
+) -> TensorProxy:
+    """Transform argsort operation for NVFuser execution.
+
+    Args:
+        a: Input tensor
+        dim: Dimension along which to sort
+        descending: Sort in descending order if True
+        stable: Whether to use a stable sorting algorithm
+        fd: Fusion definition
+        lc_to_nv_map: Map from Lightning tensors to NVFuser tensors
+
+    Returns:
+        TensorProxy: Tensor of indices that would sort the input tensor
+    """
+    nva = getnv(a, fd, lc_to_nv_map)
+    if dim is None:
+        dim = a.ndim - 1 if a.ndim > 0 else 0
+
+    return fd.ops.argsort(nva, dim, bool(descending), bool(stable))
+
+
+# Register argsort with NVFuser
+register_supported(prims.argsort, argsort_transform, _argsort_check_)
+
 # At module/class level
 NVFUSER_SUPPORTS_OPTIONS = nvfuser_version() >= LooseVersion("0.2.23")
-assert NVFUSER_SUPPORTS_OPTIONS, (
-    f"Installed version of nvFuser {nvfuser_version()} is not supported, please upgrade to 0.2.23 or later."
-)
+assert (
+    NVFUSER_SUPPORTS_OPTIONS
+), f"Installed version of nvFuser {nvfuser_version()} is not supported, please upgrade to 0.2.23 or later."
