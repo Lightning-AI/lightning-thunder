@@ -30,7 +30,7 @@ This benchmark implements the methodology from the SemiAnalysis article: ["AMD v
 - **Use Case**: Conversational AI, general-purpose inference
 - **Target**: Baseline comparison scenario
 
-### 3. Reasoning (Decode-Heavy) 1k -> 4k 
+### 3. Reasoning (Decode-Heavy) 1k -> 4k
 - **Configuration**: 1,000 input → 4,000 output tokens
 - **Workload Balance**: 20% prefill, 80% decode computational cost
 - **Hardware Focus**: Memory bandwidth optimization dominates
@@ -61,7 +61,7 @@ Thunder compilation with various executor configurations:
 ### Eager Mode
 Pure PyTorch eager execution (no compilation)
 
-### Inductor Mode  
+### Inductor Mode
 PyTorch torch.compile
 
 ## Command Line Reference
@@ -69,7 +69,7 @@ PyTorch torch.compile
 ### Basic Usage
 
 ```bash
-python inference_bmk.py [OPTIONS]
+python benchmark_inference.py [OPTIONS]
 ```
 
 ### Core Options
@@ -91,9 +91,9 @@ python inference_bmk.py [OPTIONS]
 --scenario {summarization,chat,reasoning}
     Use standardized benchmark scenario
     - summarization: 4,000 input → 1,000 output (prefill-heavy)
-    - chat: 1,000 input → 1,000 output (balanced)  
+    - chat: 1,000 input → 1,000 output (balanced)
     - reasoning: 1,000 input → 4,000 output (decode-heavy)
-    
+
 --list-scenarios
     List detailed scenario descriptions and exit
 ```
@@ -105,8 +105,8 @@ python inference_bmk.py [OPTIONS]
 
 --input-length INTEGER
     Input sequence length (default: 2048, ignored if --scenario used)
-    
---output-length INTEGER  
+
+--output-length INTEGER
     Output sequence length (default: 128, ignored if --scenario used)
 ```
 
@@ -114,7 +114,7 @@ python inference_bmk.py [OPTIONS]
 ```bash
 --mode {thunder,eager,inductor}
     Compilation mode (default: thunder)
-    
+
 --thunder-executors STRING
     Thunder executor configuration (optional, only with --mode thunder)
     Examples: inductor, inductor_cat, transformerengine, transformerengine_v2, dynamo
@@ -124,7 +124,7 @@ python inference_bmk.py [OPTIONS]
 ```bash
 --num-iterations INTEGER
     Number of benchmark iterations (default: 100)
-    
+
 --warmup-iterations INTEGER
     Number of warmup iterations (default: 10)
 ```
@@ -133,7 +133,7 @@ python inference_bmk.py [OPTIONS]
 ```bash
 --save-results
     Save detailed results to JSON file
-    
+
 --output-dir PATH
     Directory to save results (default: ./results)
 ```
@@ -144,41 +144,41 @@ python inference_bmk.py [OPTIONS]
 
 #### Run Chat Scenario with Default Thunder
 ```bash
-python inference_bmk.py --scenario chat --model-name llama3.1-8b
+python benchmark_inference.py --scenario chat --model-name llama3.1-8b
 ```
 
 #### Run Summarization Scenario with Thunder + Inductor
 ```bash
-python inference_bmk.py --scenario summarization --mode thunder --thunder-executors inductor
+python benchmark_inference.py --scenario summarization --mode thunder --thunder-executors inductor
 ```
 
 #### Run Reasoning Scenario with Eager Mode
 ```bash
-python inference_bmk.py --scenario reasoning --mode eager --save-results
+python benchmark_inference.py --scenario reasoning --mode eager --save-results
 ```
 
 ### Custom Configurations
 
 #### Custom Input/Output Lengths
 ```bash
-python inference_bmk.py --input-length 2048 --output-length 512 --mode thunder
+python benchmark_inference.py --input-length 2048 --output-length 512 --mode thunder
 ```
 
 #### Large Model with Multiple Iterations
 ```bash
-python inference_bmk.py --model-name llama3.1-70b --scenario chat --num-iterations 50
+python benchmark_inference.py --model-name llama3.1-70b --scenario chat --num-iterations 50
 ```
 
 #### Experimentation with Different Executors
 ```bash
 # Thunder with TransformerEngine
-python inference_bmk.py --scenario chat --mode thunder --thunder-executors transformerengine_v2
+python benchmark_inference.py --scenario chat --mode thunder --thunder-executors transformerengine_v2
 
 # Pure Inductor mode
-python inference_bmk.py --scenario reasoning --mode inductor
+python benchmark_inference.py --scenario reasoning --mode inductor
 
 # Eager mode for baseline
-python inference_bmk.py --scenario summarization --mode eager
+python benchmark_inference.py --scenario summarization --mode eager
 ```
 
 ### Performance Comparison
@@ -186,16 +186,16 @@ python inference_bmk.py --scenario summarization --mode eager
 #### Compare Different Modes for Same Scenario
 ```bash
 # Thunder (default executors)
-python inference_bmk.py --scenario chat --mode thunder --save-results
+python benchmark_inference.py --scenario chat --mode thunder --save-results
 
 # Thunder + Inductor
-python inference_bmk.py --scenario chat --mode thunder --thunder-executors inductor --save-results
+python benchmark_inference.py --scenario chat --mode thunder --thunder-executors inductor --save-results
 
 # Pure Inductor
-python inference_bmk.py --scenario chat --mode inductor --save-results
+python benchmark_inference.py --scenario chat --mode inductor --save-results
 
 # Eager baseline
-python inference_bmk.py --scenario chat --mode eager --save-results
+python benchmark_inference.py --scenario chat --mode eager --save-results
 ```
 
 ## Output Metrics
@@ -236,31 +236,31 @@ python inference_bmk.py --scenario chat --mode eager --save-results
 
 ```bash
 # List all available options
-python inference_bmk.py --help
+python benchmark_inference.py --help
 
 # List detailed scenario descriptions
-python inference_bmk.py --list-scenarios
+python benchmark_inference.py --list-scenarios
 ```
 
 ## Example Workflow
 
 ```bash
 # 1. List available scenarios
-python inference_bmk.py --list-scenarios
+python benchmark_inference.py --list-scenarios
 
 # 2. Run standard chat benchmark
-python inference_bmk.py --scenario chat --save-results
+python benchmark_inference.py --scenario chat --save-results
 
 # 3. Compare with different executor
-python inference_bmk.py --scenario chat --thunder-executors inductor --save-results
+python benchmark_inference.py --scenario chat --thunder-executors inductor --save-results
 
 # 4. Test eager mode baseline
-python inference_bmk.py --scenario chat --mode eager --save-results
+python benchmark_inference.py --scenario chat --mode eager --save-results
 
 # 5. Run all three scenarios for comprehensive evaluation
-python inference_bmk.py --scenario summarization --save-results
-python inference_bmk.py --scenario chat --save-results  
-python inference_bmk.py --scenario reasoning --save-results
+python benchmark_inference.py --scenario summarization --save-results
+python benchmark_inference.py --scenario chat --save-results
+python benchmark_inference.py --scenario reasoning --save-results
 ```
 
-This benchmark provides a comprehensive evaluation framework for LLM inference performance, enabling systematic comparison across different models, hardware configurations, and optimization strategies. 
+This benchmark provides a comprehensive evaluation framework for LLM inference performance, enabling systematic comparison across different models, hardware configurations, and optimization strategies.
