@@ -665,14 +665,6 @@ Examples:
         "--model-name",
         type=str,
         default="llama3.1-8b", # Small model so it's easier to iterate locally.
-        choices=[
-            "llama3.1-8b",
-            "llama3.1-70b",
-            "llama3.1-405b",
-            "deepseekv3-670b",
-            "llama4-scout",
-            "llama4-maverick",
-        ],
         help="Model to benchmark",
     )
     parser.add_argument(
