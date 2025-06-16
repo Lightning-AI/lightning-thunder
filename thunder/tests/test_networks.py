@@ -460,9 +460,9 @@ def test_hf_for_nemo(model_fn):
     torch.testing.assert_close(compiled_loss, ref_loss, rtol=1e-2, atol=1e-2)
 
     if fullgraph:
-        assert (
-            len(compiled_model._backend.subgraph_infos) == 1
-        ), "Should have exactly 1 subgraph because of fullgraph=True"
+        assert len(compiled_model._backend.subgraph_infos) == 1, (
+            "Should have exactly 1 subgraph because of fullgraph=True"
+        )
     loss_grad = torch.randn_like(compiled_loss)
 
     grads_ref = torch.autograd.grad(ref_loss, model.parameters(), grad_outputs=loss_grad)
