@@ -35,6 +35,7 @@ import thunder
 
 # Import model configurations
 from transformers import AutoConfig, AutoModelForCausalLM
+from transformers.cache_utils import HybridChunkedCache
 
 
 # Standard benchmark scenarios following the three-scenario methodology
@@ -229,7 +230,7 @@ class SemiAnalysisInferenceBenchmark:
 
         return input_ids, attention_mask
 
-    def prefill(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> Tuple[torch.Tensor, float]:
+    def prefill(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> Tuple[torch.Tensor, float, HybridChunkedCache]:
         """
         Prefill phase: Process the entire input prompt at once.
         Returns the next token and the time taken.
@@ -240,7 +241,8 @@ class SemiAnalysisInferenceBenchmark:
         start_time = time.perf_counter()
 
         with torch.no_grad():
-            outputs = self.model(input_ids, attention_mask=attention_mask)
+            past_key_values = HybridChunkedCache(self.config, input_ids.shape[0], input_ids.shape[1])
+            outputs = self.model(input_ids, attention_mask=attention_mask, past_key_values=past_key_values)
 
             # Handle both HF model output objects and raw logits
             logits = outputs.logits if hasattr(outputs, "logits") else outputs
@@ -251,9 +253,9 @@ class SemiAnalysisInferenceBenchmark:
         torch.cuda.synchronize()
         prefill_time = (time.perf_counter() - start_time) * 1000  # Convert to ms
 
-        return next_token, prefill_time
+        return next_token, prefill_time, past_key_values
 
-    def decode_one_token(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> Tuple[torch.Tensor, float]:
+    def decode_one_token(self, input_ids: torch.Tensor, attention_mask: torch.Tensor, past_key_values: HybridChunkedCache) -> Tuple[torch.Tensor, float]:
         """
         Decode phase: Generate a single token given the current sequence.
         Returns the next token and the time taken.
@@ -265,7 +267,7 @@ class SemiAnalysisInferenceBenchmark:
             # input_pos: [B, 1] One token at the time
             assert input_ids.shape[-1] == 1, f"Expected shape (B, 1), but found {input_ids.shape}"
 
-            outputs = self.model(input_ids, attention_mask=attention_mask)
+            outputs = self.model(input_ids, attention_mask=attention_mask, past_key_values=past_key_values)
 
             # Handle both HF model output objects and raw logits
             logits = outputs.logits if hasattr(outputs, "logits") else outputs
@@ -284,7 +286,7 @@ class SemiAnalysisInferenceBenchmark:
         Returns detailed metrics for both phases.
         """
         # Prefill phase - process the entire prompt
-        first_token, prefill_time = self.prefill(input_ids, attention_mask)
+        first_token, prefill_time, past_key_values = self.prefill(input_ids, attention_mask)
         generated_tokens = [first_token]
 
         # Update sequences with first generated token
@@ -297,7 +299,7 @@ class SemiAnalysisInferenceBenchmark:
         # Decode phase - generate remaining tokens one by one
         decode_times = []
         for _ in range(max_new_tokens - 1):
-            next_token, decode_time = self.decode_one_token(input_ids[:, -1:], attention_mask)
+            next_token, decode_time = self.decode_one_token(input_ids[:, -1:], attention_mask, past_key_values)
             decode_times.append(decode_time)
             generated_tokens.append(next_token)
 
