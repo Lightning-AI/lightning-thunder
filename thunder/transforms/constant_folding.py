@@ -1,6 +1,6 @@
 from numbers import Number
 from typing import Any
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 import torch
 
@@ -12,6 +12,15 @@ from thunder.core.dtypes import to_dtype
 from thunder.core.devices import to_device
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.core.utils import get_symbols_to_last_used_variables
+from thunder.core.trace import TraceCtx, tracectx
+from thunder.core.codeutils import SigInfo
+from thunder.core import utils
+from thunder.core.proxies import ProxyInterface
+from thunder.core import prims
+from thunder.executors.passes import transform_for_execution
+from thunder.executors.torchex import ex as pytorch_ex
+from thunder.executors.pythonex import ex as pythonex_ex
+from thunder.core.pytree import tree_flatten
 
 
 __all__ = [
@@ -27,6 +36,43 @@ TENSOR_FACTORY = (
     thunder.torch.ones.id,
     thunder.torch.zeros.id,
 )
+
+def trace_from_bsym_or_bsyms(bsym_or_bsyms: BoundSymbol | Sequence[BoundSymbol]) -> TraceCtx:
+    bsyms = list(utils.sequencify(bsym_or_bsyms))
+    trace_args = bsyms[0].flat_args
+    trace_name = bsyms[0].sym.name
+
+    unpack_bsyms = [
+        prims.unpack_trivial.bind(a, name=a.name, output=a)
+        for a in filter(lambda a: isinstance(a, ProxyInterface), trace_args)
+    ]
+
+    trace = TraceCtx()
+    trace.bound_symbols.extend(unpack_bsyms + bsyms)
+    trace.args = trace_args
+    with tracectx(trace):
+        prims.python_return(bsyms[-1].output)
+    with tracectx(trace):
+        # note(crcrpar): Give prefix `tmp` to avoid infinite recursion due to the same name
+        trace._siginfo = SigInfo.from_name_and_args(f"tmp_{trace_name}", trace.args)
+
+    def add_proxy_name_to_trace(bsym):
+        for p in bsym.flat_proxy_args:
+            trace.names.add(p.name)
+
+        for p in bsym.flat_proxy_outs:
+            trace.names.add(p.name)
+
+    for bsym in bsyms:
+        add_proxy_name_to_trace(bsym)
+
+    return trace
+
+
+def make_trace_executable(trace_to_convert: TraceCtx):
+    torchex_trace = transform_for_execution(trace_to_convert, executors_list=(pytorch_ex, pythonex_ex))
+    trace_callable = torchex_trace.python_callable(include_decorators=False)
+    return trace_callable
 
 
 def get_python_operator(bsym) -> None | Callable:
@@ -63,16 +109,14 @@ def compute_with_constant_tensors(bsym, const_values) -> None | Any:
     new_args = tuple(map(materialize_args, bsym.args))
     new_kwargs = {k: materialize_args(v) for k, v in bsym.kwargs.items()}
 
-    # Try to see if the symbol is torch function
-    torch_fn = _thunder_to_torch_function_map.get(bsym.sym, None)
-    if torch_fn is not None:
-        return torch_fn(*new_args, **new_kwargs)
-
-    # Try to see if the symbol is a Python function
-    python_fn = get_python_operator(bsym)
-    if python_fn is not None:
-        return python_fn(*new_args, **new_kwargs)
-    return None
+    trace = trace_from_bsym_or_bsyms(bsym)
+    callable = make_trace_executable(trace)
+    flat_args, _ = tree_flatten((new_args, new_kwargs))
+    try:
+        result = callable(*flat_args)
+        return result
+    except Exception as e:
+        return None
 
 
 class ConstantFolding(thunder.Transform):
@@ -175,6 +219,8 @@ class ConstantFolding(thunder.Transform):
                 if bsym.flat_args == []:  # eg, unpack_trivial
                     continue
                 new_concrete_output = compute_with_constant_tensors(bsym, const_values)
+                if bsym.sym.id == prims.python_return.id:
+                    new_concrete_output = None
                 if (
                     new_concrete_output is not None
                 ):  # Might happen for `python_return` as it won't have mapping in `_thunder_to_torch_map`.
