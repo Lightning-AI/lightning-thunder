@@ -65,6 +65,8 @@ jobs:
           git checkout 70bbbb9219cb10981c3b7f4457f30376e093d896
           pip install pyproject.toml
           python setup.py install
+          cd ..
+          rm -rf bitsandbytes
 
       - name: Set min. dependencies
         if: matrix.requires == 'oldest'

@@ -20,6 +20,15 @@ SHELL ["/bin/bash", "-c"]
 
 COPY requirements/ requirements/
 
+# Build bitsandbytes 0.47.0-dev0 (0.46.0 has a bug)
+RUN git clone https://github.com/bitsandbytes-foundation/bitsandbytes.git && \
+        cd bitsandbytes && \
+        git checkout 70bbbb9219cb10981c3b7f4457f30376e093d896 && \
+        pip install pyproject.toml && \
+        python setup.py install && \
+        cd .. && \
+        rm -rf bitsandbytes
+
 RUN \
     ls -lh requirements/ && \
     CUDA_VERSION_MM=${CUDA_VERSION%.*} && \
