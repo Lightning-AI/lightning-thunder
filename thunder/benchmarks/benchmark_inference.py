@@ -692,7 +692,7 @@ Examples:
 
     # Execution configuration
     parser.add_argument(
-        "--compile-mode",
+        "--mode",
         type=str,
         default="eager",
         help="Compilation mode: thunder, eager (default), or inductor",
