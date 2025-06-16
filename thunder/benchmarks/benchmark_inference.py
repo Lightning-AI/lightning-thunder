@@ -85,7 +85,6 @@ class InferenceBenchmarkConfig:
     warmup_iterations: int = 10
     device: str = "cuda"
     mode: str = "thunder"  # "thunder", "eager", "inductor"
-    thunder_executors: str | None = None  # Optional Thunder executor configuration when mode="thunder"
     measure_ttft: bool = True
     measure_tbot: bool = True
     scenario: str | None = None  # Standard scenario name if using predefined configurations
@@ -372,8 +371,6 @@ class SemiAnalysisInferenceBenchmark:
         print(f"Output length: {self.config.output_length}")
         print(f"Device: {self.device}")
         print(f"Mode: {self.config.mode}")
-        if self.config.thunder_executors:
-            print(f"Thunder executors: {self.config.thunder_executors}")
 
         # Warmup iterations
         print(f"\nWarming up with {self.config.warmup_iterations} iterations...")
@@ -544,7 +541,6 @@ def run_semianalysis_benchmark(
     num_iterations: int = 100,
     num_layers: int | None = None,
     mode: str = "thunder",
-    thunder_executors: str | None = None,
     save_results: bool = True,
     scenario: str | None = None
 ):
@@ -571,7 +567,6 @@ def run_semianalysis_benchmark(
         output_length=output_length,
         num_iterations=num_iterations,
         mode=mode,
-        thunder_executors=thunder_executors,
         num_layers=num_layers,
         scenario=scenario
     )
@@ -620,7 +615,6 @@ Use --list-scenarios for detailed scenario descriptions.
 
 Examples:
   python inference_bmk.py --scenario chat --model-name llama3.1-8b
-  python inference_bmk.py --scenario reasoning --mode thunder --thunder-executors inductor
   python inference_bmk.py --input-length 2048 --output-length 512 --model-name llama3.1-8b --mode eager
         """
     )
@@ -659,12 +653,6 @@ Examples:
         default="eager",
         help="Compilation mode: thunder, eager (default), or inductor",
     )
-    parser.add_argument(
-        "--thunder-executors",
-        type=str,
-        help="Thunder executor configuration (optional, only used with --mode thunder). "
-             "Examples: 'inductor', 'inductor_cat', 'transformerengine', 'transformerengine_v2', 'dynamo'"
-    )
 
     # Output configuration
     parser.add_argument("--save-results", action="store_true", help="Save results to JSON file")
@@ -691,7 +679,6 @@ Examples:
         num_iterations=args.num_iterations,
         num_layers=args.num_layers,
         mode=args.mode,
-        thunder_executors=args.thunder_executors,
         save_results=args.save_results,
         scenario=args.scenario,
     )
