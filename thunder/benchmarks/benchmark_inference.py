@@ -77,7 +77,6 @@ class InferenceBenchmarkConfig:
     # - 70B: ~140GB (requires multi-GPU setup or high-end datacenter GPUs)
     # - 405B: ~810GB (requires large multi-GPU clusters)
     # - 670B: ~1340GB (requires very large multi-GPU clusters)
-    precision: str = "bf16"  # "bf16", "fp16"
     batch_size: int = 1
     input_length: int = 1024
     output_length: int = 1024
@@ -203,12 +202,6 @@ class SemiAnalysisInferenceBenchmark:
         # Create model directly on target device with random weights
         with torch.device(self.device):
             model = AutoModelForCausalLM.from_config(config)
-
-        # Convert to specified precision
-        if self.config.precision == "fp16":
-            model = model.half()
-        elif self.config.precision == "bf16":
-            model = model.to(torch.bfloat16)
 
         return model
 
@@ -374,7 +367,6 @@ class SemiAnalysisInferenceBenchmark:
 
         print(f"Running inference benchmark for {self.config.model_name}")
 
-        print(f"Precision: {self.config.precision}")
         print(f"Batch size: {self.config.batch_size}")
         print(f"Input length: {self.config.input_length}")
         print(f"Output length: {self.config.output_length}")
@@ -546,7 +538,6 @@ class SemiAnalysisInferenceBenchmark:
 
 def run_semianalysis_benchmark(
     model_name: str = "llama3.1-8b",
-    precision: str = "bf16",
     batch_size: int = 1,
     input_length: int = 1024, # default 1k -> 1k
     output_length: int = 1024, # default 1k -> 1k
@@ -575,7 +566,6 @@ def run_semianalysis_benchmark(
 
     config = InferenceBenchmarkConfig(
         model_name=model_name,
-        precision=precision,
         batch_size=batch_size,
         input_length=input_length,
         output_length=output_length,
@@ -594,7 +584,7 @@ def run_semianalysis_benchmark(
     if save_results:
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         scenario_suffix = f"_{scenario}" if scenario else ""
-        filename = f"thunder_semianalysis_{model_name}_{precision}{scenario_suffix}_{timestamp}.json"
+        filename = f"thunder_semianalysis_{model_name}_{scenario_suffix}_{timestamp}.json"
         benchmark.save_results(filename)
 
     return metrics
@@ -641,9 +631,6 @@ Examples:
         type=str,
         default="llama3.1-8b", # Small model so it's easier to iterate locally.
         help="Model to benchmark",
-    )
-    parser.add_argument(
-        "--precision", type=str, default="bf16", choices=["fp16", "bf16"], help="Model precision"
     )
 
     # Scenario configuration (standardized scenarios vs custom)
@@ -698,7 +685,6 @@ Examples:
     # Run benchmark
     metrics = run_semianalysis_benchmark(
         model_name=args.model_name,
-        precision=args.precision,
         batch_size=args.batch_size,
         input_length=args.input_length,
         output_length=args.output_length,
