@@ -7055,7 +7055,7 @@ def _setup_frame_and_run_python_function(
     if pos_arguments_in_kwargs:
         return do_raise(
             TypeError(
-                f"{fn}() got some positional-only arguments passed as keyword arguments: {', ' .join(pos_arguments_in_kwargs)}"
+                f"{fn}() got some positional-only arguments passed as keyword arguments: {', '.join(pos_arguments_in_kwargs)}"
             )
         )
 

@@ -352,9 +352,9 @@ class JitCtx:
             name = ".".join(name)
             if typ == "_parameters":
                 bsym = prims.unpack_parameter.bind(root_module, name, output=output)
-                assert (
-                    ProxyTag.STATIC_MEMORY_LOCATION in output.tags
-                ), "Parameter was not tagged with STATIC_MEMORY_LOCATION"
+                assert ProxyTag.STATIC_MEMORY_LOCATION in output.tags, (
+                    "Parameter was not tagged with STATIC_MEMORY_LOCATION"
+                )
             elif typ == "_buffers":
                 bsym = prims.unpack_buffer.bind(root_module, name, output=output)
                 output.tags.add(ProxyTag.STATIC_MEMORY_LOCATION)
