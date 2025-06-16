@@ -61,16 +61,9 @@ jobs:
       - name: Build bitsandbytes for macOS # no macOS-compatible wheel on PyPI
         if: runner.os == 'macOS'
         run: |
-          echo "wget:"
-          wget https://github.com/bitsandbytes-foundation/bitsandbytes/archive/refs/tags/0.46.0.tar.gz
-          echo "ls:"
-          ls
-          echo "tar:"
-          tar -xvzf 0.46.0.tar.gz
-          echo "ls:"
-          ls
-          echo "cd bitsandbytes-0.46.0:"
-          cd bitsandbytes-0.46.0
+          git clone https://github.com/bitsandbytes-foundation/bitsandbytes.git
+          echo "cd bitsandbytes:"
+          cd bitsandbytes
           echo "pip install:"
           pip install pyproject.toml
           echo "python setup.py install:"
