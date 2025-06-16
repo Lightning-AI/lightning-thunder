@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 from enum import Enum, auto
-from collections.abc import Sequence
 
 import torch
 import thunder.core.baseutils as baseutils

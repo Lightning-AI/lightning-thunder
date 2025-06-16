@@ -13,7 +13,6 @@ from looseversion import LooseVersion
 
 import torch
 from thunder.core.pytree import tree_flatten
-from thunder.core.baseutils import check
 from thunder.core.utils import sequencify, create_python_callable_from_bsym
 from thunder.dynamo.compiler import thunderfx
 from thunder.dynamo.utils import (
@@ -23,7 +22,6 @@ from thunder.dynamo.utils import (
     get_env,
     get_split_reasons_string,
     CompilerType,
-    example_input_meta_to_input,
     recompile_graph,
     has_higher_order_operator,
     input_to_example_input_meta,
@@ -196,7 +194,9 @@ def thunderfx_pytest_benchmark_report(
                     filtered_bench, key=lambda x: x["extra_info"].get("max_allocated_memory_MB", 0)
                 )
                 for bk in filtered_bench_sorted:
-                    print(f"{bk['name'].lstrip('test_')}: {bk['extra_info'].get('max_allocated_memory_MB', 0)/1000} GB")
+                    print(
+                        f"{bk['name'].lstrip('test_')}: {bk['extra_info'].get('max_allocated_memory_MB', 0) / 1000} GB"
+                    )
                 print("\n")
 
             print_sorted_memory_info("forward")
@@ -293,7 +293,7 @@ class FXGraphReport:
     def _get_input_str(self, folder, inputs, serialize_inputs):
         input_str = ""
         if any(arg is None for arg in inputs):
-            input_str += f"# Warning: The inputs that cannot be inferred are set to None, requiring the user to manually give inputs according to the code\n"
+            input_str += "# Warning: The inputs that cannot be inferred are set to None, requiring the user to manually give inputs according to the code\n"
         if serialize_inputs:
             example_inputs = self.make_example_inputs()
             input_file_name = folder / f"{self.graph_name}_inputs.pt"
@@ -672,7 +672,7 @@ class FXReport:
                 output += "    User Stack:\n"
                 for frame_summary in reason.user_stack:
                     output += f"      {frame_summary}\n"
-        output += f"Graph information:\n"
+        output += "Graph information:\n"
         for idx, graph_report in enumerate(self.fx_graph_reports):
             output += textwrap.indent(f"{graph_report}\n", "  ")
         return output
@@ -1146,7 +1146,7 @@ def check_torch_compile_runnability(fn: Callable, stream: TextIO = sys.stdout, *
             run_forward_backward(torch_compiled, *args, **kwargs)
         except Exception as e:
             stream.write(f"Failed to run the function using torch.compile with exception: {e}")
-            stream.write(f"Trying with Torch eager...")
+            stream.write("Trying with Torch eager...")
             try:
                 run_forward_backward(fn, *args, **kwargs)
             except Exception as e:
@@ -1334,7 +1334,7 @@ def thunderfx_benchmark_report(
     thunderfx_benchmark_report_from_splits(thunder_fxgraph_reports, folder_path, compare_fusion=True)
     ```
     """
-    from thunder.dynamo.utils import get_thunder_jit_kwargs, get_torch_compile_kwargs
+    from thunder.dynamo.utils import get_torch_compile_kwargs
 
     folder_path = Path(folder_path)
     folder_path.mkdir(exist_ok=True, parents=True)

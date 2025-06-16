@@ -1,3 +1,4 @@
 transformers
 accelerate
 nvfuser-cu128-torch27
+nvidia-cudnn-frontend

@@ -1,12 +1,10 @@
 from __future__ import annotations
 from abc import ABC
 from abc import abstractmethod
-import copy
 from enum import Enum
 from enum import auto
 from dataclasses import dataclass
 from dataclasses import field
-from itertools import chain
 from typing import TYPE_CHECKING
 
 import torch
@@ -22,7 +20,6 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from typing import Any
     from torch.distributed import ProcessGroup
-    from thunder.common import CompileData
     from thunder.core.module import ThunderModule
     from thunder.core.proxies import ProxyInterface
     from thunder.core.symbol import BoundSymbol
@@ -241,7 +238,6 @@ class TransformForTensorParallel(Transform):
                 if (
                     proxy_like_param_name := f"""t_{param_name.replace(".", "_")}"""
                 ) in self.chunked_param_name_to_layer_type:
-
                     orig_shape = list(pro_out_p._shape)
                     new_shape = self._calc_new_shape(orig_shape)
                     pro_out_p._shape = new_shape
@@ -309,7 +305,6 @@ class TransformForTensorParallel(Transform):
 
         # Modify module
         for name, param in model.named_parameters():
-
             orig_param: torch.Tensor | None
             try:
                 orig_param = model._model.get_parameter(name)

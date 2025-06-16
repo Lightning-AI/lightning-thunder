@@ -32,13 +32,13 @@ class Node:
     def __repr__(self) -> str:
         s = f"node ID {self.ID} : "
         s += self.group_bsyms.__repr__()
-        s += f"\n\tparents ids: "
+        s += "\n\tparents ids: "
         for parent in self.parents:
             s += f" {parent.ID}, "
-        s += f"\n\tchildren ids: "
+        s += "\n\tchildren ids: "
         for child in self.children:
             s += f" {child.ID}, "
-        s += f"\n"
+        s += "\n"
         return s
 
     def __hash__(self) -> int:
@@ -98,7 +98,7 @@ class Graph:
             if bsym.sym.id is PrimIDs.RETURN:
                 utils.check(
                     self.return_node is None,
-                    lambda: f"Found multiple RETURN nodes while converting a list of bound symbols to a dag",
+                    lambda: "Found multiple RETURN nodes while converting a list of bound symbols to a dag",
                 )
                 self.return_node = node
 
@@ -129,7 +129,7 @@ class Graph:
                     node.children.add(child_node)
 
     def __repr__(self) -> str:
-        s = f"graph roots:"
+        s = "graph roots:"
         for root in self.roots:
             s += f" {root.ID},"
         s += "\ntraversal nodes:\n"
@@ -153,7 +153,7 @@ class Graph:
         ##############################
         max_depth = max(a.stop, b.stop)
 
-        if len(b.parents) != 1 or not a in b.parents:
+        if len(b.parents) != 1 or a not in b.parents:
             visit_stack = list()
             visit_stack.extend([x for x in a.children if x != b])
             visit_stack.extend([x for x in b.children if x != a])
