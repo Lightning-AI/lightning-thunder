@@ -198,6 +198,8 @@ class SemiAnalysisInferenceBenchmark:
         if self.config.num_layers:
             config.num_hidden_layers = self.config.num_layers
 
+        self.hf_config = config
+
         # Create model directly on target device with random weights
         with torch.device(self.device):
             model = AutoModelForCausalLM.from_config(config)
@@ -230,7 +232,7 @@ class SemiAnalysisInferenceBenchmark:
 
         return input_ids, attention_mask
 
-    def prefill(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> Tuple[torch.Tensor, float, HybridChunkedCache]:
+    def prefill(self, input_ids: torch.Tensor, attention_mask: torch.Tensor, past_key_values: HybridChunkedCache) -> Tuple[torch.Tensor, float]:
         """
         Prefill phase: Process the entire input prompt at once.
         Returns the next token and the time taken.
@@ -241,9 +243,7 @@ class SemiAnalysisInferenceBenchmark:
         start_time = time.perf_counter()
 
         with torch.no_grad():
-            past_key_values = HybridChunkedCache(self.config, input_ids.shape[0], input_ids.shape[1])
-            outputs = self.model(input_ids, attention_mask=attention_mask, past_key_values=past_key_values)
-
+            outputs = self.model(input_ids, attention_mask=attention_mask, past_key_values=past_key_values, use_cache=True)
             # Handle both HF model output objects and raw logits
             logits = outputs.logits if hasattr(outputs, "logits") else outputs
             # Get next token from the last position
@@ -253,7 +253,7 @@ class SemiAnalysisInferenceBenchmark:
         torch.cuda.synchronize()
         prefill_time = (time.perf_counter() - start_time) * 1000  # Convert to ms
 
-        return next_token, prefill_time, past_key_values
+        return next_token, prefill_time
 
     def decode_one_token(self, input_ids: torch.Tensor, attention_mask: torch.Tensor, past_key_values: HybridChunkedCache) -> Tuple[torch.Tensor, float]:
         """
@@ -267,7 +267,7 @@ class SemiAnalysisInferenceBenchmark:
             # input_pos: [B, 1] One token at the time
             assert input_ids.shape[-1] == 1, f"Expected shape (B, 1), but found {input_ids.shape}"
 
-            outputs = self.model(input_ids, attention_mask=attention_mask, past_key_values=past_key_values)
+            outputs = self.model(input_ids, attention_mask=attention_mask, past_key_values=past_key_values, use_cache=True)
 
             # Handle both HF model output objects and raw logits
             logits = outputs.logits if hasattr(outputs, "logits") else outputs
@@ -285,8 +285,17 @@ class SemiAnalysisInferenceBenchmark:
         Generate tokens using separate prefill and decode phases.
         Returns detailed metrics for both phases.
         """
+        # Cache must be initialized outside the Dynamo-traced function
+        past_key_values = HybridChunkedCache(self.hf_config, input_ids.shape[0], input_ids.shape[1] + max_new_tokens)
+        # key_states.shape[1] is used to retrieve the number of key value heads, all other dimensions can be 1 and ignored
+        # https://github.com/huggingface/transformers/blob/9300728665aaeb0ebf4db99f9d9fbce916b4a183/src/transformers/cache_utils.py#L1822
+        fake_key_states = torch.empty(1, self.hf_config.num_key_value_heads, 1, 1, device=input_ids.device)
+        for layer_idx in range(self.hf_config.num_hidden_layers):
+            past_key_values.initialise_cache_layer(layer_idx, fake_key_states)
+        del fake_key_states
+
         # Prefill phase - process the entire prompt
-        first_token, prefill_time, past_key_values = self.prefill(input_ids, attention_mask)
+        first_token, prefill_time = self.prefill(input_ids, attention_mask, past_key_values)
         generated_tokens = [first_token]
 
         # Update sequences with first generated token
