@@ -194,7 +194,7 @@ class SemiAnalysisInferenceBenchmark:
 
         return model
 
-    def generate_batch(self) -> Tuple[torch.Tensor, torch.Tensor]:
+    def generate_batch(self) -> torch.Tensor:
         """Generate a batch of input tokens"""
         batch_size = self.config.batch_size
         input_length = self.config.input_length
@@ -210,11 +210,9 @@ class SemiAnalysisInferenceBenchmark:
 
         # Random input tokens
         input_ids = torch.randint(0, vocab_size, (batch_size, input_length), device=self.device)
-        attention_mask = torch.ones_like(input_ids)
+        return input_ids
 
-        return input_ids, attention_mask
-
-    def prefill(self, input_ids: torch.Tensor, attention_mask: torch.Tensor, past_key_values: HybridChunkedCache) -> Tuple[torch.Tensor, float]:
+    def prefill(self, input_ids: torch.Tensor, past_key_values: HybridChunkedCache) -> Tuple[torch.Tensor, float]:
         """
         Prefill phase: Process the entire input prompt at once.
         Returns the next token and the time taken.
@@ -224,7 +222,7 @@ class SemiAnalysisInferenceBenchmark:
         torch.cuda.synchronize()
         start_time = time.perf_counter()
 
-        outputs = self.model(input_ids, attention_mask=attention_mask, past_key_values=past_key_values, use_cache=True)
+        outputs = self.model(input_ids, past_key_values=past_key_values, use_cache=True)
         # Handle both HF model output objects and raw logits
         logits = outputs.logits if hasattr(outputs, "logits") else outputs
         # Get next token from the last position
@@ -236,7 +234,7 @@ class SemiAnalysisInferenceBenchmark:
 
         return next_token, prefill_time
 
-    def decode_one_token(self, input_ids: torch.Tensor, attention_mask: torch.Tensor, past_key_values: HybridChunkedCache) -> Tuple[torch.Tensor, float]:
+    def decode_one_token(self, input_ids: torch.Tensor, past_key_values: HybridChunkedCache) -> Tuple[torch.Tensor, float]:
         """
         Decode phase: Generate a single token given the current sequence.
         Returns the next token and the time taken.
@@ -247,7 +245,7 @@ class SemiAnalysisInferenceBenchmark:
         # input_pos: [B, 1] One token at the time
         assert input_ids.shape[-1] == 1, f"Expected shape (B, 1), but found {input_ids.shape}"
 
-        outputs = self.model(input_ids, attention_mask=attention_mask, past_key_values=past_key_values, use_cache=True)
+        outputs = self.model(input_ids, past_key_values=past_key_values, use_cache=True)
 
         # Handle both HF model output objects and raw logits
         logits = outputs.logits if hasattr(outputs, "logits") else outputs
@@ -261,7 +259,7 @@ class SemiAnalysisInferenceBenchmark:
         return next_token, decode_time
 
     @torch.inference_mode()
-    def generate(self, input_ids: torch.Tensor, attention_mask: torch.Tensor, max_new_tokens: int) -> Dict[str, Any]:
+    def generate(self, input_ids: torch.Tensor, max_new_tokens: int) -> Dict[str, Any]:
         """
         Generate tokens using separate prefill and decode phases.
         Returns detailed metrics for both phases.
@@ -276,32 +274,21 @@ class SemiAnalysisInferenceBenchmark:
         del fake_key_states
 
         # Prefill phase - process the entire prompt
-        first_token, prefill_time = self.prefill(input_ids, attention_mask, past_key_values)
+        first_token, prefill_time = self.prefill(input_ids, past_key_values)
         generated_tokens = [first_token]
 
         # Update sequences with first generated token
         input_ids = torch.cat([input_ids, first_token], dim=1)
-        attention_mask = torch.cat(
-            [attention_mask, torch.ones((self.config.batch_size, 1), device=self.device, dtype=attention_mask.dtype)],
-            dim=1,
-        )
 
         # Decode phase - generate remaining tokens one by one
         decode_times = []
         for _ in range(max_new_tokens - 1):
-            next_token, decode_time = self.decode_one_token(input_ids[:, -1:], attention_mask, past_key_values)
+            next_token, decode_time = self.decode_one_token(input_ids[:, -1:], past_key_values)
             decode_times.append(decode_time)
             generated_tokens.append(next_token)
 
             # Update sequences
             input_ids = torch.cat([input_ids, next_token], dim=1)
-            attention_mask = torch.cat(
-                [
-                    attention_mask,
-                    torch.ones((self.config.batch_size, 1), device=self.device, dtype=attention_mask.dtype),
-                ],
-                dim=1,
-            )
 
         return {
             "prefill_time_ms": prefill_time,
@@ -310,13 +297,13 @@ class SemiAnalysisInferenceBenchmark:
             "total_tokens": max_new_tokens,
         }
 
-    def measure_inference_step(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> Dict[str, float]:
+    def measure_inference_step(self, input_ids: torch.Tensor) -> Dict[str, float]:
         """Measure a single inference step with detailed timing using separate prefill/decode"""
         torch.cuda.synchronize()
         start_time = time.perf_counter()
 
         # Generate tokens with separate prefill/decode tracking
-        generation_result = self.generate(input_ids, attention_mask, self.config.output_length)
+        generation_result = self.generate(input_ids, self.config.output_length)
 
         torch.cuda.synchronize()
         total_time = (time.perf_counter() - start_time) * 1000
@@ -366,8 +353,8 @@ class SemiAnalysisInferenceBenchmark:
         print(f"\nWarming up with {self.config.warmup_iterations} iterations...")
 
         for _ in tqdm(range(self.config.warmup_iterations)):
-            input_ids, attention_mask = self.generate_batch()
-            _ = self.measure_inference_step(input_ids, attention_mask)
+            input_ids = self.generate_batch()
+            _ = self.measure_inference_step(input_ids)
 
         # Benchmark iterations
         print(f"\nRunning {self.config.num_iterations} benchmark iterations...")
@@ -375,8 +362,8 @@ class SemiAnalysisInferenceBenchmark:
 
         for _ in tqdm(range(self.config.num_iterations)):
 
-            input_ids, attention_mask = self.generate_batch()
-            iter_metrics = self.measure_inference_step(input_ids, attention_mask)
+            input_ids = self.generate_batch()
+            iter_metrics = self.measure_inference_step(input_ids)
             all_metrics.append(iter_metrics)
 
             # Track metrics
