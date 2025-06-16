@@ -292,7 +292,7 @@ def test_quantization():
     import lightning as L
 
     plugins = BitsandbytesPrecision("nf4", torch.bfloat16)
-    fabric = L.Fabric(devices=1, precision="bf16-mixed", plugins=plugins)
+    fabric = L.Fabric(devices=1, precision=None, plugins=plugins)
     with fabric.init_module(empty_init=True):
         model = litgpt_model.GPT(config)
 
