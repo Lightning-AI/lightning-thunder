@@ -221,7 +221,13 @@ class SemiAnalysisInferenceBenchmark:
 
         # Random input tokens
         input_ids = torch.randint(0, vocab_size, (batch_size, input_length), device=self.device)
-        return input_ids
+        past_key_values = HybridChunkedCache(self.hf_config, input_ids.shape[0], input_ids.shape[1])
+        for layer_idx in range(self.hf_config.num_hidden_layers):
+            # key_states.shape[1] is used to retrieve the number of key value heads, all other dimensions can be 1 and ignored
+            # https://github.com/huggingface/transformers/blob/9300728665aaeb0ebf4db99f9d9fbce916b4a183/src/transformers/cache_utils.py#L1822
+            past_key_values.initialise_cache_layer(layer_idx, torch.empty(1, self.hf_config.num_key_value_heads, 1, 1, device=self.device))
+
+        return input_ids, past_key_values
 
     def prefill(self, input_ids: torch.Tensor, past_key_values: HybridChunkedCache) -> torch.Tensor:
         """
@@ -258,20 +264,11 @@ class SemiAnalysisInferenceBenchmark:
         return next_token
 
     @torch.inference_mode()
-    def generate(self, input_ids: torch.Tensor, max_new_tokens: int) -> Dict[str, Any]:
+    def generate(self, input_ids: torch.Tensor, max_new_tokens: int, past_key_values: HybridChunkedCache) -> Dict[str, Any]:
         """
         Generate tokens using separate prefill and decode phases.
         Returns detailed metrics for both phases.
         """
-        # Cache must be initialized outside the Dynamo-traced function
-        past_key_values = HybridChunkedCache(self.hf_config, input_ids.shape[0], input_ids.shape[1] + max_new_tokens)
-        # key_states.shape[1] is used to retrieve the number of key value heads, all other dimensions can be 1 and ignored
-        # https://github.com/huggingface/transformers/blob/9300728665aaeb0ebf4db99f9d9fbce916b4a183/src/transformers/cache_utils.py#L1822
-        fake_key_states = torch.empty(1, self.hf_config.num_key_value_heads, 1, 1, device=input_ids.device)
-        for layer_idx in range(self.hf_config.num_hidden_layers):
-            past_key_values.initialise_cache_layer(layer_idx, fake_key_states)
-        del fake_key_states
-
         # Prefill phase - process the entire prompt
         with timer() as prefill_timer:
             first_token = self.prefill(input_ids, past_key_values)
@@ -299,11 +296,11 @@ class SemiAnalysisInferenceBenchmark:
             "total_tokens": max_new_tokens,
         }
 
-    def measure_inference_step(self, input_ids: torch.Tensor) -> Dict[str, float]:
+    def measure_inference_step(self, input_ids: torch.Tensor, past_key_values: HybridChunkedCache) -> Dict[str, float]:
         """Measure a single inference step with detailed timing using separate prefill/decode"""
         with timer() as total_timer:
             # Generate tokens with separate prefill/decode tracking
-            generation_result = self.generate(input_ids, self.config.output_length)
+            generation_result = self.generate(input_ids, self.config.output_length, past_key_values)
         total_time = total_timer()
 
         # Extract metrics
@@ -351,8 +348,8 @@ class SemiAnalysisInferenceBenchmark:
         print(f"\nWarming up with {self.config.warmup_iterations} iterations...")
 
         for _ in tqdm(range(self.config.warmup_iterations)):
-            input_ids = self.generate_batch()
-            _ = self.measure_inference_step(input_ids)
+            input_ids, past_key_values = self.generate_batch()
+            _ = self.measure_inference_step(input_ids, past_key_values)
 
         # Benchmark iterations
         print(f"\nRunning {self.config.num_iterations} benchmark iterations...")
@@ -360,8 +357,8 @@ class SemiAnalysisInferenceBenchmark:
 
         for _ in tqdm(range(self.config.num_iterations)):
 
-            input_ids = self.generate_batch()
-            iter_metrics = self.measure_inference_step(input_ids)
+            input_ids, past_key_values = self.generate_batch()
+            iter_metrics = self.measure_inference_step(input_ids, past_key_values)
             all_metrics.append(iter_metrics)
 
             # Track metrics
