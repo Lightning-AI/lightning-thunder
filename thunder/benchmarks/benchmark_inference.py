@@ -29,6 +29,8 @@ import torch
 import argparse
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple, Any
+from time import perf_counter
+from contextlib import contextmanager
 import numpy as np
 
 import thunder
@@ -36,6 +38,15 @@ import thunder
 # Import model configurations
 from transformers import AutoConfig, AutoModelForCausalLM
 from transformers.cache_utils import HybridChunkedCache
+
+
+@contextmanager
+def timer():
+    torch.cuda.synchronize()
+    t1 = t2 = perf_counter()
+    yield lambda: (t2 - t1) * 1000  # Convert to ms
+    torch.cuda.synchronize()
+    t2 = perf_counter()
 
 
 # Standard benchmark scenarios following the three-scenario methodology
@@ -212,16 +223,13 @@ class SemiAnalysisInferenceBenchmark:
         input_ids = torch.randint(0, vocab_size, (batch_size, input_length), device=self.device)
         return input_ids
 
-    def prefill(self, input_ids: torch.Tensor, past_key_values: HybridChunkedCache) -> Tuple[torch.Tensor, float]:
+    def prefill(self, input_ids: torch.Tensor, past_key_values: HybridChunkedCache) -> torch.Tensor:
         """
         Prefill phase: Process the entire input prompt at once.
-        Returns the next token and the time taken.
+        Returns the next token.
 
         Similar to: https://github.com/pytorch-labs/gpt-fast/blob/main/generate.py#L68-L82
         """
-        torch.cuda.synchronize()
-        start_time = time.perf_counter()
-
         outputs = self.model(input_ids, past_key_values=past_key_values, use_cache=True)
         # Handle both HF model output objects and raw logits
         logits = outputs.logits if hasattr(outputs, "logits") else outputs
@@ -229,19 +237,13 @@ class SemiAnalysisInferenceBenchmark:
         next_token_logits = logits[:, -1, :]
         next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
 
-        torch.cuda.synchronize()
-        prefill_time = (time.perf_counter() - start_time) * 1000  # Convert to ms
+        return next_token
 
-        return next_token, prefill_time
-
-    def decode_one_token(self, input_ids: torch.Tensor, past_key_values: HybridChunkedCache) -> Tuple[torch.Tensor, float]:
+    def decode_one_token(self, input_ids: torch.Tensor, past_key_values: HybridChunkedCache) -> torch.Tensor:
         """
         Decode phase: Generate a single token given the current sequence.
-        Returns the next token and the time taken.
+        Returns the next token.
         """
-        torch.cuda.synchronize()
-        start_time = time.perf_counter()
-
         # input_pos: [B, 1] One token at the time
         assert input_ids.shape[-1] == 1, f"Expected shape (B, 1), but found {input_ids.shape}"
 
@@ -253,10 +255,7 @@ class SemiAnalysisInferenceBenchmark:
         next_token_logits = logits[:, -1, :]
         next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
 
-        torch.cuda.synchronize()
-        decode_time = (time.perf_counter() - start_time) * 1000  # Convert to ms
-
-        return next_token, decode_time
+        return next_token
 
     @torch.inference_mode()
     def generate(self, input_ids: torch.Tensor, max_new_tokens: int) -> Dict[str, Any]:
@@ -274,7 +273,9 @@ class SemiAnalysisInferenceBenchmark:
         del fake_key_states
 
         # Prefill phase - process the entire prompt
-        first_token, prefill_time = self.prefill(input_ids, past_key_values)
+        with timer() as prefill_timer:
+            first_token = self.prefill(input_ids, past_key_values)
+        prefill_time = prefill_timer()
         generated_tokens = [first_token]
 
         # Update sequences with first generated token
@@ -283,8 +284,9 @@ class SemiAnalysisInferenceBenchmark:
         # Decode phase - generate remaining tokens one by one
         decode_times = []
         for _ in range(max_new_tokens - 1):
-            next_token, decode_time = self.decode_one_token(input_ids[:, -1:], past_key_values)
-            decode_times.append(decode_time)
+            with timer() as decode_timer:
+                next_token = self.decode_one_token(input_ids[:, -1:], past_key_values)
+            decode_times.append(decode_timer())
             generated_tokens.append(next_token)
 
             # Update sequences
@@ -299,14 +301,10 @@ class SemiAnalysisInferenceBenchmark:
 
     def measure_inference_step(self, input_ids: torch.Tensor) -> Dict[str, float]:
         """Measure a single inference step with detailed timing using separate prefill/decode"""
-        torch.cuda.synchronize()
-        start_time = time.perf_counter()
-
-        # Generate tokens with separate prefill/decode tracking
-        generation_result = self.generate(input_ids, self.config.output_length)
-
-        torch.cuda.synchronize()
-        total_time = (time.perf_counter() - start_time) * 1000
+        with timer() as total_timer:
+            # Generate tokens with separate prefill/decode tracking
+            generation_result = self.generate(input_ids, self.config.output_length)
+        total_time = total_timer()
 
         # Extract metrics
         ttft = generation_result["prefill_time_ms"]  # Time to first token is the prefill time
