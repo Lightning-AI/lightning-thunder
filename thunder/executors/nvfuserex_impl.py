@@ -1,7 +1,7 @@
 from dataclasses import dataclass, replace
 from functools import partial, lru_cache
 from numbers import Number
-from typing import Any, Optional
+from typing import Any
 from collections.abc import Callable, Mapping, Hashable, Sequence
 import os
 import time

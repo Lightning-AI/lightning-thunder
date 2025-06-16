@@ -1,8 +1,4 @@
-from collections.abc import Sequence
-from typing import Any
-
 import torch
-from torch.distributed.tensor import DTensor
 
 from thunder.core.pytree import tree_map
 from thunder.core.proxies import TensorProxy, NumberProxy
@@ -10,12 +6,28 @@ from thunder.core.devices import to_torch_device
 from thunder.core.dtypes import to_torch_dtype
 from thunder.core.pytree import tree_map
 from thunder.core.trace import TraceCtx
-from thunder.torch.experimental.dtensor_proxy import DTensorProxy
 from thunder.core.prims import PrimIDs
 from thunder.core.symbol import Symbol
 from thunder.core.trace import from_trace
 
 from torch._subclasses.fake_tensor import FakeTensorMode
+
+if torch.distributed.is_available():
+    from torch.distributed.tensor import DTensor
+
+
+def run_only_if_distributed_is_available(fn):
+    def wrapper(*args, **kwargs):
+        if torch.distributed.is_available():
+            return fn(*args, **kwargs)
+
+    return wrapper
+
+
+def lazy_import_dtensor_proxy():
+    from thunder.torch.experimental.dtensor_proxy import DTensorProxy
+
+    return DTensorProxy
 
 
 def run_with_fake_tensor(torch_op, *args, **kwargs):
@@ -30,6 +42,8 @@ def run_with_fake_tensor(torch_op, *args, **kwargs):
     Returns:
         The output of the torch operation executed with fake tensors
     """
+    # To avoid cyclical dependency
+    DTensorProxy = lazy_import_dtensor_proxy()
 
     def f(*args, **kwargs):
         return torch_op(*args, **kwargs)
@@ -77,6 +91,10 @@ def check_dtensor_cotangent_metadata_in_backward(bw_trace: TraceCtx):
 
     # Quick implementation of a symbol to verify
     # that the metadata of the cotangent at runtime as that as during tracing.
+
+    # To avoid cyclical dependency
+    DTensorProxy = lazy_import_dtensor_proxy()
+
     check_dtensor_cotangent_metadata_symbol = Symbol(
         name="check_dtensor_cotangent_metadata",
         meta=lambda dtensor, metadata: None,
