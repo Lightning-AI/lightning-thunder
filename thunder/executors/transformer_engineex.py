@@ -205,9 +205,9 @@ class TELinear(TransformerEngineBaseModule):
         # Ref: https://github.com/NVIDIA/TransformerEngine/blob/b957aa475bcbcf22405381d18bd7fefe4fb6b171/transformer_engine/pytorch/module/linear.py#L264
         grad_ctx = enable_grad(*tensor_inputs) if is_grad_enabled else nullcontext()
         with grad_ctx, self.prepare_forward(inp) as inp:
-            assert (
-                self.fp8 or not self.primary_weights_in_fp8
-            ), "Need to run inside fp8_autocast region when weights are stored in FP8."
+            assert self.fp8 or not self.primary_weights_in_fp8, (
+                "Need to run inside fp8_autocast region when weights are stored in FP8."
+            )
 
             (
                 input_quantizer,
@@ -318,7 +318,6 @@ def make_te_linear_meta(is_grad_enabled: bool = False):
     def _te_functional_linear_meta(
         a: TensorProxy, w: TensorProxy, bias: None | TensorProxy
     ) -> tuple[TensorProxy, AnyProxy | None]:
-
         # Input Shape : (*, Hin)
         # Output Shape : (*, Hout) where * is any number of dims including None.
         output_shape = list(a.shape)

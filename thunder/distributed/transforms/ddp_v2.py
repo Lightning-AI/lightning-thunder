@@ -112,9 +112,9 @@ class DDPTransform(Transform):
     def transform_traces_pre_prologue(
         self, prologue_trace: TraceCtx, computation_trace: TraceCtx, epilogue_trace: TraceCtx, **kwargs
     ):
-        assert (
-            self.replicated_params is not None and self.shared_params_name is not None
-        ), "expected transform_module to have run"
+        assert self.replicated_params is not None and self.shared_params_name is not None, (
+            "expected transform_module to have run"
+        )
 
         from thunder.distributed import prims as dist_prims
 

@@ -1833,7 +1833,8 @@ def _get_grad_meta(a: Number | NumberProxy | TensorProxy, /) -> Number | TensorP
     utils.check_type(a, (Number, NumberProxy, TensorProxy))
 
     if isinstance(a, TensorProxy):
-        return TensorProxy(like=a)
+        # NOTE: `a` could be a TensorProxy subclass and it's type should be preserved.
+        return type(a)(like=a)
 
     # NOTE a is a Number in this branch
     return numberproxy(pytype(a), 0)
@@ -3288,7 +3289,7 @@ def cat_meta(tensors: list[TensorProxy], /, dim: int) -> TensorProxy:
     ndim = tensors[0].ndim
     utils.check(
         dim >= -ndim and dim < ndim,
-        lambda: f"Expected dimension in inclusive range of {-ndim} and {ndim-1}: got {dim}.",
+        lambda: f"Expected dimension in inclusive range of {-ndim} and {ndim - 1}: got {dim}.",
         IndexError,
     )
 
@@ -3308,7 +3309,7 @@ def cat_meta(tensors: list[TensorProxy], /, dim: int) -> TensorProxy:
             utils.check(
                 sd == sad or d == dim,
                 lambda: f"Sizes of tensors must match except in dimension {dim}. "
-                f"Expected size {sd} but got size {sad} for tensor number {i+1} in the list.",
+                f"Expected size {sd} but got size {sad} for tensor number {i + 1} in the list.",
             )
         shape[dim] = shape[dim] + ai.shape[dim]
 
@@ -4144,7 +4145,7 @@ def convolution_meta(
     )
     utils.check(
         bias is None or (bias.ndim == 1 and bias.numel == out_channels),
-        lambda: f"{bias.ndim=} should be 1 and {bias.numel=} should match " f"out_channels, (i.e. {weight.shape[0]=})",
+        lambda: f"{bias.ndim=} should be 1 and {bias.numel=} should match out_channels, (i.e. {weight.shape[0]=})",
     )
 
     # Check sequences (stride, padding, dilation, output_padding)
