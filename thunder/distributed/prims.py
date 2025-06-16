@@ -421,7 +421,6 @@ def synchronize_backward_rule(
 
 
 class _TensorParallelOutputPostProcessFwdBwdInterface(ABC):
-
     @staticmethod
     @abstractmethod
     def forward(t: TensorProxy, group: torch.distributed.ProcessGroup) -> TensorProxy: ...
@@ -432,7 +431,6 @@ class _TensorParallelOutputPostProcessFwdBwdInterface(ABC):
 
 
 class FwdGatherBwdSplitAlongLastDim(_TensorParallelOutputPostProcessFwdBwdInterface):
-
     @staticmethod
     def forward(t: TensorProxy, group: torch.distributed.ProcessGroup) -> TensorProxy:
         """Gather along last dim"""
@@ -454,7 +452,6 @@ class FwdGatherBwdSplitAlongLastDim(_TensorParallelOutputPostProcessFwdBwdInterf
 
 
 class FwdAllReduceBwdIdentity(_TensorParallelOutputPostProcessFwdBwdInterface):
-
     @staticmethod
     def forward(t: TensorProxy, group: torch.distributed.ProcessGroup) -> TensorProxy:
         return all_reduce(t, DistributedReduceOps.SUM, group, do_async=True, skip_clone=True).wait()
@@ -471,7 +468,6 @@ def synchronize_tensor_parallel_output_forward_rule(
     layer_type: TensorParallelLayerType,
 ) -> tuple[TensorProxy, tuple[torch.distributed.ProcessGroup, TensorParallelLayerType]]:
     from thunder.distributed.tensor_parallel.common import TensorParallelLayerType
-    import thunder.torch as ltorch
 
     match layer_type:
         case TensorParallelLayerType.COLUMN_PARALLEL_LINEAR:
@@ -514,7 +510,6 @@ def synchronize_tensor_parallel_input_forward_rule(
     layer_type: TensorParallelLayerType,
 ) -> tuple[TensorProxy, tuple[torch.distributed.ProcessGroup, TensorParallelLayerType]]:
     from thunder.distributed.tensor_parallel.common import TensorParallelLayerType
-    import thunder.torch as ltorch
 
     match layer_type:
         case TensorParallelLayerType.COLUMN_PARALLEL_LINEAR:

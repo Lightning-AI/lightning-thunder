@@ -395,7 +395,7 @@ def _prettyprint_stats(
         if rank_mem_info:
             short_printout += "\n    " + "*" * 20 + " Memory Usage " + "*" * 20
             for rank, (memory_allocated, memory_reserved) in rank_mem_info.items():
-                short_printout += f"\n    rank-{rank} - peak allocated memory {memory_allocated/1024/1024:.2f}MB, peak reserved: {memory_reserved/1024/1024:.2f}MB"
+                short_printout += f"\n    rank-{rank} - peak allocated memory {memory_allocated / 1024 / 1024:.2f}MB, peak reserved: {memory_reserved / 1024 / 1024:.2f}MB"
             short_printout += "\n"
 
         print(short_printout)
@@ -415,7 +415,7 @@ def _prettyprint_stats(
     if rank_mem_info:
         short_printout += "\n    " + "*" * 20 + " Memory Usage " + "*" * 20
         for rank, (memory_allocated, memory_reserved) in rank_mem_info.items():
-            short_printout += f"\n    rank-{rank} - peak allocated memory {memory_allocated/1024/1024:.2f}MB, peak reserved: {memory_reserved/1024/1024:.2f}MB"
+            short_printout += f"\n    rank-{rank} - peak allocated memory {memory_allocated / 1024 / 1024:.2f}MB, peak reserved: {memory_reserved / 1024 / 1024:.2f}MB"
         short_printout += "\n"
     if median_benchmark_stat.has_extended_stats:
         # NOTE At this point in the program extended statistics are available
@@ -617,26 +617,26 @@ def run_multiprocess_benchmark(
     print(f"Running distributed benchmark {benchmark.name} with {world_size=}")
     _print_benchmark_arguments(benchmark)
 
-    assert (
-        torch.distributed.is_available()
-    ), f"Trying to run a distributed benchmark, but torch.distributed is not available"
+    assert torch.distributed.is_available(), (
+        "Trying to run a distributed benchmark, but torch.distributed is not available"
+    )
 
     # Ensures the benchmark is running on a single CUDA device (which is overridden later)
     assert (
         len(benchmark.devices) == 1
         and Devices.device_from_string(benchmark.devices[0]).devicetype == Devices.DeviceType.CUDA
-    ), f"Distributed benchmarking currently only supports benchmarks that run on a single CUDA device"
+    ), "Distributed benchmarking currently only supports benchmarks that run on a single CUDA device"
 
     # Ensures the benchmark returns a module (because ddp is only supported on modules)
     benchmark_fn = benchmark.fn()
-    assert isinstance(
-        benchmark_fn, torch.nn.Module
-    ), f"Distributed benchmarking currently only supports module benchmarks"
+    assert isinstance(benchmark_fn, torch.nn.Module), (
+        "Distributed benchmarking currently only supports module benchmarks"
+    )
 
     # Validates world size
-    assert (
-        world_size <= torch.cuda.device_count()
-    ), f"Requested world size of {world_size} is greater than the number of available cuda devices {torch.cuda.device_count()}"
+    assert world_size <= torch.cuda.device_count(), (
+        f"Requested world size of {world_size} is greater than the number of available cuda devices {torch.cuda.device_count()}"
+    )
 
     FILE_SCHEMA: str = "file://"
     if sys.platform == "win32":

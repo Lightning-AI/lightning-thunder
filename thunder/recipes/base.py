@@ -1,15 +1,11 @@
 import torch
-from thunder import Recipe, Plugin, DebugOptions, Transform, Executor
-from thunder.core.recipe import Interpreter
-from thunder.executors import nvfuser_available
-from thunder.executors.torch_compile import torch_compile_ex
+from thunder import Recipe, DebugOptions, Transform, Executor
 from thunder.transforms.prune_prologue_checks import PrunePrologueChecks
 from thunder.extend import get_executor
 from typing import Any
 
 
 def get_nvfuser_package_hint() -> str:
-
     torch_version = torch.__version__.split("+")[0]
     cuda_version = torch.version.cuda or "unknown"
 
@@ -149,7 +145,6 @@ class BaseRecipe(Recipe):
         for name in self.executor_names:
             executor = get_executor(name)
             if executor is None:
-
                 if name == "nvfuser":
                     hint = get_nvfuser_package_hint()
                     print(hint)

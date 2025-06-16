@@ -1,13 +1,9 @@
-from functools import partial
-
 import torch
-from torch.testing import assert_close, make_tensor
+from torch.testing import assert_close
 
 import thunder
 import thunder.torch as ttorch
 from thunder.tests.framework import instantiate
-
-import pytest
 
 
 # TODO: convert these tests to OpInfo generated tests

@@ -15,9 +15,8 @@ import re
 import sys
 import traceback
 import weakref
-import torch
 from typing import Any, Literal, TypedDict
-from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence, Set, Sized
+from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence, Sized
 import collections
 import operator
 
@@ -25,13 +24,11 @@ from io import StringIO
 
 from types import (
     CellType,
-    ClassMethodDescriptorType,
     CodeType,
     CoroutineType,
     FrameType,
     FunctionType,
     MethodType,
-    MethodDescriptorType,
     ModuleType,
     NoneType,
     BuiltinFunctionType,
@@ -179,9 +176,9 @@ class WrappedValue:
 
     def register_proxy(self, proxy):
         # note: the proxy is responsible for capturing all the existing attributes/values
-        assert (
-            self.original_value is self.nothing
-        ), "cannot proxy multiple times, please file an issue to discuss your use-case"
+        assert self.original_value is self.nothing, (
+            "cannot proxy multiple times, please file an issue to discuss your use-case"
+        )
         self.original_value = self.value
         self.value = proxy
 
@@ -254,9 +251,9 @@ def wrap(value: Any, /, *, provenance: ProvenanceRecord) -> WrappedValue:
     if isinstance(value, WrappedValue):
         if isinstance(value.value, list):
             assert isinstance(value.item_wrappers, Sized)
-            assert len(value.value) == len(
-                value.item_wrappers
-            ), f"{len(value.value)} {len(value.item_wrappers)} {value.provenance}"
+            assert len(value.value) == len(value.item_wrappers), (
+                f"{len(value.value)} {len(value.item_wrappers)} {value.provenance}"
+            )
         if isinstance(value.value, dict):
             assert value.item_wrappers is not None
             assert len(value.item_wrappers) == len(value.key_wrappers), f"{value.value}"
@@ -270,6 +267,8 @@ def wrap(value: Any, /, *, provenance: ProvenanceRecord) -> WrappedValue:
         if cached is not None:
             potential_wrap = cached[0]()
             if potential_wrap is not None:
+                assert potential_wrap.value is value or potential_wrap.original_value is value
+
                 # Note: we want to cache mutable objects to not run into trouble
                 #       with multiple accesses to the same.
                 #       As the cache only holds a weakref to the WrappedValue instance
@@ -322,9 +321,9 @@ def populate_attribute_wrapper(wrapped_object, name, wrapped_attribute):
     assert isinstance(wrapped_object, WrappedValue)
     assert isinstance(wrapped_attribute, WrappedValue)
 
-    assert (
-        getattr(wrapped_object.value, name) is wrapped_attribute.value
-    ), f"{getattr(wrapped_object.value, name)}, {wrapped_attribute.value}"
+    assert getattr(wrapped_object.value, name) is wrapped_attribute.value, (
+        f"{getattr(wrapped_object.value, name)}, {wrapped_attribute.value}"
+    )
 
     wrapped_object.attribute_wrappers[name] = wrapped_attribute
 
@@ -1185,7 +1184,6 @@ class InterpreterFrame:
             return self.code._varname_from_oparg(idx)  # type: ignore
 
     def get_or_make_python_frame(self) -> FrameType:
-
         assert self.positions is not None
         lineno = self.positions.lineno
         if lineno is None:
@@ -1265,9 +1263,9 @@ class register_opcode_handler:
         ):
             assert self.name not in _default_opcode_handler_map, self.name
             assert self.name in dis.opmap, self.name
-            assert (
-                self.name.lower() in fn.__name__
-            ), f"opcode handler name mismatch {self.name.lower()} vs. {fn.__name__}"
+            assert self.name.lower() in fn.__name__, (
+                f"opcode handler name mismatch {self.name.lower()} vs. {fn.__name__}"
+            )
             _default_opcode_handler_map[self.name] = fn
             return fn
         return _default_opcode_handler_map.get(self.name, fn)
@@ -1424,7 +1422,6 @@ def _enumerate_lookaside(obj: Iterable, start: int = 0):
 
 
 def _zip_lookaside(*obj: Iterable, strict=False):
-
     if not obj:
         return
 
@@ -1452,13 +1449,13 @@ def _zip_lookaside(*obj: Iterable, strict=False):
         if result:
             i = len(result)
             plural = " " if i == 1 else "s 1-"
-            msg = f"zip() argument {i+1} is shorter than argument{plural}{i}"
+            msg = f"zip() argument {i + 1} is shorter than argument{plural}{i}"
             raise ValueError(msg)
         sentinel = object()
         for i, iterator in enumerate(iterators[1:], 1):
             if next(iterator, sentinel) is not sentinel:
                 plural = " " if i == 1 else "s 1-"
-                msg = f"zip() argument {i+1} is longer than argument{plural}{i}"
+                msg = f"zip() argument {i + 1} is longer than argument{plural}{i}"
                 raise ValueError(msg)
 
     return _interpret_call(zip, *obj, strict=wrap_const(strict))
@@ -1713,9 +1710,9 @@ def wrap_attribute(plain_result, obj, name):
     # note: there are cases where "is" will always fail (e.g. BuiltinMethods
     #       are recreated every time)
     if known_wrapper is not None:
-        assert plausibly_wrapper_of(
-            known_wrapper, plain_result
-        ), f"attribute {name.value} of {type(obj.value).__name__} object out of sync: {known_wrapper.value} vs. {plain_result}"
+        assert plausibly_wrapper_of(known_wrapper, plain_result), (
+            f"attribute {name.value} of {type(obj.value).__name__} object out of sync: {known_wrapper.value} vs. {plain_result}"
+        )
         return known_wrapper
 
     pr = ProvenanceRecord(PseudoInst.LOAD_ATTR, inputs=[obj.provenance, name.provenance])
@@ -2139,7 +2136,8 @@ class SequenceWrapperMethods(WrappedValue):
         res = _interpret_call(list.extend, l, iterable)
         if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
             return res
-        self.value = self.python_typ(l.value)
+        assert type(self.value) is self.python_typ
+        self.value[:] = l.value[:]
         self.item_wrappers = l.item_wrappers[:]
         return wrap_const(None)
 
@@ -2382,7 +2380,7 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
             return do_raise(IndexError(f"pop on empty {type(uself)}"))
 
         if uindex < -len(uself) or uindex >= len(uself):
-            return do_raise(IndexError(f"pop index out of range"))
+            return do_raise(IndexError("pop index out of range"))
 
         res = _interpret_call(lambda l, i: l[i], self, index)
 
@@ -3104,9 +3102,9 @@ def freevar_callback(name: str, cell: CellType, /, *, fn: Callable, idx: int) ->
     if not ctx._with_provenance_tracking:
         return new_contents
 
-    assert not isinstance(
-        new_contents, (WrappedValue, CellType)
-    ), "freevar_callback should return a plain value, not a WrappedValue or a CellType"
+    assert not isinstance(new_contents, (WrappedValue, CellType)), (
+        "freevar_callback should return a plain value, not a WrappedValue or a CellType"
+    )
 
     if new_contents is not old_contents:
         register_cell_proxy(cell, new_contents)
@@ -4406,7 +4404,7 @@ def _format_value_handler(inst: dis.Instruction, /, stack: InterpreterStack, **k
         elif _case == FVC_REPR:
             value = repr(value)
         else:
-            assert _case == FVC_ASCII, f"Unknown FVC_MASK in FORMAT_VALUE"
+            assert _case == FVC_ASCII, "Unknown FVC_MASK in FORMAT_VALUE"
             value = ascii(value)
 
         formatted: str = format(value, fmt_spec) if fmt_spec is not None else format(value)
@@ -5197,7 +5195,6 @@ def _make_cell_handler(inst: dis.Instruction, /, frame: InterpreterFrame, **kwar
 def _make_function_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, globals_dict: dict[str, Any], **kwargs
 ) -> None:
-
     assert type(inst.arg) is int
     flag: int = inst.arg
 
@@ -5265,7 +5262,6 @@ def _make_function_handler(
 def _make_function_handler_313(
     inst: dis.Instruction, /, stack: InterpreterStack, globals_dict: dict[str, Any], **kwargs
 ) -> None:
-
     fn_co: CodeType = unwrap(stack.pop_wrapped())
     name = fn_co.co_name
 
@@ -5287,7 +5283,6 @@ def _make_function_handler_313(
 def _set_function_attribute_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, globals_dict: dict[str, Any], **kwargs
 ) -> None:
-
     assert type(inst.arg) is int
     flag: int = inst.arg
 
@@ -5380,7 +5375,7 @@ def _match_class_impl(kw_names, typ, subject, count) -> tuple | None:
         match_self = True
         match_args = ()
 
-    if not type(match_args) is tuple:
+    if type(match_args) is not tuple:
         raise TypeError(f"{typ.__name__}.__match_args__ must be a tuple (got {type(match_args)})")
 
     allowed = 1 if match_self else len(match_args)
@@ -5819,7 +5814,7 @@ def do_raise(exc: Any = Py_NULL(), cause: Any = Py_NULL()) -> Literal[INTERPRETE
         elif cause is None:
             fixed_cause = None
         else:
-            return do_raise(TypeError(f"exception causes must derive from BaseException"))
+            return do_raise(TypeError("exception causes must derive from BaseException"))
 
         value.__cause__ = fixed_cause
 
@@ -6325,7 +6320,6 @@ def _store_subscr_handler(inst: dis.Instruction, /, stack: InterpreterStack, **k
 def _to_bool_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, frame: InterpreterFrame, **kwargs
 ) -> None | INTERPRETER_SIGNALS:
-
     value = stack.pop_wrapped()
 
     bool_value = _interpret_call(bool, value)
@@ -6760,24 +6754,24 @@ def _interpret_call_with_unwrapping(fn: Callable, /, *args, **kwargs) -> Any | I
         assert all(isinstance(a, WrappedValue) for a in args)
         assert all(isinstance(a, WrappedValue) for a in kwargs.values())
         if isinstance(res.value, list):
-            assert len(res.value) == len(
-                res.item_wrappers
-            ), f"{len(res.value)} {len(res.item_wrappers)} {res.value} {res.item_wrappers} {fn}"
+            assert len(res.value) == len(res.item_wrappers), (
+                f"{len(res.value)} {len(res.item_wrappers)} {res.value} {res.item_wrappers} {fn}"
+            )
         if isinstance(res.value, dict):
-            assert len(res.key_wrappers) == len(
-                res.item_wrappers
-            ), f"{len(res.value)} {len(res.item_wrappers)} {len(res.key_wrappers)} {res.value} {res.item_wrappers} {fn}"
+            assert len(res.key_wrappers) == len(res.item_wrappers), (
+                f"{len(res.value)} {len(res.item_wrappers)} {len(res.key_wrappers)} {res.value} {res.item_wrappers} {fn}"
+            )
         for a in args:
             if isinstance(a.value, list):
                 assert isinstance(a.item_wrappers, Sized)
-                assert len(a.value) == len(
-                    a.item_wrappers
-                ), f"{len(a.value)} {len(a.item_wrappers)} {a.value} {a.item_wrappers} {fn}"
+                assert len(a.value) == len(a.item_wrappers), (
+                    f"{len(a.value)} {len(a.item_wrappers)} {a.value} {a.item_wrappers} {fn}"
+                )
             if isinstance(a.value, dict):
                 assert isinstance(a.item_wrappers, Sized)
-                assert len(a.key_wrappers) == len(
-                    a.item_wrappers
-                ), f"{len(a.value)} {len(a.item_wrappers)} {len(a.key_wrappers)} {a.value} {a.item_wrappers} {fn}"
+                assert len(a.key_wrappers) == len(a.item_wrappers), (
+                    f"{len(a.value)} {len(a.item_wrappers)} {len(a.key_wrappers)} {a.value} {a.item_wrappers} {fn}"
+                )
 
     return unwrap(res)
 
@@ -6829,9 +6823,9 @@ def _call_dispatch(
         assert all(isinstance(a, WrappedValue) for a in kwargs.values())
         for a in args:
             if isinstance(a.value, list):
-                assert len(a.value) == len(
-                    a.item_wrappers
-                ), f"{len(a.value)} {len(a.item_wrappers)} {a.value} {a.item_wrappers}"
+                assert len(a.value) == len(a.item_wrappers), (
+                    f"{len(a.value)} {len(a.item_wrappers)} {a.value} {a.item_wrappers}"
+                )
 
     # (1) Already (interpreter wrapped)
     if hasattr(fn, "__thunder_interpreter_orig_fn"):
@@ -7055,7 +7049,7 @@ def _setup_frame_and_run_python_function(
     if pos_arguments_in_kwargs:
         return do_raise(
             TypeError(
-                f"{fn}() got some positional-only arguments passed as keyword arguments: {', ' .join(pos_arguments_in_kwargs)}"
+                f"{fn}() got some positional-only arguments passed as keyword arguments: {', '.join(pos_arguments_in_kwargs)}"
             )
         )
 
@@ -7102,7 +7096,6 @@ def _setup_frame_and_run_python_function(
             unconsumed_kwargs = wrap_kwargs(unconsumed_kwargs)
         locals_dict[code.co_varnames[idx]] = unconsumed_kwargs
     elif unconsumed_kwargs:
-
         return do_raise(TypeError(f"{fn}() got unexpected keyword arguments: {','.join(unconsumed_kwargs)}"))
 
     # And that's it! We have all local vars in locals_dict.
@@ -7396,17 +7389,17 @@ def _run_frame(
                     # PRECALL stack effect (3.11) has a -inst.arg stack effect in the function that we only see during CALL
                     if inst.opname == "PRECALL":
                         assert type(inst.arg) is int
-                        assert (
-                            expected_stack_effect == -inst.arg
-                        ), f"precall with stack effect {expected_stack_effect}, {inst}"
+                        assert expected_stack_effect == -inst.arg, (
+                            f"precall with stack effect {expected_stack_effect}, {inst}"
+                        )
                         expected_stack_effect = 0
                     elif inst.opname == "CALL":
                         assert type(inst.arg) is int
                         assert expected_stack_effect == -1, f"call with stack effect {expected_stack_effect}, {inst}"
                         expected_stack_effect = -inst.arg - 1
-                assert (
-                    actual_stack_effect == expected_stack_effect
-                ), f"Unexpected stack effect from {inst.opname}: expected {expected_stack_effect}, but the actual effect was {actual_stack_effect} at {inst}"
+                assert actual_stack_effect == expected_stack_effect, (
+                    f"Unexpected stack effect from {inst.opname}: expected {expected_stack_effect}, but the actual effect was {actual_stack_effect} at {inst}"
+                )
 
 
 # Special signals for the interpreter
@@ -7537,9 +7530,7 @@ def interpret(
                 # TODO Highlight the portion of the line that originated the opcode on Python versions that include
                 #      the line offset information in the instruction
                 traceback_str = os.linesep.join(f.format_with_source() for f in runtimectx.frame_stack)
-                msg = (
-                    f"Encountered exception {type(e).__name__}: {e} while tracing {fn}:{os.linesep}" f"{traceback_str}"
-                )
+                msg = f"Encountered exception {type(e).__name__}: {e} while tracing {fn}:{os.linesep}{traceback_str}"
                 # nested try ... raise to delete e from locals
                 try:
                     raise InterpreterError(msg) from e

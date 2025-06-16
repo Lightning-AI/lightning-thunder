@@ -6,18 +6,16 @@ from numbers import Number
 from typing import TYPE_CHECKING
 from collections.abc import Callable
 from collections.abc import Hashable, Sequence
-from collections.abc import Sequence
 from types import ModuleType
 
 import torch
 
-from thunder.core.compile_data import get_compile_data
 import thunder.core.dtypes as dtypes
 from thunder.core.dtypes import to_torch_dtype, to_dtype
 import thunder.core.devices as devices
 from thunder.core.devices import to_torch_device, to_device
 import thunder.core.prims as prims
-from thunder.core.proxies import NumberProxy, TensorProxy, FutureTensorProxy, pytype
+from thunder.core.proxies import NumberProxy, TensorProxy, pytype
 from thunder.core.symbol import Symbol
 from thunder.distributed.prims import DistributedReduceOps
 import thunder.distributed.prims as dist_prims
@@ -1583,7 +1581,7 @@ def _max_pool_with_indices_helper(
         dilation_ = get_maybe_ith_entry("dilation", dilation, i)
         utils.check(
             kernel_ is not None and stride_ is not None and pad_ is not None and dilation_ is not None,
-            lambda: f"max_pool argument extraction failed.",
+            lambda: "max_pool argument extraction failed.",
         )
         out_sizes.append(pooling_output_shape(in_, kernel_, pad_, stride_, dilation_, ceil_mode))
 
