@@ -21,7 +21,9 @@ def main(gh_run_id: str = ""):
     print("Starting studio...")
     s.start()
     print("Installing Thunder and dependencies...")
-    s.run(f"pip install {pkg_path} -U transformers 'numpy<2.0' 'nvfuser_cu128_torch27==0.2.27.dev20250501'")
+    s.run(
+        f"pip install {pkg_path} -U transformers nvidia-cudnn-frontend 'numpy<2.0' 'nvfuser_cu128_torch27==0.2.27.dev20250501'"
+    )
 
     print("Running HF benchmark script...")
     job = Job.run(

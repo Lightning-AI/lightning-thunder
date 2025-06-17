@@ -139,6 +139,7 @@ class torchsymbol:
         is_prim: bool = False,
         tags: None | list[Any] = None,
         out_of_place: Symbol | None = None,
+        allow_tensor_subclass_proxy: bool = False,
     ):
         self.torchfns = torchfns
         self.is_method = is_method or (method_name is not None)
@@ -151,8 +152,29 @@ class torchsymbol:
         self.tags = tags
         self.out_of_place = out_of_place
 
+        # This flag is used to enable/disable a torchsymbol to accept
+        # TensorProxy subclass as input (eg. DTensorProxy).
+        # By default, this is `False` as we don't want general `torchsymbol`
+        # which are meant for TensorProxy to accept DTensorProxy.
+        self.allow_tensor_subclass_proxy = allow_tensor_subclass_proxy
+
     def __call__(self, fn: Callable) -> Symbol:
         _fn = langctx(Languages.TORCH)(fn)
+
+        if not self.allow_tensor_subclass_proxy:
+
+            @wraps(_fn)
+            def wrapper(*args, **kwargs):
+                filter_tensor_proxies = list(
+                    filter(lambda t: isinstance(t, TensorProxy), tree_flatten((args, kwargs))[0])
+                )
+                assert all(map(lambda t: type(t) is TensorProxy, filter_tensor_proxies)), (
+                    f"Expected all inputs to be TensorProxy but found {list(map(lambda t: type(t), filter_tensor_proxies))}"
+                )
+                return _fn(*args, **kwargs)
+
+        else:
+            wrapper = _fn
 
         id: str
         if self.id is None:
@@ -178,10 +200,10 @@ class torchsymbol:
 
         if self.is_prim:
             sym = Symbol(
-                name=fn.__name__, meta=langctx(Languages.PRIMS)(_fn), id=id, is_prim=self.is_prim, tags=self.tags
+                name=fn.__name__, meta=langctx(Languages.PRIMS)(wrapper), id=id, is_prim=self.is_prim, tags=self.tags
             )
         else:
-            sym = Symbol(name=fn.__name__, meta=_fn, id=id, is_prim=self.is_prim, tags=self.tags)
+            sym = Symbol(name=fn.__name__, meta=wrapper, id=id, is_prim=self.is_prim, tags=self.tags)
 
         if self.is_method:
             method_name: str = self.method_name if self.method_name is not None else fn.__name__
