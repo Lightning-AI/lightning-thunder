@@ -3745,7 +3745,7 @@ def argsort_meta(a: TensorProxy, /, dim: int, descending: Number, stable: Number
 
 
 argsort = make_prim(
-    PrimIDs.ARGSORT,  # Need to add this to PrimIDs enum
+    PrimIDs.ARGSORT,
     "argsort",
     meta=argsort_meta,
 )

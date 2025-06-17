@@ -1349,11 +1349,8 @@ def _argsort_transform(a: TensorProxy, /, dim: int | None = None, descending: bo
         descending: Sort in descending order if True
         stable: Use stable sorting algorithm if True
     """
-    if dim is None:
-        dim = a.ndim - 1 if a.ndim > 0 else 0
-
     # NOTE: args past `a` are passed as kwargs to avoid issues with multiple `torch.argsort` overloadings
-    return argsort(a, dim=dim, descending=bool(descending), stable=bool(stable))
+    return argsort(a, dim=dim, descending=descending, stable=stable)
 
 
 # Register the implementation

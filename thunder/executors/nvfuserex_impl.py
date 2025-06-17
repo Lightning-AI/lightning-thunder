@@ -3073,9 +3073,6 @@ def argsort_transform(
         TensorProxy: Tensor of indices that would sort the input tensor
     """
     nva = getnv(a, fd, lc_to_nv_map)
-    if dim is None:
-        dim = a.ndim - 1 if a.ndim > 0 else 0
-
     return fd.ops.argsort(nva, dim, bool(descending), bool(stable))
 
 

@@ -1276,7 +1276,6 @@ register_grad(pids.SORT, _sort_prim_grad)
 def _argsort_prim_grad(
     a: TensorProxy, /, dim: None | int = None, descending: bool = False, stable: bool = False
 ) -> TensorProxy:
-    dim = -1 if dim is None else dim
     # Note: argsort returns only indices, not sorted values
     return prims.argsort(a, dim, descending, stable)
 
