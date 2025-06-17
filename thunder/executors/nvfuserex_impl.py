@@ -3016,6 +3016,34 @@ ex.register_supported(
 )
 
 
+def _topk_check_(
+    a: TensorProxy, /, k: int, dim: int | None = None, largest: Number = 1, sorted: Number = 1, *args
+) -> bool:
+    if a.ndim <= 0:
+        return False
+    if dim >= a.ndim or (dim is not None and dim < -a.ndim):
+        return False
+    return True
+
+
+def topk_transform(
+    a: TensorProxy,
+    /,
+    k: int,
+    dim: int | None = None,
+    largest: Number = 1,
+    sorted: Number = 1,
+    *,
+    fd: FusionDefinition,
+    lc_to_nv_map: dict,
+) -> any:
+    nva = getnv(a, fd, lc_to_nv_map)
+    nvk = getnv(k, fd, lc_to_nv_map)
+    return fd.ops.topk(nva, nvk, dim, bool(largest), bool(sorted))
+
+
+register_supported(prims.topk, topk_transform, _topk_check_)
+
 # At module/class level
 NVFUSER_SUPPORTS_OPTIONS = nvfuser_version() >= LooseVersion("0.2.23")
 assert NVFUSER_SUPPORTS_OPTIONS, (
