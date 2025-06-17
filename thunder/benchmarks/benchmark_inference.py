@@ -336,9 +336,10 @@ class SemiAnalysisInferenceBenchmark:
 
         # Warmup iterations
         print(f"\nWarming up with {self.config.warmup_iterations} iterations...")
+        input_ids, past_key_values = self.generate_batch()
 
         for _ in tqdm(range(self.config.warmup_iterations)):
-            input_ids, past_key_values = self.generate_batch()
+            past_key_values.reset()
             _ = self.measure_inference_step(input_ids, past_key_values, max_new_tokens=1)
 
         # Benchmark iterations
@@ -346,8 +347,7 @@ class SemiAnalysisInferenceBenchmark:
         all_metrics = []
 
         for _ in tqdm(range(self.config.num_iterations)):
-
-            input_ids, past_key_values = self.generate_batch()
+            past_key_values.reset()
             iter_metrics = self.measure_inference_step(input_ids, past_key_values, self.config.output_length)
             all_metrics.append(iter_metrics)
 
