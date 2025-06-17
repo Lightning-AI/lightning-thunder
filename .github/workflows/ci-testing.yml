@@ -49,9 +49,11 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Setup Ubuntu
-        if: runner.os == 'ubuntu'
+        if: runner.os == 'Linux'
         run: |
-          sudo apt-get install -y graphviz
+          sudo apt-get update -qq --fix-missing
+          sudo apt-get install -y libblas3 liblapack3 libopenblas-dev
+          pip install --force-reinstall numpy
 
       - name: Set min. dependencies
         if: matrix.requires == 'oldest'
