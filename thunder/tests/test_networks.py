@@ -278,8 +278,8 @@ def test_hf_bert():
     assert_close(actual, expected)
 
 
-@pytest.mark.skipif(not BITSANDBYTES_AVAILABLE, reason="`bitsandbytes` is not available")
 @requiresCUDA
+@pytest.mark.skipif(not BITSANDBYTES_AVAILABLE, reason="`bitsandbytes` is not available")
 def test_quantization():
     from thunder.tests import litgpt_model
     from lightning.fabric.plugins import BitsandbytesPrecision

@@ -1610,3 +1610,15 @@ def test_spliter_bwd():
     assert "Advanced indexing" in reason[0].exception and reason[0].exception.endswith(
         "found a tensor with dtype thunder.dtypes.bool8 and 3 dimensions"
     )
+
+
+def test_get_proxy_inputs_from_node_symtype_hint():
+    def fn(x, idx):
+        return torch.select(x, 0, idx)
+
+    x = torch.randn(4, 4)
+    idx = 0
+    cfn = thunderfx(fn, dynamic=True)
+    cfn(x, idx)
+
+    assert cfn._backend.subgraph_infos[0].split_reasons == []
