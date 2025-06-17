@@ -22,22 +22,24 @@ Key metrics:
 """
 
 from __future__ import annotations
+
+import argparse
+import json
 import os
 import time
-import json
-import torch
-import argparse
-from dataclasses import dataclass, field
-from typing import Dict, List, Tuple, Any
-from time import perf_counter
 from contextlib import contextmanager
-import numpy as np
+from dataclasses import dataclass, field
+from time import perf_counter
+from typing import Any, Dict, List, Tuple
 
-import thunder
+import numpy as np
+import torch
 
 # Import model configurations
 from transformers import AutoConfig, AutoModelForCausalLM
 from transformers.cache_utils import HybridChunkedCache
+
+import thunder
 
 
 @contextmanager
@@ -57,7 +59,7 @@ BENCHMARK_SCENARIOS = {
         "output_length": 1000,
         "description": "4,000 input → 1,000 output tokens (80% prefill, 20% decode)",
         "workload_balance": "80% prefill, 20% decode computational cost",
-        "hardware_focus": "Compute optimization provides maximum impact"
+        "hardware_focus": "Compute optimization provides maximum impact",
     },
     "chat": {
         "name": "Chat (Balanced)",
@@ -65,7 +67,7 @@ BENCHMARK_SCENARIOS = {
         "output_length": 1000,
         "description": "1,000 input → 1,000 output tokens (50% prefill, 50% decode)",
         "workload_balance": "50% prefill, 50% decode computational cost",
-        "hardware_focus": "Mixed optimization requirements"
+        "hardware_focus": "Mixed optimization requirements",
     },
     "reasoning": {
         "name": "Reasoning (Decode-Heavy)",
@@ -73,8 +75,8 @@ BENCHMARK_SCENARIOS = {
         "output_length": 4000,
         "description": "1,000 input → 4,000 output tokens (20% prefill, 80% decode)",
         "workload_balance": "20% prefill, 80% decode computational cost",
-        "hardware_focus": "Memory bandwidth optimization dominates"
-    }
+        "hardware_focus": "Memory bandwidth optimization dominates",
+    },
 }
 
 
@@ -166,7 +168,6 @@ class SemiAnalysisInferenceBenchmark:
         # Compile model
         self.model = self._compile_model(self.model)
 
-
     def _compile_model(self, model):
         match self.config.mode:
             case "eager":
@@ -175,12 +176,12 @@ class SemiAnalysisInferenceBenchmark:
                 return torch.compile(model, mode="reduce-overhead")
             case "thunder":
                 from thunder.dynamo import thunderfx
+
                 return thunderfx(model)
             case "thunderjit":
                 return thunder.jit(model)
             case _:
                 raise ValueError(f"Unknown mode: {self.config.mode}")
-
 
     def _load_model(self) -> torch.nn.Module:
         """Load the model based on configuration"""
@@ -224,13 +225,15 @@ class SemiAnalysisInferenceBenchmark:
         for layer_idx in range(self.hf_config.num_hidden_layers):
             # key_states.shape[1] is used to retrieve the number of key value heads, all other dimensions can be 1 and ignored
             # https://github.com/huggingface/transformers/blob/9300728665aaeb0ebf4db99f9d9fbce916b4a183/src/transformers/cache_utils.py#L1822
-            past_key_values.initialise_cache_layer(layer_idx, torch.empty(1, self.hf_config.num_key_value_heads, 1, 1, device=self.device))
+            past_key_values.initialise_cache_layer(
+                layer_idx, torch.empty(1, self.hf_config.num_key_value_heads, 1, 1, device=self.device)
+            )
 
         return input_ids, past_key_values
 
     def get_next_token(self, input_ids: torch.Tensor, past_key_values: HybridChunkedCache) -> torch.Tensor:
         outputs = self.model(input_ids, past_key_values=past_key_values, use_cache=True)
-        logits = outputs.logits # [B, seq_len, vocab_size]
+        logits = outputs.logits  # [B, seq_len, vocab_size]
         next_token_logits = logits[:, -1, :]
         next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
         return next_token
@@ -254,7 +257,9 @@ class SemiAnalysisInferenceBenchmark:
         return self.get_next_token(input_ids, past_key_values)
 
     @torch.inference_mode()
-    def generate(self, input_ids: torch.Tensor, max_new_tokens: int, past_key_values: HybridChunkedCache) -> Dict[str, Any]:
+    def generate(
+        self, input_ids: torch.Tensor, max_new_tokens: int, past_key_values: HybridChunkedCache
+    ) -> Dict[str, Any]:
         """
         Generate tokens using separate prefill and decode phases.
         Returns detailed metrics for both phases.
@@ -281,7 +286,9 @@ class SemiAnalysisInferenceBenchmark:
             "total_tokens": max_new_tokens,
         }
 
-    def measure_inference_step(self, input_ids: torch.Tensor, past_key_values: HybridChunkedCache, max_new_tokens: int) -> Dict[str, float]:
+    def measure_inference_step(
+        self, input_ids: torch.Tensor, past_key_values: HybridChunkedCache, max_new_tokens: int
+    ) -> Dict[str, float]:
         """Measure a single inference step with detailed timing using separate prefill/decode"""
         with timer() as total_timer:
             # Generate tokens with separate prefill/decode tracking
@@ -482,16 +489,17 @@ class SemiAnalysisInferenceBenchmark:
 
         print(f"\nResults saved to {filename}")
 
+
 def run_semianalysis_benchmark(
     model_name: str = "llama3.1-8b",
     batch_size: int = 1,
-    input_length: int = 1024, # default 1k -> 1k
-    output_length: int = 1024, # default 1k -> 1k
+    input_length: int = 1024,  # default 1k -> 1k
+    output_length: int = 1024,  # default 1k -> 1k
     num_iterations: int = 100,
     num_layers: int | None = None,
     mode: str = "thunder",
     save_results: bool = True,
-    scenario: str | None = None
+    scenario: str | None = None,
 ):
     """Main function to run the benchmark"""
 
@@ -517,7 +525,7 @@ def run_semianalysis_benchmark(
         num_iterations=num_iterations,
         mode=mode,
         num_layers=num_layers,
-        scenario=scenario
+        scenario=scenario,
     )
 
     benchmark = SemiAnalysisInferenceBenchmark(config)
@@ -565,14 +573,14 @@ Use --list-scenarios for detailed scenario descriptions.
 Examples:
   python inference_bmk.py --scenario chat --model-name llama3.1-8b
   python inference_bmk.py --input-length 2048 --output-length 512 --model-name llama3.1-8b --mode eager
-        """
+        """,
     )
 
     # Model configuration
     parser.add_argument(
         "--model-name",
         type=str,
-        default="llama3.1-8b", # Small model so it's easier to iterate locally.
+        default="llama3.1-8b",  # Small model so it's easier to iterate locally.
         help="Model to benchmark",
     )
 
@@ -581,19 +589,22 @@ Examples:
         "--scenario",
         type=str,
         choices=list(BENCHMARK_SCENARIOS.keys()),
-        help="Use standardized benchmark scenario. Available: " +
-             ", ".join([f"{k} ({v['description']})" for k, v in BENCHMARK_SCENARIOS.items()]) +
-             ". If specified, overrides --input-length and --output-length."
+        help="Use standardized benchmark scenario. Available: "
+        + ", ".join([f"{k} ({v['description']})" for k, v in BENCHMARK_SCENARIOS.items()])
+        + ". If specified, overrides --input-length and --output-length.",
     )
 
     # Benchmark configuration (for custom experimentation when not using scenarios)
     parser.add_argument("--batch-size", type=int, default=1, help="Batch size for inference")
-    parser.add_argument("--input-length", type=int, default=2048, help="Input sequence length (ignored if --scenario is used)")
-    parser.add_argument("--output-length", type=int, default=128, help="Output sequence length (ignored if --scenario is used)")
+    parser.add_argument(
+        "--input-length", type=int, default=2048, help="Input sequence length (ignored if --scenario is used)"
+    )
+    parser.add_argument(
+        "--output-length", type=int, default=128, help="Output sequence length (ignored if --scenario is used)"
+    )
     parser.add_argument("--num-iterations", type=int, default=100, help="Number of benchmark iterations")
     parser.add_argument("--warmup-iterations", type=int, default=10, help="Number of warmup iterations")
     parser.add_argument("--num-layers", type=int, help="Number of layers of the moddel")
-
 
     # Execution configuration
     parser.add_argument(
@@ -606,7 +617,9 @@ Examples:
     # Output configuration
     parser.add_argument("--save-results", action="store_true", help="Save results to JSON file")
     parser.add_argument("--output-dir", type=str, default="./results", help="Directory to save results")
-    parser.add_argument("--list-scenarios", action="store_true", help="List available standard benchmark scenarios and exit")
+    parser.add_argument(
+        "--list-scenarios", action="store_true", help="List available standard benchmark scenarios and exit"
+    )
 
     args = parser.parse_args()
 
