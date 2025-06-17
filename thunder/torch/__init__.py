@@ -3371,8 +3371,8 @@ def index_select(a: TensorLike, /, dim: int, index: TensorLike) -> TensorLike:
 
 
 @torchsymbol(torch.gather, is_method=True)
-def gather(a: TensorLike, /, dim: int, index: TensorLike) -> TensorLike:
-    return clang.gather(a, indices=index, dim=dim)
+def gather(input: TensorLike, dim: int, index: TensorLike) -> TensorLike:
+    return clang.gather(input, indices=index, dim=dim)
 
 
 # NOTE: PyTorch uses `src` for torch.Tensor arguments and `value` for scalars
