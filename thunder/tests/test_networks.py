@@ -4,6 +4,7 @@ import warnings
 
 import pytest
 import torch
+from lightning_utilities.core.imports import RequirementCache
 from torch.testing import assert_close, make_tensor
 
 import thunder
@@ -18,6 +19,7 @@ from thunder.tests.framework import (
 )
 import thunder.tests.nanogpt_model as nanogpt_model
 import thunder.tests.hf_bart_self_attn as hf_bart_self_attn
+from thunder.transforms.quantization import bitsandbytes_executor
 
 #
 # nanoGPT tests
@@ -278,8 +280,9 @@ def test_hf_bert():
     assert_close(actual, expected)
 
 
-@pytest.mark.skipif(not BITSANDBYTES_AVAILABLE, reason="`bitsandbytes` is not available")
 @requiresCUDA
+@pytest.mark.skipif(not BITSANDBYTES_AVAILABLE, reason="`bitsandbytes` is not available")
+@pytest.mark.xfail(RuntimeError, condition=RequirementCache("bitsandbytes==0.46.0"), reason="known bissue, will be resolved in 0.47.0")
 def test_quantization():
     from thunder.tests import litgpt_model
     from lightning.fabric.plugins import BitsandbytesPrecision
