@@ -972,7 +972,6 @@ def empty_like(
     requires_grad: bool = False,
     memory_format: torch.memory_format = torch.preserve_format,
 ) -> TensorLike:
-
     utils.check(
         memory_format == torch.preserve_format or memory_format == torch.contiguous_format,
         lambda: f"{memory_format} is not supported within thunder.jit",
