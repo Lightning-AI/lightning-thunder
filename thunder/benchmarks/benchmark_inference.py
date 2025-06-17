@@ -229,6 +229,13 @@ class SemiAnalysisInferenceBenchmark:
 
         return input_ids, past_key_values
 
+    def get_next_token(self, input_ids: torch.Tensor, past_key_values: HybridChunkedCache) -> torch.Tensor:
+        outputs = self.model(input_ids, past_key_values=past_key_values, use_cache=True)
+        logits = outputs.logits # [B, seq_len, vocab_size]
+        next_token_logits = logits[:, -1, :]
+        next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
+        return next_token
+
     def prefill(self, input_ids: torch.Tensor, past_key_values: HybridChunkedCache) -> torch.Tensor:
         """
         Prefill phase: Process the entire input prompt at once.
@@ -236,14 +243,7 @@ class SemiAnalysisInferenceBenchmark:
 
         Similar to: https://github.com/pytorch-labs/gpt-fast/blob/main/generate.py#L68-L82
         """
-        outputs = self.model(input_ids, past_key_values=past_key_values, use_cache=True)
-        # Handle both HF model output objects and raw logits
-        logits = outputs.logits if hasattr(outputs, "logits") else outputs
-        # Get next token from the last position
-        next_token_logits = logits[:, -1, :]
-        next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
-
-        return next_token
+        return self.get_next_token(input_ids, past_key_values)
 
     def decode_one_token(self, input_ids: torch.Tensor, past_key_values: HybridChunkedCache) -> torch.Tensor:
         """
@@ -252,16 +252,7 @@ class SemiAnalysisInferenceBenchmark:
         """
         # input_pos: [B, 1] One token at the time
         assert input_ids.shape[-1] == 1, f"Expected shape (B, 1), but found {input_ids.shape}"
-
-        outputs = self.model(input_ids, past_key_values=past_key_values, use_cache=True)
-
-        # Handle both HF model output objects and raw logits
-        logits = outputs.logits if hasattr(outputs, "logits") else outputs
-
-        next_token_logits = logits[:, -1, :]
-        next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
-
-        return next_token
+        return self.get_next_token(input_ids, past_key_values)
 
     @torch.inference_mode()
     def generate(self, input_ids: torch.Tensor, max_new_tokens: int, past_key_values: HybridChunkedCache) -> Dict[str, Any]:
