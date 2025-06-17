@@ -138,7 +138,6 @@ class InferenceMetrics:
     # Per-iteration metrics for variance analysis
     iteration_times: List[float] = field(default_factory=list)
     ttft_times: List[float] = field(default_factory=list)
-    tbot_times: List[float] = field(default_factory=list)
     prefill_times: List[float] = field(default_factory=list)
     decode_times: List[float] = field(default_factory=list)
 
@@ -266,23 +265,18 @@ class SemiAnalysisInferenceBenchmark:
         prefill_time = prefill_timer()
         generated_tokens = [first_token]
 
-        # Update sequences with first generated token
-        input_ids = torch.cat([input_ids, first_token], dim=1)
-
         # Decode phase - generate remaining tokens one by one
-        decode_times = []
-        for _ in range(max_new_tokens - 1):
-            with timer() as decode_timer:
-                next_token = self.decode_one_token(input_ids[:, -1:], past_key_values)
-            decode_times.append(decode_timer())
-            generated_tokens.append(next_token)
+        next_token = first_token
+        with timer() as decode_timer:
+            for _ in range(max_new_tokens - 1):
+                next_token = self.decode_one_token(next_token, past_key_values)
+                generated_tokens.append(next_token)
 
-            # Update sequences
-            input_ids = torch.cat([input_ids, next_token], dim=1)
+        total_decode_time = decode_timer()
 
         return {
             "prefill_time_ms": prefill_time,
-            "decode_times_ms": decode_times,
+            "decode_time_ms": total_decode_time,
             "generated_tokens": generated_tokens,
             "total_tokens": max_new_tokens,
         }
@@ -296,8 +290,8 @@ class SemiAnalysisInferenceBenchmark:
 
         # Extract metrics
         ttft = generation_result["prefill_time_ms"]  # Time to first token is the prefill time
-        decode_times = generation_result["decode_times_ms"]
-        avg_tbot = np.mean(decode_times) if decode_times else 0
+        total_decode_time = generation_result["decode_time_ms"]
+        avg_tbot = total_decode_time / (max_new_tokens - 1) if max_new_tokens > 1 else 0
 
         # Calculate throughput
         total_tokens = self.config.output_length * self.config.batch_size
@@ -308,7 +302,6 @@ class SemiAnalysisInferenceBenchmark:
         prefill_throughput = (prefill_tokens / generation_result["prefill_time_ms"]) * 1000
 
         decode_tokens = (self.config.output_length - 1) * self.config.batch_size
-        total_decode_time = sum(decode_times)
         decode_throughput = (decode_tokens / total_decode_time) * 1000 if total_decode_time > 0 else 0
 
         return {
@@ -316,7 +309,6 @@ class SemiAnalysisInferenceBenchmark:
             "avg_tbot": avg_tbot,
             "total_time": total_time,
             "throughput": throughput,
-            "tbot_times": decode_times,
             "prefill_throughput": prefill_throughput,
             "decode_throughput": decode_throughput,
             "prefill_time": generation_result["prefill_time_ms"],
@@ -355,7 +347,6 @@ class SemiAnalysisInferenceBenchmark:
             # Track metrics
             self.metrics.iteration_times.append(iter_metrics["total_time"])
             self.metrics.ttft_times.append(iter_metrics["ttft"])
-            self.metrics.tbot_times.extend(iter_metrics["tbot_times"])
             self.metrics.prefill_times.append(iter_metrics["prefill_time"])
             self.metrics.decode_times.append(iter_metrics["total_decode_time"])
 
@@ -388,10 +379,7 @@ class SemiAnalysisInferenceBenchmark:
         self.metrics.time_to_first_token_ms = np.mean(ttfts)
 
         # TBOT
-        all_tbots = []
-        for m in all_metrics:
-            all_tbots.extend(m["tbot_times"])
-        self.metrics.time_between_output_tokens_ms = np.mean(all_tbots) if all_tbots else 0
+        self.metrics.time_between_output_tokens_ms = np.mean([m["avg_tbot"] for m in all_metrics])
 
         # Total time
         self.metrics.total_time_ms = np.mean(total_times)
@@ -462,7 +450,6 @@ class SemiAnalysisInferenceBenchmark:
             print("\nVariance Analysis:")
             print(f"  Throughput Std Dev: {np.std([t for t in self.metrics.iteration_times]):.2f} ms")
             print(f"  TTFT Std Dev: {np.std(self.metrics.ttft_times):.2f} ms")
-            print(f"  TBOT Std Dev: {np.std(self.metrics.tbot_times):.2f} ms")
 
     def save_results(self, filename: str):
         """Save results to JSON file"""
@@ -485,7 +472,6 @@ class SemiAnalysisInferenceBenchmark:
             "detailed_metrics": {
                 "iteration_times": self.metrics.iteration_times,
                 "ttft_times": self.metrics.ttft_times,
-                "tbot_times_sample": self.metrics.tbot_times[:100],  # Sample to avoid huge files
                 "prefill_times": self.metrics.prefill_times,
                 "decode_times": self.metrics.decode_times,
             },
