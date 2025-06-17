@@ -4,16 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
-    paths:
-      - ".github/workflows/ci-transformer-tests.yml"
-      - ".github/run-transformer-tests-as-lit-jobs.py"
-      - "thunder/tests/test_transformer_engine_executor.py"
-      - "thunder/tests/test_transformer_engine_v2_executor.py"
-      - "thunder/tests/distributed/test_ddp.py"
-      - "thunder/tests/distributed/test_fsdp.py"
+    branches: [main]
   workflow_dispatch: {}
-  schedule:
-    - cron: "0 0 * * *" # every midnight
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.head_ref }}
