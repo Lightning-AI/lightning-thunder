@@ -6422,7 +6422,7 @@ dim_perm_ops.append(sort_opinfo)
 argsort_opinfo = OpInfo(
     clang.argsort,
     name="argsort",
-    supports_grad=True,
+    supports_grad=False,
     sample_input_generator=sort_sample_generator,
     torch_reference=torch.argsort,
     dtypes=(datatypes.bool8, datatypes.signedinteger, datatypes.unsignedinteger, datatypes.floating),
