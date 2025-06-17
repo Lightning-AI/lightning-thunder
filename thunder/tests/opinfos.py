@@ -291,9 +291,9 @@ class DecorateInfo:
 
         if devicetypes is not None:
             for x in devicetypes:
-                assert isinstance(
-                    x, devices.DeviceType
-                ), f"Found non-devicetype {x} when initializing a DecorateInfo's devicetypes"
+                assert isinstance(x, devices.DeviceType), (
+                    f"Found non-devicetype {x} when initializing a DecorateInfo's devicetypes"
+                )
 
         self.dtypes = None if dtypes is None else datatypes.resolve_dtypes(dtypes)
         self.active_if = active_if
