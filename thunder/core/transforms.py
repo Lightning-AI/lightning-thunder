@@ -1276,28 +1276,9 @@ register_grad(pids.SORT, _sort_prim_grad)
 def _argsort_prim_grad(
     a: TensorProxy, /, dim: None | int = None, descending: bool = False, stable: bool = False
 ) -> TensorProxy:
-    """Computes the gradient for argsort primitive.
-
-    Args:
-        a: Input tensor
-        dim: Dimension along which to sort (default: last dimension)
-        descending: Sort in descending order if True
-        stable: Whether to use stable sorting algorithm
-
-    Returns:
-        Gradient of input tensor
-    """
     dim = -1 if dim is None else dim
     # Note: argsort returns only indices, not sorted values
-    sort_idx = prims.argsort(a, dim, descending, stable)
-
-    # argsort only returns indices which have no gradient
-    # Zero gradient for input since argsort is not differentiable
-    a_grad = ltorch.zeros_like(a)
-    print(f"argsort grad: {a_grad.shape}, {a_grad.dtype}, {a_grad.device}")
-    put_grad(a, a_grad)
-
-    return sort_idx
+    return prims.argsort(a, dim, descending, stable)
 
 
 register_grad(pids.ARGSORT, _argsort_prim_grad)
