@@ -94,7 +94,7 @@ class InferenceBenchmarkConfig:
     input_length: int = 1024
     output_length: int = 1024
     num_layers: int | None = None
-    num_iterations: int = 100
+    num_iterations: int = 10
     warmup_iterations: int = 2
     device: str = "cuda"
     mode: str = "thunder"  # "thunder", "eager", "inductor"
