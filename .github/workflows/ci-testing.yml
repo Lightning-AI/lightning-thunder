@@ -48,6 +48,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      - run: echo "${{ runner.os }}"
       - name: Setup Ubuntu
         if: runner.os == 'ubuntu'
         run: |
