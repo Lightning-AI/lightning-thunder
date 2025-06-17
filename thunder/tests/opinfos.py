@@ -5427,6 +5427,7 @@ def gather_sample_generator(op, device, dtype, requires_grad, **kwargs):
         a = make(shape_a)
         b = make_index(shape_b, low=0, high=shape_a[dim])
         yield SampleInput(a, index=b, dim=dim)
+        yield SampleInput(input=a, index=b, dim=dim)
 
 
 gather_opinfo = OpInfo(
