@@ -221,7 +221,7 @@ class SemiAnalysisInferenceBenchmark:
 
         # Random input tokens
         input_ids = torch.randint(0, vocab_size, (batch_size, input_length), device=self.device)
-        past_key_values = HybridChunkedCache(self.hf_config, input_ids.shape[0], input_ids.shape[1])
+        past_key_values = HybridChunkedCache(self.hf_config, input_ids.shape[0], input_ids.shape[1] + self.config.output_length)
         for layer_idx in range(self.hf_config.num_hidden_layers):
             # key_states.shape[1] is used to retrieve the number of key value heads, all other dimensions can be 1 and ignored
             # https://github.com/huggingface/transformers/blob/9300728665aaeb0ebf4db99f9d9fbce916b4a183/src/transformers/cache_utils.py#L1822
