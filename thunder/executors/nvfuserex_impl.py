@@ -250,7 +250,7 @@ def get_translator(bsym: BoundSymbol) -> Callable:
 
 
 class MultiDeviceFusionDefinition(FusionDefinition):
-    def __init__(self, in_dtensors: list[DTensorProxy], define_fn: Callable, max_length: int):
+    def __init__(self, define_fn: Callable[[FusionDefinition], None], in_dtensors: list[DTensorProxy], max_length: int):
         super().__init__(max_length=max_length)
         self._in_dtensors = in_dtensors
         self._define_fn = define_fn
@@ -365,9 +365,9 @@ def create_fd(
 
     MAX_LENGTH = 9999
 
-    if any(map(lambda t: isinstance(t, DTensorProxy), sorted_unique_inputs)):
+    if any(isinstance(t, DTensorProxy) for t in sorted_unique_inputs):
         # multi-GPU path
-        assert all(map(lambda t: isinstance(t, DTensorProxy), sorted_unique_inputs)), (
+        assert all(isinstance(t, DTensorProxy) for t in sorted_unique_inputs), (
             "nvfuser: Currently we only support Fusion region with all DTensor inputs or all Tensor inputs but not a mix"
         )
 
@@ -382,7 +382,7 @@ def create_fd(
             "nvfuser: Expected runtime and tracing metadata to be the same for DTensor."
         )
 
-        fd = MultiDeviceFusionDefinition(sorted_unique_inputs, definition, max_length=MAX_LENGTH)
+        fd = MultiDeviceFusionDefinition(definition, sorted_unique_inputs, max_length=MAX_LENGTH)
         # Device may be set in one of the "factory" methods like full, iota, or uniform
         # NOTE: This should be called before defining because a factory method may look-up at `_selected_device` while being defined.
         fd._selected_device = None
