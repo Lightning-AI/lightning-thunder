@@ -14,9 +14,12 @@ from collections.abc import Callable
 from looseversion import LooseVersion
 import torch
 from torch import Tensor
-from torch.distributed.tensor import DTensor
-from torch.distributed.tensor.placement_types import Placement, Shard, Replicate
-import torch.distributed as dist
+
+IS_TORCH_DISTRIBUTED_AVAILABLE = torch.distributed.is_available()
+if IS_TORCH_DISTRIBUTED_AVAILABLE:
+    from torch.distributed.tensor import DTensor
+    from torch.distributed.tensor.placement_types import Placement, Shard, Replicate
+    import torch.distributed as dist
 
 import thunder.core.dtypes as dtypes
 import thunder.torch as ltorch
@@ -482,8 +485,8 @@ def compute_contiguity(
     return tuple(tuple(x) for x in nv_compute_td(shape, stride))
 
 
-def make_key_from_dtensor(dtensor: DTensor) -> tuple[str]:
-    if isinstance(dtensor, DTensor):
+def make_key_from_dtensor(dtensor) -> tuple[str]:
+    if IS_TORCH_DISTRIBUTED_AVAILABLE and isinstance(dtensor, DTensor):
         key = (repr(dtensor.device_mesh), repr(dtensor.placements))
     else:
         key = ()
