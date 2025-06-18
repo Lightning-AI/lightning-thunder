@@ -246,7 +246,15 @@ def get_translator(bsym: BoundSymbol) -> Callable:
     return _translation_map[bsym.sym.id]
 
 
-def get_methods_for_dtensor_fd(in_dtensors: list[DTensorProxy]) -> tuple[Callable]:
+class MultiDeviceFusionDefinition(FusionDefinition):
+    def __init__(self, in_dtensors: list[DTensorProxy], define_fn: Callable, max_length: int):
+        super().__init__(max_length=max_length)
+        self._in_dtensors = in_dtensors
+        self._define_fn = define_fn
+
+    def definition(self) -> None:
+        self._define_fn(self)
+
     def _find_tensor_by_index(self, index: int) -> nvfuser.Tensor:
         for t in self.sched.tensors():
             if t.index == index:
@@ -254,7 +262,7 @@ def get_methods_for_dtensor_fd(in_dtensors: list[DTensorProxy]) -> tuple[Callabl
         return None
 
     def multidevice_schedule(self) -> None:
-        for in_tensor_index, in_dtensor in zip(self.inputs(), in_dtensors):
+        for in_tensor_index, in_dtensor in zip(self.inputs(), self._in_dtensors):
             in_tensor = self._find_tensor_by_index(in_tensor_index)
 
             # Set the device mesh.
@@ -274,20 +282,6 @@ def get_methods_for_dtensor_fd(in_dtensors: list[DTensorProxy]) -> tuple[Callabl
                 self.sched.parallelize(in_tensor, dim, nvfuser.ParallelType.mesh_x)
                 self.sched.set_allocation_as_loop(in_tensor)
 
-    return _find_tensor_by_index, multidevice_schedule
-
-
-def bind(instance: object, func: Callable, as_name: str | None = None):
-    """
-    Bind the function *func* to *instance*, with either provided name *as_name*
-    or the existing name of *func*. The provided *func* should accept the
-    instance as the first argument, i.e. "self".
-    """
-    if as_name is None:
-        as_name = func.__name__
-    bound_method = func.__get__(instance, instance.__class__)
-    setattr(instance, as_name, bound_method)
-
 
 def create_fd(
     bsyms: list[BoundSymbol],
@@ -296,14 +290,6 @@ def create_fd(
     sorted_unique_outputs: list[Proxy],
 ) -> FusionDefinition:
     lc_to_nv_map = utils.ProxyDict()
-
-    # NOTE nvFuser's default max length is 1024 operations at the time of this writing
-    #   This arbitrarily increases it to 9999
-    # TODO Review splititng very large fusions or removing the max length restriction completely
-    #   See "Very large nvFuser fusions hit max_length"
-    fd = FusionDefinition(max_length=9999)
-    # Device may be set in one of the "factory" methods like full, iota, or uniform
-    fd._selected_device = None
 
     def definition(fd):
         # NOTE Adding constants is disabled for the moment in favor of definining them inline
@@ -374,9 +360,8 @@ def create_fd(
             nvout = lc_to_nv_map[out]
             fd.add_output(nvout)
 
-    bind(fd, definition, "definition")
+    MAX_LENGTH = 9999
 
-    is_multigpu_fd = False
     if any(map(lambda t: isinstance(t, DTensorProxy), sorted_unique_inputs)):
         # multi-GPU path
         assert all(map(lambda t: isinstance(t, DTensorProxy), sorted_unique_inputs)), (
@@ -392,13 +377,23 @@ def create_fd(
 
         assert all(map(check_dtensor_tracing_and_runtime_metadata, zip(sorted_unique_inputs, input_descriptors))), "nvfuser: Expected runtime and tracing metadata to be the same for DTensor."
 
-        _find_tensor_by_index, multidevice_schedule = get_methods_for_dtensor_fd(sorted_unique_inputs)
+        fd = MultiDeviceFusionDefinition(sorted_unique_inputs, definition, max_length=MAX_LENGTH)
+        # Device may be set in one of the "factory" methods like full, iota, or uniform
+        # NOTE: This should be called before defining because a factory method may look-up at `_selected_device` while being defined.
+        fd._selected_device = None
+    else:
+        # NOTE nvFuser's default max length is 1024 operations at the time of this writing
+        #   This arbitrarily increases it to 9999
+        # TODO Review splititng very large fusions or removing the max length restriction completely
+        #   See "Very large nvFuser fusions hit max_length"
+        fd = FusionDefinition(max_length=MAX_LENGTH)
+        # Device may be set in one of the "factory" methods like full, iota, or uniform
+        # NOTE: This should be called before defining because a factory method may look-up at `_selected_device` while being defined.
+        fd._selected_device = None
+        with fd:
+            definition(fd)
 
-        bind(fd, multidevice_schedule, "multidevice_schedule")
-        bind(fd, _find_tensor_by_index, "_find_tensor_by_index")
-        is_multigpu_fd = True
-
-    return fd, is_multigpu_fd
+    return fd
 
 
 def compute_symbolic_shape(
@@ -536,13 +531,13 @@ class FusionDefinitionWrapper:
     @annotate_for_profile("FusionDefinitionWrapper.__call__")
     def __call__(self, *args):
         if self.use_cache or self.last_used is None:
-            self.last_used, self.is_multigpu_fd = self.get_fd(self.to_descriptors(args))
+            self.last_used = self.get_fd(self.to_descriptors(args))
         fd = self.last_used
 
         if self.store_inputs:
             self.last_inputs = args
 
-        if self.is_multigpu_fd:
+        if hasattr(fd, "multidevice_schedule"):
             with annotate_for_profile(self.name):
                 in_tensors = [in_dtensor.to_local() for in_dtensor in args]
                 out_tensors, out_shardings = fd.execute(
