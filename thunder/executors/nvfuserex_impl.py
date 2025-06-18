@@ -375,7 +375,9 @@ def create_fd(
             runtime_placements_repr = dtensor_metadata[1]
             return repr(x.device_mesh) == runtime_device_mesh_repr and repr(x.placements) == runtime_placements_repr
 
-        assert all(map(check_dtensor_tracing_and_runtime_metadata, zip(sorted_unique_inputs, input_descriptors))), "nvfuser: Expected runtime and tracing metadata to be the same for DTensor."
+        assert all(map(check_dtensor_tracing_and_runtime_metadata, zip(sorted_unique_inputs, input_descriptors))), (
+            "nvfuser: Expected runtime and tracing metadata to be the same for DTensor."
+        )
 
         fd = MultiDeviceFusionDefinition(sorted_unique_inputs, definition, max_length=MAX_LENGTH)
         # Device may be set in one of the "factory" methods like full, iota, or uniform
