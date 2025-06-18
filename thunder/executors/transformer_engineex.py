@@ -544,7 +544,7 @@ te_sync_fp8_meta_bwd = transformer_engine_ex.register_operator(
 )
 
 
-def _transformer_engine_bwd_fp8_meta_sync(unused_fw_extrace, bw_extrace):
+def _transformer_engine_bwd_fp8_meta_sync(_, bw_extrace):
     # See doc of `_insert_bwd_fp8_meta_sync` for more details.
     _insert_bwd_fp8_meta_sync(bw_extrace)
 
