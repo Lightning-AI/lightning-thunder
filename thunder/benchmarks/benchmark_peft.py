@@ -452,7 +452,7 @@ def main(args: argparse.Namespace):
     if WORLD_SIZE > 1:
         logger.info(f"Applying FSDP2 to model with {WORLD_SIZE} devices")
         model = setup_fsdp2(model)
-        logger.info(f"FSDP2 applied to model")
+        logger.info("FSDP2 applied to model")
 
         # After FSDP2, verify and fix gradients
         logger.info("Verifying gradients after FSDP2...")
