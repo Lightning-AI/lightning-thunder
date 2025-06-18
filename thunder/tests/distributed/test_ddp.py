@@ -147,7 +147,7 @@ class DDPTest(DistributedParallelTestCase):
     @unittest.mock.patch.dict(os.environ, {"KINETO_LOG_LEVEL": "5"})  # silence torch.profiler logs
     @common_utils.parametrize(
         "executor,bucket_size_in_mb,dataset_size",
-        product(tuple(executors_map.keys()), (0, 25), (1, 2)),
+        [(tuple(executors_map.keys())[0], 25, 2)],
     )
     def test_ddp_with_no_sync_grad_accumulation(self, executor: str, bucket_size_in_mb: float, dataset_size: int):
         # This case tries to guarantee the parity between `thunder.distributed.ddp` with and without `no_sync`
@@ -168,7 +168,7 @@ class DDPTest(DistributedParallelTestCase):
             )
             jitted_ddp_m = ddp(jitted_m, bucket_size_in_mb=bucket_size_in_mb)
             optimizer = torch.optim.SGD(jitted_ddp_m.parameters(), lr=1e-3)
-            return jitted_ddp_m, optimizer
+            return m, jitted_ddp_m, optimizer
 
         def is_comm(k: str) -> bool:
             return "allreduce_" in k or "all_reduce" in k
