@@ -376,6 +376,10 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                         if recomp_bsym_rec is not None:
                             modified = True
                             recomp_bsym, recomp_output = recomp_bsym_rec
+                            # To avoid name clashes, we create new output proxies
+                            with tracectx(self.new_trace):
+                                for output in recomp_bsym.flat_proxy_outs:
+                                    self.add_to_swap_map(output, TensorProxy(like=output))
                             processed_bsyms.insert(bw_idx, recomp_bsym)
                             for nn in recomp_output:
                                 del self.backward_part_bsyms_recomputed[nn]
