@@ -531,7 +531,6 @@ class FusionDefinitionWrapper:
     save_fake_inputs: bool = False
     enable_options: None | list[str] = None
     disable_options: None | list[str] = None
-    is_multigpu_fd: None | bool = None
 
     @annotate_for_profile("FusionDefinitionWrapper.__call__")
     def __call__(self, *args):
