@@ -1,14 +1,9 @@
 from collections.abc import Sequence
 import math
 
-import torch
 
-import thunder
-from thunder.core.proxies import TensorProxy, AnyProxy
-from thunder.core.transforms import get_grad, put_grads
-from thunder.executors.utils import Context, set_saved_tensors
+from thunder.core.proxies import TensorProxy
 from thunder.torch import TensorLike
-from thunder.core.compile_data import get_compile_option
 from thunder.executors.apexex import apex_ex
 
 

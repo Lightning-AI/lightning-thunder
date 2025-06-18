@@ -63,6 +63,6 @@ This script finds the minimum unit of optimization fuel between `lower_bound` an
             high = mid
     assert low == high
 
-    print(f"Bisecting succeeded. Run the following command as a minimal reproducer:")
+    print("Bisecting succeeded. Run the following command as a minimal reproducer:")
     print(f"    {runner.env_var_for_fuel()}={low} {' '.join(args.command_and_args)}")
-    print(f"The last nvFusion likely triggered the failure.")
+    print("The last nvFusion likely triggered the failure.")

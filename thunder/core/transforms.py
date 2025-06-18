@@ -35,7 +35,7 @@ from thunder.core.compile_data import get_compile_data
 from thunder.core.langctxs import langctx, Languages
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten, tree_flatten_with_dataclass
 from thunder.core.symbol import BoundSymbol, BoundSymbolInterface, Symbol, has_tags
-from thunder.core.trace import TraceCtx as Trace
+from thunder.core.trace import TraceCtx as Trace, get_tracectx
 from thunder.core.trace import VariableInterface as Variable
 from thunder.core.trace import (
     detached_trace,
@@ -58,7 +58,6 @@ from thunder.core.utils import (
 )
 import thunder.clang as clang
 from thunder.clang import (
-    empty,
     full_like,
     unsqueeze,
     squeeze,
@@ -118,10 +117,10 @@ class Node:
         return str(self.bsym)
 
     def __hash__(self) -> int:
-        utils.check(False, lambda: f"Trying to hash a Node. Hash its bsym instead.")
+        utils.check(False, lambda: "Trying to hash a Node. Hash its bsym instead.")
 
     def __eq__(self, other) -> bool:
-        utils.check(False, lambda: f"Trying to compare Nodes for equality. Compare their bsyms' instead.")
+        utils.check(False, lambda: "Trying to compare Nodes for equality. Compare their bsyms' instead.")
 
 
 # TODO Think about how to model nodes likes comments -- maybe comments should be associated with
@@ -152,7 +151,7 @@ def bsym_list_to_dag(
         if bsym.sym.id is prims.PrimIDs.RETURN:
             utils.check(
                 return_node is None,
-                lambda: f"Found multiple RETURN nodes while converting a list of bound symbols to a dag",
+                lambda: "Found multiple RETURN nodes while converting a list of bound symbols to a dag",
             )
             return_node = node
 
@@ -443,7 +442,7 @@ def add_transform(
 
     cd: None | Any = getattr(cfn, "_lc_cd", None)
 
-    utils.check(cd is not None, lambda: f"Can only transform compiled thunder functions")
+    utils.check(cd is not None, lambda: "Can only transform compiled thunder functions")
     utils.check(isinstance(cd, CompileData), lambda: f"Found an unknown compile data attribute {cd}")
     if isinstance(transform, Transform):
         transform = [transform]
@@ -913,7 +912,7 @@ register_grad(pids.INDEX_COPY, _index_copy_grad)
 def _scatter_add_prim_grad(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
     utils.check(
         not value._requires_grad or value.shape == index.shape,
-        lambda: f"The gradient for the value Tensor is implemented only when value.shape == index.shape. "
+        lambda: "The gradient for the value Tensor is implemented only when value.shape == index.shape. "
         "value shape is {value.shape} while index shape is {index.shape}",
     )
 
@@ -3128,7 +3127,8 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
 
     def ones_like(x):
         if isinstance(x, TensorProxy):
-            return full_like(x, fill_value=1)
+            # NOTE: x could be a subclass of TensorProxy and that should be preserved.
+            return type(x)(like=x)
         elif isinstance(x, NumberProxy):
             return type(x.value)(1)
         else:
@@ -3290,9 +3290,10 @@ def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace) -> tuple[Tr
 
     from thunder.core.rematerialization import match_fw_and_bw_saved_for_bw_proxies
 
-    new_required_for_backward_fw_to_bw_map, new_required_for_backward_bw_to_fw_map = (
-        match_fw_and_bw_saved_for_bw_proxies(fwd_trace, bwd_trace)
-    )
+    (
+        new_required_for_backward_fw_to_bw_map,
+        new_required_for_backward_bw_to_fw_map,
+    ) = match_fw_and_bw_saved_for_bw_proxies(fwd_trace, bwd_trace)
     all_recomputable_proxies = all_recomputable_proxies.union(
         OrderedSet(
             (

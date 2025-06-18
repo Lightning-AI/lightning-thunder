@@ -358,7 +358,6 @@ def test_notimplemented_interpolate_modes():
 
 @pytest.mark.parametrize("requires_grad", (True, False))
 def test_setitem(requires_grad):
-
     def _test_forward_and_backward(fn, a, value):
         a_ref = a.detach().clone()
         a_ref.requires_grad_(a.requires_grad)
@@ -465,7 +464,6 @@ def test_max_with_int():
 
 
 def test_ltorch_cumsum_result_dtype_for_int_input():
-
     def f(a):
         return torch.cumsum(a, dim=0)
 

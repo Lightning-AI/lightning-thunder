@@ -105,7 +105,7 @@ class TorchCompileSpecification(CompileSpecificationInterface):
     def import_str(self):
         # WAR for triton error https://github.com/pytorch/pytorch/issues/124565
         comment_str = '# Workaround for "RuntimeError: Triton Error [CUDA]: an illegal memory access was encountered"\n# https://github.com/pytorch/pytorch/issues/124565'
-        code = f'if torch.cuda.is_available():\n    torch.empty(1, device="cuda", requires_grad=True).backward()'
+        code = 'if torch.cuda.is_available():\n    torch.empty(1, device="cuda", requires_grad=True).backward()'
         return ["import torch", comment_str, code]
 
 

@@ -1,5 +1,4 @@
 from collections.abc import Sequence
-import itertools
 from functools import partial
 from typing import Any
 
@@ -13,7 +12,6 @@ import torch
 import thunder
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
-import thunder.clang as clang
 
 from thunder import torch as ltorch
 from thunder.core.dtypes import is_exact_dtype, to_dtype as thunder_dtype
@@ -27,9 +25,7 @@ from thunder.tests.framework import (
     run_snippet,
     assert_closer,
     IN_CI,
-    NVFUSER_AVAILABLE,
     requiresCUDA,
-    version_between,
 )
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
 from thunder.tests.opinfos import get_opinfo, opinfos, tensor_creation_ops
@@ -263,9 +259,9 @@ def _dot(x, y):
         torch.Tensor: The dot product.
     """
     x, y = _replace_none_with_zero(x, y)
-    assert all(
-        isinstance(a, torch.Tensor) and isinstance(b, torch.Tensor) for a, b in zip(x, y)
-    ), "Not all elements are torch.Tensor"
+    assert all(isinstance(a, torch.Tensor) and isinstance(b, torch.Tensor) for a, b in zip(x, y)), (
+        "Not all elements are torch.Tensor"
+    )
     return sum([_tensor_dot(a, b) for a, b in zip(x, y)])
 
 
@@ -1117,7 +1113,6 @@ def test_torch_autograd_module(executor, device, _):
     dtypes=NOTHING,
 )
 def test_torch_autograd_module_get_compile_stats(executor, device, _):
-    from thunder.core.trace import TraceCtx
     from thunder import compile_stats
 
     l = torch.nn.Linear(3, 4, bias=False, device=device)
@@ -1204,7 +1199,6 @@ def test_forward_and_backward_from_trace(executor, device, _):
     dtypes=NOTHING,
 )
 def test_update_forward_with_new_saved_for_backward_numberproxy(executor, device, _):
-
     def foo(t, ab):
         return t * ab * 0.5
 
@@ -1242,7 +1236,6 @@ def test_torch_autograd_redundant_casts(executor, device, _):
     # There was a bug where we would eliminate the redundant casts in forward
     # but backward wasn't updated with the new proxies. This test ensures that
     # we don't regress.
-    from thunder.core.prims import convert_element_type
     import thunder.torch as ltorch
 
     def func(a, b, c):
@@ -1305,7 +1298,6 @@ def test_backward_none_propagation(executor, device, _):
 
 
 def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp):
-
     args, kwargs = sample.args, sample.kwargs
 
     def is_output_differentiable(x):
@@ -1352,14 +1344,14 @@ def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp):
         )
 
     grads = []
-    assert isinstance(torch_result, torch.Tensor) or isinstance(
-        torch_result, Sequence
-    ), "Expected a single torch tensor or a sequence of torch tensors when testing phantom grad torch consistency"
+    assert isinstance(torch_result, torch.Tensor) or isinstance(torch_result, Sequence), (
+        "Expected a single torch tensor or a sequence of torch tensors when testing phantom grad torch consistency"
+    )
     if isinstance(torch_result, Sequence):
         for x in torch_result:
-            assert isinstance(
-                x, torch.Tensor
-            ), "Expected a single torch tensor or a sequence of torch tensors when testing phantom grad torch consistency"
+            assert isinstance(x, torch.Tensor), (
+                "Expected a single torch tensor or a sequence of torch tensors when testing phantom grad torch consistency"
+            )
             if is_output_differentiable(x):
                 grads.append(torch.ones_like(x))
     else:
@@ -1434,7 +1426,7 @@ def test_phantom_grad_vs_torch_consistency(op, device: str, dtype: dtypes.dtype,
 
 
 from torch.testing import assert_close
-from thunder.core.transforms import populate_grads, clear_grads, extract_grads, put_grad, put_grads, get_grad
+from thunder.core.transforms import populate_grads, clear_grads, extract_grads, put_grad, get_grad
 
 
 @instantiate(dtypes=(thunder.float32,))
@@ -1600,7 +1592,6 @@ def test_too_few_results_from_backward():
     from thunder.core.prims import make_prim
     from thunder.core.transforms import register_augmented_forward, register_backward
     from thunder.core.proxies import TensorProxy
-    from thunder.core import codeutils
 
     def myadd_meta(a, b):
         return TensorProxy(like=a)

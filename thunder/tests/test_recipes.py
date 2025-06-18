@@ -8,12 +8,15 @@ import torch
 from transformers.models.qwen2 import Qwen2Config, Qwen2ForCausalLM
 from transformers.models.llama import LlamaConfig, LlamaForCausalLM
 from thunder.extend import deregister_executor
-from torch.testing import assert_close, make_tensor
+from torch.testing import assert_close
 from thunder.recipes import HFTransformers
 from thunder.executors import nvfuser_available
+from thunder.executors.cudnnex import cudnn_available
 from thunder.tests.framework import version_between, IS_WINDOWS
+from thunder.tests.framework import IS_WINDOWS
 
 
+@pytest.mark.skipif(not cudnn_available(), reason="cuDNN is not available")
 @pytest.mark.skipif(not nvfuser_available(), reason="nvFuser is not available")
 @pytest.mark.skipif(IS_WINDOWS, reason="slow on Windows")
 def test_default_recipe_basic_bert():
@@ -31,6 +34,7 @@ def test_default_recipe_basic_bert():
     assert_close(actual, expected)
 
 
+@pytest.mark.skipif(not cudnn_available(), reason="cuDNN is not available")
 @pytest.mark.skipif(not nvfuser_available(), reason="nvFuser is not available")
 @pytest.mark.skipif(IS_WINDOWS, reason="slow on Windows")
 def test_recipe_basic_bert():
@@ -61,6 +65,7 @@ def test_recipe_basic_bert():
     deregister_executor("inplace_index_copy_ex")
 
 
+@pytest.mark.skipif(not cudnn_available(), reason="cuDNN is not available")
 @pytest.mark.skipif(not nvfuser_available(), reason="nvFuser is not available")
 def test_recipe_basic_bert_fx():
     bert = transformers.BertForSequenceClassification(transformers.BertConfig())
@@ -82,6 +87,7 @@ def test_recipe_basic_bert_fx():
     deregister_executor("inplace_index_copy_ex")
 
 
+@pytest.mark.skipif(not cudnn_available(), reason="cuDNN is not available")
 @pytest.mark.skipif(not nvfuser_available(), reason="nvFuser is not available")
 @pytest.mark.parametrize(
     "model_cls, config_cls",
@@ -163,7 +169,7 @@ def test_recipe_errors():
     class BrokenRecipe(HFTransformers):
         def __init__(self):
             super().__init__()
-            self.executor_names = ["cudnn", "nonexistent_executor"]
+            self.executor_names = ["nonexistent_executor"]
 
     recipe = BrokenRecipe()
 
@@ -177,12 +183,12 @@ def test_recipe_errors():
     deregister_executor("inplace_index_copy_ex")
 
 
+@pytest.mark.skipif(not cudnn_available(), reason="cuDNN is not available")
 @pytest.mark.skipif(not nvfuser_available(), reason="nvFuser is not available")
 def test_plugins_basics():
     model = torch.nn.Sequential(torch.nn.Linear(2048, 4096), torch.nn.ReLU(), torch.nn.Linear(4096, 64))
 
     from thunder import compile_data as get_compile_data
-    from thunder.recipes.base import BaseRecipe
 
     thunder_model = thunder.compile(model)
     x = torch.randn(64, 2048)
@@ -194,6 +200,7 @@ def test_plugins_basics():
 
 
 # test skipped if nvfuser isn't available because providing plugins calls BaseRecipe
+@pytest.mark.skipif(not cudnn_available(), reason="cuDNN is not available")
 @pytest.mark.skipif(not nvfuser_available(), reason="nvFuser is not available")
 @pytest.mark.skipif(IS_WINDOWS, reason="libuv error with PT build on windows")
 def test_plugins_composition(monkeypatch):
@@ -249,6 +256,8 @@ def test_plugins_composition(monkeypatch):
         assert "transformer_engine" in [el.name for el in call_args.kwargs["executors"]]
 
 
+@pytest.mark.skipif(not cudnn_available(), reason="cuDNN is not available")
+@pytest.mark.skipif(not nvfuser_available(), reason="nvFuser is not available")
 @pytest.mark.skipif(IS_WINDOWS, reason="libuv error with PT build on windows")
 def test_plugins_hybrid_ddpfsdp(monkeypatch):
     model = torch.nn.Sequential(torch.nn.Linear(2048, 4096), torch.nn.ReLU(), torch.nn.Linear(4096, 64))
