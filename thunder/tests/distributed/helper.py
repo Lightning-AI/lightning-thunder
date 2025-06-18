@@ -324,7 +324,9 @@ if torch.distributed.is_available():
 
     def run_test_no_sync_grad_accumulation(
         test_case: DistributedParallelTestCase,
-        get_model_and_optimizer: Callable[[torch.device], tuple[torch.nn.Module, torch.nn.Module, torch.optim.Optimizer]],
+        get_model_and_optimizer: Callable[
+            [torch.device], tuple[torch.nn.Module, torch.nn.Module, torch.optim.Optimizer]
+        ],
         is_comm: Callable[[str], bool],
         dataset_size,
     ):
@@ -381,7 +383,7 @@ if torch.distributed.is_available():
         initial_state_dict, ground_truth_losses, ground_truth_grads = get_ground_truth_loss_grads(device, dataloader)
 
         gradients = defaultdict(list)
-        for use_no_sync in (True, ):
+        for use_no_sync in (True,):
             original_model, jitted_model, optimizer = get_model_and_optimizer(device)
             ddp_model = DistributedDataParallel(original_model)
             jitted_model.load_state_dict(initial_state_dict)
@@ -390,7 +392,7 @@ if torch.distributed.is_available():
                 loss = torch.zeros((), device=device)
                 torch_loss = torch.zeros((), device=device)
                 torch_grad = []
-                thunder_grad=[]
+                thunder_grad = []
                 with ddp_model.no_sync():
                     for i in range(num_micro_batch - 1):
                         cur_loss = run_fwd_bwd(
@@ -423,7 +425,7 @@ if torch.distributed.is_available():
                             no_sync_bwd_trc = thunder.last_backward_traces(jitted_model)[-1]
                             test_case.assertGreater(len(no_sync_bwd_trc.bound_symbols), 1)
                 assert torch.allclose(torch_loss, loss, atol=1e-4, rtol=1e-4)
-                torch.testing.assert_close(torch_grad[-1],thunder_grad[-1])
+                torch.testing.assert_close(torch_grad[-1], thunder_grad[-1])
                 cur_loss = run_fwd_bwd(
                     iter_count, jitted_model, x[-micro_batch_size:, :], y[-micro_batch_size:, :], num_micro_batch
                 )
@@ -432,7 +434,7 @@ if torch.distributed.is_available():
                     iter_count, ddp_model, x[-micro_batch_size:, :], y[-micro_batch_size:, :], num_micro_batch
                 )
                 torch_grad.append([p.grad for p in ddp_model.parameters() if p.grad is not None])
-                torch.testing.assert_close(torch_grad[-1],thunder_grad[-1])
+                torch.testing.assert_close(torch_grad[-1], thunder_grad[-1])
                 with torch.no_grad():
                     loss += cur_loss
                 optimizer.step()
