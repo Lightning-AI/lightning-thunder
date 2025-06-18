@@ -177,10 +177,8 @@ def setup_lora(model: torch.nn.Module) -> torch.nn.Module:
 
 
 # TODO broken
-def setup_fsdp2(model: torch.nn.Module, devices: int) -> torch.nn.Module:
+def setup_fsdp2(model: torch.nn.Module) -> torch.nn.Module:
     """Apply FSDP2 to the model with ZeRO-3 style sharding."""
-    if devices <= 1:
-        return model
 
     logger.debug("Applying FSDP2 to model with ZeRO-3 style sharding")
 
@@ -275,7 +273,6 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str)
 
-    parser.add_argument("--num-devices", type=int, default=WORLD_SIZE)
     parser.add_argument("--max-steps", type=int, default=100)
     parser.add_argument(
         "--skip-iters", type=int, default=2, help="Number of warmup iterations to skip in average calculation"
@@ -453,8 +450,8 @@ def main(args: argparse.Namespace):
 
     # Apply FSDP2 if needed
     if WORLD_SIZE > 1:
-        logger.info(f"Applying FSDP2 to model with {args.num_devices} devices")
-        model = setup_fsdp2(model, args.num_devices)
+        logger.info(f"Applying FSDP2 to model with {WORLD_SIZE} devices")
+        model = setup_fsdp2(model)
         logger.info(f"FSDP2 applied to model")
 
         # After FSDP2, verify and fix gradients
@@ -636,10 +633,10 @@ def print_training_summary(
     logger.info(f"Model: {args.model}")
     logger.info(f"Compiler: {args.jit_backend}")
 
-    if args.num_devices > 1:
+    if WORLD_SIZE > 1:
         logger.info("Distributed strategy: FSDP2 ZeRO-3")
 
-    logger.info(f"Devices: {args.num_devices}")
+    logger.info(f"Devices: {WORLD_SIZE}")
     logger.info(f"Sequence length: {args.seq_length}")
     logger.info(f"Micro batch size: {args.mbs}")
     logger.info(f"Global batch size: {gbs}")
@@ -654,7 +651,7 @@ def print_training_summary(
     logger.info(f"Total iterations: {args.max_steps}")
 
     # Verify batch processing across all ranks
-    if args.num_devices:
+    if WORLD_SIZE > 1:
         # Gather batch counts from all ranks
         batch_counts = torch.tensor([batches_processed], device="cuda")
         torch.distributed.all_reduce(batch_counts, op=torch.distributed.ReduceOp.SUM)
