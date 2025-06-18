@@ -14,7 +14,7 @@ from torch.nn.attention import SDPBackend, sdpa_kernel
 from tqdm import tqdm
 from loguru import logger
 
-from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokenizer, WordpieceTokenizer
 from peft import LoraConfig, get_peft_model
 from datasets import Dataset
 
@@ -452,7 +452,7 @@ def main(args: argparse.Namespace):
                 logger.debug(f"LoRA parameter {name} requires grad")
 
     # Apply FSDP2 if needed
-    if args.distributed_strategy == "fsdp2":
+    if WORLD_SIZE > 1:
         logger.info(f"Applying FSDP2 to model with {args.devices} devices")
         model = setup_fsdp2(model, args.devices)
         logger.info(f"FSDP2 applied to model")
@@ -635,7 +635,10 @@ def print_training_summary(
     logger.info("Training Summary:")
     logger.info(f"Model: {args.model}")
     logger.info(f"Compiler: {args.jit_backend}")
-    logger.info(f"Strategy: {args.distributed_strategy}")
+
+    if WORLD_SIZE > 1:
+        logger.info("Distributed strategy: FSDP2 ZeRO-3")
+
     logger.info(f"Devices: {args.devices}")
     logger.info(f"Sequence length: {args.seq_length}")
     logger.info(f"Micro batch size: {args.mbs}")
