@@ -383,7 +383,7 @@ if torch.distributed.is_available():
         initial_state_dict, ground_truth_losses, ground_truth_grads = get_ground_truth_loss_grads(device, dataloader)
 
         gradients = defaultdict(list)
-        for use_no_sync in (True, ):
+        for use_no_sync in (True,):
             ddp_model, jitted_model, optimizer = get_model_and_optimizer(device)
             jitted_model.load_state_dict(initial_state_dict)
 
@@ -438,7 +438,7 @@ if torch.distributed.is_available():
                 gradients[use_no_sync].append([p.grad for p in jitted_model.parameters() if p.grad is not None])
                 thunder_grad.append([p.grad for p in jitted_model.parameters() if p.grad is not None])
                 torch_grad.append([p.grad for p in ddp_model.parameters() if p.grad is not None])
-                torch.testing.assert_close(torch_grad,thunder_grad)
+                torch.testing.assert_close(torch_grad, thunder_grad)
                 optimizer.zero_grad(set_to_none=True)
 
                 num_expected_caches: int
