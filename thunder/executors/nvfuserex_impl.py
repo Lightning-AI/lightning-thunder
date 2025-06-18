@@ -485,9 +485,9 @@ def compute_contiguity(
     return tuple(tuple(x) for x in nv_compute_td(shape, stride))
 
 
-def make_key_from_dtensor(dtensor) -> tuple[str]:
-    if IS_TORCH_DISTRIBUTED_AVAILABLE and isinstance(dtensor, DTensor):
-        key = (repr(dtensor.device_mesh), repr(dtensor.placements))
+def make_key_from_dtensor(tensor: torch.Tensor) -> tuple:
+    if IS_TORCH_DISTRIBUTED_AVAILABLE and isinstance(tensor, DTensor):
+        key = (tensor.device_mesh, tensor.placements)
     else:
         key = ()
     return key
@@ -683,7 +683,7 @@ def create_fusion_definition_wrapper(
     # TODO (mruberry) We should think how to express "static fusion" that don't need to use
     #   a cache to improve dispatch performance
     @lru_cache(maxsize=2048)
-    def get_fd(input_descriptors) -> tuple[FusionDefinition, bool]:
+    def get_fd(input_descriptors) -> FusionDefinition:
         # A closure over local trace and region
         return create_fd(bsyms, input_descriptors, sorted_unique_inputs, sorted_unique_outputs)
 
