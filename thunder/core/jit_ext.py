@@ -1980,7 +1980,9 @@ def process_recorded_modifications(ctx, epilogue_trace):
                         name = k
                         setattr_obj_provenance = modified_object.provenance.inputs[0]
                         if hasattr(setattr_obj_provenance, "proxy"):
-                            assert isinstance(value.value, (Proxy, int, float, tuple, NoneType))  # todo: better criterion
+                            assert isinstance(
+                                value.value, (Proxy, int, float, tuple, NoneType)
+                            )  # todo: better criterion
                             setattr_obj_proxy = setattr_obj_provenance.proxy
                             with tracectx(epilogue_trace):
                                 bsym = prims.pack_attr.bind(setattr_obj_proxy, name, value.value, output=None)
