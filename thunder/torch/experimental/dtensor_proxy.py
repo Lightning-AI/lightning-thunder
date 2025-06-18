@@ -1,9 +1,13 @@
 from thunder.core.proxies import TensorProxy, AnyProxy, _infer_tensor_properties
-from torch.distributed._tensor import DTensor
 from thunder.core.proxies import proxy
 import thunder.core.devices as devices
 import thunder.core.dtypes as dtypes
 import thunder.core.utils as utils
+import torch
+from thunder.torch.experimental.dtensor_utils import run_only_if_distributed_is_available
+
+if torch.distributed.is_available():
+    from torch.distributed._tensor import DTensor
 
 
 # Inherit from TensorProxy as DTensor also supports
@@ -104,6 +108,7 @@ class DTensorProxy(TensorProxy):
         )
 
 
+@run_only_if_distributed_is_available
 def proxify_dtensor(x, name: str | None = None, history: None | tuple = None) -> DTensorProxy | None:
     if isinstance(x, DTensor):
         spec_proxy = AnyProxy(x._spec, history=history)
