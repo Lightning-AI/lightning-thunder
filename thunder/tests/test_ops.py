@@ -548,3 +548,12 @@ def test_multi_dot_optimization():
         if bsym.sym.id == "matmul":
             for flat_out in bsym.flat_outs:
                 assert flat_out.shape != (100, 100)
+
+
+def test_softmax_stacklevel():
+    def fn(a):
+        return torch.nn.functional.softmax(a, -1, _stacklevel=5)
+
+    jfn = thunder.jit(fn)
+    a = torch.randn(5, 5, requires_grad=True)  # trigger grad transform
+    assert_close(fn(a), jfn(a))
