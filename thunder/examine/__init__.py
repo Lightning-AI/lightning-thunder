@@ -15,6 +15,7 @@ import torch
 from warnings import warn
 from itertools import chain
 import importlib
+import time
 
 
 # TODO Maybe make collect_into a set?
@@ -50,9 +51,16 @@ _method_name_remap_map = {
 # TODO Accept kwargs for jit (like langctx)
 # TODO Add profiling (or profiling option) to determine if we have a slowdown
 # TODO If an error occurs, try to minify the program to produce a smaller sample to reproduce the error
-def examine(fn: Callable, *args, show_call_stack: bool | int = False, **kwargs):
+def examine(
+    fn: Callable,
+    *args,
+    show_call_stack: bool | int = False,
+    profile: bool = False,
+    **kwargs,
+):
     """
     show_call_stack: bool | int=False:  if you pass True, a call stack will be printed for each invocation of an unknown function. If you pass a number, the stack will be limited to a depth of that value.
+    profile: bool=False: measure execution time of the original and compiled functions.
     """
     # Step 0, runs the operation with our torch function mode to collection information
     #   and ensure the operation itself is working correctly
@@ -76,9 +84,15 @@ def examine(fn: Callable, *args, show_call_stack: bool | int = False, **kwargs):
                 "examine: expected `fn` to have not been compiled. Please use `examine` with original, non-jitted function."
             )
 
+    torch_time = None
+
     with CollectFunctionsUsed(collected_ops):
         try:
+            if profile:
+                start = time.perf_counter()
             torch_result = fn(*args, **kwargs)
+            if profile:
+                torch_time = time.perf_counter() - start
         except Exception as e:
             print("Failed to run the unmodified function. Please verify that your code runs without thunder")
             print(f"The code failed with exception - {e}")
@@ -174,8 +188,13 @@ def examine(fn: Callable, *args, show_call_stack: bool | int = False, **kwargs):
 
     # Step 4 Attempt to execute the function using thunder.jit
     lc_result: Any
+    lc_time = None
     try:
+        if profile:
+            start = time.perf_counter()
         lc_result = cfn(*args, **kwargs)
+        if profile:
+            lc_time = time.perf_counter() - start
     except Exception as e:
         print("Encountered an error while running the compiled function")
         print(
@@ -191,6 +210,11 @@ def examine(fn: Callable, *args, show_call_stack: bool | int = False, **kwargs):
 
     # TODO Consider returning additional information
     print("The function appears to be working as expected")
+    if profile and torch_time is not None and lc_time is not None:
+        print(f"Execution time - original: {torch_time:.4f}s")
+        print(f"Execution time - compiled: {lc_time:.4f}s")
+        if lc_time > 0:
+            print(f"Speedup: {torch_time / lc_time:.2f}x")
 
 
 def warn_fusions() -> bool:

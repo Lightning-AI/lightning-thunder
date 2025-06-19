@@ -16,7 +16,18 @@ You can run examine like this::
 
 Where ``*args and **kwargs`` are valid inputs to the model. If examine determines that Thunder can run the module or function as expected, it will print::
 
+
+The function appears to be working as expected
+
+If you pass ``profile=True`` to ``examine()``, it measures the execution time of
+the original and compiled functions and prints a summary::
+
+  examine(model, *args, profile=True)
+
   The function appears to be working as expected
+  Execution time - original: 0.1234s
+  Execution time - compiled: 0.0678s
+  Speedup: 1.82x
 
 When ``examine`` encounters a module or function with one or more operators it doesn't support, it will specify the operators, like this::
 
