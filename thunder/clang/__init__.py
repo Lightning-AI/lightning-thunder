@@ -688,16 +688,16 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
     else:
         (idx,) = idxes
 
-    # handle multi-dimensional indices by making them one-dimensional first and then reshaping the output after the take
+    # handle multi-dimensional indices (and 0-d!) by making them one-dimensional first and then reshaping the output after the take
     index_shape = idx.shape
-    if len(index_shape) > 1:
+    if len(index_shape) != 1:
         idx = reshape(idx, (-1,))
 
     # this actually does the indexing
     output = take(a, idx, dim=target_dim)
 
     # for multi-dimensional indices, reshape the output
-    if len(index_shape) > 0:
+    if len(index_shape) != 1:
         output_shape = [*non_idx_shapes[:target_dim], *index_shape, *non_idx_shapes[target_dim:]]
         output = reshape(output, output_shape)
 
