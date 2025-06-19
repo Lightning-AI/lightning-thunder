@@ -4313,11 +4313,6 @@ getitem_opinfo = OpInfo(
             pytest.mark.xfail,
             "test_vjp_correctness",
         ),
-        # See [Fix runtime-trace shape/dtype/device mismatch]
-        DecorateInfo(
-            pytest.mark.xfail(strict=True),
-            "test_core_vs_torch_consistency",
-        ),
     ),
 )
 shape_ops.append(getitem_opinfo)
