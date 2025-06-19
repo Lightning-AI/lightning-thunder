@@ -274,7 +274,7 @@ def cse_single_bsym(
         exception_type=AssertionError,
     )
 
-    # `NON_FUNCTIONAL_OPS` are a op that's not deterministic, for example, `torch.nn.functiona.dropout`
+    # `NON_FUNCTIONAL_OPS` are a op that's not deterministic, for example, `torch.nn.functional.dropout`
     # and `torch.nn.functional.scaled_dot_product_attention` depending on PRNG.
     if bsym.sym.id in NON_FUNCTIONAL_OPS:
         return bsym
@@ -287,6 +287,8 @@ def cse_single_bsym(
     )
 
     if bsym.sym.id == prims.PrimIDs.GET_GRAD:
+        # do not cse across the forward-backward boundary of the joint trace
+        rhs_to_bsym_map.clear()
         return new_bsym
 
     # Skip appending this bsym to the new bound symbols due to its rhs being a common subexpression.
