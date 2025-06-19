@@ -487,64 +487,23 @@ def _basic_indexing(a: TensorLike, /, key) -> TensorLike:
     unsqueeze_dims_pre_ellipsis = []
     unsqueeze_dims_post_ellipsis = []
     specified_slices = 0
-    ellipsis_idx = None
 
-    if key is None or isinstance(key, (Number, NumberProxy, slice, EllipsisType)):
-        key = (key,)
+    assert isinstance(key, list)
 
+    # eliminate None by unsqeezing and replacing with 'slice(None)' aka ':'
     _key = []
-    # keeps track of keys that are not squeeze related
     for idx, x in enumerate(key):
-        if isinstance(x, (list, TensorLike)):
-            # skip advanced indexing by converting this to [:]
-            x = slice(None, None, None)
-            _key.append(x)
-        else:
-            _key.append(x)
-        if x is Ellipsis:
-            utils.check(ellipsis_idx is None, lambda: f"Found two (or more) ellipses in key={key}")
-            ellipsis_idx = idx
-        elif isinstance(x, (NumberProxy, Number, slice)):
-            specified_slices += 1
-        elif x is None:
-            if ellipsis_idx is None:
-                unsqueeze_dims_pre_ellipsis.append(idx)
-            else:
-                unsqueeze_dims_post_ellipsis.append(idx)
-        else:
-            raise ValueError(f"Found unexpected value {x} in key={key}")
-    key = tuple(_key)
-
-    utils.check(
-        specified_slices <= len(a.shape),
-        lambda: f"Too many slices ({specified_slices}) specified for a.shape={a.shape}",
-    )
-
-    ellipsis_dims = len(a.shape) - specified_slices
-    # NOTE Both these checks are required
-    #   ellipsis_dims > 0 handles the implicit ellipsis matching 1+ dimensions
-    #   ellipsis_idx not being None handles an explicit ellipsis which matches no dimensions
-    if ellipsis_idx is not None or ellipsis_dims > 0:
-        ellipsis_slices = [slice(None, None, None)] * ellipsis_dims
-        if ellipsis_idx is not None:
-            key = list(key)[:ellipsis_idx] + ellipsis_slices + list(key)[ellipsis_idx + 1 :]
-        else:
-            # NOTE Without an explicit ellipsis, there is an implicit ellipsis at the end of the key
-            key = list(key) + ellipsis_slices
-
-    # Unsqueezes
-    unsqueeze_dims_post_ellipsis = [x + ellipsis_dims - 1 for x in unsqueeze_dims_post_ellipsis]
-    unsqueeze_dims = unsqueeze_dims_pre_ellipsis + unsqueeze_dims_post_ellipsis
-    if len(unsqueeze_dims) > 0:
-        a = unsqueeze(a, unsqueeze_dims)
-
-    def _convert_none(x):
         if x is None:
-            return slice(None, None, None)
+            a = unsqueeze(a, idx)
+            _key.append(slice(None))
+        else:
+            assert isinstance(x, (NumberProxy, Number, slice))
+            _key.append(x)
 
-        return x
+    for _ in range(idx + 1, len(a.shape)):
+        _key.append(slice(None))
 
-    key = tuple(_convert_none(x) for x in key)
+    key = _key
 
     # Handles numbers and slices
     squeeze_dims = []
