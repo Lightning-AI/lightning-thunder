@@ -5891,7 +5891,7 @@ def sigmoid(a: TensorLike, /) -> TensorLike:
 
 
 # CompositeImplicitAutograd - don't register decomp
-@torchsymbol(torch.softmax, torch.nn.functional.softmax, is_method=True, id="torch.softmax")
+@torchsymbol(torch.softmax, is_method=True, id="torch.softmax")
 def _softmax(
     a: TensorLike,
     /,
@@ -5922,6 +5922,9 @@ register_method("softmax", _softmax)
 # ref: https://github.com/pytorch/pytorch/blob/8d12ba9acfa20ed7df438a8892c9bf8e6bef5775/torch/nn/modules/activation.py#L1545
 def softmax(a: TensorLike, dim: int, dtype: None | dtypeLike = None, _stacklevel: int = 3) -> TensorLike:
     return _softmax(a, dim=dim, dtype=dtype)
+
+
+register_function(torch.nn.functional.softmax, softmax)
 
 
 @torchsymbol(torch.nn.functional.softmin, is_method=False, id="torch.nn.functional.softmin")
