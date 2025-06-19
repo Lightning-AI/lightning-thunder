@@ -1606,9 +1606,7 @@ def test_spliter_bwd():
     reason = cfn._backend.subgraph_infos[0].split_reasons
     assert len(reason) == 1
     assert "Failed while running meta for node with name: setitem" in reason[0].info
-    assert "Advanced indexing" in reason[0].exception and reason[0].exception.endswith(
-        "found a tensor with dtype thunder.dtypes.bool8"
-    )
+    assert "boolean advanced indexing" in reason[0].exception
 
 
 def test_get_proxy_inputs_from_node_symtype_hint():
