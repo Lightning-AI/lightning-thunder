@@ -175,7 +175,7 @@ class DDPTest(DistributedParallelTestCase):
             return "allreduce_" in k or "all_reduce" in k
 
         run_test_no_sync_grad_accumulation(self, get_model_and_optimizer, is_comm, dataset_size)
-    
+
     @unittest.mock.patch.dict(os.environ, {"KINETO_LOG_LEVEL": "5"})  # silence torch.profiler logs
     @common_utils.parametrize(
         "executor,bucket_size_in_mb,dataset_size",

@@ -470,7 +470,7 @@ if torch.distributed.is_available():
             ddp_model, ddp_optimizer, jitted_model, optimizer = get_model_and_optimizer(device)
 
             for iter_count, (x, y) in enumerate(dataloader):
-                torch.manual_seed(1997*int(test_case.rank))
+                torch.manual_seed(1997 * int(test_case.rank))
                 x = x + torch.randn_like(x) * 0.01
                 y = y + torch.randn_like(y) * 0.01
                 loss = torch.zeros((), device=device)
@@ -501,7 +501,9 @@ if torch.distributed.is_available():
                         )
                         with torch.no_grad():
                             loss += cur_loss
-                            thunder_grad.append([p.grad.clone() for p in jitted_model.parameters() if p.grad is not None])
+                            thunder_grad.append(
+                                [p.grad.clone() for p in jitted_model.parameters() if p.grad is not None]
+                            )
                         if use_no_sync and i == 0 and iter_count == 0:
                             import thunder
 
@@ -510,7 +512,7 @@ if torch.distributed.is_available():
                             test_case.assertGreater(len(no_sync_bwd_trc.bound_symbols), 1)
                 assert torch.allclose(torch_loss, loss, atol=1e-4, rtol=1e-4)
 
-                torch.testing.assert_close(torch_grad,thunder_grad, atol=1e-3, rtol=1e-3)
+                torch.testing.assert_close(torch_grad, thunder_grad, atol=1e-3, rtol=1e-3)
                 cur_loss = run_fwd_bwd(
                     iter_count, jitted_model, x[-micro_batch_size:, :], y[-micro_batch_size:, :], num_micro_batch
                 )
