@@ -324,16 +324,13 @@ if torch.distributed.is_available():
 
     def run_test_no_sync_grad_accumulation(
         test_case: DistributedParallelTestCase,
-        get_model_and_optimizer: Callable[
-            [torch.device], tuple[torch.nn.Module, torch.nn.Module, torch.optim.Optimizer]
-        ],
+        get_model_and_optimizer: Callable[[torch.device], tuple[torch.nn.Module, torch.optim.Optimizer]],
         is_comm: Callable[[str], bool],
         dataset_size,
     ):
         from collections import defaultdict
         from contextlib import nullcontext
         from thunder.distributed import get_skip_data_parallel_grad_sync
-        from torch.nn.parallel import DistributedDataParallel
 
         device = torch.device("cuda", test_case.rank)
         batch_size = 128
@@ -355,18 +352,18 @@ if torch.distributed.is_available():
                     loss /= num_grad_accum_steps
                 loss.backward()
 
-            # keys = tuple([e.key for e in prof.key_averages()])
-            # has_comms = any(is_comm(k) for k in keys)
-            # msg = f"{keys=}"
-            # if get_skip_data_parallel_grad_sync():
-            #     test_case.assertFalse(has_comms, msg=msg)
-            # else:
-            #     test_case.assertTrue(has_comms, msg=msg)
+            keys = tuple([e.key for e in prof.key_averages()])
+            has_comms = any(is_comm(k) for k in keys)
+            msg = f"{keys=}"
+            if get_skip_data_parallel_grad_sync():
+                test_case.assertFalse(has_comms, msg=msg)
+            else:
+                test_case.assertTrue(has_comms, msg=msg)
 
             return loss
 
         def get_ground_truth_loss_grads(device, dataloader):
-            original_model, compiled_ddp_m, optimizer = get_model_and_optimizer(device)
+            compiled_ddp_m, optimizer = get_model_and_optimizer(device)
             initial_state_dict = compiled_ddp_m.state_dict()
 
             losses, grads = [], []
@@ -383,28 +380,12 @@ if torch.distributed.is_available():
         initial_state_dict, ground_truth_losses, ground_truth_grads = get_ground_truth_loss_grads(device, dataloader)
 
         gradients = defaultdict(list)
-        for use_no_sync in (True,):
-            ddp_model, jitted_model, optimizer = get_model_and_optimizer(device)
+        for use_no_sync in (True, False):
+            jitted_model, optimizer = get_model_and_optimizer(device)
             jitted_model.load_state_dict(initial_state_dict)
 
             for iter_count, (x, y) in enumerate(dataloader):
                 loss = torch.zeros((), device=device)
-                torch_loss = torch.zeros((), device=device)
-                torch_grad = []
-                thunder_grad = []
-                with ddp_model.no_sync():
-                    for i in range(num_micro_batch - 1):
-                        cur_loss = run_fwd_bwd(
-                            iter_count,
-                            ddp_model,
-                            x[i * micro_batch_size : (i + 1) * micro_batch_size, :],
-                            y[i * micro_batch_size : (i + 1) * micro_batch_size, :],
-                            num_micro_batch,
-                        )
-                        with torch.no_grad():
-                            torch_loss += cur_loss
-                            torch_grad.append([p.grad for p in ddp_model.parameters() if p.grad is not None])
-
                 with jitted_model.no_sync() if use_no_sync else nullcontext():
                     for i in range(num_micro_batch - 1):
                         cur_loss = run_fwd_bwd(
@@ -416,29 +397,19 @@ if torch.distributed.is_available():
                         )
                         with torch.no_grad():
                             loss += cur_loss
-                            thunder_grad.append([p.grad for p in jitted_model.parameters() if p.grad is not None])
                         if use_no_sync and i == 0 and iter_count == 0:
                             import thunder
 
                             # make sure the backward trace under `no_sync` has actual math computations.
                             no_sync_bwd_trc = thunder.last_backward_traces(jitted_model)[-1]
                             test_case.assertGreater(len(no_sync_bwd_trc.bound_symbols), 1)
-                assert torch.allclose(torch_loss, loss, atol=1e-4, rtol=1e-4)
-
-                torch.testing.assert_close(torch_grad, thunder_grad)
                 cur_loss = run_fwd_bwd(
                     iter_count, jitted_model, x[-micro_batch_size:, :], y[-micro_batch_size:, :], num_micro_batch
-                )
-                torch_cur_loss = run_fwd_bwd(
-                    iter_count, ddp_model, x[-micro_batch_size:, :], y[-micro_batch_size:, :], num_micro_batch
                 )
                 with torch.no_grad():
                     loss += cur_loss
                 optimizer.step()
                 gradients[use_no_sync].append([p.grad for p in jitted_model.parameters() if p.grad is not None])
-                thunder_grad.append([p.grad for p in jitted_model.parameters() if p.grad is not None])
-                torch_grad.append([p.grad for p in ddp_model.parameters() if p.grad is not None])
-                torch.testing.assert_close(torch_grad, thunder_grad)
                 optimizer.zero_grad(set_to_none=True)
 
                 num_expected_caches: int
@@ -460,3 +431,107 @@ if torch.distributed.is_available():
                         actual=gradients[True][iter_count],
                         expected=gradients[False][iter_count],
                     )
+
+    def run_test_no_sync_torch(
+        test_case: DistributedParallelTestCase,
+        get_model_and_optimizer: Callable[
+            [torch.device], tuple[torch.nn.Module, torch.optim.Optimizer, torch.nn.Module, torch.optim.Optimizer]
+        ],
+        is_comm: Callable[[str], bool],
+        dataset_size,
+    ):
+        from collections import defaultdict
+        from contextlib import nullcontext
+
+        device = torch.device("cuda", test_case.rank)
+        batch_size = 128
+        num_micro_batch = 4
+        micro_batch_size = batch_size // num_micro_batch
+        with torch.no_grad():
+            dataloader = [
+                (torch.randn(batch_size, 12, device=device), torch.randn(batch_size, 8, device=device))
+                for _ in range(dataset_size)
+            ]
+
+        def run_fwd_bwd(iter_count, model, x, y, num_grad_accum_steps: int | None = None):
+            with torch.profiler.profile() as prof:
+                pred = model(x)
+                loss = torch.nn.functional.mse_loss(pred, y)
+                if num_grad_accum_steps is not None:
+                    loss /= num_grad_accum_steps
+                loss.backward()
+
+            return loss
+
+        device = torch.device("cuda", test_case.rank)
+
+        gradients = defaultdict(list)
+        for use_no_sync in (True, False):
+            ddp_model, ddp_optimizer, jitted_model, optimizer = get_model_and_optimizer(device)
+
+            for iter_count, (x, y) in enumerate(dataloader):
+                torch.manual_seed(1997*int(test_case.rank))
+                x = x + torch.randn_like(x) * 0.01
+                y = y + torch.randn_like(y) * 0.01
+                loss = torch.zeros((), device=device)
+                torch_loss = torch.zeros((), device=device)
+                torch_grad = []
+                thunder_grad = []
+                with ddp_model.no_sync() if use_no_sync else nullcontext():
+                    for i in range(num_micro_batch - 1):
+                        cur_loss = run_fwd_bwd(
+                            iter_count,
+                            ddp_model,
+                            x[i * micro_batch_size : (i + 1) * micro_batch_size, :],
+                            y[i * micro_batch_size : (i + 1) * micro_batch_size, :],
+                            num_micro_batch,
+                        )
+                        with torch.no_grad():
+                            torch_loss += cur_loss
+                            torch_grad.append([p.grad.clone() for p in ddp_model.parameters() if p.grad is not None])
+
+                with jitted_model.no_sync() if use_no_sync else nullcontext():
+                    for i in range(num_micro_batch - 1):
+                        cur_loss = run_fwd_bwd(
+                            iter_count,
+                            jitted_model,
+                            x[i * micro_batch_size : (i + 1) * micro_batch_size, :],
+                            y[i * micro_batch_size : (i + 1) * micro_batch_size, :],
+                            num_micro_batch,
+                        )
+                        with torch.no_grad():
+                            loss += cur_loss
+                            thunder_grad.append([p.grad.clone() for p in jitted_model.parameters() if p.grad is not None])
+                        if use_no_sync and i == 0 and iter_count == 0:
+                            import thunder
+
+                            # make sure the backward trace under `no_sync` has actual math computations.
+                            no_sync_bwd_trc = thunder.last_backward_traces(jitted_model)[-1]
+                            test_case.assertGreater(len(no_sync_bwd_trc.bound_symbols), 1)
+                assert torch.allclose(torch_loss, loss, atol=1e-4, rtol=1e-4)
+
+                torch.testing.assert_close(torch_grad,thunder_grad, atol=1e-3, rtol=1e-3)
+                cur_loss = run_fwd_bwd(
+                    iter_count, jitted_model, x[-micro_batch_size:, :], y[-micro_batch_size:, :], num_micro_batch
+                )
+                torch_cur_loss = run_fwd_bwd(
+                    iter_count, ddp_model, x[-micro_batch_size:, :], y[-micro_batch_size:, :], num_micro_batch
+                )
+                with torch.no_grad():
+                    loss += cur_loss
+                    torch_loss += torch_cur_loss
+                optimizer.step()
+                ddp_optimizer.step()
+                gradients[use_no_sync].append([p.grad for p in jitted_model.parameters() if p.grad is not None])
+                thunder_grad.append([p.grad.clone() for p in jitted_model.parameters() if p.grad is not None])
+                torch_grad.append([p.grad.clone() for p in ddp_model.parameters() if p.grad is not None])
+                torch.testing.assert_close(torch_grad, thunder_grad)
+                optimizer.zero_grad(set_to_none=True)
+                ddp_optimizer.zero_grad(set_to_none=True)
+
+                num_expected_caches: int
+                if use_no_sync:
+                    num_expected_caches = 2
+                else:
+                    num_expected_caches = 1
+                test_case.assertEqual(len(jitted_model._lc_cs.interpreter_cache), num_expected_caches)

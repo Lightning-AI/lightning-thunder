@@ -49,6 +49,7 @@ from thunder.tests.distributed.helper import (
     SmallModel,
     create_per_process_dataloader,
     run_test_no_sync_grad_accumulation,
+    run_test_no_sync_torch,
     distributed_wrapper,
     init_per_process_distributed,
 )
@@ -147,7 +148,7 @@ class DDPTest(DistributedParallelTestCase):
     @unittest.mock.patch.dict(os.environ, {"KINETO_LOG_LEVEL": "5"})  # silence torch.profiler logs
     @common_utils.parametrize(
         "executor,bucket_size_in_mb,dataset_size",
-        [(tuple(executors_map.keys())[0], 25, 1)],
+        product(tuple(executors_map.keys()), (0, 25), (1, 2)),
     )
     def test_ddp_with_no_sync_grad_accumulation(self, executor: str, bucket_size_in_mb: float, dataset_size: int):
         # This case tries to guarantee the parity between `thunder.distributed.ddp` with and without `no_sync`
@@ -158,9 +159,36 @@ class DDPTest(DistributedParallelTestCase):
         # If they are different, it'd be impossible to keep replicas identical.
         from thunder.common import CACHE_OPTIONS
         from thunder.distributed import ddp
-        from torch.nn.parallel import DistributedDataParallel
 
         def get_model_and_optimizer(device):
+            m = ToyModel().to(device)
+            jitted_m = thunder.jit(
+                m,
+                cache_mode=CACHE_OPTIONS.CONSTANT_VALUES,
+                executors=executors_map[executor].executors_list(),
+            )
+            jitted_ddp_m = ddp(jitted_m, bucket_size_in_mb=bucket_size_in_mb)
+            optimizer = torch.optim.SGD(jitted_ddp_m.parameters(), lr=1e-3)
+            return jitted_ddp_m, optimizer
+
+        def is_comm(k: str) -> bool:
+            return "allreduce_" in k or "all_reduce" in k
+
+        run_test_no_sync_grad_accumulation(self, get_model_and_optimizer, is_comm, dataset_size)
+    
+    @unittest.mock.patch.dict(os.environ, {"KINETO_LOG_LEVEL": "5"})  # silence torch.profiler logs
+    @common_utils.parametrize(
+        "executor,bucket_size_in_mb,dataset_size",
+        [(tuple(executors_map.keys())[0], 25, 2)],
+    )
+    def test_ddp_with_no_sync_torch(self, executor: str, bucket_size_in_mb: float, dataset_size: int):
+        # This case tries to guarantee the parity between `thunder.distributed.ddp`'s `no_sync`
+        # and `torch.distributed.no_sync` from the perspectives numeric.
+        from thunder.common import CACHE_OPTIONS
+        from thunder.distributed import ddp
+        from torch.nn.parallel import DistributedDataParallel
+
+        def get_models_and_optimizers(device):
             m = ToyModel().to(device)
             ddp_model = DistributedDataParallel(m)
             jitted_m = thunder.jit(
@@ -170,12 +198,13 @@ class DDPTest(DistributedParallelTestCase):
             )
             jitted_ddp_m = ddp(jitted_m, bucket_size_in_mb=bucket_size_in_mb)
             optimizer = torch.optim.SGD(jitted_ddp_m.parameters(), lr=1e-3)
-            return ddp_model, jitted_ddp_m, optimizer
+            ddp_optimizer = torch.optim.SGD(ddp_model.parameters(), lr=1e-3)
+            return ddp_model, ddp_optimizer, jitted_ddp_m, optimizer
 
         def is_comm(k: str) -> bool:
             return "allreduce_" in k or "all_reduce" in k
 
-        run_test_no_sync_grad_accumulation(self, get_model_and_optimizer, is_comm, dataset_size)
+        run_test_no_sync_torch(self, get_models_and_optimizers, is_comm, dataset_size)
 
     @common_utils.parametrize("executor", tuple(executors_map.keys()))
     def test_ddp_grad_parity_with_without_bucketing(self, executor):
