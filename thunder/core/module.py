@@ -379,7 +379,6 @@ class ThunderModule(pytorch.nn.Module):
             yield
         finally:
             reset_skip_data_parallel_grad_sync(token)
-            # _sync_grads(self)
 
     #
     def __getattr__(self, name: str) -> Any:
