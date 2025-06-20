@@ -380,7 +380,6 @@ class ThunderModule(pytorch.nn.Module):
         finally:
             reset_skip_data_parallel_grad_sync(token)
 
-    #
     def __getattr__(self, name: str) -> Any:
         if name == "_model":
             return self._modules["_model"]
