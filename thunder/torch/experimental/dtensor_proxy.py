@@ -61,6 +61,14 @@ class DTensorProxy(TensorProxy):
     def type_string(self):
         return f"DTensor {self.device.device_str()} {self.dtype.shortname()}{list(self._shape)} mesh={self.spec._o.mesh}, placements={self.spec._o.placements}"
 
+    @property
+    def placements(self):
+        return self.spec._o.placements
+
+    @property
+    def device_mesh(self):
+        return self.spec._o.device_mesh
+
     def replace(self, **changes):
         r"""Return a copy of the TensorProxy object with new values for the specified fields as given to the constructor as arguments.
         Valid keyword arguments are ``name``, ``history``, ``shape``, ``dtype``, ``device``, ``requires_grad``, ``distparallel_type``,  ``thunder_fsdp_padding_size``.
