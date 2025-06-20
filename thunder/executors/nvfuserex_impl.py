@@ -269,13 +269,13 @@ class MultiDeviceFusionDefinition(FusionDefinition):
             in_tensor = self._find_tensor_by_index(in_tensor_index)
 
             # Set the device mesh.
-            utils.check(in_dtensor.device_mesh.ndim == 1, lambda:"nvFuser's Python API only supports 1D meshes.")
+            utils.check(in_dtensor.device_mesh.ndim == 1, lambda: "nvFuser's Python API only supports 1D meshes.")
             mesh = nvfuser.DeviceMesh(in_dtensor.device_mesh.mesh.tolist())
 
             self.sched._set_device_mesh(in_tensor, mesh)
 
             # Split and parallelize.
-            utils.check(len(in_dtensor.placements) == 1, lambda:"nvFuser's Python API only supports 1D meshes.")
+            utils.check(len(in_dtensor.placements) == 1, lambda: "nvFuser's Python API only supports 1D meshes.")
             # When the mesh is multi-dimensional, iterate through the
             # placements in descending order of Placement.dim.
             placement: Placement = in_dtensor.placements[0]
@@ -367,8 +367,9 @@ def create_fd(
 
     if any(isinstance(t, DTensorProxy) for t in sorted_unique_inputs):
         # multi-GPU path
-        utils.check(all(isinstance(t, DTensorProxy) for t in sorted_unique_inputs),
-            lambda: "nvfuser: Currently we only support Fusion region with all DTensor inputs or all Tensor inputs but not a mix"
+        utils.check(
+            all(isinstance(t, DTensorProxy) for t in sorted_unique_inputs),
+            lambda: "nvfuser: Currently we only support Fusion region with all DTensor inputs or all Tensor inputs but not a mix",
         )
 
         def check_dtensor_tracing_and_runtime_metadata(inp):
@@ -378,8 +379,9 @@ def create_fd(
             runtime_placements_repr = dtensor_metadata[1]
             return x.device_mesh == runtime_device_mesh_repr and x.placements == runtime_placements_repr
 
-        utils.check(all(map(check_dtensor_tracing_and_runtime_metadata, zip(sorted_unique_inputs, input_descriptors))),
-            lambda: "nvfuser: Expected runtime and tracing metadata to be the same for DTensor."
+        utils.check(
+            all(map(check_dtensor_tracing_and_runtime_metadata, zip(sorted_unique_inputs, input_descriptors))),
+            lambda: "nvfuser: Expected runtime and tracing metadata to be the same for DTensor.",
         )
 
         fd = MultiDeviceFusionDefinition(definition, sorted_unique_inputs, max_length=MAX_LENGTH)
