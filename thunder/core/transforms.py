@@ -2532,6 +2532,7 @@ def sum_to(a: TensorProxy, shape: Sequence[int]) -> TensorProxy:
 
 @register_backward("torch.index_put")
 def index_put_backward(indices: Sequence[TensorProxy], values: TensorProxy, accumulate: bool, g: TensorProxy):
+    indices = tuple(indices)
     g_values = g[indices]
     # torch has extra logic to handle the expanded values
     if not utils.same_shape(g_values.shape, values.shape):
