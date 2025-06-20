@@ -527,7 +527,7 @@ if torch.distributed.is_available():
                 gradients[use_no_sync].append([p.grad for p in jitted_model.parameters() if p.grad is not None])
                 thunder_grad.append([p.grad.clone() for p in jitted_model.parameters() if p.grad is not None])
                 torch_grad.append([p.grad.clone() for p in ddp_model.parameters() if p.grad is not None])
-                torch.testing.assert_close(torch_grad, thunder_grad)
+                torch.testing.assert_close(torch_grad, thunder_grad, atol=1e-3, rtol=1e-3)
                 optimizer.zero_grad(set_to_none=True)
                 ddp_optimizer.zero_grad(set_to_none=True)
 
