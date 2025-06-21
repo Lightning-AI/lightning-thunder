@@ -630,6 +630,23 @@ def full(
     shape: Sequence[int], fill_value: NumberLike, *, device: None | DeviceLike = None, dtype: None | dtypeLike = None
 ) -> TensorLike:
     device = to_device(maybe_get_default_device(device))
+    if isinstance(fill_value, TensorLike):
+        if fill_value.numel != 1:
+            raise ValueError("only numbers or scalar tensors can be passed as fill value to full()")
+        if dtype is None:
+            dtype = fill_value.dtype
+            default_dtype = to_dtype(get_default_dtype())
+            if dtypes.is_nonboolean_integer_dtype(dtype):
+                dtype = dtypes.int64
+            elif dtypes.is_boolean_dtype(dtype):
+                dtype = dtypes.bool8
+            elif dtypes.is_complex_dtype(dtype):
+                dtype = dtypes.corresponding_complex_dtype(default_dtype)
+            else:  # non-complex float
+                dtype = default_dtype
+        res = expand(fill_value, shape)
+        return to(res, device=device, dtype=dtype, copy=True)
+
     dtype = _infer_full_dtype(fill_value, dtype)
     return clang.full(shape, fill_value, device=device, dtype=dtype)
 
@@ -5907,7 +5924,7 @@ def sigmoid(a: TensorLike, /) -> TensorLike:
 
 
 # CompositeImplicitAutograd - don't register decomp
-@torchsymbol(torch.softmax, torch.nn.functional.softmax, is_method=True, id="torch.softmax")
+@torchsymbol(torch.softmax, is_method=True, id="torch.softmax")
 def _softmax(
     a: TensorLike,
     /,
@@ -5938,6 +5955,9 @@ register_method("softmax", _softmax)
 # ref: https://github.com/pytorch/pytorch/blob/8d12ba9acfa20ed7df438a8892c9bf8e6bef5775/torch/nn/modules/activation.py#L1545
 def softmax(a: TensorLike, dim: int, dtype: None | dtypeLike = None, _stacklevel: int = 3) -> TensorLike:
     return _softmax(a, dim=dim, dtype=dtype)
+
+
+register_function(torch.nn.functional.softmax, softmax)
 
 
 @torchsymbol(torch.nn.functional.softmin, is_method=False, id="torch.nn.functional.softmin")
