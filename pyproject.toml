@@ -172,7 +172,6 @@ ignore = [
     "E741",  # https://docs.astral.sh/ruff/rules/ambiguous-variable-name/
     "W293",  # https://docs.astral.sh/ruff/rules/blank-line-with-whitespace/
     "F811",  # https://docs.astral.sh/ruff/rules/redefined-while-unused/
-    "W291",  # https://docs.astral.sh/ruff/rules/trailing-whitespace/
 ]
 
 [tool.ruff.lint.per-file-ignores]
