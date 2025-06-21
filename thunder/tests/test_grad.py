@@ -816,7 +816,7 @@ def test_multiple_output_vjp(executor, device, _):
 
     # Let's define a correct sincos_backward function
     @register_backward("sincos")
-    def sincos_backward(sin_x, cos_x, g1, g2):
+    def sincos_backward(sin_x, cos_x, g1, g2):  # noqa: F811
         return g1 * cos_x + g2 * -sin_x
 
     # It's not possible to teach Thunder about the PyTorch implementation of sincos
