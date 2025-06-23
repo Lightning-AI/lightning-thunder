@@ -178,10 +178,13 @@ class DDPTest(DistributedParallelTestCase):
 
     @unittest.mock.patch.dict(os.environ, {"KINETO_LOG_LEVEL": "5"})  # silence torch.profiler logs
     @common_utils.parametrize(
-        "executor,bucket_size_in_mb,dataset_size",
-        [(tuple(executors_map.keys())[0], 25, 2)],
+        "executor,bucket_size_in_mb,dataset_size,use_no_sync",
+        [
+            (tuple(executors_map.keys())[0], 25, 2, True),
+            (tuple(executors_map.keys())[0], 25, 2, False),
+        ],
     )
-    def test_ddp_with_no_sync_torch(self, executor: str, bucket_size_in_mb: float, dataset_size: int):
+    def test_ddp_with_no_sync_torch(self, executor: str, bucket_size_in_mb: float, dataset_size: int, use_no_sync: bool):
         # This case tries to guarantee the parity between `thunder.distributed.ddp`'s `no_sync`
         # and `torch.distributed.no_sync` from the perspectives numeric.
         from thunder.common import CACHE_OPTIONS
@@ -204,7 +207,7 @@ class DDPTest(DistributedParallelTestCase):
         def is_comm(k: str) -> bool:
             return "allreduce_" in k or "all_reduce" in k
 
-        run_test_no_sync_torch(self, get_models_and_optimizers, is_comm, dataset_size)
+        run_test_no_sync_torch(self, get_models_and_optimizers, is_comm, dataset_size, use_no_sync)
 
     @common_utils.parametrize("executor", tuple(executors_map.keys()))
     def test_ddp_grad_parity_with_without_bucketing(self, executor):
