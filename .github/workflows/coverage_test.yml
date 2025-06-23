@@ -40,8 +40,4 @@ jobs:
       - name: Run Coverage Trace Test
         env:
           ALLOW_COVERAGE_TRACE: "1"
-<<<<<<< HEAD
-        run: pytest thunder/tests/test_coverage_trace.pygit 
-=======
         run: pytest thunder/tests/test_coverage_trace.py
->>>>>>> main
