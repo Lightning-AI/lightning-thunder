@@ -35,9 +35,9 @@ jobs:
           pip install -U pip
           pip install torch transformers lightning_sdk
           pip install pytest pytest-benchmark
-          pip install looseversion
+          pip install -r requirements/base.txt
 
       - name: Run Coverage Trace Test
         env:
           ALLOW_COVERAGE_TRACE: "1"
-        run: pytest thunder/tests/test_coverage_trace.py
+        run: pytest thunder/tests/test_coverage_trace.pygit 
