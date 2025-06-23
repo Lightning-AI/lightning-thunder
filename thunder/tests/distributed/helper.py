@@ -439,7 +439,7 @@ if torch.distributed.is_available():
         ],
         is_comm: Callable[[str], bool],
         dataset_size,
-        use_no_sync
+        use_no_sync,
     ):
         from collections import defaultdict
         from contextlib import nullcontext
@@ -501,9 +501,7 @@ if torch.distributed.is_available():
                     )
                     with torch.no_grad():
                         loss += cur_loss
-                        thunder_grad.append(
-                            [p.grad.clone() for p in jitted_model.parameters() if p.grad is not None]
-                        )
+                        thunder_grad.append([p.grad.clone() for p in jitted_model.parameters() if p.grad is not None])
                     if use_no_sync and i == 0 and iter_count == 0:
                         import thunder
 

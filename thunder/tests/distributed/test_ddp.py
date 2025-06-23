@@ -184,7 +184,9 @@ class DDPTest(DistributedParallelTestCase):
             (tuple(executors_map.keys())[0], 25, 2, False),
         ],
     )
-    def test_ddp_with_no_sync_torch(self, executor: str, bucket_size_in_mb: float, dataset_size: int, use_no_sync: bool):
+    def test_ddp_with_no_sync_torch(
+        self, executor: str, bucket_size_in_mb: float, dataset_size: int, use_no_sync: bool
+    ):
         # This case tries to guarantee the parity between `thunder.distributed.ddp`'s `no_sync`
         # and `torch.distributed.no_sync` from the perspectives numeric.
         from thunder.common import CACHE_OPTIONS
