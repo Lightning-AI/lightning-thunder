@@ -507,9 +507,7 @@ if torch.distributed.is_available():
                         # make sure the backward trace under `no_sync` has actual math computations.
                         no_sync_bwd_trc = thunder.last_backward_traces(jitted_model)[-1]
                         test_case.assertGreater(len(no_sync_bwd_trc.bound_symbols), 1)
-                thunder_grad.append(
-                    [p.grad.clone() for p in jitted_model.parameters() if p.grad is not None]
-                )
+                thunder_grad.append([p.grad.clone() for p in jitted_model.parameters() if p.grad is not None])
             assert torch.allclose(torch_loss, loss, atol=1e-4, rtol=1e-4)
 
             torch.testing.assert_close(torch_grad, thunder_grad)
