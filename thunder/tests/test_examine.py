@@ -25,3 +25,13 @@ def test_examine_noncallable(capsys):
     thunder.examine.examine(x, y)
     captured = capsys.readouterr()
     assert "expected `fn` to be a callable" in captured.out
+
+
+def test_examine_profile(capsys):
+    def foo(x):
+        return torch.sin(x)
+
+    x = torch.ones(10)
+    thunder.examine.examine(foo, x, profile=True)
+    captured = capsys.readouterr()
+    assert "Execution time - original" in captured.out
