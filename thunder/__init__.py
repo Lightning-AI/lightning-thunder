@@ -87,7 +87,6 @@ import thunder.executors.torchex
 import thunder.executors.nvfuserex
 
 import thunder.torch as torch
-import thunder.numpy as numpy
 
 pythonex = extend.get_executor("python")
 assert pythonex is not None
@@ -138,7 +137,6 @@ __all__ = [
     "complex128",
     # language aliases
     "torch",
-    "numpy",
     "prims",
     # interface functions
     # TODO Extend this
