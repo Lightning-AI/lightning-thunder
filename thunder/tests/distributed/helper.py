@@ -477,8 +477,8 @@ if torch.distributed.is_available():
             torch_loss = torch.zeros((), device=device)
             torch_grad = []
             thunder_grad = []
-            with ddp_model.no_sync() if use_no_sync else nullcontext():
-                for i in range(num_micro_batch - 1):
+            for i in range(num_micro_batch - 1):
+                with ddp_model.no_sync() if use_no_sync else nullcontext():
                     cur_loss = run_fwd_bwd(
                         iter_count,
                         ddp_model,
@@ -488,10 +488,10 @@ if torch.distributed.is_available():
                     )
                     with torch.no_grad():
                         torch_loss += cur_loss
-                        torch_grad.append([p.grad.clone() for p in ddp_model.parameters() if p.grad is not None])
+                torch_grad.append([p.grad.clone() for p in ddp_model.parameters() if p.grad is not None])
 
-            with jitted_model.no_sync() if use_no_sync else nullcontext():
-                for i in range(num_micro_batch - 1):
+            for i in range(num_micro_batch - 1):
+                with jitted_model.no_sync() if use_no_sync else nullcontext():
                     cur_loss = run_fwd_bwd(
                         iter_count,
                         jitted_model,
@@ -501,16 +501,18 @@ if torch.distributed.is_available():
                     )
                     with torch.no_grad():
                         loss += cur_loss
-                        thunder_grad.append([p.grad.clone() for p in jitted_model.parameters() if p.grad is not None])
                     if use_no_sync and i == 0 and iter_count == 0:
                         import thunder
 
                         # make sure the backward trace under `no_sync` has actual math computations.
                         no_sync_bwd_trc = thunder.last_backward_traces(jitted_model)[-1]
                         test_case.assertGreater(len(no_sync_bwd_trc.bound_symbols), 1)
+                thunder_grad.append(
+                    [p.grad.clone() for p in jitted_model.parameters() if p.grad is not None]
+                )
             assert torch.allclose(torch_loss, loss, atol=1e-4, rtol=1e-4)
 
-            torch.testing.assert_close(torch_grad, thunder_grad, atol=1e-3, rtol=1e-3)
+            torch.testing.assert_close(torch_grad, thunder_grad)
             cur_loss = run_fwd_bwd(
                 iter_count, jitted_model, x[-micro_batch_size:, :], y[-micro_batch_size:, :], num_micro_batch
             )

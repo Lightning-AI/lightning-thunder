@@ -180,8 +180,8 @@ class DDPTest(DistributedParallelTestCase):
     @common_utils.parametrize(
         "executor,bucket_size_in_mb,dataset_size,use_no_sync",
         [
-            (tuple(executors_map.keys())[0], 25, 2, True),
-            (tuple(executors_map.keys())[0], 25, 2, False),
+            (tuple(executors_map.keys())[0], 25, 10, True),
+            (tuple(executors_map.keys())[0], 25, 10, False),
         ],
     )
     def test_ddp_with_no_sync_torch(
