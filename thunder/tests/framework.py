@@ -65,7 +65,7 @@ def _bitsandbytes_available():
     if not package_available("bitsandbytes"):
         return False
     try:
-        import bitsandbytes
+        import bitsandbytes  # noqa: F401
     except (ImportError, RuntimeError):
         return False
     return True
