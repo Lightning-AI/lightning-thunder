@@ -11,7 +11,7 @@ import thunder
 
 from thunder.tests.distributed.helper import DistributedParallelTestCase
 from torch.distributed._tensor import DeviceMesh, Shard, distribute_tensor
-from torch.distributed.tensor.placement_types import Placement, Shard, Replicate
+from torch.distributed.tensor.placement_types import Shard
 
 
 @unittest.skipUnless(
