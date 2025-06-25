@@ -63,21 +63,12 @@ def get_dummy_input(model_name, config):
 def test_model_trace(model_name):
     print(f"\n=== Testing {model_name} ===")
 
-    try:
-        config = AutoConfig.from_pretrained(model_name)
-        model_class = get_model_class(model_name, config)
-        model = model_class.from_config(config).to("meta")
-        input_sample = get_dummy_input(model_name, config)
-    except Exception:
-        print(f"[SKIPPED] {model_name} - model setup failed")
-        traceback.print_exc()
-        pytest.skip(f"Model setup failed for {model_name}")
+    config = AutoConfig.from_pretrained(model_name)
+    model_class = get_model_class(model_name, config)
+    model = model_class.from_config(config).to("meta")
+    input_sample = get_dummy_input(model_name, config)
 
-    try:
-        jmodel = thunder.jit(model)
-        ce, pro_to_comp, pro_to_epi = run_prologue(jmodel, **input_sample)
-        print(f"[SUCCESS] {model_name} Trace acquired!")
-    except Exception:
-        print(f"[FAILURE] {model_name} - Thunder trace acquisition failed")
-        traceback.print_exc()
-        assert False, f"Thunder trace acquisition failed for {model_name}"
+    jmodel = thunder.jit(model)
+    ce, pro_to_comp, pro_to_epi = run_prologue(jmodel, **input_sample)
+
+    print(f"[SUCCESS] {model_name} Trace acquired!")
