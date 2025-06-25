@@ -34,12 +34,33 @@ from typing import Any, Dict, List, Tuple
 
 import numpy as np
 import torch
+import torch.distributed
+
+from torch.distributed.device_mesh import init_device_mesh
+from torch.distributed.tensor.parallel import parallelize_module, RowwiseParallel, ColwiseParallel
+from torch.distributed.tensor import DTensor
 
 # Import model configurations
 from transformers import AutoConfig, AutoModelForCausalLM
 from transformers.cache_utils import HybridChunkedCache
 
 import thunder
+
+RANK = int(os.environ.get("RANK", 0))
+LOCAL_RANK = int(os.environ.get("LOCAL_RANK", 0))
+WORLD_SIZE = int(os.environ.get("WORLD_SIZE", 1))
+MASTER_ADDR = os.environ.get("MASTER_ADDR", "localhost")
+MASTER_PORT = os.environ.get("MASTER_PORT", "29500")
+os.environ["RANK"] = str(RANK)
+os.environ["LOCAL_RANK"] = str(LOCAL_RANK)
+os.environ["WORLD_SIZE"] = str(WORLD_SIZE)
+os.environ["MASTER_ADDR"] = MASTER_ADDR
+os.environ["MASTER_PORT"] = MASTER_PORT
+os.environ["TORCH_NCCL_ASYNC_ERROR_HANDLING"] = "1"
+
+mesh = init_device_mesh("cuda", (WORLD_SIZE,), mesh_dim_names=("tp",))
+device = torch.device("cuda", LOCAL_RANK)
+torch.cuda.set_device(device)
 
 
 @contextmanager
@@ -101,7 +122,7 @@ class InferenceBenchmarkConfig:
     measure_ttft: bool = True
     measure_tbot: bool = True
     scenario: str | None = None  # Standard scenario name if using predefined configurations
-
+    dtensor_single_gpu: bool = False
     # Cost calculation parameters (per GPU hour) # optional
     h100_cost_per_hour: float = 1.58
     h200_cost_per_hour: float = 1.63
@@ -152,18 +173,29 @@ class SemiAnalysisInferenceBenchmark:
         self.device = torch.device(config.device)
         self.metrics = InferenceMetrics()
 
-        # Initialize distributed if needed
-        self.world_size = int(os.environ.get("WORLD_SIZE", 1))
-        self.rank = int(os.environ.get("RANK", 0))
-        self.local_rank = int(os.environ.get("LOCAL_RANK", 0))
-
-        if self.world_size > 1:
-            torch.distributed.init_process_group(backend="nccl")
-            torch.cuda.set_device(self.local_rank)
-            self.device = torch.device(f"cuda:{self.local_rank}")
-
         # Load model
         self.model = self._load_model()
+
+        tp_plan = {
+            "*.layers.*.self_attn.q_proj": ColwiseParallel(use_local_output=True),
+            "*.layers.*.self_attn.k_proj": ColwiseParallel(use_local_output=True),
+            "*.layers.*.self_attn.v_proj": ColwiseParallel(use_local_output=True),
+            "*.layers.*.self_attn.o_proj": RowwiseParallel(use_local_output=True),
+            "*.layers.*.feed_forward.gate_proj": ColwiseParallel(use_local_output=False),
+            "*.layers.*.feed_forward.up_proj": ColwiseParallel(use_local_output=False),
+            "*.layers.*.feed_forward.down_proj": RowwiseParallel(use_local_output=True),
+            # FIXME: Getting AttributeError: 'AsyncCollectiveTensor' object has no attribute 'placements'
+            # [rank0]: File "torch/distributed/tensor/parallel/style.py", line 276, in _prepare_output_fn
+            # [rank0]:     if outputs.placements != output_layouts:
+            # "*.layers.*.feed_forward.shared_expert.gate_proj": ColwiseParallel(use_local_output=False),
+            # "*.layers.*.feed_forward.shared_expert.up_proj": ColwiseParallel(use_local_output=False),
+            # "*.layers.*.feed_forward.shared_expert.down_proj": RowwiseParallel(use_local_output=True),
+        }
+
+        if self.config.dtensor_single_gpu or WORLD_SIZE > 1:
+            self.model = parallelize_module(self.model, mesh, tp_plan)
+            assert isinstance(self.model.model.layers[0].self_attn.o_proj.weight, DTensor)
+            assert isinstance(self.model.model.layers[0].feed_forward.down_proj.weight, DTensor)
 
         # Compile model
         self.model = self._compile_model(self.model)
@@ -226,7 +258,7 @@ class SemiAnalysisInferenceBenchmark:
             # key_states.shape[1] is used to retrieve the number of key value heads, all other dimensions can be 1 and ignored
             # https://github.com/huggingface/transformers/blob/9300728665aaeb0ebf4db99f9d9fbce916b4a183/src/transformers/cache_utils.py#L1822
             past_key_values.initialise_cache_layer(
-                layer_idx, torch.empty(1, self.hf_config.num_key_value_heads, 1, 1, device=self.device)
+                layer_idx, torch.empty(1, self.hf_config.num_key_value_heads // WORLD_SIZE, 1, 1, device=self.device)
             )
 
         return input_ids, past_key_values
@@ -500,6 +532,7 @@ def run_semianalysis_benchmark(
     mode: str = "thunder",
     save_results: bool = True,
     scenario: str | None = None,
+    dtensor_single_gpu: bool = False,
 ):
     """Main function to run the benchmark"""
 
@@ -526,6 +559,7 @@ def run_semianalysis_benchmark(
         mode=mode,
         num_layers=num_layers,
         scenario=scenario,
+        dtensor_single_gpu=dtensor_single_gpu,
     )
 
     benchmark = SemiAnalysisInferenceBenchmark(config)
@@ -614,6 +648,12 @@ Examples:
         help="Compilation mode: thunder, eager (default), or inductor",
     )
 
+    parser.add_argument(
+        "--dtensor-single-gpu",
+        action="store_true",
+        help="Use DTensor for single GPU",
+    )
+
     # Output configuration
     parser.add_argument("--save-results", action="store_true", help="Save results to JSON file")
     parser.add_argument("--output-dir", type=str, default="./results", help="Directory to save results")
@@ -643,6 +683,7 @@ Examples:
         mode=args.mode,
         save_results=args.save_results,
         scenario=args.scenario,
+        dtensor_single_gpu=args.dtensor_single_gpu,
     )
 
     return metrics
