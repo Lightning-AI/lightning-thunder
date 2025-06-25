@@ -33,11 +33,14 @@ from time import perf_counter
 from typing import Any, Dict, List, Tuple
 
 import numpy as np
+
 import torch
+from torch.testing._internal.common_quantized import _f32_to_floatx_unpacked
 
 # Import model configurations
 from transformers import AutoConfig, AutoModelForCausalLM
 from transformers.cache_utils import HybridChunkedCache
+from transformers.utils.quantization_config import QuantizationConfigMixin
 
 import thunder
 
@@ -101,6 +104,7 @@ class InferenceBenchmarkConfig:
     measure_ttft: bool = True
     measure_tbot: bool = True
     scenario: str | None = None  # Standard scenario name if using predefined configurations
+    load_nvfp4: bool = False  # Enable NVFP4 quantization
 
     # Cost calculation parameters (per GPU hour) # optional
     h100_cost_per_hour: float = 1.58
@@ -142,6 +146,83 @@ class InferenceMetrics:
     ttft_times: List[float] = field(default_factory=list)
     prefill_times: List[float] = field(default_factory=list)
     decode_times: List[float] = field(default_factory=list)
+
+
+def ceil_div(a, b):
+    return (a + b - 1) // b
+
+
+def down_size(size):
+    assert size[-1] % 2 == 0, f"{size} last dim not divisible by two"
+    return (*size[:-1], size[-1] // 2)
+
+
+def pack_uint4(uint8_data) -> torch.Tensor:
+    shape = uint8_data.shape
+    assert shape[-1] % 2 == 0
+    uint8_data = uint8_data.contiguous().view(-1)
+    return (uint8_data[1::2] << 4 | uint8_data[::2]).view(down_size(shape))
+
+
+def _bfloat16_to_float4_e2m1fn_x2(x):
+    FP4_EBITS, FP4_MBITS = 2, 1
+    assert x.dtype == torch.bfloat16
+    x = _f32_to_floatx_unpacked(x.to(torch.float32), FP4_EBITS, FP4_MBITS)
+    x = pack_uint4(x)
+    x = x.view(torch.float4_e2m1fn_x2)
+    return x
+
+
+class Nvfp4QuantizedLinear(torch.nn.Module):
+    def __init__(
+        self, in_features: int, out_features: int, block_size_k, block_size_mn, bias: bool = True, dtype=torch.bfloat16
+    ) -> None:
+        super().__init__()
+
+        self.register_buffer("weight", torch.zeros((out_features, in_features), dtype=torch.float8_e4m3fn))
+        self.register_buffer("weight_scale", torch.ones((out_features, 1), dtype=torch.float8_e4m3fn))
+        self.register_buffer("x_scale", torch.ones((out_features, in_features), dtype=torch.float8_e4m3fn))
+
+        if bias:
+            self.register_buffer("bias", torch.zeros((out_features,), dtype=dtype))
+        else:
+            self.bias = None
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x
+        # quantized_x = _bfloat16_to_float4_e2m1fn_x2(x)
+        # out = torch._scaled_mm(x, self.weight.mT, x_scale, self.weight_scale, out_dtype=torch.bfloat16)
+        # if self.bias:
+        #     return out + self.bias
+        # return out
+
+
+class Nvfp4QuantizationConfig(QuantizationConfigMixin):
+    def __init__(self, modules_to_not_convert: set | None = None) -> None:
+        self.block_size_k = 16
+        self.block_size_mn = 128
+        # self.NUM_K_BLOCKS = ceil_div(K, self.BLOCK_SIZE_K)
+        # self.PADDED_NUM_K_BLOCKS = ceil_div(self.NUM_K_BLOCKS, 4) * 4
+        # self.PADDED_NUM_M_BLOCKS = ceil_div(M, self.BLOCK_SIZE_MN) * self.BLOCK_SIZE_MN
+        # self.PADDED_NUM_N_BLOCKS = ceil_div(N, self.BLOCK_SIZE_MN) * self.BLOCK_SIZE_MN
+        modules_to_quantize = set(
+            (
+                "k_proj",
+                "q_proj",
+                "v_proj",
+                "o_proj",
+                "qkv_proj",
+                "gate_proj",
+                "up_proj",
+                "down_proj",
+                "lm_head",
+                "router",
+            )
+        )
+
+        self.modules_to_convert = (
+            modules_to_quantize if not modules_to_not_convert else modules_to_quantize - modules_to_not_convert
+        )
 
 
 class SemiAnalysisInferenceBenchmark:
@@ -187,7 +268,7 @@ class SemiAnalysisInferenceBenchmark:
         """Load the model based on configuration"""
         model_id = self.config.model_name
 
-        # Load model configuration
+        # Load model configuration (without quantization first)
         config = AutoConfig.from_pretrained(model_id)
 
         if hasattr(config, "text_config"):
@@ -199,13 +280,50 @@ class SemiAnalysisInferenceBenchmark:
 
         self.hf_config = config
 
-        # Create model directly on target device with random weights
+        # Create model with optional quantization
         with torch.device(self.device):
-            model = AutoModelForCausalLM.from_config(config)
+            if self.config.load_nvfp4:
+                # Create quantization config and apply quantization during initialization
+                quantization_config = Nvfp4QuantizationConfig()
+                model = self._create_quantized_model_selective(config, quantization_config)
+            else:
+                # Create normal model without quantization
+                model = AutoModelForCausalLM.from_config(config)
 
         return model
 
-    def generate_batch(self) -> torch.Tensor:
+    def _create_quantized_model_selective(self, config, quantization_config):
+        """Create model with quantized layers before weight initialization"""
+
+        with torch.device("meta"):
+            model = AutoModelForCausalLM.from_config(config)
+
+        modules_to_convert = set(quantization_config.modules_to_convert)
+
+        def replace_with_nvfp4_linear(module, name=""):
+            for child_name, child_module in list(module.named_children()):
+                if isinstance(child_module, torch.nn.Linear) and child_name in modules_to_convert:
+                    # Create quantized replacement
+                    quantized_layer = Nvfp4QuantizedLinear(
+                        child_module.in_features,
+                        child_module.out_features,
+                        quantization_config.block_size_k,
+                        quantization_config.block_size_mn,
+                        child_module.bias is not None,
+                    )
+                    setattr(module, child_name, quantized_layer)
+                    module.requires_grad_(False)
+                else:
+                    # Recurse into child modules
+                    replace_with_nvfp4_linear(child_module, f"{name}.{child_name}" if name else child_name)
+
+        replace_with_nvfp4_linear(model)
+
+        # Use to_empty() to move from meta device to target device
+        model = model.to_empty(device="cuda")
+        return model
+
+    def generate_batch(self) -> tuple[torch.Tensor, HybridChunkedCache]:
         """Generate a batch of input tokens"""
         batch_size = self.config.batch_size
         input_length = self.config.input_length
@@ -221,7 +339,9 @@ class SemiAnalysisInferenceBenchmark:
 
         # Random input tokens
         input_ids = torch.randint(0, vocab_size, (batch_size, input_length), device=self.device)
-        past_key_values = HybridChunkedCache(self.hf_config, input_ids.shape[0], input_ids.shape[1] + self.config.output_length)
+        past_key_values = HybridChunkedCache(
+            self.hf_config, input_ids.shape[0], input_ids.shape[1] + self.config.output_length
+        )
         for layer_idx in range(self.hf_config.num_hidden_layers):
             # key_states.shape[1] is used to retrieve the number of key value heads, all other dimensions can be 1 and ignored
             # https://github.com/huggingface/transformers/blob/9300728665aaeb0ebf4db99f9d9fbce916b4a183/src/transformers/cache_utils.py#L1822
@@ -500,6 +620,7 @@ def run_semianalysis_benchmark(
     mode: str = "thunder",
     save_results: bool = True,
     scenario: str | None = None,
+    load_nvfp4: bool = False,
 ):
     """Main function to run the benchmark"""
 
@@ -526,6 +647,7 @@ def run_semianalysis_benchmark(
         mode=mode,
         num_layers=num_layers,
         scenario=scenario,
+        load_nvfp4=load_nvfp4,
     )
 
     benchmark = SemiAnalysisInferenceBenchmark(config)
@@ -573,6 +695,7 @@ Use --list-scenarios for detailed scenario descriptions.
 Examples:
   python inference_bmk.py --scenario chat --model-name llama3.1-8b
   python inference_bmk.py --input-length 2048 --output-length 512 --model-name llama3.1-8b --mode eager
+  python inference_bmk.py --scenario chat --model-name llama3.1-8b --load-nvfp4
         """,
     )
 
@@ -613,6 +736,7 @@ Examples:
         default="eager",
         help="Compilation mode: thunder, eager (default), or inductor",
     )
+    parser.add_argument("--load-nvfp4", action="store_true", help="Enable NVFP4 quantization for linear layers")
 
     # Output configuration
     parser.add_argument("--save-results", action="store_true", help="Save results to JSON file")
@@ -643,6 +767,7 @@ Examples:
         mode=args.mode,
         save_results=args.save_results,
         scenario=args.scenario,
+        load_nvfp4=args.load_nvfp4,
     )
 
     return metrics
