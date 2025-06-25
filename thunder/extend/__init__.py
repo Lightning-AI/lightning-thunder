@@ -15,6 +15,8 @@ from thunder.core.pytree import tree_map
 from thunder.core.symbol import Symbol, BoundSymbol, default_python_printer
 from thunder.core.trace import TraceCtx
 from thunder.core.vjp_utils import disable_caching_split_forward_and_backward
+from thunder._logging import get_logger
+
 
 __all__ = [
     "register_executor",
@@ -30,6 +32,9 @@ __all__ = [
     "remove_default_executor",
     "remove_always_executor",
 ]
+
+
+logger = get_logger(__name__)
 
 
 class ImplInfo:
@@ -90,14 +95,29 @@ class Executor:
     def can_execute(self, bsym: BoundSymbol) -> bool:
         sym = bsym.sym
         impl: None | ImplInfo = self.implmap.get(sym.id, None)
+        _log_extra = {"executor_name": self.name}
+
+        logger.debug("%s with args=(%s) and kwargs=(%s)", sym.id, bsym.args, bsym.kwargs, extra=_log_extra)
 
         if impl is None:
+            logger.warn("%s executor does not have impl for %s", self._name, sym.id, extra=_log_extra)
             return False
 
         if impl.checker is None:
+            logger.warn("%s executor's impl for %s does not have check", self._name, sym.id, extra=_log_extra)
             return True
 
-        return impl.checker(*bsym.args, **bsym.kwargs)
+        check_result = impl.checker(*bsym.args, **bsym.kwargs)
+        if isinstance(check_result, tuple) and not check_result[0]:
+            logger.warn(
+                "%s executor does not support %s because %s", self._name, sym.id, check_result[1], extra=_log_extra
+            )
+            return False
+        elif isinstance(check_result, bool) and not check_result:
+            logger.warn("%s executor does not support %s", self._name, sym.id, extra=_log_extra)
+            return False
+        else:
+            return True
 
     # Returns True when nvFuser can fuse every operation the bound symbol calls, False otherwise
     def can_fuse(self, bsym: BoundSymbol) -> bool:
