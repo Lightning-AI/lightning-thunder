@@ -84,8 +84,9 @@ def extract_executor_names_from_thunder_logs() -> set[str] | None:
 
 
 class ExecutorLogFilter:
-    def __init__(self):
+    def __init__(self, name):
         super().__init__()
+        self._is_logger_for_executor = "executor" in name
         self.names_not_to_filter = extract_executor_names_from_thunder_logs()
 
     @functools.cached_property
@@ -97,13 +98,12 @@ class ExecutorLogFilter:
             return True
 
         if (maybe_executor_name := getattr(record, "executor_name", None)) is None:
-            return True
+            if self._is_logger_for_executor:
+                return any(name in record.name for name in self.names_not_to_filter)
+            else:
+                return True
         else:
             return maybe_executor_name in self.names_not_to_filter
-
-
-def _create_filter() -> ExecutorLogFilter:
-    return ExecutorLogFilter()
 
 
 def get_logger(name: str) -> logging.Logger:
@@ -119,6 +119,6 @@ def get_logger(name: str) -> logging.Logger:
     stream_handler.setFormatter(fmt=formatter)
     logger.addHandler(stream_handler)
     logger.propagate = False
-    executor_log_filter = _create_filter()
+    executor_log_filter = ExecutorLogFilter(name)
     logger.addFilter(executor_log_filter)
     return logger
