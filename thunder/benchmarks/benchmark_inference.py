@@ -45,6 +45,50 @@ from torch.distributed.tensor import DTensor
 from transformers import AutoConfig, AutoModelForCausalLM
 from transformers.cache_utils import HybridChunkedCache
 from transformers.utils.quantization_config import QuantizationConfigMixin
+from transformers.models.llama4.modeling_llama4 import Llama4TextMoe, Llama4TextExperts
+
+Llama4TextMoe_forward_original = Llama4TextMoe.forward
+Llama4TextExperts_forward_original = Llama4TextExperts.forward
+
+def topk1(values, topk, dim):
+    assert topk == 1, "Only topk=1 is supported"
+    return torch.max(values, dim=dim, keepdim=True)
+
+
+def Llama4TextMoe_forward(self, hidden_states):
+    router_logits = self.router(hidden_states)
+    router_scores, router_indices = topk1(router_logits, self.top_k, dim=-1)
+    router_scores = torch.sigmoid(router_scores.to(torch.float32)).to(hidden_states.dtype)
+    shared_out = self.shared_expert(hidden_states)
+    routed_out = self.experts(
+        hidden_states=hidden_states,
+        router_scores=router_scores,
+        router_indices=router_indices,
+    )
+    experts_out = routed_out + shared_out
+    return experts_out, None
+
+
+def Llama4TextExperts_forward(self, hidden_states, router_scores, router_indices):
+    # If we would use vllm
+    # https://github.com/vllm-project/vllm/blob/c53fec1fcb27aca9475e55c2d1e74c532f5f0364/vllm/model_executor/layers/fused_moe/fused_moe.py#L1140
+    # or https://github.com/vllm-project/vllm/blob/bf5181583f4927b774d86a0a493916062f86c57d/vllm/model_executor/layers/fused_moe/cutlass_moe.py#L375
+    # return fused_experts(
+    #     hidden_states=hidden_states,
+    #     w1=self.gate_up_proj,
+    #     w2=self.down_proj,
+    #     topk_weights=router_scores,
+    #     topk_ids=router_indices,
+    #     inplace=True,
+    #     activation="silu",
+    #     apply_router_weight_on_input=True,
+    #     global_num_experts=self.num_experts,
+    #     expert_map=None,
+    # )
+    return hidden_states
+
+# Llama4TextMoe.forward = Llama4TextMoe_forward
+# Llama4TextExperts.forward = Llama4TextExperts_forward
 
 import thunder
 
