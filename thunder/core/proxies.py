@@ -1688,20 +1688,26 @@ class TensorProxy(Proxy, TensorProxyInterface):
         return method(self)
 
     #
-    # dtype conversion operators
+    # conversion operators to numbers - not implemented
     #
 
     def __complex__(self):
-        raise NotImplementedError
+        raise NotImplementedError(
+            f"casting a {type(self).__name__} to a Python complex number is not supported (data dependency)"
+        )
 
     def __float__(self):
-        raise NotImplementedError
+        raise NotImplementedError(
+            f"casting a {type(self).__name__} to a Python float is not supported (data dependency)"
+        )
 
     def __int__(self):
-        raise NotImplementedError
+        raise NotImplementedError(f"casting a {type(self).__name__} to a Python int is not supported (data dependency)")
 
     def __bool__(self):
-        raise NotImplementedError
+        raise NotImplementedError(
+            f"casting a {type(self).__name__} to a Python boolean is not supported (data dependency)"
+        )
 
     #
     # Elementwise binary operators
@@ -2090,7 +2096,7 @@ def proxy(x: Any, *, name: str | None = None, history: None | tuple = None) -> A
         if isinstance(x, int):
             return IntegerProxy(name=name, value=x, history=history)
 
-        raise NotImplementedError
+        raise NotImplementedError(f"cannot proxy {type(x).__name__}")
 
     if isinstance(x, tuple):
         return TupleProxy(x, name=name, history=history)

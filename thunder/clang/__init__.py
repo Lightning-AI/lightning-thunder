@@ -3,7 +3,7 @@ from collections import namedtuple
 from collections.abc import Callable, Sequence
 from functools import partial, reduce
 from numbers import Number
-from types import EllipsisType
+from types import EllipsisType, NoneType
 from typing import Any, Union
 import math
 import operator
@@ -474,109 +474,6 @@ def flip(a: TensorLike, dims: Sequence[int] | int | None = None) -> TensorLike:
         return prims.flip(a, tuple(range(a.ndim)))
 
 
-# IndexingSignature stores a meta-data for an indexing key.
-# It is a named tuple with the following fields:
-#
-# unsqueeze - a sequence of indices in the key that have value None.
-# These are dimensions that are supposed to be inserted into the
-# indexing result.
-#
-# basic - a sequence of pairs (a_dim, key_idx) that indicate that the a_dim'th
-# dimension of the input expects an application of basic indexing key[key_idx].
-# (a_dim, key_idx) == (None, None) if key is an instance of Number or slice.
-# See _get_indexing_signature for more on what constitutes a basic indexing.
-#
-# advanced - a sequence of pairs (a_dim, key_idx) that indicate that the a_dim'th
-# dimension of the input expects an application of advanced indexing key[key_idx].
-# (a_dim, key_idx) == (None, None) if key is an instance of TensorLike or
-# a sequence which is not a tuple.
-# See _get_indexing_signature for more on what constitutes a basic indexing.
-IndexingSignature = namedtuple("IndexingSignature", ["basic", "advanced", "unsqueeze"])
-
-
-# Given an indexing key, partition it into regions of basic/advanced indexing
-# and a region that corresponds to newly inserted dimensions.
-# Returns IndexingSignature.
-def _get_indexing_signature(key: Any) -> IndexingSignature:
-    sig = IndexingSignature([], [], [])
-
-    # key is None or Ellipsis -> indexing is a no-op,
-    # and we just return an empty signature.
-    if isinstance(key, (type(None), EllipsisType)):
-        return sig
-
-    # Numbers and slices are examples of basic indexing.
-    if isinstance(key, (Number, NumberProxy, slice)):
-        sig.basic.append((None, None))
-        return sig
-
-    # TensorLike triggers advanced indexing.
-    if isinstance(key, (TensorLike)):
-        sig.advanced.append((None, None))
-        return sig
-
-    utils.check_type(key, Sequence)
-
-    # Sequences which are not tuples trigger advanced indexing.
-    if not isinstance(key, tuple):
-        sig.advanced.append((None, None))
-        return sig
-
-    # We use this iterator over key for convenient signature population.
-    # It returns pairs (i, key[i]) where
-    # i = 0, ..., (position of Ellipsis) (left-to-right indexing of key), and
-    # i = -1, ..., (negative position of Ellipsis + 1) (right-to-left indexing of key
-    # with negative indices).
-    class IndexingKeyIter:
-        def __init__(self, k):
-            self.k = k
-
-        def __iter__(self):
-            self.k_iter = zip(range(len(self.k)), self.k)
-            return self
-
-        def __next__(self):
-            i, v = next(self.k_iter)
-            if v is Ellipsis:
-                rest_k = self.k[i + 1 :]
-                self.k_iter = zip(range(-1, -len(rest_k) - 1, -1), reversed(rest_k))
-            return i, v
-
-    has_ellipses = False
-
-    # See how IndexingKeyIter iterates over key.
-    # a_dim corresponds to the input's dimension a basic/advanced
-    # is expected to be applied to.
-    # We add this information to the signature.
-    a_dim = 0
-    # advance is applied to a_dim.
-    # It is an increment before Ellipsis is seen, and a decrement
-    # afterwards.
-    advance = lambda dim: dim + 1 if dim >= 0 else dim - 1
-
-    for i, k in IndexingKeyIter(key):
-        if k is Ellipsis:
-            utils.check(not has_ellipses, lambda: f"Found two (or more) ellipses in {key=}")
-            has_ellipses = True
-            # Ellipsis is spotted -> iteration direction is changed
-            # to iterate from left-most position to the position before Ellipsis.
-            # We use negative indices for simplicity.
-            a_dim = -1
-        elif k is None:
-            sig.unsqueeze.append(i)
-        else:
-            if isinstance(k, (Number, slice, NumberProxy)):
-                sig.basic.append((a_dim, i))
-            elif isinstance(k, (TensorLike, Sequence)):
-                sig.advanced.append((a_dim, i))
-            else:
-                raise ValueError(f"{key[i]=} has unexpected {type(key[i])=}")
-
-            a_dim = advance(a_dim)
-
-    return sig
-
-
 # TODO: should this allow negative steps?
 # TODO: we should probably be consistent about start/stop/step vs. start/end/stride language
 # TODO Add type annotations
@@ -590,67 +487,23 @@ def _basic_indexing(a: TensorLike, /, key) -> TensorLike:
     unsqueeze_dims_pre_ellipsis = []
     unsqueeze_dims_post_ellipsis = []
     specified_slices = 0
-    ellipsis_idx = None
 
-    if key is None or isinstance(key, (Number, NumberProxy, slice, EllipsisType)):
-        key = (key,)
+    assert isinstance(key, list)
 
+    # eliminate None by unsqeezing and replacing with 'slice(None)' aka ':'
     _key = []
-    # keeps track of keys that are not squeeze related
-    new_key = []
     for idx, x in enumerate(key):
-        if not isinstance(x, (NumberProxy, Number)):
-            new_key.append(x)
-        if isinstance(x, (list, TensorLike)):
-            # skip advanced indexing by converting this to [:]
-            x = slice(None, None, None)
-            _key.append(x)
-        else:
-            _key.append(x)
-        if x is Ellipsis:
-            utils.check(ellipsis_idx is None, lambda: f"Found two (or more) ellipses in key={key}")
-            ellipsis_idx = idx
-        elif isinstance(x, (NumberProxy, Number, slice)):
-            specified_slices += 1
-        elif x is None:
-            if ellipsis_idx is None:
-                unsqueeze_dims_pre_ellipsis.append(idx)
-            else:
-                unsqueeze_dims_post_ellipsis.append(idx)
-        else:
-            raise ValueError(f"Found unexpected value {x} in key={key}")
-    key = tuple(_key)
-
-    utils.check(
-        specified_slices <= len(a.shape),
-        lambda: f"Too many slices ({specified_slices}) specified for a.shape={a.shape}",
-    )
-
-    ellipsis_dims = len(a.shape) - specified_slices
-    # NOTE Both these checks are required
-    #   ellipsis_dims > 0 handles the implicit ellipsis matching 1+ dimensions
-    #   ellipsis_idx not being None handles an explicit ellipsis which matches no dimensions
-    if ellipsis_idx is not None or ellipsis_dims > 0:
-        ellipsis_slices = [slice(None, None, None)] * ellipsis_dims
-        if ellipsis_idx is not None:
-            key = list(key)[:ellipsis_idx] + ellipsis_slices + list(key)[ellipsis_idx + 1 :]
-        else:
-            # NOTE Without an explicit ellipsis, there is an implicit ellipsis at the end of the key
-            key = list(key) + ellipsis_slices
-
-    # Unsqueezes
-    unsqueeze_dims_post_ellipsis = [x + ellipsis_dims - 1 for x in unsqueeze_dims_post_ellipsis]
-    unsqueeze_dims = unsqueeze_dims_pre_ellipsis + unsqueeze_dims_post_ellipsis
-    if len(unsqueeze_dims) > 0:
-        a = unsqueeze(a, unsqueeze_dims)
-
-    def _convert_none(x):
         if x is None:
-            return slice(None, None, None)
+            a = unsqueeze(a, idx)
+            _key.append(slice(None))
+        else:
+            assert isinstance(x, (NumberProxy, Number, slice))
+            _key.append(x)
 
-        return x
+    for _ in range(idx + 1, len(a.shape)):
+        _key.append(slice(None))
 
-    key = tuple(_convert_none(x) for x in key)
+    key = _key
 
     # Handles numbers and slices
     squeeze_dims = []
@@ -716,7 +569,7 @@ def _basic_indexing(a: TensorLike, /, key) -> TensorLike:
     if len(squeeze_dims) > 0:
         result = prims.squeeze(result, tuple(squeeze_dims))
 
-    return result, tuple(new_key)
+    return result
 
 
 # TODO Add more advanced indexing support
@@ -724,18 +577,36 @@ def _basic_indexing(a: TensorLike, /, key) -> TensorLike:
 # NOTE Advanced indexing with boolean tensors has data-dependent metadata (it is akin to indexing with nonzero)
 @clangop()
 def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
-    # Advanced indexing currently supports the following cases:
-    #   - a 0D or 1D integer tensor
-    #   - a series of one or more 0D or 1D integer tensors containing at most one ellipsis as the first sequence element and at least one sequence element
+    """
+    Implements the advanced part of indexing for Thunder tensors.
 
-    utils.check(
-        isinstance(key, (TensorLike, Sequence)),
-        lambda: f"Advanced indexing currently only supports keys that are ellipses, integer tensors or sequences, but got {key=}",
+    key is expected to be a sequence of per-dimension indices.
+    basic indexing other than keeping dimensions as is is expected to be done separately, see getitem.
+
+    Supports:
+      - n-dimensional integer tensor indices
+      - Broadcasting of multiple index tensors to a common shape
+      - Keeping dimensions (by indexing with 'slice(None)' aka  ':')
+      - Sequences of integer tensor indices
+
+    Not yet supported:
+      - Boolean tensor indices (these require data-dependent metadata, like nonzero)
+
+    Modeling:
+      - All index tensors are broadcast to a common shape
+      - Indices are flattened and used with `take` to gather elements
+      - The result is reshaped to match the broadcast index shape and any remaining dimensions
+      - Permutations are applied to match PyTorch/NumPy semantics
+      - Negative indices are wrapped as in PyTorch/NumPy
+    """
+    assert isinstance(key, Sequence), (
+        "advanced indexing needs a sequence of keys (that are either slice(None) or Sequence or Tensor)"
     )
 
-    def _to_tensorproxies(x: list, device: devices.DeviceType):
-        # convert list to tensor
-        # e.g. [1, 2] -> tensor.Tensor([1, 2])
+    def _to_tensorproxies(x: Sequence, device: devices.DeviceType):
+        if not isinstance(x, list):
+            x = list(x)
+        # Convert list of numbers to tensor if possible
         for idx, val in enumerate(x):
             if isinstance(val, (NumberProxy)):
                 x[idx] = utils.get_numberlike_value(val)
@@ -746,262 +617,187 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
     basic_keys = []  # (key index, key)
     advanced_keys = []  # (key index, key)
 
-    # convert list to 1D tensor
-    # this handles both cases when key is list or a tuple that contains lists
-    if isinstance(key, Sequence):
-        if isinstance(key, list):
-            key = _to_tensorproxies(key, a.device)
-            if isinstance(key, list):
-                # handle list of tensors
-                for ii, i in enumerate(key):
-                    advanced_keys.append((ii, i))
-        else:
-            key_ = []
-            for key_idx, x in enumerate(key):
-                if isinstance(x, list):
-                    # is it possible to have list of tensors here?
-                    x = _to_tensorproxies(x, a.device)
-                    key_.append(x)
-                    advanced_keys.append((key_idx, x))
-                elif isinstance(x, (EllipsisType, TensorLike)):
-                    key_.append(x)
-                    if isinstance(x, TensorLike):
-                        advanced_keys.append((key_idx, x))
-                else:
-                    # basic indices
-                    key_.append(None)
-                    basic_keys.append((key_idx, None))
-            key = tuple(key_)
+    input_shape = prims.shape(a)
 
-    if isinstance(key, (TensorLike)):
-        key = utils.sequencify(key)
-        advanced_keys.append((0, key[0]))
-
-    # Validates (currently supported) inputs
-    utils.check(len(key) > 0, lambda: f"Advanced indexing expected a non-empty sequence for a key, but got {key=}")
-
-    num_ellipses: int = 0
-    for x in key:
-        if x is Ellipsis:
-            num_ellipses += 1
-        utils.check(
-            isinstance(x, (EllipsisType, TensorLike, type(None))),
-            lambda: f"Advanced indexing currently only supports tensors as sequence elements (possibly with a starting ellipsis), but found an object of type {type(x)}",
-        )
-        if isinstance(x, TensorLike):
-            utils.check(
-                dtypes.is_nonboolean_integer_dtype(x.dtype) and (x.ndim == 1 or x.ndim == 0),
-                lambda: f"Advanced indexing currently only supports zero or one-dimensional integer tensors, but found a tensor with dtype {x.dtype} and {x.ndim} dimensions",
-            )
-
-    utils.check(num_ellipses <= 1, lambda: "Found two or more ellipses in an advanced indexing key")
-
-    # NOTE When the key has an ellipsis it can be longer than the number of dimensions in a
-    #   (in this case the ellipsis matches no dimensions)
-    seq_len: int = len(key)
-    utils.check(
-        a.ndim >= (seq_len - num_ellipses),
-        lambda: f"Trying to (advanced) index into a tensor with {a.ndim} dimensions but with {seq_len - num_ellipses} index tensors",
-    )
-
-    # TODO Think about relaxing this
-    has_ellipsis: bool = num_ellipses > 0
-    utils.check(
-        not has_ellipsis or key[0] is Ellipsis,
-        lambda: "Advanced indexing currently only supports ellipses as the first sequence element",
-    )
-
-    # The following models two advanced indexing cases:
-    #
-    #   1) (Ellipsis, 1D tensor, 1D tensor, ...)
-    #   2) (1D tensor, 1D tensor, ...)
-    #
-    # In both cases the tensor is partially or completely flattened and a flattened index is constructed for it,
-    #   such that take(flattened_tensor, flattened_index, dim) will compute the indexing operation.
-    #
-    # In the first case, the dimensions of the tensor corresponding to the tensor sequence elements is flattened,
-    #   and the "flattened take" happens in this new innermost dimension. For example, a tensor (4, 5, 2) being indexed into
-    #   like (..., a, b) will flatten its two dimensions corresponding to a and b to become (4, 10). Then the take
-    #   happens in that innermost dimension.
-    #
-    # In the second case, the dimensions corresponding to the tensor sequence elements are still flattened, and the
-    #   "flattened take" again happens in this new outermost dimension. For example, a tensor (4, 5, 2) being indexed
-    #   into like (a, b) will flatten its two dimensions corresponding to a and b and become (20, 2). Then the take
-    #   happens in that outermost dimension.
-    #
-    # Conceptually, this technique relies on the 1D tensor sequence elements being contiguous in the key, which is why it
-    #   doesn't support an ellipsis in the middle of the key. There are probably some reasonable generalizations that
-    #   would support those use cases. One idea would be to "materialize" the ellipses as a series of 1D tensors,
-    #   but actually generating those tensors seems expensive.
-    flattened: TensorLike
-    subtensor_shape: list[int]
-    # keeps track of the rest of the dimensions
-    remaining_shape: list[int]
-    dim: int
-    modified_key = list(key)
-    # calculates the output tensor shape
-    new_shape = []
-
-    permute_shape = []  # basic keys first followed by advanced keys
-    permute_key = []
-    for key_idx, key_val in basic_keys:
-        permute_shape.append(key_idx)
-        permute_key.append(key_val)
-    for key_idx, key_val in advanced_keys:
-        permute_shape.append(key_idx)
-        permute_key.append(key_val)
-
-    # transpose so that we have basic keys first
-    if has_ellipsis:
-        del modified_key[0]
-        permute_shape = [x + len(list(a.shape[: a.ndim - (seq_len - 1)])) - 1 for x in permute_shape]
-        permute_shape = list(range(a.ndim - (seq_len - 1))) + permute_shape
-        # check if we need to permute
-        if permute_shape != list(range(a.ndim)):
-            a = transpose(a, tuple(permute_shape))
-            key = tuple(permute_key)
-
-        subtensor_shape = a.shape[a.ndim - (seq_len - 1) :]
-        remaining_shape = list(a.shape[: a.ndim - (seq_len - 1)])
-        dim = -1
-        flattened = flatten(a, a.ndim - (seq_len - 1), -1)
-    else:
-        # NOTE No ellipsis case
-        permute_shape = permute_shape + list(range(len(key), len(a.shape)))
-        # check if we need to permute
-        if permute_shape != list(range(a.ndim)):
-            a = transpose(a, tuple(permute_shape))
-            key = tuple(permute_key)
-
-        subtensor_shape = a.shape[: len(key)]
-        remaining_shape = list(a.shape[len(key) :])
-        dim = 0
-        flattened = flatten(a, 0, seq_len - 1)
-
-    # Canonicalizes tensor indices, wrapping negative indices like -5
-    # NOTE This does not check if the indices are valid. In PyTorch invalid indices
-    #   will trigger a device-side assertion.
+    # Canonicalize tensor indices, wrapping negative indices like -5
     def wrap_tensor(t: TensorLike, dim_length: int) -> TensorLike:
         return t + where(t < 0, dim_length, 0)
 
-    # NOTE The following code might be a little too complicated. Conceptually it aligns
-    #   the key and a subset of the tensor dimensions, like in the following examples:
-    #
-    #   tensor dims:  a  b  c  d
-    #           key: k0 k1 k2
-    #
-    #   tensor dims: a  b  c  d
-    #           key:  ... k0 k1
-    #
-    # And then it iterates through both in reverse to pair c and k2, b and k1, etc.
-    #   to compute the correct flattened index.
-    #
-    # A detail is that the first pairing is treated specially to initialize the loop variables.
-    l = subtensor_shape[-1]
-    flattened_idx = wrap_tensor(key[-1], l)
-    if len(flattened_idx.shape) > 0:
-        new_shape.append(flattened_idx.shape[0])
-
-    accum: int = l
-    for j, (k, l) in enumerate(zip(reversed(key[:-1]), reversed(subtensor_shape[:-1])), 2):
-        if k is not None:
-            wrapped = wrap_tensor(k, l)
-            flattened_idx = flattened_idx + wrapped * accum
-            if len(flattened_idx.shape) > 0:
-                # update flattened_idx
-                if new_shape:
-                    new_shape.pop()
-                new_shape.append(flattened_idx.shape[0])
-            accum *= l
+    # advanced indexing has the following positioning of the output dimension(s)
+    # - if there is only one or only advanced indices in consecutive dimensions, the new dimension(s) are placed there,
+    # - if there are advanced index dimensions "with gaps", the advanced index dimension(s) is placed in the front
+    # this is computed as target_dim here
+    # also, two normalizations are done here:
+    # - sequences are converted to tensors,
+    # - indices are wrapped (by adding the appropriate dimension's size to negative indices)
+    last_i = None
+    target_dim = None
+    idx_dims = []
+    idx_input_shapes = []
+    non_idx_dims = []
+    non_idx_shapes = []
+    idx_numel = 1
+    idxes = []
+    for i, k in enumerate(key):
+        if isinstance(k, (TensorLike, Sequence)):
+            if last_i is not None and last_i + 1 != i:
+                target_dim = 0
+            elif target_dim is None:
+                target_dim = i
+            last_i = i
+            idx_dims.append(i)
+            if not isinstance(k, TensorLike):
+                k = _to_tensorproxies(k, a.device)
+            assert utils.is_exact_dtype(k.dtype)
+            if k.dtype == dtypes.bool8:
+                raise NotImplementedError(
+                    "boolean advanced indexing is not implemented (the result would be of unknown shape)"
+                )
+            k = wrap_tensor(k, input_shape[i])
+            idxes.append(k)
+            idx_input_shapes.append(input_shape[i])
+            idx_numel *= input_shape[i]
         else:
-            new_shape.append(l)
-            flattened_idx_ = empty([0], device=a.device, dtype=dtypes.int64)
-            for y in range(subtensor_shape[-j]):
-                flattened_idx_ = cat((flattened_idx_, flattened_idx + (accum * y)), dim=0)
-            accum *= l
-            flattened_idx = flattened_idx_
+            assert k == slice(None), (
+                "advanced part can only have skipped dims ('slice(None)' aka ':') and sequcnes / tensors"
+            )
+            non_idx_dims.append(i)
+            non_idx_shapes.append(input_shape[i])
 
-    if has_ellipsis:
-        # fill from back
-        new_shape = remaining_shape + list(reversed(new_shape))
+    # treat non-indexed dimensions as ":"
+    for i in range(i + 1, len(input_shape)):
+        non_idx_dims.append(i)
+        non_idx_shapes.append(input_shape[i])
+
+    assert target_dim is not None
+
+    # for multi-dimensional indexing, we join the dimensions and compute a single index into them
+    # this also takes care of the broadcasting between index tensors
+    if len(idx_dims) > 1:
+        a = transpose(a, [*non_idx_dims[:target_dim], *idx_dims, *non_idx_dims[target_dim:]])
+        # TODO: the reshape is inefficient as it might create a copy, we might look at having a prim
+        #       for this instead...
+        a = reshape(a, [*non_idx_shapes[:target_dim], idx_numel, *non_idx_shapes[target_dim:]])
+
+        # this also does the broadcasting
+        flattened_idx = idxes[0]
+        for d, i in enumerate(idxes[1:], start=1):
+            flattened_idx = flattened_idx * idx_input_shapes[d] + i
+
+        idx = flattened_idx
     else:
-        # fill from front
-        new_shape = new_shape + remaining_shape
+        (idx,) = idxes
 
-    res = take(flattened, flattened_idx, dim=dim)
+    # handle multi-dimensional indices (and 0-d!) by making them one-dimensional first and then reshaping the output after the take
+    index_shape = idx.shape
+    if len(index_shape) != 1:
+        idx = reshape(idx, (-1,))
 
-    # take always keeps the indexed dim.
-    # If all keys are 0-dim, this dim has to be squeezed.
-    if all(k.ndim == 0 for k in modified_key if isinstance(k, TensorLike)):
-        res = squeeze(res, (dim,))
-    res = reshape(res, tuple(new_shape))
-    # check if we need to permute
-    if permute_shape != list(range(a.ndim)):
-        # permute back to original shape
-        res = transpose(res, tuple(permute_shape[: len(new_shape)]))
+    # this actually does the indexing
+    output = take(a, idx, dim=target_dim)
 
-    return res
+    # for multi-dimensional indices, reshape the output
+    if len(index_shape) != 1:
+        output_shape = [*non_idx_shapes[:target_dim], *index_shape, *non_idx_shapes[target_dim:]]
+        output = reshape(output, output_shape)
+
+    return output
 
 
 @clangop()
 def copy_with_setitem(a: TensorLike, key, value: TensorLike) -> TensorLike:
-    sig = _get_indexing_signature(key)
-    utils.check(
-        (a.ndim == 0 and (len(sig.basic) + len(sig.advanced)) <= 1) or (a.ndim >= len(sig.basic) + len(sig.advanced)),
-        lambda: f"{key=} tries to index more dimensions than {a.ndim=}",
-    )
+    # TODO: do more checking here. We used to have a check
+    #     lambda: f"{key=} tries to index more dimensions than {a.ndim=}",
     return prims.copy_with_setitem(a, key, value)
 
 
-# NOTE Advanced indexing is triggered whenever:
-#   - key is a sequence but not a tuple
-#   - key is an tensor
-#   - key is a tuple that contains a sequence or tensor
 # NOTE: currently supported indexing:
 # - all basic indexing.
-# - advanced indexing:
-#       * 0D or 1D TensorLike indices.
-#       * basic indexing + a single index which is a 1-length Sequence.
+# - advanced indexing with integer tensors
 @clangop(method_name="getitem")
 def getitem(a: TensorLike, /, key) -> TensorLike:
-    sig = _get_indexing_signature(key)
-    utils.check(
-        (a.ndim == 0 and (len(sig.basic) + len(sig.advanced)) <= 1) or (a.ndim >= len(sig.basic) + len(sig.advanced)),
-        lambda: f"{key=} tries to index more dimensions than {a.ndim=}",
-    )
+    """
+    Implements indexing (mostly torch-style):
+    - Basic indexing:
+      - Integers index into a dimension and removes it
+      - Slices (":" etc.)
+      - None adds singleton dimensions
+      - Ellipsis aka "..." (implicit ":" for as many dimensions to cover all)
+    - Advanced indexing:
+      - Lists
+      - Tensors
+
+    Mixing is allowed, the getitem splits this into a basic indexing operation
+    and an advanced indexing operation (but can skip either).
+    """
 
     # FIXME: This is a quick WAR to avoid accessing shape attribute of a without
     # definition. This needs to be done properly somewhere else. See issue
     # github.com/Lightning-AI/lightning-thunder/issues/1253
     old_shape = prims.shape(a)
 
-    # We do not support mixing basic and advanced indexing together yet,
-    # but a very special case when there is a single advanced index which
-    # is a sequence of length 1.
-    if len(sig.advanced) == 1 and not isinstance(key, TensorLike):
-        (_, key_idx), *_ = sig.advanced
-        if key_idx is not None:
-            key_idx = key_idx if key_idx >= 0 else len(key) + key_idx
-            index = key[key_idx]
-            if isinstance(index, Sequence) and len(index) == 1 and isinstance(index[0], (Number, NumberProxy)):
-                start = index[0]
-                # Hande -1 to avoid empty slices
-                if start == -1:
-                    end = None
-                else:
-                    end = start + 1
-                # 1-len Sequence -> a slice
-                key = tuple(key[:key_idx]) + (slice(start, end),) + tuple(key[key_idx + 1 :])
-                a, _ = _basic_indexing(a, key)
-                return a
+    # unify key to list of dimension indices (outermost tuple is indexing along dimensions)
+    if not isinstance(key, tuple):
+        key = [key]
+    else:
+        key = [*key]
 
-    if isinstance(key, TensorLike) or (isinstance(key, Sequence) and not isinstance(key, tuple)):
-        return _advanced_indexing(a, key)
+    # eliminate Ellipsis aka '...' by filling up dimensions with slice(None) aka ':'
+    if any(isinstance(k, EllipsisType) for k in key):
+        # expand the ellipsis type
+        indexing_dims = sum(1 for k in key if not isinstance(k, (NoneType, EllipsisType)))
+        ellipsis_length = len(old_shape) - indexing_dims
+        new_key = []
+        for k in key:
+            if isinstance(k, EllipsisType):
+                new_key.extend(slice(None) for _ in range(ellipsis_length))
+                ellipsis_length = 0  # if there are multiple, we only use the first
+            else:
+                new_key.append(k)
+        key = new_key
 
-    # perform basic indexing first
-    a, key = _basic_indexing(a, key)
-    if sig.advanced:
-        a = _advanced_indexing(a, key)
+    # decompose into basic and advanced indexing
+    # - None, slices and integer indices are handled by basic indexing
+    # - tensors and sequences are handled by advanced indexing
+    # For the things not handled, we insert slice(None) aka ':' at the right dimension
+    input_dim = 0
+    basic_indices = []
+    advanced_indices = []
+    have_advanced = False
+    have_basic = False
+
+    for k in key:
+        if isinstance(k, (Number, NumberProxy)):  # removes an input dimension form basic output
+            basic_indices.append(k)
+            have_basic = True
+            input_dim += 1
+        elif isinstance(k, slice):  # this keeps a dimension form input
+            if k != slice(None):
+                have_basic = True
+            basic_indices.append(k)
+            advanced_indices.append(slice(None))
+            input_dim += 1
+        elif k is None:  # adds an basic output dim, does not take an input dim
+            have_basic = True
+            basic_indices.append(None)
+            advanced_indices.append(slice(None))
+        elif isinstance(k, (TensorLike, Sequence)):  # keeps a dimension and puts this into advance indexing
+            input_dim += 1
+            basic_indices.append(slice(None))
+            advanced_indices.append(k)
+            have_advanced = True
+        else:
+            raise IndexError(f"invalid index of type {type(k).__name__}")
+
+    if input_dim > len(old_shape):
+        raise IndexError(f"too many indices for tensor of dimension {len(old_shape)}")
+
+    # now dispatch into the two parts, basic first, then advanced
+    if have_basic:
+        a = _basic_indexing(a, basic_indices)
+
+    if have_advanced:
+        a = _advanced_indexing(a, advanced_indices)
 
     return a
 
@@ -2226,3 +2022,23 @@ def sort(
     dim = utils.canonicalize_dim(a.ndim, dim)
 
     return prims.sort(a, dim, descending, stable)
+
+
+@clangop()
+def argsort(a: TensorProxy, /, dim: None | int = None, descending: bool = False, stable: bool = False) -> TensorProxy:
+    """Returns the indices that would sort a tensor along a given dimension.
+
+    Args:
+        a: Input tensor
+        dim: Dimension along which to sort. If None, uses last dimension
+        descending: Sort in descending order if True
+        stable: Maintain relative order of equal elements if True
+
+    Returns:
+        TensorProxy containing indices that would sort the input tensor
+    """
+    if dim is None:
+        dim = a.ndim - 1 if a.ndim > 0 else 0
+    dim = utils.canonicalize_dim(a.ndim, dim)
+
+    return prims.argsort(a, dim, descending, stable)
