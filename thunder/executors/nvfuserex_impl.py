@@ -1428,7 +1428,7 @@ register_supported(PrimIDs.TAKE_ALONG_AXIS, take_along_axis, _take_check)
 def _transpose_check(a: TensorProxy, /, permutation: Sequence[int]) -> bool:
     if is_supported_tensor(a):
         return True
-    logger.warn("%s" != supported)
+    logger.warn("%s is not supported", a)
     return False
 
 
