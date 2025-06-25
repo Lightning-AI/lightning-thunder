@@ -107,17 +107,10 @@ class Executor:
             logger.warn("%s executor's impl for %s does not have check", self._name, sym.id, extra=_log_extra)
             return True
 
-        check_result = impl.checker(*bsym.args, **bsym.kwargs)
-        if isinstance(check_result, tuple) and not check_result[0]:
-            logger.warn(
-                "%s executor does not support %s because %s", self._name, sym.id, check_result[1], extra=_log_extra
-            )
-            return False
-        elif isinstance(check_result, bool) and not check_result:
+        is_supported = impl.checker(*bsym.args, **bsym.kwargs)
+        if not is_supported:
             logger.warn("%s executor does not support %s", self._name, sym.id, extra=_log_extra)
-            return False
-        else:
-            return True
+        return is_supported
 
     # Returns True when nvFuser can fuse every operation the bound symbol calls, False otherwise
     def can_fuse(self, bsym: BoundSymbol) -> bool:
