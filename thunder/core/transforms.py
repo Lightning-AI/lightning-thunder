@@ -1273,6 +1273,16 @@ def _sort_prim_grad(
 register_grad(pids.SORT, _sort_prim_grad)
 
 
+def _argsort_prim_grad(
+    a: TensorProxy, /, dim: None | int = None, descending: bool = False, stable: bool = False
+) -> TensorProxy:
+    # Note: argsort returns only indices, not sorted values
+    return prims.argsort(a, dim, descending, stable)
+
+
+register_grad(pids.ARGSORT, _argsort_prim_grad)
+
+
 # TODO Fix division by zero when n_elem_reduced == 0 or when mean.numel == 0
 #   by returning zeros_like(a) or similar.
 # TODO Fix grad when correction > n_elem_reduced.
@@ -2532,6 +2542,7 @@ def sum_to(a: TensorProxy, shape: Sequence[int]) -> TensorProxy:
 
 @register_backward("torch.index_put")
 def index_put_backward(indices: Sequence[TensorProxy], values: TensorProxy, accumulate: bool, g: TensorProxy):
+    indices = tuple(indices)
     g_values = g[indices]
     # torch has extra logic to handle the expanded values
     if not utils.same_shape(g_values.shape, values.shape):
