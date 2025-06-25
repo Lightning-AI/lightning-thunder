@@ -1379,6 +1379,33 @@ def _matmul_prim_grad(a: TensorProxy, b: TensorProxy, /) -> TensorProxy:
 
 register_grad(pids.MATMUL, _matmul_prim_grad)
 
+
+def _grouped_mm_prim_grad(
+    a: TensorProxy, b: TensorProxy, /, *, offs: TensorProxy = None, bias: TensorProxy = None, dtype=None
+) -> TensorProxy:
+    fwd = prims.grouped_mm(a, b)
+    g = get_grad(fwd)
+
+    # Gradient w.r.t a: grouped_mm(g, b.transpose(-2, -1))
+    # Gradient w.r.t b: grouped_mm(a.transpose(-2, -1), g)
+    if a.ndim == 2 and b.ndim == 2:
+        a_grad = prims.grouped_mm(g, prims.transpose(b, (-1, -2)))
+        b_grad = prims.grouped_mm(prims.transpose(a, (-1, -2)), g)
+    elif a.ndim == 3 and b.ndim == 3:
+        a_grad = prims.grouped_mm(g, prims.transpose(b, (0, 2, 1)))
+        b_grad = prims.grouped_mm(prims.transpose(a, (0, 2, 1)), g)
+    else:
+        raise AssertionError(
+            f"grouped_mm grad expects both inputs to be 2D or both to be 3D, got shapes {a.shape} and {b.shape}"
+        )
+
+    put_grads((a, b), (a_grad, b_grad))
+    return fwd
+
+
+register_grad(pids._GROUPED_MM, _grouped_mm_prim_grad)
+
+
 #
 # NN operator grads
 #

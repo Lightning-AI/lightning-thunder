@@ -1527,6 +1527,7 @@ _register_implementation(ltorch.local_response_norm, local_response_norm, checke
 
 bmm = _register_torch_operation("bmm")
 baddbmm = _register_torch_operation("baddbmm")
+_grouped_mm = _register_torch_operation("_grouped_mm")
 convolution = _register_torch_operation("convolution")
 conv1d = _register_torch_operation("conv1d", module=torch.nn.functional)
 conv2d = _register_torch_operation("conv2d", module=torch.nn.functional)
@@ -1819,6 +1820,8 @@ _register_implementation(prims.linear, linear, checker=_always_executable)
 
 _register_implementation(ltorch.baddbmm, baddbmm, checker=_always_executable)
 _register_implementation(ltorch.bmm, bmm, checker=_always_executable)
+_register_implementation(prims._grouped_mm, _grouped_mm, checker=_always_executable)
+_register_implementation(ltorch._grouped_mm, _grouped_mm, checker=_always_executable)
 _register_implementation(ltorch.convolution, checker=_always_executable, execution_transform=_convolution_transform)
 _register_implementation(ltorch.conv1d, conv1d, checker=_always_executable)
 _register_implementation(ltorch.conv2d, conv2d, checker=_always_executable)

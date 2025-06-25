@@ -5619,6 +5619,11 @@ register_grad(item.id, item)
 def linear(a: TensorLike, w: TensorLike, /, bias: None | TensorLike = None) -> TensorLike:
     return prims.linear(a, w, bias)
 
+@torchsymbol(torch._grouped_mm)
+def _grouped_mm(a: TensorLike, b: TensorLike) -> TensorLike:
+    """Thunder support for torch._grouped_mm, accepts 2D or 3D tensors."""
+    return prims._grouped_mm(a, b)    
+
 
 @torchsymbol(torch.logsumexp, is_method=True)
 def logsumexp(a: TensorLike, /, dim: int | Sequence[int], keepdim: bool = False) -> TensorLike:
