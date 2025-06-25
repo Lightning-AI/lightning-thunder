@@ -126,7 +126,8 @@ class InferenceBenchmarkConfig:
     measure_ttft: bool = True
     measure_tbot: bool = True
     scenario: str | None = None  # Standard scenario name if using predefined configurations
-    dtensor_single_gpu: bool = False    load_nvfp4: bool = False  # Enable NVFP4 quantization
+    dtensor_single_gpu: bool = False
+    load_nvfp4: bool = False  # Enable NVFP4 quantization
 
     # Cost calculation parameters (per GPU hour) # optional
     h100_cost_per_hour: float = 1.58
