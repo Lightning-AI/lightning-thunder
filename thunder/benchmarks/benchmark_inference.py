@@ -41,8 +41,6 @@ from torch.distributed.device_mesh import init_device_mesh
 from torch.distributed.tensor.parallel import parallelize_module, RowwiseParallel, ColwiseParallel
 from torch.distributed.tensor import DTensor
 
-from torch.testing._internal.common_quantized import _f32_to_floatx_unpacked
-
 # Import model configurations
 from transformers import AutoConfig, AutoModelForCausalLM
 from transformers.cache_utils import HybridChunkedCache
@@ -188,6 +186,8 @@ def pack_uint4(uint8_data) -> torch.Tensor:
 
 
 def _bfloat16_to_float4_e2m1fn_x2(x):
+    from torch.testing._internal.common_quantized import _f32_to_floatx_unpacked
+
     FP4_EBITS, FP4_MBITS = 2, 1
     assert x.dtype == torch.bfloat16
     x = _f32_to_floatx_unpacked(x.to(torch.float32), FP4_EBITS, FP4_MBITS)
