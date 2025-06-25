@@ -2042,3 +2042,9 @@ def argsort(a: TensorProxy, /, dim: None | int = None, descending: bool = False,
     dim = utils.canonicalize_dim(a.ndim, dim)
 
     return prims.argsort(a, dim, descending, stable)
+
+@clangop()
+def _grouped_mm(a: TensorLike, b: TensorLike) -> TensorLike:
+    """Thunder support for torch._grouped_mm, accepts 2D or 3D tensors."""
+    return prims.grouped_mm(a, b)
+

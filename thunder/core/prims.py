@@ -270,6 +270,7 @@ class PrimIDs(Enum):
     COPY_WITH_SETITEM = auto()
     # Linear algebra prims (Mostly experimental)
     MATMUL = auto()
+    _GROUPED_MM = auto()  # Used for grouped matmuls
     # NN prims (Experimental!)
     CONVOLUTION = auto()
     EMBEDDING = auto()
@@ -3761,6 +3762,71 @@ def sort_meta(a: TensorProxy, /, dim: int, descending: Number, sorted: Number) -
 
 
 sort = make_prim(PrimIDs.SORT, "sort", meta=sort_meta)
+
+
+def _grouped_mm_meta(
+    a: TensorProxy,
+    b: TensorProxy,
+    /,
+    *,
+    offs: TensorProxy = None,
+    bias: TensorProxy = None,
+    dtype=None
+) -> TensorProxy:
+    """Meta function for _grouped_mm primitive.
+
+    Accepts 2D or 3D tensors:
+      - If 2D: performs a regular matmul (m, k) x (k, n) -> (m, n)
+      - If 3D: performs grouped matmul (g, m, k) x (g, k, n) -> (g, m, n)
+
+    Args:
+        a: Input tensor of shape (groups, m, k) or (m, k)
+        b: Input tensor of shape (groups, k, n) or (k, n)
+        offs: TensorProxy, offset tensor (unused in meta, but type-checked)
+        bias: TensorProxy, bias tensor (unused in meta, but type-checked)
+        dtype: Optional dtype for output (unused in meta, but type-checked)
+
+    Returns:
+        TensorProxy with shape (groups, m, n) or (m, n)
+    """
+    # Validate types
+    utils.check_type(a, TensorProxy)
+    utils.check_type(b, TensorProxy)
+    if offs is not None:
+        utils.check_type(offs, TensorProxy)
+    if bias is not None:
+        utils.check_type(bias, TensorProxy)
+
+    # Accept 2D or 3D tensors
+    utils.check(a.ndim in (2, 3), lambda: f"Expected a to have 2 or 3 dimensions, got {a.ndim}")
+    utils.check(b.ndim in (2, 3), lambda: f"Expected b to have 2 or 3 dimensions, got {b.ndim}")
+
+    # 2D case: regular matmul
+    if a.ndim == 2 and b.ndim == 2:
+        utils.check(a.shape[1] == b.shape[0], lambda: f"Inner dimension mismatch: {a.shape[1]} vs {b.shape[0]}")
+        out_shape = (a.shape[0], b.shape[1])
+    # 3D case: grouped matmul
+    elif a.ndim == 3 and b.ndim == 3:
+        utils.check(a.shape[0] == b.shape[0], lambda: f"Group count mismatch: {a.shape[0]} vs {b.shape[0]}")
+        utils.check(a.shape[2] == b.shape[1], lambda: f"Inner dimension mismatch: {a.shape[2]} vs {b.shape[1]}")
+        out_shape = (a.shape[0], a.shape[1], b.shape[2])
+    else:
+        raise AssertionError(
+            f"grouped_mm expects both inputs to be 2D or both to be 3D, got shapes {a.shape} and {b.shape}"
+        )
+
+    # Validate dtype and device
+    utils.check_same_dtype(a, b)
+    utils.check_same_device(a, b)
+
+    return TensorProxy(like=a, shape=out_shape, dtype=dtype if dtype is not None else a.dtype)
+
+_grouped_mm = make_prim(
+    PrimIDs._GROUPED_MM,  # Use a unique value if not present
+    "_grouped_mm",
+    meta=_grouped_mm_meta,
+    tags=(OpTags.MATMUL_OP,),
+)
 
 
 def transpose_meta(a: TensorProxy, /, permutation: tuple[int, ...]) -> TensorProxy:
