@@ -8,10 +8,18 @@ import time
 from copy import copy
 from itertools import chain, filterfalse
 import warnings
+from typing import cast
+from collections.abc import Callable
 
 from looseversion import LooseVersion
 import torch
 from torch import Tensor
+
+IS_TORCH_DISTRIBUTED_AVAILABLE = torch.distributed.is_available()
+if IS_TORCH_DISTRIBUTED_AVAILABLE:
+    from torch.distributed.tensor import DTensor
+    from torch.distributed.tensor.placement_types import Placement, Shard, Replicate
+    import torch.distributed as dist
 
 import thunder.core.dtypes as dtypes
 import thunder.torch as ltorch
@@ -39,6 +47,8 @@ from thunder.core.devices import Device, DeviceType, cpu
 from thunder.core.transform_common import dce, cse_single_bsym, replace_redundant_inputs
 from thunder.core.profile import annotate_for_profile
 from thunder.core.compile_data import get_compile_option
+from thunder.torch.experimental.dtensor_torch_and_prims import dtensor_mul_prim
+from thunder.torch.experimental.dtensor_proxy import DTensorProxy
 
 from thunder.core.transforms import (
     get_grad,
@@ -239,6 +249,43 @@ def get_translator(bsym: BoundSymbol) -> Callable:
     return _translation_map[bsym.sym.id]
 
 
+class MultiDeviceFusionDefinition(FusionDefinition):
+    def __init__(self, define_fn: Callable[[FusionDefinition], None], in_dtensors: list[DTensorProxy], max_length: int):
+        super().__init__(max_length=max_length)
+        self._in_dtensors = in_dtensors
+        self._define_fn = define_fn
+
+    def definition(self) -> None:
+        self._define_fn(self)
+
+    def _find_tensor_by_index(self, index: int) -> nvfuser.Tensor:
+        for t in self.sched.tensors():
+            if t.index == index:
+                return t
+        return None
+
+    def multidevice_schedule(self) -> None:
+        for in_tensor_index, in_dtensor in zip(self.inputs(), self._in_dtensors):
+            in_tensor = self._find_tensor_by_index(in_tensor_index)
+
+            # Set the device mesh.
+            utils.check(in_dtensor.device_mesh.ndim == 1, lambda: "nvFuser's Python API only supports 1D meshes.")
+            mesh = nvfuser.DeviceMesh(in_dtensor.device_mesh.mesh.tolist())
+
+            self.sched._set_device_mesh(in_tensor, mesh)
+
+            # Split and parallelize.
+            utils.check(len(in_dtensor.placements) == 1, lambda: "nvFuser's Python API only supports 1D meshes.")
+            # When the mesh is multi-dimensional, iterate through the
+            # placements in descending order of Placement.dim.
+            placement: Placement = in_dtensor.placements[0]
+            if placement.is_shard():
+                dim = cast(Shard, placement).dim
+                self.sched.split(in_tensor, dim, mesh.size, False)
+                self.sched.parallelize(in_tensor, dim, nvfuser.ParallelType.mesh_x)
+                self.sched.set_allocation_as_loop(in_tensor)
+
+
 def create_fd(
     bsyms: list[BoundSymbol],
     input_descriptors: Sequence[type | tuple[tuple[int, ...], tuple[bool, ...], tuple[int, ...]]],
@@ -247,16 +294,7 @@ def create_fd(
 ) -> FusionDefinition:
     lc_to_nv_map = utils.ProxyDict()
 
-    # NOTE nvFuser's default max length is 1024 operations at the time of this writing
-    #   This arbitrarily increases it to 9999
-    # TODO Review splititng very large fusions or removing the max length restriction completely
-    #   See "Very large nvFuser fusions hit max_length"
-    fd = FusionDefinition(max_length=9999)
-
-    # Device may be set in one of the "factory" methods like full, iota, or uniform
-    fd._selected_device = None
-
-    with fd:
+    def definition(fd):
         # NOTE Adding constants is disabled for the moment in favor of definining them inline
         # 0) Adds constants
 
@@ -275,7 +313,7 @@ def create_fd(
                 lc_to_nv_map[x] = nv
             elif isinstance(x, TensorProxy):
                 utils.check_type(y, tuple)
-                contiguity, stride_order = y
+                contiguity, stride_order, dtensor_metadata = y
                 symbolic_shape = compute_symbolic_shape(x._shape, x._shape)
                 nvdtype = lcdtype_to_nvdtype(x.dtype)
                 is_cpu = x.device == cpu
@@ -324,6 +362,43 @@ def create_fd(
         for out in sorted_unique_outputs:
             nvout = lc_to_nv_map[out]
             fd.add_output(nvout)
+
+    MAX_LENGTH = 9999
+
+    if any(isinstance(t, DTensorProxy) for t in sorted_unique_inputs):
+        # multi-GPU path
+        utils.check(
+            all(isinstance(t, DTensorProxy) for t in sorted_unique_inputs),
+            lambda: "nvfuser: Currently we only support Fusion region with all DTensor inputs or all Tensor inputs but not a mix",
+        )
+
+        def check_dtensor_tracing_and_runtime_metadata(inp):
+            x, y = inp
+            _, _, dtensor_metadata = y
+            runtime_device_mesh_repr = dtensor_metadata[0]
+            runtime_placements_repr = dtensor_metadata[1]
+            return x.device_mesh == runtime_device_mesh_repr and x.placements == runtime_placements_repr
+
+        utils.check(
+            all(map(check_dtensor_tracing_and_runtime_metadata, zip(sorted_unique_inputs, input_descriptors))),
+            lambda: "nvfuser: Expected runtime and tracing metadata to be the same for DTensor.",
+        )
+
+        fd = MultiDeviceFusionDefinition(definition, sorted_unique_inputs, max_length=MAX_LENGTH)
+        # Device may be set in one of the "factory" methods like full, iota, or uniform
+        # NOTE: This should be called before defining because a factory method may look-up at `_selected_device` while being defined.
+        fd._selected_device = None
+    else:
+        # NOTE nvFuser's default max length is 1024 operations at the time of this writing
+        #   This arbitrarily increases it to 9999
+        # TODO Review splititng very large fusions or removing the max length restriction completely
+        #   See "Very large nvFuser fusions hit max_length"
+        fd = FusionDefinition(max_length=MAX_LENGTH)
+        # Device may be set in one of the "factory" methods like full, iota, or uniform
+        # NOTE: This should be called before defining because a factory method may look-up at `_selected_device` while being defined.
+        fd._selected_device = None
+        with fd:
+            definition(fd)
 
     return fd
 
@@ -412,6 +487,14 @@ def compute_contiguity(
     return tuple(tuple(x) for x in nv_compute_td(shape, stride))
 
 
+def make_key_from_dtensor(tensor: torch.Tensor) -> tuple:
+    if IS_TORCH_DISTRIBUTED_AVAILABLE and isinstance(tensor, DTensor):
+        key = (tensor.device_mesh, tensor.placements)
+    else:
+        key = ()
+    return key
+
+
 def to_runtime_descriptors(args) -> tuple:
     """
     Converts the arguments to their runtime descriptors.
@@ -425,7 +508,10 @@ def to_runtime_descriptors(args) -> tuple:
     Returns:
         Tuple: The runtime descriptors of the arguments.
     """
-    return tuple(compute_contiguity(arg.shape, arg.stride()) if isinstance(arg, Tensor) else None for arg in args)
+    return tuple(
+        compute_contiguity(arg.shape, arg.stride()) + (make_key_from_dtensor(arg),) if isinstance(arg, Tensor) else None
+        for arg in args
+    )
 
 
 # TODO Consider making this just a function, because it's faster to call a function than a callable class
@@ -457,14 +543,37 @@ class FusionDefinitionWrapper:
         if self.store_inputs:
             self.last_inputs = args
 
-        with annotate_for_profile(self.name):
-            return fd.execute(
-                args,
-                device=fd._selected_device,
-                save_repro_inputs=self.save_fake_inputs,
-                _enable_options=self.enable_options,
-                _disable_options=self.disable_options,
-            )
+        if hasattr(fd, "multidevice_schedule"):
+            with annotate_for_profile(self.name):
+                in_tensors = [in_dtensor.to_local() for in_dtensor in args]
+                out_tensors, out_shardings = fd.execute(
+                    in_tensors,
+                    device=fd._selected_device,
+                    save_repro_inputs=self.save_fake_inputs,
+                    _enable_options=self.enable_options,
+                    _disable_options=self.disable_options,
+                )
+
+                assert len(out_tensors) == len(out_shardings)
+                out_dtensors: list[DTensor] = []
+                for out_tensor, out_sharding in zip(out_tensors, out_shardings):
+                    mesh = dist.device_mesh.init_device_mesh("cuda", (out_sharding.mesh.size,))
+                    placements: list[Placement] = []
+                    for parallel_type in [nvfuser.ParallelType.mesh_x]:
+                        axis: int = out_sharding.axis_sharded_on(parallel_type)
+                        placements.append(Replicate() if axis == -1 else Shard(axis))
+                    out_dtensors.append(DTensor.from_local(out_tensor, mesh, placements))
+
+                return out_dtensors
+        else:
+            with annotate_for_profile(self.name):
+                return fd.execute(
+                    args,
+                    device=fd._selected_device,
+                    save_repro_inputs=self.save_fake_inputs,
+                    _enable_options=self.enable_options,
+                    _disable_options=self.disable_options,
+                )
 
     def __repr__(self):
         return f"FusionDefinitionWrapper({self.name})"
@@ -1901,6 +2010,7 @@ def mul(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinitio
 
 
 register_supported(PrimIDs.MUL, mul, _elementwise_binary_check)
+register_supported(dtensor_mul_prim.id, mul, _elementwise_binary_check)
 
 
 def ne(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
@@ -3043,6 +3153,41 @@ def topk_transform(
 
 
 register_supported(prims.topk, topk_transform, _topk_check_)
+
+
+def _argsort_check_(a: TensorProxy, /, dim: int | None = None, descending: bool = False, stable: bool = False) -> bool:
+    return True
+
+
+def argsort_transform(
+    a: TensorProxy,
+    /,
+    dim: int | None = None,
+    descending: bool = False,
+    stable: bool = False,
+    *,
+    fd: FusionDefinition,
+    lc_to_nv_map: dict,
+) -> TensorProxy:
+    """Transform argsort operation for NVFuser execution.
+
+    Args:
+        a: Input tensor
+        dim: Dimension along which to sort
+        descending: Sort in descending order if True
+        stable: Whether to use a stable sorting algorithm
+        fd: Fusion definition
+        lc_to_nv_map: Map from Lightning tensors to NVFuser tensors
+
+    Returns:
+        TensorProxy: Tensor of indices that would sort the input tensor
+    """
+    nva = getnv(a, fd, lc_to_nv_map)
+    return fd.ops.argsort(nva, dim, bool(descending), bool(stable))
+
+
+# Register argsort with NVFuser
+register_supported(prims.argsort, argsort_transform, _argsort_check_)
 
 # At module/class level
 NVFUSER_SUPPORTS_OPTIONS = nvfuser_version() >= LooseVersion("0.2.23")
