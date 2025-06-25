@@ -741,12 +741,18 @@ class _OrderedSet(Generic[T, T1], Iterable[T]):
     def __or__(self, other: _OrderedSet) -> Self:
         return self.__class__(itertools.chain(self, other))
 
+    def add(self, x: T | T1):
+        self.d[self.canonicalize(x)] = None
+
+    def clear(self) -> None:
+        self.d.clear()
+
+    def copy(self) -> Self:
+        return self.__class__(self)
+
     # NOTE: actual set signature is (self, *others)
     def difference(self, other: _OrderedSet) -> Self:
         return self - other
-
-    def add(self, x: T | T1):
-        self.d[self.canonicalize(x)] = None
 
     def discard(self, x: T | T1):
         c = self.canonicalize(x)
@@ -756,21 +762,18 @@ class _OrderedSet(Generic[T, T1], Iterable[T]):
     def issubset(self, other):
         return all((e in other) for e in self)
 
+    def pop(self) -> T | T1:
+        return self.d.popitem()[0]
+
+    def remove(self, x: T | T1):
+        del self.d[self.canonicalize(x)]
+
     def union(self, *others: Sequence[_OrderedSet]) -> Self:
         return self.__class__(itertools.chain(self, *others))
 
     def update(self, x: Iterable[T | T1]) -> None:
         for i in x:
             self.d.setdefault(self.canonicalize(i), None)
-
-    def remove(self, x: T | T1):
-        del self.d[self.canonicalize(x)]
-
-    def copy(self) -> Self:
-        return self.__class__(self)
-
-    def clear(self) -> None:
-        self.d.clear()
 
 
 # PEP 696 would make this simpler, but it isn't available until 3.12

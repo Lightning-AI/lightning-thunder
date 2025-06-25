@@ -287,8 +287,6 @@ def cse_single_bsym(
     )
 
     if bsym.sym.id == prims.PrimIDs.GET_GRAD:
-        # do not cse across the forward-backward boundary of the joint trace
-        rhs_to_bsym_map.clear()
         return new_bsym
 
     # Skip appending this bsym to the new bound symbols due to its rhs being a common subexpression.
