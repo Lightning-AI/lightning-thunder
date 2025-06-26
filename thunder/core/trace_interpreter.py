@@ -322,10 +322,15 @@ class TraceSubstitutionProcessor:
     def add_unprocessed_bsyms(self, bsyms):
         self.unprocessed_bsyms[:0] = bsyms
 
-    def add_bsyms_from_function(self, fn, /, *args, **kwargs):
+    def add_bsyms_from_function(self, fn, /, *args, tags=None, **kwargs):
         self.new_trace.push_scope([])
         result = fn(*args, **kwargs)
-        self.new_bsyms += self.new_trace.pop_scope()
+        new_bsyms = self.new_trace.pop_scope()
+        if tags is not None:
+            for bsym in new_bsyms:
+                bsym.tags.update(tags)
+        self.new_bsyms += new_bsyms
+
         self.set_result(result)
         return result
 
