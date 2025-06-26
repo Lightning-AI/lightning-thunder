@@ -6,7 +6,6 @@ from typing import Any
 
 
 def get_nvfuser_package_hint() -> str:
-
     torch_version = torch.__version__.split("+")[0]
     cuda_version = torch.version.cuda or "unknown"
 
@@ -146,7 +145,6 @@ class BaseRecipe(Recipe):
         for name in self.executor_names:
             executor = get_executor(name)
             if executor is None:
-
                 if name == "nvfuser":
                     hint = get_nvfuser_package_hint()
                     print(hint)

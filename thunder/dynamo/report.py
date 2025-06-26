@@ -194,7 +194,9 @@ def thunderfx_pytest_benchmark_report(
                     filtered_bench, key=lambda x: x["extra_info"].get("max_allocated_memory_MB", 0)
                 )
                 for bk in filtered_bench_sorted:
-                    print(f"{bk['name'].lstrip('test_')}: {bk['extra_info'].get('max_allocated_memory_MB', 0)/1000} GB")
+                    print(
+                        f"{bk['name'].lstrip('test_')}: {bk['extra_info'].get('max_allocated_memory_MB', 0) / 1000} GB"
+                    )
                 print("\n")
 
             print_sorted_memory_info("forward")

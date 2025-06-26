@@ -1196,7 +1196,6 @@ def test_custom_autograd_function():
 
 @pytest.mark.filterwarnings("ignore:Please use torch.vmap")
 def test_autograd_function_apply():
-
     # see https://github.com/Lightning-AI/lightning-thunder/issues/1248#issuecomment-2388655917
     # for why `torch.foo` instead of `torch.Tensor.foo`
     def forward(ctx, x):
