@@ -420,6 +420,22 @@ def test_setitem(requires_grad):
     )
 
 
+def test_double_setitem():
+    query_states = torch.zeros((1, 40, 16, 96), dtype=torch.bfloat16, device="cuda:0", requires_grad=False)
+    q_nope = torch.ones((1, 40, 16, 64), dtype=torch.bfloat16, device="cuda:0", requires_grad=True)
+    q_pe_1 = torch.zeros((1, 40, 16, 32), dtype=torch.bfloat16, device="cuda:0", requires_grad=True)
+
+    @thunder.jit
+    def computation(query_states, q_nope, q_pe_1):
+        # Perform the in-place setitem operation
+        query_states[:, :, :, :64] = q_nope
+        query_states[:, :, :, 64:] = q_pe_1
+        return None
+
+    computation(query_states, q_nope, q_pe_1)
+    assert query_states.sum() > 1
+
+
 # TODO: Add random operator support to OpInfo
 # https://github.com/Lightning-AI/lightning-thunder/issues/1163
 @requiresCUDA
