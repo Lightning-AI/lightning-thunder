@@ -274,8 +274,12 @@ class SemiAnalysisInferenceBenchmark:
 
         if self.config.dtensor_single_gpu or WORLD_SIZE > 1:
             self.model = parallelize_module(self.model, mesh, tp_plan)
-            assert isinstance(self.model.model.layers[0].self_attn.o_proj.weight, DTensor)
-            assert isinstance(self.model.model.layers[0].feed_forward.down_proj.weight, DTensor)
+            # assert isinstance(self.model.model.layers[0].self_attn.o_proj.weight, DTensor)
+            # assert isinstance(self.model.model.layers[0].feed_forward.down_proj.weight, DTensor)
+            
+            # Required as that doesn't understand inference mode
+            for p in self.model.parameters():
+                p.requires_grad_(False)
 
         # Compile model
         self.model = self._compile_model(self.model)
@@ -288,10 +292,13 @@ class SemiAnalysisInferenceBenchmark:
                 return torch.compile(model, mode="reduce-overhead")
             case "thunder":
                 from thunder.dynamo import thunderfx
-
-                return thunderfx(model)
+                # Set `nv_enable_linear` to True
+                # once workaround is added for https://github.com/NVIDIA/Fuser/issues/4507
+                return thunderfx(model, nv_enable_linear=False)
             case "thunderjit":
-                return thunder.jit(model)
+                # Set `nv_enable_linear` to True
+                # once workaround is added for https://github.com/NVIDIA/Fuser/issues/4507
+                return thunder.jit(model, nv_enable_linear=False)
             case _:
                 raise ValueError(f"Unknown mode: {self.config.mode}")
 

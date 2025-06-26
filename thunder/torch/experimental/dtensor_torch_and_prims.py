@@ -15,6 +15,7 @@ from thunder.core.transforms import (
     register_grad,
     put_grads,
     get_grad,
+    put_grad
 )
 from thunder.executors.torchex import ex as pytorchex
 from thunder.executors.pythonex import ex as pythonex
@@ -136,5 +137,97 @@ def dtensor_mul(a: TensorLike, b: TensorLike) -> TensorLike:
     return dtensor_mul_prim(a, b)
 
 
+def dtensor_linear_meta(a, w, bias):
+    output = run_with_fake_tensor(torch.nn.functional.linear, a, w, bias)
+    local_tensor_proxy = TensorProxy(like=a.local_tensor)
+    spec = output._spec
+    spec_proxy = AnyProxy(spec, history=a.history)
+    return create_dtensor_proxy_from_proxies(local_tensor_proxy, spec_proxy, False)
+
+
+dtensor_linear_prim = make_prim("dtensor_linear_prim", "dtensor_linear_prim", meta=dtensor_linear_meta)
+
+dtensor_linear_prim_impl = pytorchex.register_operator("dtensor_linear_prim", like=dtensor_linear_prim, fn=torch.nn.functional.linear)
+
+pytorchex.register_implementation(dtensor_linear_prim, dtensor_linear_prim_impl)
+
+
+# def _dtensor_linear_prim_grad(a: TensorLike, w: TensorLike, bias: None | TensorLike) -> TensorLike:
+#     fwd = dtensor_linear_prim(a, w, bias)
+
+#     g = get_grad(fwd)
+
+#     first_dim = -2
+#     grad_a = ltorch.matmul(g.reshape(-1, g.shape[-1]), w).reshape(a.shape)
+
+#     grad_w: TensorLike
+#     if a.ndim == 1:
+#         grad_w = ltorch.matmul(g.unsqueeze(first_dim).mT, a.unsqueeze(first_dim))
+#     else:
+#         grad_w = ltorch.matmul(g.reshape(-1, g.shape[-1]).mT, a.reshape(-1, a.shape[-1]))
+
+#     put_grads((a, w), (grad_a, grad_w))
+
+#     if bias is not None:
+#         if g.ndim > 1:
+#             grad_bias = ltorch.sum(g, tuple(range(g.ndim - 1)))
+#         else:
+#             grad_bias = g
+#         put_grad(bias, grad_bias)
+
+#     return fwd
+
+
+# register_grad(dtensor_linear_prim, _dtensor_linear_prim_grad)
+
+
+@dtensor_torchsymbol(torch.nn.functional.linear, id="dtensor.torch.nn.functional.linear")
+def dtensor_linear(a: TensorLike, w: TensorLike, bias: None | TensorLike = None) -> TensorLike:
+    return dtensor_linear_prim(a, w, bias)
+
+from typing import Optional
+from torch.distributed.tensor import DTensor
+
+def dtensor_from_local_meta(x, mesh, placements, *, run_check: bool = False, shape: Optional[torch.Size] = None, stride: Optional[tuple[int, ...]] = None):
+    res = run_with_fake_tensor(DTensor.from_local, x, mesh, placements, run_check=run_check, shape=shape, stride=stride)
+    from thunder.torch.experimental.dtensor_proxy import proxify_dtensor
+    res = proxify_dtensor(res)
+    return res
+
+# def dtensor_from_local_fn(x, mesh, placements, *, run_check: bool = False, shape: Optional[torch.Size] = None, stride: Optional[tuple[int, ...]] = None):
+#     return DTensor.from_local(x, mesh, placements, run_check=run_check, shape=shape, stride=stride)
+
+dtensor_from_local_prim = make_prim("dtensor_from_local", "dtensor_from_local", meta=dtensor_from_local_meta)
+
+dtensor_from_local_prim_impl = pytorchex.register_operator("dtensor_from_local", like=dtensor_from_local_prim, fn=DTensor.from_local)
+
+pytorchex.register_implementation(dtensor_from_local_prim, dtensor_from_local_prim_impl)
+
+def dtensor_redistribute_meta(dtensor, device_mesh: "Optional[DeviceMesh]" = None, placements: "Optional[Sequence[Placement]]" = None, *, async_op: bool = False) -> "DTensor":
+    res = run_with_fake_tensor(DTensor.redistribute, dtensor, device_mesh, placements, async_op=async_op)
+    from thunder.torch.experimental.dtensor_proxy import proxify_dtensor
+    res = proxify_dtensor(res)
+    return res
+
+dtensor_redistribute_prim = make_prim("dtensor_redistribute", "dtensor_redistribute", meta=dtensor_redistribute_meta)
+
+dtensor_redistribute_prim_impl = pytorchex.register_operator("dtensor_redistribute", like=dtensor_redistribute_prim, fn=DTensor.redistribute)
+
+pytorchex.register_implementation(dtensor_redistribute_prim, dtensor_redistribute_prim_impl)
+
+def dtensor_to_local_meta(dtensor, *, grad_placements: "Optional[Sequence[Placement]]" = None):
+    res = run_with_fake_tensor(DTensor.to_local, dtensor, grad_placements=grad_placements)
+    from thunder.core.proxies import proxy
+    res = proxy(res)
+    return res
+
+dtensor_to_local_prim = make_prim("dtensor_to_local", "dtensor_to_local", meta=dtensor_to_local_meta)
+
+dtensor_to_local_prim_impl = pytorchex.register_operator("dtensor_to_local", like=dtensor_to_local_prim, fn=DTensor.to_local)
+
+pytorchex.register_implementation(dtensor_to_local_prim, dtensor_to_local_prim_impl)
+
+
 def register_dtensor_torch_and_prims():
     register_function_for_dtensor(torch.mul, ltorch.mul, dtensor_mul, is_method=True)
+    register_function_for_dtensor(torch.nn.functional.linear, ltorch.linear, dtensor_linear, is_method=False)
