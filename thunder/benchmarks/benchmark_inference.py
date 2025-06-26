@@ -246,58 +246,6 @@ def _bfloat16_to_float4_e2m1fn_x2(x):
     return x
 
 
-class Nvfp4QuantizedLinear(torch.nn.Module):
-    def __init__(
-        self, in_features: int, out_features: int, block_size_k, block_size_mn, bias: bool = True, dtype=torch.bfloat16
-    ) -> None:
-        super().__init__()
-
-        self.register_buffer("weight", torch.zeros((out_features, in_features), dtype=torch.float8_e4m3fn))
-        self.register_buffer("weight_scale", torch.ones((out_features, 1), dtype=torch.float8_e4m3fn))
-        self.register_buffer("x_scale", torch.ones((out_features, in_features), dtype=torch.float8_e4m3fn))
-
-        if bias:
-            self.register_buffer("bias", torch.zeros((out_features,), dtype=dtype))
-        else:
-            self.bias = None
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return x
-        # quantized_x = _bfloat16_to_float4_e2m1fn_x2(x)
-        # out = torch._scaled_mm(x, self.weight.mT, x_scale, self.weight_scale, out_dtype=torch.bfloat16)
-        # if self.bias:
-        #     return out + self.bias
-        # return out
-
-
-class Nvfp4QuantizationConfig(QuantizationConfigMixin):
-    def __init__(self, modules_to_not_convert: set | None = None) -> None:
-        self.block_size_k = 16
-        self.block_size_mn = 128
-        # self.NUM_K_BLOCKS = ceil_div(K, self.BLOCK_SIZE_K)
-        # self.PADDED_NUM_K_BLOCKS = ceil_div(self.NUM_K_BLOCKS, 4) * 4
-        # self.PADDED_NUM_M_BLOCKS = ceil_div(M, self.BLOCK_SIZE_MN) * self.BLOCK_SIZE_MN
-        # self.PADDED_NUM_N_BLOCKS = ceil_div(N, self.BLOCK_SIZE_MN) * self.BLOCK_SIZE_MN
-        modules_to_quantize = set(
-            (
-                "k_proj",
-                "q_proj",
-                "v_proj",
-                "o_proj",
-                "qkv_proj",
-                "gate_proj",
-                "up_proj",
-                "down_proj",
-                "lm_head",
-                "router",
-            )
-        )
-
-        self.modules_to_convert = (
-            modules_to_quantize if not modules_to_not_convert else modules_to_quantize - modules_to_not_convert
-        )
-
-
 class SemiAnalysisInferenceBenchmark:
     """Main benchmark class following SemiAnalysis methodology"""
 
@@ -364,15 +312,15 @@ class SemiAnalysisInferenceBenchmark:
 
         self.hf_config = config
 
-        # Create model with optional quantization
-        with torch.device(self.device):
-            if self.config.load_nvfp4:
-                # Create quantization config and apply quantization during initialization
-                quantization_config = Nvfp4QuantizationConfig()
-                model = self._create_quantized_model_selective(config, quantization_config)
-            else:
-                # Create normal model without quantization
-                model = AutoModelForCausalLM.from_config(config)
+        # Apply FP4 quantization to weights if requested
+        if self.config.load_nvfp4:
+            with torch.device("meta"):
+                model = AutoModelForCausalLM.from_config(config, torch_dtype=torch.bfloat16)
+            self._quantize_to_nvfp4_and_materialize(model)
+        else:
+            # Create model on device
+            with torch.device(self.device):
+                model = AutoModelForCausalLM.from_config(config, torch_dtype=torch.bfloat16)
 
         # NOTE(mkozuki): Transpose `Llama4TextExperts.gate_up_proj` for the better compatibility with vLLM's `fused_moe`.
         # In huggingface/transformers, w1 (= gate_up_proj) has the shape of (e, k, 2n) and w2 (= down_proj) has the shape of (e, n, k).
@@ -387,36 +335,55 @@ class SemiAnalysisInferenceBenchmark:
 
         return model
 
-    def _create_quantized_model_selective(self, config, quantization_config):
-        """Create model with quantized layers before weight initialization"""
+    def _quantize_to_nvfp4_and_materialize(self, model: torch.nn.Module, device: torch.device | str = "cuda"):
+        modules_to_quantize = {
+            "k_proj",
+            "q_proj",
+            "v_proj",
+            "o_proj",
+            "qkv_proj",
+            "gate_proj",
+            "up_proj",
+            "down_proj",
+            "lm_head",
+            "router",
+        }
 
-        with torch.device("meta"):
-            model = AutoModelForCausalLM.from_config(config)
-
-        modules_to_convert = set(quantization_config.modules_to_convert)
-
-        def replace_with_nvfp4_linear(module, name=""):
-            for child_name, child_module in list(module.named_children()):
-                if isinstance(child_module, torch.nn.Linear) and child_name in modules_to_convert:
-                    # Create quantized replacement
-                    quantized_layer = Nvfp4QuantizedLinear(
-                        child_module.in_features,
-                        child_module.out_features,
-                        quantization_config.block_size_k,
-                        quantization_config.block_size_mn,
-                        child_module.bias is not None,
+        def materialize(module: torch.nn.Module):
+            module.to_empty(device=device, recurse=False)
+            if len(tuple(module.parameters())) > 1:
+                if not hasattr(module, "reset_parameters"):
+                    raise TypeError(
+                        f"Materialization requires that the `{type(module).__name__}.reset_parameters` method is implemented."
+                        " This method is used to initialize any children parameters or buffers in this module."
                     )
-                    setattr(module, child_name, quantized_layer)
-                    module.requires_grad_(False)
+                module.reset_parameters()
+
+        def quantize_to_nvfp4(module, name=""):
+            if len(list(module.children())) < 1:
+                materialize(module)
+
+            for child_name, child_module in module.named_children():
+                if isinstance(child_module, torch.nn.Linear) and child_name in modules_to_quantize:
+                    # Initialize weight to FP4
+                    with torch.no_grad():
+                        materialize(child_module)
+                        # Convert to FP4 format
+                        weight_fp4 = _bfloat16_to_float4_e2m1fn_x2(child_module.weight)
+
+                        del child_module.weight
+                        # Create a new parameter with FP4 data
+                        # Note: PyTorch Linear layers expect float weights, so this is experimental
+                        child_module.weight = torch.nn.Parameter(weight_fp4, requires_grad=False)
+
+                        # remove bf16 from cache
+                        torch.cuda.empty_cache()
+
                 else:
                     # Recurse into child modules
-                    replace_with_nvfp4_linear(child_module, f"{name}.{child_name}" if name else child_name)
+                    quantize_to_nvfp4(child_module, f"{name}.{child_name}" if name else child_name)
 
-        replace_with_nvfp4_linear(model)
-
-        # Use to_empty() to move from meta device to target device
-        model = model.to_empty(device="cuda")
-        return model
+        quantize_to_nvfp4(model)
 
     def generate_batch(self) -> tuple[torch.Tensor, HybridChunkedCache]:
         """Generate a batch of input tokens"""
