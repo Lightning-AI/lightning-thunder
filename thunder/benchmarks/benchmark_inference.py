@@ -89,6 +89,7 @@ if package_available("vllm"):
                 router_logits_2d,
                 self.top_k,
                 renormalize=False,
+                inplace=True,
             ), None
 
         Llama4TextMoe.forward = Llama4TextMoe_forward
