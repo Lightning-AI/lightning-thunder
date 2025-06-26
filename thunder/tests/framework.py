@@ -652,7 +652,6 @@ def has_enough_device_memory(required_memory_bytes: int, cuda_device_id: int = 0
 
 
 def requiresDeviceMemory(required_memory_bytes: int, cuda_device_id: int = 0):
-
     def decorator(fn):
         @wraps(fn)
         def _fn(*args, **kwargs):
