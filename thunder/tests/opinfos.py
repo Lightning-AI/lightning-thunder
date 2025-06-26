@@ -6482,6 +6482,29 @@ sort_opinfo = OpInfo(
 dim_perm_ops.append(sort_opinfo)
 
 
+argsort_opinfo = OpInfo(
+    clang.argsort,
+    name="argsort",
+    supports_grad=False,
+    sample_input_generator=sort_sample_generator,
+    torch_reference=torch.argsort,
+    dtypes=(datatypes.bool8, datatypes.signedinteger, datatypes.unsignedinteger, datatypes.floating),
+    test_directives=(
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=1e-6, rtol=1e-6)),
+            "test_vjp_correctness",
+        ),
+        DecorateInfo(
+            pytest.mark.skip(reason="PyTorch does not yet support boolean types in argsort for CUDA"),
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.bool8,),
+            devicetypes=(devices.DeviceType.CUDA,),
+        ),
+    ),
+)
+dim_perm_ops.append(argsort_opinfo)
+
+
 opinfos.extend(dim_perm_ops)
 
 
