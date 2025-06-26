@@ -1630,6 +1630,8 @@ def test_spliter_einops():
 
     fc = thunderfx(f)
     input = torch.randn(2, 3, 4, 5, device="cuda")
-    fc(input, "b c h w -> b (c h w)")
+    out = fc(input, "b c h w -> b (c h w)")
+    expected_out = f(input, "b c h w -> b (c h w)")
 
     assert len(fc._backend.subgraph_infos[0].split_reasons) == 0
+    torch.testing.assert_close(out, expected_out)
