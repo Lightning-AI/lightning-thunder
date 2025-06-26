@@ -24,19 +24,19 @@ Supported Values
 The ``THUNDER_LOGS`` environment variable supports the following values:
 
 * Standard logging levels:
-  * ``debug``: Set logging level to DEBUG
-  * ``info``: Set logging level to INFO
-  * ``warning``: Set logging level to WARNING
-  * ``error``: Set logging level to ERROR
-  * ``critical``: Set logging level to CRITICAL
+    * ``debug``: Set logging level to DEBUG
+    * ``info``: Set logging level to INFO
+    * ``warning``: Set logging level to WARNING
+    * ``error``: Set logging level to ERROR
+    * ``critical``: Set logging level to CRITICAL
 
 * Executor-specific logging:
-  * ``executors``: Allow all executors to log
-  * ``<executor name>``: Allow a specific executor to log (e.g., ``nvfuser``, ``sdpa``)
+    * ``executors``: Allow all executors to log
+    * ``<executor name>``: Allow a specific executor to log (e.g., ``nvfuser``, ``sdpa``)
 
 * Prefix with ``+`` to set DEBUG level for an executor:
-  * ``+<executor name>``: Set logging level to DEBUG for the specified executor
-  * Without ``+``, the logging level defaults to WARNING
+    * ``+<executor name>``: Set logging level to DEBUG for the specified executor
+    * Without ``+``, the logging level defaults to WARNING
 
 Multiple values can be specified by separating them with commas.
 
