@@ -44,7 +44,6 @@ from torch.distributed.tensor import DTensor
 # Import model configurations
 from transformers import AutoConfig, AutoModelForCausalLM
 from transformers.cache_utils import HybridChunkedCache
-from transformers.utils.quantization_config import QuantizationConfigMixin
 from transformers.models.llama4.modeling_llama4 import Llama4TextMoe, Llama4TextExperts
 
 from lightning_utilities.core.imports import package_available
