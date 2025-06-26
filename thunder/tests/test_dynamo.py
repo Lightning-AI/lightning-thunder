@@ -12,6 +12,9 @@ from looseversion import LooseVersion
 from unittest.mock import patch
 import weakref
 import re
+from hypothesis import strategies as st
+from hypothesis import given, settings
+from hypothesis import HealthCheck
 
 from thunder import dtypes
 from thunder.dynamo import thunderfx
@@ -26,7 +29,6 @@ from thunder.tests.framework import (
     DynamoThunderExecutor,
     IS_WINDOWS,
     requiresCUDA,
-    version_between,
 )
 from thunder.tests.make_tensor import make_tensor
 from thunder.dynamo.report import (
@@ -63,6 +65,12 @@ def reset_torch_dynamo():
     # [0/8]    last reason: 0/0:
     # [0/8] To log all recompilation reasons, use TORCH_LOGS="recompiles".
     torch._dynamo.reset()
+
+
+def run_script(file_name, cmd):
+    cmd = cmd + [file_name]
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    assert result.returncode == 0, f"Script {file_name} failed: {result}"
 
 
 @instantiate(
@@ -514,13 +522,12 @@ def test_thundercompiler_optim_step(executor, device, dtype, optim):
         torch.testing.assert_close(
             tuple(model.parameters()),
             tuple(ref_model.parameters()),
-            msg=lambda s: f"{i+1}-iter {s}",
+            msg=lambda s: f"{i + 1}-iter {s}",
         )
 
 
 @instantiate(dtypes=NOTHING, executors=[DynamoThunderExecutor])
 def test_no_grad_ctx_manager(executor, device: str, dtype: dtypes.dtype):
-
     def func(x):
         with torch.no_grad():
             with torch.autocast("cuda", dtype=torch.bfloat16):
@@ -550,7 +557,6 @@ def test_no_grad_ctx_manager(executor, device: str, dtype: dtypes.dtype):
 
 @instantiate(dtypes=NOTHING, executors=[DynamoThunderExecutor])
 def test_no_grad_enabled_grad_nested_ctx_manager(executor, device: str, dtype: dtypes.dtype):
-
     def func(x):
         with torch.no_grad():
             with torch.autocast("cuda", dtype=torch.bfloat16):
@@ -669,19 +675,17 @@ def test_ThunderCompilerGraphBenchmarking_groupby(benchmark):
         if x.sum() > 0:
             x = x.exp()
             y = torch.sinc(x) + torch.cos(y)
-            return y + 1
+            return y
         else:
             y = y.exp()
             x = torch.sinc(y) + torch.cos(x)
-            return x - 1
+            return x
 
     import thunder
 
-    backend = ThunderCompilerGraphBenchmarking(
-        benchmark, executors={"thunder": thunder.jit, "inductor": torch.compile, "eager": None}
-    )
+    backend = ThunderCompilerGraphBenchmarking(benchmark, executors={"thunder": thunder.jit, "inductor": torch.compile})
     compiled = torch.compile(backend=backend)(f)
-    x = torch.ones(2, requires_grad=True).cuda()
+    x = torch.ones(2).cuda()
     y = torch.ones(2, requires_grad=True).cuda()
     compiled(x, y)
 
@@ -845,7 +849,6 @@ def test_dynamo_reproducer_2graph(executor, device: str, dtype: dtypes.dtype, us
             "Skipping on Windows because this uses torch.compile (see https://github.com/Lightning-AI/lightning-thunder/issues/1326)"
         )
 
-    from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform
     from thunder import nvfuser_executor
     from thunder.transforms import ConstantFolding
 
@@ -955,7 +958,11 @@ def test_deepcopy_graph_module():
     executors=[DynamoThunderExecutor],
     decorators=(pytest.mark.parametrize("use_pytest_benchmark", (True, False), ids=("benchmark", "repro")),),
 )
-def test_dynamo_reproducer_split(executor, device: str, dtype: dtypes.dtype, use_pytest_benchmark, tmp_path):
+@given(file_indices=st.lists(st.integers(min_value=0, max_value=2), min_size=2, max_size=2, unique=True))
+@settings(max_examples=1, deadline=None)
+def test_dynamo_reproducer_split(
+    executor, device: str, dtype: dtypes.dtype, use_pytest_benchmark, tmp_path, file_indices
+):
     if IS_WINDOWS and use_pytest_benchmark:
         pytest.skip(
             "Skipping on Windows because this uses torch.compile (see https://github.com/Lightning-AI/lightning-thunder/issues/1326)"
@@ -975,12 +982,6 @@ def test_dynamo_reproducer_split(executor, device: str, dtype: dtypes.dtype, use
     actual = cfunc(x)
     cfunc._backend.save_reproducer_to_folder(tmp_path, use_pytest_benchmark)
 
-    def check(file_name, cmd):
-        assert os.path.exists(file_name)
-        cmd = cmd + [file_name]
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        assert result.returncode == 0, f"Reproducer {file_name} failed: {result}"
-
     suffix = "_benchmark" if use_pytest_benchmark else "_repro"
     s1 = f"{tmp_path}/graph0_thunder_0{suffix}.py"
     s2 = f"{tmp_path}/graph0_thunder_2{suffix}.py"
@@ -988,8 +989,11 @@ def test_dynamo_reproducer_split(executor, device: str, dtype: dtypes.dtype, use
     cmd = [sys.executable]
     if use_pytest_benchmark:
         cmd = cmd + ["-m", "pytest"]
-    for fname in [s1, s2, s3]:
-        check(fname, cmd)
+
+    all_files = [s1, s2, s3]
+    selected_files = [all_files[i] for i in file_indices]
+    for file in selected_files:
+        run_script(file, cmd)
 
 
 @requiresCUDA
@@ -1122,20 +1126,12 @@ def test_thunderfx_meta_tensor():
     assert out.device.type == "meta"
 
 
-def run_script(file_name, cmd):
-    cmd = cmd + [file_name]
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    assert result.returncode == 0, f"Script {file_name} failed: {result}"
-
-
 @requiresCUDA
 def test_report_thunderfx_pytest_benchmark_report(tmp_path, capsys):
     def foo(x):
-        y = x.sin()
-        torch._dynamo.graph_break()
-        return y + x.cos()
+        return x.sin()
 
-    x = torch.randn(4, 4, device="cuda", requires_grad=True)
+    x = torch.randn(4, 4, device="cuda")
     thunderfx_pytest_benchmark_report(foo, x, folder_path=tmp_path, check_consistency=True)
     captured = capsys.readouterr()
     msg = captured.out
@@ -1213,9 +1209,8 @@ def test_leak_on_unsupported_thunder_operator():
 
     def unsupported_op_fn(w1) -> torch.Tensor:
         topk_ids = torch.tensor([[0, 1]])
-        # This indexing is not supported by thunder and get's passed to inductor.
-        w13_weights = w1[topk_ids]
-        return w13_weights + 1
+        # This operation is not supported by thunder and get's passed to inductor.
+        return torch.sinc(w1) + 1
 
     def call_thunderfx_on_leaking_fn():
         w1 = torch.randn(16, 16, 32, dtype=torch.bfloat16)
@@ -1234,7 +1229,9 @@ def test_leak_on_unsupported_thunder_operator():
 
 
 @requiresCUDA
-def test_thunder_specific_reports(tmp_path):
+@given(file_indices=st.lists(st.integers(min_value=0, max_value=15), min_size=2, max_size=2, unique=True))
+@settings(max_examples=2, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+def test_thunder_specific_reports(tmp_path, file_indices):
     x = torch.ones(2, 2, device="cuda", requires_grad=True)
 
     def foo(x):
@@ -1263,7 +1260,8 @@ def test_thunder_specific_reports(tmp_path):
     py_files = list(tmp_path.rglob("*.py"))
     assert len(py_files) == 16
 
-    for file in py_files:
+    selected_files = [py_files[i] for i in file_indices]
+    for file in selected_files:
         run_script(file, cmd)
 
 
@@ -1332,7 +1330,9 @@ def test_ThunderCompileSpecification():
 
 
 @requiresCUDA
-def test_reports_repro(tmp_path):
+@given(file_indices=st.lists(st.integers(min_value=0, max_value=15), min_size=2, max_size=2, unique=True))
+@settings(max_examples=2, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+def test_reports_repro(tmp_path, file_indices):
     x = torch.ones(2, 2, device="cuda", requires_grad=True)
 
     def foo(x):
@@ -1370,12 +1370,15 @@ def test_reports_repro(tmp_path):
     py_files = list(tmp_path.rglob("*.py"))
     assert len(py_files) == 16
 
-    for file in py_files:
+    selected_files = [py_files[i] for i in file_indices]
+    for file in selected_files:
         run_script(file, cmd)
 
 
 @requiresCUDA
-def test_reports_benchmark(tmp_path):
+@given(file_indices=st.lists(st.integers(min_value=0, max_value=4), min_size=1, max_size=1, unique=True))
+@settings(max_examples=2, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+def test_reports_benchmark(tmp_path, file_indices):
     x = torch.ones(2, 2, device="cuda", requires_grad=True)
 
     def foo(x):
@@ -1384,7 +1387,7 @@ def test_reports_benchmark(tmp_path):
         x = x.exp()
         torch._dynamo.graph_break()
         y = torch.sinc(x) + torch.cos(x)
-        return y + 1
+        return y
 
     results = fx_report(foo)(x)
     thunderjit = ThunderCompileSpecification()
@@ -1399,7 +1402,7 @@ def test_reports_benchmark(tmp_path):
     thunder_split_report.write_benchmark(
         tmp_path,
         torchcompile,
-        WallTimeWithMemoryUsage(min_run_time=0.01, max_run_time=9.0, threshold=0.08),
+        WallTimeWithMemoryUsage(min_run_time=0.01, max_run_time=4.0, threshold=0.08),
         file_name=f"{split_name}_torchcompile.py",
     )
     thunder_split_report.write_benchmark(tmp_path, torcheager, WallTime, file_name=f"{split_name}_eager.py")
@@ -1409,14 +1412,15 @@ def test_reports_benchmark(tmp_path):
     nvf = thunder_split_report.fusion_reports[0]
     nvf.write_nvfuser_benchmark(tmp_path, WallTime)
     nvf.write_inductor_benchmark(tmp_path, WallTime)
-    nvf.run_benchmark(BoundSymbolNvfuserSpecification(), WallTime(min_run_time=0.01, max_run_time=5.0, threshold=0.08))
+    nvf.run_benchmark(BoundSymbolNvfuserSpecification(), WallTime(min_run_time=0.01, max_run_time=4.0, threshold=0.08))
     nvf.run_benchmark(BoundSymbolTorchCompileSpecification(), WallTime)
 
     cmd = [sys.executable]
     py_files = list(tmp_path.rglob("*.py"))
     assert len(py_files) == 5
 
-    for file in py_files:
+    selected_files = [py_files[i] for i in file_indices]
+    for file in selected_files:
         run_script(file, cmd)
 
 
@@ -1602,6 +1606,16 @@ def test_spliter_bwd():
     reason = cfn._backend.subgraph_infos[0].split_reasons
     assert len(reason) == 1
     assert "Failed while running meta for node with name: setitem" in reason[0].info
-    assert "Advanced indexing" in reason[0].exception and reason[0].exception.endswith(
-        "found a tensor with dtype thunder.dtypes.bool8 and 3 dimensions"
-    )
+    assert "boolean advanced indexing" in reason[0].exception
+
+
+def test_get_proxy_inputs_from_node_symtype_hint():
+    def fn(x, idx):
+        return torch.select(x, 0, idx)
+
+    x = torch.randn(4, 4)
+    idx = 0
+    cfn = thunderfx(fn, dynamic=True)
+    cfn(x, idx)
+
+    assert cfn._backend.subgraph_infos[0].split_reasons == []

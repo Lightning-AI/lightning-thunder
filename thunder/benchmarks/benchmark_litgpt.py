@@ -111,7 +111,6 @@ def check_and_update_config_for_te_if_needed(config: Config) -> None:
 
 
 def swap_linear_layers_for_te(model: torch.nn.Module, device: Any, swap_layernorm: bool = True) -> None:
-
     def parameters_cnt(model: torch.nn.Module) -> int:
         return sum(p.numel() for p in model.parameters())
 
@@ -252,6 +251,7 @@ class Benchmark_litGPT:
         use_torchao_fp8_precompute_scale_for_fsdp: bool = False,
         fp8_shard_intermediate_activation: bool = False,
         use_sdpa: bool = False,
+        use_hf: bool = False,
     ):
         seed = 1337
         torch.manual_seed(seed)
@@ -288,6 +288,7 @@ class Benchmark_litGPT:
         self.fp8_shard_intermediate_activation = fp8_shard_intermediate_activation
 
         self.use_sdpa = use_sdpa
+        self.use_hf = use_hf
 
         if self.use_sdpa and sdpa_available and self.compile not in ["eager", "inductor"]:
             warnings.warn(
@@ -296,7 +297,6 @@ class Benchmark_litGPT:
             self.use_sdpa = False
 
         if use_torchao_fp8_linear:
-
             if not torchao_available:
                 raise ValueError("`torchao` is not available")
             if self.distributed_mode not in ("none", "fsdp2"):
@@ -311,18 +311,18 @@ class Benchmark_litGPT:
 
         # Clarify benchmark assumptions
         if self.sharding_size is not None:
-            assert (
-                "thunder" not in self.compile
-            ), "Hybrid Sharding (FSDP/DP) using --sharding_size is not yet supported for Thunder. Coming soon."
+            assert "thunder" not in self.compile, (
+                "Hybrid Sharding (FSDP/DP) using --sharding_size is not yet supported for Thunder. Coming soon."
+            )
 
             assert self.shard_mode in [
                 "hybrid_zero2",
                 "hybrid_zero3",
             ], "Sharding Size is only used with Hybrid FSDP/DP style parallelism."
 
-            assert (
-                world_size % self.sharding_size == 0
-            ), f"World size {world_size} is not divisible by the sharding size {self.sharding_size}"
+            assert world_size % self.sharding_size == 0, (
+                f"World size {world_size} is not divisible by the sharding size {self.sharding_size}"
+            )
 
         if self.bucketing_mode is not None and self.distributed_mode not in FSDP_MODES:
             warnings.warn(
@@ -330,9 +330,9 @@ class Benchmark_litGPT:
                 f" it is only used for FSDP style parallelism but running {self.distributed_mode}"
             )
 
-        assert not (
-            "thunder" in self.compile and self.bucketing_mode == "size"
-        ), "'size' bucketing mode is not supported for Thunder. Please use 'none' or 'block'."
+        assert not ("thunder" in self.compile and self.bucketing_mode == "size"), (
+            "'size' bucketing mode is not supported for Thunder. Please use 'none' or 'block'."
+        )
 
         if self.fsdp_bucket_params is not None:
             if self.distributed_mode not in FSDP_MODES:
@@ -359,15 +359,15 @@ class Benchmark_litGPT:
             self.global_batch_size = (
                 self.micro_batch_size * world_size if world_size is not None else self.micro_batch_size
             )
-        assert (
-            self.global_batch_size % self.micro_batch_size == 0
-        ), f"Global Batch Size {self.global_batch_size} should be a multiple of Micro Batch Size {self.micro_batch_size}."
+        assert self.global_batch_size % self.micro_batch_size == 0, (
+            f"Global Batch Size {self.global_batch_size} should be a multiple of Micro Batch Size {self.micro_batch_size}."
+        )
         self.gradient_accumulation_steps = int(self.global_batch_size / self.micro_batch_size)
         if world_size:
             self.gradient_accumulation_steps = int(self.gradient_accumulation_steps / world_size)
-            assert (
-                self.global_batch_size % self.micro_batch_size * world_size == 0
-            ), f"Global Batch Size {self.global_batch_size} should be a multiple Micro Batch Size {self.micro_batch_size} * World Size {world_size}."
+            assert self.global_batch_size % self.micro_batch_size * world_size == 0, (
+                f"Global Batch Size {self.global_batch_size} should be a multiple Micro Batch Size {self.micro_batch_size} * World Size {world_size}."
+            )
 
         self.skip_data_sync = skip_data_sync
 
@@ -424,8 +424,42 @@ class Benchmark_litGPT:
 
     def init_model(self):
         init_device = torch.device("meta") if self.distributed_mode in FSDP_MODES else self.device
-        with init_device:
-            model = GPT(self.config)
+        if self.use_hf:
+            warnings.warn(
+                "HuggingFace transformers mode is experimental, many options do not apply. Preliminary testing  with transformers==4.50.3."
+            )
+
+            # for the materialization, we need reset_parameters
+            def RotaryEmbedding_reset_parameters(self):
+                inv_freq, self.attention_scaling = self.rope_init_fn(self.config, self.inv_freq.device)
+                with torch.no_grad():
+                    self.inv_freq.copy_(inv_freq)
+
+            from transformers.models.qwen2.modeling_qwen2 import Qwen2RotaryEmbedding
+            from transformers.models.llama.modeling_llama import LlamaRotaryEmbedding
+
+            Qwen2RotaryEmbedding.reset_parameters = RotaryEmbedding_reset_parameters
+            LlamaRotaryEmbedding.reset_parameters = RotaryEmbedding_reset_parameters
+
+            def RMSNorm_reset_parameters(self):
+                with torch.no_grad():
+                    self.weight.fill_(1)
+
+            from transformers.models.qwen2.modeling_qwen2 import Qwen2RMSNorm
+            from transformers.models.llama.modeling_llama import LlamaRMSNorm
+
+            Qwen2RMSNorm.reset_parameters = RMSNorm_reset_parameters
+            LlamaRMSNorm.reset_parameters = RMSNorm_reset_parameters
+
+            import transformers
+
+            hf_model_name = f"{self.config.hf_config['org']}/{self.config.hf_config['name']}"
+            hf_cfg = transformers.AutoConfig.from_pretrained(hf_model_name)
+            with init_device:
+                model = transformers.AutoModel.from_config(hf_cfg)
+        else:
+            with init_device:
+                model = GPT(self.config)
 
         # Handle fp8 related Linear layer swapping (for torchao or TransformerEngine)
         model = self._torchao_fp8_handler.convert_model_to_fp8(model)
@@ -442,7 +476,7 @@ class Benchmark_litGPT:
 
         # Distributed Setup
         # TODO: Change compiler call names
-        if "thunder" in self.compile and not "dynamo" in self.compile:
+        if "thunder" in self.compile and "dynamo" not in self.compile:
             if self.distributed_mode == "ddp":
                 from thunder.distributed import ddp
 
@@ -470,7 +504,7 @@ class Benchmark_litGPT:
             else:
                 if self.distributed_mode == "fsdp2":
                     raise ValueError(
-                        f"To use `fsdp2`, use thunder as torch.compile backend by including dynamo in `--compile` option or set `--compile` to either eager or inductor"
+                        "To use `fsdp2`, use thunder as torch.compile backend by including dynamo in `--compile` option or set `--compile` to either eager or inductor"
                     )
         else:
             if self.distributed_mode == "ddp":
@@ -592,7 +626,6 @@ class Benchmark_litGPT:
                 executors.insert(0, torch_compile_ex)
 
             if "transformerengine_v2" in self.compile:
-
                 from thunder.executors.transformer_engine_v2ex import (
                     transformer_engine_v2_ex,
                     TransformerEngineTransformV2,
@@ -623,7 +656,6 @@ class Benchmark_litGPT:
                 jit_options = {}
                 jit_options["fp8_shard_intermediate_activation"] = self.fp8_shard_intermediate_activation
                 model = thunder.jit(model, executors=executors, transforms=transforms, **jit_options)
-
         elif self.compile != "eager":
             raise ValueError(f"Invalid compile option: {self.compile}")
 
@@ -702,6 +734,8 @@ class Benchmark_litGPT:
                             logits = self.model(input_ids)
                     else:
                         logits = self.model(input_ids)
+                    if not isinstance(logits, torch.Tensor):
+                        logits = logits["last_hidden_state"]
                     logits = logits.reshape(-1, logits.size(-1))
                     targets = targets.reshape(-1)
                     loss = (
@@ -718,6 +752,8 @@ class Benchmark_litGPT:
                     logits = self.model(input_ids)
             else:
                 logits = self.model(input_ids)
+            if not isinstance(logits, torch.Tensor):
+                logits = logits["last_hidden_state"]
             # This information is accurate only in the case when torch.compile
             # uses a single graph for the entire forward pass In the case of
             # torch.compile using multiple graphs, the saved_tensors will be
@@ -860,9 +896,11 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
 
     if global_rank in [0, None]:
         benchmark.add_perf_metrics()
-
+        model_name = benchmark.model_name
+        if benchmark.use_hf:
+            model_name += "_hf"
         print(
-            f"Model name: {benchmark.model_name}\nSeq Length: {benchmark.config.block_size}\nMicro BS: {benchmark.micro_batch_size}\nGlobal BS: {benchmark.global_batch_size}"
+            f"Model name: {model_name}\nSeq Length: {benchmark.config.block_size}\nMicro BS: {benchmark.micro_batch_size}\nGlobal BS: {benchmark.global_batch_size}"
         )
         print(
             f"Number of Layers: {benchmark.config.n_layer}\nNumber of parameters: {sum(p.numel() for p in benchmark.model.parameters() if p.requires_grad) / 1e9:.02f}B"
@@ -872,7 +910,7 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
             print(f"Sharding Mode: {benchmark.shard_mode}\nBucketing: {benchmark.bucketing_mode}")
             if benchmark.sharding_size is not None:
                 print(
-                    f"Sharding Size: {benchmark.sharding_size}\nReplicate DP Groups: {int(world_size/benchmark.sharding_size)}"
+                    f"Sharding Size: {benchmark.sharding_size}\nReplicate DP Groups: {int(world_size / benchmark.sharding_size)}"
                 )
             if benchmark.bucketing_mode == "size":
                 print(f"Bucketing Number Params: {benchmark.fsdp_bucket_params}")

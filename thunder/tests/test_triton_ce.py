@@ -10,7 +10,7 @@ import thunder
 
 
 from thunder.tests.opinfos import get_opinfo
-from thunder.tests.framework import instantiate, requiresCUDA, requiresTriton, run_snippet, IN_CI
+from thunder.tests.framework import requiresCUDA, requiresTriton, run_snippet, IN_CI
 from thunder.executors import triton_utils
 
 

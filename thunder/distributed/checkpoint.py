@@ -12,7 +12,6 @@ from torch.distributed.device_mesh import init_device_mesh
 from torch.nn import Module
 
 from thunder.core.pytree import tree_map
-from thunder.distributed import _shard_params, _unshard_params
 
 _TORCH_GREATER_EQUAL_2_3 = compare_version("torch", operator.ge, "2.3.0", use_base_version=True)
 

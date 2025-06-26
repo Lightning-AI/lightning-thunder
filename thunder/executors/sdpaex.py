@@ -1,5 +1,4 @@
 import math
-from looseversion import LooseVersion
 
 import torch
 
@@ -19,7 +18,6 @@ from thunder.core.transforms import (
 )
 from thunder.extend import OperatorExecutor, register_executor
 
-from enum import Enum
 
 from thunder.executors.utils import (
     _input_dtype_check_fused_scaled_dot_product_attention,
@@ -90,12 +88,12 @@ def _attention_mask_memory_efficient_helper(attn_mask: None | torch.Tensor, quer
 
     utils.check(
         head_dim > 0,
-        lambda: f"Expected head dimension to be greater than 0.",
+        lambda: "Expected head dimension to be greater than 0.",
     )
 
     utils.check(
         key_seq_len > 0,
-        lambda: f"Expected key-value sequence length to be greater than 0.",
+        lambda: "Expected key-value sequence length to be greater than 0.",
     )
 
     # Pad and slice attention mask to ensure correct alignment.
