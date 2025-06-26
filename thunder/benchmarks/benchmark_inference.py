@@ -47,6 +47,9 @@ from transformers.cache_utils import HybridChunkedCache
 from transformers.utils.quantization_config import QuantizationConfigMixin
 from transformers.models.llama4.modeling_llama4 import Llama4TextMoe, Llama4TextExperts
 
+from lightning_utilities.core.imports import package_available
+
+
 Llama4TextMoe_forward_original = Llama4TextMoe.forward
 Llama4TextExperts_forward_original = Llama4TextExperts.forward
 
@@ -55,40 +58,42 @@ def topk1(values, topk, dim):
     return torch.max(values, dim=dim, keepdim=True)
 
 
-def Llama4TextMoe_forward(self, hidden_states):
-    router_logits = self.router(hidden_states)
-    router_scores, router_indices = topk1(router_logits, self.top_k, dim=-1)
-    router_scores = torch.sigmoid(router_scores.to(torch.float32)).to(hidden_states.dtype)
-    shared_out = self.shared_expert(hidden_states)
-    routed_out = self.experts(
-        hidden_states=hidden_states,
-        router_scores=router_scores,
-        router_indices=router_indices,
-    )
-    experts_out = routed_out + shared_out
-    return experts_out, None
+# When `vllm` and its fused_moe is available, use fused_moe as llama4 moe forward.
+# Note that due to the expected shape difference between transformers and vllm,
+# `fused_moe` requires `Tensor.contiguous`.
+# NOTE(mkozuki) test env I used:
+#     - dlcluster node: gb-nvl-081-compute04 (GB200)
+#     - container: `gitlab-master.nvidia.com:5005/dl/dgx/vllm:25.06-py3-devel-arm64`
+TEXT_MOE_REPLACED = False
+if package_available("vllm"):
+    try:
+        from vllm.model_executor.layers.fused_moe.fused_moe import fused_moe
+    except ImportError:
+        pass
+    else:
+        # ref:
+        #   - https://github.com/vllm-project/vllm/blob/65397e40f58ff5657d9e8bbd860ed9d3fdf734a0/tests/kernels/moe/test_moe.py#L125
+        #   - https://gitlab-master.nvidia.com/dl/vllm/vllm/-/blob/556acedfbda60ba40bca19bd333e6dbff0f90680/tests/kernels/moe/test_moe.py#L50
+        def Llama4TextMoe_forward(self: Llama4TextMoe, hidden_states: torch.Tensor) -> tuple[torch.Tensor, None]:
+            router_logits = self.router(hidden_states)
 
+            router_logits_2d = router_logits.view(-1, router_logits.size(-1))
+            hidden_states_2d = hidden_states.view(-1, self.hidden_dim)
 
-def Llama4TextExperts_forward(self, hidden_states, router_scores, router_indices):
-    # If we would use vllm
-    # https://github.com/vllm-project/vllm/blob/c53fec1fcb27aca9475e55c2d1e74c532f5f0364/vllm/model_executor/layers/fused_moe/fused_moe.py#L1140
-    # or https://github.com/vllm-project/vllm/blob/bf5181583f4927b774d86a0a493916062f86c57d/vllm/model_executor/layers/fused_moe/cutlass_moe.py#L375
-    # return fused_experts(
-    #     hidden_states=hidden_states,
-    #     w1=self.gate_up_proj,
-    #     w2=self.down_proj,
-    #     topk_weights=router_scores,
-    #     topk_ids=router_indices,
-    #     inplace=True,
-    #     activation="silu",
-    #     apply_router_weight_on_input=True,
-    #     global_num_experts=self.num_experts,
-    #     expert_map=None,
-    # )
-    return hidden_states
+            w1 = self.experts.gate_up_proj
+            w2 = self.experts.down_proj
+            return fused_moe(
+                hidden_states_2d,
+                w1,
+                w2,
+                router_logits_2d,
+                self.top_k,
+                renormalize=False,
+            ), None
 
-# Llama4TextMoe.forward = Llama4TextMoe_forward
-# Llama4TextExperts.forward = Llama4TextExperts_forward
+        Llama4TextMoe.forward = Llama4TextMoe_forward
+        TEXT_MOE_REPLACED = True
+
 
 import thunder
 
@@ -367,6 +372,17 @@ class SemiAnalysisInferenceBenchmark:
             else:
                 # Create normal model without quantization
                 model = AutoModelForCausalLM.from_config(config)
+
+        # NOTE(mkozuki): Transpose `Llama4TextExperts.gate_up_proj` for the better compatibility with vLLM's `fused_moe`.
+        # In huggingface/transformers, w1 (= gate_up_proj) has the shape of (e, k, 2n) and w2 (= down_proj) has the shape of (e, n, k).
+        # vLLM however requires w1 to have the shape of (e, 2n, k), and w2, (e, n, k).
+        # Shapes I get from the command of `python thunder/benchmarks/benchmark_inference.py --model-name meta-llama/Llama-4-Maverick-17B-128E --mode thunder --input-length 32 --output-length 32 --batch-size 1 --num-iterations 20 --num-layers 4` are as follows:
+        # The shapes are w/o transpose on gate_up_proj.
+        # router_logits_2d.shape = torch.Size([32, 128]), hidden_states_2d.shape = torch.Size([32, 5120]), w1.shape = torch.Size([128, 5120, 16384]), w2.shape = torch.Size([128, 8192, 5120])
+        if TEXT_MOE_REPLACED:
+            with torch.inference_mode():
+                for module in filter(lambda module: isinstance(module, Llama4TextExperts), model.modules()):
+                    module.gate_up_proj = torch.nn.Parameter(module.gate_up_proj.transpose(1, 2).contiguous())
 
         return model
 
