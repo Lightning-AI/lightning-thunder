@@ -243,7 +243,6 @@ def test_redundant_no_op(executor, device: str, dtype: dtypes.dtype):
 
 @instantiate(dtypes=NOTHING, devicetypes=(devices.DeviceType.CUDA,), executors=(nvFuserExecutor,))
 def test_cse_subsymbol_removal(executor, device, _):
-
     def func(x):
         t0 = x.relu()
         t1 = t0 + 5
@@ -638,9 +637,9 @@ def test_bookend_meta_optimization(executor, device, _):
                     if ssym.id is prims.PrimIDs.TRANSPOSE:
                         transposes_in_fusions += 1
 
-        assert (
-            transposes_in_fusions == n
-        ), f"Expected {n} prims.transpose operations in fusions, but found {transposes_in_fusions} transpose in fusions in the trace {traces[-1]}"
+        assert transposes_in_fusions == n, (
+            f"Expected {n} prims.transpose operations in fusions, but found {transposes_in_fusions} transpose in fusions in the trace {traces[-1]}"
+        )
 
     # one transpose at the beginning
     # should be moved out of fusion
@@ -866,7 +865,6 @@ def test_optimization_fuel(executor, device, _):
     ),
 )
 def test_linear(executor, device: str, dtype: dtypes.dtype, has_bias: bool):
-
     def fn(a, b, bias=None):
         return torch.nn.functional.linear(a, b, bias)
 
@@ -897,7 +895,6 @@ def test_linear(executor, device: str, dtype: dtypes.dtype, has_bias: bool):
     ),
 )
 def test_matmul(executor, device: str, dtype: dtypes.dtype):
-
     def fn(a, b):
         return torch.matmul(a, b)
 
@@ -997,7 +994,6 @@ def test_sdpa(
     is_causal: None | bool,
     scale: None | float,
 ):
-
     def sdpa_fn(q, k, v, dropout_p, is_causal, scale):
         return torch.nn.functional.scaled_dot_product_attention(
             q, k, v, dropout_p=dropout_p, is_causal=is_causal, scale=scale
@@ -1110,7 +1106,6 @@ def test_cross_entropy(executor, device: str, thunder_dtype: dtypes.dtype, ignor
     ),
 )
 def test_enable_disable_options(executor, device: str, thunder_dtype: dtypes.dtype):
-
     def fn(a, b):
         return torch.matmul(a, b)
 
@@ -1205,7 +1200,6 @@ def test_embedding(
     device: str,
     dtype: dtypes.dtype,
 ):
-
     def embedding_fn(inputs):
         return torch.nn.functional.embedding(*inputs)
 

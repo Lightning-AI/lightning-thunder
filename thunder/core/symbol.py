@@ -99,6 +99,7 @@ class BoundSymbolTag(TagBase):
 
 
 BoundSymbolTag.register_tag("RECOMPUTE_IN_BACKWARD")
+BoundSymbolTag.register_tag("BACKWARD")
 
 # A symbol represents a function and how it can be transformed
 
@@ -210,9 +211,9 @@ class Symbol:
 
             if sym is None:
                 raise RuntimeError(f"Could not find symbol {name} in executor {executor}.")
-            assert isinstance(
-                sym, Symbol
-            ), f"lookup {name} in executor {executor} gave object of type {type(sym)} instead of Symbol"
+            assert isinstance(sym, Symbol), (
+                f"lookup {name} in executor {executor} gave object of type {type(sym)} instead of Symbol"
+            )
 
         return sym
 
@@ -223,9 +224,9 @@ class Symbol:
             raise ValueError("Cannot serialize a symbol without a module and executor.")
 
         if self.executor is None:
-            assert (
-                getattr(sys.modules[self.module.__name__], self.name, None) is self
-            ), f"{self.module.__name__}.{self.name} is not {self}"
+            assert getattr(sys.modules[self.module.__name__], self.name, None) is self, (
+                f"{self.module.__name__}.{self.name} is not {self}"
+            )
         else:
             assert thunder.get_executor(self.executor.name).opmap.get(self.name) is self
 
@@ -594,7 +595,7 @@ class BoundSymbol(BoundSymbolInterface):
     def rhs(self) -> BoundSymbolRHS:
         hashable_args = make_hashable(self._var_args)
         hashable_kwargs = make_hashable(self._var_kwargs)
-        return BoundSymbolRHS(self.sym, hashable_args, hashable_kwargs)
+        return BoundSymbolRHS(self.sym, hashable_args, hashable_kwargs, has_tags(self, {BoundSymbolTag.BACKWARD}))
 
     # TODO Document contexts
     def import_ctx(self):
@@ -737,3 +738,4 @@ class BoundSymbolRHS:
     sym: Symbol
     args: tuple[Hashable]
     kwargs: FrozenDict
+    backward: bool

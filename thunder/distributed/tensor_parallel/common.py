@@ -238,7 +238,6 @@ class TransformForTensorParallel(Transform):
                 if (
                     proxy_like_param_name := f"""t_{param_name.replace(".", "_")}"""
                 ) in self.chunked_param_name_to_layer_type:
-
                     orig_shape = list(pro_out_p._shape)
                     new_shape = self._calc_new_shape(orig_shape)
                     pro_out_p._shape = new_shape
@@ -306,7 +305,6 @@ class TransformForTensorParallel(Transform):
 
         # Modify module
         for name, param in model.named_parameters():
-
             orig_param: torch.Tensor | None
             try:
                 orig_param = model._model.get_parameter(name)

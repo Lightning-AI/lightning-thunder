@@ -239,9 +239,9 @@ class CompileData:
 
         # Validates executors list
         for ex in self.executors_list:
-            assert isinstance(
-                ex, Executor
-            ), f"Expected all elements of the executors list to be executors, but found {ex}"
+            assert isinstance(ex, Executor), (
+                f"Expected all elements of the executors list to be executors, but found {ex}"
+            )
 
         # Resolves language context (defaulting to the torch language)
         self.langctx = langctx if langctx is not None else resolve_language(Languages.TORCH)

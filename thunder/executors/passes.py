@@ -29,7 +29,6 @@ comment_symbols = {prims.PrimIDs.COMMENT, prims.PrimIDs.UNPACK_TRIVIAL}
 # Transforms a trace by determining which execution transforms to call given the list of executors in priority order
 # This pass tries to preserve the original trace and proxies.
 def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: Sequence[Executor]) -> TraceCtx:
-
     # This processes the bsyms to map symbols to operator executors:
     # - if a bsym has a python impl, that will be called, so we can keep it.
     # - in the order of the executor list
@@ -58,7 +57,7 @@ def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: 
                 ):
                     execution_transform: None | Callable = ex.get_execution_transform(bsym)
                     if execution_transform is not None:
-                        self.add_bsyms_from_function(execution_transform, *bsym.args, **bsym.kwargs)
+                        self.add_bsyms_from_function(execution_transform, *bsym.args, **bsym.kwargs, tags=bsym.tags)
                         return
                     elif isinstance(ex, OperatorExecutor):
                         # NOTE execution_transform is None and the executor is an operator executor
@@ -66,7 +65,7 @@ def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: 
                         # TODO Instead of directly acquiring the symbol from the implmap, we probably
                         #   want to hide this behind a function
                         op = ex.implmap[bsym.sym.id].symbol
-                        self.add_bsyms_from_function(op, *bsym.args, **bsym.kwargs)
+                        self.add_bsyms_from_function(op, *bsym.args, **bsym.kwargs, tags=bsym.tags)
                         return
                     elif isinstance(ex, FusionExecutor):
                         # NOTE execution_transform is None and the executor is a fusion executor

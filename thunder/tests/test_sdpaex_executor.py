@@ -143,7 +143,6 @@ def snippet_torch_consistency(op, torch_op, sample):
 @pytest.mark.parametrize("device,", ["cuda"])
 @requiresCUDA
 def test_sdpa_torch_consistency(device: str, dtype: torch.dtype):
-
     # Enable math and memory-efficient sdpa options for Volta and prior devices
     torch_device = torch.device(device)
     if not device_version_support(torch_device, CudaVersion(8, 0), CudaVersion(9, 0)):

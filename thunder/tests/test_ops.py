@@ -10,7 +10,7 @@ import thunder
 import thunder.core.devices as devices
 import thunder.core.dtypes as dtypes
 from thunder.core.pytree import tree_flatten, tree_map
-from thunder.tests.framework import assert_closer, ops, run_snippet, requiresJAX, requiresCUDA
+from thunder.tests.framework import assert_closer, ops, run_snippet, requiresJAX, requiresCUDA, instantiate
 from thunder.tests.opinfos import OpInfo, SampleInput, opinfos
 import thunder.tests.bf16
 
@@ -358,7 +358,6 @@ def test_notimplemented_interpolate_modes():
 
 @pytest.mark.parametrize("requires_grad", (True, False))
 def test_setitem(requires_grad):
-
     def _test_forward_and_backward(fn, a, value):
         a_ref = a.detach().clone()
         a_ref.requires_grad_(a.requires_grad)
@@ -465,7 +464,6 @@ def test_max_with_int():
 
 
 def test_ltorch_cumsum_result_dtype_for_int_input():
-
     def f(a):
         return torch.cumsum(a, dim=0)
 
@@ -550,3 +548,24 @@ def test_multi_dot_optimization():
         if bsym.sym.id == "matmul":
             for flat_out in bsym.flat_outs:
                 assert flat_out.shape != (100, 100)
+
+
+def test_softmax_stacklevel():
+    def fn(a):
+        return torch.nn.functional.softmax(a, -1, _stacklevel=5)
+
+    jfn = thunder.jit(fn)
+    a = torch.randn(5, 5, requires_grad=True)  # trigger grad transform
+    assert_close(fn(a), jfn(a))
+
+
+@instantiate()
+def test_full_tensor_value(executor, device, dtype):
+    def fn(a):
+        return torch.full((2,), a)
+
+    jfn = thunder.jit(fn)
+
+    tdtype = dtypes.to_torch_dtype(dtype)
+    a = torch.tensor(1, dtype=tdtype, device=device)
+    assert_close(fn(a), jfn(a))

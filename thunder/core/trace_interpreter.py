@@ -322,10 +322,15 @@ class TraceSubstitutionProcessor:
     def add_unprocessed_bsyms(self, bsyms):
         self.unprocessed_bsyms[:0] = bsyms
 
-    def add_bsyms_from_function(self, fn, /, *args, **kwargs):
+    def add_bsyms_from_function(self, fn, /, *args, tags=None, **kwargs):
         self.new_trace.push_scope([])
         result = fn(*args, **kwargs)
-        self.new_bsyms += self.new_trace.pop_scope()
+        new_bsyms = self.new_trace.pop_scope()
+        if tags is not None:
+            for bsym in new_bsyms:
+                bsym.tags.update(tags)
+        self.new_bsyms += new_bsyms
+
         self.set_result(result)
         return result
 
@@ -372,7 +377,6 @@ class TraceSubstitutionProcessor:
                     assert self.replacement_result is not self.NULL, "Need to call set_result if producing new bsyms"
 
                 if self.replacement_result is not self.NULL:
-
                     # TODO: if inputs are returned, the old outputs should be mapped on the new ones (= the inputs) instead of the other way round
                     if not self.new_bsyms:
                         # empty result means we want to swap references to the old

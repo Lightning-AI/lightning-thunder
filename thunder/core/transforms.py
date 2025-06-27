@@ -35,7 +35,7 @@ from thunder.core.compile_data import get_compile_data
 from thunder.core.langctxs import langctx, Languages
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten, tree_flatten_with_dataclass
 from thunder.core.symbol import BoundSymbol, BoundSymbolInterface, Symbol, has_tags
-from thunder.core.trace import TraceCtx as Trace
+from thunder.core.trace import TraceCtx as Trace, get_tracectx
 from thunder.core.trace import VariableInterface as Variable
 from thunder.core.trace import (
     detached_trace,
@@ -1271,6 +1271,16 @@ def _sort_prim_grad(
 
 
 register_grad(pids.SORT, _sort_prim_grad)
+
+
+def _argsort_prim_grad(
+    a: TensorProxy, /, dim: None | int = None, descending: bool = False, stable: bool = False
+) -> TensorProxy:
+    # Note: argsort returns only indices, not sorted values
+    return prims.argsort(a, dim, descending, stable)
+
+
+register_grad(pids.ARGSORT, _argsort_prim_grad)
 
 
 # TODO Fix division by zero when n_elem_reduced == 0 or when mean.numel == 0
@@ -2532,6 +2542,7 @@ def sum_to(a: TensorProxy, shape: Sequence[int]) -> TensorProxy:
 
 @register_backward("torch.index_put")
 def index_put_backward(indices: Sequence[TensorProxy], values: TensorProxy, accumulate: bool, g: TensorProxy):
+    indices = tuple(indices)
     g_values = g[indices]
     # torch has extra logic to handle the expanded values
     if not utils.same_shape(g_values.shape, values.shape):
@@ -3127,7 +3138,8 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
 
     def ones_like(x):
         if isinstance(x, TensorProxy):
-            return full_like(x, fill_value=1)
+            # NOTE: x could be a subclass of TensorProxy and that should be preserved.
+            return type(x)(like=x)
         elif isinstance(x, NumberProxy):
             return type(x.value)(1)
         else:
@@ -3289,9 +3301,10 @@ def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace) -> tuple[Tr
 
     from thunder.core.rematerialization import match_fw_and_bw_saved_for_bw_proxies
 
-    new_required_for_backward_fw_to_bw_map, new_required_for_backward_bw_to_fw_map = (
-        match_fw_and_bw_saved_for_bw_proxies(fwd_trace, bwd_trace)
-    )
+    (
+        new_required_for_backward_fw_to_bw_map,
+        new_required_for_backward_bw_to_fw_map,
+    ) = match_fw_and_bw_saved_for_bw_proxies(fwd_trace, bwd_trace)
     all_recomputable_proxies = all_recomputable_proxies.union(
         OrderedSet(
             (

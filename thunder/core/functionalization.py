@@ -221,13 +221,13 @@ def replace_args_with_alias_map(
         }:
             bsyms.append(bsym.from_bsym_swap_proxies(swap_map_for_aliases, skip_output=True))
             if len(replaced_args_map) == 1:
-                bsyms[-1].header = (
-                    f"[alias tensor args] `{list(replaced_args_map.keys())[0]}` is replaced by `{list(replaced_args_map.values())[0]}`"
-                )
+                bsyms[
+                    -1
+                ].header = f"[alias tensor args] `{list(replaced_args_map.keys())[0]}` is replaced by `{list(replaced_args_map.values())[0]}`"
             else:
-                bsyms[-1].header = (
-                    f"[alias tensor args] {list(replaced_args_map.keys())} are replaced by {list(replaced_args_map.values())}, respectively"
-                )
+                bsyms[
+                    -1
+                ].header = f"[alias tensor args] {list(replaced_args_map.keys())} are replaced by {list(replaced_args_map.values())}, respectively"
         else:
             bsyms.append(bsym)
     no_implicit_alias_trace = from_trace(computation_trace)
@@ -298,9 +298,9 @@ def canonicalize_bsym_args(
             new_bsym = new_bsym.from_bsym_swap_proxies(swap_map, skip_inputs=True, skip_subsymbols=True)
             bsyms.append(new_bsym)
         if cur_orig_to_view_swap_map:
-            bsyms[-1].header = (
-                f"Replace {[unvariableify(k) for k in cur_orig_to_view_swap_map]} with {[list(cur_orig_to_view_swap_map.values())]}"
-            )
+            bsyms[
+                -1
+            ].header = f"Replace {[unvariableify(k) for k in cur_orig_to_view_swap_map]} with {[list(cur_orig_to_view_swap_map.values())]}"
 
     intermediate_trace = from_trace(computation_trace)
     intermediate_trace.bound_symbols = bsyms

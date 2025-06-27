@@ -405,7 +405,13 @@ def jit(
         data_ptr_to_tensor_group_index = {}
         tensor_group_index_to_tensor_indices = defaultdict(list)
         for idx, t in enumerate(flat_args):
-            if pytorch.is_tensor(t) and t.layout == pytorch.strided:
+            # Using type(t) is pytorch.Tensor as TensorSubclasses don't support calling
+            # data_ptr().
+            # Eg. RuntimeError: Attempted to access the data pointer on an invalid python storage. (data_ptr access on TensorSubclass)
+            #
+            # isinstance(t, pytorch.Tensor) or pytorch.is_tensor(t) will match all Tensor objects including
+            # subclasses.
+            if type(t) is pytorch.Tensor and t.layout is pytorch.strided:
                 data_ptr = t.untyped_storage().data_ptr()
                 if data_ptr not in data_ptr_to_tensor_group_index:
                     data_ptr_to_tensor_group_index[data_ptr] = len(data_ptr_to_tensor_group_index)
@@ -553,7 +559,6 @@ def jit(
 
             if requires_grad:
                 if delay_trace_split:
-
                     from thunder.transforms.autodiff import grad_transform_on_trace
 
                     computation_trc = grad_transform_on_trace(computation_trc)

@@ -418,9 +418,10 @@ def rematerialize_all_gather(fw_trace: TraceCtx, bw_trace: TraceCtx) -> tuple[Tr
     assert all(x.sym.id in (distPrimIDs.WAIT, wait_prim_impl.id) for x in waits)
     wait_outputs = tuple(chain.from_iterable((y for y in x.flat_proxy_outs) for x in waits))
 
-    new_required_for_backward_fw_to_bw_map, new_required_for_backward_bw_to_fw_map = (
-        match_fw_and_bw_saved_for_bw_proxies(fw_trace, bw_trace)
-    )
+    (
+        new_required_for_backward_fw_to_bw_map,
+        new_required_for_backward_bw_to_fw_map,
+    ) = match_fw_and_bw_saved_for_bw_proxies(fw_trace, bw_trace)
 
     wait_outputs = tuple(
         new_required_for_backward_fw_to_bw_map[a.name] if a.name in new_required_for_backward_fw_to_bw_map else a
