@@ -5,7 +5,7 @@ from lightning_utilities.core.imports import package_available
 from thunder import Transform
 from thunder.extend import StatefulExecutor
 
-__all__ = ["transformer_engine_v2_ex", "TransformerEngineTransformV2"]
+__all__ = ["transformer_engine_v2_ex", "TransformerEngineTransformV2", "_te_activation_checkpointing_transform"]
 
 transformer_engine_v2_ex: None | StatefulExecutor = None
 TransformerEngineTransformV2: None | Transform = None
@@ -15,6 +15,7 @@ if package_available("transformer_engine"):
 
     transformer_engine_v2_ex = impl.transformer_engine_v2_ex
     TransformerEngineTransformV2 = impl.TransformerEngineTransformV2
+    _te_activation_checkpointing_transform = impl._te_activation_checkpointing_transform
 
 else:
     warnings.warn("transformer_engine module not found!")
