@@ -3,22 +3,15 @@ import os
 from contextvars import ContextVar
 from contextlib import contextmanager
 import pathlib
-from typing import Optional, Any, Tuple, Type, Dict, List, Union
+from typing import Any
 from enum import Enum
 from collections.abc import Callable
-from collections.abc import Sequence, Hashable
-import string
-from numbers import Number
-import inspect
-import functools
 from types import ModuleType
 
 import thunder
 import thunder.core.codeutils as codeutils
 import thunder.core.baseutils as baseutils
 from thunder.core.baseutils import ProxyInterface, BoundSymbolInterface, TagBase
-import thunder.core.devices as devices
-from thunder.core.pytree import tree_flatten, tree_unflatten
 from thunder.core.codeutils import ContextObject, get_source_line, Positions
 
 
@@ -120,10 +113,6 @@ class TraceCtx:
         self._complete = False
 
         self._any_future_tensors = False
-
-        # This is a detail for enabling transformer_engine's autocast manager.
-        # We only want the forward function to be called with ctx manager.
-        self._include_te_fp8_autocast = False
 
     @property
     def bound_symbols(self) -> list[BoundSymbolInterface]:
@@ -366,7 +355,7 @@ class TraceCtx:
 
             # ... and from the signature
             if self._siginfo is None and self.fn is None:
-                signature_str = f"# No signature available"
+                signature_str = "# No signature available"
             else:
                 si = self.siginfo()
                 signature_str = si.prettyprint(trace=self, import_ctx=import_ctx, object_ctx=object_ctx)
@@ -426,7 +415,7 @@ class TraceCtx:
                 # it is in grad enabled part).
                 from thunder.executors.transformer_engineex import _is_te_linear_enabled, _get_te_wrapper_string
 
-                if self._include_te_fp8_autocast and _is_te_linear_enabled(import_ctx, object_ctx):
+                if TraceTag.AUGMENTED_FORWARD and _is_te_linear_enabled(import_ctx, object_ctx):
                     program.append(_get_te_wrapper_string())
 
                 # Disable gradients since Thunder takes care of this (for when calling torch operations)
@@ -527,8 +516,6 @@ def from_trace(trace: TraceCtx) -> TraceCtx:
     t.name_ctr = trace.name_ctr
     t.obj_name_ctr = trace.obj_name_ctr
     t.names = trace.names
-    # This is a detail for enabling transformer_engine's autocast manager.
-    t._include_te_fp8_autocast = trace._include_te_fp8_autocast
     t._tags = trace._tags.copy()
 
     t._siginfo = trace._siginfo

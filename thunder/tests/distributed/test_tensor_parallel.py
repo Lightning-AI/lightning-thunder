@@ -24,7 +24,6 @@ _name_to_transform = {
 
 
 class TensorParallelTest(DistributedParallelTestCase):
-
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="")
     @common_utils.parametrize("name,bias", product(tuple(_name_to_transform.keys()), (True, False)))
     def test_linear(self, name, bias):

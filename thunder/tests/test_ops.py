@@ -7,9 +7,10 @@ import torch
 from torch.testing import assert_close
 
 import thunder
+import thunder.core.devices as devices
 import thunder.core.dtypes as dtypes
-from thunder.core.pytree import tree_map
-from thunder.tests.framework import assert_closer, ops, run_snippet, requiresJAX, requiresCUDA
+from thunder.core.pytree import tree_flatten, tree_map
+from thunder.tests.framework import assert_closer, ops, run_snippet, requiresJAX, requiresCUDA, instantiate
 from thunder.tests.opinfos import OpInfo, SampleInput, opinfos
 import thunder.tests.bf16
 
@@ -32,6 +33,31 @@ def test_errors(op, device, dtype, executor, comp):
             return result
 
 
+def assert_consistency_of_compiletime_and_runtime(thunder_op, thunder_result):
+    from thunder.core.baseutils import sequencify
+
+    __tracebackhide__ = True
+
+    extrace: thunder.TraceCtx = thunder.last_traces(thunder_op)[-1]
+    for runtime, compiletime in zip(
+        tree_flatten(sequencify(thunder_result))[0],
+        tree_flatten(sequencify(extrace.output))[0],
+    ):
+        if isinstance(compiletime, thunder.TensorProxy):
+            torch_device = devices.to_torch_device(compiletime.device)
+            torch_dtype = dtypes.to_torch_dtype(compiletime.dtype)
+            if not (
+                (r_shape := tuple(runtime.shape)) == (c_shape := tuple(compiletime.shape))
+                and runtime.device == torch_device
+                and runtime.dtype == torch_dtype
+            ):
+                msg = (
+                    f"Runtime output has shape of `{r_shape}`, device of `{runtime.device}`, and dtype of `{runtime.dtype}` "
+                    f"but compiletime output has shape of `{c_shape}`, device of `{torch_device}`, and dtype of `{torch_dtype}`"
+                )
+                raise RuntimeError(msg)
+
+
 # Snippets run a single test using a single sample
 # TODO: should snippets be able to access the original opinfo? -- No?
 # TODO: revisit atol/rtol, maybe be more selective about which ops need a more permissive check
@@ -44,6 +70,8 @@ def snippet_torch_consistency(op: OpInfo, torch_op, sample: SampleInput, comp: C
     # TODO Review how thunder.jit returns Exception information
     if isinstance(thunder_result, Exception):
         raise thunder_result
+
+    assert_consistency_of_compiletime_and_runtime(op, thunder_result)
 
     # Try checking strictly, if that does not work, check against reference.
     try:
@@ -330,7 +358,6 @@ def test_notimplemented_interpolate_modes():
 
 @pytest.mark.parametrize("requires_grad", (True, False))
 def test_setitem(requires_grad):
-
     def _test_forward_and_backward(fn, a, value):
         a_ref = a.detach().clone()
         a_ref.requires_grad_(a.requires_grad)
@@ -437,7 +464,6 @@ def test_max_with_int():
 
 
 def test_ltorch_cumsum_result_dtype_for_int_input():
-
     def f(a):
         return torch.cumsum(a, dim=0)
 
@@ -522,3 +548,24 @@ def test_multi_dot_optimization():
         if bsym.sym.id == "matmul":
             for flat_out in bsym.flat_outs:
                 assert flat_out.shape != (100, 100)
+
+
+def test_softmax_stacklevel():
+    def fn(a):
+        return torch.nn.functional.softmax(a, -1, _stacklevel=5)
+
+    jfn = thunder.jit(fn)
+    a = torch.randn(5, 5, requires_grad=True)  # trigger grad transform
+    assert_close(fn(a), jfn(a))
+
+
+@instantiate()
+def test_full_tensor_value(executor, device, dtype):
+    def fn(a):
+        return torch.full((2,), a)
+
+    jfn = thunder.jit(fn)
+
+    tdtype = dtypes.to_torch_dtype(dtype)
+    a = torch.tensor(1, dtype=tdtype, device=device)
+    assert_close(fn(a), jfn(a))

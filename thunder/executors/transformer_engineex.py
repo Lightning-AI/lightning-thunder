@@ -18,8 +18,7 @@ from thunder.core.trace import get_tracectx
 from thunder.core.symbol import Symbol, BoundSymbol
 import thunder.core.devices as devices
 import thunder.core.prims as prims
-from thunder.core.proxies import TensorProxy, AnyProxy
-from thunder.core.symbol import Symbol
+from thunder.core.proxies import AnyProxy
 from thunder.core.vjp_utils import disable_caching_split_forward_and_backward
 from thunder.extend import OperatorExecutor, register_executor
 from thunder.core.compile_data import get_compile_option, get_compile_data
@@ -44,7 +43,6 @@ te: None | Any = None
 if TE_AVAILABLE:
     try:
         import transformer_engine.pytorch as te
-        from transformer_engine.common import recipe
         from transformer_engine.common.recipe import MXFP8BlockScaling, DelayedScaling
         from transformer_engine.pytorch.constants import MXFP8_BLOCK_SCALING_SIZE
         from transformer_engine.pytorch.module.linear import _Linear
@@ -220,9 +218,9 @@ class TELinear(TransformerEngineBaseModule):
         # Ref: https://github.com/NVIDIA/TransformerEngine/blob/b957aa475bcbcf22405381d18bd7fefe4fb6b171/transformer_engine/pytorch/module/linear.py#L264
         grad_ctx = enable_grad(*enable_grad_inputs) if is_grad_enabled else nullcontext()
         with grad_ctx, self.prepare_forward(inp) as inp:
-            assert (
-                self.fp8 or not self.primary_weights_in_fp8
-            ), "Need to run inside fp8_autocast region when weights are stored in FP8."
+            assert self.fp8 or not self.primary_weights_in_fp8, (
+                "Need to run inside fp8_autocast region when weights are stored in FP8."
+            )
 
             (
                 input_quantizer,
@@ -339,8 +337,6 @@ def make_te_linear_meta(i_requires_grad, w_requires_grad):
         weight_requires_grad: bool,
         bias_requires_grad: bool,
     ) -> tuple[TensorProxy, AnyProxy | None]:
-        from thunder.core.dtypes import float8_e4m3fn, uint8
-
         # Input Shape : (*, Hin)
         # Output Shape : (*, Hout) where * is any number of dims including None.
         output_shape = list(a.shape)
@@ -753,3 +749,9 @@ def _insert_bwd_fp8_meta_sync(bw_extrace):
     # See NOTE: Backward FP8 metadata sync
     bwd_idx = len(bw_extrace.bound_symbols) - 1
     bw_extrace.bound_symbols.insert(bwd_idx, te_sync_fp8_meta_bwd.bind(output=None))
+
+
+def transformer_engine_v1_bwd_fp8_meta_sync(forward_trace, backward_trace):
+    if transformer_engine_ex in get_compile_data().executors_list:
+        # NOTE: `_transformer_engine_bwd_fp8_meta_sync` may mutate `fw_extrace` or `bw_extrace`.
+        _transformer_engine_bwd_fp8_meta_sync(forward_trace, backward_trace)

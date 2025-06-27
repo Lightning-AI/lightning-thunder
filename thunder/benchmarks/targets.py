@@ -48,7 +48,6 @@ from thunder.benchmarks import (
 from thunder.core.interpreter import interpret
 
 from thunder.tests.litgpt_model import Config as LitGPTConfig
-from thunder.tests.make_tensor import make_tensor
 from thunder.benchmarks.utils import backward_only
 
 LIGER_FUSED_SWIGLU_AVAILABLE: bool = package_available("liger_kernel.ops.swiglu")

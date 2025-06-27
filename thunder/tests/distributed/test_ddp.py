@@ -1,7 +1,6 @@
 import os
 import unittest
 from itertools import product
-from collections.abc import Callable
 
 import pytest
 import torch
@@ -40,7 +39,6 @@ if TE_AVAILABLE:
         get_default_fp8_recipe,
     )
     from transformer_engine.common.recipe import MXFP8BlockScaling
-    import transformer_engine
 
     is_fp8_supported, fp8_support_reason = check_fp8_support()
 
@@ -105,6 +103,8 @@ class DDPTest(DistributedParallelTestCase):
             x = torch.randn(20, 12).to(self.rank)
             outputs = cm(x)
 
+    # `apply_bucketing_to_grad_allreduce` needs to be updated to work correctly with joint trace
+    @pytest.mark.xfail(strict=True, reason="This is not updated yet for joint forward-backward trace")
     @common_utils.parametrize("executor,bucket_size_in_mb", product(tuple(executors_map.keys()), (0, 1000)))
     def test_ddp_grad_bucketing(self, executor, bucket_size_in_mb: int):
         from thunder.distributed import ddp
@@ -158,7 +158,6 @@ class DDPTest(DistributedParallelTestCase):
         # If they are different, it'd be impossible to keep replicas identical.
         from thunder.common import CACHE_OPTIONS
         from thunder.distributed import ddp
-        from thunder.distributed import get_skip_data_parallel_grad_sync
 
         def get_model_and_optimizer(device):
             m = ToyModel().to(device)
