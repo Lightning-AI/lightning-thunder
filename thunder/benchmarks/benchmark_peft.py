@@ -246,9 +246,8 @@ def setup_compilation(model, backend: str):
         logger.info("Compiling model with torch.compile")
         model = torch.compile(model)
 
-    elif backend == "thunder":
+    elif "thunder" in backend:
         import thunder
-        from thunder.dynamo import thunderfx
         from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform
 
         # Disable gradient checkpointing for Thunder
@@ -261,9 +260,16 @@ def setup_compilation(model, backend: str):
         logger.info(f"Thunder used executors: {executors}")
         logger.info(f"Applying Thunder compilation with {len(executors)} executors")
 
-        # TODO get parameters out from thunderfx CompiledObject
-        compiled_object = thunderfx(model, transforms=xforms, executors=executors)
-        model = compiled_object._func
+        if "jit" in backend:
+            logger.info("Using thunder.jit")
+            model = thunder.jit(model, transforms=xforms, executors=executors)
+        else:
+            logger.info("Using ThunderFX")
+            from thunder.dynamo import thunderfx
+
+            # TODO get parameters out from thunderfx CompiledObject
+            compiled_object = thunderfx(model, transforms=xforms, executors=executors)
+            model = compiled_object._func
 
     return model
 
@@ -294,7 +300,7 @@ def parse_args():
         "--jit-backend",
         default="eager",
         type=str.lower,
-        choices=["eager", "inductor", "thunder"],
+        choices=["eager", "inductor", "thunder", "thunder+jit"],
     )
     parser.add_argument("--verbose", action="store_true", help="Enable verbose output including model wrapping details")
     parser.add_argument("--trust-remote-code", action="store_true")
