@@ -786,14 +786,8 @@ def test_hf_diffusers(model_id):
     from diffusers import UNet2DConditionModel
 
     torch.manual_seed(0)
-
-    try:
-        unet = UNet2DConditionModel.from_pretrained(model_id, subfolder="unet", torch_dtype=torch.bfloat16)
-    except OSError:
-        unet = UNet2DConditionModel.from_pretrained(
-            model_id, subfolder="unet", use_safetensors=False, torch_dtype=torch.bfloat16
-        )
-
+    unet_config = UNet2DConditionModel.load_config(model_id, subfolder="unet", torch_dtype=torch.bfloat16)
+    unet = UNet2DConditionModel(unet_config)
     config = unet.config
     in_channels = config.in_channels
     cross_attention_dim = config.cross_attention_dim
