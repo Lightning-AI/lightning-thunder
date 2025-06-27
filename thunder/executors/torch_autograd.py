@@ -425,9 +425,9 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     # Importing here to avoid cyclical dependencies in future.
     # NOTE: This is required only for v1 executor.
     #       Mutates the backward_trace inplace.
-    from thunder.executors.transformer_engineex import transformer_engine_v1_bwd_fp8_meta_sync
+    from thunder.executors.transformer_engineex import transformer_engine_v1_requires_grad_transform_and_bwd_fp8_meta_sync
 
-    transformer_engine_v1_bwd_fp8_meta_sync(fw_extrace, bw_extrace)
+    fw_extrace, bw_extrace = transformer_engine_v1_requires_grad_transform_and_bwd_fp8_meta_sync(fw_extrace, bw_extrace)
 
     fw_extrace = del_last_used(fw_extrace)
     fw_traces.append(fw_extrace)

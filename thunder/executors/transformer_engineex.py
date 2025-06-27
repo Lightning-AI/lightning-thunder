@@ -736,7 +736,6 @@ def _transformer_engine_set_requires_grad(fw_extrace: TraceCtx, bw_extrace: Trac
 
 def _transformer_engine_bwd_fp8_meta_sync(fw_extrace, bw_extrace) -> tuple[TraceCtx, TraceCtx]:
     updated_fw_extrace, updated_bw_extrace = _transformer_engine_set_requires_grad(fw_extrace, bw_extrace)
-
     # See doc of `_insert_bwd_fp8_meta_sync` for more details.
     # `bw_extrace` is mutated in place.
     _insert_bwd_fp8_meta_sync(updated_bw_extrace)
@@ -751,7 +750,7 @@ def _insert_bwd_fp8_meta_sync(bw_extrace):
     bw_extrace.bound_symbols.insert(bwd_idx, te_sync_fp8_meta_bwd.bind(output=None))
 
 
-def transformer_engine_v1_bwd_fp8_meta_sync(forward_trace, backward_trace):
+def transformer_engine_v1_requires_grad_transform_and_bwd_fp8_meta_sync(forward_trace, backward_trace) -> tuple[TraceCtx, TraceCtx]:
     if transformer_engine_ex in get_compile_data().executors_list:
-        # NOTE: `_transformer_engine_bwd_fp8_meta_sync` may mutate `fw_extrace` or `bw_extrace`.
-        _transformer_engine_bwd_fp8_meta_sync(forward_trace, backward_trace)
+        return _transformer_engine_bwd_fp8_meta_sync(forward_trace, backward_trace)
+    return forward_trace, backward_trace
