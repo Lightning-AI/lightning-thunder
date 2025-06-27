@@ -1703,6 +1703,7 @@ def test_multiple_backward_with_graph_retained():
     dynamic_jit = thunder.jit(foo, cache="symbolic values")
     out = dynamic_jit(a, c)
     torch.autograd.backward(out, torch.rand_like(out), retain_graph=True)
+    # Verify no exception is raised.
     torch.autograd.backward(out, torch.rand_like(out))
 
     a = make_tensor((2, 2), device="cpu", dtype=torch.float32, requires_grad=True)
@@ -1710,6 +1711,7 @@ def test_multiple_backward_with_graph_retained():
     static_jit = thunder.jit(foo)
     out = static_jit(a, c)
     torch.autograd.backward(out, torch.rand_like(out), retain_graph=True)
+    # Verify no exception is raised.
     torch.autograd.backward(out, torch.rand_like(out))
 
 
