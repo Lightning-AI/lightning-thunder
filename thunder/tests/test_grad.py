@@ -1693,6 +1693,26 @@ def test_grad_transform_saved_for_backward_proxy():
     assert not any(map(lambda x: isinstance(x, Proxy), tree_flatten(static_trace.args[0])[0]))
 
 
+def test_multiple_backward_with_graph_retained():
+    def foo(a, c):
+        return a * c
+
+    a = make_tensor((2, 2), device="cpu", dtype=torch.float32, requires_grad=True)
+    c = 2.0
+
+    dynamic_jit = thunder.jit(foo, cache="symbolic values")
+    out = dynamic_jit(a, c)
+    torch.autograd.backward(out, torch.rand_like(out), retain_graph=True)
+    torch.autograd.backward(out, torch.rand_like(out))
+
+    a = make_tensor((2, 2), device="cpu", dtype=torch.float32, requires_grad=True)
+
+    static_jit = thunder.jit(foo)
+    out = static_jit(a, c)
+    torch.autograd.backward(out, torch.rand_like(out), retain_graph=True)
+    torch.autograd.backward(out, torch.rand_like(out))
+
+
 def test_get_saved_for_backward_tensors():
     from thunder.core.vjp_utils import get_saved_for_backward_tensors
 
