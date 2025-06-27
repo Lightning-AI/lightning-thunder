@@ -729,8 +729,8 @@ def _transformer_engine_set_requires_grad(fw_extrace: TraceCtx, bw_extrace: Trac
             args[SAVED_TENSORS_ARG_IDX] = args[SAVED_TENSORS_ARG_IDX][:new_saved_tensor_len]
             bsym.args = tuple(args)
 
-    updated_fw_extrace.set_provenance(TraceProvenance(f"TransformerEngine update weight and bias requires_grad pass"))
-    updated_bw_extrace.set_provenance(TraceProvenance(f"TransformerEngine update weight and bias requires_grad pass"))
+    updated_fw_extrace.set_provenance(TraceProvenance("TransformerEngine update weight and bias requires_grad pass"))
+    updated_bw_extrace.set_provenance(TraceProvenance("TransformerEngine update weight and bias requires_grad pass"))
     return updated_fw_extrace, updated_bw_extrace
 
 
@@ -750,7 +750,9 @@ def _insert_bwd_fp8_meta_sync(bw_extrace):
     bw_extrace.bound_symbols.insert(bwd_idx, te_sync_fp8_meta_bwd.bind(output=None))
 
 
-def transformer_engine_v1_requires_grad_transform_and_bwd_fp8_meta_sync(forward_trace, backward_trace) -> tuple[TraceCtx, TraceCtx]:
+def transformer_engine_v1_requires_grad_transform_and_bwd_fp8_meta_sync(
+    forward_trace, backward_trace
+) -> tuple[TraceCtx, TraceCtx]:
     if transformer_engine_ex in get_compile_data().executors_list:
         return _transformer_engine_bwd_fp8_meta_sync(forward_trace, backward_trace)
     return forward_trace, backward_trace
