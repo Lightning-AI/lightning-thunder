@@ -538,6 +538,7 @@ def get_all_executors() -> tuple[Executor, ...]:
         torch_compile,
         torchex,
         transformer_engineex,
+        transformer_engine_v2ex,
         triton_crossentropy,
     )
 
