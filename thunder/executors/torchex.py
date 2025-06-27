@@ -130,6 +130,24 @@ _register_implementation(
 )
 _register_implementation(ltorch.to, checker=_always_executable, execution_transform=_to_transform)
 
+
+def _scaled_mm_transform(
+    a: TensorProxy,
+    b: TensorProxy,
+    a_scale: TensorProxy,
+    b_scale: TensorProxy,
+    bias: TensorProxy = None,
+    scale_result: TensorProxy = None,
+    out_dtype=None,
+    use_fast_accum: bool = False,
+) -> TensorLike:
+    torch_out_dtype: None | torch.dtype = to_torch_dtype(out_dtype)
+    ret = _scaled_mm(a, b, a_scale, b_scale, bias, scale_result, out_dtype=torch_out_dtype, use_fast_accum=use_fast_accum)
+    return ret
+
+
+_register_implementation(prims._scaled_mm, checker=_always_executable, execution_transform=_scaled_mm_transform)
+
 #
 # Disable torch.autocast operations
 #
@@ -1528,6 +1546,7 @@ _register_implementation(ltorch.local_response_norm, local_response_norm, checke
 bmm = _register_torch_operation("bmm")
 baddbmm = _register_torch_operation("baddbmm")
 _grouped_mm = _register_torch_operation("_grouped_mm")
+_scaled_mm = _register_torch_operation("_scaled_mm")
 convolution = _register_torch_operation("convolution")
 conv1d = _register_torch_operation("conv1d", module=torch.nn.functional)
 conv2d = _register_torch_operation("conv2d", module=torch.nn.functional)

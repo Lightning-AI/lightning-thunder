@@ -2048,3 +2048,27 @@ def _grouped_mm(a: TensorLike, b: TensorLike) -> TensorLike:
     """Thunder support for torch._grouped_mm, accepts 2D or 3D tensors."""
     return prims.grouped_mm(a, b)
 
+from typing import Tuple, Optional
+@clangop()
+def _scaled_mm(
+    self: TensorLike,
+    mat2: TensorLike,
+    scale_a: TensorLike,
+    scale_b: TensorLike,
+    bias: TensorLike = None,
+    scale_result: TensorLike = None,
+    out_dtype=None,
+    use_fast_accum: bool = False,
+) -> TensorProxy:
+    """Thunder support for torch._scaled_mm, accepts 2D or 3D tensors and scaling factors."""
+    return prims.scaled_mm(
+        self,
+        mat2,
+        scale_a,
+        scale_b,
+        bias=bias,
+        scale_result=scale_result,
+        out_dtype=out_dtype,
+        use_fast_accum=use_fast_accum,
+    )
+
