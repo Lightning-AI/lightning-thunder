@@ -15,7 +15,6 @@ from thunder.core.transforms import (
     backward_impls,
     ForwardBackwardTraces,
 )
-from thunder.core.transform_common import dce
 import thunder.torch as ltorch
 
 

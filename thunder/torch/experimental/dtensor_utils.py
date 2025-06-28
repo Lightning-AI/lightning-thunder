@@ -1,6 +1,5 @@
 import torch
 
-from thunder.core.pytree import tree_map
 from thunder.core.proxies import TensorProxy, NumberProxy
 from thunder.core.devices import to_torch_device
 from thunder.core.dtypes import to_torch_dtype
