@@ -36,13 +36,11 @@ def main():
     )
     initialize_model_parallel(1, 1)
 
+    sp = SamplingParams(max_tokens=1024, temperature=0.0)
     llm = LLM(
         model="my_custom_model_dir",
-        hf_overrides={"architectures": ["ThunderModel"]},
         enforce_eager=True
     )
-
-    sp = SamplingParams(max_tokens=128, temperature=0.0)
     out = llm.generate(["Why is the sky blue?",], sp)
     print(out[0].outputs[0].text)
 
@@ -62,11 +60,12 @@ def main():
 
     llm = LLM(
         model="my_custom_model_dir",
+        hf_overrides={"architectures": ["ThunderModel"]},
         enforce_eager=True
     )
+
     out = llm.generate(["Why is the sky blue?",], sp)
     print(out[0].outputs[0].text)
 
-    torch.distributed.destroy_process_group()
 if __name__ == "__main__":
     main()
