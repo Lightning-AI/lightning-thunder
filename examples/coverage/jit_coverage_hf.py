@@ -51,7 +51,7 @@ def try_model(output_dir, model_name):
     def run_prologue(jfn, *args, **kwargs):
         cd = thunder.compile_data(jfn)
         cs = thunder.compile_stats(jfn)
-    
+
         ci = thunder._get_cache_info()
         cd.populate_cache_info(ci, *args, **kwargs)
         traces = cd.acquire_initial_trace(cd.fn, args, kwargs, cd, cs, cd.executors_list[0])
@@ -59,7 +59,7 @@ def try_model(output_dir, model_name):
         with thunder.compile_data_and_stats(cd, cs):
             pro_to_comp, pro_to_epi = cache_entry.prologue_fn(*args, **kwargs)
         return cache_entry, pro_to_comp, pro_to_epi
-   
+
     print(f"\n=== Testing {model_name} ===")
 
     output_file_name = os.path.join(output_dir, f"{model_name.replace('/', '__')}.txt")
