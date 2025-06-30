@@ -1,6 +1,7 @@
 import sys
 from datetime import datetime
 import glob
+import os
 
 from lightning_sdk import Studio, Machine
 
@@ -23,9 +24,10 @@ def main(gh_run_id: str = ""):
     print("Installing Thunder and other requirements...")
     s.run(f"pip install {pkg_path} -U -r coverage/requirements.txt")
 
+    hf_token = os.environ["HF_TOKEN"]
     print("Running thunder.jit coverage...")
-    s.run("python coverage/jit_coverage_hf.py --models-file coverage/all.txt --output-dir data --results-file data.json")
-    
+    s.run(f"HF_TOKEN={hf_token} python coverage/jit_coverage_hf.py --models-file coverage/all.txt --output-dir data --results-file data.json")
+
     data_json = s.run("cat data.json")
 
     with open("jit_coverage_report.json", "w") as f:

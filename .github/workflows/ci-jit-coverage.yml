@@ -42,6 +42,7 @@ jobs:
         env:
           LIGHTNING_USER_ID: ${{ secrets.LIGHTNING_USER_ID }}
           LIGHTNING_API_KEY: ${{ secrets.LIGHTNING_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           pip install lightning_sdk -U -q
           python .github/run-jit-coverage-as-lit-studios.py ${{ github.run_id }}
