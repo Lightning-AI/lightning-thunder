@@ -78,9 +78,8 @@ def run_script(file_name, cmd):
     executors=[DynamoThunderExecutor],
     decorators=(
         pytest.mark.parametrize("dynamic", (True, False, None), ids=("dynamic", "static", "auto")),
-        pytest.mark.xfail(
+        pytest.mark.skipif(
             condition=IS_WINDOWS,
-            strict=True,
             reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
         ),
     ),
