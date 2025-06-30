@@ -389,7 +389,7 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                             # To avoid name clashes, we create new output proxies
                             with tracectx(self.new_trace):
                                 for output in recomp_bsym.flat_proxy_outs:
-                                    new = TensorProxy(like=output)
+                                    new = output.replace_name()
                                     self.add_to_swap_map(output, new)
                             processed_bsyms.insert(bw_idx, recomp_bsym)
                             for nn in recomp_output:
