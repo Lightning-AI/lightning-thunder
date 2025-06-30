@@ -57,6 +57,20 @@ def topk1(values, topk, dim):
     return torch.max(values, dim=dim, keepdim=True)
 
 
+# Ref:
+# https://github.com/vllm-project/vllm/blob/3ee56e26be4cfddc17f7d2e5f38f15ab74ede1c2/vllm/model_executor/models/llama4.py#L48
+def custom_routing_function(
+    hidden_states: torch.Tensor,
+    gating_output: torch.Tensor,
+    topk: int,
+    renormalize: bool,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    assert renormalize is False, "Renormalization is not supported"
+    router_scores, router_indices = topk1(gating_output, topk, dim=-1)
+    router_scores = torch.sigmoid(router_scores.to(torch.float32)).to(hidden_states.dtype)
+    return (router_scores, router_indices.to(torch.int32))
+
+
 # When `vllm` and its fused_moe is available, use fused_moe as llama4 moe forward.
 # Note that due to the expected shape difference between transformers and vllm,
 # `fused_moe` requires `Tensor.contiguous`.
@@ -89,6 +103,7 @@ if package_available("vllm"):
                 self.top_k,
                 renormalize=False,
                 inplace=True,
+                custom_routing_function=custom_routing_function,
             ), None
 
         Llama4TextMoe.forward = Llama4TextMoe_forward
@@ -276,7 +291,7 @@ class SemiAnalysisInferenceBenchmark:
             self.model = parallelize_module(self.model, mesh, tp_plan)
             # assert isinstance(self.model.model.layers[0].self_attn.o_proj.weight, DTensor)
             # assert isinstance(self.model.model.layers[0].feed_forward.down_proj.weight, DTensor)
-            
+
             # Required as that doesn't understand inference mode
             for p in self.model.parameters():
                 p.requires_grad_(False)
