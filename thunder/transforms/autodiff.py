@@ -504,8 +504,8 @@ def split_into_forward_and_backward(joint_trace: TraceCtx):
     saved_for_backward = {}
     for bsym in backward_part_bsyms:
         saved_for_backward.update((a.name, a) for a in bsym.flat_proxy_args if a.name in forward_proxy_names)
-    saved_for_backward_tensors = [p for p in saved_for_backward.values() if isinstance(p, TensorProxy)]
-    saved_for_backward_other = [p for p in saved_for_backward.values() if not isinstance(p, TensorProxy)]
+    saved_for_backward_tensors = tuple(p for p in saved_for_backward.values() if isinstance(p, TensorProxy))
+    saved_for_backward_other = tuple(p for p in saved_for_backward.values() if not isinstance(p, TensorProxy))
 
     # we build the forward trace
     forward_trace = from_trace(joint_trace)
