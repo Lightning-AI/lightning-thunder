@@ -1939,8 +1939,7 @@ def amin_aug_fwd(x, dims):
     return VJPDual(primal, residuals)
 
 
-@register_augmented_forward(prims.PrimIDs.POW)
-def pow_aug_fed(x, y):
+def _pow_grad(x, y):
     """Augmented the pow operation.
 
     Args:
@@ -1950,19 +1949,19 @@ def pow_aug_fed(x, y):
     Returns:
         VJPDual: Primal and residuals.
     """
-    primal = prims.pow(x, y)
-    residuals = (primal, x, y)
-    return VJPDual(primal, residuals)
-
-
-@register_backward(prims.PrimIDs.POW)
-def pow_backward(result, x, y, g):
     import thunder.clang as tlang
 
-    gresult = g * result  # reuse common factor
-    dx = g * y * x ** (y - 1)
+    res = prims.pow(x, y)
+
+    g_res = get_grad(res)
+    gresult = g_res * res  # reuse common factor
+    dx = g_res * y * x ** (y - 1)
     dy = gresult * tlang.log(x)
-    return dx, dy
+    put_grads((x, y), (dx, dy))
+    return res
+
+
+register_grad(prims.PrimIDs.POW, _pow_grad)
 
 
 @register_augmented_forward(prims.PrimIDs.TAN)
