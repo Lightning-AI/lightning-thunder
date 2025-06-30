@@ -87,6 +87,7 @@ if package_available("vllm"):
                 w2,
                 router_logits_2d,
                 self.top_k,
+                apply_router_weight_on_input=True, # https://github.com/vllm-project/vllm/blob/3ee56e26be4cfddc17f7d2e5f38f15ab74ede1c2/vllm/model_executor/models/llama4.py#L80
                 renormalize=False,
                 inplace=True,
             ), None
@@ -276,7 +277,7 @@ class SemiAnalysisInferenceBenchmark:
             self.model = parallelize_module(self.model, mesh, tp_plan)
             # assert isinstance(self.model.model.layers[0].self_attn.o_proj.weight, DTensor)
             # assert isinstance(self.model.model.layers[0].feed_forward.down_proj.weight, DTensor)
-            
+
             # Required as that doesn't understand inference mode
             for p in self.model.parameters():
                 p.requires_grad_(False)
