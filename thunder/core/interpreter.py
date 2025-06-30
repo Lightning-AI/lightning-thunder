@@ -4427,7 +4427,6 @@ def _for_iter_handler(
     def _next_impl(tos):
         return next(tos)
 
-    v: Any
     r = _interpret_call(_next_impl, tos)
 
     if r is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
