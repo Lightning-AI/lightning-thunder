@@ -124,17 +124,20 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--models-file', type=str, required=True)
+    parser.add_argument('--models-file', type=str, required=False, default="")
     parser.add_argument('--output-dir', type=str, required=True)
-    parser.add_argument('--results-file', type=str, required=True)
+    parser.add_argument('--results-file', type=str, required=False, default="")
     args = parser.parse_args()
 
-    os.makedirs(args.output_dir, exist_ok=True)
+    if args.models_file:
+        os.makedirs(args.output_dir, exist_ok=True)
 
-    with open(args.models_file) as f:
-        model_list = [el for el in f.read().split("\n") if el.strip() and not el.strip().startswith("#")]
+        with open(args.models_file) as f:
+            model_list = [el for el in f.readlines() if el.strip() and not el.strip().startswith("#")]
 
-    with multiprocessing.Pool(16) as pool:
-        pool.map(partial(try_model, args.output_dir), model_list)
+        with multiprocessing.Pool(16) as pool:
+            pool.map(partial(try_model, args.output_dir), model_list)
 
-    aggregate_results(args.output_dir, args.results_file)
+    if args.results_file:
+        aggregate_results(args.output_dir, args.results_file)
+
