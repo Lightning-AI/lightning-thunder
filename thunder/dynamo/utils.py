@@ -467,7 +467,12 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
         from thunder.executors.torchex import has_einops
 
         if has_einops:
-            return True, None
+            import einops
+
+            # According to https://github.com/Lightning-AI/lightning-thunder/blob/main/thunder/tests/test_einops.py
+            einops_ops = (einops.reduce, einops.rearrange, einops.repeat, einops.einsum)
+            if target in einops_ops:
+                return True, None
 
     # We found no automatic fallback registration and no mapping to thunder symbol.
     split_reason = SplitReason(
