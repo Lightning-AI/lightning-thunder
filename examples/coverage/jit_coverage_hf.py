@@ -133,7 +133,7 @@ if __name__ == "__main__":
         os.makedirs(args.output_dir, exist_ok=True)
 
         with open(args.models_file) as f:
-            model_list = [el for el in f.readlines() if el.strip() and not el.strip().startswith("#")]
+            model_list = [el.strip() for el in f.readlines() if el.strip() and not el.strip().startswith("#")]
 
         with multiprocessing.Pool(16) as pool:
             pool.map(partial(try_model, args.output_dir), model_list)

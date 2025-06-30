@@ -47,7 +47,14 @@ def main(gh_run_id: str = ""):
         print(f"Processing {filename}")
         print(out)
 
+<<<<<<< Updated upstream
     out = s.run("python coverage/jit_coverage_hf.py --output-dir data --results-file data.json")
+=======
+    print("Aggregating results...")
+    out = s.run(
+        f"python coverage/jit_coverage_hf.py --output-dir data --results-file data.json"
+    )
+>>>>>>> Stashed changes
     print(out)
 
     data_json = s.run("cat data.json")
