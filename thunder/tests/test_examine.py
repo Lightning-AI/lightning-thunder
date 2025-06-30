@@ -1,7 +1,5 @@
 import thunder.examine
 import torch
-import pytest
-from thunder.executors import nvfuser_available
 
 
 def test_examine_fn():

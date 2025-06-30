@@ -10,10 +10,10 @@ from functools import partial
 import thunder
 import thunder.core.prims as prims
 from thunder.core.baseutils import BoundSymbolInterface, NumberProxyInterface
-from thunder.core.proxies import Proxy, variableify, Variable, TensorProxy, unvariableify
-from thunder.core.pytree import tree_flatten, tree_iter, tree_map, tree_unflatten
+from thunder.core.proxies import Proxy, variableify, Variable
+from thunder.core.pytree import tree_flatten, tree_iter, tree_map
 from thunder.core.symbol import BoundSymbol, BoundSymbolRHS, has_tags
-from thunder.core.trace import from_trace, TraceProvenance, TraceCtx as Trace, tracectx
+from thunder.core.trace import from_trace, TraceProvenance, TraceCtx as Trace
 from thunder.core.utils import ProxyDict, producers, check
 
 if TYPE_CHECKING:
@@ -270,7 +270,7 @@ def cse_single_bsym(
 ) -> BoundSymbolInterface:
     check(
         bsym.sym.is_fusion != True,
-        lambda: f"Expected bound symbol not to be a fusion in _cse_single_bsym",
+        lambda: "Expected bound symbol not to be a fusion in _cse_single_bsym",
         exception_type=AssertionError,
     )
 

@@ -5,8 +5,6 @@ from thunder.extend import OperatorExecutor, register_executor
 apex_ex = OperatorExecutor("apex", version="0.1")
 register_executor(apex_ex)
 
-import thunder.executors.apex_entropyex_impl
-import thunder.executors.apex_fused_rms_norm_impl as apex_fused_rms_norm_impl
 
 from thunder.executors.apex_entropyex_impl import apex_entropy_available
 from thunder.executors.apex_fused_rms_norm_impl import apex_fused_norms_available

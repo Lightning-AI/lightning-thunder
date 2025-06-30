@@ -1,7 +1,6 @@
 import operator
 import time
 from collections.abc import Callable, Hashable
-from typing import Any
 
 import torch
 from lightning_utilities import compare_version
