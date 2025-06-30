@@ -166,7 +166,6 @@ ignore = [
     "F403",  # https://docs.astral.sh/ruff/rules/undefined-local-with-import-star/
     "F601",  # https://docs.astral.sh/ruff/rules/multi-value-repeated-key-literal/
     "F822",  # https://docs.astral.sh/ruff/rules/undefined-export/
-    "F842",  # https://docs.astral.sh/ruff/rules/unused-annotation/
     "E741",  # https://docs.astral.sh/ruff/rules/ambiguous-variable-name/
     "F811",  # https://docs.astral.sh/ruff/rules/redefined-while-unused/
 ]
