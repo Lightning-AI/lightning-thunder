@@ -71,16 +71,16 @@ def custom_routing_function(
     return (router_scores, router_indices.to(torch.int32))
 
 
-# When `vllm` and its fused_moe is available, use fused_moe as llama4 moe forward.
+# When `vllm` and its fused_experts is available, use fused_experts as llama4 moe forward.
 # Note that due to the expected shape difference between transformers and vllm,
-# `fused_moe` requires `Tensor.contiguous`.
+# `fused_experts` requires `Tensor.contiguous`.
 # NOTE(mkozuki) test env I used:
 #     - dlcluster node: gb-nvl-081-compute04 (GB200)
 #     - container: `gitlab-master.nvidia.com:5005/dl/dgx/vllm:25.06-py3-devel-arm64`
 TEXT_MOE_REPLACED = False
 if package_available("vllm"):
     try:
-        from vllm.model_executor.layers.fused_moe.fused_moe import fused_moe
+        from vllm.model_executor.layers.fused_moe.fused_moe import fused_experts
     except ImportError:
         pass
     else:
@@ -93,17 +93,16 @@ if package_available("vllm"):
             router_logits_2d = router_logits.view(-1, router_logits.size(-1))
             hidden_states_2d = hidden_states.view(-1, self.hidden_dim)
 
+            topk_weights, topk_ids = custom_routing_function(hidden_states_2d, router_logits_2d, self.top_k, renormalize=False)
             w1 = self.experts.gate_up_proj
             w2 = self.experts.down_proj
-            return fused_moe(
+            return fused_experts(
                 hidden_states_2d,
                 w1,
                 w2,
-                router_logits_2d,
-                self.top_k,
-                renormalize=False,
+                topk_weights,
+                topk_ids,
                 inplace=True,
-                custom_routing_function=custom_routing_function,
             ), None
 
         Llama4TextMoe.forward = Llama4TextMoe_forward
