@@ -48,9 +48,7 @@ def main(gh_run_id: str = ""):
         print(out)
 
     print("Aggregating results...")
-    out = s.run(
-        "python coverage/jit_coverage_hf.py --output-dir data --results-file data.json"
-    )
+    out = s.run("python coverage/jit_coverage_hf.py --output-dir data --results-file data.json")
     print(out)
 
     data_json = s.run("cat data.json")
