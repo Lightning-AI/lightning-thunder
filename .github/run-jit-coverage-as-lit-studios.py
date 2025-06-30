@@ -12,7 +12,6 @@ def main(gh_run_id: str = ""):
 
     print("Creating studio...")
     s = Studio(f"thunder-jit-coverage-run{gh_run_id}", "oss-thunder", org="lightning-ai", create_ok=True)
-    s.switch_machine(machine=Machine.L40S, interruptible=True)
 
     print("Uploading package and scripts...")
     s.upload_folder("dist", remote_path="dist")
@@ -20,7 +19,8 @@ def main(gh_run_id: str = ""):
     s.upload_folder("examples/coverage", remote_path="coverage")
 
     print("Starting studio...")
-    s.start()
+    s.start(machine=Machine.L40S, interruptible=True)
+
     print("Installing Thunder and other requirements...")
     s.run(f"pip install {pkg_path} -U -r coverage/requirements.txt")
 
