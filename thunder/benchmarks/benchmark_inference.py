@@ -103,6 +103,7 @@ if package_available("vllm"):
                 topk_weights,
                 topk_ids,
                 inplace=True,
+                apply_router_weight_on_input=True, # https://github.com/vllm-project/vllm/blob/3ee56e26be4cfddc17f7d2e5f38f15ab74ede1c2/vllm/model_executor/models/llama4.py#L80
             ), None
 
         Llama4TextMoe.forward = Llama4TextMoe_forward
