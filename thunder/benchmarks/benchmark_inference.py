@@ -365,29 +365,25 @@ class SemiAnalysisInferenceBenchmark:
                     )
                 module.reset_parameters()
 
-        def quantize_to_nvfp4(module, name=""):
-            if len(list(module.children())) < 1:
-                materialize(module)
-
-            for child_name, child_module in module.named_children():
-                if isinstance(child_module, torch.nn.Linear) and child_name in modules_to_quantize:
+        def quantize_to_nvfp4(model: torch.nn.Module):
+            for module_name, module in model.named_modules():
+                if isinstance(module, torch.nn.Linear) and any(name in module_name for name in modules_to_quantize):
                     # Initialize weight to FP4
                     with torch.no_grad():
-                        materialize(child_module)
+                        materialize(module)
                         # Convert to FP4 format
-                        weight_fp4 = _bfloat16_to_float4_e2m1fn_x2(child_module.weight)
+                        weight_fp4 = _bfloat16_to_float4_e2m1fn_x2(module.weight)
 
-                        del child_module.weight
+                        del module.weight
                         # Create a new parameter with FP4 data
                         # Note: PyTorch Linear layers expect float weights, so this is experimental
-                        child_module.weight = torch.nn.Parameter(weight_fp4, requires_grad=False)
+                        module.weight = torch.nn.Parameter(weight_fp4, requires_grad=False)
 
                         # remove bf16 from cache
                         torch.cuda.empty_cache()
 
-                else:
-                    # Recurse into child modules
-                    quantize_to_nvfp4(child_module, f"{name}.{child_name}" if name else child_name)
+                elif len(list(module.children())) < 1:
+                    materialize(module)
 
         quantize_to_nvfp4(model)
 
