@@ -420,6 +420,7 @@ def test_setitem(requires_grad):
     )
 
 
+@requiresCUDA
 def test_double_setitem():
     query_states = torch.zeros((1, 40, 16, 96), dtype=torch.bfloat16, device="cuda:0", requires_grad=False)
     q_nope = torch.ones((1, 40, 16, 64), dtype=torch.bfloat16, device="cuda:0", requires_grad=True)
