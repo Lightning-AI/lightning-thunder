@@ -14,7 +14,7 @@ def main(gh_run_id: str = ""):
     chunk_size = 16
     with open("examples/coverage/all.txt") as f:
         lines = [el for el in f.readlines()]
-        chunks = [lines[i:i + chunk_size] for i in range(0, len(lines), chunk_size)]
+        chunks = [lines[i : i + chunk_size] for i in range(0, len(lines), chunk_size)]
         for i, chunk_lines in enumerate(chunks):
             filename = f"{i:03d}.txt"
             with open(f"examples/coverage/{filename}", "w") as f:
@@ -47,9 +47,7 @@ def main(gh_run_id: str = ""):
         print(f"Processing {filename}")
         print(out)
 
-    out = s.run(
-        f"python coverage/jit_coverage_hf.py --output-dir data --results-file data.json"
-    )
+    out = s.run("python coverage/jit_coverage_hf.py --output-dir data --results-file data.json")
     print(out)
 
     data_json = s.run("cat data.json")
@@ -66,4 +64,3 @@ if __name__ == "__main__":
     # parse command line arguments
     args = sys.argv[1:]
     main(*args)
-

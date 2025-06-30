@@ -140,4 +140,3 @@ if __name__ == "__main__":
 
     if args.results_file:
         aggregate_results(args.output_dir, args.results_file)
-
