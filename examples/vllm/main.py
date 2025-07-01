@@ -1,12 +1,20 @@
 import thunder_plugin
 from vllm import ModelRegistry
 
+# register the new model class
 ModelRegistry.register_model("ThunderModel", thunder_plugin.ThunderForCausalLM)
 
 def main():
-    import thunder_plugin
+    import torch, os
+    import time
+
+    # reproducibility params
+    os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+    torch.use_deterministic_algorithms(True)
+    torch.backends.cudnn.benchmark = False
+
+    # Save config with correct architectures locally
     from transformers import AutoConfig, AutoTokenizer, AutoModelForCausalLM
-    # Save config with correct architectures field
     config = AutoConfig.from_pretrained("unsloth/Llama-3.2-1B")
     config.architectures = ["ThunderModel"]  # Match registry name
     config.auto_map = {
@@ -14,18 +22,12 @@ def main():
         "AutoModelForCausalLM": "thunder_plugin.ThunderForCausalLM"
     }
     config.save_pretrained("my_custom_model_dir")
-    from vllm import ModelRegistry
-    ModelRegistry.register_model("ThunderModel", thunder_plugin.ThunderForCausalLM)  # Match config
-    
-
     AutoTokenizer.from_pretrained("unsloth/Llama-3.2-1B").save_pretrained("my_custom_model_dir")
-
     model = AutoModelForCausalLM.from_pretrained("unsloth/Llama-3.2-1B", config=config)
     model.save_pretrained("my_custom_model_dir")
 
-    from vllm import LLM
-
-    import torch, thunder, gc
+    # start vllm
+    import torch, gc
     from vllm.distributed import init_distributed_environment, initialize_model_parallel
     from vllm.distributed.parallel_state import destroy_model_parallel
     from vllm import LLM, SamplingParams
@@ -36,13 +38,20 @@ def main():
     )
     initialize_model_parallel(1, 1)
 
-    sp = SamplingParams(max_tokens=1024, temperature=0.0)
+    sp = SamplingParams(max_tokens=32, seed=42, temperature=0.0)
     llm = LLM(
         model="my_custom_model_dir",
-        enforce_eager=True
+        enforce_eager=True,
+        max_model_len=256,
+        max_num_batched_tokens=1024,
     )
-    out = llm.generate(["Why is the sky blue?",], sp)
-    print(out[0].outputs[0].text)
+    # warmup
+    out_true = llm.generate(["Why is the sky blue?",], sp)
+    print(out_true[0].outputs[0].text)
+
+    start = time.time()
+    out_true = llm.generate(["Why is the sky blue?",], sp)
+    print(f"vllm with eager took {(time.time() - start):.4f}s")
 
     import gc
 
@@ -61,11 +70,18 @@ def main():
     llm = LLM(
         model="my_custom_model_dir",
         hf_overrides={"architectures": ["ThunderModel"]},
-        enforce_eager=True
+        enforce_eager=True,
+        max_model_len=256,
+        max_num_batched_tokens=256
     )
 
+    # warmup
     out = llm.generate(["Why is the sky blue?",], sp)
     print(out[0].outputs[0].text)
+    start = time.time()
+    out = llm.generate(["Why is the sky blue?",], sp)
+    print(f"vllm with thunder took {(time.time() - start):.4f}s")
+    assert out[0].outputs[0].text == out_true[0].outputs[0].text
 
 if __name__ == "__main__":
     main()
