@@ -3,7 +3,7 @@ from typing import Optional, Union
 import torch
 import thunder
 from vllm.model_executor.models.transformers import (
-    TransformersForCausalLM, 
+    TransformersForCausalLM,
 )
 import torch, thunder
 from thunder.extend          import TemporaryExecutor
@@ -29,7 +29,7 @@ from thunder.core import prims
 _vllm_sym = tmp_exec.register_operator(
     "vllm_unified_attention",
     meta=vllm_unified_attention_meta,
-    fn=vllm_unified_attention,          
+    fn=vllm_unified_attention,
     tags=(prims.OpTags.DONT_DCE,) # needed to avoid DCE of unified_attention executor. TODO: don't rely on this.
 )
 
@@ -52,9 +52,9 @@ class ThunderForCausalLM(TransformersForCausalLM):
         # add needed executors
         from thunder.executors.nvfuserex import nvfuserex
         from thunder.executors.cudnnex import cudnn_ex
-        
+
         self._core = thunder.jit(self.model, executors = [tmp_exec, nvfuserex, cudnn_ex], disable_torch_autograd=True)
-        # if we don't disable the gradients here, the DONT_DCE optag leads to an error 
+        # if we don't disable the gradients here, the DONT_DCE optag leads to an error
 
     def forward(
         self,
@@ -77,7 +77,7 @@ class ThunderForCausalLM(TransformersForCausalLM):
             pad_token_id = self.config.pad_token_id if self.config.pad_token_id is not None else self.config.eos_token_id
 
             padding_needed = max_seq_len - current_seq_len
-            
+
             if padding_needed < 0:
                 raise ValueError(f"Input sequence length ({current_seq_len}) exceeds max_seq_len ({max_seq_len})")
 
@@ -90,11 +90,11 @@ class ThunderForCausalLM(TransformersForCausalLM):
             )
 
             out = self._core(input_to_core, positions_to_core)
-            
+
             return out
 
         else:
             # --- DECODE LOGIC (Length == 1) ---
             return self._core(input_ids, positions)
 
-            
+

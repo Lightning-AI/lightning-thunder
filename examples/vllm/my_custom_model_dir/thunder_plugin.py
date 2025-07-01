@@ -74,7 +74,7 @@ class ThunderForCausalLM(TransformersForCausalLM):
 
         # nothing else changes – forward() in the parent already
         # delegates to self.model, so it now hits the compiled graph.
-    
+
     def forward(
         self,
         input_ids: Optional[torch.Tensor] = None,
