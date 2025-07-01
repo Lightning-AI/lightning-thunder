@@ -96,5 +96,3 @@ class ThunderForCausalLM(TransformersForCausalLM):
         else:
             # --- DECODE LOGIC (Length == 1) ---
             return self._core(input_ids, positions)
-
-
