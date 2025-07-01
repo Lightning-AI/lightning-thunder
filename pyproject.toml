@@ -167,7 +167,6 @@ ignore = [
     "F601",  # https://docs.astral.sh/ruff/rules/multi-value-repeated-key-literal/
     "F822",  # https://docs.astral.sh/ruff/rules/undefined-export/
     "E741",  # https://docs.astral.sh/ruff/rules/ambiguous-variable-name/
-    "F811",  # https://docs.astral.sh/ruff/rules/redefined-while-unused/
 ]
 
 [tool.ruff.lint.per-file-ignores]
