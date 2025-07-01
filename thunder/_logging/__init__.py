@@ -22,6 +22,14 @@ _STR_TO_LOGGING_LEVEL: dict[str, int] = {
 }
 
 
+def _get_library_name() -> str:
+    return __name__.split(".")[0]
+
+
+def _get_library_root_logger() -> logging.Logger:
+    return logging.getLogger(_get_library_name())
+
+
 @functools.cache
 def _get_thunder_logs_value() -> tuple[str] | None:
     thunder_log_configs: str | None = os.environ.get(_THUNDER_LOGS)
@@ -57,19 +65,23 @@ def _setup_logging():
         warnings.warn(msg)
         sys.exit(0)
 
+    default_level = None
     is_logging_active: bool = False
     if thunder_log_configs is not None:
         for maybe_log_level in thunder_log_configs:
             if (logging_level := _STR_TO_LOGGING_LEVEL.get(maybe_log_level.upper())) is not None:
-                logging.basicConfig(level=logging_level)
+                default_level = logging_level
                 is_logging_active = True
             else:
                 if maybe_log_level.startswith("+"):
-                    logging.basicConfig(level=logging.DEBUG)
+                    default_level = logging.DEBUG
+                    is_logging_active = True
                 else:
-                    logging.basicConfig(level=logging.WARNING)
+                    default_level = logging.WARNING
+                    is_logging_active = True
     if not is_logging_active:
-        logging.basicConfig(level=logging.CRITICAL + 100)
+        default_level = logging.CRITICAL + 100
+    _get_library_root_logger().setLevel(default_level)
 
 
 def extract_executor_names_from_thunder_logs() -> set[str] | None:
@@ -107,8 +119,11 @@ class ExecutorLogFilter:
 
 
 def get_logger(name: str) -> logging.Logger:
+    global _THUNDER_LOGGER_SETUP
+
     if not _THUNDER_LOGGER_SETUP:
         _setup_logging()
+        _THUNDER_LOGGER_SETUP = True
     logger = logging.getLogger(name)
 
     stream_handler = logging.StreamHandler()
