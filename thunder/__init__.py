@@ -1092,15 +1092,15 @@ def get_auto_registered_torch_op_names(fn: Callable, /) -> set[str] | None:
 
 
 # TODO (mruberry) Update this
-def _grad_transform(trace):
-    grad_fwd_trace = from_trace(trace)
+def _grad_transform(original_trace):
+    grad_fwd_trace = from_trace(original_trace)
     trace_tok = set_tracectx(grad_fwd_trace)
     all_residuals = []
 
     # Constructs grad fwd and records info
     # TODO: make recursive (or iterative, whatever)
     current_inputs = grad_fwd_trace.args
-    for bsym in trace.bound_symbols:
+    for bsym in original_trace.bound_symbols:
         grad_defined = bsym.sym.grad_defined
         grad_ignored = bsym.sym.grad_ignored
         grad_fwd, grad_bwd = bsym.sym.grad_fwd, bsym.sym.grad_bwd
@@ -1123,7 +1123,7 @@ def _grad_transform(trace):
     # Constructs bwd part of the program
     current_grads = (prims.full(o.shape, 1.0, device=o.device, dtype=o.dtype) for o in fw_result)
 
-    for bsym, residuals in zip(reversed(trace.bound_symbols), reversed(all_residuals)):
+    for bsym, residuals in zip(reversed(original_trace.bound_symbols), reversed(all_residuals)):
         grad_fwd = bsym.sym.grad_fwd
         grad_bwd = bsym.sym.grad_bwd
         grad_defined = bsym.sym.grad_defined
