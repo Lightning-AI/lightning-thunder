@@ -9,7 +9,6 @@ from copy import copy
 from itertools import chain, filterfalse
 import warnings
 from typing import cast
-from collections.abc import Callable
 
 from looseversion import LooseVersion
 import torch

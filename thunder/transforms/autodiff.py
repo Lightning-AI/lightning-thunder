@@ -15,7 +15,6 @@ from thunder.core.transforms import (
     backward_impls,
     ForwardBackwardTraces,
 )
-from thunder.core.transform_common import dce
 import thunder.torch as ltorch
 
 
@@ -386,10 +385,12 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                         if recomp_bsym_rec is not None:
                             modified = True
                             recomp_bsym, recomp_output = recomp_bsym_rec
-                            # To avoid name clashes, we create new output proxies
+                            # To avoid name clashes, we create new output proxies.
+                            # This relies on the fact that all backward operations occur after get_grad,
+                            # which is no longer true after fusion passes.
                             with tracectx(self.new_trace):
                                 for output in recomp_bsym.flat_proxy_outs:
-                                    new = output.replace_name()
+                                    new = output.replace_name("bw_" + output.name)
                                     self.add_to_swap_map(output, new)
                             processed_bsyms.insert(bw_idx, recomp_bsym)
                             for nn in recomp_output:
@@ -503,8 +504,8 @@ def split_into_forward_and_backward(joint_trace: TraceCtx):
     saved_for_backward = {}
     for bsym in backward_part_bsyms:
         saved_for_backward.update((a.name, a) for a in bsym.flat_proxy_args if a.name in forward_proxy_names)
-    saved_for_backward_tensors = [p for p in saved_for_backward.values() if isinstance(p, TensorProxy)]
-    saved_for_backward_other = [p for p in saved_for_backward.values() if not isinstance(p, TensorProxy)]
+    saved_for_backward_tensors = tuple(p for p in saved_for_backward.values() if isinstance(p, TensorProxy))
+    saved_for_backward_other = tuple(p for p in saved_for_backward.values() if not isinstance(p, TensorProxy))
 
     # we build the forward trace
     forward_trace = from_trace(joint_trace)

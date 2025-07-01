@@ -76,7 +76,13 @@ def run_script(file_name, cmd):
 @instantiate(
     dtypes=NOTHING,
     executors=[DynamoThunderExecutor],
-    decorators=(pytest.mark.parametrize("dynamic", (True, False, None), ids=("dynamic", "static", "auto")),),
+    decorators=(
+        pytest.mark.parametrize("dynamic", (True, False, None), ids=("dynamic", "static", "auto")),
+        pytest.mark.skipif(
+            condition=IS_WINDOWS,
+            reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
+        ),
+    ),
 )
 def test_basic(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None):
     x = torch.ones(2, dtype=dtype, device=device, requires_grad=True)
@@ -1609,6 +1615,10 @@ def test_spliter_bwd():
     assert "boolean advanced indexing" in reason[0].exception
 
 
+@pytest.mark.skipif(
+    IS_WINDOWS,
+    reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
+)
 def test_get_proxy_inputs_from_node_symtype_hint():
     def fn(x, idx):
         return torch.select(x, 0, idx)
