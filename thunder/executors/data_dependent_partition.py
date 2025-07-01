@@ -6,7 +6,7 @@ from copy import copy
 import thunder.core.utils as utils
 from thunder.core.compile_data import get_compile_option
 from thunder.core.trace import TraceCtx
-from thunder.core.symbol import BoundSymbol
+from thunder.core.symbol import BoundSymbol, BoundSymbolTag
 from thunder.core.proxies import variableify, Proxy
 from thunder.core.prims import PrimIDs
 
@@ -20,7 +20,15 @@ _DEFAULT_FUSION_TYPE = "consecutive"
 #   producer-consumer relationships.
 # TODO These classes could be refactored to be region-independent in their logic
 class Node:
-    def __init__(self, ID: int, group_bsyms: list[BoundSymbol], group_indices: list[int], start: int, stop: int):
+    def __init__(
+        self,
+        ID: int,
+        group_bsyms: list[BoundSymbol],
+        group_indices: list[int],
+        start: int,
+        stop: int,
+        is_backward: bool,
+    ):
         self.ID = ID
         self.start = start
         self.stop = stop
@@ -28,6 +36,7 @@ class Node:
         self.group_indices = group_indices
         self.parents: utils.OrderedSet[Node] = utils.OrderedSet()
         self.children: utils.OrderedSet[Node] = utils.OrderedSet()
+        self.is_backward = is_backward
 
     def __repr__(self) -> str:
         s = f"node ID {self.ID} : "
@@ -92,7 +101,7 @@ class Graph:
         # We use indices as hash values instead.
         bsym_id_to_node_map: list[int] = []
         for bsym_id, bsym in enumerate(trace.bound_symbols):
-            node = Node(bsym_id, [bsym], [bsym_id], bsym_id, bsym_id)
+            node = Node(bsym_id, [bsym], [bsym_id], bsym_id, bsym_id, BoundSymbolTag.BACKWARD in bsym.tags)
             bsym_id_to_node_map.append(node)
 
             if bsym.sym.id is PrimIDs.RETURN:
@@ -149,7 +158,13 @@ class Graph:
     # merge consumer `b` into producer `a`
     def merge(self, a: Node, b: Node) -> bool:
         ##############################
-        # step0: cyclic check
+        # step0: check forward-backward boundary
+        ##############################
+        if a.is_backward ^ b.is_backward:
+            return False
+
+        ##############################
+        # step1: cyclic check
         ##############################
         max_depth = max(a.stop, b.stop)
 
@@ -171,14 +186,14 @@ class Graph:
                     visit_stack.extend(cur.children)
 
         ##############################
-        # step1: merge the two nodes together
+        # step2: merge the two nodes together
         ##############################
 
         # create a new_node as the merged node with combined bsyms from a and b
 
         min_start = min(a.start, b.start)
         merged_bsyms, merged_indices = Node.merge(a, b)
-        new_node = Node(self.counter, merged_bsyms, merged_indices, min_start, max_depth)
+        new_node = Node(self.counter, merged_bsyms, merged_indices, min_start, max_depth, a.is_backward)
         self.counter = self.counter + 1
 
         # TODO: this part is slow! we might want to refactor this section and do one merge with a group, instead of do rewiring for every single pair
@@ -281,7 +296,7 @@ def horizontal_merge(graph, merge_func: Callable):
         update_candidate(cur)
         index = 0
         while index < len(visit_stack):
-            if merge_func(cur, visit_stack[index]):
+            if merge_func(cur, visit_stack[index]) and not (cur.is_backward ^ visit_stack[index].is_backward):
                 # NOTE: we are not mutating the graph
                 update_candidate(visit_stack.pop(index))
             else:
@@ -308,7 +323,7 @@ def consecutive_fusion(trace: TraceCtx, merge_func: Callable[[Node, Node], bool]
     """
     fusions = [[]]
     for bsym in trace.bound_symbols:
-        node = Node(0, [bsym], [0], 0, 0)
+        node = Node(0, [bsym], [0], 0, 0, BoundSymbolTag.BACKWARD in bsym.tags)
         if merge_func(node, node):
             fusions[-1].append(bsym)
         else:

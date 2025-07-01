@@ -195,16 +195,6 @@ class TransformForTensorParallel(Transform):
     @abstractmethod
     def distparallel_type(self) -> DistParallelType: ...
 
-    def transform_module(self, thunder_module):
-        from thunder.core import utils
-        from thunder.core.compile_data import get_compile_data
-        from thunder.common import CompileData
-
-        compile_data = get_compile_data()
-        utils.check_type(compile_data, CompileData)
-        if getattr(compile_data, "use_fsdp", False) or getattr(compile_data.fn, "use_fsdp", False):
-            raise NotImplementedError("Currently thunder does not support the combination of fsdp and tensor parallel")
-
     def transform_traces_pre_prologue(
         self,
         prologue_trace: TraceCtx,
