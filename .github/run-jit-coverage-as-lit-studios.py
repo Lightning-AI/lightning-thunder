@@ -2,6 +2,7 @@ import sys
 from datetime import datetime
 import glob
 import os
+import json
 
 from lightning_sdk import Studio, Machine
 
@@ -48,10 +49,12 @@ def main(gh_run_id: str = ""):
         print(out)
 
     print("Aggregating results...")
-    out = s.run("python coverage/jit_coverage_hf.py --output-dir data --results-file data.json")
-    print(out)
+    s.run("python coverage/jit_coverage_hf.py --output-dir data --results-file data.json")
 
     data_json = s.run("cat data.json")
+    data = json.loads(data_json)
+    for el in data:
+        print(el)
 
     with open("jit_coverage_report.json", "w") as f:
         f.write(data_json)
