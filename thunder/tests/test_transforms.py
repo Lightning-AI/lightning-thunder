@@ -883,3 +883,22 @@ def test_cache_symbolic_values_grad_unsqueeze():
     expected.sum().backward()
     assert_close(actual, expected)
     assert_close(a.grad, a_ref.grad)
+
+
+def test_linear_merging():
+    def forward(x, w1, w2):
+        return torch.nn.functional.linear(x, w1), torch.nn.functional.linear(x, w2)
+
+    x = torch.randn(2, 3, 5)
+    w1 = torch.randn(7, 5)
+    w2 = torch.randn(11, 5)
+
+    from thunder.transforms.linear_merging import LinearMerging
+
+    jforward = thunder.jit(forward, transforms=[LinearMerging()])
+    actual = jforward(x, w1, w2)
+    expected = forward(x, w1, w2)
+    torch.testing.assert_close(actual, expected)
+
+    exec_trace = thunder.last_traces(jforward)[0]
+    print(exec_trace)
