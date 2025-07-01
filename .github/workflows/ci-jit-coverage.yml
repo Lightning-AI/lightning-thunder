@@ -61,7 +61,7 @@ jobs:
           echo "EOF" >> $GITHUB_ENV
 
       - uses: act10ns/slack@v2
-        if: always() && github.event_name != 'pull_request' && steps.load-report.conclusion == 'success'
+        if: always() && github.event_name != 'pull_request'
         with:
           webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
           payload: |
