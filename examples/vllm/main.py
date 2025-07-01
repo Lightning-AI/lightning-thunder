@@ -1,8 +1,8 @@
-import thunder_plugin
+import thunder_transformers
 from vllm import ModelRegistry
 
 # register the new model class
-ModelRegistry.register_model("ThunderModel", thunder_plugin.ThunderForCausalLM)
+ModelRegistry.register_model("ThunderModel", thunder_transformers.ThunderForCausalLM)
 
 def main():
     import torch, os
@@ -18,8 +18,8 @@ def main():
     config = AutoConfig.from_pretrained("unsloth/Llama-3.2-1B")
     config.architectures = ["ThunderModel"]  # Match registry name
     config.auto_map = {
-        "AutoModel": "thunder_plugin.ThunderForCausalLM",
-        "AutoModelForCausalLM": "thunder_plugin.ThunderForCausalLM"
+        "AutoModel": "thunder_transformers.ThunderForCausalLM",
+        "AutoModelForCausalLM": "thunder_transformers.ThunderForCausalLM"
     }
     config.save_pretrained("my_custom_model_dir")
     AutoTokenizer.from_pretrained("unsloth/Llama-3.2-1B").save_pretrained("my_custom_model_dir")
