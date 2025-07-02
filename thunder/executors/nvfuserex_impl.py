@@ -702,6 +702,35 @@ def create_fusion_definition_wrapper(
     return fdw
 
 
+def _merge_linears(bsyms: list[BoundSymbol]) -> list[BoundSymbol]:
+    candidates = {}
+    for bsym in bsyms:
+        if bsym.sym.id == prims.PrimIDs.LINEAR and bsym.args[2] is None:
+            candidates.setdefault(bsym.args[0].name, []).append(bsym.args[1])
+    print(candidates)
+
+    new_bsyms = []
+    for bsym in bsyms:
+        new_bsym = bsym.from_bsym()
+        new_bsyms.append(new_bsym)
+    return new_bsyms
+
+
+def merge_linears(trace: TraceCtx) -> TraceCtx:
+    new_trace = from_trace(trace)
+    new_trace.bound_symbols = []
+
+    for bsym in trace.bound_symbols:
+        if bsym.sym.is_fusion:
+            new_subsymbols = _merge_linears(bsym.subsymbols)
+            new_bsym = bsym.from_bsym(subsymbols=new_subsymbols)
+            new_trace.bound_symbols.append(new_bsym)
+        else:
+            new_trace.bound_symbols.append(bsym)
+    new_trace.set_provenance(TraceProvenance("Merge linears"))
+    return new_trace
+
+
 class nvFuserExecutor(FusionExecutor):
     # Max number of times that this nvFuserExecutor instance can fuse.
     _optimization_fuel: int | FUEL_LEVEL
@@ -1044,6 +1073,7 @@ instantiated) this heuristic actually leads to worse code.
         if self._use_rematerialization:
             fusedtrace = rematerialize(fusedtrace)
 
+        fusedtrace = merge_linears(fusedtrace)
         fusedtrace = remove_redundant_casts(fusedtrace)
         fusedtrace = self.cse(fusedtrace)
         fusedtrace = dce(fusedtrace)

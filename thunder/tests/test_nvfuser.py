@@ -1250,7 +1250,6 @@ def test_linear_merging(executor, device: str, dtype: dtypes.dtype):
     def forward(x, w1, w2):
         return torch.nn.functional.linear(x, w1), torch.nn.functional.linear(x, w2)
 
-    print(dtype)
     x = torch.randn(2, 3, 5, device=device)
     w1 = torch.randn(7, 5, device=device)
     w2 = torch.randn(11, 5, device=device)
