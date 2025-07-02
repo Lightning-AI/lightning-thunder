@@ -469,7 +469,7 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
         if has_einops:
             import einops
 
-            # According to https://github.com/Lightning-AI/lightning-thunder/blob/main/thunder/tests/test_einops.py
+            # According to https://github.com/Lightning-AI/lightning-thunder/blob/4f92190d/thunder/tests/test_einops.py
             einops_ops = (einops.reduce, einops.rearrange, einops.repeat, einops.einsum)
             if target in einops_ops:
                 return True, None
