@@ -71,8 +71,8 @@ jobs:
             ref: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           attachments:
             - blocks:
-                - type: section
-                  fields:
-                    - type: plain_text
-                      text: ${{ env.DETAIL }}
+              - type: section
+                fields:
+                  - type: plain_text
+                    text: ${{ env.DETAIL }}
 
