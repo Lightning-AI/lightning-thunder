@@ -1239,3 +1239,26 @@ def test_slice_dynamic_extent(executor, device: str, dtype: dtypes.dtype):
 
     outside_fusion_syms = ["unpack_trivial", "python_return"]
     assert {el.sym.name for el in fw_trace.bound_symbols if not el.sym.is_fusion} == set(outside_fusion_syms)
+
+
+@instantiate(
+    executors=(nvFuserExecutor,),
+    devicetypes=(devices.DeviceType.CUDA,),
+    dtypes=NOTHING,
+)
+def test_linear_merging(executor, device: str, dtype: dtypes.dtype):
+    def forward(x, w1, w2):
+        return torch.nn.functional.linear(x, w1), torch.nn.functional.linear(x, w2)
+
+    print(dtype)
+    x = torch.randn(2, 3, 5, device=device)
+    w1 = torch.randn(7, 5, device=device)
+    w2 = torch.randn(11, 5, device=device)
+
+    jforward = thunder.jit(forward, executors_list=executor.executors_list(), nv_enable_linear=True)
+    actual = jforward(x, w1, w2)
+    expected = forward(x, w1, w2)
+    torch.testing.assert_close(actual, expected)
+
+    exec_trace = thunder.last_traces(jforward)[-1]
+    print(exec_trace)
