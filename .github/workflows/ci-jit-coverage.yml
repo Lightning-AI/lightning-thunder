@@ -8,7 +8,6 @@ on:
       - ".github/workflows/ci-jit-coverage.yml"
       - ".github/run-jit-coverage-as-lit-studios.py"
       - ".github/load-jit-coverage-report.py"
-      - ".github/load-jit-coverage-report-details.py"
       - "examples/coverage/*"
   workflow_dispatch: {}
   schedule:
@@ -55,10 +54,6 @@ jobs:
           echo "REPORT<<EOF" >> $GITHUB_ENV
           echo "$report" >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
-          reportd=$(python .github/load-jit-coverage-report-details.py)
-          echo "REPORTD<<EOF" >> $GITHUB_ENV
-          echo "$reportd" >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
 
       - uses: act10ns/slack@v2
         # if: always() && github.event_name != 'pull_request'
@@ -69,11 +64,4 @@ jobs:
             *thunder.jit coverage CI* - [${{ job.status }}]
             ${{ env.REPORT }}
             ref: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-            $ {{ env.DETAIL }}
-          # attachments:
-          #   - blocks:
-          #     - type: section
-          #       fields:
-          #         - type: plain_text
-          #           text: ${{ env.DETAIL }}
 
