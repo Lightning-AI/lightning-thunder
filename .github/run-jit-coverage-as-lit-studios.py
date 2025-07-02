@@ -47,7 +47,7 @@ def main(gh_run_id: str = ""):
         print(f"Processed {n_processed}/{n_models}")
         print(f"Processing:")
         for model in models:
-            print(f"  model")
+            print(f"  {model}")
         out = s.run(
             f"HF_TOKEN={hf_token} python coverage/jit_coverage_hf.py --models-file coverage/{filename} --output-dir data"
         )
