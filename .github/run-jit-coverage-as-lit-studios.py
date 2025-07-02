@@ -45,9 +45,9 @@ def main(gh_run_id: str = ""):
     for filename, models in batches:
         n_processed += len(models)
         print(f"Processed {n_processed}/{n_models}")
-        print(f"Processing:")
+        print("Processing:")
         for model in models:
-            print(f"  model")
+            print("  model")
         out = s.run(
             f"HF_TOKEN={hf_token} python coverage/jit_coverage_hf.py --models-file coverage/{filename} --output-dir data"
         )
