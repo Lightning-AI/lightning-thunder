@@ -1409,7 +1409,7 @@ register_supported(PrimIDs.PAD, pad, _pad_check)
 def _reshape_check(a: TensorProxy, shape: list[int]) -> bool:
     if is_supported_tensor(a):
         return True
-    logger.warn("%s is not supported")
+    logger.warn("%s is not supported", a)
     return False
 
 
