@@ -9,8 +9,6 @@ import dis
 import time
 import warnings
 
-from looseversion import LooseVersion
-
 from thunder.core.module import ThunderModule
 from thunder.core.interpreter import InterpreterLogItem
 from thunder.core.options import (
@@ -58,8 +56,7 @@ from thunder.core.compile_data import compile_data_and_stats, get_compile_data
 from thunder.core.langctxs import LanguageContext
 import thunder.core.langctxs as langctxs
 from thunder.core.symbol import has_tags
-from thunder.core.baseutils import run_once, check
-from thunder.core.codeutils import Positions
+from thunder.core.baseutils import run_once
 from thunder.core.proxies import (
     Proxy,
     TensorProxy,
@@ -73,7 +70,7 @@ from thunder.core.proxies import (
     DictProxy,
     AnyProxy,
 )
-from thunder.core.interpreter import print_interpreter_log, print_to_log
+from thunder.core.interpreter import print_interpreter_log
 from thunder.core.jit_ext import thunder_general_jit
 from thunder.executors.torch_autograd import split_forward_backward, connect_to_autograd
 
@@ -81,13 +78,15 @@ from thunder.executors.torch_autograd import split_forward_backward, connect_to_
 import torch as pytorch
 
 import thunder.clang as clang
-from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
+from thunder.core.pytree import tree_flatten
 import thunder.transforms as transforms
 
 # Imports executors (to populate default executors and make them accessible)
 import thunder.executors.pythonex
 import thunder.executors.torchex
 import thunder.executors.nvfuserex
+
+import thunder.torch as torch
 
 pythonex = extend.get_executor("python")
 assert pythonex is not None
@@ -98,7 +97,26 @@ _PROJECT_ROOT = os.path.dirname(_PACKAGE_ROOT)
 
 # TODO RC1 Review exposed names
 __all__ = [
+    # module aliases
+    "clang",
+    "dtypes",
+    "devices",
     "transforms",
+    # function aliases
+    "get_compile_data",
+    "trace",
+    # class aliases
+    "Proxy",
+    "TensorProxy",
+    "NumberProxy",
+    "StringProxy",
+    "IntegerProxy",
+    "FloatProxy",
+    "ComplexProxy",
+    "TupleProxy",
+    "ListProxy",
+    "DictProxy",
+    "AnyProxy",
     # dtype aliases
     "bool8",
     "uint8",
@@ -119,7 +137,6 @@ __all__ = [
     "complex128",
     # language aliases
     "torch",
-    "numpy",
     "prims",
     # interface functions
     # TODO Extend this
@@ -574,7 +591,6 @@ def jit(
                     # by split_forward_backward
 
             if backward_trc is None:
-                from thunder.executors.passes import transform_for_execution as transform_for_execution_pass
                 from thunder.executors.passes import _transform_for_operator_executor_execution
                 from thunder.distributed.utils import maybe_sort_waits
 
