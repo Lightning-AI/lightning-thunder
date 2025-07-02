@@ -703,14 +703,42 @@ def create_fusion_definition_wrapper(
 
 
 def _merge_linears(bsyms: list[BoundSymbol]) -> list[BoundSymbol]:
+    has_definition = set()
+    for bsym in bsyms:
+        has_definition.add(bsym.output.name)
+
     candidates = {}
     for bsym in bsyms:
-        if bsym.sym.id == prims.PrimIDs.LINEAR and bsym.args[2] is None:
-            candidates.setdefault(bsym.args[0].name, []).append(bsym.args[1])
+        if bsym.sym.id != prims.PrimIDs.LINEAR:
+            continue
+
+        if bsym.args[1].name in has_definition:
+            continue
+
+        if bsym.args[2] is not None:
+            continue
+
+        candidates.setdefault(bsym.args[0].name, []).append(bsym)
+
+    candidates = {k: v for k, v in candidates.items() if len(v) > 1}
     print(candidates)
 
+    linears_to_replace = set()
+    for linears in candidates.values():
+        for linear in linears:
+            linears_to_replace.add(linear.output.name)
+
+    new_linears = {}
+
+    swap_map = {}
     new_bsyms = []
     for bsym in bsyms:
+        if bsym.output.name in linears_to_replace:
+            if bsym.args[0].name not in new_linears:
+                # create new linear
+                # add it to new_linears
+                bsym.from_bsym()
+            # TODO: slice from the new linear
         new_bsym = bsym.from_bsym()
         new_bsyms.append(new_bsym)
     return new_bsyms
