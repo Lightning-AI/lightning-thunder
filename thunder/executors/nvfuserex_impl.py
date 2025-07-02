@@ -185,7 +185,10 @@ _low_precision_floats = (dtypes.float16, dtypes.float16_, dtypes.bfloat16, dtype
 
 def device_supports_fp8() -> bool:
     cuda_major, _ = torch.cuda.get_device_capability()
-    return cuda_major > 8
+    if cuda_major <= 8:
+        logger.warn("FP8 requires CUDA >= 8 but found %d", cuda_major)
+        return False
+    return True
 
 
 def is_supported_dtype(dtype: type | dtypes.dtype, *, allow_low_precision_floats: bool = True) -> bool:
@@ -205,6 +208,11 @@ def is_supported_tensor(a: TensorProxy, *, allow_low_precision_floats: bool = Tr
 
     if not allow_low_precision_floats:
         if a.dtype in _low_precision_floats:
+            logger.warn(
+                "Input has low-precision dtype of %s but allow_low_precision_floats=%s",
+                a.dtype,
+                allow_low_precision_floats,
+            )
             return False
 
     rank_supported = a.ndim <= 8
