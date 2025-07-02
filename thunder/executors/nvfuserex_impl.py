@@ -1086,7 +1086,7 @@ def register_supported(sym_or_id: Hashable, translator: Callable, checker: Calla
 
 def _convert_element_type_check(a: TensorProxy | Number, dtype: type | dtypes.dtype) -> bool:
     if not is_supported_tensor_or_number(a):
-        logger.warn("%s is not supported tensor nor number", a)
+        logger.warn("%s is not supported", a)
         return False
     if not is_supported_dtype(dtype):
         logger.warn("%s is not supported", dtype)
