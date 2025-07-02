@@ -136,7 +136,7 @@ def get_logger(name: str) -> logging.Logger:
 
     stream_handler = logging.StreamHandler()
     formatter = logging.Formatter(
-        fmt="%(asctime)s - %(levelname)s - %(name)s:%(lineno)d - %(message)s",
+        fmt="%(asctime)s - %(levelname)s - %(name)s:%(lineno)d - %(funcName)s - %(message)s",
         datefmt="%y-%m-%d %H:%M:%S",
     )
     stream_handler.setFormatter(fmt=formatter)
