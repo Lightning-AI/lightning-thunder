@@ -64,14 +64,15 @@ jobs:
         # if: always() && github.event_name != 'pull_request'
         with:
           webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
-          payload: |
-            {
-              "text": "*thunder.jit coverage CI* - [${{ job.status }}]\n${{ env.REPORT }}",
-              "attachments": [
-                {
-                  "color": "${{ job.status == 'success' && '#36a64f' || '#ff0000' }}",
-                  "text": "${{ env.REPORTD }}",
-                  "footer": "ref: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-                }
-              ]
-            }
+          status: ${{ job.status }}
+          message: |
+            *thunder.jit coverage CI* - [${{ job.status }}]
+            ${{ env.REPORT }}
+            ref: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          attachments:
+            - blocks:
+                - type: section
+                  fields:
+                    - type: plain_text
+                      text: ${{ env.DETAIL }}
+
