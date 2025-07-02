@@ -22,6 +22,12 @@ _STR_TO_LOGGING_LEVEL: dict[str, int] = {
 }
 
 
+# NOTE: `FutureWarning` is not for experimental warning, having dedicated one here.
+# ref: https://docs.python.org/3/library/warnings.html#warning-categories
+class ExperimentalWarning(Warning):
+    pass
+
+
 def _get_library_name() -> str:
     return __name__.split(".")[0]
 
@@ -81,6 +87,8 @@ def _setup_logging():
                     is_logging_active = True
     if not is_logging_active:
         default_level = logging.CRITICAL + 100
+    else:
+        warnings.warn("`THUNDER_LOGS` is experimental and subject to changes", ExperimentalWarning)
     _get_library_root_logger().setLevel(default_level)
 
 
