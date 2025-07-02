@@ -7,7 +7,6 @@ import torch
 if not torch.distributed.is_available():
     pytest.skip(allow_module_level=True)
 
-from thunder.dynamo import thunderfx
 import thunder
 
 from thunder.tests.distributed.helper import DistributedParallelTestCase
