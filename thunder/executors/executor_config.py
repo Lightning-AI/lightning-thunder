@@ -41,7 +41,7 @@ class ExecutorConfig:
 
     def _key_from_op_and_inputs(self, *args, **kwargs) -> OpInputMetadata:
         flat_args, _spec = tree_flatten((args, kwargs))
-        shapes, devices, dtypes, dtensor_specs, constants = [[] for _ in range(5)]
+        shapes, devices, dtypes, dtensor_specs, constants = ([] for _ in range(5))
         for t in flat_args:
             if isinstance(t, (TensorProxy, FutureTensorProxy, DTensorProxy)):
                 shapes.append(t.shape)
