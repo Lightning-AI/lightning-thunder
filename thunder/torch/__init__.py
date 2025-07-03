@@ -1500,6 +1500,13 @@ def unsqueeze(a: TensorLike, /, dim: int) -> TensorLike:
 def view(a: TensorLike, /, *shape) -> TensorLike:
     shape = utils.extract_shape_from_varargs(shape)
     if len(shape) == 1 and isinstance(shape[0], torch.dtype):
+        dst_dtype = to_dtype(shape[0])
+        src_dtype = to_dtype(a.dtype)
+        utils.check(
+            dst_dtype.bytes == src_dtype.bytes,
+            lambda: f"`a.view({shape[0]})` is not supported as a's itemsize is {src_dtype.bytes} but target dtype itemsize is {dst_dtype.bytes}",
+            exception_type=NotImplementedError,
+        )
         return to(a, dtype=shape[0])
     return reshape(a, shape)
 
