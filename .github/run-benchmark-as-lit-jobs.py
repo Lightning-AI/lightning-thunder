@@ -22,7 +22,7 @@ def main(gh_run_id: str = ""):
     s.start()
     print("Installing Thunder and dependencies...")
     s.run(
-        f"pip install {pkg_path} -U transformers nvidia-cudnn-frontend 'numpy<2.0' 'nvfuser_cu128_torch27==0.2.27.dev20250615'"
+        f"pip install {pkg_path} -U transformers==0.52.4 nvidia-cudnn-frontend 'numpy<2.0' 'nvfuser_cu128_torch27==0.2.27.dev20250615'"
     )
 
     print("Running HF benchmark script...")
