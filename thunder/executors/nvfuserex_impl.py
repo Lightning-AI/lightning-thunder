@@ -3358,7 +3358,6 @@ def _scaled_mm_impl(
 
 ex.register_supported(
     ltorch._scaled_mm,
-    _scaled_mm_impl,
     checker=_scaled_mm_check,
     execution_transform=_scaled_mm_impl,
 )
