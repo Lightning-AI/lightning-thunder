@@ -599,9 +599,9 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
       - Permutations are applied to match PyTorch/NumPy semantics
       - Negative indices are wrapped as in PyTorch/NumPy
     """
-    assert isinstance(key, Sequence), (
-        "advanced indexing needs a sequence of keys (that are either slice(None) or Sequence or Tensor)"
-    )
+    assert isinstance(
+        key, Sequence
+    ), "advanced indexing needs a sequence of keys (that are either slice(None) or Sequence or Tensor)"
 
     def _to_tensorproxies(x: Sequence, device: devices.DeviceType):
         if not isinstance(x, list):
@@ -658,9 +658,9 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
             idx_input_shapes.append(input_shape[i])
             idx_numel *= input_shape[i]
         else:
-            assert k == slice(None), (
-                "advanced part can only have skipped dims ('slice(None)' aka ':') and sequcnes / tensors"
-            )
+            assert k == slice(
+                None
+            ), "advanced part can only have skipped dims ('slice(None)' aka ':') and sequcnes / tensors"
             non_idx_dims.append(i)
             non_idx_shapes.append(input_shape[i])
 
@@ -2043,32 +2043,14 @@ def argsort(a: TensorProxy, /, dim: None | int = None, descending: bool = False,
 
     return prims.argsort(a, dim, descending, stable)
 
-@clangop()
-def _grouped_mm(a: TensorLike, b: TensorLike) -> TensorLike:
-    """Thunder support for torch._grouped_mm, accepts 2D or 3D tensors."""
-    return prims.grouped_mm(a, b)
 
-from typing import Tuple, Optional
 @clangop()
-def _scaled_mm(
-    self: TensorLike,
-    mat2: TensorLike,
-    scale_a: TensorLike,
-    scale_b: TensorLike,
-    bias: TensorLike = None,
-    scale_result: TensorLike = None,
-    out_dtype=None,
-    use_fast_accum: bool = False,
+def _grouped_mm(
+    a: TensorProxy,
+    b: TensorProxy,
+    offsets: TensorProxy = None,  # Unused in meta, but type-checked
+    bias: TensorProxy = None,
+    dtype=None,
 ) -> TensorProxy:
-    """Thunder support for torch._scaled_mm, accepts 2D or 3D tensors and scaling factors."""
-    return prims.scaled_mm(
-        self,
-        mat2,
-        scale_a,
-        scale_b,
-        bias=bias,
-        scale_result=scale_result,
-        out_dtype=out_dtype,
-        use_fast_accum=use_fast_accum,
-    )
-
+    """Thunder support for torch._grouped_mm, accepts 2D or 3D tensors."""
+    return prims.grouped_mm(a, b, offsets, bias, dtype)

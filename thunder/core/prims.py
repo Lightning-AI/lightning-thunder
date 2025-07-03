@@ -271,7 +271,6 @@ class PrimIDs(Enum):
     # Linear algebra prims (Mostly experimental)
     MATMUL = auto()
     _GROUPED_MM = auto()  # Used for grouped matmuls
-    _SCALED_MM = auto()  # Used for scaled matmuls
     # NN prims (Experimental!)
     CONVOLUTION = auto()
     EMBEDDING = auto()
@@ -3768,10 +3767,8 @@ sort = make_prim(PrimIDs.SORT, "sort", meta=sort_meta)
 def _grouped_mm_meta(
     a: TensorProxy,
     b: TensorProxy,
-    /,
-    *,
-    offs: TensorProxy = None,
-    bias: TensorProxy = None,
+    offs: None | TensorProxy = None,  
+    bias: None | TensorProxy = None,
     dtype=None
 ) -> TensorProxy:
     """Meta function for _grouped_mm primitive.
@@ -3803,9 +3800,9 @@ def _grouped_mm_meta(
     utils.check(b.ndim in (2, 3), lambda: f"Expected b to have 2 or 3 dimensions, got {b.ndim}")
 
     # 2D case: regular matmul
-    if a.ndim == 2 and b.ndim == 2:
-        utils.check(a.shape[1] == b.shape[0], lambda: f"Inner dimension mismatch: {a.shape[1]} vs {b.shape[0]}")
-        out_shape = (a.shape[0], b.shape[1])
+    if a.ndim == 2 and b.ndim == 3:
+        utils.check(a.shape[1] == b.shape[1], lambda: f"Inner dimension mismatch: {a.shape[2]} vs {b.shape[1]}")
+        out_shape = (a.shape[0], b.shape[2])
     # 3D case: grouped matmul
     elif a.ndim == 3 and b.ndim == 3:
         utils.check(a.shape[0] == b.shape[0], lambda: f"Group count mismatch: {a.shape[0]} vs {b.shape[0]}")
@@ -3823,84 +3820,10 @@ def _grouped_mm_meta(
     return TensorProxy(like=a, shape=out_shape, dtype=dtype if dtype is not None else a.dtype)
 
 _grouped_mm = make_prim(
-    PrimIDs._GROUPED_MM,  # Use a unique value if not present
+    PrimIDs._GROUPED_MM,  
     "_grouped_mm",
     meta=_grouped_mm_meta,
-    tags=(OpTags.MATMUL_OP,),
 )
-
-from typing import Tuple, Optional
-def _scaled_mm_meta(
-    self: TensorProxy,
-    mat2: TensorProxy,
-    scale_a: TensorProxy,
-    scale_b: TensorProxy,
-    bias: TensorProxy = None,
-    scale_result: TensorProxy = None,
-    out_dtype=None,
-    use_fast_accum: bool = False,
-) -> TensorProxy:
-    """Meta function for _scaled_mm primitive.
-
-    Performs a (possibly scaled) matrix multiplication:
-      - (m, k) x (k, n) -> (m, n)
-      - (g, m, k) x (g, k, n) -> (g, m, n) for batched/grouped inputs
-
-    Args:
-        self: Input tensor of shape (groups, m, k) or (m, k)
-        mat2: Input tensor of shape (groups, k, n) or (k, n)
-        scale_a: TensorProxy, scaling factor for self (unused in meta, but type-checked)
-        scale_b: TensorProxy, scaling factor for mat2 (unused in meta, but type-checked)
-        bias: Optional TensorProxy, bias tensor (unused in meta, but type-checked)
-        scale_result: Optional TensorProxy, scaling factor for result (unused in meta, but type-checked)
-        out_dtype: Optional dtype for output (unused in meta, but type-checked)
-        use_fast_accum: Optional bool, whether to use fast accumulation (unused in meta)
-
-    Returns:
-        TensorProxy with shape (groups, m, n) or (m, n)
-    """
-    # Validate types
-    utils.check_type(self, TensorProxy)
-    utils.check_type(mat2, TensorProxy)
-    utils.check_type(scale_a, TensorProxy)
-    utils.check_type(scale_b, TensorProxy)
-    if bias is not None:
-        utils.check_type(bias, TensorProxy)
-    if scale_result is not None:
-        utils.check_type(scale_result, TensorProxy)
-
-    # Accept 2D or 3D tensors
-    utils.check(self.ndim in (2, 3), lambda: f"Expected self to have 2 or 3 dimensions, got {self.ndim}")
-    utils.check(mat2.ndim in (2, 3), lambda: f"Expected mat2 to have 2 or 3 dimensions, got {mat2.ndim}")
-
-    # 2D case: regular matmul
-    if self.ndim == 2 and mat2.ndim == 2:
-        utils.check(self.shape[1] == mat2.shape[0], lambda: f"Inner dimension mismatch: {self.shape[1]} vs {mat2.shape[0]}")
-        out_shape = (self.shape[0], mat2.shape[1])
-    # 3D case: batched/grouped matmul
-    elif self.ndim == 3 and mat2.ndim == 3:
-        utils.check(self.shape[0] == mat2.shape[0], lambda: f"Batch/group count mismatch: {self.shape[0]} vs {mat2.shape[0]}")
-        utils.check(self.shape[2] == mat2.shape[1], lambda: f"Inner dimension mismatch: {self.shape[2]} vs {mat2.shape[1]}")
-        out_shape = (self.shape[0], self.shape[1], mat2.shape[2])
-    else:
-        raise AssertionError(
-            f"_scaled_mm expects both inputs to be 2D or both to be 3D, got shapes {self.shape} and {mat2.shape}"
-        )
-
-    # Validate dtype and device
-    utils.check_same_dtype(self, mat2)
-    utils.check_same_device(self, mat2)
-
-    return TensorProxy(like=self, shape=out_shape, dtype=dtypes.to_dtype(out_dtype) if out_dtype is not None else self.dtype)
-
-_scaled_mm = make_prim(
-    PrimIDs._SCALED_MM,  # Use a unique value if not present
-    "_scaled_mm",
-    meta=_scaled_mm_meta,
-    tags=(OpTags.MATMUL_OP,),
-)
-
-
 
 def transpose_meta(a: TensorProxy, /, permutation: tuple[int, ...]) -> TensorProxy:
     utils.check_type(a, TensorProxy)
