@@ -6571,6 +6571,52 @@ def autocast_exit(*args):
     get_compile_data().autocast_stack.pop()
 
 
+@torchsymbol(torch._scaled_mm, is_method=False)
+def _scaled_mm(
+    a: TensorLike,
+    b: TensorLike,
+    scale_a: TensorLike,
+    scale_b: TensorLike,
+    bias: TensorLike | None = None,
+    scale_result: TensorLike | None = None,
+    out_dtype: dtypeLike = None,
+    use_fast_accum: bool = False,
+) -> TensorLike:
+    # NOTE: Currently this only supports fp8 a & b and per-tensor scales.
+    # TODO: Devise a way to make sure `a` is row-major and `b` is column-major.
+    args = [a, b, scale_a, scale_b]
+    if bias is not None:
+        args.append(bias)
+    utils.check_same_device(args)
+    utils.check(
+        (
+            (a.ndim == 2 and b.ndim == 2)
+            and (a.shape[1] == b.shape[0])
+            and (a.shape[1] % 16 == 0 and b.shape[0] % 16 == 0 and b.shape[1] % 16 == 0)
+            and (to_dtype(a.dtype).bytes == 1 and to_dtype(b.dtype).bytes == 1)
+            and not (a.dtype == dtypes.float8_e5m2 and b.dtype == dtypes.float8_e5m2)
+            and to_device(a.device).type == "cuda"
+            and to_device(b.device).type == "cuda"
+        ),
+        lambda: f"data matrices of {a=} and {b=} do not satisfy the condition.",
+    )
+    utils.check(
+        (
+            (scale_a.numel() == 1 and scale_b.numel() == 1)
+            and (scale_a.dtype == dtypes.float32 and scale_b.dtype == dtypes.float32)
+        ),
+        lambda: f"Only tensor-wise scaling is supported but {scaled_a.shape = } and {scaled_b.shape = }",
+        exception_type=NotImplementedError,
+    )
+    result_dtype = a.dtype if out_dtype is None else to_dtype(out_dtype)
+    return TensorProxy(
+        like=a,
+        shape=(a.shape[0], b.shape[1]),
+        device=a.device,
+        dtype=result_dtype,
+    )
+
+
 #
 # The automatically registered torch operators
 #
