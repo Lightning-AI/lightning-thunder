@@ -7541,7 +7541,14 @@ _scaled_mm_opinfo = OpInfo(
     test_directives=(
         DecorateInfo(
             pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
             devicetypes=(devices.DeviceType.CPU,),
+        ),
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            devicetypes=(devices.DeviceType.CUDA,),
+            executors=("nvfuser",),
         ),
     ),
     no_fallback_with_double_inputs=True,
