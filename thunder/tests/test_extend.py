@@ -123,6 +123,7 @@ def test_extend_core():
 def test_get_all_executors_includes_all_native_executors():
     executors = get_all_executors()
     actual = {e.name for e in executors}
+    # apex and transformer_engine register the executor even if the external library they rely on is not available.
     expected = {
         "apex",
         "fa3",
@@ -141,6 +142,8 @@ def test_get_all_executors_includes_all_native_executors():
         expected.update({"nvfuser"})
         expected.update({"cudnn"})
         expected.update({"cudnn_layernorm"})
+    if package_available("transformer_engine"):
+        expected.update({"transformer_engine_v2"})
     assert actual == expected
 
 
