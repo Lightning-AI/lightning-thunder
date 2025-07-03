@@ -1492,9 +1492,19 @@ def unsqueeze(a: TensorLike, /, dim: int) -> TensorLike:
 
 # TODO Review view functionalization
 # TODO Add type annotations
+# TODO(crcrpar): see [Return value of view creation ops]
 @torchsymbol(torch.Tensor.view, is_method=True)
 def view(a: TensorLike, /, *shape) -> TensorLike:
     shape = utils.extract_shape_from_varargs(shape)
+    if len(shape) == 1 and isinstance(shape[0], torch.dtype):
+        dst_dtype = to_dtype(shape[0])
+        src_dtype = to_dtype(a.dtype)
+        utils.check(
+            dst_dtype.bytes == src_dtype.bytes,
+            lambda: f"`a.view({shape[0]})` is not supported as a's itemsize is {src_dtype.bytes} but target dtype itemsize is {dst_dtype.bytes}",
+            exception_type=NotImplementedError,
+        )
+        return to(a, dtype=shape[0])
     return reshape(a, shape)
 
 
@@ -6754,6 +6764,11 @@ _syms_that_may_return_views: set[Symbol] = {
     _torch_to_thunder_function_map[torch.Tensor.reshape_as],
 }
 
+# TODO(crcrpar): [Return value of view creation ops]
+# Review what's more appropriate return value from the ops below.
+# Currently they return a new tensor, which obscures the nature of these ops, i.e.,
+# outputs share underlying storage with inputs. For more stable and improved in-place support
+# it'd be necessary to think about e.g. extending TensorProxy and/or DCE.
 _syms_returning_views: set[Symbol] = {
     diagonal,
     expand,
