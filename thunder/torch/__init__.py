@@ -168,9 +168,9 @@ class torchsymbol:
                 filter_tensor_proxies = list(
                     filter(lambda t: isinstance(t, TensorProxy), tree_flatten((args, kwargs))[0])
                 )
-                assert all(map(lambda t: type(t) is TensorProxy, filter_tensor_proxies)), (
-                    f"Expected all inputs to be TensorProxy but found {list(map(lambda t: type(t), filter_tensor_proxies))}"
-                )
+                assert all(
+                    map(lambda t: type(t) is TensorProxy, filter_tensor_proxies)
+                ), f"Expected all inputs to be TensorProxy but found {list(map(lambda t: type(t), filter_tensor_proxies))}"
                 return _fn(*args, **kwargs)
 
         else:
@@ -5617,12 +5617,22 @@ register_grad(item.id, item)
 def linear(a: TensorLike, w: TensorLike, /, bias: None | TensorLike = None) -> TensorLike:
     return prims.linear(a, w, bias)
 
+
 @torchsymbol(torch._grouped_mm)
-def _grouped_mm(a: TensorLike, b: TensorLike) -> TensorLike:
+def _grouped_mm(
+    a: TensorProxy,
+    b: TensorProxy,
+    offs: TensorProxy = None,  # Unused in meta, but type-checked
+    bias: TensorProxy = None,
+    dtype=None,
+) -> TensorProxy:
     """Thunder support for torch._grouped_mm, accepts 2D or 3D tensors."""
-    return prims._grouped_mm(a, b)
+    return prims._grouped_mm(a, b, offs, bias, dtype)
+
 
 from typing import Tuple, Optional
+
+
 @torchsymbol(torch._scaled_mm)
 def _scaled_mm(
     self: TensorLike,
@@ -5645,7 +5655,7 @@ def _scaled_mm(
         out_dtype=out_dtype,
         use_fast_accum=use_fast_accum,
     )
-    return a        
+    return a
 
 
 @torchsymbol(torch.logsumexp, is_method=True)

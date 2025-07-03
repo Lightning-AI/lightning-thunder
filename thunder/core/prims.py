@@ -3768,10 +3768,8 @@ sort = make_prim(PrimIDs.SORT, "sort", meta=sort_meta)
 def _grouped_mm_meta(
     a: TensorProxy,
     b: TensorProxy,
-    /,
-    *,
-    offs: TensorProxy = None,
-    bias: TensorProxy = None,
+    offs: None | TensorProxy = None,  # Unused in meta, but type-checked
+    bias: None | TensorProxy = None,
     dtype=None
 ) -> TensorProxy:
     """Meta function for _grouped_mm primitive.
@@ -3803,9 +3801,9 @@ def _grouped_mm_meta(
     utils.check(b.ndim in (2, 3), lambda: f"Expected b to have 2 or 3 dimensions, got {b.ndim}")
 
     # 2D case: regular matmul
-    if a.ndim == 2 and b.ndim == 2:
-        utils.check(a.shape[1] == b.shape[0], lambda: f"Inner dimension mismatch: {a.shape[1]} vs {b.shape[0]}")
-        out_shape = (a.shape[0], b.shape[1])
+    if a.ndim == 2 and b.ndim == 3:
+        utils.check(a.shape[1] == b.shape[1], lambda: f"Inner dimension mismatch: {a.shape[2]} vs {b.shape[1]}")
+        out_shape = (a.shape[0], b.shape[2])
     # 3D case: grouped matmul
     elif a.ndim == 3 and b.ndim == 3:
         utils.check(a.shape[0] == b.shape[0], lambda: f"Group count mismatch: {a.shape[0]} vs {b.shape[0]}")
@@ -3826,7 +3824,6 @@ _grouped_mm = make_prim(
     PrimIDs._GROUPED_MM,  # Use a unique value if not present
     "_grouped_mm",
     meta=_grouped_mm_meta,
-    tags=(OpTags.MATMUL_OP,),
 )
 
 from typing import Tuple, Optional

@@ -73,6 +73,14 @@ def test_scaled_mm(a, b, a_scale=None, b_scale=None):
     return torch._scaled_mm(a, b, scale_a=a_scale, scale_b=b_scale,  out_dtype=torch.bfloat16)
 
 
-fn = thunder.jit(test_scaled_mm)
+result_ref = test_scaled_mm(x_fp8, y_fp8, x_scales, y_scales)
+
+fn = thunder.jit(test_scaled_mm, executors=[thunder.executors.get_nvfuser_executor()])
 result = fn(x_fp8, y_fp8, x_scales, y_scales)
+# Compare result and result_ref
+if torch.allclose(result, result_ref, atol=1e-2, rtol=1e-2):
+    print("Results match within tolerance.")
+else:
+    max_diff = (result - result_ref).abs().max().item()
+    print(f"Results differ. Max absolute difference: {max_diff}")
 print("Result shape from thunder.jit:", result.shape)
