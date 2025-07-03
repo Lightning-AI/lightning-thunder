@@ -61,7 +61,9 @@ def assert_consistency_of_compiletime_and_runtime(thunder_op, thunder_result):
 # Snippets run a single test using a single sample
 # TODO: should snippets be able to access the original opinfo? -- No?
 # TODO: revisit atol/rtol, maybe be more selective about which ops need a more permissive check
-def snippet_torch_consistency(op: OpInfo, torch_op, sample: SampleInput, comp: Callable, no_fallback_with_double_inputs: bool):
+def snippet_torch_consistency(
+    op: OpInfo, torch_op, sample: SampleInput, comp: Callable, no_fallback_with_double_inputs: bool
+):
     args, kwargs = sample.args, sample.kwargs
 
     thunder_result = op(*args, **kwargs)
@@ -77,7 +79,6 @@ def snippet_torch_consistency(op: OpInfo, torch_op, sample: SampleInput, comp: C
     try:
         comp(thunder_result, torch_result)
     except AssertionError:
-
         if no_fallback_with_double_inputs:
             raise
 
