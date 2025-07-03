@@ -2,7 +2,7 @@ coverage ~=7.9.1
 pytest ==8.3.5
 pytest-benchmark ==5.1.0
 pytest-timeout ==2.4.0
-pytest-cov ==6.1.1
+pytest-cov ==6.2.1
 pytest-xdist ==3.7.0
 pytest-random-order ==1.2.0
 pytest-timestamper ==0.0.10
