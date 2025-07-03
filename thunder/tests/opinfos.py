@@ -311,6 +311,7 @@ class OpInfo:
         singularity_fn_producer=None,
         test_torch_compile_executor=False,
         instantiate_complex_tests=False,
+        no_fallback_with_double_inputs=False,
     ):
         self.op = op
 
@@ -351,6 +352,7 @@ class OpInfo:
         )
         self.test_torch_compile_executor = test_torch_compile_executor
         self.instantiate_complex_tests = instantiate_complex_tests
+        self.no_fallback_with_double_inputs = no_fallback_with_double_inputs
 
     def __call__(self, *args, **kwargs):
         """Calls the function variant of the operator."""
@@ -7542,6 +7544,7 @@ _scaled_mm_opinfo = OpInfo(
             devicetypes=(devices.DeviceType.CPU,),
         ),
     ),
+    no_fallback_with_double_inputs=True,
 )
 linear_algebra_ops.append(_scaled_mm_opinfo)
 
