@@ -1,5 +1,6 @@
 import torch
 from torch.testing._internal.common_quantized import _f32_to_floatx_unpacked, ceil_div, to_blocked
+import thunder
 
 E4M3_MAX_POS = torch.finfo(torch.float8_e4m3fn).max
 E5M2_MAX_POS = torch.finfo(torch.float8_e5m2).max
@@ -81,3 +82,12 @@ C = torch._scaled_mm(
     out_dtype=torch.bfloat16,
     use_fast_accum=False,
 )
+
+
+def test_scaled_mm(a, b, a_scale=None, b_scale=None):
+    return torch._scaled_mm(a, b, scale_a=a_scale, scale_b=b_scale,  out_dtype=torch.bfloat16)
+
+
+fn = thunder.jit(test_scaled_mm, executors=[thunder.executors.get_nvfuser_executor()])
+result = fn(A, B.t(), A_scale, B_scale)
+print("Result shape from thunder.jit:", result.shape)

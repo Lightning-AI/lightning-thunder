@@ -3188,6 +3188,48 @@ def argsort_transform(
 # Register argsort with NVFuser
 register_supported(prims.argsort, argsort_transform, _argsort_check_)
 
+def _scaled_mm_check_(
+    a: TensorProxy,
+    b: TensorProxy,
+    a_scale: TensorProxy,
+    b_scale: TensorProxy,
+    bias: TensorProxy = None,
+    scale_result: TensorProxy = None,
+    out_dtype=None,
+    use_fast_accum: bool = False,
+) -> bool:
+    return True
+
+def _scaled_mm_transform(
+    a: TensorProxy,
+    b: TensorProxy,
+    a_scale: TensorProxy,
+    b_scale: TensorProxy,
+    bias: TensorProxy = None,
+    scale_result: TensorProxy = None,
+    out_dtype=None,
+    use_fast_accum: bool = False,
+    *,
+    fd: FusionDefinition,
+    lc_to_nv_map: dict,
+) -> TensorLike:
+    # torch_out_dtype: None | torch.dtype = to_torch_dtype(out_dtype)
+    nva = getnv(a, fd, lc_to_nv_map)
+    nvb = getnv(b, fd, lc_to_nv_map)
+    nva_scale = getnv(a_scale, fd, lc_to_nv_map)
+    nvb_scale = getnv(b_scale, fd, lc_to_nv_map)
+    # nvbias = getnv(bias, fd, lc_to_nv_map)
+    # nv_scale_result = getnv(nv_scale_result, fd, lc_to_nv_map)
+    return fd.ops.scaled_mm(
+        nva,
+        nvb,
+        nva_scale,
+        nvb_scale,
+    )
+
+
+register_supported(prims._scaled_mm, _scaled_mm_transform, _scaled_mm_check_)
+
 # At module/class level
 NVFUSER_SUPPORTS_OPTIONS = nvfuser_version() >= LooseVersion("0.2.23")
 assert NVFUSER_SUPPORTS_OPTIONS, (
