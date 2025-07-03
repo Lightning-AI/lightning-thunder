@@ -7529,7 +7529,7 @@ def _scaled_mm_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
         scale_a = make(()).float()
         scale_b = make(()).float()
-        yield SampleInput(a, b, scale_a, scale_b)
+        yield SampleInput(a, b, scale_a, scale_b, out_dtype=torch.bfloat16)
 
 
 _scaled_mm_opinfo = OpInfo(
