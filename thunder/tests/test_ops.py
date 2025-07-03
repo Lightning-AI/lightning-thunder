@@ -61,7 +61,7 @@ def assert_consistency_of_compiletime_and_runtime(thunder_op, thunder_result):
 # Snippets run a single test using a single sample
 # TODO: should snippets be able to access the original opinfo? -- No?
 # TODO: revisit atol/rtol, maybe be more selective about which ops need a more permissive check
-def snippet_torch_consistency(op: OpInfo, torch_op, sample: SampleInput, comp: Callable):
+def snippet_torch_consistency(op: OpInfo, torch_op, sample: SampleInput, comp: Callable, no_fallback_with_double_inputs: bool):
     args, kwargs = sample.args, sample.kwargs
 
     thunder_result = op(*args, **kwargs)
@@ -78,8 +78,11 @@ def snippet_torch_consistency(op: OpInfo, torch_op, sample: SampleInput, comp: C
         comp(thunder_result, torch_result)
     except AssertionError:
 
-        def upcast(x):
-            if isinstance(x, torch.Tensor) and x.is_floating_point():
+        if no_fallback_with_double_inputs:
+            raise
+
+        def upcast_tensors(x):
+            if isinstance(x, torch.Tensor) and torch.is_floating_point(x):
                 return x.to(torch.double)
 
             # Some torch APIs (e.g. cumsum) take a `dtype` argument and use it
@@ -106,7 +109,7 @@ def snippet_torch_consistency(op: OpInfo, torch_op, sample: SampleInput, comp: C
 # TODO Extend this test with some reproducible randomness (maybe using hypothesis)
 # TODO Remove the atol and rtol defaults and rely on the given comparator to set them
 @ops(tuple(op for op in opinfos if op.torch_reference is not None))
-def test_core_vs_torch_consistency(op, device: str, dtype: dtypes.dtype, executor, comp):
+def test_core_vs_torch_consistency(op: OpInfo, device: str, dtype: dtypes.dtype, executor, comp):
     if dtypes.is_complex_dtype(dtype) and not op.instantiate_complex_tests:
         pytest.skip("Skipping complex operator tests in CI for speed")
     if (
@@ -149,6 +152,7 @@ def test_core_vs_torch_consistency(op, device: str, dtype: dtypes.dtype, executo
                 op.torch_reference,
                 sample,
                 lambda a, b, **kwargs: sample_comp(a, b, equal_nan=True, **kwargs),
+                op.no_fallback_with_double_inputs,
             )
         except Exception as e:
             if repro_cmd not in str(e):
