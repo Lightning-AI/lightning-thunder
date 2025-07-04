@@ -347,6 +347,7 @@ class OpInfo:
         singularity_fn_producer=None,
         test_torch_compile_executor=False,
         instantiate_complex_tests=False,
+        no_fallback_with_double_inputs=False,
     ):
         self.op = op
 
@@ -388,6 +389,7 @@ class OpInfo:
         )
         self.test_torch_compile_executor = test_torch_compile_executor
         self.instantiate_complex_tests = instantiate_complex_tests
+        self.no_fallback_with_double_inputs = no_fallback_with_double_inputs
 
     def __call__(self, *args, **kwargs):
         """Calls the function variant of the operator."""
@@ -7448,6 +7450,49 @@ outer_opinfo = OpInfo(
     ltorch.outer, supports_grad=True, sample_input_generator=tensor_1d_sample_generator, torch_reference=torch.outer
 )
 linear_algebra_ops.append(outer_opinfo)
+
+
+def _scaled_mm_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    M = 64
+    N = 64
+
+    for col_major in (True,):
+        a = make((M, N)).to(torch.float8_e4m3fn)
+        b = make((N, M))
+        if col_major:
+            b = b.t().contiguous().to(torch.float8_e4m3fn).t()
+        else:
+            b = b.to(torch.float8_e4m3fn)
+
+        scale_a = make(()).float()
+        scale_b = make(()).float()
+        yield SampleInput(a, b, scale_a, scale_b, out_dtype=torch.bfloat16)
+
+
+_scaled_mm_opinfo = OpInfo(
+    ltorch._scaled_mm,
+    supports_grad=False,
+    sample_input_generator=_scaled_mm_sample_generator,
+    torch_reference=torch._scaled_mm,
+    dtypes=(datatypes.float32,),
+    test_directives=(
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            devicetypes=(devices.DeviceType.CUDA,),
+            executors=("nvfuser",),
+        ),
+    ),
+    no_fallback_with_double_inputs=True,
+)
+linear_algebra_ops.append(_scaled_mm_opinfo)
 
 
 opinfos.extend(linear_algebra_ops)

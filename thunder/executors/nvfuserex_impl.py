@@ -3193,3 +3193,52 @@ NVFUSER_SUPPORTS_OPTIONS = nvfuser_version() >= LooseVersion("0.2.23")
 assert NVFUSER_SUPPORTS_OPTIONS, (
     f"Installed version of nvFuser {nvfuser_version()} is not supported, please upgrade to 0.2.23 or later."
 )
+
+
+def _scaled_mm_check(
+    a: TensorLike,
+    b: TensorLike,
+    scale_a: TensorLike,
+    scale_b: TensorLike,
+    bias: TensorLike | None = None,
+    scale_result: TensorLike | None = None,
+    out_dtype: dtypes.dtype | None = None,
+    use_fast_accum: bool = False,
+) -> bool:
+    return nvfuser_version() >= LooseVersion("0.2.27")
+
+
+# FIXME: Somehow the expected fd.ops does not seem to appear in the trace
+def _scaled_mm(
+    a: TensorLike,
+    b: TensorLike,
+    scale_a: TensorLike,
+    scale_b: TensorLike,
+    bias: TensorLike | None = None,
+    scale_result: TensorLike | None = None,
+    out_dtype: dtypes.dtype | None = None,
+    use_fast_accum: bool = False,
+    *,
+    fd: FusionDefinition,
+    lc_to_nv_map: dict,
+):
+    nv_a = getnv(a, fd, lc_to_nv_map)
+    nv_b = getnv(b, fd, lc_to_nv_map)
+    nv_scale_a = getnv(scale_a, fd, lc_to_nv_map)
+    nv_scale_b = getnv(scale_b, fd, lc_to_nv_map)
+    if bias is not None:
+        nv_bias = getnv(bias, fd, lc_to_nv_map)
+    else:
+        nv_bias = None
+    if out_dtype is not None:
+        out_dtype = dtypes.to_dtype(out_dtype)
+    if scale_result is not None:
+        nv_scale_result = getnv(scale_result, fd, lc_to_nv_map)
+    else:
+        nv_scale_result = False
+    return fd.ops.scaled_mm(nv_a, nv_b, nv_scale_a, nv_scale_b, nv_bias, None, None, out_dtype)[
+        0
+    ]  # , output_gamma=nv_scale_result)[0]
+
+
+register_supported(ltorch._scaled_mm, _scaled_mm, _scaled_mm_check)
