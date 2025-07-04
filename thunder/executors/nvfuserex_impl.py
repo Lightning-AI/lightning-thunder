@@ -3314,7 +3314,9 @@ def _scaled_mm(
         nv_scale_result = getnv(scale_result, fd, lc_to_nv_map)
     else:
         nv_scale_result = False
-    return fd.ops.scaled_mm(nv_a, nv_b, nv_scale_a, nv_scale_b, nv_bias, None, None, out_dtype)[0]  # , output_gamma=nv_scale_result)[0]
+    return fd.ops.scaled_mm(nv_a, nv_b, nv_scale_a, nv_scale_b, nv_bias, None, None, out_dtype)[
+        0
+    ]  # , output_gamma=nv_scale_result)[0]
 
 
 register_supported(ltorch._scaled_mm, _scaled_mm, _scaled_mm_check)
