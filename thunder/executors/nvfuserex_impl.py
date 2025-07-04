@@ -3273,7 +3273,7 @@ assert NVFUSER_SUPPORTS_OPTIONS, (
 )
 
 
-def _decomposed_scaled_mm_meta(
+def _scaled_mm_check(
     a: TensorLike,
     b: TensorLike,
     scale_a: TensorLike,
@@ -3282,12 +3282,12 @@ def _decomposed_scaled_mm_meta(
     scale_result: TensorLike | None = None,
     out_dtype: dtypes.dtype | None = None,
     use_fast_accum: bool = False,
-) -> TensorLike:
-    dtype = dtypes.to_dtype(out_dtype) if out_dtype is not None else a.dtype
-    return TensorProxy(like=a, shape=(a.shape[0], b.shape[1]), device=a.device, dtype=dtype)
+) -> bool:
+    return nvfuser_version() >= LooseVersion("0.2.27")
 
 
-def _decomposed_scaled_mm_impl(
+# FIXME: Somehow the expected fd.ops does not seem to appear in the trace
+def _scaled_mm(
     a: TensorLike,
     b: TensorLike,
     scale_a: TensorLike,
@@ -3299,65 +3299,22 @@ def _decomposed_scaled_mm_impl(
     *,
     fd: FusionDefinition,
     lc_to_nv_map: dict,
-) -> TensorLike:
-    nva = getnv(a, fd, lc_to_nv_map)
-    nvb = getnv(b, fd, lc_to_nv_map)
-    nv_scalea = getnv(scale_a, fd, lc_to_nv_map)
-    nv_scaleb = getnv(scale_b, fd, lc_to_nv_map)
-    nv_float32 = lcdtype_to_nvdtype(dtypes.float32)
-
-    out = fd.ops.matmul(
-        fd.ops.mul(fd.ops.cast(nva, nv_float32), nv_scalea),
-        fd.ops.mul(fd.ops.cast(nvb, nv_float32), nv_scaleb),
-    )
+):
+    nv_a = getnv(a, fd, lc_to_nv_map)
+    nv_b = getnv(b, fd, lc_to_nv_map)
+    nv_scale_a = getnv(scale_a, fd, lc_to_nv_map)
+    nv_scale_b = getnv(scale_b, fd, lc_to_nv_map)
     if bias is not None:
-        out = fd.ops.add(out, getnv(bias, fd, lc_to_nv_map))
-
-    dtype = dtypes.to_dtype(out_dtype) if out_dtype is not None else a.dtype
-    nv_out_dtype = lcdtype_to_nvdtype(dtype)
-    out = fd.ops.cast(out, nv_out_dtype)
-
-    return out
-
-
-nv_decomposed_scaled_mm = ex.register_operator(
-    "nv_decomposed_scaled_mm",
-    meta=_decomposed_scaled_mm_meta,
-    fn=_decomposed_scaled_mm_impl,
-)
-register_supported(nv_decomposed_scaled_mm.id, _decomposed_scaled_mm_impl, None)
+        nv_bias = getnv(bias, fd, lc_to_nv_map)
+    else:
+        nv_bias = None
+    if out_dtype is not None:
+        out_dtype = dtypes.to_dtype(out_dtype)
+    if scale_result is not None:
+        nv_scale_result = getnv(scale_result, fd, lc_to_nv_map)
+    else:
+        nv_scale_result = False
+    return fd.ops.scaled_mm(nv_a, nv_b, nv_scale_a, nv_scale_b, nv_bias, None, None, out_dtype)[0]  # , output_gamma=nv_scale_result)[0]
 
 
-def _scaled_mm_check(
-    a: TensorLike,
-    b: TensorLike,
-    scale_a: TensorLike,
-    scale_b: TensorLike,
-    bias: TensorLike | None = None,
-    scale_result: TensorLike | None = None,
-    out_dtype: dtypes.dtype | None = None,
-    use_fast_accum: bool = False,
-) -> bool:
-    if scale_result is not None or use_fast_accum:
-        return False
-    return True
-
-
-def _scaled_mm_impl(
-    a: TensorLike,
-    b: TensorLike,
-    scale_a: TensorLike,
-    scale_b: TensorLike,
-    bias: TensorLike | None = None,
-    scale_result: TensorLike | None = None,
-    out_dtype: dtypes.dtype | None = None,
-    use_fast_accum: bool = False,
-) -> bool:
-    return nv_decomposed_scaled_mm(a, b, scale_a, scale_b, bias, scale_result, out_dtype, use_fast_accum)
-
-
-ex.register_supported(
-    ltorch._scaled_mm,
-    checker=_scaled_mm_check,
-    execution_transform=_scaled_mm_impl,
-)
+register_supported(ltorch._scaled_mm, _scaled_mm, _scaled_mm_check)
