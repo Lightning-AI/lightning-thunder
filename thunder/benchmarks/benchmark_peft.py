@@ -297,7 +297,7 @@ def parse_args():
         help="If true will use different sequence length for each batch; In this case --seq-length will be used as maximum sequence length allowed.",
     )
     parser.add_argument(
-        "--jit-backend",
+        "--compile",
         default="eager",
         type=str.lower,
         choices=["eager", "inductor", "thunder", "thunder+jit"],
@@ -471,9 +471,9 @@ def main(args: argparse.Namespace):
                     logger.debug(f"LoRA parameter {name} still requires grad")
 
     # Apply compilation if needed
-    if args.jit_backend != "eager":
-        logger.info(f"Applying compilation: {args.jit_backend} to model")
-        model = setup_compilation(model, args.jit_backend)
+    if args.compile != "eager":
+        logger.info(f"Applying compilation: {args.compile} to model")
+        model = setup_compilation(model, args.compile)
         logger.info("Compilation applied to model")
 
     # Verify only LoRA parameters are trainable
@@ -637,7 +637,7 @@ def print_training_summary(
 
     logger.info("Training Summary:")
     logger.info(f"Model: {args.model}")
-    logger.info(f"Compiler: {args.jit_backend}")
+    logger.info(f"Compiler: {args.compile}")
 
     if WORLD_SIZE > 1:
         logger.info("Distributed strategy: FSDP2 ZeRO-3")
