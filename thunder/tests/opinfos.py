@@ -7527,8 +7527,8 @@ def _scaled_mm_sample_generator(op, device, dtype, requires_grad, **kwargs):
         else:
             b = b.to(torch.float8_e4m3fn)
 
-        scale_a = make(()).float()
-        scale_b = make(()).float()
+        scale_a = make(()).float().abs()
+        scale_b = make(()).float().abs()
         yield SampleInput(a, b, scale_a, scale_b, out_dtype=torch.bfloat16)
 
 
@@ -7540,15 +7540,22 @@ _scaled_mm_opinfo = OpInfo(
     dtypes=(datatypes.float32,),
     test_directives=(
         DecorateInfo(
-            pytest.mark.xfail,
             "test_core_vs_torch_consistency",
+            pytest.mark.xfail,
             devicetypes=(devices.DeviceType.CPU,),
         ),
         DecorateInfo(
-            pytest.mark.xfail,
+            pytest.mark.skip,
             "test_core_vs_torch_consistency",
-            devicetypes=(devices.DeviceType.CUDA,),
+            executors=("torch",),
+            active_if=torch.cuda.get_device_capability() < (8, 9),
+        ),
+        # TODO: Double check `active_if`
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_core_vs_torch_consistency",
             executors=("nvfuser",),
+            active_if=torch.cuda.get_device_capability() < (9, 0),
         ),
     ),
     no_fallback_with_double_inputs=True,
