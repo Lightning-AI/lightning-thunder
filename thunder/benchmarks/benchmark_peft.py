@@ -257,7 +257,7 @@ def setup_compilation(model, backend: str):
 
         executors = thunder.get_default_executors()
         xforms: list = [NvtxProfileTransform()]
-        logger.info(f"Thunder used executors: {executors}")
+        logger.info(f"Thunder used executors: {[ex.name for ex in executors]}")
         logger.info(f"Applying Thunder compilation with {len(executors)} executors")
 
         if "jit" in backend:
