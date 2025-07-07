@@ -35,7 +35,7 @@ def main(gh_run_id: str = ""):
     s.upload_folder("examples/coverage", remote_path="coverage")
 
     print("Starting studio...")
-    s.start(machine=Machine.L40S, interruptible=True)
+    s.start(machine=Machine.L40S, interruptible=False)
 
     print("Installing Thunder and other requirements...")
     s.run(f"pip install {pkg_path} -U -r coverage/requirements.txt")
