@@ -6605,16 +6605,11 @@ def _scaled_mm(
             (scale_a.numel() == 1 and scale_b.numel() == 1)
             and (scale_a.dtype == dtypes.float32 and scale_b.dtype == dtypes.float32)
         ),
-        lambda: f"Only tensor-wise scaling is supported but {scaled_a.shape = } and {scaled_b.shape = }",
+        lambda: f"Only tensor-wise scaling is supported but {scale_a.shape = } and {scale_b.shape = }",
         exception_type=NotImplementedError,
     )
-    result_dtype = a.dtype if out_dtype is None else to_dtype(out_dtype)
-    return TensorProxy(
-        like=a,
-        shape=(a.shape[0], b.shape[1]),
-        device=a.device,
-        dtype=result_dtype,
-    )
+    result_dtype = to_dtype(a.dtype if out_dtype is None else out_dtype)
+    return prims._scaled_mm(a, b, scale_a, scale_b, bias, scale_result, result_dtype, use_fast_accum)
 
 
 #

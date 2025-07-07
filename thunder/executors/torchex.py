@@ -1544,7 +1544,7 @@ def _scaled_mm_transform(
 
 
 _register_implementation(
-    ltorch._scaled_mm,
+    prims._scaled_mm,
     _scaled_mm_transform,
     checker=_always_executable,
     execution_transform=_scaled_mm_transform,
