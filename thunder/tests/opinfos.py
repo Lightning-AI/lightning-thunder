@@ -7549,7 +7549,8 @@ _scaled_mm_opinfo = OpInfo(
             "test_core_vs_torch_consistency",
             executors=("torch",),
             devicetypes=(devices.DeviceType.CUDA,),
-            active_if=(not torch.cuda.is_available()) or (torch.cuda.is_available() and torch.cuda.get_device_capability() < (8, 9)),
+            active_if=(not torch.cuda.is_available())
+            or (torch.cuda.is_available() and torch.cuda.get_device_capability() < (8, 9)),
         ),
         # TODO: Double check `active_if`
         DecorateInfo(
@@ -7557,7 +7558,8 @@ _scaled_mm_opinfo = OpInfo(
             "test_core_vs_torch_consistency",
             executors=("nvfuser",),
             devicetypes=(devices.DeviceType.CUDA,),
-            active_if=(not torch.cuda.is_available()) or (torch.cuda.is_available() and torch.cuda.get_device_capability() < (9, 0)),
+            active_if=(not torch.cuda.is_available())
+            or (torch.cuda.is_available() and torch.cuda.get_device_capability() < (9, 0)),
         ),
     ),
     no_fallback_with_double_inputs=True,
