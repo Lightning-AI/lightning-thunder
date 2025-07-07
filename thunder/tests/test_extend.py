@@ -154,23 +154,32 @@ def test_register_implementation_custom_op():
     def official_add(a, b):
         return a + b
 
+    def official_add2(a, b):
+        return a + b
+
     def _myadd(a, b):
         return a + b
 
-    myadd1 = addex.register_operator("myadd1", like=_myadd, fn=_myadd, replaces=official_add)
+    myadd1 = addex.register_operator("myadd1", like=_myadd, fn=_myadd, replaces=(official_add, official_add2))
     myadd2 = addex.register_operator("myadd2", like=_myadd, fn=_myadd)
 
     def fn(a, b):
         return official_add(a, b)
 
+    def fn2(a, b):
+        return official_add2(a, b)
+
     cfn = thunder.jit(fn, executors=[addex])
+    cfn2 = thunder.jit(fn2, executors=[addex])
 
     a = torch.randn(2, 2)
     b = torch.randn(2, 2)
 
     res = cfn(a, b)
+    res2 = cfn2(a, b)
 
     assert "myadd1" in str(thunder.last_traces(cfn)[-1])
+    assert "myadd1" in str(thunder.last_traces(cfn2)[-1])
 
     def myadd_trafo(a, b):
         return myadd2(a, b)
