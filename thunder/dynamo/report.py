@@ -1437,7 +1437,9 @@ def save_thunderfx_repros(
     from thunder.dynamo.utils import get_torch_compile_kwargs
 
     folder_path = Path(folder_path)
-    folder_path.mkdir(exist_ok=True, parents=True)
+    if folder_path.exists():
+        raise RuntimeError(f"Folder {folder_path} already exists. Please specify a different folder path.")
+    folder_path.mkdir(parents=True)
     torch_compile_kwargs = get_torch_compile_kwargs(**compile_kwargs)
     thunder_jit_kwargs = {k: v for k, v in compile_kwargs.items() if k not in torch_compile_kwargs}
     thunderjit = ThunderCompileSpecification(**thunder_jit_kwargs)
