@@ -5,7 +5,7 @@ import os
 import json
 
 from lightning_sdk import Studio, Machine
-from tdqm import tdqm
+from tqdm import tqdm
 
 
 def main(gh_run_id: str = ""):
@@ -42,7 +42,7 @@ def main(gh_run_id: str = ""):
 
     hf_token = os.environ["HF_TOKEN"]
     print("Running thunder.jit coverage...")
-    for filename, models in tdqm(batches, unit_scale=chunk_size):
+    for filename, models in tqdm(batches, unit_scale=chunk_size):
         out = s.run(
             f"HF_TOKEN={hf_token} python coverage/jit_coverage_hf.py --models-file coverage/{filename} --output-dir data"
         )
