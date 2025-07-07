@@ -3243,7 +3243,6 @@ def _scaled_mm(
     # else:
     #     nv_scale_result = False
 
-    print(mat2)
     scaled_mm_result, _output_block_scale, _output_gamma = fd.ops.scaled_mm(
         mat1,
         mat2,
