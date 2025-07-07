@@ -2077,6 +2077,17 @@ def hardshrink(a: TensorProxy, /, lambd: float = 0.5) -> TensorLike:
     return where(abs(a) <= lambd, 0, a)
 
 
+@torchsymbol(torch.nn.functional.hardsigmoid, is_method=False)
+def hardsigmoid(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
+    out = clamp(a / 6.0 + 0.5, 0.0, 1.0)
+    if inplace:
+        return _copy_(a, out)
+    return out
+
+
+_inplace_to_out_of_place[hardsigmoid] = hardsigmoid, 1
+
+
 @torchsymbol(torch.nn.functional.hardswish, id="torch.hardswish", is_method=False)
 def hardswish(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
     utils.check(
