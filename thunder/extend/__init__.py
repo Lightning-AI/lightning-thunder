@@ -153,7 +153,7 @@ class Executor:
         module: None | type | ModuleType = None,
         fn: None | Callable = None,
         bind_postprocess: None | Callable = None,
-        replaces: None | Callable = None,
+        replaces: None | Callable | tuple[Callable, ...] = None,
         python_printer: Callable = default_python_printer,
     ) -> Symbol:
         ln = like is None
@@ -190,8 +190,10 @@ class Executor:
         )
         self.opmap[name] = sym
 
-        if replaces is not None:
-            self._lookasides[replaces] = sym
+        if callable(replaces):
+            replaces = (replaces,)
+
+        self._lookasides.update({replace: sym for replace in replaces or []})
 
         return sym
 
