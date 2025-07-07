@@ -166,13 +166,7 @@ ignore = [
     "F403",  # https://docs.astral.sh/ruff/rules/undefined-local-with-import-star/
     "F601",  # https://docs.astral.sh/ruff/rules/multi-value-repeated-key-literal/
     "F822",  # https://docs.astral.sh/ruff/rules/undefined-export/
-    "F842",  # https://docs.astral.sh/ruff/rules/unused-annotation/
-    "F722",  # https://docs.astral.sh/ruff/rules/forward-annotation-syntax-error/
-    "E702",  # https://docs.astral.sh/ruff/rules/multiple-statements-on-one-line-semicolon/
     "E741",  # https://docs.astral.sh/ruff/rules/ambiguous-variable-name/
-    "W293",  # https://docs.astral.sh/ruff/rules/blank-line-with-whitespace/
-    "F811",  # https://docs.astral.sh/ruff/rules/redefined-while-unused/
-    "W291",  # https://docs.astral.sh/ruff/rules/trailing-whitespace/
 ]
 
 [tool.ruff.lint.per-file-ignores]

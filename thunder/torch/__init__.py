@@ -2075,6 +2075,17 @@ def hardshrink(a: TensorProxy, /, lambd: float = 0.5) -> TensorLike:
     return where(abs(a) <= lambd, 0, a)
 
 
+@torchsymbol(torch.nn.functional.hardsigmoid, is_method=False)
+def hardsigmoid(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
+    out = clamp(a / 6.0 + 0.5, 0.0, 1.0)
+    if inplace:
+        return _copy_(a, out)
+    return out
+
+
+_inplace_to_out_of_place[hardsigmoid] = hardsigmoid, 1
+
+
 @torchsymbol(torch.nn.functional.hardswish, id="torch.hardswish", is_method=False)
 def hardswish(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
     utils.check(
@@ -3354,6 +3365,22 @@ def sort(
     a: TensorLike, /, dim: None | int = None, descending: bool = False, stable: bool = False
 ) -> (TensorLike, TensorLike):
     return clang.sort(a, dim, descending, stable)
+
+
+@torchsymbol(torch.argsort, is_method=True)
+def argsort(a: TensorLike, /, dim: None | int = -1, descending: bool = False, stable: bool = False) -> TensorLike:
+    """Returns the indices that would sort an array along the given dimension.
+
+    Args:
+        a: Input tensor
+        dim: Dimension along which to sort. If None, the array is flattened before sorting
+        descending: If True, sort in descending order
+        stable: Whether to use a stable sorting algorithm
+
+    Returns:
+        Tensor of indices that would sort the array
+    """
+    return clang.argsort(a, dim, descending, stable)
 
 
 #

@@ -76,7 +76,13 @@ def run_script(file_name, cmd):
 @instantiate(
     dtypes=NOTHING,
     executors=[DynamoThunderExecutor],
-    decorators=(pytest.mark.parametrize("dynamic", (True, False, None), ids=("dynamic", "static", "auto")),),
+    decorators=(
+        pytest.mark.parametrize("dynamic", (True, False, None), ids=("dynamic", "static", "auto")),
+        pytest.mark.skipif(
+            condition=IS_WINDOWS,
+            reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
+        ),
+    ),
 )
 def test_basic(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None):
     x = torch.ones(2, dtype=dtype, device=device, requires_grad=True)
@@ -1209,9 +1215,8 @@ def test_leak_on_unsupported_thunder_operator():
 
     def unsupported_op_fn(w1) -> torch.Tensor:
         topk_ids = torch.tensor([[0, 1]])
-        # This indexing is not supported by thunder and get's passed to inductor.
-        w13_weights = w1[topk_ids]
-        return w13_weights + 1
+        # This operation is not supported by thunder and get's passed to inductor.
+        return torch.sinc(w1) + 1
 
     def call_thunderfx_on_leaking_fn():
         w1 = torch.randn(16, 16, 32, dtype=torch.bfloat16)
@@ -1607,11 +1612,13 @@ def test_spliter_bwd():
     reason = cfn._backend.subgraph_infos[0].split_reasons
     assert len(reason) == 1
     assert "Failed while running meta for node with name: setitem" in reason[0].info
-    assert "Advanced indexing" in reason[0].exception and reason[0].exception.endswith(
-        "found a tensor with dtype thunder.dtypes.bool8 and 3 dimensions"
-    )
+    assert "boolean advanced indexing" in reason[0].exception
 
 
+@pytest.mark.skipif(
+    IS_WINDOWS,
+    reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
+)
 def test_get_proxy_inputs_from_node_symtype_hint():
     def fn(x, idx):
         return torch.select(x, 0, idx)
