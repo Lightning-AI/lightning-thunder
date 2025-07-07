@@ -55,16 +55,6 @@ jobs:
           sudo apt-get install -y libblas3 liblapack3 libopenblas-dev
           pip install --force-reinstall numpy
 
-      - name: Build bitsandbytes 0.47.0.dev0 # 0.46.0 has a bug
-        run: |
-          git clone https://github.com/bitsandbytes-foundation/bitsandbytes.git
-          cd bitsandbytes
-          git checkout 70bbbb9219cb10981c3b7f4457f30376e093d896
-          pip install pyproject.toml
-          python setup.py install
-          cd ..
-          rm -rf bitsandbytes
-
       - name: Set min. dependencies
         if: matrix.requires == 'oldest'
         run: |
