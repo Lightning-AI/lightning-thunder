@@ -3622,6 +3622,8 @@ def _binary_subscr_handler(inst: dis.Instruction, /, stack: InterpreterStack, **
     tos1 = stack.pop_wrapped()
 
     def impl(tos1, tos):
+        if isinstance(tos1, type) and hasattr(tos1, "__class_getitem"):
+            return tos1.__class_getitem__(tos)
         return tos1.__getitem__(tos)
 
     res = _interpret_call(impl, tos1, tos)
