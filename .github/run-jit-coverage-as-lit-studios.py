@@ -5,6 +5,7 @@ import os
 import json
 
 from lightning_sdk import Studio, Machine
+from tdqm import tdqm
 
 
 def main(gh_run_id: str = ""):
@@ -40,18 +41,11 @@ def main(gh_run_id: str = ""):
     s.run(f"pip install {pkg_path} -U -r coverage/requirements.txt")
 
     hf_token = os.environ["HF_TOKEN"]
-    n_processed = 0
     print("Running thunder.jit coverage...")
-    for filename, models in batches:
-        n_processed += len(models)
-        print(f"Processed {n_processed}/{n_models}")
-        print("Processing:")
-        for model in models:
-            print(f"  {model}")
+    for filename, models in tdqm(batches, unit_scale=chunk_size):
         out = s.run(
             f"HF_TOKEN={hf_token} python coverage/jit_coverage_hf.py --models-file coverage/{filename} --output-dir data"
         )
-    print(f"Processed {n_processed}/{n_models}")
 
     print("Aggregating results...")
     s.run("python coverage/jit_coverage_hf.py --output-dir data --results-file data.json")
@@ -67,6 +61,7 @@ def main(gh_run_id: str = ""):
 
     for el in skipped:
         print(f"🟡 [SKIPPED] {el['model']}")
+        print(f"   Error:    {el['last']}")
 
     for el in failure:
         print(f"⛔️ [FAILURE] {el['model']}")
