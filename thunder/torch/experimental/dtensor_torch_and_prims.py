@@ -8,7 +8,6 @@ from thunder import clang
 from thunder.torch.experimental.dtensor_utils import run_with_fake_tensor
 from thunder.torch.experimental.dtensor_proxy import DTensorProxy, create_dtensor_proxy_from_proxies
 from thunder.torch.langctx import register_method
-from thunder.core.prims import make_prim
 
 from thunder.core.proxies import TensorProxy, AnyProxy
 from thunder.core.transforms import (
@@ -22,7 +21,6 @@ from thunder.core.prims import make_prim, OpTags
 from thunder.core import prims
 from thunder.core import baseutils
 from thunder.core import utils
-from thunder import clang
 
 import torch
 

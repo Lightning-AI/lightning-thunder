@@ -274,7 +274,7 @@ def cse_single_bsym(
         exception_type=AssertionError,
     )
 
-    # `NON_FUNCTIONAL_OPS` are a op that's not deterministic, for example, `torch.nn.functiona.dropout`
+    # `NON_FUNCTIONAL_OPS` are a op that's not deterministic, for example, `torch.nn.functional.dropout`
     # and `torch.nn.functional.scaled_dot_product_attention` depending on PRNG.
     if bsym.sym.id in NON_FUNCTIONAL_OPS:
         return bsym
