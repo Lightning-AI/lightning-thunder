@@ -37,7 +37,7 @@ jobs:
           python -m build --sdist --wheel --outdir dist/
           ls -l dist/
 
-      - name: Run scripts in jobs
+      - name: Run thunder.jit coverage
         env:
           LIGHTNING_USER_ID: ${{ secrets.LIGHTNING_USER_ID }}
           LIGHTNING_API_KEY: ${{ secrets.LIGHTNING_API_KEY }}
