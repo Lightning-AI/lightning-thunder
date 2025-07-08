@@ -505,6 +505,7 @@ _thunder_to_torch_dtype_map = {
     int: torch.int32,
     float: torch.float32,
     complex: torch.complex64,
+    bool8: torch.bool,
 }
 
 _thunder_to_torch_dtype_map.update(
