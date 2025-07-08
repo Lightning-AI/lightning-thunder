@@ -1179,7 +1179,7 @@ def movedim(a: TensorLike, /, source: int | Sequence[int], destination: int | Se
     return clang.movedim(a, source, destination)
 
 
-@torchsymbol(torch.nn.functional.pad, torch._C._nn.pad, id="torch.nn.functional.pad", is_method=False)
+@torchsymbol(torch.nn.functional.pad, torch._C._nn.pad, id="torch.nn.functional.pad")
 def pad(a: TensorProxy, /, pad: tuple[int, ...], mode: str | None = "constant", value: NumberLike | None = None):
     utils.check(mode == "constant", lambda: "Mode arguments other than constant are not supported")
     utils.check(len(pad) % 2 == 0, lambda: "Padding length must be divisible by 2")
