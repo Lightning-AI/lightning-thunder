@@ -7,7 +7,7 @@
 # microsoft/Phi-4-multimodal-instruct
 # xai-org/grok-1
 # xverse/XVERSE-MoE-A36B
-#Qwen/Qwen3-0.6B
+# Qwen/Qwen3-0.6B
 1bitLLM/bitnet_b1_58-3B
 AI-Safeguard/Ivy-VL-llava
 Aleph-Alpha/Pharia-1-LLM-7B-control-hf
@@ -27,7 +27,7 @@ CausalLM/miniG
 CofeAI/Tele-FLM-1T
 CohereForAI/c4ai-command-r-v01
 Corianas/tiny-llama-miniguanaco
-Crystalcareai/GemMoE-Beta-1
+Crystalcareai/GemMoE-Base-Random
 Crystalcareai/Quiet-Star-Custom
 DAMO-NLP-MT/polylm-13b
 DAMO-NLP-SG/VideoLLaMA3-7B
@@ -42,8 +42,8 @@ FractalGPT/RuQwen2.5-3B-Instruct-AWQ
 GeoV/GeoV-9b
 Graphcore/gpt2-wikitext-103
 HuggingFaceH4/zephyr-7b-beta
-HuggingFaceM4/VLM_WebSight_finetuned
-HuggingFaceM4/idefics2_raven_finetuned
+# HuggingFaceM4/VLM_WebSight_finetuned  # Error:    ValueError: Unrecognized configuration class <...> for this kind of AutoModel: AutoModel.
+# HuggingFaceM4/idefics2_raven_finetuned  # Error:    ValueError: Unrecognized configuration class <...> for this kind of AutoModel: AutoModel.
 HuggingFaceTB/SmolLM-1.7B
 IEITYuan/Yuan2-M32-hf
 IndexTeam/Index-1.9B-Chat
@@ -56,7 +56,7 @@ LLM360/Crystal
 LLM360/CrystalChat-7B-Web2Code
 MBZUAI/MobiLlama-05B
 MILVLG/imp-v1-3b
-Nanbeige/Nanbeige2-8B-Chat
+Nanbeige/Nanbeige2-8B-Chat  # Error:    OSError: Nanbeige/Nanbeige2-8B-Chat is not a local folder and is not a valid model identifier listed on 'https://huggingface.co/models'
 NexaAIDev/Octopus-v2
 NousResearch/Nous-Capybara-3B-V1.9
 OEvortex/HelpingAI-3B-v2.2
@@ -64,7 +64,7 @@ OpenNLG/OpenBA-V1-Based
 OrionStarAI/Orion-14B-Base
 OrionStarAI/Orion-14B-Chat
 Qwen/QwQ-32B-Preview
-Qwen/Qwen-7B
+# Qwen/Qwen-7B  # Error:    ValueError: Unrecognized configuration class <...> for this kind of AutoModel: AutoModel.
 Qwen/Qwen1.5-MoE-A2.7B
 Qwen/Qwen2-7B
 Qwen/Qwen2.5-Coder-32B-Instruct
@@ -85,9 +85,9 @@ THUDM/glm-4-9b-chat-hf
 TIGER-Lab/Mantis-8B-Fuyu
 TJUNLP/FuxiTranyu-8B
 Tele-AI/telechat-7B
-TeleAI/TeleChat2-35B
-TeleAI/TeleChat2-3B
-TeleAI/TeleChat2-7B
+# TeleAI/TeleChat2-35B  # Error:    OSError: TeleAI/TeleChat2-35B is not a local folder and is not a valid model identifier listed on 'https://huggingface.co/models'
+# TeleAI/TeleChat2-3B  # Error:    OSError: TeleAI/TeleChat2-3B is not a local folder and is not a valid model identifier listed on 'https://huggingface.co/models'
+# TeleAI/TeleChat2-7B  # Error:    OSError: TeleAI/TeleChat2-7B is not a local folder and is not a valid model identifier listed on 'https://huggingface.co/models'
 Tensoic/Cerule-v0.1
 TheBloke/falcon-40b-instruct-GPTQ
 Undi95/dbrx-base
@@ -101,8 +101,10 @@ abeja/gpt-neox-japanese-2.7b
 adalbertojunior/DUSMistral
 adept/persimmon-8b-base
 adept/persimmon-8b-chat
-ai21labs/AI21-Jamba-1.5-Large
-ai21labs/AI21-Jamba-1.5-Mini
+ai21labs/AI21-Jamba-Large-1.5
+ai21labs/AI21-Jamba-Mini-1.5
+ai21labs/AI21-Jamba-Large-1.7
+ai21labs/AI21-Jamba-Mini-1.7
 ai21labs/Jamba-v0.1
 aisingapore/coherence-momentum
 akemiH/JMLR
@@ -122,7 +124,7 @@ baichuan-inc/Baichuan-13B-Chat
 baichuan-inc/Baichuan-7B
 baichuan-inc/Baichuan2-13B-Chat
 bczhou/TinyLLaVA-2.0B
-bigcode/santacoder
+# bigcode/santacoder  # Error:    ValueError: Unrecognized configuration class <..> for this kind of AutoModel: AutoModel. 
 bigcode/santacoderpack
 bigcode/starcoder
 bigcode/starcoder2-15b
@@ -137,8 +139,8 @@ claritylab/zero-shot-vanilla-gpt2
 cognitivecomputations/dolphin-2.5-mixtral-8x7b
 cognitivecomputations/dolphin-vision-72b
 crumb/shrink-v1
-crumbly/cramp-25m
-crumbly/gpt2-linear-xl
+# crumbly/cramp-25m  #  Error:    ValueError: Unrecognized configuration class <...> for this kind of AutoModel: AutoModel.
+# crumbly/gpt2-linear-xl  # Error:    ValueError: Unrecognized configuration class <...> for this kind of AutoModel: AutoModel.
 databricks/dbrx-base
 databricks/dolly-v2-12b
 deeplang-ai/LingoWhale-8B
@@ -148,8 +150,8 @@ deepseek-ai/DeepSeek-V2.5
 deepseek-ai/DeepSeek-V3-Base
 deepseek-ai/deepseek-llm-67b-base
 deepseek-ai/deepseek-moe-16b-chat
-dice-research/lola_v1
-dicta-il/dictalm-7b-instruct
+# dice-research/lola_v1  # Error:    ValueError: Unrecognized configuration class <...> for this kind of AutoModel: AutoModel.
+# dicta-il/dictalm-7b-instruct  # Error:    OSError: dicta-il/dictalm-7b-instruct is not a local folder and is not a valid model identifier listed on 'https://huggingface.co/models'
 entropy/roberta_zinc_decoder
 facebook/MobileLLM-1B
 facebook/bart-base
@@ -203,7 +205,7 @@ meta-llama/Meta-Llama-3.1-405B-Instruct
 meta-llama/Meta-Llama-3.1-70B
 metterian/kullm-polyglot-12.8b-v1
 mgoin/Nemotron-4-340B-Base-hf-FP8
-microsoft/GRIN-MoE
+# microsoft/GRIN-MoE  # Error:    ValueError: Unrecognized configuration class <...> for this kind of AutoModel: AutoModel.
 microsoft/Phi-3-small-8k-instruct
 microsoft/Phi-3-vision-128k-instruct
 microsoft/Phi-3.5-MoE-instruct
@@ -245,7 +247,7 @@ stabilityai/stable-code-3b
 stabilityai/stablelm-3b-4e1t
 stabilityai/stablelm-base-alpha-7b-v2
 stabilityai/stablelm-tuned-alpha-7b
-stanfordnlp/backpack-gpt2
+# stanfordnlp/backpack-gpt2  # Error:    ValueError: Unrecognized configuration class <...> for this kind of AutoModel: AutoModel.
 state-spaces/mamba-2.8b-hf
 team-lucid/mptk-1b
 tencent/Hunyuan-7B-Instruct
