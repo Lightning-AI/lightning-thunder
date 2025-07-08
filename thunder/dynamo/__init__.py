@@ -1,6 +1,6 @@
 from thunder.dynamo.compiler import (
     ThunderCompiler,
-    ThunderfxCompiledObject,
+    ThunderFXCompiledObject,
     thunder_optimize,
     thunder_profile,
     thunderfx,
@@ -9,7 +9,7 @@ from thunder.dynamo.compiler import (
 
 __all__ = [
     "ThunderCompiler",
-    "ThunderfxCompiledObject",
+    "ThunderFXCompiledObject",
     "thunder_optimize",
     "thunder_profile",
     "thunderfx",
