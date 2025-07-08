@@ -4,7 +4,8 @@
 # is hopper and fa3 has been built
 
 try:
-    from flash_attn_interface import _flash_attn_forward, _flash_attn_backward, flash_attn_func
+    # NOTE: Might be better to use `importlib.util.find_spec`
+    from flash_attn_interface import _flash_attn_forward, _flash_attn_backward, flash_attn_func  # noqa: F401
 
     HAS_FA3 = True
 except ImportError:
