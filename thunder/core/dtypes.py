@@ -503,11 +503,13 @@ _thunder_to_torch_dtype_map = {
     complex: torch.complex64,
 }
 
-_thunder_to_torch_dtype_map.update({
-    dtype: getattr(torch, dtype.full_name.rstrip('_'))
-    for dtype in all_dtypes
-    if hasattr(torch, dtype.full_name.rstrip('_'))
-})
+_thunder_to_torch_dtype_map.update(
+    {
+        dtype: getattr(torch, dtype.full_name.rstrip("_"))
+        for dtype in all_dtypes
+        if hasattr(torch, dtype.full_name.rstrip("_"))
+    }
+)
 
 _torch_to_thunder_dtype_map = {
     v: k

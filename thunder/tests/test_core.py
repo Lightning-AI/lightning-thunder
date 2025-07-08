@@ -3227,8 +3227,11 @@ def test_apply_autograd_memory(thunderfx_disable_split_autograd):
 
 def test_float4_e2m1fn_x2():
     x = torch.ones(2, 2, dtype=torch.uint8).view(torch.float4_e2m1fn_x2)
+
     @thunder.jit
-    def f(x): return x
+    def f(x):
+        return x
+
     y = f(x)
     assert y.dtype == torch.float4_e2m1fn_x2
 
