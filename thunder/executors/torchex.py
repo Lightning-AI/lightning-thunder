@@ -858,6 +858,7 @@ _register_implementation(ltorch.frexp, checker=_always_executable, execution_tra
 celu = _register_torch_operation("celu", module=torch.nn.functional)
 elu = _register_torch_operation("elu", module=torch.nn.functional)
 gelu = _register_torch_operation("gelu", module=torch.nn.functional)
+hardsigmoid = _register_torch_operation("hardsigmoid", module=torch.nn.functional)
 hardshrink = _register_torch_operation("hardshrink", module=torch.nn.functional)
 hardswish = _register_torch_operation("hardswish", module=torch.nn.functional)
 hardtanh = _register_torch_operation("hardtanh", module=torch.nn.functional)
@@ -884,6 +885,9 @@ def _elementwise_unary_with_inplace_checker(a: TensorProxy, /, inplace: bool = F
 _register_elementwise_unary_implementation(ltorch.elu, elu, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.celu, celu, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.gelu, gelu, checker=_always_executable)
+_register_elementwise_unary_implementation(
+    ltorch.hardsigmoid, hardsigmoid, checker=_elementwise_unary_with_inplace_checker
+)
 _register_elementwise_unary_implementation(ltorch.hardshrink, hardshrink, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.hardswish, hardswish, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.hardtanh, hardtanh, checker=_always_executable)

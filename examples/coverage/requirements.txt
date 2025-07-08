@@ -1,0 +1,4 @@
+transformers==4.52.4
+accelerate
+nvfuser-cu128-torch27
+nvidia-cudnn-frontend

@@ -1,2 +1,6 @@
 packaging
 -r test.txt
+
+datasets>=3.5.0
+loguru>=0.7.3
+peft>=0.15.2
