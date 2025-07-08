@@ -368,26 +368,6 @@ def indent(level):
     return f"{tab * level}"
 
 
-_torch_dtype_to_str_map = {
-    torch.bool: "torch.bool",
-    torch.uint8: "torch.uint8",
-    torch.int8: "torch.int8",
-    torch.int16: "torch.int16",
-    torch.int32: "torch.int32",
-    torch.int64: "torch.int64",
-    torch.bfloat16: "torch.bfloat16",
-    torch.float8_e4m3fn: "torch.float8_e4m3fn",
-    torch.float8_e4m3fnuz: "torch.float8_e4m3fnuz",
-    torch.float8_e5m2: "torch.float8_e5m2",
-    torch.float8_e5m2fnuz: "torch.float8_e5m2fnuz",
-    torch.float16: "torch.float16",
-    torch.float32: "torch.float32",
-    torch.float64: "torch.float64",
-    torch.complex32: "torch.complex32",
-    torch.complex64: "torch.complex64",
-    torch.complex128: "torch.complex128",
-}
-
 _type_to_str_map = {
     bool: "bool",
     int: "int",
@@ -451,7 +431,7 @@ _printable_literals = {
 _printable_value_types = {
     str: lambda s: f'"{s}"',
     torch.device: lambda d: f'torch.device("{str(d)}")',
-    torch.dtype: lambda d: _torch_dtype_to_str_map[d],
+    torch.dtype: str,
     bool: lambda b: str(b),
     int: lambda b: str(b),
     float: _print_float_number,
