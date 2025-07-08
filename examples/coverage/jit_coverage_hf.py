@@ -73,7 +73,10 @@ def try_model(output_dir, model_name):
                 elif getattr(config.rope_scaling, 'type', None) == "dynamic":
                     config.rope_scaling['type'] = "default"
             model_class = get_model_class(model_name, config)
-            model = model_class.from_config(config, trust_remote_code=True, attn_implementation="sdpa").eval()
+            try:
+                model = model_class.from_config(config, trust_remote_code=True, attn_implementation="sdpa").eval()
+            except ValueError:
+                model = model_class.from_config(config, trust_remote_code=True).eval()
             input_sample = get_dummy_input(model_name, config)
 
     except Exception as setup_err:
