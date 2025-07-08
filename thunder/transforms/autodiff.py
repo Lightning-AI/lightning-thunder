@@ -363,9 +363,49 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
         def __init__(self, trace):
             super().__init__(trace)
             self.backward_part_bsyms_recomputed = {}
+            self.already_processed_recomputations = set()
+
+        def find_recomputation_symbols_for_bsym(self, bsym) -> list[tuple[str, BoundSymbol]]:
+            need_sorting = list()
+            queue: list[Proxy] = list(
+                filter(lambda p: p.name in self.backward_part_bsyms_recomputed, bsym.flat_proxy_args)
+            )
+            visited = set(map(lambda p: p.name, queue))
+            while queue:
+                proxy = queue.pop()
+                producer_record = self.backward_part_bsyms_recomputed.get(proxy.name)
+                if producer_record is not None:
+                    producer, _ = producer_record
+                    need_sorting.append((proxy.name, producer))
+                    for arg in producer.flat_proxy_args:
+                        arg_name = arg.name
+                        if arg_name not in visited:
+                            queue.append(arg)
+                            visited.add(arg_name)
+
+            if need_sorting:
+                remaining = dict(need_sorting)
+                sorted_recomputation = []
+                while remaining:
+                    sorted_recomputation_names = []
+                    for name, producer in remaining.items():
+                        ready = True
+                        for dep in producer.flat_proxy_args:
+                            if dep.name in remaining:
+                                ready = False
+                                break
+                        if ready:
+                            sorted_recomputation_names.append(name)
+                    for name in sorted_recomputation_names:
+                        sorted_recomputation.append((name, remaining[name]))
+                        del remaining[name]
+
+                return sorted_recomputation
+
+            return []
 
         def process_bsym(self, bsym: BoundSymbol) -> None:
-            processed_bsyms = [bsym.from_bsym()]
+            processed_bsyms = []
             if _should_recompute_bsym_in_backward(bsym) and BoundSymbolTag.BACKWARD not in bsym.tags:
                 bsym_out_names = {o.name for o in bsym.flat_proxy_outs}
                 nbsym = bsym.from_bsym()
@@ -373,30 +413,28 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                 bsym_rec = (nbsym, bsym_out_names)
                 self.backward_part_bsyms_recomputed.update((n, bsym_rec) for n in bsym_out_names)
             elif BoundSymbolTag.BACKWARD in bsym.tags:
-                # we insert the recomputed symbols just before where they are needed.
-                # as this inserts into the list during processing, we use a while loop rather than
-                # a for loop
-                bw_idx = 0
-                while bw_idx < len(processed_bsyms):
-                    backward_part_bsym = processed_bsyms[bw_idx]
-                    modified = False
-                    for n in reversed(backward_part_bsym.flat_proxy_args):
-                        recomp_bsym_rec = self.backward_part_bsyms_recomputed.get(n.name)
-                        if recomp_bsym_rec is not None:
-                            modified = True
-                            recomp_bsym, recomp_output = recomp_bsym_rec
-                            # To avoid name clashes, we create new output proxies.
-                            # This relies on the fact that all backward operations occur after get_grad,
-                            # which is no longer true after fusion passes.
-                            with tracectx(self.new_trace):
-                                for output in recomp_bsym.flat_proxy_outs:
-                                    new = output.replace_name("bw_" + output.name)
-                                    self.add_to_swap_map(output, new)
-                            processed_bsyms.insert(bw_idx, recomp_bsym)
-                            for nn in recomp_output:
-                                del self.backward_part_bsyms_recomputed[nn]
-                    if not modified:
-                        bw_idx += 1
+                recomputed_bsyms = self.find_recomputation_symbols_for_bsym(bsym)
+
+                for name, rec_bsym in recomputed_bsyms:
+                    if name in self.already_processed_recomputations:
+                        continue
+                    # To avoid name clashes, we create new output proxies.
+                    # This relies on the fact that all backward operations occur after get_grad,
+                    # which is no longer true after fusion passes.
+                    with tracectx(self.new_trace):
+                        for output in rec_bsym.flat_proxy_outs:
+                            self.already_processed_recomputations.add(output.name)
+                            # Avoid double-prefixing if the name already starts with "bw_"
+                            if output.name.startswith("bw_"):
+                                new = output.replace_name(output.name)
+                            else:
+                                new = output.replace_name("bw_" + output.name)
+
+                            self.add_to_swap_map(output, new)
+
+                    processed_bsyms.append(rec_bsym)
+
+            processed_bsyms.append(bsym.from_bsym())
 
             self.add_processed_bsyms(processed_bsyms)
             self.set_result(processed_bsyms[-1].output)
