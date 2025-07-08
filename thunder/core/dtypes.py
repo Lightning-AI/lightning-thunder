@@ -152,6 +152,10 @@ uint8_ = unsignedinteger("uint", "ui", bytes=1, is_weak=True)
 uint64 = unsignedinteger("uint", "ui", bytes=8, is_weak=False)
 uint64_ = unsignedinteger("uint", "ui", bytes=8, is_weak=True)
 
+# TODO: Update _elementwise_exact_promotion_table to handle uint64 and uint64_
+all_dtypes.discard(uint64)
+all_dtypes.discard(uint64_)
+
 
 class bool_(exact):
     """Base class for the boolean dtype: bool8."""
