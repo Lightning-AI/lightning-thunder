@@ -182,6 +182,8 @@ class floating(inexact):
 
 bfloat16 = floating("bfloat", "bf", bytes=2, is_weak=False)
 bfloat16_ = floating("bfloat", "bf", bytes=2, is_weak=True)
+float4_e2m1fn_x2 = floating("float", "f", bytes=1, is_weak=False, variant="e2m1fn_x2")
+float4_e2m1fn_x2_ = floating("float", "f", bytes=1, is_weak=True, variant="e2m1fn_x2")
 float8_e5m2 = floating("float", "f", bytes=1, is_weak=False, variant="e5m2")
 float8_e5m2_ = floating("float", "f", bytes=1, is_weak=True, variant="e5m2")
 float8_e5m2fnuz = floating("float", "f", bytes=1, is_weak=False, variant="e5m2fnuz")
