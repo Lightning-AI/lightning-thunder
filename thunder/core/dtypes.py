@@ -80,16 +80,20 @@ class dtype:
         return self._bytes
 
     @property
+    def bits(self):
+        return int(8 * self._bytes)
+
+    @property
     def is_weak(self):
         return self._is_weak
 
     def shortname(self):
-        return f"{self._shortname}{8 * self._bytes}{f'_{self._variant}' if self._variant else ''}"
+        return f"{self._shortname}{self.bits}{f'_{self._variant}' if self._variant else ''}"
 
     @property
     def full_name(self):
         return (
-            f"{self._name}{8 * self._bytes}{f'_{self._variant}' if self._variant else ''}{'_' if self._is_weak else ''}"
+            f"{self._name}{self.bits}{f'_{self._variant}' if self._variant else ''}{'_' if self._is_weak else ''}"
         )
 
     # TODO Fix name printing
@@ -182,8 +186,8 @@ class floating(inexact):
 
 bfloat16 = floating("bfloat", "bf", bytes=2, is_weak=False)
 bfloat16_ = floating("bfloat", "bf", bytes=2, is_weak=True)
-float4_e2m1fn_x2 = floating("float", "f", bytes=1, is_weak=False, variant="e2m1fn_x2")
-float4_e2m1fn_x2_ = floating("float", "f", bytes=1, is_weak=True, variant="e2m1fn_x2")
+float4_e2m1fn_x2 = floating("float", "f", bytes=0.5, is_weak=False, variant="e2m1fn_x2")
+float4_e2m1fn_x2_ = floating("float", "f", bytes=0.5, is_weak=True, variant="e2m1fn_x2")
 float8_e5m2 = floating("float", "f", bytes=1, is_weak=False, variant="e5m2")
 float8_e5m2_ = floating("float", "f", bytes=1, is_weak=True, variant="e5m2")
 float8_e5m2fnuz = floating("float", "f", bytes=1, is_weak=False, variant="e5m2fnuz")
