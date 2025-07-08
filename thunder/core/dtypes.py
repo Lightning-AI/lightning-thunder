@@ -48,6 +48,8 @@ from thunder.core.baseutils import NumberProxyInterface, TensorProxyInterface
 
 _abstract_classes = set()
 
+all_dtypes = set()
+
 
 # TODO consider bytes per element to better identify low precision dtypes
 class dtype:
@@ -66,6 +68,7 @@ class dtype:
         self._shortname = shortname
         self._bytes = bytes
         self._is_weak = is_weak
+        all_dtypes.add(self)
 
     # NOTE: these are properties so they appear as read-only
     @property
@@ -211,43 +214,6 @@ complex128_ = complexfloating("complex", "c", bytes=16, is_weak=True)
 
 
 _abstract_classes.update((dtype, exact, inexact))
-
-all_dtypes = {
-    bool8,
-    bool8_,
-    uint8,
-    uint8_,
-    int8,
-    int8_,
-    int16,
-    int16_,
-    int32,
-    int32_,
-    int64,
-    int64_,
-    bfloat16,
-    bfloat16_,
-    float8_e5m2,
-    float8_e5m2_,
-    float8_e5m2fnuz,
-    float8_e5m2fnuz_,
-    float8_e4m3fn,
-    float8_e4m3fn_,
-    float8_e4m3fnuz,
-    float8_e4m3fnuz_,
-    float16,
-    float16_,
-    float32,
-    float32_,
-    float64,
-    float64_,
-    complex32,
-    complex32_,
-    complex64,
-    complex64_,
-    complex128,
-    complex128_,
-}
 
 all_numbertypes = {bool, int, float, complex}
 
