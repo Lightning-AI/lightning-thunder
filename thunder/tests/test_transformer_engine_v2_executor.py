@@ -449,7 +449,8 @@ def test_te_trace_correctness(fp8_recipe: recipe.Recipe):
 
 @requiresCUDA
 @pytest.mark.parametrize("fp8_recipe", recipes, ids=recipe_ids)
-def test_te_activation_checkpointing_trace(fp8_recipe: recipe.Recipe):
+@pytest.mark.parametrize("compile_path", ["jit", "ThunderFX"])
+def test_te_activation_checkpointing_trace(fp8_recipe: recipe.Recipe, compile_path: str):
     if fp8_recipe and not (fp8_recipe.delayed() or is_mxfp8_supported):
         pytest.skip(msg_mxfp8)
 
@@ -464,9 +465,11 @@ def test_te_activation_checkpointing_trace(fp8_recipe: recipe.Recipe):
         a = checkpoint_fn(torch.nn.functional.linear, x, w)
         return torch.nn.functional.linear(a, w2)
 
-    from thunder.dynamo import thunderfx
-
-    cfn = thunderfx(fn, executors=[transformer_engine_v2_ex], transforms=[TransformerEngineTransformV2()])
+    if compile_path == "jit":
+        cfn = thunder.jit(fn, executors=[transformer_engine_v2_ex], transforms=[TransformerEngineTransformV2()])
+    else:
+        from thunder.dynamo import thunderfx
+        cfn = thunderfx(fn, executors=[transformer_engine_v2_ex], transforms=[TransformerEngineTransformV2()])
 
     device = "cuda"
     x = torch.randn(64, 64, device=device, requires_grad=True)
@@ -488,8 +491,9 @@ def test_te_activation_checkpointing_trace(fp8_recipe: recipe.Recipe):
 
 @requiresCUDA
 @pytest.mark.parametrize("fp8_recipe", recipes, ids=recipe_ids)
+@pytest.mark.parametrize("compile_path", ["jit", "ThunderFX"])
 @pytest.mark.filterwarnings("ignore::FutureWarning")  # Coming from TE v2.3
-def test_te_activation_checkpointing_correctness(fp8_recipe: recipe.Recipe):
+def test_te_activation_checkpointing_correctness(fp8_recipe: recipe.Recipe, compile_path: str):
     if not fp8_recipe:
         pytest.skip(
             "When recipe is None a new recipe is created for each iteration. This makes the results not numerically comparable."
@@ -542,7 +546,11 @@ def test_te_activation_checkpointing_correctness(fp8_recipe: recipe.Recipe):
         o = checkpoint_fn(torch.nn.functional.linear, x, w1, b1)
         return torch.nn.functional.linear(o, w2, b2)
 
-    cfn = thunder.jit(fn, executors=[transformer_engine_v2_ex], transforms=[TransformerEngineTransformV2()])
+    if compile_path == "jit":
+        cfn = thunder.jit(fn, executors=[transformer_engine_v2_ex], transforms=[TransformerEngineTransformV2()])
+    else:
+        from thunder.dynamo import thunderfx
+        cfn = thunderfx(fn, executors=[transformer_engine_v2_ex], transforms=[TransformerEngineTransformV2()])
 
     list(map(lambda t: t.requires_grad_(True), (w1, w2, b1, b2)))
     thunder_sgd_optimizer = torch.optim.SGD([w1, w2, b1, b2])
