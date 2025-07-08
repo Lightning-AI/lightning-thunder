@@ -111,6 +111,49 @@ def _inplace_copy_sanity_check(extrace: Trace):
             check(copy_to_out, "output")
 
 
+def _replace_copy_output_with_source(extrace: Trace):
+    """The is based on the sharp edge of nvfuser's `add_ouput(output, input)` interface,
+    it makes sure that the output of `prims.copy_` is not used as input for any of its subsequent operators in a nvFusion fused operator
+
+    Anti-pattern:
+
+    .. code-block:: python
+
+        [t2] = nvFusion0(x, y)
+            # result = prims.mul(x, y)
+            # a = prims.copy_(result, x)
+            # t2 = prims.add(a, y)
+
+    Do not use `a` after it has been updated, use the `copy_from` variable `result` instead to reflect the dependency:
+
+    .. code-block:: python
+
+        [t2] = nvFusion0(x, y)
+            # result = prims.mul(x, y)
+            # a = prims.copy_(result, x)
+            # t2 = prims.add(result, y)
+    This is only to be used when `skip_inplace_alias_updates` is set to False, and relies on the non-fusibility of prims.UPDATE_ALIASES.
+    """
+    from thunder.core.utils import consumers
+
+    nvfuser_symbols = (bsym for bsym in extrace.bound_symbols if bsym.sym.name.startswith("nvFusion"))
+    for bsym in nvfuser_symbols:
+        consumer_dict = consumers(list(bsym.subsymbols), _map_to_numbers=True)
+        inplace_copy_idx = ((idx, sym) for idx, sym in enumerate(bsym.subsymbols) if sym.sym.id == prims.PrimIDs.COPY_)
+        for idx, subbsym in inplace_copy_idx:
+            copy_from_arg = subbsym.flat_args[0]
+            copy_out = subbsym.output
+            swap_map = {variableify(copy_out): copy_from_arg}
+            sub_bsyms = list(bsym.subsymbols)
+            for consumer_idx in consumer_dict.get(copy_out, []):
+                if consumer_idx <= idx:
+                    continue
+                consumer = sub_bsyms[consumer_idx]
+                new_consumer = consumer.from_bsym_swap_proxies(swap_map)
+                sub_bsyms[consumer_idx] = new_consumer
+            bsym.subsymbols = tuple(sub_bsyms)
+
+
 def remove_duplicate_number_proxies(bsyms: Sequence[BoundSymbol]) -> list[BoundSymbol]:
     """This removes duplicate number proxies when they are returned multiple times.
     The remaining DCE pass does not see them (because they often are in a tuple?).

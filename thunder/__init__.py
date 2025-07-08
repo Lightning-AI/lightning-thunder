@@ -602,6 +602,9 @@ def jit(
                 backward_trc = thunder.executors.passes.del_last_used(backward_trc, clear_mutable_collections=True)
                 backward_traces.append(backward_trc)
 
+            if not compile_options.get("skip_inplace_alias_updates", True):
+                thunder.core.transform_common._replace_copy_output_with_source(computation_trc)
+
             if not compile_options.get("disable_inplace_copy_check", False):
                 thunder.core.transform_common._inplace_copy_sanity_check(computation_trc)
                 computation_traces.append(computation_trc)
