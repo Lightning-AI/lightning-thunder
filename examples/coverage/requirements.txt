@@ -4,4 +4,3 @@ nvfuser-cu128-torch27
 nvidia-cudnn-frontend
 einops
 tiktoken
-flash-attn
