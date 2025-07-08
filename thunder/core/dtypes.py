@@ -499,41 +499,13 @@ _thunder_to_torch_dtype_map = {
     int: torch.int32,
     float: torch.float32,
     complex: torch.complex64,
-    bool8_: torch.bool,
-    bool8: torch.bool,
-    uint8_: torch.uint8,
-    uint8: torch.uint8,
-    int8_: torch.int8,
-    int8: torch.int8,
-    int16_: torch.int16,
-    int16: torch.int16,
-    int32_: torch.int32,
-    int32: torch.int32,
-    int64_: torch.int64,
-    int64: torch.int64,
-    bfloat16_: torch.bfloat16,
-    bfloat16: torch.bfloat16,
-    float8_e5m2: torch.float8_e5m2,
-    float8_e5m2_: torch.float8_e5m2,
-    float8_e5m2fnuz: torch.float8_e5m2fnuz,
-    float8_e5m2fnuz_: torch.float8_e5m2fnuz,
-    float8_e4m3fn: torch.float8_e4m3fn,
-    float8_e4m3fn_: torch.float8_e4m3fn,
-    float8_e4m3fnuz: torch.float8_e4m3fnuz,
-    float8_e4m3fnuz_: torch.float8_e4m3fnuz,
-    float16_: torch.float16,
-    float16: torch.float16,
-    float32_: torch.float32,
-    float32: torch.float32,
-    float64_: torch.float64,
-    float64: torch.float64,
-    complex32_: torch.complex32,
-    complex32: torch.complex32,
-    complex64_: torch.complex64,
-    complex64: torch.complex64,
-    complex128_: torch.complex128,
-    complex128: torch.complex128,
 }
+
+_thunder_to_torch_dtype_map.update({
+    dtype: getattr(torch, dtype.full_name.rstrip('_'))
+    for dtype in all_dtypes
+    if hasattr(torch, dtype.full_name.rstrip('_'))
+})
 
 _torch_to_thunder_dtype_map = {
     v: k
