@@ -208,7 +208,7 @@ class ThunderCompiler:
 
 # We return this object instead of just the raw `compiled` Callable so that
 # we have a place to hang the `last_*traces` properties.
-class ThunderfxCompiledObject:
+class ThunderFXCompiledObject:
     """A wrapper around the result of :func:`~thunder.dynamo.thunderfx` compilation.
 
     This object wraps the function compiled with :func:`torch.compile` using Thunder as a backend
@@ -270,7 +270,7 @@ class ThunderfxCompiledObject:
         return rv
 
 
-def thunderfx(fn: Callable, /, **kwargs) -> ThunderfxCompiledObject:
+def thunderfx(fn: Callable, /, **kwargs) -> ThunderFXCompiledObject:
     """Compiles a callable (function or model) by using :class:`thunder.dynamo.ThunderCompiler` as the backend of :func:`torch.compile`
 
     Args:
@@ -289,7 +289,7 @@ def thunderfx(fn: Callable, /, **kwargs) -> ThunderfxCompiledObject:
     backend = ThunderCompiler(**thunder_jit_kwargs)
     compiled = torch.compile(fn, backend=backend, **torch_compile_kwargs)
 
-    c = ThunderfxCompiledObject(backend, compiled)
+    c = ThunderFXCompiledObject(backend, compiled)
     return c
 
 
