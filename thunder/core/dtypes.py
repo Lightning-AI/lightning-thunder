@@ -92,9 +92,7 @@ class dtype:
 
     @property
     def full_name(self):
-        return (
-            f"{self._name}{self.bits}{f'_{self._variant}' if self._variant else ''}{'_' if self._is_weak else ''}"
-        )
+        return f"{self._name}{self.bits}{f'_{self._variant}' if self._variant else ''}{'_' if self._is_weak else ''}"
 
     # TODO Fix name printing
     def __repr__(self):
@@ -377,8 +375,11 @@ def corresponding_real_dtype(dtype):
 def corresponding_complex_dtype(dtype):
     return _real_to_complex_dtype_map[dtype]
 
+
 _name_to_dtype_map = {dtype.full_name: dtype for dtype in all_dtypes}
-_strong_dtype_to_weak_dtype_map = {dtype: _name_to_dtype_map[f"{dtype.full_name}_"] for dtype in all_dtypes if not dtype.is_weak}
+_strong_dtype_to_weak_dtype_map = {
+    dtype: _name_to_dtype_map[f"{dtype.full_name}_"] for dtype in all_dtypes if not dtype.is_weak
+}
 
 _weak_dtype_to_strong_dtype_map = {v: k for k, v in _strong_dtype_to_weak_dtype_map.items()}
 _weak_dtype_to_strong_dtype_map.update(
