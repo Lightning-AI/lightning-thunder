@@ -124,7 +124,7 @@ baichuan-inc/Baichuan-13B-Chat
 baichuan-inc/Baichuan-7B
 baichuan-inc/Baichuan2-13B-Chat
 bczhou/TinyLLaVA-2.0B
-# bigcode/santacoder  # Error:    ValueError: Unrecognized configuration class <..> for this kind of AutoModel: AutoModel. 
+# bigcode/santacoder  # Error:    ValueError: Unrecognized configuration class <..> for this kind of AutoModel: AutoModel.
 bigcode/santacoderpack
 bigcode/starcoder
 bigcode/starcoder2-15b
