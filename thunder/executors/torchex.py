@@ -1537,7 +1537,7 @@ def _scaled_mm_transform(
         b = b.t().contiguous().t()
     utils.check(
         is_column_major(b),
-        lambda: f"`b` has strides of {b.stride()} but expected to be row-major",
+        lambda: f"`b` has strides of {b.stride()} but expected to be column-major",
     )
 
     return _scaled_mm(a, b, scale_a, scale_b, bias, scale_result, result_dtype, use_fast_accum)
