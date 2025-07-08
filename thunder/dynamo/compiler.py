@@ -219,8 +219,8 @@ class ThunderFXCompiledObject:
     Note: This is the return type of ``thunderfx``, not :func:`thunder.jit`.
     """
 
-    def __init__(self, be, func: Callable):
-        self._backend = be
+    def __init__(self, backend, func: Callable):
+        self._backend = backend
         self._func = func
 
     def __call__(self, *args, **kwargs):
