@@ -372,26 +372,7 @@ def corresponding_complex_dtype(dtype):
     return _real_to_complex_dtype_map[dtype]
 
 
-_strong_dtype_to_weak_dtype_map = {
-    bool8: bool8_,
-    uint8: uint8_,
-    uint64: uint64_,
-    int8: int8_,
-    int16: int16_,
-    int32: int32_,
-    int64: int64_,
-    bfloat16: bfloat16_,
-    float8_e5m2: float8_e5m2_,
-    float8_e5m2fnuz: float8_e5m2fnuz_,
-    float8_e4m3fn: float8_e4m3fn_,
-    float8_e4m3fnuz: float8_e4m3fnuz_,
-    float16: float16_,
-    float32: float32_,
-    float64: float64_,
-    complex32: complex32_,
-    complex64: complex64_,
-    complex128: complex128_,
-}
+_strong_dtype_to_weak_dtype_map = {dtype: eval(f"{dtype.full_name}_") for dtype in all_dtypes if not dtype.is_weak}
 
 _weak_dtype_to_strong_dtype_map = {v: k for k, v in _strong_dtype_to_weak_dtype_map.items()}
 _weak_dtype_to_strong_dtype_map.update(
