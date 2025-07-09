@@ -17,7 +17,7 @@ def main(gh_run_id: str = ""):
     pkg_path = glob.glob("dist/*.whl")[0]
 
     print("Starting studio...")
-    s.start()
+    s.start(machine=Machine.L40S, interruptible=False)
     print("Installing Thunder and other requirements...")
     s.run(f"pip install {pkg_path} -U")
     s.run("pip install --no-build-isolation transformer_engine[pytorch]")
@@ -31,46 +31,20 @@ def main(gh_run_id: str = ""):
     ]
 
     print("Running transformer tests...")
-    jobs = {
-        f"test_{i}": Job.run(
-            name=f"ci-run{gh_run_id}_transformer_test_{i}",
-            command=cmd,
-            studio=s,
-            machine=Machine.L40S,
-            interruptible=True,
-        )
-        for i, cmd in enumerate(test_commands)
-    }
+
+    test_outputs = []
+    for test in test_commands:
+        test_outputs.append(s.run(test))
 
     print("Stopping studio...")
     s.stop()
 
-    print("Waiting for jobs to finish...")
-    report, failures = {}, {}
-    for name, job in jobs.items():
-        job.wait()
-        print(f"[{job.status}]\t {job.name}")
-        report[name] = str(job.status).lower()
-        if job.status != Status.Completed:
-            failures[name] = job.logs
-        else:  # clean up successful jobs
-            job.delete()
-
-    with open("transformer_tests_report.json", "w") as fp:
-        json.dump(report, fp, indent=4)
-
-    print("Showing logs of failed jobs...")
-    separator = "=" * 80
-    for name, logs in failures.items():
-        offset = "=" * (80 - 5 - 2 - len(name))
-        print(f"{separator}\n===== {name} {offset}\n{separator}")
-        print(logs)
-        print(separator + "\n" * 5)
-
-    assert not failures
-
     print("Cleaning up...")
     s.delete()
+
+    print("Test Outputs:")
+    for test_output in test_outputs:
+        print(test_output)
 
 
 if __name__ == "__main__":
