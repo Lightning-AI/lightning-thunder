@@ -52,7 +52,7 @@ def main(gh_run_id: str = ""):
             print(f"Test {cmd} failed with exit code {exit_code}")
             print(output)
             print("=" * 80)
-    
+
     if any(exit_code != 0 for output, exit_code in cmd_exit_code.values()):
         assert False, "Some tests failed"
 
