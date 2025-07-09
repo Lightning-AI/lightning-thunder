@@ -57,6 +57,34 @@ def topk1(values, topk, dim):
     return torch.max(values, dim=dim, keepdim=True)
 
 
+def static_bincount(x, length):
+    return torch.index_add(torch.zeros(length, device=x.device, dtype=x.dtype), 0, x, torch.ones_like(x))
+
+
+def inverse_permutation(x):
+    return torch.scatter(torch.zeros_like(x), 0, x, torch.arange(x.numel(), device=x.device))
+
+
+def compute_offsets_and_permutations(router_indices, num_experts):
+    flat_router_indices = router_indices.flatten()
+    expert_permutation = torch.argsort(flat_router_indices)
+    group_size_per_expert = static_bincount(flat_router_indices, num_experts)
+    zero = torch.zeros(1, device=group_size_per_expert.device, dtype=group_size_per_expert.dtype)
+    # torch.compile requires int32 for offsets
+    # https://github.com/pytorch/pytorch/blob/ed6ae20cf0e31d49d54177251293267205e24021/torch/_meta_registrations.py#L7657
+    expert_offsets = torch.cat([zero, group_size_per_expert.cumsum(0)]).to(torch.int32)
+    inv_expert_permutation = inverse_permutation(expert_permutation)
+    return expert_offsets, expert_permutation, inv_expert_permutation
+
+
+# Grouped MM in PyTorch is supported only for compute capability == 9.0, 10.0
+def grouped_mm(a, b, offsets):
+    try:
+        return torch._grouped_mm(a, b, offsets)
+    except RuntimeError:
+        return (torch.nested.nested_tensor_from_jagged(a, offsets) @ b).values()
+
+
 # Ref:
 # https://github.com/vllm-project/vllm/blob/3ee56e26be4cfddc17f7d2e5f38f15ab74ede1c2/vllm/model_executor/models/llama4.py#L48
 def custom_routing_function(
@@ -69,6 +97,50 @@ def custom_routing_function(
     router_scores, router_indices = topk1(gating_output, topk, dim=-1)
     router_scores = torch.sigmoid(router_scores.to(torch.float32)).to(hidden_states.dtype)
     return (router_scores, router_indices.to(torch.int32))
+
+
+def experts(
+    hidden_states_2d: torch.Tensor,
+    w1: torch.Tensor,
+    w2: torch.Tensor,
+    topk_weights: torch.Tensor,
+    topk_ids: torch.Tensor,
+    num_experts: int,
+) -> torch.Tensor:
+    hidden_states_2d = hidden_states_2d * topk_weights.reshape(-1, 1)
+    expert_offsets, expert_permutation, inv_expert_permutation = compute_offsets_and_permutations(
+        topk_ids, num_experts)
+    sorted_per_expert_hidden_states = hidden_states_2d[expert_permutation]
+    gate_up = grouped_mm(sorted_per_expert_hidden_states, w1, expert_offsets)
+    gate, up = gate_up.chunk(2, dim=-1)
+    next_states = grouped_mm(up * torch.nn.functional.silu(gate), w2, expert_offsets)
+    return next_states[inv_expert_permutation]
+
+
+def Llama4TextMoe_forward(self: Llama4TextMoe, hidden_states: torch.Tensor) -> tuple[torch.Tensor, None]:
+    shared_out = self.shared_expert(hidden_states)
+    router_logits = self.router(hidden_states)
+
+    router_logits_2d = router_logits.view(-1, router_logits.size(-1))
+    hidden_states_2d = hidden_states.view(-1, self.hidden_dim)
+
+    topk_weights, topk_ids = custom_routing_function(hidden_states_2d, router_logits_2d, self.top_k, renormalize=False)
+    w1 = self.experts.gate_up_proj
+    w2 = self.experts.down_proj
+    routed_out = experts(
+        hidden_states_2d,
+        w1,
+        w2,
+        topk_weights,
+        topk_ids,
+        num_experts=self.num_experts,
+    )
+    routed_out = routed_out.view(hidden_states.shape)
+    out = routed_out + shared_out
+    return out, None
+
+
+Llama4TextMoe.forward = Llama4TextMoe_forward
 
 
 # When `vllm` and its fused_experts is available, use fused_experts as llama4 moe forward.
