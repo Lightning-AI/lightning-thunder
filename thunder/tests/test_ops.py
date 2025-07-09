@@ -559,7 +559,7 @@ def test_softmax_stacklevel():
     assert_close(fn(a), jfn(a))
 
 
-@instantiate()
+@instantiate(dtypes=dtypes.float_math_dtypes)
 def test_full_tensor_value(executor, device, dtype):
     def fn(a):
         return torch.full((2,), a)
