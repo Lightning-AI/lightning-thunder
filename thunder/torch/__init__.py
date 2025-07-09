@@ -1507,7 +1507,7 @@ def view(a: TensorLike, /, *shape) -> TensorLike:
             lambda: f"`a.view({shape[0]})` is not supported as a's itemsize is {src_dtype.bytes} but target dtype itemsize is {dst_dtype.bytes}",
             exception_type=NotImplementedError,
         )
-        return to(a, dtype=shape[0])
+        return prims.bitcast(a, dtype=to_dtype(shape[0]))
     return reshape(a, shape)
 
 
