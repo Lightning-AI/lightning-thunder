@@ -15,6 +15,7 @@ def main(gh_run_id: str = ""):
     print("Uploading package and scripts...")
     s.upload_folder("dist", remote_path="dist")
     s.upload_folder("requirements", remote_path="requirements")
+    s.upload_folder("thunder/tests", remote_path="tests")
     pkg_path = glob.glob("dist/*.whl")[0]
 
     print("Starting studio...")
@@ -25,10 +26,10 @@ def main(gh_run_id: str = ""):
 
     # Define test commands
     test_commands = [
-        "pytest thunder/tests/test_transformer_engine_executor.py -v",
-        "pytest thunder/tests/distributed/test_ddp.py -k transformer -v -rs",
-        "pytest thunder/tests/distributed/test_fsdp.py -k transformer -v -rs",
-        "pytest thunder/tests/test_transformer_engine_v2_executor.py -v -rs",
+        "pytest tests/test_transformer_engine_executor.py -v",
+        "pytest tests/distributed/test_ddp.py -k transformer -v -rs",
+        "pytest tests/distributed/test_fsdp.py -k transformer -v -rs",
+        "pytest tests/test_transformer_engine_v2_executor.py -v -rs",
     ]
 
     print("Running transformer tests...")
