@@ -49,12 +49,12 @@ jobs:
             echo "EOF" >> $GITHUB_ENV
           fi
 
-      - uses: act10ns/slack@v2
-        if: always() && github.event_name != 'pull_request' && steps.load-report.conclusion == 'success'
-        with:
-          webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
-          status: ${{ job.status }}
-          message: |
-            *Transformer Tests CI* - [${{ job.status }}]
-            ${{ env.REPORT }}
-            ref: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }} 
+      # - uses: act10ns/slack@v2
+      #   if: always() && github.event_name != 'pull_request' && steps.load-report.conclusion == 'success'
+      #   with:
+      #     webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
+      #     status: ${{ job.status }}
+      #     message: |
+      #       *Transformer Tests CI* - [${{ job.status }}]
+      #       ${{ env.REPORT }}
+      #       ref: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }} 
