@@ -10,7 +10,7 @@ import thunder.torch as ttorch
 from thunder.tests.framework import instantiate, nvFuserExecutor, TorchExecutor
 
 
-@instantiate(dtypes=datatypes.all_dtypes - datatypes.float_8bit_dtypes)
+@instantiate(dtypes=datatypes.float_math_dtypes)
 def test_prim_inplace_copy_fwd(executor, device, dtype):
     def torch_foo(x, y):
         z = x + y
