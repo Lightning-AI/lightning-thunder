@@ -14,12 +14,13 @@ def main(gh_run_id: str = ""):
     s = Studio(f"thunder-transformer-tests-run{gh_run_id}", "oss-thunder", org="lightning-ai", create_ok=True)
     print("Uploading package and scripts...")
     s.upload_folder("dist", remote_path="dist")
+    s.upload_folder("requirements", remote_path="requirements")
     pkg_path = glob.glob("dist/*.whl")[0]
 
     print("Starting studio...")
     s.start(machine=Machine.L40S, interruptible=False)
     print("Installing Thunder and other requirements...")
-    s.run(f"pip install {pkg_path} -U")
+    s.run(f"pip install {pkg_path} -U -r requirements/test.txt")
     s.run("pip install --no-build-isolation 'transformer_engine[pytorch]'")
 
     # Define test commands
