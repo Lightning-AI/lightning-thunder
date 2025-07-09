@@ -34,9 +34,11 @@ def main(gh_run_id: str = ""):
 
     print("Running transformer tests...")
 
-    test_outputs = []
+    cmd_exit_code = {}
     for test in test_commands:
-        test_outputs.append(s.run(test))
+        output, exit_code = s.run_with_exit_code(test)
+        print(output)
+        cmd_exit_code[test] = (output, exit_code)
 
     print("Stopping studio...")
     s.stop()
@@ -45,8 +47,14 @@ def main(gh_run_id: str = ""):
     s.delete()
 
     print("Test Outputs:")
-    for test_output in test_outputs:
-        print(test_output)
+    for cmd, (output, exit_code) in cmd_exit_code.items():
+        if exit_code != 0:
+            print(f"Test {cmd} failed with exit code {exit_code}")
+            print(output)
+            print("=" * 80)
+    
+    if any(exit_code != 0 for output, exit_code in cmd_exit_code.values()):
+        assert False, "Some tests failed"
 
 
 if __name__ == "__main__":

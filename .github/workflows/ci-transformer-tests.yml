@@ -38,16 +38,16 @@ jobs:
           pip install lightning_sdk -U -q
           python .github/run-transformer-tests-as-lit-jobs.py ${{ github.run_id }}
 
-      - name: Load report
-        if: always()
-        id: load-report
-        run: |
-          if [ -f "transformer_tests_report.json" ]; then
-            report=$(cat transformer_tests_report.json)
-            echo "REPORT<<EOF" >> $GITHUB_ENV
-            echo "$report" >> $GITHUB_ENV
-            echo "EOF" >> $GITHUB_ENV
-          fi
+      # - name: Load report
+      #   if: always()
+      #   id: load-report
+      #   run: |
+      #     if [ -f "transformer_tests_report.json" ]; then
+      #       report=$(cat transformer_tests_report.json)
+      #       echo "REPORT<<EOF" >> $GITHUB_ENV
+      #       echo "$report" >> $GITHUB_ENV
+      #       echo "EOF" >> $GITHUB_ENV
+      #     fi
 
       # - uses: act10ns/slack@v2
       #   if: always() && github.event_name != 'pull_request' && steps.load-report.conclusion == 'success'
