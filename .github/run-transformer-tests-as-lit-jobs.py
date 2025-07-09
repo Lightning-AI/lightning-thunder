@@ -20,7 +20,7 @@ def main(gh_run_id: str = ""):
     s.start(machine=Machine.L40S, interruptible=False)
     print("Installing Thunder and other requirements...")
     s.run(f"pip install {pkg_path} -U")
-    s.run("pip install --no-build-isolation transformer_engine[pytorch]")
+    s.run("pip install --no-build-isolation 'transformer_engine[pytorch]'")
 
     # Define test commands
     test_commands = [
