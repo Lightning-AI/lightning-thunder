@@ -1,4 +1,5 @@
 import unittest
+from itertools import product
 
 import pytest
 import torch
@@ -10,8 +11,22 @@ from thunder.dynamo import thunderfx
 import thunder
 
 from thunder.tests.distributed.helper import DistributedParallelTestCase
-from torch.distributed._tensor import DeviceMesh, Shard, distribute_tensor
+from torch.distributed._tensor import DeviceMesh, distribute_tensor
 from torch.distributed.tensor.placement_types import Placement, Shard, Replicate
+
+from torch.testing._internal import common_utils
+
+from thunder.tests.distributed.helper import executors_map
+
+
+# NOTE: We run all these similar functions seperately
+#       as we want to avoid nvfuser issue (https://github.com/NVIDIA/Fuser/issues/4507)
+#       where trying to create FusionDefinition with same math operation can fail.
+functions_to_test = {
+    "torch.mul": lambda x, w: torch.mul(x, w),
+    "x.mul(w)": lambda x, w: torch.Tensor.mul(x, w),
+    "x * w": lambda x, w: x * w,
+}
 
 
 @unittest.skipUnless(
@@ -19,15 +34,16 @@ from torch.distributed.tensor.placement_types import Placement, Shard, Replicate
     "DTensor test requires CUDA and NCCL `torch.distributed` backend",
 )
 class DTensorTest(DistributedParallelTestCase):
-    def test_dtensor_basic_op(self):
+    @common_utils.parametrize("executor, fn_key", product(tuple(executors_map.keys()), functions_to_test.keys()))
+    def test_dtensor_basic_op(self, executor, fn_key):
         num_devices = self.world_size
         mesh = DeviceMesh("cuda", list(range(num_devices)))
 
         dim_size = 16
 
-        def _helper(fn, in_dtensor, w_dtensor, compile_fn):
+        def _helper(fn, in_dtensor, w_dtensor):
             expected = torch.compile(fn)(in_dtensor, w_dtensor)
-            tmodel = compile_fn(fn)
+            tmodel = thunder.jit(fn, executors=executors_map[executor].executors_list())
             actual = tmodel(in_dtensor, w_dtensor)
 
             torch.testing.assert_close(actual, expected)
@@ -41,23 +57,12 @@ class DTensorTest(DistributedParallelTestCase):
             actual_g = torch.autograd.grad(actual, (in_dtensor, w_dtensor), g_o)
 
             torch.testing.assert_close(actual_g, expected_g)
-            if compile_fn is thunderfx:
-                assert len(tmodel._backend.subgraph_infos[0].split_reasons) > 0, "TODO: Fix with thunderfx path"
 
         w_dtensor = distribute_tensor(torch.randn(dim_size, dim_size, requires_grad=True), mesh, [Shard(0)])
         in_dtensor = distribute_tensor(torch.randn(dim_size, dim_size, requires_grad=True), mesh, [Shard(0)])
 
         # Verify torch API works
-        _helper(lambda x, w: torch.mul(x, w), in_dtensor, w_dtensor, compile_fn=thunder.jit)
-        _helper(lambda x, w: torch.mul(x, w), in_dtensor, w_dtensor, compile_fn=thunderfx)
-
-        # Verify calling method works
-        _helper(lambda x, w: torch.Tensor.mul(x, w), in_dtensor, w_dtensor, compile_fn=thunder.jit)
-        _helper(lambda x, w: torch.Tensor.mul(x, w), in_dtensor, w_dtensor, compile_fn=thunderfx)
-
-        # # Verify calling special method works
-        _helper(lambda x, w: x * w, in_dtensor, w_dtensor, compile_fn=thunder.jit)
-        _helper(lambda x, w: x * w, in_dtensor, w_dtensor, compile_fn=thunderfx)
+        _helper(functions_to_test[fn_key], in_dtensor, w_dtensor)
 
     def test_dtensor_unsupported(self):
         num_devices = self.world_size
@@ -118,3 +123,9 @@ class DTensorTest(DistributedParallelTestCase):
 
         with pytest.raises(RuntimeError, match="has changed for cotangent between tracing and runtime"):
             torch.autograd.grad(actual, (in_dtensor, w_dtensor), g_o)
+
+
+common_utils.instantiate_parametrized_tests(DTensorTest)
+
+if __name__ == "__main__":
+    common_utils.run_tests()

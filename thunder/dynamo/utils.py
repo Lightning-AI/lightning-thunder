@@ -228,9 +228,13 @@ def get_proxy_inputs_from_node(node: torch.fx.Node) -> tuple[tuple, dict]:
                         e_v.new_ones(_concrete_value(e_v.shape), device=e_v.device, dtype=e_v.dtype)
                         for e_v in example_value
                     )
+                elif isinstance(example_value, torch.types.py_sym_types) and example_value.node.has_hint():
+                    return proxy(example_value.node.hint)
                 else:
                     # NOTE - This will be caught and be part of the SplitReason.
-                    raise TypeError("`make_input_proxy` received example_value which wasn't Tensor or Tuple")
+                    raise TypeError(
+                        f"`make_input_proxy` received unsupported example_value type: {type(example_value)}"
+                    )
                 return proxy(example_value)
 
             # This is int, float, etc.
@@ -514,7 +518,12 @@ def _get_storage_shape(t: torch.Tensor):
 
 def _get_min_and_val(t: torch.Tensor) -> tuple[Number | None, Number | None]:
     # We assume that for TensorSubclass, `aminmax` is not supported which is true for FakeTensor and DTensor.
-    if (isinstance(t, torch.Tensor) and type(t) is not torch.Tensor) or t.device.type == "meta" or t.numel() == 0:
+    if (
+        (isinstance(t, torch.Tensor) and type(t) is not torch.Tensor)
+        or t.device.type == "meta"
+        or t.numel() == 0
+        or t.dtype.is_complex
+    ):
         return None, None
     if t.dtype in (torch.float8_e4m3fn, torch.float8_e4m3fnuz, torch.float8_e5m2, torch.float8_e5m2fnuz):
         t = t.to(torch.float32)
