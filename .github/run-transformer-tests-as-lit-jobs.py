@@ -27,7 +27,7 @@ def main(gh_run_id: str = ""):
         "pytest thunder/tests/test_transformer_engine_executor.py -v",
         "pytest thunder/tests/distributed/test_ddp.py -k transformer -v -rs",
         "pytest thunder/tests/distributed/test_fsdp.py -k transformer -v -rs",
-        "pytest thunder/tests/test_transformer_engine_v2_executor.py -v -rs"
+        "pytest thunder/tests/test_transformer_engine_v2_executor.py -v -rs",
     ]
 
     print("Running transformer tests...")
@@ -50,4 +50,4 @@ def main(gh_run_id: str = ""):
 if __name__ == "__main__":
     # parse command line arguments
     args = sys.argv[1:]
-    main(*args) 
+    main(*args)
