@@ -111,8 +111,8 @@ def _inplace_copy_sanity_check(extrace: Trace):
             check(copy_to_out, "output")
 
 
-def _replace_copy_output_with_source(extrace: Trace):
-    """The is based on the sharp edge of nvfuser's `add_ouput(output, input)` interface,
+def _replace_copy_output_with_source(extrace: Trace) -> None:
+    """This is based on the sharp edge of nvfuser's `add_ouput(output, input)` interface,
     it makes sure that the output of `prims.copy_` is not used as input for any of its subsequent operators in a nvFusion fused operator
 
     Anti-pattern:
