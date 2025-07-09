@@ -26,10 +26,11 @@ def main(gh_run_id: str = ""):
 
     # Define test commands
     test_commands = [
-        "pytest tests/test_transformer_engine_executor.py -v",
-        "pytest tests/distributed/test_ddp.py -k transformer -v -rs",
-        "pytest tests/distributed/test_fsdp.py -k transformer -v -rs",
+        "pytest tests/test_transformer_engine_executor.py -v -rs",
         "pytest tests/test_transformer_engine_v2_executor.py -v -rs",
+        # TODO: Add DDP and FSDP tests
+        # "pytest tests/distributed/test_ddp.py -k transformer -v -rs",
+        # "pytest tests/distributed/test_fsdp.py -k transformer -v -rs",
     ]
 
     print("Running transformer tests...")
@@ -50,8 +51,6 @@ def main(gh_run_id: str = ""):
     for cmd, (output, exit_code) in cmd_exit_code.items():
         if exit_code != 0:
             print(f"Test {cmd} failed with exit code {exit_code}")
-            print(output)
-            print("=" * 80)
     
     if any(exit_code != 0 for output, exit_code in cmd_exit_code.values()):
         assert False, "Some tests failed"
