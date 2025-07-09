@@ -2,7 +2,6 @@ import thunder
 from thunder.core.proxies import TensorProxy
 from thunder.core.transform_common import Transform
 from thunder.core import prims
-from .quantization import trace_with_replaced_proxy_metadata
 import torch
 import math
 

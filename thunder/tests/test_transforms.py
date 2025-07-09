@@ -660,7 +660,7 @@ def test_buffer_dtype_casting():
             }
 
             # here we switch the prologue_trace to a copy with new metadata
-            prologue_trace = thunder.transforms.quantization.trace_with_replaced_proxy_metadata(
+            prologue_trace = thunder.transforms.utils.trace_with_replaced_proxy_metadata(
                 prologue_trace, prologue_proxy_map
             )
 
@@ -686,7 +686,7 @@ def test_buffer_dtype_casting():
                 if psym.shape != csym.shape or psym.dtype != csym.dtype
             }
 
-            new_computation_trace = thunder.transforms.quantization.trace_with_replaced_proxy_metadata(
+            new_computation_trace = thunder.transforms.utils.trace_with_replaced_proxy_metadata(
                 computation_trace, computation_proxy_map
             )
 
@@ -714,7 +714,7 @@ def test_buffer_dtype_casting():
 
             new_computation_trace.bound_symbols = new_bound_symbols
 
-            new_computation_trace = thunder.transforms.quantization.trace_with_replaced_proxy_metadata(
+            new_computation_trace = thunder.transforms.utils.trace_with_replaced_proxy_metadata(
                 new_computation_trace, computation_proxy_map
             )
 

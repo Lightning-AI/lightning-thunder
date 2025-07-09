@@ -9,7 +9,6 @@ from copy import copy
 from itertools import chain, filterfalse
 import warnings
 from typing import cast
-from collections.abc import Callable
 
 from looseversion import LooseVersion
 import torch
@@ -269,13 +268,13 @@ class MultiDeviceFusionDefinition(FusionDefinition):
             in_tensor = self._find_tensor_by_index(in_tensor_index)
 
             # Set the device mesh.
-            assert in_dtensor.device_mesh.ndim == 1, "nvFuser's Python API only supports 1D meshes."
+            utils.check(in_dtensor.device_mesh.ndim == 1, lambda: "nvFuser's Python API only supports 1D meshes.")
             mesh = nvfuser.DeviceMesh(in_dtensor.device_mesh.mesh.tolist())
 
             self.sched._set_device_mesh(in_tensor, mesh)
 
             # Split and parallelize.
-            assert len(in_dtensor.placements) == 1, "Expect a 1D mesh"
+            utils.check(len(in_dtensor.placements) == 1, lambda: "nvFuser's Python API only supports 1D meshes.")
             # When the mesh is multi-dimensional, iterate through the
             # placements in descending order of Placement.dim.
             placement: Placement = in_dtensor.placements[0]
@@ -367,8 +366,9 @@ def create_fd(
 
     if any(isinstance(t, DTensorProxy) for t in sorted_unique_inputs):
         # multi-GPU path
-        assert all(isinstance(t, DTensorProxy) for t in sorted_unique_inputs), (
-            "nvfuser: Currently we only support Fusion region with all DTensor inputs or all Tensor inputs but not a mix"
+        utils.check(
+            all(isinstance(t, DTensorProxy) for t in sorted_unique_inputs),
+            lambda: "nvfuser: Currently we only support Fusion region with all DTensor inputs or all Tensor inputs but not a mix",
         )
 
         def check_dtensor_tracing_and_runtime_metadata(inp):
@@ -378,8 +378,9 @@ def create_fd(
             runtime_placements_repr = dtensor_metadata[1]
             return x.device_mesh == runtime_device_mesh_repr and x.placements == runtime_placements_repr
 
-        assert all(map(check_dtensor_tracing_and_runtime_metadata, zip(sorted_unique_inputs, input_descriptors))), (
-            "nvfuser: Expected runtime and tracing metadata to be the same for DTensor."
+        utils.check(
+            all(map(check_dtensor_tracing_and_runtime_metadata, zip(sorted_unique_inputs, input_descriptors))),
+            lambda: "nvfuser: Expected runtime and tracing metadata to be the same for DTensor.",
         )
 
         fd = MultiDeviceFusionDefinition(definition, sorted_unique_inputs, max_length=MAX_LENGTH)
@@ -2012,7 +2013,7 @@ def mul(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinitio
 
 
 register_supported(PrimIDs.MUL, mul, _elementwise_binary_check)
-# register_supported(dtensor_mul_prim.id, mul, _elementwise_binary_check)
+register_supported(dtensor_mul_prim.id, mul, _elementwise_binary_check)
 
 
 def ne(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
@@ -3128,6 +3129,69 @@ ex.register_supported(
     checker=_cross_entropy_check_,
 )
 
+
+def _topk_check_(
+    a: TensorProxy, /, k: int, dim: int | None = None, largest: Number = 1, sorted: Number = 1, *args
+) -> bool:
+    if a.ndim <= 0:
+        return False
+    if dim >= a.ndim or (dim is not None and dim < -a.ndim):
+        return False
+    return True
+
+
+def topk_transform(
+    a: TensorProxy,
+    /,
+    k: int,
+    dim: int | None = None,
+    largest: Number = 1,
+    sorted: Number = 1,
+    *,
+    fd: FusionDefinition,
+    lc_to_nv_map: dict,
+) -> any:
+    nva = getnv(a, fd, lc_to_nv_map)
+    nvk = getnv(k, fd, lc_to_nv_map)
+    return fd.ops.topk(nva, nvk, dim, bool(largest), bool(sorted))
+
+
+register_supported(prims.topk, topk_transform, _topk_check_)
+
+
+def _argsort_check_(a: TensorProxy, /, dim: int | None = None, descending: bool = False, stable: bool = False) -> bool:
+    return True
+
+
+def argsort_transform(
+    a: TensorProxy,
+    /,
+    dim: int | None = None,
+    descending: bool = False,
+    stable: bool = False,
+    *,
+    fd: FusionDefinition,
+    lc_to_nv_map: dict,
+) -> TensorProxy:
+    """Transform argsort operation for NVFuser execution.
+
+    Args:
+        a: Input tensor
+        dim: Dimension along which to sort
+        descending: Sort in descending order if True
+        stable: Whether to use a stable sorting algorithm
+        fd: Fusion definition
+        lc_to_nv_map: Map from Lightning tensors to NVFuser tensors
+
+    Returns:
+        TensorProxy: Tensor of indices that would sort the input tensor
+    """
+    nva = getnv(a, fd, lc_to_nv_map)
+    return fd.ops.argsort(nva, dim, bool(descending), bool(stable))
+
+
+# Register argsort with NVFuser
+register_supported(prims.argsort, argsort_transform, _argsort_check_)
 
 # At module/class level
 NVFUSER_SUPPORTS_OPTIONS = nvfuser_version() >= LooseVersion("0.2.23")

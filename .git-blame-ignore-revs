@@ -4,3 +4,5 @@
 b63e8713141044ed8c184f2f4c8305048d477319
 # Enable `ruff-check` in pre-commit (#2192)
 ae51153db2e623e8b9fb3609de3a6ad976addd0a
+# Enable ruff format in pre-commit (#2142)
+0c6f9a91f1ac955bd5c1087ae26d120d7ab184a3

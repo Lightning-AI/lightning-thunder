@@ -99,6 +99,7 @@ class BoundSymbolTag(TagBase):
 
 
 BoundSymbolTag.register_tag("RECOMPUTE_IN_BACKWARD")
+BoundSymbolTag.register_tag("BACKWARD")
 
 # A symbol represents a function and how it can be transformed
 
@@ -594,7 +595,7 @@ class BoundSymbol(BoundSymbolInterface):
     def rhs(self) -> BoundSymbolRHS:
         hashable_args = make_hashable(self._var_args)
         hashable_kwargs = make_hashable(self._var_kwargs)
-        return BoundSymbolRHS(self.sym, hashable_args, hashable_kwargs)
+        return BoundSymbolRHS(self.sym, hashable_args, hashable_kwargs, has_tags(self, {BoundSymbolTag.BACKWARD}))
 
     # TODO Document contexts
     def import_ctx(self):
@@ -737,3 +738,4 @@ class BoundSymbolRHS:
     sym: Symbol
     args: tuple[Hashable]
     kwargs: FrozenDict
+    backward: bool

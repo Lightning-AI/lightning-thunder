@@ -1292,14 +1292,14 @@ def test_autograd_function_apply_with_no_grad():
 
     # This is using `thunder` operations
     # NOTE - This takes a different codepath compared to above.
-    def forward(_, x):
+    def forward(_, x):  # noqa: F811
         saved_for_backward = (x,)
         thunder.torch._set_grad_enabled_with_warning(False)
         sin = thunder.torch.sin(x)
         thunder.torch._set_grad_enabled_with_warning(True)
         return sin, saved_for_backward
 
-    def backward(_, grad_output, *saved_tensors):
+    def backward(_, grad_output, *saved_tensors):  # noqa: F811
         # NOTE - This is incorrect on purpose
         return grad_output * 2
 

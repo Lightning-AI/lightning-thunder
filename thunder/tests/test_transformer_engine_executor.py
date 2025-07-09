@@ -8,7 +8,6 @@ from thunder.tests.framework import requiresCUDA
 te = pytest.importorskip("transformer_engine", reason="transformer_engine was not found, skipping the tests.")
 from thunder.executors.transformer_engineex import transformer_engine_ex
 from transformer_engine.common import recipe
-import transformer_engine.pytorch as te
 
 # FP8 is supported on compute arch 8.9 onwards.
 # MXFP8 is supported on compute arch 10.0 onwards.
@@ -208,7 +207,9 @@ def test_te_with_autocast():
 
 
 # NOTE: strict=False as it passes on Blackwell.
-@pytest.mark.xfail(strict=False, raises=(RuntimeError, TypeError), reason="Retain graph is not supported by TE")
+@pytest.mark.xfail(
+    strict=False, raises=(ValueError), reason="See https://github.com/Lightning-AI/lightning-thunder/issues/2221"
+)
 @requiresCUDA
 def test_te_with_retain_graph():
     def foo(x, w):

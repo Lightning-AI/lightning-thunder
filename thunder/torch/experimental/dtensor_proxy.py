@@ -73,7 +73,7 @@ class DTensorProxy(TensorProxy):
         import thunder.torch.experimental.dtensor_torch_and_prims as dtensor_torch_and_prims
         res = dtensor_torch_and_prims.dtensor_redistribute_prim(self, device_mesh, placements, async_op=async_op)
         return res
-    
+
     def to_local(self, *, grad_placements: "Optional[Sequence[Placement]]" = None):
         import thunder.torch.experimental.dtensor_torch_and_prims as dtensor_torch_and_prims
         res = dtensor_torch_and_prims.dtensor_to_local_prim(self, grad_placements=grad_placements)

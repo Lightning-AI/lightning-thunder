@@ -123,6 +123,7 @@ def test_extend_core():
 def test_get_all_executors_includes_all_native_executors():
     executors = get_all_executors()
     actual = {e.name for e in executors}
+    # apex and transformer_engine register the executor even if the external library they rely on is not available.
     expected = {
         "apex",
         "fa3",
@@ -141,6 +142,8 @@ def test_get_all_executors_includes_all_native_executors():
         expected.update({"nvfuser"})
         expected.update({"cudnn"})
         expected.update({"cudnn_layernorm"})
+    if package_available("transformer_engine"):
+        expected.update({"transformer_engine_v2"})
     assert actual == expected
 
 
@@ -151,23 +154,32 @@ def test_register_implementation_custom_op():
     def official_add(a, b):
         return a + b
 
+    def official_add2(a, b):
+        return a + b
+
     def _myadd(a, b):
         return a + b
 
-    myadd1 = addex.register_operator("myadd1", like=_myadd, fn=_myadd, replaces=official_add)
+    myadd1 = addex.register_operator("myadd1", like=_myadd, fn=_myadd, replaces=(official_add, official_add2))
     myadd2 = addex.register_operator("myadd2", like=_myadd, fn=_myadd)
 
     def fn(a, b):
         return official_add(a, b)
 
+    def fn2(a, b):
+        return official_add2(a, b)
+
     cfn = thunder.jit(fn, executors=[addex])
+    cfn2 = thunder.jit(fn2, executors=[addex])
 
     a = torch.randn(2, 2)
     b = torch.randn(2, 2)
 
     res = cfn(a, b)
+    res2 = cfn2(a, b)
 
     assert "myadd1" in str(thunder.last_traces(cfn)[-1])
+    assert "myadd1" in str(thunder.last_traces(cfn2)[-1])
 
     def myadd_trafo(a, b):
         return myadd2(a, b)

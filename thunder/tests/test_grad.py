@@ -816,7 +816,7 @@ def test_multiple_output_vjp(executor, device, _):
 
     # Let's define a correct sincos_backward function
     @register_backward("sincos")
-    def sincos_backward(sin_x, cos_x, g1, g2):
+    def sincos_backward(sin_x, cos_x, g1, g2):  # noqa: F811
         return g1 * cos_x + g2 * -sin_x
 
     # It's not possible to teach Thunder about the PyTorch implementation of sincos
@@ -1691,6 +1691,28 @@ def test_grad_transform_saved_for_backward_proxy():
     static_trace = thunder.last_backward_traces(static_jit)[-1]
     # static trace should bake `c` as scalar number, so it won't show up in backward as proxy
     assert not any(map(lambda x: isinstance(x, Proxy), tree_flatten(static_trace.args[0])[0]))
+
+
+def test_multiple_backward_with_graph_retained():
+    def foo(a, c):
+        return a * c
+
+    a = make_tensor((2, 2), device="cpu", dtype=torch.float32, requires_grad=True)
+    c = 2.0
+
+    dynamic_jit = thunder.jit(foo, cache="symbolic values")
+    out = dynamic_jit(a, c)
+    torch.autograd.backward(out, torch.rand_like(out), retain_graph=True)
+    # Verify no exception is raised.
+    torch.autograd.backward(out, torch.rand_like(out))
+
+    a = make_tensor((2, 2), device="cpu", dtype=torch.float32, requires_grad=True)
+
+    static_jit = thunder.jit(foo)
+    out = static_jit(a, c)
+    torch.autograd.backward(out, torch.rand_like(out), retain_graph=True)
+    # Verify no exception is raised.
+    torch.autograd.backward(out, torch.rand_like(out))
 
 
 def test_get_saved_for_backward_tensors():

@@ -26,17 +26,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ["ubuntu-22.04", "macOS-14", "windows-2022"]
+        os: ["ubuntu-22.04", "macOS-15", "windows-latest"]
         python-version: ["3.10"]
         requires: ["latest", "nightly"] # , 'oldest'
         suite: ["core", "ops", "grads"]
         include:
-          - { os: "ubuntu-22.04", python-version: "3.11", requires: "latest" }
-          - { os: "ubuntu-22.04", python-version: "3.12", requires: "latest" }
-          - { os: "ubuntu-22.04", python-version: "3.13", requires: "latest" }
+          - { os: "ubuntu-24.04", python-version: "3.11", requires: "latest" }
+          - { os: "ubuntu-24.04", python-version: "3.12", requires: "latest" }
+          - { os: "ubuntu-24.04", python-version: "3.13", requires: "latest" }
         exclude:
-          - { os: "windows-2022", suite: "ops" }
-          - { os: "windows-2022", suite: "grads" }
+          - { os: "windows-latest", suite: "ops" }
+          - { os: "windows-latest", suite: "grads" }
 
     # Timeout: https://stackoverflow.com/a/59076067/4521646
     timeout-minutes: 35
@@ -47,11 +47,14 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: "pip"
 
       - name: Setup Ubuntu
-        if: runner.os == 'ubuntu'
+        if: runner.os == 'Linux'
         run: |
-          sudo apt-get install -y graphviz
+          sudo apt-get update -qq --fix-missing
+          sudo apt-get install -y libblas3 liblapack3 libopenblas-dev
+          pip install --force-reinstall numpy
 
       - name: Set min. dependencies
         if: matrix.requires == 'oldest'
@@ -61,17 +64,6 @@ jobs:
               open(fpath, 'w').write(req)
         shell: python
 
-      - name: Get pip cache dir
-        id: pip-cache
-        run: echo "dir=$(pip cache dir)" >> $GITHUB_OUTPUT
-
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ${{ steps.pip-cache.outputs.dir }}
-          key: ${{ runner.os }}-${{ matrix.python-version }}-${{ matrix.requires }}-pip-${{ hashFiles('requirements/*.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ matrix.python-version }}-${{ matrix.requires }}-pip-
       - name: switch Torch source
         run: |
           if [[ "${{ matrix.requires }}" == "nightly" ]]; then
@@ -96,7 +88,7 @@ jobs:
         shell: bash
 
       - name: Testing Local
-        if: matrix.python-version == '3.10' && matrix.suite == 'core'
+        if: matrix.suite == 'core'
         run: |
           coverage run --source thunder -m \
             pytest thunder/tests/ \
@@ -109,7 +101,7 @@ jobs:
 
       - name: Testing Distributed
         # run all found tests in given past as standalone
-        if: matrix.python-version == '3.10' && runner.os == 'Linux' && matrix.suite == 'core'
+        if: runner.os == 'Linux' && matrix.suite == 'core'
         run: |
           pytest thunder/tests/distributed/ \
             -v --datefmt="%Y%m%d-%H:%M:%S.%f" \
@@ -117,7 +109,7 @@ jobs:
             --durations=250
 
       - name: Testing Ops
-        if: matrix.python-version == '3.10' && matrix.suite == 'ops' && runner.os != 'Windows'
+        if: matrix.suite == 'ops'
         run: |
           coverage run --source thunder -m \
             pytest thunder/tests/test_ops.py \
@@ -126,7 +118,7 @@ jobs:
               -n 4 --durations=250
 
       - name: Testing Grads
-        if: matrix.python-version == '3.10' && matrix.suite == 'grads' && runner.os != 'Windows'
+        if: matrix.suite == 'grads'
         run: |
           coverage run --source thunder -m \
             pytest thunder/tests/test_grad.py \
@@ -135,7 +127,7 @@ jobs:
               -n 4 --durations=250
 
       - name: Testing interpreter
-        if: matrix.python-version == '3.11' || matrix.python-version == '3.12' || matrix.python-version == '3.13'
+        if: matrix.python-version != '3.10'
         run: |
           python -m pytest \
             thunder/tests/test_interpreter.py \
