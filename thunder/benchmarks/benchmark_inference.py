@@ -82,7 +82,18 @@ def grouped_mm(a, b, offsets):
     try:
         return torch._grouped_mm(a, b, offsets)
     except RuntimeError:
-        return (torch.nested.nested_tensor_from_jagged(a, offsets) @ b).values()
+        # try:
+        #     return (torch.nested.nested_tensor_from_jagged(a, offsets) @ b).values()
+        # # RuntimeError: numel needs to be smaller than int32_t max; otherwise, please use packed_accessor64
+        # except RuntimeError:
+        c_list = []
+        offsets_cpu = offsets.cpu()
+        for i in range(offsets_cpu.size(0) - 1):
+            a_i = a[offsets_cpu[i]:offsets_cpu[i+1]]
+            b_i = b[i]
+            c_i = a_i @ b_i
+            c_list.append(c_i)
+        return torch.cat(c_list, dim=0)
 
 
 # Ref:
