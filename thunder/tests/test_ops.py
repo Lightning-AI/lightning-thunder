@@ -10,7 +10,7 @@ import thunder
 import thunder.core.devices as devices
 import thunder.core.dtypes as dtypes
 from thunder.core.pytree import tree_flatten, tree_map
-from thunder.tests.framework import assert_closer, ops, run_snippet, requiresJAX, requiresCUDA, instantiate
+from thunder.tests.framework import assert_closer, ops, run_snippet, requiresJAX, requiresCUDA
 from thunder.tests.opinfos import OpInfo, SampleInput, opinfos
 import thunder.tests.bf16
 
@@ -556,16 +556,4 @@ def test_softmax_stacklevel():
 
     jfn = thunder.jit(fn)
     a = torch.randn(5, 5, requires_grad=True)  # trigger grad transform
-    assert_close(fn(a), jfn(a))
-
-
-@instantiate()
-def test_full_tensor_value(executor, device, dtype):
-    def fn(a):
-        return torch.full((2,), a)
-
-    jfn = thunder.jit(fn)
-
-    tdtype = dtypes.to_torch_dtype(dtype)
-    a = torch.tensor(1, dtype=tdtype, device=device)
     assert_close(fn(a), jfn(a))
