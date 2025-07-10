@@ -11,7 +11,7 @@ def main(gh_run_id: str = ""):
     if not gh_run_id:
         gh_run_id = datetime.now().strftime("%Y-%m-%d|%H:%M:%S")
     print("Creating studio...")
-    s = Studio(f"thunder-transformer-tests-run{gh_run_id}", "oss-thunder", org="lightning-ai", create_ok=True)
+    s = Studio(f"thunder-transformer-engine-tests-run{gh_run_id}", "oss-thunder", org="lightning-ai", create_ok=True)
     print("Uploading package and scripts...")
     s.upload_folder("dist", remote_path="dist")
     s.upload_folder("requirements", remote_path="requirements")
@@ -33,7 +33,7 @@ def main(gh_run_id: str = ""):
         # "pytest tests/distributed/test_fsdp.py -k transformer -v -rs",
     ]
 
-    print("Running transformer tests...")
+    print("Running transformer_engine tests...")
 
     cmd_exit_code = {}
     for test in test_commands:

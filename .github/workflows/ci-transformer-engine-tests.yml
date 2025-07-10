@@ -1,4 +1,4 @@
-name: CI Transformer Tests
+name: CI Transformer Engine Tests
 
 on:
   push:
@@ -30,7 +30,7 @@ jobs:
           python -m build --sdist --wheel --outdir dist/
           ls -l dist/
 
-      - name: Run transformer tests in jobs
+      - name: Run transformer_engine tests
         env:
           LIGHTNING_USER_ID: ${{ secrets.LIGHTNING_USER_ID }}
           LIGHTNING_API_KEY: ${{ secrets.LIGHTNING_API_KEY }}
