@@ -2548,7 +2548,6 @@ def _bitcast_prim_grad(src: TensorProxy, dtype: dtypes.dtype) -> TensorProxy:
     g = get_grad(fwd)
     src_grad = prims.bitcast(g, src.dtype)
     put_grad(src, src_grad)
-    # put_grad((src, dtype), (src_grad, None))
 
     return fwd
 
