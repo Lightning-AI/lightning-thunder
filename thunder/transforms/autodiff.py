@@ -362,7 +362,7 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
     class InsertRecomputationsProcessor(TraceSubstitutionProcessor):
         def __init__(self, trace):
             super().__init__(trace)
-            self.backward_part_bsyms_recomputed = {}
+            self.backward_part_bsyms_recomputed: dict[str, BoundSymbol] = {}
             self.already_processed_recomputations = set()
 
         def find_recomputation_symbols_for_bsym(self, bsym) -> list[tuple[str, BoundSymbol]]:
@@ -373,9 +373,8 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
             visited = set(map(lambda p: p.name, queue))
             while queue:
                 proxy = queue.pop()
-                producer_record = self.backward_part_bsyms_recomputed.get(proxy.name)
-                if producer_record is not None:
-                    producer, _ = producer_record
+                producer = self.backward_part_bsyms_recomputed.get(proxy.name, None)
+                if producer is not None:
                     need_sorting[proxy.name] = producer
                     for arg in producer.flat_proxy_args:
                         arg_name = arg.name
@@ -406,11 +405,7 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
         def process_bsym(self, bsym: BoundSymbol) -> None:
             processed_bsyms = []
             if _should_recompute_bsym_in_backward(bsym) and BoundSymbolTag.BACKWARD not in bsym.tags:
-                bsym_out_names = {o.name for o in bsym.flat_proxy_outs}
-                nbsym = bsym.from_bsym()
-                nbsym.tags.add(BoundSymbolTag.BACKWARD)
-                bsym_rec = (nbsym, bsym_out_names)
-                self.backward_part_bsyms_recomputed.update((n, bsym_rec) for n in bsym_out_names)
+                self.backward_part_bsyms_recomputed.update({arg.name: bsym for arg in bsym.flat_proxy_outs})
             elif BoundSymbolTag.BACKWARD in bsym.tags:
                 recomputed_bsyms = self.find_recomputation_symbols_for_bsym(bsym)
 
