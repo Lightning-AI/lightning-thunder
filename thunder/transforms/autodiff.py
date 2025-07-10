@@ -404,7 +404,10 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
         def process_bsym(self, bsym: BoundSymbol) -> None:
             processed_bsyms = []
             if _should_recompute_bsym_in_backward(bsym) and BoundSymbolTag.BACKWARD not in bsym.tags:
-                self.backward_part_bsyms_recomputed.update({arg.name: bsym for arg in bsym.flat_proxy_outs})
+                nbsym = bsym.from_bsym()
+                nbsym.tags.add(BoundSymbolTag.BACKWARD)
+                self.backward_part_bsyms_recomputed.update({arg.name: nbsym for arg in nbsym.flat_proxy_outs})
+
             elif BoundSymbolTag.BACKWARD in bsym.tags:
                 sorted_recomputed_bsyms: list[tuple[str, BoundSymbol]] = self.find_recomputation_symbols_for_bsym(bsym)
 
