@@ -270,7 +270,6 @@ class TraceSubstitutionProcessor:
 
     def read(self, x: VariableInterface | Any) -> Any:
         if isinstance(x, VariableInterface):
-            print(f"{self.env = }, {x=}")
             return self.env[x.name]
         else:
             return x

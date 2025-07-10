@@ -3513,6 +3513,20 @@ to_opinfo = OpInfo(
 data_movement_ops.append(to_opinfo)
 
 
+def view_with_dtype_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    for dst_dtype in {torch.float32, torch.bfloat16, torch.float64} - {dtype}:
+        yield SampleInput(make((8, 8)), dtype)
+
+
+view_with_dtype_opinfo = OpInfo(
+    ltorch.view,
+    sample_input_generator=view_with_dtype_sample_generator,
+    torch_reference=torch.Tensor.view,
+)
+
+
 def cuda_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
