@@ -366,7 +366,7 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
             self.already_processed_recomputations = set()
 
         def find_recomputation_symbols_for_bsym(self, bsym) -> list[tuple[str, BoundSymbol]]:
-            need_sorting = list()
+            need_sorting: dict[str, BoundSymbol] = {}
             queue: list[Proxy] = list(
                 filter(lambda p: p.name in self.backward_part_bsyms_recomputed, bsym.flat_proxy_args)
             )
@@ -376,7 +376,7 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                 producer_record = self.backward_part_bsyms_recomputed.get(proxy.name)
                 if producer_record is not None:
                     producer, _ = producer_record
-                    need_sorting.append((proxy.name, producer))
+                    need_sorting[proxy.name] = producer
                     for arg in producer.flat_proxy_args:
                         arg_name = arg.name
                         if arg_name not in visited:
@@ -384,21 +384,20 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                             visited.add(arg_name)
 
             if need_sorting:
-                remaining = dict(need_sorting)
                 sorted_recomputation = []
-                while remaining:
+                while need_sorting:
                     sorted_recomputation_names = []
-                    for name, producer in remaining.items():
+                    for name, producer in need_sorting.items():
                         ready = True
                         for dep in producer.flat_proxy_args:
-                            if dep.name in remaining:
+                            if dep.name in need_sorting:
                                 ready = False
                                 break
                         if ready:
                             sorted_recomputation_names.append(name)
                     for name in sorted_recomputation_names:
-                        sorted_recomputation.append((name, remaining[name]))
-                        del remaining[name]
+                        sorted_recomputation.append((name, need_sorting[name]))
+                        del need_sorting[name]
 
                 return sorted_recomputation
 
