@@ -208,8 +208,11 @@ def test_te_with_autocast():
 
 
 # NOTE: strict=False as it passes on Blackwell.
+# NOTE: Type of the error is different in different versions.
 @pytest.mark.xfail(
-    strict=False, raises=(ValueError), reason="See https://github.com/Lightning-AI/lightning-thunder/issues/2221"
+    strict=False,
+    raises=(ValueError, TypeError),
+    reason="See https://github.com/Lightning-AI/lightning-thunder/issues/2221",
 )
 @requiresCUDA
 def test_te_with_retain_graph():
