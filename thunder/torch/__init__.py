@@ -6792,3 +6792,14 @@ _syms_returning_views: set[Symbol] = {
 
 # Add all auto-registered torch operators symbol that return tensor views to _syms_returning_views
 _syms_returning_views.update({_torch_to_thunder_function_map[x] for x in _auto_registered_operators_returning_views})
+
+@torchsymbol(torch._grouped_mm)
+def _grouped_mm(
+    a: TensorProxy,
+    b: TensorProxy,
+    offs: TensorProxy = None,  # Unused in meta, but type-checked
+    bias: TensorProxy = None,
+    dtype=None,
+) -> TensorProxy:
+    """Thunder support for torch._grouped_mm, accepts 2D or 3D tensors."""
+    return prims._grouped_mm(a, b, offs, bias, dtype)

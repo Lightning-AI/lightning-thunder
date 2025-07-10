@@ -7564,6 +7564,49 @@ baddbmm_opinfo = OpInfo(
 nn_ops.append(baddbmm_opinfo)
 
 
+def _grouped_mm_sample_generator(op, device, dtype, requires_grad, **kwargs):
+
+    M = 32
+    N = 64
+    K = 16
+    G = 2
+
+    a = make_tensor((M, K), device=device, dtype=dtype, requires_grad=requires_grad)
+    b = make_tensor((G, K, N), device=device, dtype=dtype, requires_grad=requires_grad)
+    c =  torch.tensor([0, 0], device=device, dtype=torch.int32)
+    yield SampleInput(a, b, c)
+
+
+
+
+_grouped_mm_opinfo = OpInfo(
+    prims._grouped_mm,
+    supports_grad=False,
+    sample_input_generator=_grouped_mm_sample_generator,
+    torch_reference=torch._grouped_mm,
+    dtypes=(datatypes.bfloat16,),
+    devicetypes=(devices.DeviceType.CUDA,),
+    test_directives=(
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_core_vs_torch_consistency",
+            executors=("torch",),
+            active_if=(not torch.cuda.is_available())
+            or (torch.cuda.is_available() and torch.cuda.get_device_capability() < (8, 9)),
+        ),
+        
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_core_vs_torch_consistency",
+            executors=("nvfuser",),
+            active_if=(not torch.cuda.is_available())
+            or (torch.cuda.is_available() and torch.cuda.get_device_capability() < (9, 0)),
+        ),
+    ),
+)
+linear_algebra_ops.append(_grouped_mm_opinfo)
+
+
 def _convolution_get_default_args():
     defaults = {
         "stride": (1,),
