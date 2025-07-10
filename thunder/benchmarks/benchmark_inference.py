@@ -151,7 +151,7 @@ def Llama4TextMoe_forward(self: Llama4TextMoe, hidden_states: torch.Tensor) -> t
     return out, None
 
 
-# Llama4TextMoe.forward = Llama4TextMoe_forward
+Llama4TextMoe.forward = Llama4TextMoe_forward
 
 
 # When `vllm` and its fused_experts is available, use fused_experts as llama4 moe forward.
