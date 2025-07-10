@@ -5,9 +5,10 @@ from torch.testing import assert_close
 import thunder
 from thunder.tests.framework import requiresCUDA
 
-te = pytest.importorskip("transformer_engine", reason="transformer_engine was not found, skipping the tests.")
+pytest.importorskip("transformer_engine", reason="transformer_engine was not found, skipping the tests.")
 from thunder.executors.transformer_engineex import transformer_engine_ex
 from transformer_engine.common import recipe
+import transformer_engine.pytorch as te
 
 # FP8 is supported on compute arch 8.9 onwards.
 # MXFP8 is supported on compute arch 10.0 onwards.
@@ -207,8 +208,11 @@ def test_te_with_autocast():
 
 
 # NOTE: strict=False as it passes on Blackwell.
+# NOTE: Type of the error is different in different versions.
 @pytest.mark.xfail(
-    strict=False, raises=(ValueError), reason="See https://github.com/Lightning-AI/lightning-thunder/issues/2221"
+    strict=False,
+    raises=(ValueError, TypeError),
+    reason="See https://github.com/Lightning-AI/lightning-thunder/issues/2221",
 )
 @requiresCUDA
 def test_te_with_retain_graph():
