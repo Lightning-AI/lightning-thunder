@@ -1649,6 +1649,7 @@ augmented_forward_impls = {
     prims.PrimIDs.FMOD: lambda x, y: (prims.fmod(x, y), (x, y)),
     prims.PrimIDs.COPY_: lambda x, y, grad_enabled: (prims.copy_(x, y, grad_enabled=grad_enabled), tuple()),
     prims.PrimIDs.CLONE: lambda x: (prims.clone(x), tuple()),
+    prims.PrimIDs.BITCAST: lambda x, dtype: (prims.bitcast(x, dtype), (x.dtype,)),
 }
 
 
@@ -1679,6 +1680,7 @@ backward_impls = {
     prims.PrimIDs.FMOD: lambda x, y, g: (g, -g * prims.trunc(x / y)),
     prims.PrimIDs.COPY_: lambda g: (g, None),
     prims.PrimIDs.CLONE: lambda g: g,
+    prims.PrimIDs.BITCAST: lambda x_dtype, g: (prims.bitcast(g, x_dtype), None),
 }
 
 
@@ -2540,19 +2542,6 @@ def index_put_backward(indices: Sequence[TensorProxy], values: TensorProxy, accu
     if accumulate:
         return g, g_values
     return clang.index_put(g, indices, ltorch.zeros_like(values), False), g_values
-
-
-def _bitcast_prim_grad(src: TensorProxy, dtype: dtypes.dtype) -> TensorProxy:
-    fwd = prims.bitcast(src, dtype)
-
-    g = get_grad(fwd)
-    src_grad = prims.bitcast(g, src.dtype)
-    put_grad(src, src_grad)
-
-    return fwd
-
-
-register_grad(pids.BITCAST, _bitcast_prim_grad)
 
 
 def uniform_aug_fwd(shape, minval, maxval, *, device, dtype):
