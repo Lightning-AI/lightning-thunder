@@ -5,9 +5,10 @@ from torch.testing import assert_close
 import thunder
 from thunder.tests.framework import requiresCUDA
 
-te = pytest.importorskip("transformer_engine", reason="transformer_engine was not found, skipping the tests.")
+pytest.importorskip("transformer_engine", reason="transformer_engine was not found, skipping the tests.")
 from thunder.executors.transformer_engineex import transformer_engine_ex
 from transformer_engine.common import recipe
+import transformer_engine.pytorch as te
 
 # FP8 is supported on compute arch 8.9 onwards.
 # MXFP8 is supported on compute arch 10.0 onwards.
