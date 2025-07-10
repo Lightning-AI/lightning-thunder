@@ -3502,6 +3502,7 @@ view_with_dtype_opinfo = OpInfo(
     sample_input_generator=view_with_dtype_sample_generator,
     torch_reference=torch.Tensor.view,
 )
+data_movement_ops.append(view_with_dtype_opinfo)
 
 
 def cuda_sample_generator(op, device, dtype, requires_grad, **kwargs):
