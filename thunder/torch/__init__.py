@@ -1499,7 +1499,7 @@ def unsqueeze(a: TensorLike, /, dim: int) -> TensorLike:
 @torchsymbol(torch.Tensor.view, is_method=True)
 def view(a: TensorLike, /, *shape) -> TensorLike:
     shape = utils.extract_shape_from_varargs(shape)
-    if len(shape) == 1 and isinstance(shape[0], torch.dtype):
+    if len(shape) == 1 and isinstance(shape[0], (torch.dtype, dtypes.dtype)):
         dst_dtype = to_dtype(shape[0])
         src_dtype = to_dtype(a.dtype)
         utils.check(
