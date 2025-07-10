@@ -16,7 +16,7 @@ defaults:
     shell: bash
 
 jobs:
-  launcher-transformer-tests:
+  launcher-transformer-engine-tests:
     runs-on: "ubuntu-22.04"
     steps:
       - uses: actions/checkout@v4
@@ -36,4 +36,4 @@ jobs:
           LIGHTNING_API_KEY: ${{ secrets.LIGHTNING_API_KEY }}
         run: |
           pip install lightning_sdk -U -q
-          python .github/run-transformer-tests-as-lit-jobs.py ${{ github.run_id }}
+          python .github/run-transformer-engine-tests-as-lit-jobs.py ${{ github.run_id }}
