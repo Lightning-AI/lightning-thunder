@@ -384,20 +384,19 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
 
             sorted_recomputation = []
 
-            if need_sorting:
-                while need_sorting:
-                    sorted_recomputation_names = []
-                    for name, producer in need_sorting.items():
-                        ready = True
-                        for dep in producer.flat_proxy_args:
-                            if dep.name in need_sorting:
-                                ready = False
-                                break
-                        if ready:
-                            sorted_recomputation_names.append(name)
-                    for name in sorted_recomputation_names:
-                        sorted_recomputation.append((name, need_sorting[name]))
-                        del need_sorting[name]
+            while need_sorting:
+                sorted_recomputation_names = []
+                for name, producer in need_sorting.items():
+                    ready = True
+                    for dep in producer.flat_proxy_args:
+                        if dep.name in need_sorting:
+                            ready = False
+                            break
+                    if ready:
+                        sorted_recomputation_names.append(name)
+                for name in sorted_recomputation_names:
+                    sorted_recomputation.append((name, need_sorting[name]))
+                    del need_sorting[name]
 
             return sorted_recomputation
 
@@ -420,11 +419,7 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                     with tracectx(self.new_trace):
                         for output in rec_bsym.flat_proxy_outs:
                             self.already_processed_recomputations.add(output.name)
-                            # Avoid double-prefixing if the name already starts with "bw_"
-                            if output.name.startswith("bw_"):
-                                new = output.replace_name(output.name)
-                            else:
-                                new = output.replace_name("bw_" + output.name)
+                            new = output.replace_name("bw_" + output.name)
 
                             self.add_to_swap_map(output, new)
 
