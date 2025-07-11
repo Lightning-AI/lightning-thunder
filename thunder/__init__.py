@@ -488,11 +488,13 @@ def jit(
                 [int(i) for i in s.split(",")] for s in alias_tensor_indices_str.split("-") if s != ""
             ]
 
-            if not compile_options.get("skip_inplace_alias_updates", True):
-                computation_traces.append(insert_alias_updates(computation_trc, alias_tensor_indices))
-                computation_trc = computation_traces[-1]
+            if not compile_options.get("skip_inplace_alias_updates", False):
+                aliased_trace = insert_alias_updates(computation_trc, alias_tensor_indices)
+                if aliased_trace is not computation_trc:
+                    computation_traces.append(aliased_trace)
+                    computation_trc = computation_traces[-1]
 
-            if not compile_options.get("skip_inplace_functionalization", False):
+            if not compile_options.get("skip_inplace_functionalization", True):
                 orig_to_view_swap_map = check_inplace_to_views(computation_trc)
                 computation_traces.extend(
                     functionalize_inplace_ops(
