@@ -7,7 +7,8 @@ import os.path
 from lightning_sdk import Studio, Job, Machine, Status
 
 
-def main(gh_run_id: str = ""):
+def main(gh_run_id: str = "", te_version: str = "stable"):
+    assert te_version in ["stable", "main"]
     if not gh_run_id:
         gh_run_id = datetime.now().strftime("%Y-%m-%d|%H:%M:%S")
     print("Creating studio...")
@@ -22,7 +23,10 @@ def main(gh_run_id: str = ""):
     s.start(machine=Machine.L40S, interruptible=False)
     print("Installing Thunder and other requirements...")
     s.run(f"pip install {pkg_path} -U -r requirements/test.txt")
-    s.run("pip install --no-build-isolation 'transformer_engine[pytorch]'")
+    if te_version == "stable":
+        s.run("pip install --no-build-isolation 'transformer_engine[pytorch]'")
+    else:
+        s.run("pip install --no-build-isolation 'git+https://github.com/NVIDIA/TransformerEngine.git@main'")
 
     # Define test commands
     test_commands = [
