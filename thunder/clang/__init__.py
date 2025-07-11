@@ -599,9 +599,9 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
       - Permutations are applied to match PyTorch/NumPy semantics
       - Negative indices are wrapped as in PyTorch/NumPy
     """
-    assert isinstance(
-        key, Sequence
-    ), "advanced indexing needs a sequence of keys (that are either slice(None) or Sequence or Tensor)"
+    assert isinstance(key, Sequence), (
+        "advanced indexing needs a sequence of keys (that are either slice(None) or Sequence or Tensor)"
+    )
 
     def _to_tensorproxies(x: Sequence, device: devices.DeviceType):
         if not isinstance(x, list):
@@ -658,9 +658,9 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
             idx_input_shapes.append(input_shape[i])
             idx_numel *= input_shape[i]
         else:
-            assert k == slice(
-                None
-            ), "advanced part can only have skipped dims ('slice(None)' aka ':') and sequcnes / tensors"
+            assert k == slice(None), (
+                "advanced part can only have skipped dims ('slice(None)' aka ':') and sequcnes / tensors"
+            )
             non_idx_dims.append(i)
             non_idx_shapes.append(input_shape[i])
 

@@ -3765,11 +3765,7 @@ sort = make_prim(PrimIDs.SORT, "sort", meta=sort_meta)
 
 
 def _grouped_mm_meta(
-    a: TensorProxy,
-    b: TensorProxy,
-    offs: None | TensorProxy = None,  
-    bias: None | TensorProxy = None,
-    dtype=None
+    a: TensorProxy, b: TensorProxy, offs: None | TensorProxy = None, bias: None | TensorProxy = None, dtype=None
 ) -> TensorProxy:
     """Meta function for _grouped_mm primitive.
 
@@ -3819,11 +3815,13 @@ def _grouped_mm_meta(
 
     return TensorProxy(like=a, shape=out_shape, dtype=dtype if dtype is not None else a.dtype)
 
+
 _grouped_mm = make_prim(
-    PrimIDs._GROUPED_MM,  
+    PrimIDs._GROUPED_MM,
     "_grouped_mm",
     meta=_grouped_mm_meta,
 )
+
 
 def transpose_meta(a: TensorProxy, /, permutation: tuple[int, ...]) -> TensorProxy:
     utils.check_type(a, TensorProxy)

@@ -109,6 +109,7 @@ class Languages(Enum):
     CLANG = auto()
     PRIMS = auto()
 
+
 # Decorator and context manager for setting the language context with a function
 #   or region
 #

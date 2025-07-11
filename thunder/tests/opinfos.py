@@ -7214,8 +7214,8 @@ multi_dot_opinfo = OpInfo(
 )
 linear_algebra_ops.append(multi_dot_opinfo)
 
-def _grouped_mm_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
+def _grouped_mm_sample_generator(op, device, dtype, requires_grad, **kwargs):
     M = 16
     N = 64
     K = 32
@@ -7227,13 +7227,11 @@ def _grouped_mm_sample_generator(op, device, dtype, requires_grad, **kwargs):
     offests = [[0, 16], [0, 32]]
     for offset in offests:
         c = torch.tensor(offset, device=device, dtype=torch.int32)
-        c =  torch.tensor(offset, device=device, dtype=torch.int32)
+        c = torch.tensor(offset, device=device, dtype=torch.int32)
         bfloat16_comp = TorchTensorComp(atol=1e-1, rtol=1e-1)
         si = SampleInput(a, b, c)
         si.set_comparator(bfloat16_comp)
         yield si
-
-
 
 
 _grouped_mm_opinfo = OpInfo(
@@ -7251,7 +7249,6 @@ _grouped_mm_opinfo = OpInfo(
             active_if=(not torch.cuda.is_available())
             or (torch.cuda.is_available() and torch.cuda.get_device_capability() < (8, 9)),
         ),
-        
         DecorateInfo(
             pytest.mark.skip,
             "test_core_vs_torch_consistency",

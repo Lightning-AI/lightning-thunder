@@ -3188,16 +3188,19 @@ def argsort_transform(
 # Register argsort with NVFuser
 register_supported(prims.argsort, argsort_transform, _argsort_check_)
 
+
 def _grouped_mm_check_(
-    a:TensorProxy,
+    a: TensorProxy,
     b: TensorProxy,
     offs: TensorProxy,
     bias: TensorProxy = None,
-    out_dtype=None, ) -> bool:
+    out_dtype=None,
+) -> bool:
     return True
 
+
 def _grouped_mm_transform(
-    a:TensorProxy,
+    a: TensorProxy,
     b: TensorProxy,
     offs: TensorProxy,
     bias: TensorProxy = None,
@@ -3206,10 +3209,11 @@ def _grouped_mm_transform(
     fd: FusionDefinition,
     lc_to_nv_map: dict,
 ) -> list[TensorLike]:
-    nva = getnv(a, fd, lc_to_nv_map) 
-    nvb = getnv(b, fd, lc_to_nv_map) 
+    nva = getnv(a, fd, lc_to_nv_map)
+    nvb = getnv(b, fd, lc_to_nv_map)
     nvoffs = getnv(offs, fd, lc_to_nv_map) if offs is not None else None
     return fd.ops.grouped_mm(nva, nvb, nvoffs)
+
 
 register_supported(prims._grouped_mm, _grouped_mm_transform, _grouped_mm_check_)
 
