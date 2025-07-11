@@ -31,7 +31,9 @@ def main(gh_run_id: str = "", te_version: str = "stable"):
     if te_version == "stable":
         s.run("pip install --no-build-isolation 'transformer_engine[pytorch]'")
     else:
-        s.run("NVTE_FRAMEWORK=pytorch pip install --no-build-isolation 'git+https://github.com/NVIDIA/TransformerEngine.git@main'")
+        s.run(
+            "NVTE_FRAMEWORK=pytorch pip install --no-build-isolation 'git+https://github.com/NVIDIA/TransformerEngine.git@main'"
+        )
 
     # Define test commands
     test_commands = [
