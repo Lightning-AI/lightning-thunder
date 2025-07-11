@@ -12,7 +12,12 @@ def main(gh_run_id: str = "", te_version: str = "stable"):
     if not gh_run_id:
         gh_run_id = datetime.now().strftime("%Y-%m-%d|%H:%M:%S")
     print("Creating studio...")
-    s = Studio(f"thunder-transformer-engine-tests-run{gh_run_id}-{te_version}", "oss-thunder", org="lightning-ai", create_ok=True)
+    s = Studio(
+        f"thunder-transformer-engine-tests-run{gh_run_id}-{te_version}",
+        "oss-thunder",
+        org="lightning-ai",
+        create_ok=True,
+    )
     print("Uploading package and scripts...")
     s.upload_folder("dist", remote_path="dist")
     s.upload_folder("requirements", remote_path="requirements")
