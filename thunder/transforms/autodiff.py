@@ -382,8 +382,9 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                             queue.append(arg)
                             visited.add(arg_name)
 
+            sorted_recomputation = []
+
             if need_sorting:
-                sorted_recomputation = []
                 while need_sorting:
                     sorted_recomputation_names = []
                     for name, producer in need_sorting.items():
@@ -398,18 +399,16 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                         sorted_recomputation.append((name, need_sorting[name]))
                         del need_sorting[name]
 
-                return sorted_recomputation
-
-            return []
+            return sorted_recomputation
 
         def process_bsym(self, bsym: BoundSymbol) -> None:
             processed_bsyms = []
             if _should_recompute_bsym_in_backward(bsym) and BoundSymbolTag.BACKWARD not in bsym.tags:
                 self.backward_part_bsyms_recomputed.update({arg.name: bsym for arg in bsym.flat_proxy_outs})
             elif BoundSymbolTag.BACKWARD in bsym.tags:
-                recomputed_bsyms = self.find_recomputation_symbols_for_bsym(bsym)
+                sorted_recomputed_bsyms: list[tuple[str, BoundSymbol]] = self.find_recomputation_symbols_for_bsym(bsym)
 
-                for name, rec_bsym in recomputed_bsyms:
+                for name, rec_bsym in sorted_recomputed_bsyms:
                     if name in self.already_processed_recomputations:
                         continue
                     # To avoid name clashes, we create new output proxies.
