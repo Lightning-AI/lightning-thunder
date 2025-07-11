@@ -39,23 +39,23 @@ jobs:
           python .github/run-transformer-engine-tests-as-lit-jobs.py ${{ github.run_id }} "stable"
 
   launcher-transformer-engine-main-tests:
-  runs-on: "ubuntu-22.04"
-  steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-python@v5
-      with:
-        python-version: "3.10"
+    runs-on: "ubuntu-22.04"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
 
-    - name: Build package
-      run: |
-        pip install -U build
-        python -m build --sdist --wheel --outdir dist/
-        ls -l dist/
+      - name: Build package
+        run: |
+          pip install -U build
+          python -m build --sdist --wheel --outdir dist/
+          ls -l dist/
 
-    - name: Run transformer_engine main tests
-      env:
-        LIGHTNING_USER_ID: ${{ secrets.LIGHTNING_USER_ID }}
-        LIGHTNING_API_KEY: ${{ secrets.LIGHTNING_API_KEY }}
-      run: |
-        pip install lightning_sdk -U -q
-        python .github/run-transformer-engine-tests-as-lit-jobs.py ${{ github.run_id }} "main"
+      - name: Run transformer_engine main tests
+        env:
+          LIGHTNING_USER_ID: ${{ secrets.LIGHTNING_USER_ID }}
+          LIGHTNING_API_KEY: ${{ secrets.LIGHTNING_API_KEY }}
+        run: |
+          pip install lightning_sdk -U -q
+          python .github/run-transformer-engine-tests-as-lit-jobs.py ${{ github.run_id }} "main"
