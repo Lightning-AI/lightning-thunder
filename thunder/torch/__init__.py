@@ -1021,7 +1021,7 @@ def empty_like(
 
 
 # TODO Update this to take a *args series of tensors or a sequence of tensors
-@torchsymbol(torch.cat)
+@torchsymbol(torch.cat, torch.concat, torch.concatenate, id="torch.cat")
 def cat(tensors: Sequence[TensorLike], dim: int = 0) -> TensorLike:
     return clang.cat(tensors, dim)
 
@@ -1096,7 +1096,9 @@ def diagonal(a: TensorLike, /, offset: int = 0, dim1: int = 0, dim2: int = 1) ->
     return clang.diagonal(a, offset, dim1, dim2)
 
 
-@torchsymbol(torch.Tensor.expand, is_method=True)
+@torchsymbol(
+    torch.Tensor.expand, torch.broadcast_to, torch.Tensor.broadcast_to, id="torch.Tensor.expand", is_method=True
+)
 def expand(a: TensorLike, /, *shape: int) -> TensorLike:
     return clang.expand(a, *shape)
 
@@ -1177,7 +1179,7 @@ def movedim(a: TensorLike, /, source: int | Sequence[int], destination: int | Se
     return clang.movedim(a, source, destination)
 
 
-@torchsymbol(torch.nn.functional.pad)
+@torchsymbol(torch.nn.functional.pad, torch._C._nn.pad, id="torch.nn.functional.pad")
 def pad(a: TensorProxy, /, pad: tuple[int, ...], mode: str | None = "constant", value: NumberLike | None = None):
     utils.check(mode == "constant", lambda: "Mode arguments other than constant are not supported")
     utils.check(len(pad) % 2 == 0, lambda: "Padding length must be divisible by 2")
@@ -1910,7 +1912,7 @@ def tan_(a):
     return _copy_(a, tan(a))
 
 
-@torchsymbol(torch.tanh, is_method=True)
+@torchsymbol(torch.tanh, torch.nn.functional.tanh, id="torch.tanh", is_method=True)
 def tanh(a):
     return clang.tanh(a)
 
@@ -2073,6 +2075,17 @@ def hardshrink(a: TensorProxy, /, lambd: float = 0.5) -> TensorLike:
         lambda: f"hardshrink not implemented for '{a.dtype}'",
     )
     return where(abs(a) <= lambd, 0, a)
+
+
+@torchsymbol(torch.nn.functional.hardsigmoid, is_method=False)
+def hardsigmoid(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
+    out = clamp(a / 6.0 + 0.5, 0.0, 1.0)
+    if inplace:
+        return _copy_(a, out)
+    return out
+
+
+_inplace_to_out_of_place[hardsigmoid] = hardsigmoid, 1
 
 
 @torchsymbol(torch.nn.functional.hardswish, id="torch.hardswish", is_method=False)
