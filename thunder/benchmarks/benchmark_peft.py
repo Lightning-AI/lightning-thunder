@@ -35,7 +35,7 @@ os.environ["HF_HUB_ETAG_TIMEOUT"] = "60"  # Increase timeout to 60 seconds
 
 logger: logging.Logger = logging.getLogger("peft_benchmark")
 handler = logging.StreamHandler()
-fmt = logging.Formatter("%(asctime)-8s %(levelname)-4s %(message)s", datefmt="%y-%m-%d %H:%M")
+fmt = logging.Formatter("%(asctime)-8s %(levelname)-4s %(message)s", datefmt="%y-%m-%d %H:%M:%S")
 handler.setFormatter(fmt)
 logger.addHandler(handler)
 
