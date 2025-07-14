@@ -237,6 +237,7 @@ torch_auto_registered_ops = {
         torch.rsub,
         torch.saddmm,
         torch.scatter_reduce,
+        torch.scalar_tensor,
         torch.searchsorted,
         torch.select_copy,
         torch.select_scatter,
