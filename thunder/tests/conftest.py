@@ -1,5 +1,6 @@
 import pytest
 import pytest_benchmark
+
 from thunder.dynamo.compiler_graph_benchmark import GRAPH_BY_GRAPH_BENCHMARK_PARAMS_KEYS
 
 

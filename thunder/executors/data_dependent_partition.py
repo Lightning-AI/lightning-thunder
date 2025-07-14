@@ -5,11 +5,10 @@ from copy import copy
 
 import thunder.core.utils as utils
 from thunder.core.compile_data import get_compile_option
-from thunder.core.trace import TraceCtx
-from thunder.core.symbol import BoundSymbol, BoundSymbolTag
-from thunder.core.proxies import variableify, Proxy
 from thunder.core.prims import PrimIDs
-
+from thunder.core.proxies import Proxy, variableify
+from thunder.core.symbol import BoundSymbol, BoundSymbolTag
+from thunder.core.trace import TraceCtx
 
 _DEFAULT_FUSION_TYPE = "consecutive"
 

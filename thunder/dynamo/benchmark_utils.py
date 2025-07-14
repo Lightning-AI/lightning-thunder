@@ -1,18 +1,22 @@
 from __future__ import annotations
-from typing import TYPE_CHECKING
-import sys
+
 import inspect
+import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
+
 import torch
+from torch.profiler import ProfilerActivity, profile
 from torch.utils.benchmark import Timer as TorchBenchmarkTimer
-from torch.profiler import profile, ProfilerActivity
-from thunder.dynamo.utils import thunder_options_to_str
-from thunder.core.utils import check
 from torch.utils.benchmark.utils.common import select_unit as select_time_unit
 
+from thunder.core.utils import check
+from thunder.dynamo.utils import thunder_options_to_str
+
 if TYPE_CHECKING:
-    from typing import TextIO
     from collections.abc import Callable
+    from typing import TextIO
+
     from torch.utils.benchmark.utils.common import Measurement
 
 
@@ -457,8 +461,8 @@ def check_timing(a: float, b: float, a_name: str, b_name: str, test_name: str, t
 
 
 def is_report_using_cuda(report):
-    from thunder.dynamo.utils import ExampleInputMetaData
     from thunder.core.pytree import tree_map
+    from thunder.dynamo.utils import ExampleInputMetaData
 
     def _check_tensor(x):
         return isinstance(x, ExampleInputMetaData) and x.device.type == "cuda"

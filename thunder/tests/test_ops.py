@@ -1,5 +1,5 @@
-from collections.abc import Callable
 import os
+from collections.abc import Callable
 
 import numpy as np
 import pytest
@@ -9,10 +9,10 @@ from torch.testing import assert_close
 import thunder
 import thunder.core.devices as devices
 import thunder.core.dtypes as dtypes
-from thunder.core.pytree import tree_flatten, tree_map
-from thunder.tests.framework import assert_closer, ops, run_snippet, requiresJAX, requiresCUDA
-from thunder.tests.opinfos import OpInfo, SampleInput, opinfos
 import thunder.tests.bf16
+from thunder.core.pytree import tree_flatten, tree_map
+from thunder.tests.framework import assert_closer, ops, requiresCUDA, requiresJAX, run_snippet
+from thunder.tests.opinfos import OpInfo, SampleInput, opinfos
 
 #
 # Generic test templates for all operators

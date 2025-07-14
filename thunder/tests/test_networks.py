@@ -1,24 +1,24 @@
 import math
-from functools import partial
 import warnings
+from functools import partial
 
 import pytest
 import torch
 from torch.testing import assert_close, make_tensor
 
 import thunder
+import thunder.tests.hf_bart_self_attn as hf_bart_self_attn
+import thunder.tests.nanogpt_model as nanogpt_model
 import thunder.torch as ttorch
 from thunder.tests.framework import (
-    instantiate,
-    requiresCUDA,
+    BITSANDBYTES_AVAILABLE,
     DynamoThunderExecutor,
     _all_test_executors,
-    version_between,
-    BITSANDBYTES_AVAILABLE,
+    instantiate,
+    requiresCUDA,
     requiresDeviceMemory,
+    version_between,
 )
-import thunder.tests.nanogpt_model as nanogpt_model
-import thunder.tests.hf_bart_self_attn as hf_bart_self_attn
 
 #
 # nanoGPT tests
@@ -282,8 +282,9 @@ def test_hf_bert():
 @requiresCUDA
 @pytest.mark.skipif(not BITSANDBYTES_AVAILABLE, reason="`bitsandbytes` is not available")
 def test_quantization():
-    from thunder.tests import litgpt_model
     from lightning.fabric.plugins import BitsandbytesPrecision
+
+    from thunder.tests import litgpt_model
 
     config = litgpt_model.Config.from_name("llama2-like")
     with torch.device("cuda"):
@@ -407,12 +408,12 @@ def test_thunderfx_mistral_nemo_small():
 
 def _get_model_config_pairs():
     def phi3():
-        from transformers.models.phi3 import Phi3ForCausalLM, Phi3Config
+        from transformers.models.phi3 import Phi3Config, Phi3ForCausalLM
 
         return Phi3ForCausalLM, Phi3Config
 
     def qwen2():
-        from transformers.models.qwen2 import Qwen2ForCausalLM, Qwen2Config
+        from transformers.models.qwen2 import Qwen2Config, Qwen2ForCausalLM
 
         return Qwen2ForCausalLM, Qwen2Config
 
@@ -422,8 +423,9 @@ def _get_model_config_pairs():
 @thunder.tests.framework.requiresCUDA
 @pytest.mark.parametrize("model_fn", _get_model_config_pairs())
 def test_hf_for_nemo(model_fn):
-    from thunder.dynamo import thunderfx
     import torch
+
+    from thunder.dynamo import thunderfx
 
     model_cls, config_cls = model_fn()
 
@@ -516,10 +518,12 @@ def test_hf_llama():
     if version_between(transformers.__version__, min_ver="4.46.4"):
         pytest.skip("Dynamic cache is not supported, see static cache 'test_hf_kvcache'")
 
-    from transformers.models.llama import LlamaForCausalLM, LlamaConfig
-    from transformers.models.llama.modeling_llama import logger as llama_logger
-    from thunder.examine import get_fusion_symbols
     import logging
+
+    from transformers.models.llama import LlamaConfig, LlamaForCausalLM
+    from transformers.models.llama.modeling_llama import logger as llama_logger
+
+    from thunder.examine import get_fusion_symbols
 
     # transformers logs a cache deprecation warning
     llama_logger.setLevel(logging.CRITICAL)
@@ -571,7 +575,8 @@ def test_hf_phi3_vision(attn_implementation):
     # This test takes around 697805312 bytes (~0.7GB) of memory.
     # Shapes for data generated with help of the following script
     # https://github.com/microsoft/PhiCookBook/blob/main/code/03.Finetuning/Phi-3-vision-Trainingscript.py
-    from transformers import AutoModelForCausalLM, AutoConfig
+    from transformers import AutoConfig, AutoModelForCausalLM
+
     from thunder.dynamo import thunderfx
 
     if attn_implementation is None:
@@ -652,12 +657,13 @@ def test_memory_litgpt_llama3():
 
 @requiresCUDA
 def test_checkpointing_thunderfx():
-    from thunder.dynamo import thunderfx
-    from thunder.tests import litgpt_model
     from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
         apply_activation_checkpointing,
         checkpoint_wrapper,
     )
+
+    from thunder.dynamo import thunderfx
+    from thunder.tests import litgpt_model
 
     def forward_backward_peak(m, inp):
         torch.cuda.reset_peak_memory_stats(device=None)
@@ -698,9 +704,10 @@ def test_checkpointing_thunderfx():
 
 @requiresCUDA
 def test_hf_kvcache():
-    from transformers.models.llama import LlamaForCausalLM, LlamaConfig
-    from transformers.models.llama.modeling_llama import logger as llama_logger
     import logging
+
+    from transformers.models.llama import LlamaConfig, LlamaForCausalLM
+    from transformers.models.llama.modeling_llama import logger as llama_logger
 
     # transformers logs a cache deprecation warning
     llama_logger.setLevel(logging.CRITICAL)

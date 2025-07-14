@@ -1,16 +1,15 @@
-from collections.abc import Callable
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 import pytest
-import thunder
 
+import thunder
 from thunder.benchmarks import EinsumBenchmark
 from thunder.benchmarks.targets import (
-    make_setup,
-    fwd_executors,
     fwd_executor_ids,
+    fwd_executors,
     grad_executors,
     grad_executors_ids,
+    make_setup,
     thunder_gradv1,
     thunder_torchcompile_gradv1,
 )

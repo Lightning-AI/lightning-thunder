@@ -1,13 +1,13 @@
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
+
 import torch
 import transformers
+from torch.profiler import ProfilerActivity, profile, record_function
 
 import thunder
 from thunder.dev_utils.benchmark import benchmark_n
 from thunder.recipes.base import BaseRecipe
-
-from torch.profiler import profile, record_function, ProfilerActivity
 
 
 class DebugRecipe(BaseRecipe):

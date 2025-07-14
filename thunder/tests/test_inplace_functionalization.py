@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 from collections.abc import Callable
 from functools import partial
 from typing import TYPE_CHECKING
@@ -11,17 +12,17 @@ import thunder.core.devices as devices
 from thunder.core import dtypes
 from thunder.core.prims import PrimIDs
 from thunder.tests.framework import (
+    NOTHING,
+    TorchCompileExecutor,
+    TorchExecutor,
     instantiate,
+    nvFuserExecutor,
     ops,
     requiresCUDA,
-    NOTHING,
-    TorchExecutor,
-    TorchCompileExecutor,
-    nvFuserExecutor,
 )
-from thunder.tests.opinfos import opinfos, OpInfo, make_number, SampleInput
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
-from thunder.torch import _torch_to_thunder_function_map, _inplace_to_out_of_place
+from thunder.tests.opinfos import OpInfo, SampleInput, make_number, opinfos
+from thunder.torch import _inplace_to_out_of_place, _torch_to_thunder_function_map
 
 if TYPE_CHECKING:
     from thunder.core.symbol import Symbol

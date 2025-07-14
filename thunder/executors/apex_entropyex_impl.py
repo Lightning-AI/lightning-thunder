@@ -1,16 +1,14 @@
 from typing import Any
 
 import torch
-
 from lightning_utilities.core.imports import package_available
 
 import thunder.torch as ltorch
+from thunder.core.compile_data import get_compile_option
 from thunder.core.devices import DeviceType, to_device
 from thunder.core.proxies import TensorProxy
+from thunder.core.transforms import get_grad, mean_backward, put_grad, restore_reduced_dims
 from thunder.core.utils import check, same_shape
-from thunder.core.transforms import get_grad, put_grad, mean_backward, restore_reduced_dims
-from thunder.core.compile_data import get_compile_option
-
 from thunder.executors.apexex import apex_ex
 
 APEX_CROSS_ENTROPY_AVAILABLE: bool = package_available("xentropy_cuda")

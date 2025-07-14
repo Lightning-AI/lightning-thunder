@@ -1,24 +1,27 @@
 from __future__ import annotations
+
+import dataclasses
 import time
-from typing import TYPE_CHECKING
 from abc import ABC
 from collections.abc import Sequence
-import dataclasses
-from itertools import filterfalse
 from functools import partial
+from itertools import filterfalse
+from typing import TYPE_CHECKING
 
 import thunder
 import thunder.core.prims as prims
 from thunder.core.baseutils import BoundSymbolInterface, NumberProxyInterface
-from thunder.core.proxies import Proxy, variableify, Variable
+from thunder.core.proxies import Proxy, Variable, variableify
 from thunder.core.pytree import tree_flatten, tree_iter, tree_map
 from thunder.core.symbol import BoundSymbol, BoundSymbolRHS, has_tags
-from thunder.core.trace import from_trace, TraceProvenance, TraceCtx as Trace
-from thunder.core.utils import ProxyDict, producers, check
+from thunder.core.trace import TraceCtx as Trace
+from thunder.core.trace import TraceProvenance, from_trace
+from thunder.core.utils import ProxyDict, check, producers
 
 if TYPE_CHECKING:
     from numbers import Number
     from typing import Any
+
     from thunder.core.module import ThunderModule
 
 

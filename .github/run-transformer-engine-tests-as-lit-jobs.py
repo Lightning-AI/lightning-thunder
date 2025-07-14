@@ -1,10 +1,10 @@
+import glob
 import json
+import os.path
 import sys
 from datetime import datetime
-import glob
-import os.path
 
-from lightning_sdk import Studio, Job, Machine, Status
+from lightning_sdk import Job, Machine, Status, Studio
 
 
 def main(gh_run_id: str = ""):

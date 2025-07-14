@@ -1,35 +1,37 @@
 from __future__ import annotations
-from functools import partial
-from looseversion import LooseVersion
-from typing import TYPE_CHECKING
-import warnings
-from pathlib import Path
+
 import copy
+import warnings
+from functools import partial
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 import torch
+from looseversion import LooseVersion
 
+from thunder.dynamo.benchmark_utils import ThunderCompileSpecification
+from thunder.dynamo.splitter import _splitter
 from thunder.dynamo.utils import (
-    recompile_graph,
-    remove_empty_autocast,
     CompilerType,
-    get_split_reasons_string,
-    thunder_options_to_str,
     ProfileStats,
     ThunderAoTOptimizer,
     default_filter,
     default_optimizer,
+    get_split_reasons_string,
     input_to_example_input_meta,
+    recompile_graph,
+    remove_empty_autocast,
+    thunder_options_to_str,
 )
-from thunder.dynamo.splitter import _splitter
-from thunder.dynamo.benchmark_utils import ThunderCompileSpecification
 from thunder.transforms.extraction_only_prologue_transform import ExtractionOnlyPrologueTransform
 
 if TYPE_CHECKING:
-    from thunder.dynamo.utils import SubgraphInfo
-    from thunder.core.transform_common import Transform
-    from thunder.core.trace import TraceCtx as Trace
-    from os import PathLike
     from collections.abc import Callable
+    from os import PathLike
+
+    from thunder.core.trace import TraceCtx as Trace
+    from thunder.core.transform_common import Transform
+    from thunder.dynamo.utils import SubgraphInfo
 
 
 _DEFAULT_THUNDER_FUSION_TYPE = "dataflow"
@@ -216,7 +218,6 @@ def thunderfx(fn: Callable, /, **kwargs) -> Callable:
         The compiled callable
     """
     import thunder
-
     from thunder.dynamo.utils import get_torch_compile_kwargs
 
     torch_compile_kwargs = get_torch_compile_kwargs(**kwargs)

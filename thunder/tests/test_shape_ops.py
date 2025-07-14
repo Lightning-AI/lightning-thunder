@@ -1,5 +1,6 @@
-import thunder
 import torch
+
+import thunder
 from thunder.tests.framework import JAX_AVAILABLE
 
 if JAX_AVAILABLE:

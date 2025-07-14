@@ -10,9 +10,9 @@ import thunder.core.devices as devices
 from thunder import dtypes
 from thunder.core.transforms import vjp
 from thunder.core.utils import flatten_func
-from thunder.tests.framework import ops, requiresCUDA, run_snippet, TorchExecutor
+from thunder.tests.framework import TorchExecutor, ops, requiresCUDA, run_snippet
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
-from thunder.tests.opinfos import get_opinfo, OpInfo
+from thunder.tests.opinfos import OpInfo, get_opinfo
 from thunder.tests.test_grad import _make_differentiable_wrapper
 
 cudnn = pytest.importorskip("cudnn")
@@ -272,7 +272,7 @@ def test_vjp_correctness_cudnn_sdpa(dtype, may_cat_grad_qkv):
         with compile_data_and_stats(cd, None):
             initial_trace = thunder.trace()(vjp(filtered_op), filtered_args, (v,))
 
-        from thunder.executors.cudnn_sdpa import cudnn_sdpa_fwd, cudnn_sdpa_bwd
+        from thunder.executors.cudnn_sdpa import cudnn_sdpa_bwd, cudnn_sdpa_fwd
 
         # This is a workaround for the issue with python_ctx replacing symbols
         # with their "call_ctx" values which are not traceable and accept only

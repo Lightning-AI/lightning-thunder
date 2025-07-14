@@ -8,9 +8,10 @@ from thunder.core.prims import PrimIDs
 from thunder.core.proxies import TensorProxy, variableify
 from thunder.core.pytree import tree_flatten, tree_map
 from thunder.core.symbol import BoundSymbol
-from thunder.core.trace import TraceCtx, from_trace, set_tracectx, reset_tracectx
+from thunder.core.trace import TraceCtx, from_trace, reset_tracectx, set_tracectx
 from thunder.core.transform_common import replace_redundant_inputs
 from thunder.core.vjp_utils import get_saved_for_backward_tensors, set_saved_for_backward_tensors
+
 from .utils import is_cudagraph_capturing
 
 if TYPE_CHECKING:
@@ -225,10 +226,10 @@ def connect_to_autograd(
 
 def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stats, /, *flat_args):
     from thunder.core.rematerialization import rematerialize_all_gather, rematerialize_forward_and_backward
-    from thunder.transforms.autodiff import forward_and_backward_from_trace
     from thunder.distributed.transforms import FSDPCommBucketing
-    from thunder.distributed.utils import sort_data_parallel_syncs, sort_waits, sort_communication_ops
+    from thunder.distributed.utils import sort_communication_ops, sort_data_parallel_syncs, sort_waits
     from thunder.executors.passes import del_last_used, transform_for_execution
+    from thunder.transforms.autodiff import forward_and_backward_from_trace
 
     utils.check(compile_data is not None, lambda: "`compile_data` is required")
     # NOTE: This function is rather slow, so it's intended to be used
@@ -400,9 +401,10 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
                 compile_data.fn.bucketing_strategy != FSDPBucketingStrategy.NONE,
             )
         if getattr(compile_data.fn, "sharding_strategy") == FSDPType.ZERO2:
+            from sys import maxsize as INT_MAX
+
             from thunder.distributed import FSDPBucketingStrategy
             from thunder.distributed.utils import limit_in_flight_allgathers
-            from sys import maxsize as INT_MAX
 
             # sort the allgather+wait as consumer order just before consumer
             fw_extrace = sort_communication_ops(fw_extrace)

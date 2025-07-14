@@ -1,29 +1,30 @@
 from __future__ import annotations
-from dataclasses import dataclass
-from dataclasses import field
-from typing import TYPE_CHECKING
-from typing import ClassVar
+
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, ClassVar
 
 import torch
 import torch.nn as nn
 from torch.distributed import distributed_c10d
 
 from thunder.core import utils
-from thunder.core.proxies import TensorProxy
-from thunder.core.proxies import DistParallelType
-from thunder.distributed.tensor_parallel.common import PrePostProcessInterface
-from thunder.distributed.tensor_parallel.common import ComputationTraceTransformVisitorForTensorParallel
-from thunder.distributed.tensor_parallel.common import TransformForTensorParallel
-from thunder.distributed.tensor_parallel.common import TensorParallelLayerType
+from thunder.core.proxies import DistParallelType, TensorProxy
+from thunder.distributed.tensor_parallel.common import (
+    ComputationTraceTransformVisitorForTensorParallel,
+    PrePostProcessInterface,
+    TensorParallelLayerType,
+    TransformForTensorParallel,
+)
 
 if TYPE_CHECKING:
-    from typing import Any
     from collections.abc import Sequence
+    from typing import Any
+
     from torch.distributed import ProcessGroup
-    from thunder.core.trace import TraceCtx
-    from thunder.core.trace import TraceProvenance
-    from thunder.core.symbol import BoundSymbol
+
     from thunder.core.module import ThunderModule
+    from thunder.core.symbol import BoundSymbol
+    from thunder.core.trace import TraceCtx, TraceProvenance
 
 
 __all__ = [
@@ -81,8 +82,8 @@ class ColumnParallelEmbeddingPrePostProcess(PrePostProcessInterface):
         return masked2, (mask1, mask2)
 
     def postprocess(self, y: TensorProxy, masks: Any) -> TensorProxy:
-        from thunder.distributed import prims as dist_prims
         import thunder.torch as ltorch
+        from thunder.distributed import prims as dist_prims
 
         utils.check(len(masks) == 2, lambda: f"Expected 2 masks but {len(masks)=}")
         for mask in masks:
@@ -217,8 +218,8 @@ def column_parallel(
             x = torch.randn(4, n_in, device=device)
             out = tp_model(x)  # shape: [4, n_out]
     """
-    from thunder.core.transforms import add_transform
     from thunder.core.module import ThunderModule
+    from thunder.core.transforms import add_transform
     from thunder.distributed import copy_default_process_group
     from thunder.transforms import MaterializationTransform
 

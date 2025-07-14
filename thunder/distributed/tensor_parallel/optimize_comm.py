@@ -1,17 +1,16 @@
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
 from thunder.core import utils
-from thunder.core.proxies import TensorProxy
-from thunder.core.proxies import variableify
+from thunder.core.proxies import TensorProxy, variableify
 from thunder.core.trace import from_trace
 from thunder.distributed.tensor_parallel.common import TensorParallelLayerType
 
 if TYPE_CHECKING:
-    from thunder.core.trace import TraceCtx
-    from thunder.core.symbol import BoundSymbol
     from thunder.core.proxies import ProxyInterface
-    from thunder.core.trace import VariableInterface
+    from thunder.core.symbol import BoundSymbol
+    from thunder.core.trace import TraceCtx, VariableInterface
 
 
 __all__ = [

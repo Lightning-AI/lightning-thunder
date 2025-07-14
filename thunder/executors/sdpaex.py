@@ -2,29 +2,25 @@ import math
 
 import torch
 
-import thunder.core.dtypes as dtypes
-from thunder.core.proxies import Proxy, TensorProxy
-import thunder.core.utils as utils
 import thunder.core.devices as devices
-from thunder.core.prims import OpTags
-
+import thunder.core.dtypes as dtypes
+import thunder.core.utils as utils
 import thunder.torch as ltorch
-from thunder.torch import TensorLike
-
+from thunder.core.prims import OpTags
+from thunder.core.proxies import Proxy, TensorProxy
 from thunder.core.transforms import (
     get_grad,
     put_grad,
     put_grads,
 )
-from thunder.extend import OperatorExecutor, register_executor
-
-
 from thunder.executors.utils import (
+    SpdaBackend,
+    _fused_sdp_choice,
     _input_dtype_check_fused_scaled_dot_product_attention,
     _input_shape_check_fused_scaled_dot_product_attention,
-    _fused_sdp_choice,
-    SpdaBackend,
 )
+from thunder.extend import OperatorExecutor, register_executor
+from thunder.torch import TensorLike
 
 sdpa_ex: OperatorExecutor = OperatorExecutor("sdpa", version="0.1")
 register_executor(sdpa_ex)

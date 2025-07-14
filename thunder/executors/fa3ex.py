@@ -4,13 +4,14 @@
 # is hopper and fa3 has been built
 
 try:
-    from flash_attn_interface import _flash_attn_forward, _flash_attn_backward, flash_attn_func
+    from flash_attn_interface import _flash_attn_backward, _flash_attn_forward, flash_attn_func
 
     HAS_FA3 = True
 except ImportError:
     HAS_FA3 = False
 
 import torch
+
 import thunder
 from thunder.core.transforms import get_grad, put_grads
 from thunder.extend import OperatorExecutor, register_executor

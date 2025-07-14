@@ -1,5 +1,6 @@
-import thunder.core
 import torch
+
+import thunder.core
 
 
 def device_supports_bf16(device: None | str | torch.device | thunder.core.devices.Device, /) -> bool:

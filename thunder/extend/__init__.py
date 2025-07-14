@@ -1,8 +1,8 @@
-from collections.abc import Callable, Sequence, Hashable
 import enum
 import itertools
 import os
 import sys
+from collections.abc import Callable, Hashable, Sequence
 from types import ModuleType
 from typing import Any
 
@@ -12,7 +12,7 @@ from thunder.core.devices import to_torch_device
 from thunder.core.dtypes import to_torch_dtype
 from thunder.core.proxies import Proxy, TensorProxy, proxy
 from thunder.core.pytree import tree_map
-from thunder.core.symbol import Symbol, BoundSymbol, default_python_printer
+from thunder.core.symbol import BoundSymbol, Symbol, default_python_printer
 from thunder.core.trace import TraceCtx
 from thunder.core.vjp_utils import disable_caching_split_forward_and_backward
 
@@ -533,14 +533,14 @@ def get_all_executors() -> tuple[Executor, ...]:
         apexex,
         cudnn_layernormex,
         cudnnex,
+        fa3ex,
         nvfuserex,
         pythonex,
         sdpaex,
-        fa3ex,
         torch_compile,
         torchex,
-        transformer_engineex,
         transformer_engine_v2ex,
+        transformer_engineex,
         triton_crossentropy,
     )
 

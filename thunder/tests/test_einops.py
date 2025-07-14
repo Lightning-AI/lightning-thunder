@@ -6,9 +6,8 @@ import torch
 from torch.testing import assert_close
 
 import thunder
-from thunder.tests.opinfos import get_opinfo
 from thunder.tests.make_tensor import make_tensor
-
+from thunder.tests.opinfos import get_opinfo
 
 einops = pytest.importorskip("einops")
 

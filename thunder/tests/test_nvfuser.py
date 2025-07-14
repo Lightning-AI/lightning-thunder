@@ -1,43 +1,41 @@
 import pytest
-
 import torch
+from looseversion import LooseVersion
 
 import thunder
-import thunder.examine as examine
-from thunder.executors.nvfuserex import nvfuser_version, nvfuserex
-import thunder.torch as ltorch
-import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
+import thunder.core.dtypes as dtypes
 import thunder.core.prims as prims
+import thunder.examine as examine
+import thunder.torch as ltorch
 from thunder.core.pytree import tree_map
 from thunder.core.transforms import value_and_grad
-
+from thunder.executors.nvfuserex import nvfuser_version, nvfuserex
 from thunder.tests.framework import (
-    instantiate,
-    TestExecutor,
     NOTHING,
+    TestExecutor,
+    instantiate,
     nvFuserExecutor,
 )
 from thunder.tests.make_tensor import make_tensor
 from thunder.tests.opinfos import (
+    embedding_opinfo,
     linear_opinfo,
     matmul_opinfo,
-    embedding_opinfo,
 )
-from looseversion import LooseVersion
 
 
 @instantiate(
     dtypes=NOTHING,
 )
 def test_rematerialization_with_forward_and_backward_from_trace(executor: TestExecutor, device: str, _) -> None:
+    import thunder.torch as ltorch
     from thunder import trace
     from thunder.clang import cos, sin
-    import thunder.torch as ltorch
-    from thunder.core.transforms import forward_and_backward_from_trace
-    from thunder.core.transform_common import wrap_return_value_together_with_arguments
     from thunder.common import transform_for_execution
     from thunder.core.rematerialization import rematerialize_forward_and_backward
+    from thunder.core.transform_common import wrap_return_value_together_with_arguments
+    from thunder.core.transforms import forward_and_backward_from_trace
 
     def func(a, b, *, c):
         d = a + b + c
@@ -303,7 +301,7 @@ def test_cse_subsymbol_redundant_args(executor, device, _):
 @instantiate(dtypes=NOTHING, devicetypes=(devices.DeviceType.CUDA,), executors=(nvFuserExecutor,))
 def test_cse_rematerialization(executor, device, _):
     # Unit test for "llama2.c example failed with bookend disabled."
-    from thunder.tests.llama2_model import Transformer, ModelArgs
+    from thunder.tests.llama2_model import ModelArgs, Transformer
 
     batch_size = 2
     max_seq_len = 32

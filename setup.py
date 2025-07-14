@@ -5,7 +5,6 @@ from importlib.util import module_from_spec, spec_from_file_location
 from packaging.requirements import Requirement as parse_requirements
 from setuptools import find_packages, setup
 
-
 _PATH_ROOT = os.path.dirname(__file__)
 _PATH_REQUIRES = os.path.join(_PATH_ROOT, "requirements")
 # check if os env. variable is set to convert version to nightly

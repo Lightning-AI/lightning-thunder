@@ -1,17 +1,16 @@
-from enum import auto, Enum
-from numbers import Number
-from functools import reduce
-import operator
 import builtins
 import math
+import operator
+from collections.abc import Callable, Hashable, Sequence
+from enum import Enum, auto
+from functools import reduce
+from numbers import Number
 from types import NoneType
 from typing import Any
-from collections.abc import Callable
-from collections.abc import Hashable, Sequence
 
 import torch
 
-from thunder.core.langctxs import LanguageContext, register_langctx, Languages, langctx
+from thunder.core.langctxs import LanguageContext, Languages, langctx, register_langctx
 
 #
 # Creates and registers the torch language context
@@ -61,30 +60,30 @@ def register_method(method_name: str, method: Callable, /) -> None:
     _method_name_to_fn_map[method_name] = method
 
 
-from thunder.core.symbol import Symbol, BoundSymbol, default_python_printer
-from thunder.core.proxies import (
-    CollectionProxy,
-    ListProxy,
-    TensorProxy,
-    NumberProxy,
-    proxy,
-    numberproxy,
-    pytype,
-    pyval,
-    Proxy,
-    StringProxy,
-    TupleProxy,
-    AnyProxy,
-    IntegerProxy,
-)
-import thunder.core.codeutils as codeutils
-from thunder.core.codeutils import Printable
-import thunder.core.utils as utils
 import thunder.core.baseutils as baseutils
+import thunder.core.codeutils as codeutils
 import thunder.core.devices as devices
 import thunder.core.dtypes as dtypes
+import thunder.core.utils as utils
+from thunder.core.codeutils import Printable
+from thunder.core.langctxs import LanguageContext, Languages, register_langctx
+from thunder.core.proxies import (
+    AnyProxy,
+    CollectionProxy,
+    IntegerProxy,
+    ListProxy,
+    NumberProxy,
+    Proxy,
+    StringProxy,
+    TensorProxy,
+    TupleProxy,
+    numberproxy,
+    proxy,
+    pytype,
+    pyval,
+)
 from thunder.core.pytree import tree_flatten
-from thunder.core.langctxs import LanguageContext, register_langctx, Languages
+from thunder.core.symbol import BoundSymbol, Symbol, default_python_printer
 
 #
 # Primitives and helpers for defining them

@@ -1,80 +1,73 @@
-from dataclasses import dataclass, replace
-from functools import partial, lru_cache
-from numbers import Number
-from typing import Any
-from collections.abc import Callable, Mapping, Hashable, Sequence
 import os
 import time
-from copy import copy
-from itertools import chain, filterfalse
 import warnings
-from typing import cast
+from collections.abc import Callable, Hashable, Mapping, Sequence
+from copy import copy
+from dataclasses import dataclass, replace
+from functools import lru_cache, partial
+from itertools import chain, filterfalse
+from numbers import Number
+from typing import Any, cast
 
-from looseversion import LooseVersion
 import torch
+from looseversion import LooseVersion
 from torch import Tensor
 
 IS_TORCH_DISTRIBUTED_AVAILABLE = torch.distributed.is_available()
 if IS_TORCH_DISTRIBUTED_AVAILABLE:
-    from torch.distributed.tensor import DTensor
-    from torch.distributed.tensor.placement_types import Placement, Shard, Replicate
     import torch.distributed as dist
-
-import thunder.core.dtypes as dtypes
-import thunder.torch as ltorch
-from thunder.torch import TensorLike
-
-from thunder.core import prims, utils
-from thunder.core.baseutils import BoundSymbolInterface
-from thunder.core.prims import PrimIDs
-from thunder.core.proxies import (
-    NumberProxy,
-    Proxy,
-    TupleProxy,
-    TensorProxy,
-    variableify,
-    unvariableify,
-    Variable,
-    pyval,
-)
-from thunder.core.pytree import tree_map
-from thunder.core.rematerialization import rematerialize
-from thunder.core.utils import check
-from thunder.core.trace import TraceCtx, from_trace, TraceProvenance
-from thunder.core.symbol import BoundSymbol, BoundSymbolRHS, Symbol, has_tags
-from thunder.core.devices import Device, DeviceType, cpu
-from thunder.core.transform_common import dce, cse_single_bsym, replace_redundant_inputs
-from thunder.core.profile import annotate_for_profile
-from thunder.core.compile_data import get_compile_option
-from thunder.torch.experimental.dtensor_torch_and_prims import dtensor_mul_prim
-from thunder.torch.experimental.dtensor_proxy import DTensorProxy
-
-from thunder.core.transforms import (
-    get_grad,
-    put_grads,
-)
-
-from nvfuser.pytorch_utils import (
-    torch_dtype_to_nvfuser_dtype,
-)
-
-
-from thunder.executors.utils import (
-    Region,
-    _input_dtype_check_fused_scaled_dot_product_attention,
-    _input_shape_check_fused_scaled_dot_product_attention,
-    _fused_sdp_choice,
-    SpdaBackend,
-)
-
-from thunder.executors.passes import update_fusion_call_ctx
-from thunder.extend import FUEL_LEVEL, FusionExecutor, register_executor
-from thunder.executors.nvfuserex import nvfuser_version
+    from torch.distributed.tensor import DTensor
+    from torch.distributed.tensor.placement_types import Placement, Replicate, Shard
 
 # NOTE This impl file is here because nvFuser may not be available, so it's imported conditionally
 #   by nvfuserex.py when nvFuser is available.
 import nvfuser
 from nvfuser import DataType, FusionDefinition
+from nvfuser.pytorch_utils import (
+    torch_dtype_to_nvfuser_dtype,
+)
+
+import thunder.core.dtypes as dtypes
+import thunder.torch as ltorch
+from thunder.core import prims, utils
+from thunder.core.baseutils import BoundSymbolInterface
+from thunder.core.compile_data import get_compile_option
+from thunder.core.devices import Device, DeviceType, cpu
+from thunder.core.prims import PrimIDs
+from thunder.core.profile import annotate_for_profile
+from thunder.core.proxies import (
+    NumberProxy,
+    Proxy,
+    TensorProxy,
+    TupleProxy,
+    Variable,
+    pyval,
+    unvariableify,
+    variableify,
+)
+from thunder.core.pytree import tree_map
+from thunder.core.rematerialization import rematerialize
+from thunder.core.symbol import BoundSymbol, BoundSymbolRHS, Symbol, has_tags
+from thunder.core.trace import TraceCtx, TraceProvenance, from_trace
+from thunder.core.transform_common import cse_single_bsym, dce, replace_redundant_inputs
+from thunder.core.transforms import (
+    get_grad,
+    put_grads,
+)
+from thunder.core.utils import check
+from thunder.executors.nvfuserex import nvfuser_version
+from thunder.executors.passes import update_fusion_call_ctx
+from thunder.executors.utils import (
+    Region,
+    SpdaBackend,
+    _fused_sdp_choice,
+    _input_dtype_check_fused_scaled_dot_product_attention,
+    _input_shape_check_fused_scaled_dot_product_attention,
+)
+from thunder.extend import FUEL_LEVEL, FusionExecutor, register_executor
+from thunder.torch import TensorLike
+from thunder.torch.experimental.dtensor_proxy import DTensorProxy
+from thunder.torch.experimental.dtensor_torch_and_prims import dtensor_mul_prim
 
 nvTensor = nvfuser._C.Tensor
 nvNumber = nvfuser._C.Scalar
@@ -747,7 +740,7 @@ class nvFuserExecutor(FusionExecutor):
          * When the LOCAL_RANK environment variable is set for ddp or fsdp, a
          separate fusion cache is saved for each device.
         """
-        from nvfuser import enable_automatic_serialization, disable_automatic_serialization
+        from nvfuser import disable_automatic_serialization, enable_automatic_serialization
 
         if save_cache:
             enable_automatic_serialization()

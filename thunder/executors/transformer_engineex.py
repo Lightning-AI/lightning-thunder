@@ -1,30 +1,26 @@
+import warnings
+from collections import deque
+from collections.abc import Callable, Sequence
+from contextlib import contextmanager, nullcontext
 from functools import partial
+from importlib.metadata import version
 from itertools import chain
 from typing import Any
-from collections.abc import Sequence
-from collections.abc import Callable
-from contextlib import contextmanager, nullcontext
-from collections import deque
-from importlib.metadata import version
-from looseversion import LooseVersion
-import warnings
 
 import torch
-
 from lightning_utilities.core.imports import package_available
+from looseversion import LooseVersion
 
-from thunder.core.proxies import TensorProxy
-from thunder.core.trace import get_tracectx
-from thunder.core.symbol import Symbol, BoundSymbol
 import thunder.core.devices as devices
 import thunder.core.prims as prims
-from thunder.core.proxies import AnyProxy
+from thunder.core.compile_data import get_compile_data, get_compile_option
+from thunder.core.proxies import AnyProxy, TensorProxy
+from thunder.core.symbol import BoundSymbol, Symbol
+from thunder.core.trace import get_tracectx
 from thunder.core.vjp_utils import disable_caching_split_forward_and_backward
-from thunder.extend import OperatorExecutor, register_executor
-from thunder.core.compile_data import get_compile_option, get_compile_data
 from thunder.distributed import FSDPType
 from thunder.executors.utils import Context, set_saved_tensors
-
+from thunder.extend import OperatorExecutor, register_executor
 
 __all__ = [
     "transformer_engine_ex",
@@ -42,14 +38,14 @@ te: None | Any = None
 if TE_AVAILABLE:
     try:
         import transformer_engine.pytorch as te
-        from transformer_engine.common.recipe import MXFP8BlockScaling, DelayedScaling
-        from transformer_engine.pytorch.constants import MXFP8_BLOCK_SCALING_SIZE
-        from transformer_engine.pytorch.module.linear import _Linear
-        from transformer_engine.pytorch.module.base import TransformerEngineBaseModule
-        from transformer_engine.pytorch.fp8 import FP8GlobalStateManager, get_default_fp8_recipe
-        from transformer_engine.pytorch.utils import check_dim_for_fp8_exec
-        from transformer_engine.pytorch.cpu_offload import CPUOffloadEnabled
         import transformer_engine_torch as tex
+        from transformer_engine.common.recipe import DelayedScaling, MXFP8BlockScaling
+        from transformer_engine.pytorch.constants import MXFP8_BLOCK_SCALING_SIZE
+        from transformer_engine.pytorch.cpu_offload import CPUOffloadEnabled
+        from transformer_engine.pytorch.fp8 import FP8GlobalStateManager, get_default_fp8_recipe
+        from transformer_engine.pytorch.module.base import TransformerEngineBaseModule
+        from transformer_engine.pytorch.module.linear import _Linear
+        from transformer_engine.pytorch.utils import check_dim_for_fp8_exec
     except Exception as ex:
         warnings.warn(f"transformer_engine failed to import with exception {ex}")
         TE_AVAILABLE = False

@@ -1,34 +1,31 @@
 from __future__ import annotations
-import operator
+
 import importlib
+import operator
+from collections.abc import Callable, Hashable, Sequence
 from functools import partial, wraps
 from numbers import Number
-from typing import TYPE_CHECKING
-from collections.abc import Callable
-from collections.abc import Hashable, Sequence
 from types import ModuleType
+from typing import TYPE_CHECKING
 
 import torch
 
-import thunder.core.dtypes as dtypes
-from thunder.core.dtypes import to_torch_dtype, to_dtype
 import thunder.core.devices as devices
-from thunder.core.devices import to_torch_device, to_device
+import thunder.core.dtypes as dtypes
 import thunder.core.prims as prims
+import thunder.core.utils as utils
+import thunder.distributed.prims as dist_prims
+import thunder.torch as ltorch
+from thunder.core.devices import to_device, to_torch_device
+from thunder.core.dtypes import to_dtype, to_torch_dtype
 from thunder.core.proxies import NumberProxy, TensorProxy, pytype
 from thunder.core.symbol import Symbol
-from thunder.distributed.prims import DistributedReduceOps
-import thunder.distributed.prims as dist_prims
-import thunder.core.utils as utils
-
-import thunder.torch as ltorch
-
-from thunder.extend import OperatorExecutor, register_executor, add_always_executor
-
 from thunder.core.transforms import (
     get_grad,
     put_grad,
 )
+from thunder.distributed.prims import DistributedReduceOps
+from thunder.extend import OperatorExecutor, add_always_executor, register_executor
 
 if TYPE_CHECKING:
     from thunder.common import CompileData

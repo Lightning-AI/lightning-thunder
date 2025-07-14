@@ -1,10 +1,10 @@
+import time
 from collections.abc import Callable
 from functools import partial
-import time
 
-from thunder.core.trace import TraceCtx, from_trace, TraceProvenance
 import thunder
-from thunder.core.symbol import Symbol, BoundSymbol
+from thunder.core.symbol import BoundSymbol, Symbol
+from thunder.core.trace import TraceCtx, TraceProvenance, from_trace
 from thunder.dev_utils.utils import NON_COMPUTATION_PRIMS
 
 

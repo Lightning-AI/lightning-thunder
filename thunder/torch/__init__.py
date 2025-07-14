@@ -1,65 +1,65 @@
 from __future__ import annotations
+
 import builtins
+import collections
 import itertools
 import math
 import operator
-import collections
 import re
 import sys
-from collections.abc import Callable
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from enum import Enum
 from functools import partial, reduce, wraps
 from numbers import Number
-from types import NoneType, ModuleType
+from types import ModuleType, NoneType
 from typing import Any, overload
 
 import opt_einsum
 
-# Initializes the language context
-from thunder.torch.langctx import register_method, register_property
-from thunder.core.baseutils import run_once
+import thunder
 import thunder.clang as clang
 import thunder.core.devices as devices
-from thunder.core.devices import to_device
 import thunder.core.dtypes as dtypes
-from thunder.core.dtypes import to_torch_dtype, to_dtype, _torch_to_thunder_dtype_map
 import thunder.core.prims as prims
 import thunder.core.utils as utils
 import thunder.distributed.prims as dist_prims
-from thunder.core.langctxs import langctx, Languages, get_langctx
+from thunder.core.baseutils import run_once
 from thunder.core.compile_data import get_compile_data
-from thunder.core.proxies import (
-    FloatProxy,
-    IntegerProxy,
-    NumberProxy,
-    NumberLike,
-    TensorProxy,
-    FutureTensorProxy,
-    pyval,
-    TupleProxy,
-    ListProxy,
-    DictProxy,
-    numberproxy,
-    ProxyTag,
-)
-from thunder.core.pytree import tree_map, tree_flatten, tree_unflatten
-from thunder.core.symbol import Symbol
-from thunder.core.transforms import register_grad, register_augmented_forward, register_backward
+from thunder.core.devices import to_device
+from thunder.core.dtypes import _torch_to_thunder_dtype_map, to_dtype, to_torch_dtype
+from thunder.core.langctxs import Languages, get_langctx, langctx
 from thunder.core.prims import get_grad, put_grad
-import thunder
+from thunder.core.proxies import (
+    DictProxy,
+    FloatProxy,
+    FutureTensorProxy,
+    IntegerProxy,
+    ListProxy,
+    NumberLike,
+    NumberProxy,
+    ProxyTag,
+    TensorProxy,
+    TupleProxy,
+    numberproxy,
+    pyval,
+)
+from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
+from thunder.core.symbol import Symbol
+from thunder.core.transforms import register_augmented_forward, register_backward, register_grad
 from thunder.torch.default_torch_ops import _auto_registered_operators_returning_views
 
+# Initializes the language context
+from thunder.torch.langctx import register_method, register_property
 
 __all__ = [
     "is_available",
 ]
 
 # NOTE torch is a requirement
+import warnings
+
 import torch
 import torch._higher_order_ops.wrap
-
-import warnings
 
 # Type annotation helpers
 TensorLike = TensorProxy
@@ -4942,7 +4942,7 @@ def adaptive_avg_pool2d(
     /,
     output_size: int | Sequence[int],
 ) -> TensorProxy:
-    from thunder.core.baseutils import check_valid_shape, check_valid_length
+    from thunder.core.baseutils import check_valid_length, check_valid_shape
 
     utils.check_type(output_size, (int, IntegerProxy, Sequence))
     if isinstance(output_size, Sequence):
@@ -6615,8 +6615,9 @@ def _get_fake_arg(inp: Any):
 
 
 def _fake_type_to_thunder(inp: Any):
-    from thunder.core.proxies import _cls_to_number_proxy_map
     from torch._subclasses.fake_tensor import FakeTensor
+
+    from thunder.core.proxies import _cls_to_number_proxy_map
 
     if inp is None:
         return inp

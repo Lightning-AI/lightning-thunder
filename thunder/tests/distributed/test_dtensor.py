@@ -7,17 +7,13 @@ import torch
 if not torch.distributed.is_available():
     pytest.skip(allow_module_level=True)
 
-from thunder.dynamo import thunderfx
-import thunder
-
-from thunder.tests.distributed.helper import DistributedParallelTestCase
 from torch.distributed._tensor import DeviceMesh, distribute_tensor
-from torch.distributed.tensor.placement_types import Placement, Shard, Replicate
-
+from torch.distributed.tensor.placement_types import Placement, Replicate, Shard
 from torch.testing._internal import common_utils
 
-from thunder.tests.distributed.helper import executors_map
-
+import thunder
+from thunder.dynamo import thunderfx
+from thunder.tests.distributed.helper import DistributedParallelTestCase, executors_map
 
 # NOTE: We run all these similar functions seperately
 #       as we want to avoid nvfuser issue (https://github.com/NVIDIA/Fuser/issues/4507)

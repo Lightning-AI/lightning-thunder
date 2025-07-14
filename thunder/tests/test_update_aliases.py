@@ -2,10 +2,10 @@ import pytest
 import torch.testing
 
 import thunder
-from thunder.examine import get_fusions
 import thunder.core.dtypes as dtypes
+from thunder.examine import get_fusions
+from thunder.tests.framework import NOTHING, TorchCompileExecutor, TorchExecutor, instantiate, nvFuserExecutor, ops
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
-from thunder.tests.framework import instantiate, ops, NOTHING, TorchExecutor, TorchCompileExecutor, nvFuserExecutor
 from thunder.tests.test_inplace_functionalization import _inplace_opinfos
 
 

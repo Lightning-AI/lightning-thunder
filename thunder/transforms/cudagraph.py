@@ -5,21 +5,21 @@ from typing import Any
 
 import torch
 
-from thunder.core.transform_common import Transform
-from thunder.core import utils, prims, vjp_utils
+from thunder.core import prims, utils, vjp_utils
 from thunder.core.proxies import Proxy, ProxyTag, unvariableify
 from thunder.core.symbol import BoundSymbol, Symbol
 from thunder.core.trace import (
     TraceCtx,
-    from_trace,
     TraceProvenance,
-    get_tracectx,
-    set_tracectx,
-    reset_tracectx,
     TraceTag,
+    from_trace,
+    get_tracectx,
+    reset_tracectx,
+    set_tracectx,
 )
+from thunder.core.transform_common import Transform
+from thunder.executors.data_dependent_partition import Node, fuse_bound_symbols
 from thunder.executors.utils import Region
-from thunder.executors.data_dependent_partition import fuse_bound_symbols, Node
 
 
 @dataclass(**utils.default_dataclass_params)

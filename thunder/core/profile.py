@@ -1,11 +1,10 @@
-from collections.abc import Callable
 import contextlib
 import functools
 import os
 import warnings
+from collections.abc import Callable
 
 import torch
-
 
 _ENABLED = os.getenv("THUNDER_ANNOTATE_TRACES") in ("1", "y", "Y")
 

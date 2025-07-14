@@ -1,40 +1,38 @@
+import dataclasses
 import operator
 import os
-import tempfile
-from functools import partial, reduce
-import dataclasses
 import re
+import tempfile
 import weakref
+from functools import partial, reduce
 
 import pytest
 import torch
-from torch.testing import assert_close, make_tensor
 from lightning_utilities import compare_version
+from torch.testing import assert_close, make_tensor
 
 import thunder
-from thunder import cache_option, cache_hits, cache_misses
-import thunder.core.proxies
-import thunder.examine as examine
 import thunder.clang as clang
-import thunder.core.profile
-import thunder.tests.bf16
-import thunder.torch as ltorch
-
 import thunder.core.codeutils as codeutils
-from thunder.tests.framework import (
-    instantiate,
-    NOTHING,
-    TorchExecutor,
-    nvFuserExecutor,
-    requiresCUDA,
-    TestExecutor,
-    set_default_dtype_ctx,
-)
 import thunder.core.dtypes as dtypes
 import thunder.core.prims as prims
-from thunder.core.trace import TraceCtx, set_tracectx, reset_tracectx, tracectx
+import thunder.core.profile
+import thunder.core.proxies
+import thunder.examine as examine
+import thunder.tests.bf16
+import thunder.torch as ltorch
+from thunder import cache_hits, cache_misses, cache_option
 from thunder.core.symbol import BoundSymbol
-
+from thunder.core.trace import TraceCtx, reset_tracectx, set_tracectx, tracectx
+from thunder.tests.framework import (
+    NOTHING,
+    TestExecutor,
+    TorchExecutor,
+    instantiate,
+    nvFuserExecutor,
+    requiresCUDA,
+    set_default_dtype_ctx,
+)
 
 #
 # Tests related to the test framework itself
@@ -1079,7 +1077,7 @@ def test_bsym_toposort(executor: TestExecutor, device: str, dtype: dtypes.dtype)
     traces = thunder.last_traces(cfoo)
     trc = traces[0]
 
-    from thunder.core.transforms import bsym_list_to_dag, TOPOSORT_ORDER, toposort_bsym_dag, Node
+    from thunder.core.transforms import TOPOSORT_ORDER, Node, bsym_list_to_dag, toposort_bsym_dag
 
     roots, leaves = bsym_list_to_dag(trc.bound_symbols)
     top_down_bsyms = toposort_bsym_dag(roots, TOPOSORT_ORDER.TOP_DOWN)
@@ -1163,7 +1161,7 @@ def test_visitor_transform():
 
     trc = thunder.trace()(foo, a, b)
 
-    from thunder.core.transforms import visitor_transform, VISIT_TYPE
+    from thunder.core.transforms import VISIT_TYPE, visitor_transform
 
     # Adds a comment before each bound symbols
     def add_comments(bsym) -> VISIT_TYPE:
@@ -1277,7 +1275,7 @@ def test_detached_trace(executor, device: str, _):
     # This test ensures that the detached_trace context manager works as expected.
     #   It should be possible to enter a detached trace, and then exit it, and
     #   the trace should be restored to its original state.
-    from thunder.core.trace import get_tracectx, TraceCtx, detached_trace
+    from thunder.core.trace import TraceCtx, detached_trace, get_tracectx
 
     try:
         new_trace = TraceCtx(None)
@@ -1622,8 +1620,8 @@ def test_nested_trace_no_name_collision(executor, device, _):
 
 @instantiate(dtypes=NOTHING)
 def test_trace_args_no_name_collision(executor, device, _):
-    from thunder.core.trace import detached_trace
     from thunder.core.proxies import TensorProxy
+    from thunder.core.trace import detached_trace
 
     with detached_trace():
         a = TensorProxy(
@@ -1648,9 +1646,9 @@ def test_eval_trace(executor, device, _):
     # This test ensures that eval_trace() can be called from within a trace
     #   and that all the symbols in the trace are properly evaluated.
 
-    from thunder.core.transforms import eval_trace
-    from thunder.core.trace import TraceCtx
     from thunder.core.proxies import TensorProxy
+    from thunder.core.trace import TraceCtx
+    from thunder.core.transforms import eval_trace
 
     def foo(a, b, *, c=5):
         return clang.mul(clang.add(a, b), c)
@@ -2181,7 +2179,7 @@ def test_cse(executor, device, _):
 
 
 def test_symbol_flat_args():
-    from thunder.core.symbol import Symbol, BoundSymbol
+    from thunder.core.symbol import BoundSymbol, Symbol
 
     def func(x, y, *, z):
         return x * y + z
@@ -2271,8 +2269,8 @@ def test_clone_alias():
 @instantiate(dtypes=(thunder.float32,))
 def test_default_method(executor, device: str, dtype: dtypes.dtype):
     # This test ensures that when no language context is given, it will fallback to the default implementation.
-    from thunder.core.trace import detached_trace
     from thunder.core.proxies import TensorProxy
+    from thunder.core.trace import detached_trace
 
     torch_dtype = ltorch.to_torch_dtype(dtype)
     a = make_tensor((2, 2), device=device, dtype=torch_dtype)
@@ -3105,8 +3103,9 @@ def test_saved_view_of_output_of_autograd_function_does_not_leak():
 
 
 def test_debug_options():
-    from thunder import DebugOptions
     import dill
+
+    from thunder import DebugOptions
 
     initial_state = dill.dumps(dict(DebugOptions.__dict__))
     DebugOptions.register_option("test_option", bool, False, "Test Option")
@@ -3131,10 +3130,10 @@ def test_debug_options():
 
 
 def test_default_tensor_proxy():
+    from thunder.core.devices import cpu
+    from thunder.core.dtypes import float32
     from thunder.core.proxies import TensorProxy
     from thunder.core.trace import detached_trace
-    from thunder.core.dtypes import float32
-    from thunder.core.devices import cpu
 
     # It should be possible to create a TensorProxy with default values for all
     # optional arguments
@@ -3146,10 +3145,10 @@ def test_default_tensor_proxy():
 
 
 def test_proxy_same_name():
+    from thunder.core.devices import cpu
+    from thunder.core.dtypes import float32
     from thunder.core.proxies import TensorProxy
     from thunder.core.trace import detached_trace
-    from thunder.core.dtypes import float32
-    from thunder.core.devices import cpu
 
     with detached_trace():
         t = TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32)

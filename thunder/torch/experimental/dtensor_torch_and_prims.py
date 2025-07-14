@@ -1,28 +1,25 @@
-from functools import partial
 from collections.abc import Callable
-
-from thunder.torch import torchsymbol, TensorLike, register_function
-import thunder.torch as ltorch
-from thunder.core.pytree import tree_flatten
-from thunder import clang
-from thunder.torch.experimental.dtensor_utils import run_with_fake_tensor
-from thunder.torch.experimental.dtensor_proxy import DTensorProxy, create_dtensor_proxy_from_proxies
-from thunder.torch.langctx import register_method
-
-from thunder.core.proxies import TensorProxy, AnyProxy
-from thunder.core.transforms import (
-    register_grad,
-    put_grads,
-    get_grad,
-)
-from thunder.executors.torchex import ex as pytorchex
-from thunder.executors.pythonex import ex as pythonex
-from thunder.core.prims import make_prim, OpTags
-from thunder.core import prims
-from thunder.core import baseutils
-from thunder.core import utils
+from functools import partial
 
 import torch
+
+import thunder.torch as ltorch
+from thunder import clang
+from thunder.core import baseutils, prims, utils
+from thunder.core.prims import OpTags, make_prim
+from thunder.core.proxies import AnyProxy, TensorProxy
+from thunder.core.pytree import tree_flatten
+from thunder.core.transforms import (
+    get_grad,
+    put_grads,
+    register_grad,
+)
+from thunder.executors.pythonex import ex as pythonex
+from thunder.executors.torchex import ex as pytorchex
+from thunder.torch import TensorLike, register_function, torchsymbol
+from thunder.torch.experimental.dtensor_proxy import DTensorProxy, create_dtensor_proxy_from_proxies
+from thunder.torch.experimental.dtensor_utils import run_with_fake_tensor
+from thunder.torch.langctx import register_method
 
 dtensor_torchsymbol = partial(torchsymbol, allow_tensor_subclass_proxy=True)
 

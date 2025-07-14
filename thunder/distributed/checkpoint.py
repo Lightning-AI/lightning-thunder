@@ -1,8 +1,7 @@
 import operator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Union
-from typing import TypeGuard
+from typing import Any, TypeGuard, Union
 
 import torch
 from lightning_utilities import compare_version

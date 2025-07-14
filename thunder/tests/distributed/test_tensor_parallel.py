@@ -7,13 +7,13 @@ import torch.nn as nn
 if not torch.distributed.is_available():
     pytest.skip(allow_module_level=True)
 
-import thunder
-from thunder.distributed import column_parallel, row_parallel
-import thunder.executors
-from thunder.tests.distributed.helper import ToyModel, DistributedParallelTestCase
-from thunder.tests.distributed.modules import ParallelMLP
-
 from torch.testing._internal import common_utils
+
+import thunder
+import thunder.executors
+from thunder.distributed import column_parallel, row_parallel
+from thunder.tests.distributed.helper import DistributedParallelTestCase, ToyModel
+from thunder.tests.distributed.modules import ParallelMLP
 
 _COL = "column"
 _ROW = "row"
@@ -263,10 +263,9 @@ class TensorParallelTest(DistributedParallelTestCase):
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="")
     def test_litgpt_causal_self_attention(self):
-        from thunder.tests.litgpt_model import Config
-        from thunder.tests.litgpt_model import CausalSelfAttention
-        from thunder.tests.make_tensor import make_tensor
         from thunder.distributed.prims import PrimIDs
+        from thunder.tests.litgpt_model import CausalSelfAttention, Config
+        from thunder.tests.make_tensor import make_tensor
 
         device = torch.device(f"cuda:{self.rank}")
         dtype = torch.bfloat16

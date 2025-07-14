@@ -1,19 +1,18 @@
 from __future__ import annotations
 
-from enum import Enum
 from contextlib import contextmanager
+from enum import Enum
 
 import torch
 from looseversion import LooseVersion
+from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode
 
 import thunder.core.utils as utils
-from thunder.core.symbol import BoundSymbol
-from thunder.core.proxies import variableify, Proxy, unvariableify
-from thunder.core.prims import PrimIDs
-from thunder.core.transform_common import order_proxies
-from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode
 from thunder.core.compile_data import get_compile_option
-
+from thunder.core.prims import PrimIDs
+from thunder.core.proxies import Proxy, unvariableify, variableify
+from thunder.core.symbol import BoundSymbol
+from thunder.core.transform_common import order_proxies
 
 try:
     torch.cuda.graphs.is_current_stream_capturing()

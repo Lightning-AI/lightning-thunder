@@ -1,20 +1,18 @@
+import random
 from collections import OrderedDict
 from itertools import accumulate
-import random
-import torch
-
-from thunder.torch import TensorLike
-from thunder.core.proxies import TensorProxy
-from thunder.core.compile_data import get_compile_option
-from thunder.core.prims import OpTags
-from thunder.core.transforms import get_grad, put_grad, put_grads
-import thunder.core.dtypes as dtypes
-import thunder.torch as ltorch
-from thunder.core.proxies import pyval
-
-from thunder.extend import OperatorExecutor, register_executor
 
 import cudnn
+import torch
+
+import thunder.core.dtypes as dtypes
+import thunder.torch as ltorch
+from thunder.core.compile_data import get_compile_option
+from thunder.core.prims import OpTags
+from thunder.core.proxies import TensorProxy, pyval
+from thunder.core.transforms import get_grad, put_grad, put_grads
+from thunder.extend import OperatorExecutor, register_executor
+from thunder.torch import TensorLike
 
 cudnn_backend_version = cudnn.backend_version()
 

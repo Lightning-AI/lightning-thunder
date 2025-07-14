@@ -1,18 +1,17 @@
+from collections.abc import Callable
 from numbers import Number
 from typing import Any
-from collections.abc import Callable
 
 import torch
 
 import thunder
-from thunder.core.trace import from_trace
-from thunder.core.proxies import variableify, Variable, TensorProxy, NumberProxy
-from thunder.core.symbol import BoundSymbol
-from thunder.core.dtypes import to_dtype
 from thunder.core.devices import to_device
-from thunder.torch import _torch_to_thunder_function_map
+from thunder.core.dtypes import to_dtype
+from thunder.core.proxies import NumberProxy, TensorProxy, Variable, variableify
+from thunder.core.symbol import BoundSymbol
+from thunder.core.trace import from_trace
 from thunder.core.utils import get_symbols_to_last_used_variables
-
+from thunder.torch import _torch_to_thunder_function_map
 
 __all__ = [
     "ConstantFolding",

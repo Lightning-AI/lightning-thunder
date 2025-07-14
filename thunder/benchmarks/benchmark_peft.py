@@ -1,22 +1,20 @@
-import sys
 import argparse
 import os
 import random
+import sys
 import time
 from contextlib import contextmanager
 from datetime import timedelta
-from looseversion import LooseVersion
 
 import torch
 import torch.distributed as torch_dist
-from torch.nn.attention import SDPBackend, sdpa_kernel
-
-from tqdm import tqdm
-from loguru import logger
-
-from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokenizer, WordpieceTokenizer
-from peft import LoraConfig, get_peft_model
 from datasets import Dataset
+from loguru import logger
+from looseversion import LooseVersion
+from peft import LoraConfig, get_peft_model
+from torch.nn.attention import SDPBackend, sdpa_kernel
+from tqdm import tqdm
+from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokenizer, WordpieceTokenizer
 
 # Set up distributed training variables
 WORLD_SIZE = int(os.environ.get("WORLD_SIZE", 1))
@@ -185,8 +183,9 @@ def setup_fsdp2(model: torch.nn.Module) -> torch.nn.Module:
     # Apply FSDP2 with ZeRO-3 style sharding
     # reference: https://github.com/pytorch/torchtitan/blob/6e7a183/docs/fsdp.md
     from functools import partial
+
+    from torch.distributed._composable.fsdp import MixedPrecisionPolicy, fully_shard
     from torch.distributed.device_mesh import init_device_mesh
-    from torch.distributed._composable.fsdp import fully_shard, MixedPrecisionPolicy
 
     device = torch.device("cuda", LOCAL_RANK)
     torch.cuda.set_device(device)

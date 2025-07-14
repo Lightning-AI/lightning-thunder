@@ -1,12 +1,12 @@
-from collections.abc import Callable, MutableSequence, MutableMapping, MutableSet
+from collections.abc import Callable, MutableMapping, MutableSequence, MutableSet
 from functools import partial
 
 from thunder.core.prims import PrimIDs
 from thunder.core.proxies import FutureTensorProxy, Proxy, TensorProxy
+from thunder.core.pytree import tree_iter
 from thunder.core.symbol import BoundSymbol, Symbol
 from thunder.core.trace import TraceCtx
-from thunder.core.utils import check_type, ProxyDict
-from thunder.core.pytree import tree_iter
+from thunder.core.utils import ProxyDict, check_type
 from thunder.executors import pythonex
 
 # Arguments are considered independently, so we ignore all unpacking operations on them

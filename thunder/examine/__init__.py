@@ -1,20 +1,21 @@
-from typing import Any
-from collections.abc import Callable
 import collections
+import importlib
 import traceback
+from collections.abc import Callable
+from itertools import chain
+from typing import Any
+from warnings import warn
+
+import torch
 
 import thunder
-from thunder.core.trace import TraceCtx
-from thunder.core.transforms import bsym_list_to_dag, Node
-from thunder.core.proxies import TensorProxy, CollectionProxy
+from thunder.core.langctxs import LanguageContext, Languages, resolve_language
+from thunder.core.proxies import CollectionProxy, TensorProxy
 from thunder.core.symbol import BoundSymbol
+from thunder.core.trace import TraceCtx
+from thunder.core.transforms import Node, bsym_list_to_dag
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.torch.default_torch_ops import torch_auto_registered_ops
-from thunder.core.langctxs import resolve_language, LanguageContext, Languages
-import torch
-from warnings import warn
-from itertools import chain
-import importlib
 
 
 # TODO Maybe make collect_into a set?

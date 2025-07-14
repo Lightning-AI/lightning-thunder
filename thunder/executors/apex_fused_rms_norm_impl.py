@@ -1,11 +1,9 @@
-from collections.abc import Sequence
 import math
-
+from collections.abc import Sequence
 
 from thunder.core.proxies import TensorProxy
-from thunder.torch import TensorLike
 from thunder.executors.apexex import apex_ex
-
+from thunder.torch import TensorLike
 
 APEX_FUSED_NORMS_AVAILABLE = True
 try:

@@ -5,9 +5,9 @@ import torch
 from torch.testing import assert_close
 
 import thunder
-from thunder.tests.framework import requiresCUDA, run_snippet, IN_CI, assert_closer
-from thunder.tests.opinfos import get_opinfo
 from thunder.core.transforms import grad
+from thunder.tests.framework import IN_CI, assert_closer, requiresCUDA, run_snippet
+from thunder.tests.opinfos import get_opinfo
 
 xentropy_cuda = pytest.importorskip("xentropy_cuda")
 from thunder.executors.apexex import apex_ex
@@ -91,9 +91,9 @@ def test_apex_torch_consistency(device: str, dtype: torch.dtype):
 @pytest.mark.parametrize("device,", ["cuda"])
 @requiresCUDA
 def test_apex_cross_entropy_backward(device, dtype):
-    from thunder.core.transforms import value_and_grad
     from thunder.common import CompileData
     from thunder.core.compile_data import compile_data_and_stats
+    from thunder.core.transforms import value_and_grad
 
     logits = torch.randn([2048, 50257], device=device, dtype=thunder.torch.to_torch_dtype(dtype), requires_grad=True)
     labels = torch.randint(0, 50257, [2048], device=device)

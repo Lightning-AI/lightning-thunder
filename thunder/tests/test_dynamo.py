@@ -1,53 +1,52 @@
-import pytest
-import warnings
 import itertools
 import os
+import re
 import subprocess
 import sys
+import warnings
+import weakref
+from unittest.mock import patch
+
+import pytest
 import torch
 import torch.fx
 import torch.nn as nn
 import torch.nn.functional as F
-from looseversion import LooseVersion
-from unittest.mock import patch
-import weakref
-import re
+from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
-from hypothesis import given, settings
-from hypothesis import HealthCheck
+from looseversion import LooseVersion
 
-from thunder import dtypes
-from thunder.dynamo import thunderfx
-from thunder.dynamo.utils import CompilerType
-from thunder.dynamo.compiler_graph_benchmark import ThunderCompilerGraphBenchmarking
-from thunder import last_traces
+from thunder import dtypes, last_traces
 from thunder.core.symbol import Symbol
-from thunder.tests.bf16 import device_supports_bf16
-from thunder.tests.framework import (
-    instantiate,
-    NOTHING,
-    DynamoThunderExecutor,
-    IS_WINDOWS,
-    requiresCUDA,
-)
-from thunder.tests.make_tensor import make_tensor
-from thunder.dynamo.report import (
-    thunderfx_pytest_benchmark_report,
-    fx_report,
-    analyze_thunder_splits,
-    save_failing_repros,
-    get_thunder_fxgraph_reports,
-)
+from thunder.dynamo import thunderfx
 from thunder.dynamo.benchmark_utils import (
+    BoundSymbolNvfuserSpecification,
+    BoundSymbolTorchCompileSpecification,
+    KernelTime,
     ThunderCompileSpecification,
     TorchCompileSpecification,
     TorchEagerSpecification,
     WallTime,
-    KernelTime,
     WallTimeWithMemoryUsage,
-    BoundSymbolNvfuserSpecification,
-    BoundSymbolTorchCompileSpecification,
 )
+from thunder.dynamo.compiler_graph_benchmark import ThunderCompilerGraphBenchmarking
+from thunder.dynamo.report import (
+    analyze_thunder_splits,
+    fx_report,
+    get_thunder_fxgraph_reports,
+    save_failing_repros,
+    thunderfx_pytest_benchmark_report,
+)
+from thunder.dynamo.utils import CompilerType
+from thunder.tests.bf16 import device_supports_bf16
+from thunder.tests.framework import (
+    IS_WINDOWS,
+    NOTHING,
+    DynamoThunderExecutor,
+    instantiate,
+    requiresCUDA,
+)
+from thunder.tests.make_tensor import make_tensor
 
 
 # This will be applied to all tests in this file.
@@ -658,7 +657,7 @@ def test_ThunderCompilerGraphBenchmarking_LitGTMLPBenchmark(benchmark):
     backend = ThunderCompilerGraphBenchmarking(
         benchmark, executors={"thunder": thunder.jit, "inductor": torch.compile, "eager": None}
     )
-    from thunder.benchmarks import LitGPTMLPBenchmark, Benchmark
+    from thunder.benchmarks import Benchmark, LitGPTMLPBenchmark
 
     bench: Benchmark = LitGPTMLPBenchmark(
         config="Llama-2-7b-hf",
@@ -701,8 +700,9 @@ def test_ThunderCompilerGraphBenchmarking_post_graph(benchmark):
     def f(x):
         return torch.sin(x)
 
-    import thunder
     from functools import partial
+
+    import thunder
 
     x = torch.randn((2, 2), device="cuda").requires_grad_()
     post_gp = partial(torch.cuda.make_graphed_callables, num_warmup_iters=1, allow_unused_input=True)
@@ -903,8 +903,9 @@ def test_dynamo_reproducer_2graph(executor, device: str, dtype: dtypes.dtype, us
 @requiresCUDA
 @pytest.mark.parametrize("use_pytest_benchmark", (True, False), ids=("benchmark", "repro"))
 def test_dynamo_reproducer_submodules(use_pytest_benchmark, tmp_path):
-    from thunder.tests.distributed.helper import ToyModel
     import torch.nn as nn
+
+    from thunder.tests.distributed.helper import ToyModel
 
     class SimpleModel(torch.nn.Module):
         def __init__(self) -> None:
@@ -1056,13 +1057,14 @@ def test_thunderfx_last_traces():
 
 
 def test_get_example_input_tensor_metadata():
-    from thunder.dynamo.utils import (
-        _get_example_input_tensor_metadata,
-        arg_like_tensor,
-        arg_like,
-        _create_random_tensor_from_tensor_metadata,
-    )
     from torch._subclasses.fake_tensor import FakeTensorMode
+
+    from thunder.dynamo.utils import (
+        _create_random_tensor_from_tensor_metadata,
+        _get_example_input_tensor_metadata,
+        arg_like,
+        arg_like_tensor,
+    )
 
     int_tensor = torch.arange(1, 11, dtype=torch.int)
     meta_int_tensor = _get_example_input_tensor_metadata(int_tensor)
@@ -1273,7 +1275,7 @@ def test_thunder_specific_reports(tmp_path, file_indices):
 
 @requiresCUDA
 def test_WallTime_KernelTime():
-    from nvfuser import FusionDefinition, DataType
+    from nvfuser import DataType, FusionDefinition
 
     def nvfuser_fusion_id2(fd: FusionDefinition) -> None:
         T0 = fd.define_tensor(
@@ -1308,8 +1310,8 @@ def test_WallTime_KernelTime():
 
 @requiresCUDA
 def test_ThunderCompileSpecification():
-    from thunder.executors.torch_compile import torch_compile_cat_ex
     from thunder import nvfuser_executor
+    from thunder.executors.torch_compile import torch_compile_cat_ex
 
     def foo(x):
         return x + x
@@ -1547,7 +1549,7 @@ def test_autograd_function_fx_report(tmp_path):
 
 @requiresCUDA
 def test_aot_optimize():
-    from thunder.dynamo import thunder_profile, thunder_optimize
+    from thunder.dynamo import thunder_optimize, thunder_profile
 
     def foo(x):
         # torch.sinc has automatic fallback registered,

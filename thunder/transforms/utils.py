@@ -1,8 +1,7 @@
 import thunder
-from thunder.core import utils
-from thunder.core import prims
-from thunder.core.trace import TraceCtx
+from thunder.core import prims, utils
 from thunder.core.pytree import tree_map
+from thunder.core.trace import TraceCtx
 
 
 def get_checks(prologue_trace):

@@ -1,32 +1,29 @@
+import contextlib
 import inspect
 import os
-import sys
 import platform
-from functools import wraps, singledispatchmethod, partial
+import sys
+from collections.abc import Callable, Iterable, Sequence
+from functools import partial, singledispatchmethod, wraps
 from itertools import product
-from collections.abc import Callable, Sequence, Iterable
-import packaging.version
-import contextlib
 
+import packaging.version
 import pytest
 import torch
+from lightning_utilities.core.imports import package_available
 from torch._dynamo import is_inductor_supported
 from torch.testing import assert_close
 
-from lightning_utilities.core.imports import package_available
-
-from thunder.core.pytree import tree_flatten, tree_map
-import thunder.core.dtypes as datatypes
+import thunder
 import thunder.core.devices as devices
-import thunder.executors as executors
-import thunder.extend as extend
-import thunder.executors.triton_utils as triton_utils
+import thunder.core.dtypes as datatypes
 import thunder.core.utils as utils
-
+import thunder.executors as executors
+import thunder.executors.triton_utils as triton_utils
+import thunder.extend as extend
+from thunder.core.pytree import tree_flatten, tree_map
 from thunder.core.trace import TraceCtx, detached_trace
 from thunder.dynamo import thunderfx
-
-import thunder
 
 __all__ = [
     "TestExecutor",

@@ -1,50 +1,29 @@
-from functools import wraps
-from typing import Any
-from collections import defaultdict, namedtuple
-from collections.abc import Callable
-from collections.abc import Sequence
-from contextvars import ContextVar
-import os
 import dis
+import os
 import time
 import warnings
+from collections import defaultdict, namedtuple
+from collections.abc import Callable, Sequence
+from contextvars import ContextVar
+from functools import wraps
+from typing import Any
 
+# NOTE This import is intentionally pytorch so that it thunder.torch doesn't import this
+import torch as pytorch
 from looseversion import LooseVersion
 
-from thunder.core.module import ThunderModule
-from thunder.core.interpreter import InterpreterLogItem
-from thunder.core.options import (
-    CACHE_OPTIONS,
-    SHARP_EDGES_OPTIONS,
-    DebugOptions,
-)
-from thunder.core.trace import (
-    TraceResults,
-    TraceCtx,
-    from_trace,
-    set_tracectx,
-    reset_tracectx,
-    is_tracing,
-)
-
-import thunder.core.prims as prims
-import thunder.core.dtypes as dtypes
+import thunder.clang as clang
 import thunder.core.devices as devices
-from thunder.core.transform_common import (
-    dce,
-    Transform,
-    wrap_return_value_together_with_arguments,
-    unwrap_return_value,
-    remove_context_manager_prims_from_trace,
-)
-from thunder.core.functionalization import (
-    check_inplace_to_views,
-    functionalize_inplace_ops,
-)
-from thunder.core.update_aliases import (
-    insert_alias_updates,
-)
-from thunder.core.recipe import Recipe, Plugin
+import thunder.core.dtypes as dtypes
+import thunder.core.langctxs as langctxs
+import thunder.core.prims as prims
+import thunder.executors.nvfuserex
+
+# Imports executors (to populate default executors and make them accessible)
+import thunder.executors.pythonex
+import thunder.executors.torchex
+import thunder.extend as extend
+import thunder.transforms as transforms
 from thunder.common import (
     CompileData,
     CompileStats,
@@ -52,42 +31,58 @@ from thunder.common import (
     transform_for_execution,
     transform_to_torch_types,
 )
-import thunder.extend as extend
-from thunder.extend import Executor, add_default_executor
-from thunder.core.compile_data import compile_data_and_stats, get_compile_data
-from thunder.core.langctxs import LanguageContext
-import thunder.core.langctxs as langctxs
-from thunder.core.symbol import has_tags
-from thunder.core.baseutils import run_once, check
+from thunder.core.baseutils import check, run_once
 from thunder.core.codeutils import Positions
-from thunder.core.proxies import (
-    Proxy,
-    TensorProxy,
-    NumberProxy,
-    StringProxy,
-    IntegerProxy,
-    FloatProxy,
-    ComplexProxy,
-    TupleProxy,
-    ListProxy,
-    DictProxy,
-    AnyProxy,
+from thunder.core.compile_data import compile_data_and_stats, get_compile_data
+from thunder.core.functionalization import (
+    check_inplace_to_views,
+    functionalize_inplace_ops,
 )
-from thunder.core.interpreter import print_interpreter_log, print_to_log
+from thunder.core.interpreter import InterpreterLogItem, print_interpreter_log, print_to_log
 from thunder.core.jit_ext import thunder_general_jit
-from thunder.executors.torch_autograd import split_forward_backward, connect_to_autograd
-
-# NOTE This import is intentionally pytorch so that it thunder.torch doesn't import this
-import torch as pytorch
-
-import thunder.clang as clang
-from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
-import thunder.transforms as transforms
-
-# Imports executors (to populate default executors and make them accessible)
-import thunder.executors.pythonex
-import thunder.executors.torchex
-import thunder.executors.nvfuserex
+from thunder.core.langctxs import LanguageContext
+from thunder.core.module import ThunderModule
+from thunder.core.options import (
+    CACHE_OPTIONS,
+    SHARP_EDGES_OPTIONS,
+    DebugOptions,
+)
+from thunder.core.proxies import (
+    AnyProxy,
+    ComplexProxy,
+    DictProxy,
+    FloatProxy,
+    IntegerProxy,
+    ListProxy,
+    NumberProxy,
+    Proxy,
+    StringProxy,
+    TensorProxy,
+    TupleProxy,
+)
+from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
+from thunder.core.recipe import Plugin, Recipe
+from thunder.core.symbol import has_tags
+from thunder.core.trace import (
+    TraceCtx,
+    TraceResults,
+    from_trace,
+    is_tracing,
+    reset_tracectx,
+    set_tracectx,
+)
+from thunder.core.transform_common import (
+    Transform,
+    dce,
+    remove_context_manager_prims_from_trace,
+    unwrap_return_value,
+    wrap_return_value_together_with_arguments,
+)
+from thunder.core.update_aliases import (
+    insert_alias_updates,
+)
+from thunder.executors.torch_autograd import connect_to_autograd, split_forward_backward
+from thunder.extend import Executor, add_default_executor
 
 pythonex = extend.get_executor("python")
 assert pythonex is not None
@@ -157,7 +152,6 @@ __all__ = [
 
 
 from thunder.__about__ import *  # import all
-
 
 # TODO maybe move these aliases to the core language?
 #
@@ -273,8 +267,8 @@ CacheEntry = namedtuple(
 def compile(
     fn: Callable, recipe: Recipe | str = "auto", plugins: Plugin | list[Plugin] | str | list[str] | None = None
 ):
-    import thunder.recipes
     import thunder.plugins
+    import thunder.recipes
 
     if plugins is None:
         plugins = []
@@ -574,9 +568,9 @@ def jit(
                     # by split_forward_backward
 
             if backward_trc is None:
-                from thunder.executors.passes import transform_for_execution as transform_for_execution_pass
-                from thunder.executors.passes import _transform_for_operator_executor_execution
                 from thunder.distributed.utils import maybe_sort_waits
+                from thunder.executors.passes import _transform_for_operator_executor_execution
+                from thunder.executors.passes import transform_for_execution as transform_for_execution_pass
 
                 tmp_comp_trc = _transform_for_operator_executor_execution(computation_trc, cd.executors_list)
                 is_transformed, tmp_comp_trc = maybe_sort_waits(tmp_comp_trc)

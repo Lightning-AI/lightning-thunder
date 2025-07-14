@@ -1,5 +1,6 @@
-import thunder.examine
 import torch
+
+import thunder.examine
 
 
 def test_examine_fn():

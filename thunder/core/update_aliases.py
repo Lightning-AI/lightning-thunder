@@ -1,9 +1,10 @@
-from functools import reduce, partial
+from functools import partial, reduce
 
-from thunder.core.functionalization import replace_args_with_alias_map
 import thunder.core.prims as prims
-from thunder.core.proxies import TensorProxy, variableify, unvariableify
-from thunder.core.trace import from_trace, tracectx, TraceCtx as Trace, TraceProvenance
+from thunder.core.functionalization import replace_args_with_alias_map
+from thunder.core.proxies import TensorProxy, unvariableify, variableify
+from thunder.core.trace import TraceCtx as Trace
+from thunder.core.trace import TraceProvenance, from_trace, tracectx
 
 
 def _update_swap_map(swap_map, old_alias, new_alias):

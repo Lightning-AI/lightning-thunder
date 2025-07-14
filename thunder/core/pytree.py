@@ -1,12 +1,13 @@
+import dataclasses
 from functools import partial
 from types import FunctionType
-import dataclasses
 
 import optree
 import torch
 from torch.fx.immutable_collections import immutable_list
-import thunder.core.dtypes as dtypes
+
 import thunder.core.devices as devices
+import thunder.core.dtypes as dtypes
 from thunder.core.baseutils import ProxyInterface, is_likely_from_collections_namedtuple
 
 OPTREE_NAMESPACE = "thunder"

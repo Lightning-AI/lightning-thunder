@@ -1,14 +1,16 @@
 from __future__ import annotations
+
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
-from thunder.core.compile_data import get_compile_data
 import thunder.core.prims as prims
-from thunder.core.proxies import variableify, TensorProxy, unvariableify, ProxyInterface
+from thunder.core.compile_data import get_compile_data
+from thunder.core.proxies import ProxyInterface, TensorProxy, unvariableify, variableify
 from thunder.core.pytree import tree_flatten, tree_unflatten
 from thunder.core.symbol import BoundSymbol
-from thunder.core.trace import from_trace, TraceProvenance, TraceCtx as Trace, tracectx
-from thunder.core.utils import ProxyDict, producers, check, consumers
+from thunder.core.trace import TraceCtx as Trace
+from thunder.core.trace import TraceProvenance, from_trace, tracectx
+from thunder.core.utils import ProxyDict, check, consumers, producers
 
 if TYPE_CHECKING:
     from thunder.core.trace import VariableInterface
@@ -135,8 +137,7 @@ def _get_prod_bsym_with_arg(
     orig_bsym_of_in_tensor: BoundSymbol,
     in_tensor: TensorProxy,
 ) -> BoundSymbol | None:
-    from thunder.torch import _syms_returning_views
-    from thunder.torch import _syms_that_may_return_views
+    from thunder.torch import _syms_returning_views, _syms_that_may_return_views
 
     def inplace_or_view(bsym) -> bool:
         import thunder.torch as ltorch
@@ -317,7 +318,7 @@ def canonicalize_bsym_args(
 
 
 def create_functional_bsym_from(inplace_bsym: BoundSymbol) -> BoundSymbol:
-    from thunder.torch import _inplace_to_out_of_place, polygamma_, setitem_, setitem
+    from thunder.torch import _inplace_to_out_of_place, polygamma_, setitem, setitem_
 
     functional_sym, optional_inplace_arg_index = _inplace_to_out_of_place[inplace_bsym.sym]
     args, kwargs = inplace_bsym.args, inplace_bsym.kwargs

@@ -1,19 +1,19 @@
 from functools import partial
-from unittest.mock import patch
 from itertools import islice
+from unittest.mock import patch
 
 import pytest
+import torch
+from torch.testing._internal.common_device_type import skipCPUIfNoLapack, skipCUDAIfNoMagma
+from torch.testing._internal.common_methods_invocations import op_db
+
 import thunder
 import thunder.torch.default_torch_ops as ops
-from thunder.torch import _get_torch_function_name
-import torch
-
-from thunder.tests.framework import requiresCUDA, TorchExecutor, instantiate, NOTHING
+from thunder.tests.framework import NOTHING, TorchExecutor, instantiate, requiresCUDA
 from thunder.tests.make_tensor import make_tensor
 from thunder.tests.opinfos import get_opinfo
 from thunder.tests.test_einops import skipIfNoCUDA
-from torch.testing._internal.common_device_type import skipCPUIfNoLapack, skipCUDAIfNoMagma
-from torch.testing._internal.common_methods_invocations import op_db
+from thunder.torch import _get_torch_function_name
 
 _name2func = {}
 for m, fns in ops.torch_auto_registered_ops.items():

@@ -1,18 +1,16 @@
+from collections.abc import Callable, Sequence
 from contextlib import contextmanager
 from functools import partial, wraps
-from collections.abc import Callable
-from collections.abc import Sequence
 
-from thunder.core import dtypes, prims, devices
-from thunder.core.pytree import tree_map, tree_flatten
-from thunder.core.proxies import TensorProxy
-from thunder.core.symbol import BoundSymbolInterface, Symbol
-from thunder.core.transforms import construct_trace, eval_trace
+import thunder.torch as ltorch
 from thunder.clang import (
     maybe_convert_to_dtype,
 )
-import thunder.torch as ltorch
-
+from thunder.core import devices, dtypes, prims
+from thunder.core.proxies import TensorProxy
+from thunder.core.pytree import tree_flatten, tree_map
+from thunder.core.symbol import BoundSymbolInterface, Symbol
+from thunder.core.transforms import construct_trace, eval_trace
 
 autocast_impls: dict[prims.PrimIDs, Callable] = {}
 

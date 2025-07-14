@@ -1,20 +1,19 @@
-from typing import Any
-from collections.abc import Sequence, Collection, MutableSet, MutableMapping, MutableSequence
-from numbers import Number
+import builtins
 import math
 import operator
-import builtins
 import platform
+from collections.abc import Collection, MutableMapping, MutableSequence, MutableSet, Sequence
+from numbers import Number
+from typing import Any
 
 import torch
 
-import thunder.core.prims as prims
-from thunder.core.proxies import NumberProxy, NumberLike, TensorProxy, CollectionProxy
-from thunder.core import baseutils
 import thunder.core.dtypes as dtypes
+import thunder.core.prims as prims
 import thunder.core.utils as utils
-
-from thunder.extend import OperatorExecutor, register_executor, add_always_executor
+from thunder.core import baseutils
+from thunder.core.proxies import CollectionProxy, NumberLike, NumberProxy, TensorProxy
+from thunder.extend import OperatorExecutor, add_always_executor, register_executor
 
 # NOTE The criterion for being an "always" executor is that this does not introduce symbols that
 #   it does not execute in its execution transforms

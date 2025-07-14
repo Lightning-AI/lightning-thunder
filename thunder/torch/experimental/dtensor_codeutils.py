@@ -1,10 +1,12 @@
 from typing import Any
+
 import torch
+
 from thunder.torch.experimental.dtensor_utils import run_only_if_distributed_is_available
 
 if torch.distributed.is_available():
-    from torch.distributed.tensor._dtensor_spec import DTensorSpec, TensorMeta
     from torch.distributed.tensor import DeviceMesh, Partial, Placement, Replicate, Shard
+    from torch.distributed.tensor._dtensor_spec import DTensorSpec, TensorMeta
 
 
 @run_only_if_distributed_is_available

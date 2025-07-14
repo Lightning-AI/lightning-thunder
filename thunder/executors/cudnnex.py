@@ -2,6 +2,7 @@ from collections.abc import Callable
 
 from lightning_utilities.core.imports import package_available
 from looseversion import LooseVersion
+
 from thunder.extend import OperatorExecutor
 
 __all__ = ["cudnn_version", "required_cudnn_version", "cudnn_available", "cudnn_ex", "torch_to_cudnn_dtype"]

@@ -1,13 +1,14 @@
-import os
-from os import path
-import platform
-import psutil
-from typing import Any
-import warnings
 import importlib.util
-from pytest import hookimpl, TestReport, Item, Parser
 import multiprocessing as mp
+import os
+import platform
 import subprocess
+import warnings
+from os import path
+from typing import Any
+
+import psutil
+from pytest import Item, Parser, TestReport, hookimpl
 
 BENCHMARK_JSON_DIR = "benchmarks_reports"
 FAILED_BENCHMARK_LOGS_DIR = "failed_benchmarks_logs"
@@ -138,7 +139,7 @@ def save_benchmark_results_asv(config):
         warnings.warn("asv_bench_dir' is not set. Results won't be saved in asv format.")
         return
 
-    from asvdb import utils, ASVDb, BenchmarkResult, BenchmarkInfo
+    from asvdb import ASVDb, BenchmarkInfo, BenchmarkResult, utils
 
     benchmarks = config._benchmarksession.benchmarks
 
