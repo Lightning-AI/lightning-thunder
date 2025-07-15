@@ -105,7 +105,11 @@ def test_functionalization(op: OpInfo, device: str, dtype: dtypes.dtype, executo
             tmp = args[0]
             args[0] = args[1]
             args[1] = tmp
-        expected = inplace_op(*args, **sample.kwargs)
+        # in-place math op would change values of its first tensor argument,
+        # thus clone inputs to avoid doing math on the results of the first in-place math op call.
+        ref_sample = sample.to(dtypes.to_torch_dtype(dtype))
+        ref_args = [t.clone().detach() if isinstance(t, torch.Tensor) else t for t in args]
+        expected = inplace_op(*ref_args, **ref_sample.kwargs)
         actual = jitted_inplace_op(*args, **sample.kwargs)
         torch.testing.assert_close(actual, expected, equal_nan=True)
 
