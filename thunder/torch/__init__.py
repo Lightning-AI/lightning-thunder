@@ -2248,6 +2248,25 @@ def threshold_(a: TensorProxy, /, threshold: float, value: float) -> TensorLike:
 _inplace_to_out_of_place[threshold_] = threshold, -1
 
 
+@torchsymbol(torch.square, is_method=True)
+def square(a):
+    if isinstance(dtypes.to_dtype(a), dtypes.bool_):
+        a = clang.maybe_convert_to_dtype(a, dtypes.int64)
+    return a * a
+
+
+@torchsymbol(torch.square_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def square_(a):
+    utils.check(
+        not isinstance(dtypes.to_dtype(a), dtypes.bool_),
+        lambda: f"Result type of {dtypes.int64} cannot be stored into {dtypes.to_dtype(a)}",
+    )
+    return a * a
+
+
+_inplace_to_out_of_place[square_] = square, -1
+
+
 #
 # Elementwise binary operations
 #
