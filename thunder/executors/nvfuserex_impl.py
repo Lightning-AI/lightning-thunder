@@ -2868,17 +2868,17 @@ register_supported(ltorch.embedding, embedding, _embedding_check)
 #     enable_scatter: None | bool = get_compile_option("nv_enable_scatter", "Enable nvFuser scatter-like operations.")
 #     if not enable_scatter:
 #         return False
-# 
+#
 #     # TODO: limited support inside nvfuser. remove this when codegen support is generalized.
 #     if len(indices) != 1 or indices[0].ndim != 1:
 #         return False
-# 
+#
 #     if accumulate == True:
 #         return False
-# 
+#
 #     return True
-# 
-# 
+#
+#
 # def index_put(
 #     a: TensorProxy,
 #     /,
@@ -2902,13 +2902,13 @@ register_supported(ltorch.embedding, embedding, _embedding_check)
 #         flag += [shapes[i]]
 #     # broadcast index tensor nvi to abide to scatter semantics
 #     nvi_b = fd.ops.broadcast_in_dim(nvi, flag, [0])
-# 
+#
 #     nvs = getnv(values, fd, lc_to_nv_map)
-# 
+#
 #     # index_put is translated to scatter in nvfuser
 #     return fd.ops.scatter(nva, nvi_b, nvs, 0)
-# 
-# 
+#
+#
 # register_supported(PrimIDs.INDEX_PUT, index_put, _index_put_check)
 
 
