@@ -1241,11 +1241,11 @@ def test_slice_dynamic_extent(executor, device: str, dtype: dtypes.dtype):
     assert {el.sym.name for el in fw_trace.bound_symbols if not el.sym.is_fusion} == set(outside_fusion_syms)
 
 
-#@instantiate(
+# @instantiate(
 #    executors=(nvFuserExecutor,),
 #    dtypes=NOTHING,
-#)
-#def test_moe_infer_scatter(executor, device: str, dtype: dtypes.dtype):
+# )
+# def test_moe_infer_scatter(executor, device: str, dtype: dtypes.dtype):
 #    def foo(inputs: list):
 #        bmm_out: torch.Tensor  # [seq*top_k, hidden]
 #        idxs: torch.Tensor  # [seq*top_k]
