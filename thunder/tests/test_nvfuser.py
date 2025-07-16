@@ -1273,3 +1273,5 @@ def test_moe_infer_scatter(executor, device: str, dtype: dtypes.dtype):
     actual = jfoo(inputs)
     expected = foo(inputs)
     torch.testing.assert_close(actual, expected)
+    # this would clear up all allocated gpu memory
+    del actual, expected, hidden_states, topk_weight, idxs, logits, inputs
