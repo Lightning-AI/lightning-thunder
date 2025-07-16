@@ -35,7 +35,9 @@ def main(gh_run_id: str = "", te_version: str = "stable"):
         # as pip doesn't install them with `--no-build-isolation`
         # See https://github.com/pypa/pip/issues/9314
         s.run("pip install cmake pybind11[global] ninja")
-        s.run("NVTE_FRAMEWORK=pytorch pip install --no-build-isolation 'git+https://github.com/NVIDIA/TransformerEngine.git@main'")
+        s.run(
+            "NVTE_FRAMEWORK=pytorch pip install --no-build-isolation 'git+https://github.com/NVIDIA/TransformerEngine.git@main'"
+        )
 
     # Define test commands
     test_commands = [
