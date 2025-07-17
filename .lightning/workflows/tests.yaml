@@ -46,7 +46,7 @@ run: |
   python setup.py develop
 
   bash .azure/sanity-check.sh
-  
+
   if [ "${testing}" == "main" ]; then
     coverage run --source thunder -m \
       pytest thunder/tests/ \
