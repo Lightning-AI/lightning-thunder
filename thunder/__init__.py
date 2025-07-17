@@ -858,6 +858,7 @@ def jit(
                 saved_other=saved_other,
                 return_none_instead_of_grads=cache_entry.return_none_instead_of_grads,
                 disable_split_autograd=disable_split_autograd,
+                non_differentiable_output=data_for_autograd.get("non_differentiable_output", None),
             )
             result = data_for_autograd["output"]
 
