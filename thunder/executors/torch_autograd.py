@@ -1,5 +1,5 @@
 from dataclasses import replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Sequence
 
 import torch
 
@@ -207,7 +207,7 @@ def connect_to_autograd(
     saved_other,
     return_none_instead_of_grads,
     disable_split_autograd,
-    non_differentiable_output,
+    non_differentiable_output: Sequence[bool] | None,
 ):
     # PyTorch seems to not like our side channel trick when capturing graphs
     # through dynamo and using cuda graphs.

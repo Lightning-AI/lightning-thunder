@@ -3219,6 +3219,7 @@ def test_apply_autograd_memory(thunderfx_disable_split_autograd):
             saved_other=(),
             return_none_instead_of_grads=True,
             disable_split_autograd=thunderfx_disable_split_autograd,
+            non_differentiable_output=None,
         )
         return [weakref.ref(x), weakref.ref(o)]
 
