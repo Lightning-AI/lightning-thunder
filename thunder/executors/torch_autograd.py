@@ -1,5 +1,6 @@
 from dataclasses import replace
-from typing import TYPE_CHECKING, Sequence
+from typing import TYPE_CHECKING
+from collections.abc import Sequence
 
 import torch
 
