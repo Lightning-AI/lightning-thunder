@@ -23,6 +23,7 @@ from thunder.dynamo.utils import (
 from thunder.dynamo.splitter import _splitter
 from thunder.dynamo.benchmark_utils import ThunderCompileSpecification
 from thunder.transforms.extraction_only_prologue_transform import ExtractionOnlyPrologueTransform
+from thunder.transforms.intermediate_mark_non_differentiable_transform import IntermediateMarkNonDifferentiableTransform
 
 if TYPE_CHECKING:
     from thunder.dynamo.utils import SubgraphInfo
@@ -52,6 +53,20 @@ def _add_prologue_pruning(options: dict):
     if transforms is None:
         transforms = []
     transforms.append(ExtractionOnlyPrologueTransform())
+    options["transforms"] = transforms
+
+
+def _add_intermediate_mark_non_differentiable_transform(options: dict):
+    """
+    Add a transform to mark intermediate tensors as non-differentiable to the list of transforms in the given options dictionary.
+
+    Args:
+        options: The dictionary of options to modify
+    """
+    transforms: list[Transform] | None = options.get("transforms", None)
+    if transforms is None:
+        transforms = []
+    transforms.append(IntermediateMarkNonDifferentiableTransform())
     options["transforms"] = transforms
 
 
@@ -98,6 +113,7 @@ class ThunderCompiler:
         # NOTE: Dynamo already adds guards for modules by default (see flag `torch._dynamo.config.guard_nn_modules`), so thunder can avoid adding extra metadata checks for parameters
         #       in prologue.
         _add_prologue_pruning(thunder_options)
+        _add_intermediate_mark_non_differentiable_transform(thunder_options)
         thunder_options["thunderfx_disable_split_autograd"] = thunder_options.get(
             "thunderfx_disable_split_autograd", _DEFAULT_THUNDERFX_DISABLE_SPLIT_AUTOGRAD
         )

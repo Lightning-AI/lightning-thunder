@@ -27,7 +27,7 @@ def is_input_node(node, graph_nodes, input_nodes):
     return False
 
 
-class IntermediateMarkNonDifferentiable(Transform):
+class IntermediateMarkNonDifferentiableTransform(Transform):
     def transform_trace_post_optimization(self, computation_trace: Trace, **kwargs):
         if TraceTag.AUGMENTED_FORWARD in computation_trace.tags:
             def create_graph():
