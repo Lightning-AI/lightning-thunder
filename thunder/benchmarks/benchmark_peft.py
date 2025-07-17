@@ -176,7 +176,6 @@ def setup_lora(model: torch.nn.Module) -> torch.nn.Module:
     return model
 
 
-# TODO broken
 def setup_fsdp2(model: torch.nn.Module) -> torch.nn.Module:
     """Apply FSDP2 to the model with ZeRO-3 style sharding."""
 
@@ -205,16 +204,6 @@ def setup_fsdp2(model: torch.nn.Module) -> torch.nn.Module:
             reduce_dtype=torch.bfloat16,
         ),
     )
-
-    # for transformer_block in model.transformer.modules():
-    # from transformers import Block
-    # for transformer_block in model.modules():
-    #     if isinstance(transformer_block, Block):
-    #         _apply_fully_shard(transformer_block)
-
-    # _apply_fully_shard(model.lm_head)
-    # _apply_fully_shard(model.transformer["wte"])
-    # _apply_fully_shard(model.transformer["ln_f"])
 
     # First wrap individual layers
     for name, module in model.named_modules():
