@@ -2261,7 +2261,7 @@ def square_(a):
         not isinstance(dtypes.to_dtype(a), dtypes.bool_),
         lambda: f"Result type of {dtypes.int64} cannot be stored into {dtypes.to_dtype(a)}",
     )
-    return a * a
+    return _copy_(a, square(a))
 
 
 _inplace_to_out_of_place[square_] = square, -1
