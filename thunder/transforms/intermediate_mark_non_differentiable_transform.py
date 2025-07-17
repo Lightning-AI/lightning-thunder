@@ -3,6 +3,7 @@ from thunder.core.trace import TraceCtx as Trace, TraceTag
 from thunder.core.proxies import TensorProxy
 from thunder.core.prims import PrimIDs
 
+
 class Node:
     def __init__(self, name):
         self.name = name
@@ -11,7 +12,7 @@ class Node:
 
     def add_parent(self, parent):
         self.parents.append(parent)
-    
+
     def __repr__(self):
         return f"Node(name={self.name}, parents={self.parents}, children={self.children})"
 
@@ -37,6 +38,7 @@ class IntermediateMarkNonDifferentiableTransform(Transform):
         # Any output which has interacted with the input Tensors is marked as differentiable.
         # TODO: Also consider the requires_grad flag of the input Tensors.
         if TraceTag.AUGMENTED_FORWARD in computation_trace.tags:
+
             def create_graph():
                 graph_nodes = {}
                 input_nodes = []
@@ -66,6 +68,7 @@ class IntermediateMarkNonDifferentiableTransform(Transform):
                         process_bsym(bsym)
 
                 return graph_nodes, input_nodes
+
             graph_nodes, input_nodes = create_graph()
 
             non_differentiable_output = []
@@ -77,7 +80,7 @@ class IntermediateMarkNonDifferentiableTransform(Transform):
                     non_differentiable_output.append(True)
                 else:
                     non_differentiable_output.append(False)
-            
+
             data_for_autograd["non_differentiable_output"] = tuple(non_differentiable_output)
 
         return computation_trace

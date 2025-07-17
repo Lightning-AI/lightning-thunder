@@ -125,7 +125,6 @@ class ThunderFunction(torch.autograd.Function):
             ctx.side_channel["tensors_to_save"] = saved_tensors
             return torch.randn(1, device="meta", requires_grad=True)
         else:
-
             if non_differentiable_output is None:
                 # Default to original behavior of marking all outputs as differentiable.
                 non_differentiable_output = tuple(False for _ in flat_output)
