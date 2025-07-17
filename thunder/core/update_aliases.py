@@ -2,7 +2,8 @@ from functools import reduce, partial
 
 from thunder.core.functionalization import replace_args_with_alias_map
 import thunder.core.prims as prims
-from thunder.core.proxies import TensorProxy, variableify, unvariableify
+from thunder.core.proxies import ProxyTag, TensorProxy, variableify, unvariableify
+from thunder.core.symbol import BoundSymbolTag, has_tags
 from thunder.core.trace import from_trace, tracectx, TraceCtx as Trace, TraceProvenance
 
 
@@ -104,9 +105,11 @@ def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[li
             new_aliases = _get_new_aliases(views_encountered, computation_trace)
 
             update_bsym, swap_map = _get_update_bsym(views_encountered, swap_map, new_aliases)
+            new_bsym = bsym.from_bsym_swap_proxies(swap_map)
+            if has_tags(bsym, {BoundSymbolTag.BACKWARD}):
+                update_bsym.tags.add(BoundSymbolTag.BACKWARD)
             bsyms.append(update_bsym)
             encountered.update(out_tensors)
-            new_bsym = bsym.from_bsym_swap_proxies(swap_map)
             bsyms.append(new_bsym)
             if _is_inplace_op(bsym) and len(out_tensors) == 1 and len(in_tensors) == 1:
                 #  This relies on these being one element sets (ltorch.setitem_ yields no outs).

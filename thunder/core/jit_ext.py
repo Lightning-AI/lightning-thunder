@@ -991,8 +991,9 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
 
     from thunder.core.update_aliases import insert_alias_updates
 
-    alias_tensor_indices = [[i] for i in range(len(bwd_trace.args))]
-    aliased_bwd_trace = insert_alias_updates(bwd_trace, alias_tensor_indices)
+    # alias_tensor_indices = [] #[[i] for i in range(len(bwd_trace.args))]
+    # aliased_bwd_trace = insert_alias_updates(bwd_trace, alias_tensor_indices)
+    aliased_bwd_trace = bwd_trace
 
     @wraps(forward)
     def grad_transform(*args, **kwargs):
