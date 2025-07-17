@@ -4,17 +4,22 @@ trigger:
   pull_request:
     branches: ["main"]
 
-image: "pytorchlightning/lightning-thunder:ubuntu24.04-cuda12.6.3-cudnn-fe1.10.0-py3.10-pt_2.7.1-dev"
-machine: "L4_X_4"
 timeout: "40" # minutes
 parametrize:
   matrix:
     image:
       - "pytorchlightning/lightning-thunder:ubuntu24.04-cuda12.6.3-cudnn-fe1.10.0-py3.10-pt_2.7.1-dev"
       - "pytorchlightning/lightning-thunder:ubuntu24.04-cuda12.6.3-cudnn-fe1.10.0-py3.10-pt_main-dev"
-    testing: ["main", "ops", "grads", "distributed"]
-  include: []
+    testing: ["main", "ops", "grads"]
+    machine: ["L4"]
   exclude: []
+  include:
+    - image: "pytorchlightning/lightning-thunder:ubuntu24.04-cuda12.6.3-cudnn-fe1.10.0-py3.10-pt_2.7.1-dev"
+      testing: "distributed"
+      machine: "L4_X_4"
+    - image: "pytorchlightning/lightning-thunder:ubuntu24.04-cuda12.6.3-cudnn-fe1.10.0-py3.10-pt_main-dev"
+      testing: "distributed"
+      machine: "L4_X_4"
 
 env:
   CI: "true" # skip some tests with CI
