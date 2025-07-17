@@ -225,8 +225,6 @@ def setup_fsdp2(model: torch.nn.Module) -> torch.nn.Module:
     # Then wrap the entire model
     _apply_fully_shard(model)
 
-    model.to_empty(device=device)
-    model.apply(model._init_weights)
     logger.debug("FSDP2 applied to model")
 
     return model
@@ -424,10 +422,6 @@ def main(args: argparse.Namespace):
     config.max_position_embeddings = args.seq_length
     logger.info(f"Configured model for static shapes with sequence length: {args.seq_length}")
 
-    # Materialize the model on CUDA
-    model = model.to_empty(device=f"cuda:{LOCAL_RANK}")
-    model.apply(lambda m: m.reset_parameters() if hasattr(m, "reset_parameters") else None)
-
     # Handle gradient checkpointing based on user preference
     if hasattr(model, "gradient_checkpointing_enable"):
         if args.gradient_checkpointing:
@@ -469,6 +463,10 @@ def main(args: argparse.Namespace):
                     param.requires_grad = True
                 else:
                     logger.debug(f"LoRA parameter {name} still requires grad")
+
+    # Materialize the model on CUDA
+    model = model.to_empty(device=f"cuda:{LOCAL_RANK}")
+    model.apply(lambda m: m.reset_parameters() if hasattr(m, "reset_parameters") else None)
 
     # Apply compilation if needed
     if args.compile != "eager":
