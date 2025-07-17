@@ -84,6 +84,7 @@ class ThunderFunction(torch.autograd.Function):
         side_channel,
         saved_tensors,
         saved_other,
+        non_differentiable_output,
         flat_output,
         *flat_args,
     ):
@@ -114,6 +115,7 @@ class ThunderFunction(torch.autograd.Function):
 
         ctx.side_channel = side_channel
         if side_channel is not None:
+            assert non_differentiable_output is None
             assert not side_channel
             ctx.side_channel["fw"] = flat_output
             # We must save tensors using ctx.save_for_backward but
@@ -123,7 +125,16 @@ class ThunderFunction(torch.autograd.Function):
             ctx.side_channel["tensors_to_save"] = saved_tensors
             return torch.randn(1, device="meta", requires_grad=True)
         else:
+
+            if non_differentiable_output is None:
+                # Default to original behavior of marking all outputs as differentiable.
+                non_differentiable_output = tuple(False for _ in flat_output)
+
             ctx.save_for_backward(*saved_tensors)
+
+            for output, mark_non_differentiable in zip(flat_output, non_differentiable_output):
+                if mark_non_differentiable:
+                    ctx.mark_non_differentiable(output)
             return flat_output
 
     # NOTE: If `torch.autograd.function.once_differentiable` is to be removed,
@@ -162,11 +173,11 @@ class ThunderFunction(torch.autograd.Function):
         # TODO(crcrpar): Remove if-else once `dist_prims.stash_grad_for_fsdp` starts to return `None`
         # NOTE(crcrpar): In fsdp no-sync, unsharded gradients are attached and accumulated to their parameters as the attr of `_thunder_fsdp_unsharded_grad` in order to avoid shape mismatch of a param and its grad. When exiting the no_sync context, the accumulated, unsharded gradients are reduce-scattered into the attr of `grad` and `_thunder_fsdp_unsharded_grad` is removed.
         if not ctx.return_none_instead_of_grads:
-            return (None, None, None, None, None, None, *grads)
+            return (None, None, None, None, None, None, None, *grads)
         else:
             n_grads = len(grads)
             del grads
-            return (None, None, None, None, None, None, *([None] * n_grads))
+            return (None, None, None, None, None, None, None, *([None] * n_grads))
 
 
 class ThunderOutputFunction(torch.autograd.Function):
@@ -197,6 +208,7 @@ def connect_to_autograd(
     saved_other,
     return_none_instead_of_grads,
     disable_split_autograd,
+    non_differentiable_output,
 ):
     # PyTorch seems to not like our side channel trick when capturing graphs
     # through dynamo and using cuda graphs.
@@ -214,6 +226,7 @@ def connect_to_autograd(
         side_channel,
         saved_tensors,
         saved_other,
+        non_differentiable_output,
         flat_output,
         *flat_args,
     )
