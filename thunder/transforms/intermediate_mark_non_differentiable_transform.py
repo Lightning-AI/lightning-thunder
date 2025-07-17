@@ -29,10 +29,11 @@ def is_input_node(node, graph_nodes, input_nodes):
 
 
 class IntermediateMarkNonDifferentiableTransform(Transform):
-    '''
+    """
     This transform is used to mark the intermediate output of the computation trace as non-differentiable.
     This is a workaround for the fact currently all output from thunderfx function is marked as differentiable (even if it is not).
-    '''
+    """
+
     def transform_trace_post_optimization(self, computation_trace: Trace, **kwargs):
         # We only need to do this for augmented forward traces
         # Any output which has interacted with the input Tensors is marked as differentiable.
