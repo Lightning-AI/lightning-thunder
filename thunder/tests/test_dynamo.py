@@ -1648,6 +1648,7 @@ def test_spliter_einops():
     torch.testing.assert_close(out, expected_out)
 
 
+@requiresCUDA
 def test_thunderfx_with_intermediate_output_marked_as_non_differentiable():
     class Model(torch.nn.Module):
         def __init__(self, *args, **kwargs):
