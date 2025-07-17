@@ -28,7 +28,14 @@ def is_input_node(node, graph_nodes, input_nodes):
 
 
 class IntermediateMarkNonDifferentiableTransform(Transform):
+    '''
+    This transform is used to mark the intermediate output of the computation trace as non-differentiable.
+    This is a workaround for the fact currently all output from thunderfx function is marked as differentiable (even if it is not).
+    '''
     def transform_trace_post_optimization(self, computation_trace: Trace, **kwargs):
+        # We only need to do this for augmented forward traces
+        # Any output which has interacted with the input Tensors is marked as differentiable.
+        # TODO: Also consider the requires_grad flag of the input Tensors.
         if TraceTag.AUGMENTED_FORWARD in computation_trace.tags:
             def create_graph():
                 graph_nodes = {}
@@ -36,6 +43,7 @@ class IntermediateMarkNonDifferentiableTransform(Transform):
 
                 def process_bsym(bsym):
                     if bsym.sym.id == PrimIDs.UNPACK_TRIVIAL:
+                        # Output of unpack_trivial is treated as input_nodes.
                         for arg in bsym.flat_outs:
                             input_nodes.append(arg.name)
 
