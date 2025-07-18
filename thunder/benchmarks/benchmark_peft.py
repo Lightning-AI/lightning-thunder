@@ -153,11 +153,19 @@ def setup_lora(model: torch.nn.Module) -> torch.nn.Module:
 
     logger.debug("Applying LoRA to model")
 
+    # From: https://github.com/huggingface/peft/blob/main/src/peft/tuners/tuners_utils.py
+    mamba_model_types = {"falcon_h1", "mamba", "mamba2", "falcon_mamba"}
+    if hasattr(model, "config") and getattr(model.config, "model_type", None) in mamba_model_types:
+        exclude_modules = ["out_proj", "conv1d"]
+    else:
+        exclude_modules = []
+
     lora_config = LoraConfig(
         r=16,  # rank
         target_modules="all-linear",  # See: https://huggingface.co/docs/peft/package_reference/lora#peft.LoraConfig.target_modules
         lora_alpha=32,
         task_type="CAUSAL_LM",
+        exclude_modules=exclude_modules,
     )
 
     model = get_peft_model(model, lora_config)
