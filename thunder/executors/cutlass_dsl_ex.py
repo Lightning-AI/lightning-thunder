@@ -322,7 +322,7 @@ if find_spec("quack") is not None:
     ) -> TensorProxy:
         return quack_layer_norm_forward(a, weight, eps, return_rstd=False, return_mean=False)
 
-    cutlass_dsl_ex.register_operator(
+    cutlass_dsl_ex.register_implementation(
         ltorch.layer_norm,
         checker=quack_layer_norm_checker,
         execution_transform=quack_layer_norm_transform,
@@ -369,7 +369,7 @@ if find_spec("quack") is not None:
 
     quack_rms_norm_backward = cutlass_dsl_ex.register_operator(
         "cutlass_quack_rms_norm_backward",
-        meta=quack_rms_norm_forward_meta,
+        meta=quack_rms_norm_backward_meta,
         fn=quack_rms_norm_backward_impl,
     )
 
@@ -381,17 +381,6 @@ if find_spec("quack") is not None:
         eps: float | None = None,
     ) -> bool:
         return weight is not None and is_device_quack_compat()
-
-    def quack_rms_norm_transform(
-        a: TensorProxy,
-        /,
-        normalized_shape: Sequence[int],
-        weight: TensorProxy | None = None,
-        eps: float | None = None,
-    ) -> TensorProxy:
-        if eps is None:
-            eps = 1e-6
-        return quack_rms_norm_forward(a, weight, eps)
 
     def quack_rms_norm_aug_forward_impl(
         x: torch.Tensor,
@@ -405,13 +394,24 @@ if find_spec("quack") is not None:
         weight: TensorProxy,
         eps: float = 1e-6,
     ) -> tuple[TensorProxy, TensorProxy]:
-        return (TensorProxy(like=x), TensorProxy(like=x, shape=(x.shape[0])))
+        return (TensorProxy(like=x), TensorProxy(like=x, shape=(x.shape[0],)))
 
     quack_rms_norm_aug_forward = cutlass_dsl_ex.register_operator(
         "cutlass_quack_rms_norm_aug_forward",
         meta=quack_rms_norm_aug_forward_meta,
         fn=quack_rms_norm_aug_forward_impl,
     )
+
+    def quack_rms_norm_transform(
+        a: TensorProxy,
+        /,
+        normalized_shape: Sequence[int],
+        weight: TensorProxy | None = None,
+        eps: float | None = None,
+    ) -> TensorProxy:
+        if eps is None:
+            eps = 1e-6
+        return quack_rms_norm_aug_forward(a, weight, eps)[0]
 
     def quack_rms_norm_grad(
         a: TensorProxy,
