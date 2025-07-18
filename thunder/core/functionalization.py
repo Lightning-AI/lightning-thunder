@@ -6,7 +6,7 @@ from thunder.core.compile_data import get_compile_data
 import thunder.core.prims as prims
 from thunder.core.proxies import variableify, TensorProxy, unvariableify, ProxyInterface
 from thunder.core.pytree import tree_flatten, tree_unflatten
-from thunder.core.symbol import BoundSymbol
+from thunder.core.symbol import BoundSymbol, BoundSymbolTag, has_tags
 from thunder.core.trace import from_trace, TraceProvenance, TraceCtx as Trace, tracectx
 from thunder.core.utils import ProxyDict, producers, check, consumers
 
@@ -351,6 +351,8 @@ def create_functional_bsym_from(inplace_bsym: BoundSymbol) -> BoundSymbol:
         functional_bsym.subsymbols = functional_bsym.subsymbols[:-1]
     if len(functional_bsym.subsymbols) == 1 and functional_bsym.rhs == functional_bsym.subsymbols[0].rhs:
         functional_bsym.subsymbols = functional_bsym.subsymbols[0].subsymbols
+    if has_tags(inplace_bsym, {BoundSymbolTag.BACKWARD}):
+        functional_bsym.tags.add(BoundSymbolTag.BACKWARD)
     return functional_bsym
 
 
