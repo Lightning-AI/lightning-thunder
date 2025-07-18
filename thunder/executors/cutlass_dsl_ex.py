@@ -288,8 +288,8 @@ if find_spec("quack") is not None:
         return layernorm(x, weight, eps, return_rstd=return_rstd, return_mean=return_mean)
 
     def quack_layer_norm_forward_meta(
-        x: torch.Tensor,
-        weight: torch.Tensor,
+        x: TensorProxy,
+        weight: TensorProxy,
         eps: float,
         return_rstd: bool,
         return_mean: bool,
@@ -320,10 +320,118 @@ if find_spec("quack") is not None:
         bias: TensorProxy | None = None,
         eps: Number = 1e-5,
     ) -> TensorProxy:
-        return quack_layer_norm_forward(a, weight, eps)
+        return quack_layer_norm_forward(a, weight, eps, return_rstd=False, return_mean=False)
 
     cutlass_dsl_ex.register_operator(
         ltorch.layer_norm,
         checker=quack_layer_norm_checker,
         execution_transform=quack_layer_norm_transform,
+    )
+
+    # rmsnorm
+    from quack.rmsnorm import _rmsnorm_fwd, _rmsnorm_backward
+
+    def quack_rms_norm_forward_impl(
+        x: torch.Tensor,
+        weight: torch.Tensor,
+        eps: float = 1e-6,
+    ) -> torch.Tensor:
+        return _rmsnorm_fwd(x, weight, eps, return_rstd=False)
+
+    def quack_rms_norm_forward_meta(
+        x: TensorProxy,
+        weight: TensorProxy,
+        eps: float = 1e-6,
+    ) -> TensorProxy:
+        return TensorProxy(like=x)
+
+    quack_rms_norm_forward = cutlass_dsl_ex.register_operator(
+        "cutlass_quack_rms_norm_forward",
+        meta=quack_rms_norm_forward_meta,
+        fn=quack_rms_norm_forward_impl,
+    )
+
+    def quack_rms_norm_backward_impl(
+        grad: torch.Tensor,
+        x: torch.Tensor,
+        weight: torch.Tensor,
+        rstd: torch.Tensor,
+    ) -> torch.Tensor:
+        return _rmsnorm_backward(x, weight, grad, rstd)
+
+    def quack_rms_norm_backward_meta(
+        grad: TensorProxy,
+        x: TensorProxy,
+        weight: TensorProxy,
+        rstd: TensorProxy,
+    ) -> TensorProxy:
+        return TensorProxy(like=grad)
+
+    quack_rms_norm_backward = cutlass_dsl_ex.register_operator(
+        "cutlass_quack_rms_norm_backward",
+        meta=quack_rms_norm_forward_meta,
+        fn=quack_rms_norm_backward_impl,
+    )
+
+    def quack_rms_norm_checker(
+        a: TensorProxy,
+        /,
+        normalized_shape: Sequence[int],
+        weight: TensorProxy | None = None,
+        eps: float | None = None,
+    ) -> bool:
+        return weight is not None and is_device_quack_compat()
+
+    def quack_rms_norm_transform(
+        a: TensorProxy,
+        /,
+        normalized_shape: Sequence[int],
+        weight: TensorProxy | None = None,
+        eps: float | None = None,
+    ) -> TensorProxy:
+        if eps is None:
+            eps = 1e-6
+        return quack_rms_norm_forward(a, weight, eps)
+
+    def quack_rms_norm_aug_forward_impl(
+        x: torch.Tensor,
+        weight: torch.Tensor,
+        eps: float = 1e-6,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        return _rmsnorm_fwd(x, weight, eps, return_rstd=True)
+
+    def quack_rms_norm_aug_forward_meta(
+        x: TensorProxy,
+        weight: TensorProxy,
+        eps: float = 1e-6,
+    ) -> tuple[TensorProxy, TensorProxy]:
+        return (TensorProxy(like=x), TensorProxy(like=x, shape=(x.shape[0])))
+
+    quack_rms_norm_aug_forward = cutlass_dsl_ex.register_operator(
+        "cutlass_quack_rms_norm_aug_forward",
+        meta=quack_rms_norm_aug_forward_meta,
+        fn=quack_rms_norm_aug_forward_impl,
+    )
+
+    def quack_rms_norm_grad(
+        a: TensorProxy,
+        /,
+        normalized_shape: Sequence[int],
+        weight: TensorProxy | None = None,
+        eps: float | None = None,
+    ) -> TensorProxy:
+        if eps is None:
+            eps = 1e-6
+        fwd, rstd = quack_rms_norm_aug_forward(a, weight, eps)
+
+        grad = get_grad(fwd)
+        a_grad = quack_rms_norm_backward(grad, a, weight, rstd)
+        put_grad(a, a_grad)
+        return fwd
+
+    cutlass_dsl_ex.register_implementation(
+        ltorch.rms_norm,
+        checker=quack_rms_norm_checker,
+        execution_transform=quack_rms_norm_transform,
+        grad_transform=quack_rms_norm_grad,
     )
