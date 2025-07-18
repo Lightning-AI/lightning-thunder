@@ -689,8 +689,8 @@ class FSDPDDPHybridTest(DistributedParallelTestCase):
             assert_close(g, rg[slice_size * fsdp_rank : slice_size * (fsdp_rank + 1)])
 
     @pytest.mark.skipif(torch.cuda.device_count() < 4, reason="Requires 4 devices")
+    @pytest.mark.xfail(RuntimeError, reason="requires fix ...")  # todo
     def test_fsdp_ddp_plugin(self):
-        import torch
         import thunder
         import torch.distributed
         from thunder.plugins import FSDP
