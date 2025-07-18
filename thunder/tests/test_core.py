@@ -2864,6 +2864,16 @@ def test_arange_default_dtype():
     assert jfn() == torch.int64
 
 
+def test_randint_default_dtype():
+    # If any of start, end, or stop are floating-point, the dtype is inferred to be the default dtype, see get_default_dtype().
+    # Otherwise, the dtype is inferred to be torch.int64.
+    def fn():
+        return torch.randint(0, 5, (2, 3))
+
+    jfn = thunder.jit(fn)
+    assert jfn().dtype == fn().dtype == torch.int64
+
+
 def test_cat_mixed_dtypes():
     # We add a special test here instead of a sample in OpInfo.
     # When we add a mixed input sample in OpInfo, it will also be picked up for the test which
