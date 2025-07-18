@@ -13,7 +13,8 @@ from thunder.core.proxies import TensorProxy
 import thunder.torch as ltorch
 
 if TYPE_CHECKING:
-    from typing import Any
+    from collections.abc import Sequence
+    from numbers import Number
     from thunder.core.dtypes import dtype as thunder_dtype
 
 
@@ -272,4 +273,57 @@ if find_spec("quack") is not None:
         checker=quack_cross_entropy_checker,
         execution_transform=quack_cross_entropy_transform,
         grad_transform=quack_cross_entropy_grad,
+    )
+
+    # layernorm (only forward as of https://github.com/Dao-AILab/quack/commit/3ce89a24)
+    from quack.layernorm import layernorm
+
+    def quack_layer_norm_forward_impl(
+        x: torch.Tensor,
+        weight: torch.Tensor,
+        eps: float,
+        return_rstd: bool,
+        return_mean: bool,
+    ) -> torch.Tensor:
+        return layernorm(x, weight, eps, return_rstd=return_rstd, return_mean=return_mean)
+
+    def quack_layer_norm_forward_meta(
+        x: torch.Tensor,
+        weight: torch.Tensor,
+        eps: float,
+        return_rstd: bool,
+        return_mean: bool,
+    ) -> TensorProxy:
+        return TensorProxy(like=x)
+
+    quack_layer_norm_forward = cutlass_dsl_ex.register_operator(
+        "cutlass_quack_layer_norm_forward",
+        meta=quack_layer_norm_forward_meta,
+        fn=quack_layer_norm_forward_impl,
+    )
+
+    def quack_layer_norm_checker(
+        a: TensorProxy,
+        /,
+        normalized_shape: Sequence[int],
+        weight: TensorProxy | None = None,
+        bias: TensorProxy | None = None,
+        eps: Number = 1e-5,
+    ) -> bool:
+        return is_device_quack_compat()
+
+    def quack_layer_norm_transform(
+        a: TensorProxy,
+        /,
+        normalized_shape: Sequence[int],
+        weight: TensorProxy | None = None,
+        bias: TensorProxy | None = None,
+        eps: Number = 1e-5,
+    ) -> TensorProxy:
+        return quack_layer_norm_forward(a, weight, eps)
+
+    cutlass_dsl_ex.register_operator(
+        ltorch.layer_norm,
+        checker=quack_layer_norm_checker,
+        execution_transform=quack_layer_norm_transform,
     )
