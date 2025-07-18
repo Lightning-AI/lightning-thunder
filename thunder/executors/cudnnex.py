@@ -1,6 +1,5 @@
 from collections.abc import Callable
 
-from lightning_utilities.core.imports import package_available
 from looseversion import LooseVersion
 from thunder.extend import OperatorExecutor
 
