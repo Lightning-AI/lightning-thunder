@@ -97,9 +97,9 @@ run: |
     exit 1
   fi
 
-  # compile coverage results
-  python -m coverage report
-  python -m coverage xml
+  # TODO: compile coverage results
+  #python -m coverage report
+  #python -m coverage xml
   # upload to codecov
-  # todo: add >> --token=$(CODECOV_TOKEN) --commit=$(Build.SourceVersion)
-  ./codecov --flags=gpu,pytest,${testing} --name="GPU-coverage" --env=linux
+  # TODO: add >> --token=$(CODECOV_TOKEN) --commit=$(Build.SourceVersion)
+  #./codecov --flags=gpu,pytest,${testing} --name="GPU-coverage" --env=linux
