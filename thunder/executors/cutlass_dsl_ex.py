@@ -185,11 +185,11 @@ if find_spec("quack") is not None:
         grad: TensorProxy,
         lse: TensorProxy,
     ) -> TensorProxy:
-        return TensorProxy(like=grad)
+        return TensorProxy(like=x)
 
     quack_cross_entropy_backward = cutlass_dsl_ex.register_operator(
         "cutlass_quack_cross_entropy_backward",
-        meta=quack_softmax_backward_meta,
+        meta=quack_cross_entropy_backward_meta,
         fn=quack_cross_entropy_backward_impl,
     )
 
