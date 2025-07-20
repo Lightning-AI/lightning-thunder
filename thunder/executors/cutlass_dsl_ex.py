@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from looseversion import LooseVersion
 import torch
 
+from thunder.core import dtypes
 from thunder.core.transforms import get_grad, put_grad
 from thunder.extend import register_executor, OperatorExecutor
 from thunder.core.proxies import TensorProxy
@@ -111,6 +112,7 @@ if find_spec("quack") is not None:
         fn=quack_softmax_backward,
     )
 
+    # Ref: https://github.com/Dao-AILab/quack/blob/3ce89a24/quack/softmax.py#L189-L198
     def quack_softmax_checker(
         a: TensorProxy,
         /,
@@ -120,7 +122,13 @@ if find_spec("quack") is not None:
     ) -> bool:
         last_dims = {-1, a.ndim - 1}
         allowed_dtypes = {None, a.dtype}
-        return dim in last_dims and dtype in allowed_dtypes and is_device_quack_compat()
+        return (
+            a.ndim == 2
+            and dim in last_dims
+            and dtype in allowed_dtypes
+            and a.dtype in {dtypes.float16, dtypes.bfloat16, dtypes.float32}
+            and is_device_quack_compat()
+        )
 
     def quack_softmax_transform(
         a: TensorProxy,
@@ -193,6 +201,7 @@ if find_spec("quack") is not None:
         fn=quack_cross_entropy_backward_impl,
     )
 
+    # Ref: https://github.com/Dao-AILab/quack/blob/3ce89a24/quack/cross_entropy.py#L216-L239
     def quack_cross_entropy_checker(
         a: TensorProxy,
         /,
@@ -218,6 +227,14 @@ if find_spec("quack") is not None:
             return False
 
         if label_smoothing != 0.0:
+            return False
+
+        if (
+            a.ndim != 2
+            or a.dtype not in {dtypes.float16, dtypes.bfloat16, dtypes.float32}
+            and target.ndim == 1
+            and target.dytpe in {dtypes.int32, dtypes.int64}
+        ):
             return False
 
         return True
@@ -302,6 +319,7 @@ if find_spec("quack") is not None:
         fn=quack_layer_norm_forward_impl,
     )
 
+    # Ref: https://github.com/Dao-AILab/quack/blob/3ce89a24/quack/layernorm.py#L252-L278
     def quack_layer_norm_checker(
         a: TensorProxy,
         /,
@@ -310,6 +328,14 @@ if find_spec("quack") is not None:
         bias: TensorProxy | None = None,
         eps: Number = 1e-5,
     ) -> bool:
+        if (
+            a.ndim != 2
+            or a.dtype not in {dtypes.float16, dtypes.bfloat16, dtypes.float32}
+            or weight.ndim != 1
+            or a.shape[-1] != weight.shape[0]
+            or weight.dtype not in {dtypes.float32}
+        ):
+            return False
         return is_device_quack_compat()
 
     def quack_layer_norm_transform(
@@ -373,6 +399,7 @@ if find_spec("quack") is not None:
         fn=quack_rms_norm_backward_impl,
     )
 
+    # Ref: https://github.com/Dao-AILab/quack/blob/3ce89a24/quack/rmsnorm.py#L231-L261
     def quack_rms_norm_checker(
         a: TensorProxy,
         /,
@@ -380,6 +407,14 @@ if find_spec("quack") is not None:
         weight: TensorProxy | None = None,
         eps: float | None = None,
     ) -> bool:
+        if (
+            a.ndim != 2
+            or weight.ndim != 1
+            or a.shape[-1] != weight.shape[0]
+            or a.dtype not in {dtypes.float16, dtypes.bfloat16, dtypes.float32}
+            or weight.dtype not in {dtypes.float16, dtypes.bfloat16, dtypes.float32}
+        ):
+            return False
         return weight is not None and is_device_quack_compat()
 
     def quack_rms_norm_aug_forward_impl(
