@@ -138,7 +138,7 @@ def dtensor_mul(a: TensorLike, b: TensorLike) -> TensorLike:
 def dtensor_convert_element_type_meta(a, dtype):
     tdtype = ltorch.to_torch_dtype(dtype)
     output = run_with_fake_tensor(lambda x, dt: x.to(dt), a, tdtype)
-    local_tensor_proxy = TensorProxy(like=a.local_tensor, dtype=dtype)
+    local_tensor_proxy = TensorProxy(like=a.local_tensor, shape=output._local_tensor.shape, dtype=dtype)
     spec = output._spec
     spec_proxy = AnyProxy(spec, history=a.history)
     return create_dtensor_proxy_from_proxies(local_tensor_proxy, spec_proxy, False)
@@ -171,7 +171,7 @@ def dtensor_broadcast_in_dim_meta(a, shape, broadcast_dimensions):
         shape, 
         broadcast_dimensions
     )
-    local_tensor_proxy = TensorProxy(like=a.local_tensor, shape=shape)
+    local_tensor_proxy = TensorProxy(like=a.local_tensor, shape=output._local_tensor.shape)
     spec = output._spec
     spec_proxy = AnyProxy(spec, history=a.history)
     return create_dtensor_proxy_from_proxies(local_tensor_proxy, spec_proxy, a.requires_grad)
