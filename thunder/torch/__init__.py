@@ -850,7 +850,7 @@ def randint(
     utils.check(generator is None, lambda: "generator is not None which is currently unsupported", NotImplementedError)
     utils.check(out is None, lambda: "out is not None which is currently unsupported", NotImplementedError)
     device = to_device(maybe_get_default_device(device))
-    dtype = to_dtype(dtype or torch.int64)
+    dtype = to_dtype(dtype if dtype is not None else torch.int64)
 
     # dispatch our two overloads:
     if len(args) == 2 and isinstance(args[1], (tuple, list)):
