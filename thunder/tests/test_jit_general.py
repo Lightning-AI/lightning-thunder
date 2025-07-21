@@ -1194,6 +1194,7 @@ def test_custom_autograd_function():
     assert jitted.l1.weight.grad is not None
 
 
+@requiresCUDA
 def test_complex_backward_custom_autograd():
     # This tests that backward tags are correctly propagated to the subsymbols of the custom autograd function.
     # Without this propagation, operations for the backward pass could be fused with forward pass operations.
