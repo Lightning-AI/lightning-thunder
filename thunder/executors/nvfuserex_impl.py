@@ -256,9 +256,7 @@ def multidevice_schedule(fd: FusionDefinition, in_dtensors: list[Proxy]) -> None
     for in_tv, in_dtensor in zip(fd.fusion.inputs(), in_dtensors):
         assert isinstance(in_dtensor, DTensorProxy)
         # Set the device mesh.
-        assert (
-            in_dtensor.device_mesh.ndim == 1
-        ), "nvFuser's Python API only supports 1D meshes."
+        assert in_dtensor.device_mesh.ndim == 1, "nvFuser's Python API only supports 1D meshes."
         mesh = nvfd.multidevice.DeviceMesh(in_dtensor.device_mesh.mesh.tolist())
 
         in_tv.set_device_mesh(mesh)
