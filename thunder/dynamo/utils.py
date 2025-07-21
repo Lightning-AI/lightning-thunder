@@ -6,6 +6,7 @@ import dataclasses
 import inspect
 import itertools
 import copy
+from types import NoneType
 from collections import defaultdict
 from collections import namedtuple
 
@@ -13,6 +14,11 @@ import torch
 from torch.nn.modules.module import _addindent
 from torch._subclasses.fake_tensor import FakeTensor
 from torch.utils.weak import TensorWeakRef
+
+if torch.distributed.is_available():
+    from torch.distributed.tensor import DTensor
+else:
+    DTensor = NoneType
 
 from thunder.torch.default_torch_ops import torch_auto_registered_ops
 from thunder.torch import _torch_to_thunder_function_map
@@ -222,9 +228,13 @@ def get_proxy_inputs_from_node(node: torch.fx.Node) -> tuple[tuple, dict]:
                         e_v.new_ones(_concrete_value(e_v.shape), device=e_v.device, dtype=e_v.dtype)
                         for e_v in example_value
                     )
+                elif isinstance(example_value, torch.types.py_sym_types) and example_value.node.has_hint():
+                    return proxy(example_value.node.hint)
                 else:
                     # NOTE - This will be caught and be part of the SplitReason.
-                    raise TypeError("`make_input_proxy` received example_value which wasn't Tensor or Tuple")
+                    raise TypeError(
+                        f"`make_input_proxy` received unsupported example_value type: {type(example_value)}"
+                    )
                 return proxy(example_value)
 
             # This is int, float, etc.
@@ -452,6 +462,18 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
         did_run, opt_split_reason = try_execute_thunder_symbol(method, node)
         return did_run, opt_split_reason
 
+    # checks einops operators
+    if hasattr(target, "__module__") and target.__module__ == "einops.einops":
+        from thunder.executors.torchex import has_einops
+
+        if has_einops:
+            import einops
+
+            # According to https://github.com/Lightning-AI/lightning-thunder/blob/4f92190d/thunder/tests/test_einops.py
+            einops_ops = (einops.reduce, einops.rearrange, einops.repeat, einops.einsum)
+            if target in einops_ops:
+                return True, None
+
     # We found no automatic fallback registration and no mapping to thunder symbol.
     split_reason = SplitReason(
         SplitReasonType.MISSING_OP_SUPPORT,
@@ -507,7 +529,13 @@ def _get_storage_shape(t: torch.Tensor):
 
 
 def _get_min_and_val(t: torch.Tensor) -> tuple[Number | None, Number | None]:
-    if isinstance(t, FakeTensor) or t.device.type == "meta" or t.numel() == 0:
+    # We assume that for TensorSubclass, `aminmax` is not supported which is true for FakeTensor and DTensor.
+    if (
+        (isinstance(t, torch.Tensor) and type(t) is not torch.Tensor)
+        or t.device.type == "meta"
+        or t.numel() == 0
+        or t.dtype.is_complex
+    ):
         return None, None
     if t.dtype in (torch.float8_e4m3fn, torch.float8_e4m3fnuz, torch.float8_e5m2, torch.float8_e5m2fnuz):
         t = t.to(torch.float32)

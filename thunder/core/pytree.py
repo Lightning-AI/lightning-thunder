@@ -69,6 +69,7 @@ def tree_flatten(args, namespace=OPTREE_NAMESPACE):
             torch.autograd.function.FunctionCtx,
             immutable_list,
             *torch.types.py_sym_types,
+            *((torch.distributed._tensor.DTensor,) if torch.distributed.is_available() else ()),
         }
         and not isinstance(args, (ProxyInterface))
         and not is_likely_from_collections_namedtuple(args)

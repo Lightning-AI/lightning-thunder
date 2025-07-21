@@ -139,6 +139,7 @@ class torchsymbol:
         is_prim: bool = False,
         tags: None | list[Any] = None,
         out_of_place: Symbol | None = None,
+        allow_tensor_subclass_proxy: bool = False,
     ):
         self.torchfns = torchfns
         self.is_method = is_method or (method_name is not None)
@@ -151,8 +152,29 @@ class torchsymbol:
         self.tags = tags
         self.out_of_place = out_of_place
 
+        # This flag is used to enable/disable a torchsymbol to accept
+        # TensorProxy subclass as input (eg. DTensorProxy).
+        # By default, this is `False` as we don't want general `torchsymbol`
+        # which are meant for TensorProxy to accept DTensorProxy.
+        self.allow_tensor_subclass_proxy = allow_tensor_subclass_proxy
+
     def __call__(self, fn: Callable) -> Symbol:
         _fn = langctx(Languages.TORCH)(fn)
+
+        if not self.allow_tensor_subclass_proxy:
+
+            @wraps(_fn)
+            def wrapper(*args, **kwargs):
+                filter_tensor_proxies = list(
+                    filter(lambda t: isinstance(t, TensorProxy), tree_flatten((args, kwargs))[0])
+                )
+                assert all(map(lambda t: type(t) is TensorProxy, filter_tensor_proxies)), (
+                    f"Expected all inputs to be TensorProxy but found {list(map(lambda t: type(t), filter_tensor_proxies))}"
+                )
+                return _fn(*args, **kwargs)
+
+        else:
+            wrapper = _fn
 
         id: str
         if self.id is None:
@@ -178,10 +200,10 @@ class torchsymbol:
 
         if self.is_prim:
             sym = Symbol(
-                name=fn.__name__, meta=langctx(Languages.PRIMS)(_fn), id=id, is_prim=self.is_prim, tags=self.tags
+                name=fn.__name__, meta=langctx(Languages.PRIMS)(wrapper), id=id, is_prim=self.is_prim, tags=self.tags
             )
         else:
-            sym = Symbol(name=fn.__name__, meta=_fn, id=id, is_prim=self.is_prim, tags=self.tags)
+            sym = Symbol(name=fn.__name__, meta=wrapper, id=id, is_prim=self.is_prim, tags=self.tags)
 
         if self.is_method:
             method_name: str = self.method_name if self.method_name is not None else fn.__name__
@@ -608,6 +630,23 @@ def full(
     shape: Sequence[int], fill_value: NumberLike, *, device: None | DeviceLike = None, dtype: None | dtypeLike = None
 ) -> TensorLike:
     device = to_device(maybe_get_default_device(device))
+    if isinstance(fill_value, TensorLike):
+        if fill_value.numel != 1:
+            raise ValueError("only numbers or scalar tensors can be passed as fill value to full()")
+        if dtype is None:
+            dtype = fill_value.dtype
+            default_dtype = to_dtype(get_default_dtype())
+            if dtypes.is_nonboolean_integer_dtype(dtype):
+                dtype = dtypes.int64
+            elif dtypes.is_boolean_dtype(dtype):
+                dtype = dtypes.bool8
+            elif dtypes.is_complex_dtype(dtype):
+                dtype = dtypes.corresponding_complex_dtype(default_dtype)
+            else:  # non-complex float
+                dtype = default_dtype
+        res = expand(fill_value, shape)
+        return to(res, device=device, dtype=dtype, copy=True)
+
     dtype = _infer_full_dtype(fill_value, dtype)
     return clang.full(shape, fill_value, device=device, dtype=dtype)
 
@@ -763,6 +802,37 @@ def rand(
     return clang.uniform(shape, 0, 1, device=device, dtype=dtype)
 
 
+@torchsymbol(torch.rand_like)
+def rand_like(
+    a,
+    /,
+    *,
+    dtype: None | dtypeLike = None,
+    layout: None | torch.layout = None,
+    device: None | DeviceLike = None,
+    requires_grad: bool = False,
+    memory_format: torch.memory_format = torch.preserve_format,
+):
+    utils.check(
+        not requires_grad, lambda: "requires_grad=True is not supported within thunder.jit", NotImplementedError
+    )
+    utils.check(
+        layout is None or layout == torch.strided, lambda: "Only torch.strided layout is supported", NotImplementedError
+    )
+    utils.check(
+        memory_format == torch.preserve_format,
+        lambda: "preserve_format!=torch.preserve_format is not supported within thunder.jit",
+        NotImplementedError,
+    )
+
+    if dtype is None:
+        dtype = a.dtype
+
+    if device is None:
+        device = a.device
+    return rand(a.shape, dtype=dtype, device=device)
+
+
 @torchsymbol(torch.randint)
 def randint(
     *args,
@@ -908,13 +978,50 @@ def empty(
     return clang.empty(size, device=device, dtype=dtype)
 
 
+@torchsymbol(torch.empty_like)
+def empty_like(
+    a: TensorLike,
+    /,
+    *,
+    dtype: None | dtypeLike = None,
+    layout: None | torch.layout = None,
+    device: None | DeviceLike = None,
+    requires_grad: bool = False,
+    memory_format: torch.memory_format = torch.preserve_format,
+) -> TensorLike:
+    utils.check(
+        memory_format == torch.preserve_format or memory_format == torch.contiguous_format,
+        lambda: f"{memory_format} is not supported within thunder.jit",
+        NotImplementedError,
+    )
+    utils.check(
+        layout is None or layout == torch.strided, lambda: "Only torch.strided layout is supported", NotImplementedError
+    )
+    utils.check(
+        not requires_grad, lambda: "requires_grad=True is not yet supported within thunder.jit", NotImplementedError
+    )
+
+    # Use the input tensor's properties as defaults
+    if dtype is None:
+        dtype = a.dtype
+    if device is None:
+        device = a.device
+
+    return empty(
+        a.shape,
+        dtype=dtype,
+        device=device,
+        requires_grad=requires_grad,
+    )
+
+
 #
 # Shape operations
 #
 
 
 # TODO Update this to take a *args series of tensors or a sequence of tensors
-@torchsymbol(torch.cat)
+@torchsymbol(torch.cat, torch.concat, torch.concatenate, id="torch.cat")
 def cat(tensors: Sequence[TensorLike], dim: int = 0) -> TensorLike:
     return clang.cat(tensors, dim)
 
@@ -989,7 +1096,9 @@ def diagonal(a: TensorLike, /, offset: int = 0, dim1: int = 0, dim2: int = 1) ->
     return clang.diagonal(a, offset, dim1, dim2)
 
 
-@torchsymbol(torch.Tensor.expand, is_method=True)
+@torchsymbol(
+    torch.Tensor.expand, torch.broadcast_to, torch.Tensor.broadcast_to, id="torch.Tensor.expand", is_method=True
+)
 def expand(a: TensorLike, /, *shape: int) -> TensorLike:
     return clang.expand(a, *shape)
 
@@ -1070,7 +1179,7 @@ def movedim(a: TensorLike, /, source: int | Sequence[int], destination: int | Se
     return clang.movedim(a, source, destination)
 
 
-@torchsymbol(torch.nn.functional.pad)
+@torchsymbol(torch.nn.functional.pad, torch._C._nn.pad, id="torch.nn.functional.pad")
 def pad(a: TensorProxy, /, pad: tuple[int, ...], mode: str | None = "constant", value: NumberLike | None = None):
     utils.check(mode == "constant", lambda: "Mode arguments other than constant are not supported")
     utils.check(len(pad) % 2 == 0, lambda: "Padding length must be divisible by 2")
@@ -1803,7 +1912,7 @@ def tan_(a):
     return _copy_(a, tan(a))
 
 
-@torchsymbol(torch.tanh, is_method=True)
+@torchsymbol(torch.tanh, torch.nn.functional.tanh, id="torch.tanh", is_method=True)
 def tanh(a):
     return clang.tanh(a)
 
@@ -1966,6 +2075,17 @@ def hardshrink(a: TensorProxy, /, lambd: float = 0.5) -> TensorLike:
         lambda: f"hardshrink not implemented for '{a.dtype}'",
     )
     return where(abs(a) <= lambd, 0, a)
+
+
+@torchsymbol(torch.nn.functional.hardsigmoid, is_method=False)
+def hardsigmoid(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
+    out = clamp(a / 6.0 + 0.5, 0.0, 1.0)
+    if inplace:
+        return _copy_(a, out)
+    return out
+
+
+_inplace_to_out_of_place[hardsigmoid] = hardsigmoid, 1
 
 
 @torchsymbol(torch.nn.functional.hardswish, id="torch.hardswish", is_method=False)
@@ -3249,6 +3369,22 @@ def sort(
     return clang.sort(a, dim, descending, stable)
 
 
+@torchsymbol(torch.argsort, is_method=True)
+def argsort(a: TensorLike, /, dim: None | int = -1, descending: bool = False, stable: bool = False) -> TensorLike:
+    """Returns the indices that would sort an array along the given dimension.
+
+    Args:
+        a: Input tensor
+        dim: Dimension along which to sort. If None, the array is flattened before sorting
+        descending: If True, sort in descending order
+        stable: Whether to use a stable sorting algorithm
+
+    Returns:
+        Tensor of indices that would sort the array
+    """
+    return clang.argsort(a, dim, descending, stable)
+
+
 #
 # Scatter and gather-related operations
 #
@@ -3281,8 +3417,8 @@ def index_select(a: TensorLike, /, dim: int, index: TensorLike) -> TensorLike:
 
 
 @torchsymbol(torch.gather, is_method=True)
-def gather(a: TensorLike, /, dim: int, index: TensorLike) -> TensorLike:
-    return clang.gather(a, indices=index, dim=dim)
+def gather(input: TensorLike, dim: int, index: TensorLike) -> TensorLike:
+    return clang.gather(input, indices=index, dim=dim)
 
 
 # NOTE: PyTorch uses `src` for torch.Tensor arguments and `value` for scalars
@@ -4397,20 +4533,26 @@ def local_response_norm(
 
 @torchsymbol(torch.baddbmm, is_method=True)
 def baddbmm(
-    a: TensorLike, b1: TensorLike, b2: TensorLike, *, beta: float = 1.0, alpha: float = 1.0, out: TensorLike = None
+    a: TensorLike,
+    batch1: TensorLike,
+    batch2: TensorLike,
+    *,
+    beta: float = 1.0,
+    alpha: float = 1.0,
+    out: TensorLike = None,
 ) -> TensorLike:
     utils.check(out is None, lambda: "Non-None out is not supported", NotImplementedError)
 
-    utils.check_same_dtype(a, b1, b2)
-    utils.check_same_device(a, b1, b2)
-    utils.check(b1.ndim == 3, lambda: f"batch1 must be a 3D tensor, found {b1.ndim} instead.")
-    utils.check(b2.ndim == 3, lambda: f"batch2 must be a 3D tensor, found {b2.ndim} instead.")
+    utils.check_same_dtype(a, batch1, batch2)
+    utils.check_same_device(a, batch1, batch2)
+    utils.check(batch1.ndim == 3, lambda: f"batch1 must be a 3D tensor, found {batch1.ndim} instead.")
+    utils.check(batch2.ndim == 3, lambda: f"batch2 must be a 3D tensor, found {batch2.ndim} instead.")
 
     if a.dtype not in dtypes.inexact_dtypes:
         utils.check_type(beta, int)
         utils.check_type(alpha, int)
 
-    t0 = matmul(b1, b2)
+    t0 = matmul(batch1, batch2)
     t1 = alpha * t0
     return t1 + (beta * a)
 
@@ -5795,7 +5937,7 @@ def sigmoid(a: TensorLike, /) -> TensorLike:
 
 
 # CompositeImplicitAutograd - don't register decomp
-@torchsymbol(torch.softmax, torch.nn.functional.softmax, is_method=True, id="torch.softmax")
+@torchsymbol(torch.softmax, is_method=True, id="torch.softmax")
 def _softmax(
     a: TensorLike,
     /,
@@ -5826,6 +5968,9 @@ register_method("softmax", _softmax)
 # ref: https://github.com/pytorch/pytorch/blob/8d12ba9acfa20ed7df438a8892c9bf8e6bef5775/torch/nn/modules/activation.py#L1545
 def softmax(a: TensorLike, dim: int, dtype: None | dtypeLike = None, _stacklevel: int = 3) -> TensorLike:
     return _softmax(a, dim=dim, dtype=dtype)
+
+
+register_function(torch.nn.functional.softmax, softmax)
 
 
 @torchsymbol(torch.nn.functional.softmin, is_method=False, id="torch.nn.functional.softmin")

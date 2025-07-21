@@ -405,7 +405,13 @@ def jit(
         data_ptr_to_tensor_group_index = {}
         tensor_group_index_to_tensor_indices = defaultdict(list)
         for idx, t in enumerate(flat_args):
-            if pytorch.is_tensor(t) and t.layout == pytorch.strided:
+            # Using type(t) is pytorch.Tensor as TensorSubclasses don't support calling
+            # data_ptr().
+            # Eg. RuntimeError: Attempted to access the data pointer on an invalid python storage. (data_ptr access on TensorSubclass)
+            #
+            # isinstance(t, pytorch.Tensor) or pytorch.is_tensor(t) will match all Tensor objects including
+            # subclasses.
+            if type(t) is pytorch.Tensor and t.layout is pytorch.strided:
                 data_ptr = t.untyped_storage().data_ptr()
                 if data_ptr not in data_ptr_to_tensor_group_index:
                     data_ptr_to_tensor_group_index[data_ptr] = len(data_ptr_to_tensor_group_index)
@@ -1084,15 +1090,15 @@ def get_auto_registered_torch_op_names(fn: Callable, /) -> set[str] | None:
 
 
 # TODO (mruberry) Update this
-def _grad_transform(trace):
-    grad_fwd_trace = from_trace(trace)
+def _grad_transform(original_trace):
+    grad_fwd_trace = from_trace(original_trace)
     trace_tok = set_tracectx(grad_fwd_trace)
     all_residuals = []
 
     # Constructs grad fwd and records info
     # TODO: make recursive (or iterative, whatever)
     current_inputs = grad_fwd_trace.args
-    for bsym in trace.bound_symbols:
+    for bsym in original_trace.bound_symbols:
         grad_defined = bsym.sym.grad_defined
         grad_ignored = bsym.sym.grad_ignored
         grad_fwd, grad_bwd = bsym.sym.grad_fwd, bsym.sym.grad_bwd
@@ -1115,7 +1121,7 @@ def _grad_transform(trace):
     # Constructs bwd part of the program
     current_grads = (prims.full(o.shape, 1.0, device=o.device, dtype=o.dtype) for o in fw_result)
 
-    for bsym, residuals in zip(reversed(trace.bound_symbols), reversed(all_residuals)):
+    for bsym, residuals in zip(reversed(original_trace.bound_symbols), reversed(all_residuals)):
         grad_fwd = bsym.sym.grad_fwd
         grad_bwd = bsym.sym.grad_bwd
         grad_defined = bsym.sym.grad_defined

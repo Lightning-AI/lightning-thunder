@@ -5,7 +5,7 @@ from torch.testing import assert_close
 import thunder
 from thunder.tests.framework import requiresCUDA
 
-te = pytest.importorskip("transformer_engine", reason="transformer_engine was not found, skipping the tests.")
+pytest.importorskip("transformer_engine", reason="transformer_engine was not found, skipping the tests.")
 from thunder.executors.transformer_engineex import transformer_engine_ex
 from transformer_engine.common import recipe
 import transformer_engine.pytorch as te
@@ -208,7 +208,12 @@ def test_te_with_autocast():
 
 
 # NOTE: strict=False as it passes on Blackwell.
-@pytest.mark.xfail(strict=False, raises=(RuntimeError, TypeError), reason="Retain graph is not supported by TE")
+# NOTE: Type of the error is different in different versions.
+@pytest.mark.xfail(
+    strict=False,
+    raises=(ValueError, TypeError),
+    reason="See https://github.com/Lightning-AI/lightning-thunder/issues/2221",
+)
 @requiresCUDA
 def test_te_with_retain_graph():
     def foo(x, w):
