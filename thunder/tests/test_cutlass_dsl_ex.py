@@ -99,7 +99,7 @@ def test_quack_layernorm(dtype: torch.dtype):
 @requiresCUDA
 @quack_available
 @pytest.mark.parametrize("dtype", _DTYPES, ids=_DTYPE_IDS)
-def test_quack_rmsrnorm(dtype: torch.dtype):
+def test_quack_rmsnorm(dtype: torch.dtype):
     x = torch.randn((128, 1024), dtype=dtype, requires_grad=True)
     ref_x = x.clone().detach()
 
