@@ -1,3 +1,5 @@
+from functools import partial
+
 import pytest
 import torch
 from torch.testing import assert_close
@@ -444,3 +446,129 @@ def test_te_trace_correctness(fp8_recipe: recipe.Recipe):
 
     # If all the elements appear in order in the trace then the list is empty
     assert len(bwd_te_trace_op_names) == 0
+
+
+@requiresCUDA
+@pytest.mark.parametrize("fp8_recipe", recipes, ids=recipe_ids)
+@pytest.mark.parametrize("compile_path", ["jit", "ThunderFX"])
+def test_te_activation_checkpointing_trace(fp8_recipe: recipe.Recipe, compile_path: str):
+    if fp8_recipe and not (fp8_recipe.delayed() or is_mxfp8_supported):
+        pytest.skip(msg_mxfp8)
+
+    if not fp8_recipe:
+        pytest.skip(
+            "When recipe is None a new recipe is created for each iteration. This makes the results not numerically comparable."
+        )
+
+    checkpoint_fn = partial(torch.utils.checkpoint.checkpoint, use_reentrant=False)
+
+    def fn(x, w, w2):
+        a = checkpoint_fn(torch.nn.functional.linear, x, w)
+        return torch.nn.functional.linear(a, w2)
+
+    if compile_path == "jit":
+        cfn = thunder.jit(fn, executors=[transformer_engine_v2_ex], transforms=[TransformerEngineTransformV2()])
+    else:
+        from thunder.dynamo import thunderfx
+
+        cfn = thunderfx(fn, executors=[transformer_engine_v2_ex], transforms=[TransformerEngineTransformV2()])
+
+    device = "cuda"
+    x = torch.randn(64, 64, device=device, requires_grad=True)
+    w = torch.randn(64, 64, device=device, requires_grad=True)
+    w2 = torch.randn(64, 64, device=device, requires_grad=True)
+
+    with te.fp8_autocast(enabled=True, fp8_recipe=fp8_recipe):
+        cfn(x, w, w2)
+
+    fwd_trace = thunder.last_traces(cfn)[-1] if compile_path == "jit" else cfn.last_traces[-1]
+
+    from thunder.core.vjp_utils import get_saved_for_backward_tensors
+
+    saved_tensors = {p.name for p in get_saved_for_backward_tensors(fwd_trace)}
+    # only the first linear is checkpointed, so only the first two are saved for backward and the two inputs
+    assert len(saved_tensors) == 4
+    # make sure that the inputs for recomputation are passed in the backward as they are
+    assert len({"l_x_", "l_w_"} - saved_tensors) == 0
+
+
+@requiresCUDA
+@pytest.mark.parametrize("fp8_recipe", recipes, ids=recipe_ids)
+@pytest.mark.parametrize("compile_path", ["jit", "ThunderFX"])
+@pytest.mark.filterwarnings("ignore::FutureWarning")  # Coming from TE v2.3
+def test_te_activation_checkpointing_correctness(fp8_recipe: recipe.Recipe, compile_path: str):
+    if not fp8_recipe:
+        pytest.skip(
+            "When recipe is None a new recipe is created for each iteration. This makes the results not numerically comparable."
+        )
+
+    if fp8_recipe and not (fp8_recipe.delayed() or is_mxfp8_supported):
+        pytest.skip(msg_mxfp8)
+
+    dtype = torch.bfloat16
+    device = "cuda"
+    iterations = 3
+
+    checkpoint_fn = partial(torch.utils.checkpoint.checkpoint, use_reentrant=False)
+
+    input_shape = (768, 4096)
+    te_linear1 = te.Linear(4096, 4096, params_dtype=dtype)
+    te_linear2 = te.Linear(4096, 2048, params_dtype=dtype)
+
+    def clone_params(*params):
+        return tuple(param.detach().clone() for param in params)
+
+    w1, w2, b1, b2 = clone_params(te_linear1.weight, te_linear2.weight, te_linear1.bias, te_linear2.bias)
+
+    target_value = torch.tensor(42, dtype=dtype, device=device)
+
+    inputs = tuple(torch.rand(*input_shape, device=device, dtype=dtype, requires_grad=True) for _ in range(iterations))
+
+    def train_model(model, optimizer, loss_hist):
+        for iter_n in range(iterations):
+            x = inputs[iter_n]
+            with te.fp8_autocast(enabled=True, fp8_recipe=fp8_recipe):
+                result = model(x)
+            loss = torch.nn.functional.mse_loss(result.sum(), target_value)
+            loss_hist.append(loss.item())
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
+
+    def te_model(x):
+        # Enable autocasting for the forward pass
+        a = te.checkpoint(te_linear1, x)
+        return te_linear2(a)
+
+    te_sgd_optimizer = torch.optim.SGD(list(te_linear1.parameters()) + list(te_linear2.parameters()))
+
+    te_loss_hist = []
+    train_model(te_model, te_sgd_optimizer, te_loss_hist)
+
+    def fn(x, w1, w2, b1, b2):
+        o = checkpoint_fn(torch.nn.functional.linear, x, w1, b1)
+        return torch.nn.functional.linear(o, w2, b2)
+
+    if compile_path == "jit":
+        cfn = thunder.jit(fn, executors=[transformer_engine_v2_ex], transforms=[TransformerEngineTransformV2()])
+    else:
+        from thunder.dynamo import thunderfx
+
+        cfn = thunderfx(fn, executors=[transformer_engine_v2_ex], transforms=[TransformerEngineTransformV2()])
+
+    list(map(lambda t: t.requires_grad_(True), (w1, w2, b1, b2)))
+    thunder_sgd_optimizer = torch.optim.SGD([w1, w2, b1, b2])
+
+    def thunder_model(x):
+        return cfn(x, w1, w2, b1, b2)
+
+    thunder_loss_hist = []
+    train_model(thunder_model, thunder_sgd_optimizer, thunder_loss_hist)
+
+    for loss, te_loss in zip(thunder_loss_hist, te_loss_hist):
+        assert_close(loss, te_loss)
+
+    assert_close(w1, te_linear1.weight)
+    assert_close(w2, te_linear2.weight)
+    assert_close(b1, te_linear1.bias)
+    assert_close(b2, te_linear2.bias)
