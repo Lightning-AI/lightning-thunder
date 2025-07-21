@@ -464,6 +464,11 @@ def _group_get_grad_bsyms(trace):
 def split_into_forward_and_backward(joint_trace: TraceCtx):
     """split a joint trace for forward and backward into separate ones, including recomputation (aka activation checkpointing)"""
 
+    from thunder.executors.transformer_engine_v2ex import _te_activation_checkpointing_transform
+
+    if _te_activation_checkpointing_transform:
+        joint_trace = _te_activation_checkpointing_transform(joint_trace)
+
     # the joint trace will have the forward computation at the beginning and then the backward computation
     # from how it is constructed.
     # we split the trace:
