@@ -12,6 +12,7 @@ from thunder.torch.langctx import register_method
 from thunder.core.proxies import TensorProxy, AnyProxy
 from thunder.core.transforms import (
     register_grad,
+    put_grad,
     put_grads,
     get_grad,
 )
@@ -132,6 +133,35 @@ register_grad(dtensor_mul_prim, _dtensor_mul_prim_grad)
 @dtensor_torchsymbol(torch.mul, id="dtensor.torch.mul")
 def dtensor_mul(a: TensorLike, b: TensorLike) -> TensorLike:
     return dtensor_mul_prim(a, b)
+
+
+def dtensor_convert_element_type_meta(a, dtype):
+    tdtype = ltorch.to_torch_dtype(dtype)
+    output = run_with_fake_tensor(lambda x, dt: x.to(dt), a, tdtype)
+    local_tensor_proxy = TensorProxy(like=a.local_tensor, dtype=dtype)
+    spec = output._spec
+    spec_proxy = AnyProxy(spec, history=a.history)
+    return create_dtensor_proxy_from_proxies(local_tensor_proxy, spec_proxy, False)
+
+
+dtensor_convert_element_type_prim = make_prim("dtensor_convert_element_type_prim", "dtensor_convert_element_type_prim", meta=dtensor_convert_element_type_meta)
+
+dtensor_convert_element_type_prim_impl = pytorchex.register_operator("dtensor_convert_element_type_prim", like=dtensor_convert_element_type_prim, fn=lambda x, dt: x.to(ltorch.to_torch_dtype(dt)))
+
+pytorchex.register_implementation(dtensor_convert_element_type_prim, dtensor_convert_element_type_prim_impl)
+
+
+def _dtensor_convert_element_type_prim_grad(a: TensorLike, dtype) -> TensorLike:
+    fwd = dtensor_convert_element_type_prim(a, dtype)
+
+    g = get_grad(fwd)
+    g_converted = dtensor_convert_element_type_prim(g, a.dtype)
+    put_grad(a, g_converted)
+
+    return fwd
+
+
+register_grad(dtensor_convert_element_type_prim, _dtensor_convert_element_type_prim_grad)
 
 
 def register_dtensor_torch_and_prims():
