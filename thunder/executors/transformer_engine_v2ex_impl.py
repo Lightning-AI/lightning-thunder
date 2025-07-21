@@ -207,10 +207,10 @@ def _te_linear_grad_transform(a, w, bias):
 
     primal, quantized_a, quantized_w = _te_linear_fwd(a, w, bias, input_quantizer, weight_quantizer)
 
-    (primal,) = _te_fp8_amax_and_scale_update(
+    (primal, quantized_a, quantized_w) = _te_fp8_amax_and_scale_update(
         recipe,
         states=(forward_recipe_state,),
-        tokens=(primal,),
+        tokens=(primal, quantized_a, quantized_w),
     )
 
     grad_out = get_grad(primal)
