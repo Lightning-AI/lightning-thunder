@@ -164,5 +164,34 @@ def _dtensor_convert_element_type_prim_grad(a: TensorLike, dtype) -> TensorLike:
 register_grad(dtensor_convert_element_type_prim, _dtensor_convert_element_type_prim_grad)
 
 
+def dtensor_broadcast_in_dim_meta(a, shape, broadcast_dimensions):
+    output = run_with_fake_tensor(
+        lambda x, s, bd: x.broadcast_to(s), 
+        a, 
+        shape, 
+        broadcast_dimensions
+    )
+    local_tensor_proxy = TensorProxy(like=a.local_tensor, shape=shape)
+    spec = output._spec
+    spec_proxy = AnyProxy(spec, history=a.history)
+    return create_dtensor_proxy_from_proxies(local_tensor_proxy, spec_proxy, a.requires_grad)
+
+
+# TODO: Add gradient for `dtensor_broadcast_in_dim_prim` which requires `sum`.
+dtensor_broadcast_in_dim_prim = make_prim("dtensor_broadcast_in_dim_prim", "dtensor_broadcast_in_dim_prim", meta=dtensor_broadcast_in_dim_meta)
+
+dtensor_broadcast_in_dim_prim_impl = pytorchex.register_operator(
+    "dtensor_broadcast_in_dim_prim", 
+    like=dtensor_broadcast_in_dim_prim, 
+    fn=lambda x, s, bd: x.broadcast_to(s)
+)
+
+pytorchex.register_implementation(dtensor_broadcast_in_dim_prim, dtensor_broadcast_in_dim_prim_impl)
+
+@dtensor_torchsymbol(lambda x, s, bd: x.broadcast_to(s), id="dtensor.broadcast_in_dim")
+def dtensor_broadcast_in_dim(a: TensorLike, shape, broadcast_dimensions) -> TensorLike:
+    return dtensor_broadcast_in_dim_prim(a, shape, broadcast_dimensions)
+
+
 def register_dtensor_torch_and_prims():
     register_function_for_dtensor(torch.mul, ltorch.mul, dtensor_mul, is_method=True)
