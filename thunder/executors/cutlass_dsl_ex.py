@@ -259,7 +259,10 @@ if find_spec("quack") is not None:
         return _cross_entropy(x, target, return_lse=True)
 
     def quack_cross_entropy_aug_forward_meta(a: TensorProxy, target: TensorProxy) -> tuple[TensorProxy, TensorProxy]:
-        return (TensorProxy(like=a, shape=(a.shape[0],)), TensorProxy(like=a, shape=(a.shape[0],)))
+        return (
+            TensorProxy(like=a, shape=(a.shape[0],), dtype=dtypes.float32),
+            TensorProxy(like=a, shape=(a.shape[0],), dtype=dtypes.float32),
+        )
 
     quack_cross_entropy_aug_forward = cutlass_dsl_ex.register_operator(
         "cutlass_quack_cross_entropy_aug_forward",
@@ -429,7 +432,7 @@ if find_spec("quack") is not None:
         weight: TensorProxy,
         eps: float = 1e-6,
     ) -> tuple[TensorProxy, TensorProxy]:
-        return (TensorProxy(like=x), TensorProxy(like=x, shape=(x.shape[0],)))
+        return (TensorProxy(like=x), TensorProxy(like=x, shape=(x.shape[0],), dtype=dtypes.float32))
 
     quack_rms_norm_aug_forward = cutlass_dsl_ex.register_operator(
         "cutlass_quack_rms_norm_aug_forward",
