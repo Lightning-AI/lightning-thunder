@@ -153,11 +153,19 @@ def setup_lora(model: torch.nn.Module) -> torch.nn.Module:
 
     logger.debug("Applying LoRA to model")
 
+    # From: https://github.com/huggingface/peft/blob/main/src/peft/tuners/tuners_utils.py
+    mamba_model_types = {"falcon_h1", "mamba", "mamba2", "falcon_mamba"}
+    if hasattr(model, "config") and getattr(model.config, "model_type", None) in mamba_model_types:
+        exclude_modules = ["out_proj", "conv1d"]
+    else:
+        exclude_modules = []
+
     lora_config = LoraConfig(
         r=16,  # rank
         target_modules="all-linear",  # See: https://huggingface.co/docs/peft/package_reference/lora#peft.LoraConfig.target_modules
         lora_alpha=32,
         task_type="CAUSAL_LM",
+        exclude_modules=exclude_modules,
     )
 
     model = get_peft_model(model, lora_config)
@@ -176,7 +184,6 @@ def setup_lora(model: torch.nn.Module) -> torch.nn.Module:
     return model
 
 
-# TODO broken
 def setup_fsdp2(model: torch.nn.Module) -> torch.nn.Module:
     """Apply FSDP2 to the model with ZeRO-3 style sharding."""
 
@@ -206,16 +213,6 @@ def setup_fsdp2(model: torch.nn.Module) -> torch.nn.Module:
         ),
     )
 
-    # for transformer_block in model.transformer.modules():
-    # from transformers import Block
-    # for transformer_block in model.modules():
-    #     if isinstance(transformer_block, Block):
-    #         _apply_fully_shard(transformer_block)
-
-    # _apply_fully_shard(model.lm_head)
-    # _apply_fully_shard(model.transformer["wte"])
-    # _apply_fully_shard(model.transformer["ln_f"])
-
     # First wrap individual layers
     for name, module in model.named_modules():
         if isinstance(module, (torch.nn.Linear, torch.nn.Embedding)):
@@ -225,8 +222,6 @@ def setup_fsdp2(model: torch.nn.Module) -> torch.nn.Module:
     # Then wrap the entire model
     _apply_fully_shard(model)
 
-    model.to_empty(device=device)
-    model.apply(model._init_weights)
     logger.debug("FSDP2 applied to model")
 
     return model
@@ -424,10 +419,6 @@ def main(args: argparse.Namespace):
     config.max_position_embeddings = args.seq_length
     logger.info(f"Configured model for static shapes with sequence length: {args.seq_length}")
 
-    # Materialize the model on CUDA
-    model = model.to_empty(device=f"cuda:{LOCAL_RANK}")
-    model.apply(lambda m: m.reset_parameters() if hasattr(m, "reset_parameters") else None)
-
     # Handle gradient checkpointing based on user preference
     if hasattr(model, "gradient_checkpointing_enable"):
         if args.gradient_checkpointing:
@@ -469,6 +460,10 @@ def main(args: argparse.Namespace):
                     param.requires_grad = True
                 else:
                     logger.debug(f"LoRA parameter {name} still requires grad")
+
+    # Materialize the model on CUDA
+    model = model.to_empty(device=f"cuda:{LOCAL_RANK}")
+    model.apply(lambda m: m.reset_parameters() if hasattr(m, "reset_parameters") else None)
 
     # Apply compilation if needed
     if args.compile != "eager":
