@@ -171,7 +171,7 @@ if find_spec("quack") is not None:
         return _cross_entropy(x, target, return_lse=False)
 
     def quack_cross_entropy_forward_meta(x: TensorProxy, target: TensorProxy) -> TensorProxy:
-        return TensorProxy(like=x, shape=(x.shape[0],))
+        return TensorProxy(like=x, shape=(x.shape[0],), dtype=dtypes.float32)
 
     quack_cross_entropy_forward = cutlass_dsl_ex.register_operator(
         "cutlass_quack_cross_entropy_forward",
