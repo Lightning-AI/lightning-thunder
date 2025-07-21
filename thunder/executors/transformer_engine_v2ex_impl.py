@@ -376,7 +376,6 @@ class TransformerEngineTransformV2(Transform):
 
 
 def _te_activation_checkpointing_transform(joint_trace: TraceCtx) -> TraceCtx:
-    breakpoint()
     """
     Looks at the joint trace and removes the amax and scale updates that are not needed.
 
