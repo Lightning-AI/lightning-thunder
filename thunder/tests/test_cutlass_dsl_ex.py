@@ -1,3 +1,4 @@
+from __future__ import annotations
 from importlib.util import find_spec
 from typing import TYPE_CHECKING
 
@@ -20,6 +21,8 @@ quack_available = pytest.mark.skipif(
     not is_device_quack_compat() or not _quack_available,
     reason="quack requires SM9.0/10.0",
 )
+_DTYPES = (torch.float16, torch.bfloat16, torch.float32)
+_DTYPE_IDS = tuple(str(a) for a in _DTYPES)
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -41,7 +44,7 @@ def jit_with_cutlass_dsl_ex(fn: Callable[[Any], Any]) -> Callable[[Any], Any]:
 
 @requiresCUDA
 @quack_available
-@pytest.mark.parametrize("dtype", (torch.float16, torch.bfloat16, torch.float32))
+@pytest.mark.parametrize("dtype", _DTYPES, ids=_DTYPE_IDS)
 def test_quack_cross_entropy(dtype: torch.dtype):
     x = torch.randn((128, 1024), dtype=dtype, requires_grad=True)
     ref_x = x.clone().detach()
@@ -60,7 +63,7 @@ def test_quack_cross_entropy(dtype: torch.dtype):
 
 @requiresCUDA
 @quack_available
-@pytest.mark.parametrize("dtype", (torch.float16, torch.bfloat16, torch.float32))
+@pytest.mark.parametrize("dtype", _DTYPES, ids=_DTYPE_IDS)
 def test_quack_softmax(dtype: torch.dtype):
     x = torch.randn((128, 1024), dtype=dtype, requires_grad=True)
     ref_x = x.clone().detach()
@@ -78,7 +81,7 @@ def test_quack_softmax(dtype: torch.dtype):
 
 @requiresCUDA
 @quack_available
-@pytest.mark.parametrize("dtype", (torch.float16, torch.bfloat16, torch.float32))
+@pytest.mark.parametrize("dtype", _DTYPES, ids=_DTYPE_IDS)
 def test_quack_layernorm(dtype: torch.dtype):
     x = torch.randn((128, 1024), dtype=dtype, requires_grad=True)
     ref_x = x.clone().detach()
@@ -93,7 +96,7 @@ def test_quack_layernorm(dtype: torch.dtype):
 
 @requiresCUDA
 @quack_available
-@pytest.mark.parametrize("dtype", (torch.float16, torch.bfloat16, torch.float32))
+@pytest.mark.parametrize("dtype", _DTYPES, ids=_DTYPE_IDS)
 def test_quack_rmsrnorm(dtype: torch.dtype):
     x = torch.randn((128, 1024), dtype=dtype, requires_grad=True)
     ref_x = x.clone().detach()
