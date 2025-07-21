@@ -48,6 +48,8 @@ def jit_with_cutlass_dsl_ex(fn: Callable[[Any], Any]) -> Callable[[Any], Any]:
 def test_quack_cross_entropy(dtype: torch.dtype):
     x = torch.randn((128, 1024), dtype=dtype, requires_grad=True)
     ref_x = x.clone().detach()
+    if dtype != torch.float32:
+        ref_x = ref_x.to(torch.float32)
     targets = torch.randint(0, 128, (128,), dtype=torch.int64)
 
     jitted = jit_with_cutlass_dsl_ex(F.cross_entropy)
