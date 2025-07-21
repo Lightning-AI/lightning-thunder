@@ -72,8 +72,8 @@ def test_quack_softmax(dtype: torch.dtype):
 
     jitted = jit_with_cutlass_dsl_ex(F.softmax)
 
-    expected = F.softmax(ref_x, dim=-1, reduction="none")
-    actual = jitted(x, dim=-1, reduction="none")
+    expected = F.softmax(ref_x, dim=-1)
+    actual = jitted(x, dim=-1)
     torch.testing.assert_close(expected, actual)
 
     # expected_grad = torch.autograd.grad((expected,), (ref_x,))
