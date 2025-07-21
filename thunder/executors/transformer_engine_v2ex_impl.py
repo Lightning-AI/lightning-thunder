@@ -10,7 +10,7 @@ import thunder.torch as ltorch
 from thunder import Transform
 from thunder.core import prims
 from thunder.core.proxies import Proxy, Variable, unvariableify, variableify
-from thunder.core.trace import from_trace, TraceProvenance, TraceTag
+from thunder.core.trace import from_trace, TraceProvenance, TraceTag, TraceCtx
 from thunder.core.transforms import (
     _update_forward_with_new_saved_for_backward,
     _update_backward_with_new_saved_for_backward,
@@ -373,3 +373,57 @@ class TransformerEngineTransformV2(Transform):
         )
 
         return sync_trace
+
+
+def _te_activation_checkpointing_transform(joint_trace: TraceCtx) -> TraceCtx:
+    breakpoint()
+    """
+    Looks at the joint trace and removes the amax and scale updates that are not needed.
+
+    Args:
+        joint_trace: Joint trace after recomputation has been inserted.
+    """
+
+    swapmap: dict[Variable, Proxy] = {}
+
+    # state sym name(unique) and output
+    state_swapmap: dict[str, Proxy] = {}
+
+    new_bsyms = []
+
+    for bsym in joint_trace.bound_symbols:
+        if "get_te_fp8_state" in bsym.sym.name:
+            out_proxy = state_swapmap.get(bsym.sym.name, None)
+            if out_proxy is None:
+                # if it's the first occurance add it
+                state_swapmap[bsym.sym.name] = bsym.output
+            else:
+                swapmap[variableify(bsym.output)] = out_proxy
+                # remove eccessive call to avoid duplicates
+                continue
+
+        new_bsyms.append(bsym.from_bsym_swap_proxies(swapmap))
+
+    new_trace = from_trace(joint_trace)
+    seen_updated_states = set()
+    reversed_bsyms = []
+
+    # remove every occurance of te_fp8_amax_and_scale_update but the last one.
+    for bsym in reversed(new_bsyms):
+        if bsym.sym.name == "te_fp8_amax_and_scale_update":
+            # TODO is it possible to simplify?
+            if all(variableify(state) in seen_updated_states for state in bsym.kwargs["states"]):
+                tokens_to_swap = bsym.kwargs["tokens"]
+                for t, o in zip(tokens_to_swap, bsym.output):
+                    if o is not None:
+                        swapmap[variableify(o)] = t
+                continue
+            else:
+                for state in bsym.kwargs["states"]:
+                    seen_updated_states.add(variableify(state))
+
+        reversed_bsyms.append(bsym)
+
+    new_trace.bound_symbols = [bsym.from_bsym_swap_proxies(swapmap) for bsym in reversed(reversed_bsyms)]
+
+    return new_trace
