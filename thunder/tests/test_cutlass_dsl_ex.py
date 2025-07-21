@@ -86,12 +86,12 @@ def test_quack_softmax(dtype: torch.dtype):
 @pytest.mark.parametrize("dtype", _DTYPES, ids=_DTYPE_IDS)
 def test_quack_layernorm(dtype: torch.dtype):
     x = torch.randn((128, 1024), dtype=dtype, requires_grad=True)
-    ref_x = x.clone().detach()
+    ref_x = x.clone().detach().to(torch.float32)
 
     module = nn.LayerNorm(1024).cuda()
     jitted = jit_with_cutlass_dsl_ex(module)
 
-    expected = module(ref_x)
+    expected = module(ref_x).to(dtype)
     actual = jitted(x)
     torch.testing.assert_close(expected, actual)
 
