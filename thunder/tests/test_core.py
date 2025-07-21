@@ -2865,8 +2865,6 @@ def test_arange_default_dtype():
 
 
 def test_randint_default_dtype():
-    # If any of start, end, or stop are floating-point, the dtype is inferred to be the default dtype, see get_default_dtype().
-    # Otherwise, the dtype is inferred to be torch.int64.
     def fn():
         return torch.randint(0, 5, (2, 3))
 
