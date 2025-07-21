@@ -10,6 +10,7 @@ import textwrap
 import copy
 from itertools import chain
 from looseversion import LooseVersion
+import shutil
 
 import torch
 from thunder.core.pytree import tree_flatten
@@ -1389,6 +1390,21 @@ def save_failing_repros(
             )
 
 
+def create_folder(folder_path: str | PathLike, force_overwrite: bool = False):
+    folder_path = Path(folder_path)
+
+    if folder_path.exists():
+        if not folder_path.is_dir():
+            raise RuntimeError(f"{folder_path} exists and is not a directory.")
+
+        if force_overwrite:
+            shutil.rmtree(folder_path)
+        else:
+            raise RuntimeError(f"Folder {folder_path} already exists. Use force_overwrite=True to overwrite.")
+
+    folder_path.mkdir(parents=True, exist_ok=False)
+
+
 def save_thunderfx_repros(
     fn: Callable,
     folder_path: str | PathLike,
@@ -1398,6 +1414,7 @@ def save_thunderfx_repros(
     save_fusion: bool = False,
     save_trace: bool = False,
     stream: TextIO = sys.stdout,
+    force_overwrite: bool = False,
     **compile_kwargs,
 ):
     """
@@ -1436,10 +1453,7 @@ def save_thunderfx_repros(
     """
     from thunder.dynamo.utils import get_torch_compile_kwargs
 
-    folder_path = Path(folder_path)
-    if folder_path.exists():
-        raise RuntimeError(f"Folder {folder_path} already exists. Please specify a different folder path.")
-    folder_path.mkdir(parents=True)
+    create_folder(folder_path, force_overwrite)
     torch_compile_kwargs = get_torch_compile_kwargs(**compile_kwargs)
     thunder_jit_kwargs = {k: v for k, v in compile_kwargs.items() if k not in torch_compile_kwargs}
     thunderjit = ThunderCompileSpecification(**thunder_jit_kwargs)
