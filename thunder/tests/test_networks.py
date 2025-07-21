@@ -390,7 +390,7 @@ def test_thunderfx_mistral_nemo_small():
     device = torch.device("cuda")
     model.to(device)
     model.train()
-    mdl = thunder.dynamo.thunderfx(model, disable_inplace_copy_check=True)
+    mdl = thunder.dynamo.thunderfx(model)
 
     batch_size = 1
     iid_size = (batch_size, config.max_position_embeddings)
@@ -660,7 +660,7 @@ def test_hf_kvcache():
         model2 = LlamaForCausalLM(LlamaConfig(**config_args)).to(torch.bfloat16).requires_grad_(False).eval()
         model2.load_state_dict(model.state_dict())
 
-    jm = thunder.jit(model, disable_inplace_copy_check=True)
+    jm = thunder.jit(model)
 
     j_static_cache = model._get_cache("static", 1, 128, "cuda", config_args)
     ref_static_cache = model2._get_cache("static", 1, 128, "cuda", config_args)
