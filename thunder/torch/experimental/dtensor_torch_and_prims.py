@@ -144,9 +144,15 @@ def dtensor_convert_element_type_meta(a, dtype):
     return create_dtensor_proxy_from_proxies(local_tensor_proxy, spec_proxy, False)
 
 
-dtensor_convert_element_type_prim = make_prim("dtensor_convert_element_type_prim", "dtensor_convert_element_type_prim", meta=dtensor_convert_element_type_meta)
+dtensor_convert_element_type_prim = make_prim(
+    "dtensor_convert_element_type_prim", "dtensor_convert_element_type_prim", meta=dtensor_convert_element_type_meta
+)
 
-dtensor_convert_element_type_prim_impl = pytorchex.register_operator("dtensor_convert_element_type_prim", like=dtensor_convert_element_type_prim, fn=lambda x, dt: x.to(ltorch.to_torch_dtype(dt)))
+dtensor_convert_element_type_prim_impl = pytorchex.register_operator(
+    "dtensor_convert_element_type_prim",
+    like=dtensor_convert_element_type_prim,
+    fn=lambda x, dt: x.to(ltorch.to_torch_dtype(dt)),
+)
 
 pytorchex.register_implementation(dtensor_convert_element_type_prim, dtensor_convert_element_type_prim_impl)
 
@@ -165,12 +171,7 @@ register_grad(dtensor_convert_element_type_prim, _dtensor_convert_element_type_p
 
 
 def dtensor_broadcast_in_dim_meta(a, shape, broadcast_dimensions):
-    output = run_with_fake_tensor(
-        lambda x, s, bd: x.broadcast_to(s), 
-        a, 
-        shape, 
-        broadcast_dimensions
-    )
+    output = run_with_fake_tensor(lambda x, s, bd: x.broadcast_to(s), a, shape, broadcast_dimensions)
     local_tensor_proxy = TensorProxy(like=a.local_tensor, shape=output._local_tensor.shape)
     spec = output._spec
     spec_proxy = AnyProxy(spec, history=a.history)
@@ -178,15 +179,16 @@ def dtensor_broadcast_in_dim_meta(a, shape, broadcast_dimensions):
 
 
 # TODO: Add gradient for `dtensor_broadcast_in_dim_prim` which requires `sum`.
-dtensor_broadcast_in_dim_prim = make_prim("dtensor_broadcast_in_dim_prim", "dtensor_broadcast_in_dim_prim", meta=dtensor_broadcast_in_dim_meta)
+dtensor_broadcast_in_dim_prim = make_prim(
+    "dtensor_broadcast_in_dim_prim", "dtensor_broadcast_in_dim_prim", meta=dtensor_broadcast_in_dim_meta
+)
 
 dtensor_broadcast_in_dim_prim_impl = pytorchex.register_operator(
-    "dtensor_broadcast_in_dim_prim", 
-    like=dtensor_broadcast_in_dim_prim, 
-    fn=lambda x, s, bd: x.broadcast_to(s)
+    "dtensor_broadcast_in_dim_prim", like=dtensor_broadcast_in_dim_prim, fn=lambda x, s, bd: x.broadcast_to(s)
 )
 
 pytorchex.register_implementation(dtensor_broadcast_in_dim_prim, dtensor_broadcast_in_dim_prim_impl)
+
 
 @dtensor_torchsymbol(lambda x, s, bd: x.broadcast_to(s), id="dtensor.broadcast_in_dim")
 def dtensor_broadcast_in_dim(a: TensorLike, shape, broadcast_dimensions) -> TensorLike:
