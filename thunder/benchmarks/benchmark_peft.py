@@ -1,4 +1,3 @@
-import sys
 import argparse
 import os
 import random
