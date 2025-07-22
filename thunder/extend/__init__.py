@@ -633,7 +633,7 @@ def resolve_executors(executors: None | Sequence[Executor | str]) -> tuple[Execu
     resolved_executors: list[Executor] = []
     for e in executors:
         if isinstance(e, str):
-            ex = get_executor(e, raise_on_missing=True)
+            ex = get_executor(e, verbose=True)
             resolved_executors.append(ex)
         elif isinstance(e, Executor):
             resolved_executors.append(e)
