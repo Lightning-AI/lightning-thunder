@@ -1647,6 +1647,7 @@ def test_spliter_einops():
     assert len(fc._backend.subgraph_infos[0].split_reasons) == 0
     torch.testing.assert_close(out, expected_out)
 
+
 @requiresCUDA
 def test_thunderfx_with_intermediate_output_marked_as_non_differentiable():
     class Model(torch.nn.Module):
