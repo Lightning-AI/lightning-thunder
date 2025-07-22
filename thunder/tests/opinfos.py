@@ -6605,6 +6605,7 @@ def full_sample_generator(op, device, dtype, requires_grad, **kwargs):
         ((4, 4), make_fv()),
         ((8, 1, 6), make_fv()),
         ((8, 7, 5, 1), make_fv()),
+        ((4, 4), make_tensor((), dtype=dtype, device=device)),
     )
 
     for shape, fill_value in cases:

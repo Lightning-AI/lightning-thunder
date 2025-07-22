@@ -168,9 +168,7 @@ def test_chained_inplace(executor, device, dtype):
     for fn in [f, g, h]:
         a = make_tensor((2, 3), dtype=torch.float32, device=device)
         a_ = a.clone().detach()
-        jfn = executor.make_callable(
-            fn, skip_inplace_alias_updates=False, skip_inplace_functionalization=True, disable_inplace_copy_check=True
-        )
+        jfn = executor.make_callable(fn, skip_inplace_alias_updates=False, skip_inplace_functionalization=True)
         actual = jfn(a)
         expected = fn(a_)
         torch.testing.assert_close(actual, expected)
@@ -233,9 +231,7 @@ def test_aliased_input(executor, device, dtype):
     a_ = a.clone().detach()
     b_ = b.clone().detach()
     c_ = c.clone().detach()
-    jfn = executor.make_callable(
-        f, skip_inplace_alias_updates=False, skip_inplace_functionalization=True, disable_inplace_copy_check=True
-    )
+    jfn = executor.make_callable(f, skip_inplace_alias_updates=False, skip_inplace_functionalization=True)
     actual = jfn(a, b, c)
     expected = f(a_, b_, c_)
     torch.testing.assert_close(actual, expected)
@@ -274,9 +270,7 @@ def test_inplace_to_alias_func_args(executor, device, dtype):
     def f(a, b):
         return a.exp_() + b.tanh_(), a
 
-    jitted_f = executor.make_callable(
-        f, skip_inplace_alias_updates=False, skip_inplace_functionalization=True, disable_inplace_copy_check=True
-    )
+    jitted_f = executor.make_callable(f, skip_inplace_alias_updates=False, skip_inplace_functionalization=True)
 
     a = make_tensor(shape, device=device, dtype=torch_dtype)
     b = make_tensor(shape, device=device, dtype=torch_dtype)
@@ -317,9 +311,7 @@ def test_inplace_to_alias_func_args(executor, device, dtype):
     def f(a, b):
         return a.exp() + b.tanh()
 
-    jitted_f = executor.make_callable(
-        f, skip_inplace_alias_updates=False, skip_inplace_functionalization=True, disable_inplace_copy_check=True
-    )
+    jitted_f = executor.make_callable(f, skip_inplace_alias_updates=False, skip_inplace_functionalization=True)
     jitted_f(a, a)
     assert (thunder.cache_hits(jitted_f), thunder.cache_misses(jitted_f)) == (0, 1)
     jitted_f(a, b)
@@ -338,9 +330,7 @@ def test_inplace_to_alias_func_args(executor, device, dtype):
     a = make_tensor(shape, device=device, dtype=torch_dtype)
     a_expected = a.exp().tanh().cosh()
 
-    jitted_f = executor.make_callable(
-        f, skip_inplace_alias_updates=False, skip_inplace_functionalization=True, disable_inplace_copy_check=True
-    )
+    jitted_f = executor.make_callable(f, skip_inplace_alias_updates=False, skip_inplace_functionalization=True)
     out = jitted_f(a, a, a)
 
     torch.testing.assert_close(a, a_expected)
@@ -364,9 +354,7 @@ def test_inplace_to_alias_func_args(executor, device, dtype):
     a = make_tensor(shape, device=device, dtype=torch_dtype)
     out_expected = torch.zeros_like(a)
 
-    jitted_f = executor.make_callable(
-        f, skip_inplace_alias_updates=False, skip_inplace_functionalization=True, disable_inplace_copy_check=True
-    )
+    jitted_f = executor.make_callable(f, skip_inplace_alias_updates=False, skip_inplace_functionalization=True)
     out = jitted_f(a)
 
     torch.testing.assert_close(out, out_expected)

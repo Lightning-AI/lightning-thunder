@@ -10,7 +10,7 @@ import thunder
 import thunder.core.devices as devices
 import thunder.core.dtypes as dtypes
 from thunder.core.pytree import tree_flatten, tree_map
-from thunder.tests.framework import assert_closer, ops, run_snippet, requiresJAX, requiresCUDA, instantiate
+from thunder.tests.framework import assert_closer, ops, run_snippet, requiresJAX, requiresCUDA
 from thunder.tests.opinfos import OpInfo, SampleInput, opinfos
 import thunder.tests.bf16
 
@@ -420,6 +420,23 @@ def test_setitem(requires_grad):
     )
 
 
+@requiresCUDA
+def test_double_setitem():
+    query_states = torch.zeros((1, 40, 16, 96), dtype=torch.bfloat16, device="cuda:0", requires_grad=False)
+    q_nope = torch.ones((1, 40, 16, 64), dtype=torch.bfloat16, device="cuda:0", requires_grad=True)
+    q_pe_1 = torch.zeros((1, 40, 16, 32), dtype=torch.bfloat16, device="cuda:0", requires_grad=True)
+
+    @thunder.jit
+    def computation(query_states, q_nope, q_pe_1):
+        # Perform the in-place setitem operation
+        query_states[:, :, :, :64] = q_nope
+        query_states[:, :, :, 64:] = q_pe_1
+        return None
+
+    computation(query_states, q_nope, q_pe_1)
+    assert query_states.sum() > 1
+
+
 # TODO: Add random operator support to OpInfo
 # https://github.com/Lightning-AI/lightning-thunder/issues/1163
 @requiresCUDA
@@ -556,16 +573,4 @@ def test_softmax_stacklevel():
 
     jfn = thunder.jit(fn)
     a = torch.randn(5, 5, requires_grad=True)  # trigger grad transform
-    assert_close(fn(a), jfn(a))
-
-
-@instantiate()
-def test_full_tensor_value(executor, device, dtype):
-    def fn(a):
-        return torch.full((2,), a)
-
-    jfn = thunder.jit(fn)
-
-    tdtype = dtypes.to_torch_dtype(dtype)
-    a = torch.tensor(1, dtype=tdtype, device=device)
     assert_close(fn(a), jfn(a))
