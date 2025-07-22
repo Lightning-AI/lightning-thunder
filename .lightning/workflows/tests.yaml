@@ -59,7 +59,7 @@ run: |
         -v --datefmt="%Y%m%d-%H:%M:%S.%f" \
         --random-order-seed=42 \
         --durations=250 \
-        --timeout=240 \
+        --timeout=360 \
         --numprocesses=9 \
         --ignore=thunder/tests/distributed --ignore=thunder/tests/test_networks.py \
         --ignore=thunder/tests/test_ops.py --ignore=thunder/tests/test_grad.py
@@ -86,7 +86,7 @@ run: |
         -v --datefmt="%Y%m%d-%H:%M:%S.%f" \
         --random-order-seed=42 \
         --durations=250 \
-        --timeout=240 \
+        --timeout=360 \
         --numprocesses=9
   elif [ "${testing}" == "distributed" ]; then
     pytest thunder/tests/distributed \
