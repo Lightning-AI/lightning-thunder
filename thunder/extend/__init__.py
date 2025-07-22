@@ -563,8 +563,7 @@ def get_executor(name: Any, verbose: bool = False) -> None | Executor:
 
     if verbose:
         raise ValueError(
-            f"No executor found with name '{name}'. "
-            f"Registered executors: {[e.name for e in get_all_executors()]}"
+            f"No executor found with name '{name}'. Registered executors: {[e.name for e in get_all_executors()]}"
         )
     return None
 
