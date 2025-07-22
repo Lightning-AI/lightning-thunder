@@ -14,7 +14,7 @@ from looseversion import LooseVersion
 import torch
 from thunder.core.pytree import tree_flatten
 from thunder.core.utils import sequencify, create_python_callable_from_bsym
-from thunder.dynamo.compiler import thunderfx
+from thunder.dynamo.compiler import thunderfx, _DEFAULT_THUNDER_FUSION_TYPE, _DEFAULT_THUNDERFX_DISABLE_SPLIT_AUTOGRAD
 from thunder.dynamo.utils import (
     _get_example_inputs_from_placeholder,
     _readable,
@@ -1098,6 +1098,12 @@ def analyze_thunder_splits(
     # Dynamo uses lazy generation of the underlying Python code, so we need to
     # force recompilation of the GraphModule before passing it to Thunder.
     recompile_graph(gm)
+
+    thunder_options["fusion_type"] = thunder_options.get("fusion_type", _DEFAULT_THUNDER_FUSION_TYPE)
+    thunder_options["thunderfx_disable_split_autograd"] = thunder_options.get(
+            "thunderfx_disable_split_autograd", _DEFAULT_THUNDERFX_DISABLE_SPLIT_AUTOGRAD
+        )
+
     thunder_jit = partial(jit, **thunder_options, nv_save_fake_inputs=True)
     _, subgraph_info = _splitter(gm, thunder_jit, torch.compile, _unused_sample_args=None)
 
