@@ -1,5 +1,6 @@
 from dataclasses import replace
-from typing import TYPE_CHECKING, Sequence
+from typing import TYPE_CHECKING
+from collections.abc import Sequence
 
 import torch
 
@@ -115,7 +116,9 @@ class ThunderFunction(torch.autograd.Function):
 
         ctx.side_channel = side_channel
         if side_channel is not None:
-            assert is_differentiable_outputs is None, "is_differentiable_outputs is not supported when side_channel is not None"
+            assert is_differentiable_outputs is None, (
+                "is_differentiable_outputs is not supported when side_channel is not None"
+            )
             assert not side_channel
             ctx.side_channel["fw"] = flat_output
             # We must save tensors using ctx.save_for_backward but
@@ -132,7 +135,9 @@ class ThunderFunction(torch.autograd.Function):
             ctx.save_for_backward(*saved_tensors)
 
             assert len(flat_output) == len(is_differentiable_outputs)
-            filter_non_differentiable = [o for o, is_differentiable in zip(flat_output, is_differentiable_outputs) if not is_differentiable]
+            filter_non_differentiable = [
+                o for o, is_differentiable in zip(flat_output, is_differentiable_outputs) if not is_differentiable
+            ]
             ctx.mark_non_differentiable(*filter_non_differentiable)
 
             return flat_output
@@ -221,7 +226,9 @@ def connect_to_autograd(
         side_channel = None
 
     if is_differentiable_outputs is not None:
-        utils.check(disable_split_autograd, lambda: "is_differentiable_outputs is not supported when split_autograd is enabled")
+        utils.check(
+            disable_split_autograd, lambda: "is_differentiable_outputs is not supported when split_autograd is enabled"
+        )
 
     dummy_res = ThunderFunction.apply(
         return_none_instead_of_grads,
