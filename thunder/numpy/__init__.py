@@ -1,8 +1,5 @@
 from numbers import Number
-from typing import Any
 from collections.abc import Callable
-
-import numpy as np
 
 from thunder.core.langctx import langctx, Languages
 from thunder.numpy.langctx import register_method
