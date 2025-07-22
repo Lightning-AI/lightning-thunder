@@ -131,9 +131,9 @@ class ThunderFunction(torch.autograd.Function):
 
             ctx.save_for_backward(*saved_tensors)
 
-            for output, is_differentiable in zip(flat_output, is_differentiable_outputs):
-                if not is_differentiable:
-                    ctx.mark_non_differentiable(output)
+            assert len(flat_output) == len(is_differentiable_outputs)
+            filter_non_differentiable = [o for o, is_differentiable in zip(flat_output, is_differentiable_outputs) if not is_differentiable]
+            ctx.mark_non_differentiable(*filter_non_differentiable)
 
             return flat_output
 
@@ -219,6 +219,9 @@ def connect_to_autograd(
         side_channel = {}
     else:
         side_channel = None
+
+    if is_differentiable_outputs is not None:
+        utils.check(disable_split_autograd, lambda: "is_differentiable_outputs is not supported when split_autograd is enabled")
 
     dummy_res = ThunderFunction.apply(
         return_none_instead_of_grads,
