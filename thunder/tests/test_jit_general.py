@@ -1218,7 +1218,7 @@ def test_complex_backward_custom_autograd():
         z = x + x
         return y, z
 
-    jf = thunder_jit(f, skip_inplace_alias_updates=False, skip_inplace_functionalization=True, fusion_type="dataflow")
+    jf = thunder_jit(f, fusion_type="dataflow")
 
     x = torch.ones(2, 3, device="cuda", requires_grad=True)
 
