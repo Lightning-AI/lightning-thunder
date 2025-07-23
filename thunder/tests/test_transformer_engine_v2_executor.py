@@ -547,6 +547,7 @@ def test_te_activation_checkpointing_correctness(fp8_recipe: recipe.Recipe, comp
     def te_model(x):
         # Enable autocasting for the forward pass
         a = te.checkpoint(te_linear1, x)
+        a = a + a
         return te_linear2(a)
 
     te_sgd_optimizer = torch.optim.SGD(list(te_linear1.parameters()) + list(te_linear2.parameters()))
@@ -554,8 +555,12 @@ def test_te_activation_checkpointing_correctness(fp8_recipe: recipe.Recipe, comp
     te_loss_hist = []
     train_model(te_model, te_sgd_optimizer, te_loss_hist)
 
+    def fn_to_checkpoint(x, w1, b1):
+        a = torch.nn.functional.linear(x, w1, b1)
+        return a + a
+
     def fn(x, w1, w2, b1, b2):
-        o = checkpoint_fn(torch.nn.functional.linear, x, w1, b1)
+        o = checkpoint_fn(fn_to_checkpoint, x, w1, b1)
         return torch.nn.functional.linear(o, w2, b2)
 
     if compile_path == "jit":
