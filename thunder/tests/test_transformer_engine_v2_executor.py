@@ -462,9 +462,15 @@ def test_te_activation_checkpointing_trace(fp8_recipe: recipe.Recipe, compile_pa
 
     checkpoint_fn = partial(torch.utils.checkpoint.checkpoint, use_reentrant=False)
 
+    def fn_to_checkpoint(x, y):
+        a = torch.nn.functional.linear(x, y)
+        a = torch.sin(a)
+        return a
+
     def fn(x, w, w2):
-        a = checkpoint_fn(torch.nn.functional.linear, x, w)
-        return torch.nn.functional.linear(a, w2)
+        a = checkpoint_fn(fn_to_checkpoint, x, w)
+        a = torch.nn.functional.linear(a, w2)
+        return a
 
     if compile_path == "jit":
         cfn = thunder.jit(fn, executors=[transformer_engine_v2_ex], transforms=[TransformerEngineTransformV2()])
@@ -488,8 +494,11 @@ def test_te_activation_checkpointing_trace(fp8_recipe: recipe.Recipe, compile_pa
     saved_tensors = {p.name for p in get_saved_for_backward_tensors(fwd_trace)}
     # only the first linear is checkpointed, so only the first two are saved for backward and the two inputs
     assert len(saved_tensors) == 4
-    # make sure that the inputs for recomputation are passed in the backward as they are
-    assert len({"l_x_", "l_w_"} - saved_tensors) == 0
+    # make sure that only two outputs from the second linear in the forward are passed to the backward
+    if compile_path == "jit":
+        assert len(saved_tensors - {"x", "w" }) == 2
+    else:
+        assert len(saved_tensors - {"l_x_", "l_w_"}) == 2
 
 
 @requiresCUDA
