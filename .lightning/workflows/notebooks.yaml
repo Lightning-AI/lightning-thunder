@@ -33,6 +33,7 @@ run: |
   bash scripts/sanity-check.sh
 
   # list all notebooks in this folder
+  cd notebooks/
   find . -name "*.ipynb" > all.txt
   # drop all "./" from beginning of each line
   sed -i 's/^\.\///' all.txt
