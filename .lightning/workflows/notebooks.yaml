@@ -26,7 +26,7 @@ run: |
   bash scripts/remove-torch-lines.sh requirements/base.txt
   cat requirements/base.txt
   # double check on test requirements
-  pip install -U -r requirements/base.txt -r requirements/notebooks.txt
+  pip install -q -U -r requirements/base.txt -r requirements/notebooks.txt
   # install this package
   python setup.py develop
 
