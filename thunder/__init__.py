@@ -594,7 +594,7 @@ def jit(
             if requires_grad and delay_trace_split:
                 from thunder.transforms.autodiff import split_into_forward_and_backward
 
-                if "transformer_engine_v2" in set(ex.name for ex in cd.executors_list):
+                if "transformer_engine_v2" in {ex.name for ex in cd.executors_list}:
                     from thunder.executors.transformer_engine_v2ex import _te_activation_checkpointing_transform
 
                     if _te_activation_checkpointing_transform:
