@@ -37,7 +37,7 @@ run: |
   set -ex
 
   # drop pt from requirements so not to interfere with the existing one
-  bash .azure/remove-torch-lines.sh requirements/base.txt
+  bash scripts/remove-torch-lines.sh requirements/base.txt
   cat requirements/base.txt
 
   # double check on test requirements
@@ -50,7 +50,7 @@ run: |
   # install this package
   python setup.py develop
 
-  bash .azure/sanity-check.sh
+  bash scripts/sanity-check.sh
 
   if [ "${testing}" == "main" ]; then
     coverage run --source thunder -m \
