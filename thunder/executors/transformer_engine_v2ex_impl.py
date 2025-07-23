@@ -412,7 +412,8 @@ def _te_activation_checkpointing_transform(joint_trace: TraceCtx) -> TraceCtx:
     # which ensures we maintain the most recent scaling information.
     for bsym in reversed(new_bsyms):
         if bsym.sym.name == "te_fp8_amax_and_scale_update":
-            # TODO: Is it possible to simplify this if staement?
+            # TODO: This takes into account multiple states and does remove the update call only
+            # in the case that all the states have been updated already. When update grouping will be added this needs to be revised.
             if all(variableify(state) in seen_updated_states for state in bsym.kwargs["states"]):
                 # All states have already been updated - redirect outputs to original tokens
                 tokens_to_swap = bsym.kwargs["tokens"]
