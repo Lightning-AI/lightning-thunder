@@ -14,6 +14,7 @@ from thunder.core.utils import ProxyDict
 from thunder.executors.pythonex import clear_mutable_collection
 from thunder.extend import Executor, get_always_executors, OperatorExecutor, FusionExecutor
 import thunder.core.prims as prims
+from thunder.core.symbol import BoundSymbolTag, has_tags
 import thunder.core.utils as cutils
 
 if TYPE_CHECKING:
@@ -57,7 +58,7 @@ def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: 
                 ):
                     execution_transform: None | Callable = ex.get_execution_transform(bsym)
                     if execution_transform is not None:
-                        self.add_bsyms_from_function(execution_transform, *bsym.args, **bsym.kwargs)
+                        self.add_bsyms_from_function(execution_transform, *bsym.args, **bsym.kwargs, tags=bsym.tags)
                         return
                     elif isinstance(ex, OperatorExecutor):
                         # NOTE execution_transform is None and the executor is an operator executor
@@ -65,7 +66,7 @@ def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: 
                         # TODO Instead of directly acquiring the symbol from the implmap, we probably
                         #   want to hide this behind a function
                         op = ex.implmap[bsym.sym.id].symbol
-                        self.add_bsyms_from_function(op, *bsym.args, **bsym.kwargs)
+                        self.add_bsyms_from_function(op, *bsym.args, **bsym.kwargs, tags=bsym.tags)
                         return
                     elif isinstance(ex, FusionExecutor):
                         # NOTE execution_transform is None and the executor is a fusion executor
@@ -84,7 +85,11 @@ def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: 
             # No executor found, need to descend
             cutils.check(not bsym.sym.is_prim, lambda: f"Failed to find an executor for bound symbol {bsym=}")
             # OUTPUTS to map
-            self.add_unprocessed_bsyms(bsym.subsymbols[:])
+            sub_bsyms = bsym.subsymbols[:]
+            if has_tags(bsym, {BoundSymbolTag.BACKWARD}):
+                for subbsym in sub_bsyms:
+                    subbsym.tags.add(BoundSymbolTag.BACKWARD)
+            self.add_unprocessed_bsyms(sub_bsyms)
 
     start_time_ns = time.perf_counter_ns()
 
