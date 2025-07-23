@@ -23,6 +23,8 @@ quack_available = pytest.mark.skipif(
 )
 _DTYPES = (torch.float16, torch.bfloat16, torch.float32)
 _DTYPE_IDS = tuple(str(a) for a in _DTYPES)
+_SHAPES = ((128, 1024), (3, 139, 641), (3, 3, 128, 1024))
+_SHAPE_IDS = ("2d", "incompat_3d", "3d")
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -39,7 +41,7 @@ def set_cuda_as_default_device():
 
 
 def jit_with_cutlass_dsl_ex(fn: Callable[[Any], Any]) -> Callable[[Any], Any]:
-    return thunder.jit(fn, executors=[cutlass_dsl_ex])
+    return thunder.jit(fn, executors=[cutlass_dsl_ex], disable_torch_autograd=True)
 
 
 @requiresCUDA
@@ -58,16 +60,13 @@ def test_quack_cross_entropy(dtype: torch.dtype):
     actual = jitted(x, targets, reduction="none")
     torch.testing.assert_close(expected, actual)
 
-    # expected_grad = torch.autograd.grad((expected,), (ref_x, targets), )
-    # actual_grad = torch.autograd.grad((actual,), (x, targets))
-    # torch.testing.assert_close(expected_grad, actual_grad)
-
 
 @requiresCUDA
 @quack_available
+@pytest.mark.parametrize("shape", _SHAPES, ids=_SHAPE_IDS)
 @pytest.mark.parametrize("dtype", _DTYPES, ids=_DTYPE_IDS)
-def test_quack_softmax(dtype: torch.dtype):
-    x = torch.randn((128, 1024), dtype=dtype, requires_grad=True)
+def test_quack_softmax(dtype: torch.dtype, shape: tuple[int, ...]):
+    x = torch.randn(shape, dtype=dtype, requires_grad=True)
     ref_x = x.clone().detach()
 
     jitted = jit_with_cutlass_dsl_ex(F.softmax)
@@ -76,19 +75,16 @@ def test_quack_softmax(dtype: torch.dtype):
     actual = jitted(x, dim=-1)
     torch.testing.assert_close(expected, actual)
 
-    # expected_grad = torch.autograd.grad((expected,), (ref_x,))
-    # actual_grad = torch.autograd.grad((actual,), (x,))
-    # torch.testing.assert_close(expected_grad, actual_grad)
-
 
 @requiresCUDA
 @quack_available
+@pytest.mark.parametrize("shape", _SHAPES, ids=_SHAPE_IDS)
 @pytest.mark.parametrize("dtype", _DTYPES, ids=_DTYPE_IDS)
-def test_quack_layernorm(dtype: torch.dtype):
-    x = torch.randn((128, 1024), dtype=dtype, requires_grad=True)
+def test_quack_layernorm(dtype: torch.dtype, shape: tuple[int, ...]):
+    x = torch.randn(shape, dtype=dtype, requires_grad=True)
     ref_x = x.clone().detach().to(torch.float32)
 
-    module = nn.LayerNorm(1024).cuda()
+    module = nn.LayerNorm(shape[-1]).cuda()
     jitted = jit_with_cutlass_dsl_ex(module)
 
     expected = module(ref_x).to(dtype)
@@ -98,18 +94,15 @@ def test_quack_layernorm(dtype: torch.dtype):
 
 @requiresCUDA
 @quack_available
+@pytest.mark.parametrize("shape", _SHAPES, ids=_SHAPE_IDS)
 @pytest.mark.parametrize("dtype", _DTYPES, ids=_DTYPE_IDS)
-def test_quack_rmsnorm(dtype: torch.dtype):
-    x = torch.randn((128, 1024), dtype=dtype, requires_grad=True)
+def test_quack_rmsnorm(dtype: torch.dtype, shape: tuple[int, ...]):
+    x = torch.randn(shape, dtype=dtype, requires_grad=True)
     ref_x = x.clone().detach()
 
-    module = nn.RMSNorm(1024).cuda()
+    module = nn.RMSNorm(shape[-1]).cuda()
     jitted = jit_with_cutlass_dsl_ex(module)
 
     expected = module(ref_x)
     actual = jitted(x)
     torch.testing.assert_close(expected, actual)
-
-    # expected_grad = torch.autograd.grad((expected,), (ref_x,))
-    # actual_grad = torch.autograd.grad((actual,), (x,))
-    # torch.testing.assert_close(expected_grad, actual_grad)

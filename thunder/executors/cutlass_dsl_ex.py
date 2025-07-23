@@ -83,13 +83,24 @@ def is_device_quack_compat() -> bool:
     return torch.cuda.get_device_capability() in ((9, 0), (10, 0))
 
 
+# NOTE: This constraint comes from https://github.com/Dao-AILab/quack/blob/59631e98/quack/reduction_base.py#L35-L38
+def is_last_dim_divisible(dtype: dtypes.dtype, last_dim_size: int) -> bool:
+    return last_dim_size % (128 // 8 // dtype.bytes) == 0
+
+
 # Register [`quack`](https://github.com/Dao-AILab/quack) ops
 if find_spec("quack") is not None:
     # softmax
     from quack.softmax import _softmax_fwd, _softmax_backward
 
     def quack_softmax_impl(a: torch.Tensor) -> torch.Tensor:
-        return _softmax_fwd(a)
+        original_shape = a.shape
+        if requires_reshpae := a.ndim > 2:
+            a = a.view(-1, original_shape[-1])
+        ret = _softmax_fwd(a)
+        if requires_reshpae:
+            ret = ret.view(original_shape)
+        return ret
 
     def quack_softmax_meta(a: TensorProxy) -> TensorProxy:
         return TensorProxy(like=a)
@@ -101,7 +112,14 @@ if find_spec("quack") is not None:
     )
 
     def quack_softmax_backward(g: torch.Tensor, a: torch.Tensor) -> torch.Tensor:
-        return _softmax_backward(g, a)
+        original_shape = g.shape
+        if requires_reshape := g.ndim > 2:
+            g = g.view(-1, original_shape[-1])
+            a = a.view(-1, original_shape[-1])
+        ret = _softmax_backward(g, a)
+        if requires_reshape:
+            ret = ret.view(original_shape)
+        return ret
 
     def quack_softmax_backward_meta(g: TensorProxy, a: TensorProxy) -> TensorProxy:
         return TensorProxy(like=g)
@@ -123,11 +141,11 @@ if find_spec("quack") is not None:
         last_dims = {-1, a.ndim - 1}
         allowed_dtypes = {None, a.dtype}
         return (
-            a.ndim == 2
-            and dim in last_dims
+            dim in last_dims
             and dtype in allowed_dtypes
             and a.dtype in {dtypes.float16, dtypes.bfloat16, dtypes.float32}
             and is_device_quack_compat()
+            and is_last_dim_divisible(a.dtype, a.shape[-1])
         )
 
     def quack_softmax_transform(
@@ -139,26 +157,42 @@ if find_spec("quack") is not None:
     ) -> TensorProxy:
         return quack_softmax(a)
 
-    def quack_softmax_grad(
-        a: TensorProxy,
-        /,
-        dim: int,
-        *,
-        dtype: thunder_dtype | None = None,
-    ) -> TensorProxy:
-        fwd = quack_softmax(a)
-        g = get_grad(fwd)
-        a_grad = quack_softmax_backward(g, fwd)
-        put_grad(a, a_grad)
+    # NOTE: Softmax backward doesn't look functioning as follows:
+    #     def _engine_run_backward(
+    #         t_outputs: Sequence[Union[torch.Tensor, GradientEdge]],
+    #         *args: Any,
+    #         **kwargs: Any,
+    #     ) -> tuple[torch.Tensor, ...]:
+    #         attach_logging_hooks = log.getEffectiveLevel() <= logging.DEBUG
+    #         if attach_logging_hooks:
+    #             unregister_hooks = _register_logging_hooks_on_whole_graph(t_outputs)
+    #         try:
+    # >           return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+    #                 t_outputs, *args, **kwargs
+    #             )  # Calls into the C++ engine to run the backward pass
+    # E           RuntimeError: element 0 of tensors does not require grad and does not have a grad_fn
+    #
+    # /pytorch/torch/autograd/graph.py:829: RuntimeError
+    # def quack_softmax_grad(
+    #     a: TensorProxy,
+    #     /,
+    #     dim: int,
+    #     *,
+    #     dtype: thunder_dtype | None = None,
+    # ) -> TensorProxy:
+    #     fwd = quack_softmax(a)
+    #     g = get_grad(fwd)
+    #     a_grad = quack_softmax_backward(g, fwd)
+    #     put_grad(a, a_grad)
 
-        return fwd
+    #     return fwd
 
     for ltorch_softmax in (ltorch._softmax, ltorch.softmax):
         cutlass_dsl_ex.register_implementation(
             ltorch_softmax,
             checker=quack_softmax_checker,
             execution_transform=quack_softmax_transform,
-            grad_transform=quack_softmax_grad,
+            # grad_transform=quack_softmax_grad,
         )
 
     # crossentropy
@@ -305,7 +339,13 @@ if find_spec("quack") is not None:
         return_rstd: bool,
         return_mean: bool,
     ) -> torch.Tensor:
-        return layernorm(x, weight, eps, return_rstd=return_rstd, return_mean=return_mean)
+        original_shape = x.shape
+        if requires_reshape := x.ndim > 2:
+            x = x.view(-1, original_shape[-1])
+        ret = layernorm(x, weight, eps, return_rstd=return_rstd, return_mean=return_mean)
+        if requires_reshape:
+            ret = ret.view(original_shape)
+        return ret
 
     def quack_layer_norm_forward_meta(
         x: TensorProxy,
@@ -332,8 +372,7 @@ if find_spec("quack") is not None:
         eps: Number = 1e-5,
     ) -> bool:
         if (
-            a.ndim != 2
-            or a.dtype not in {dtypes.float16, dtypes.bfloat16, dtypes.float32}
+            a.dtype not in {dtypes.float16, dtypes.bfloat16, dtypes.float32}
             or weight.ndim != 1
             or a.shape[-1] != weight.shape[0]
             or weight.dtype not in {dtypes.float32}
@@ -365,7 +404,13 @@ if find_spec("quack") is not None:
         weight: torch.Tensor,
         eps: float = 1e-6,
     ) -> torch.Tensor:
-        return _rmsnorm_fwd(x, weight, eps, return_rstd=False)
+        original_shape = x.shape
+        if requires_reshape := x.ndim > 2:
+            x = x.view(-1, original_shape[-1])
+        ret = _rmsnorm_fwd(x, weight, eps, return_rstd=False)
+        if requires_reshape:
+            ret = ret.view(original_shape)
+        return ret
 
     def quack_rms_norm_forward_meta(
         x: TensorProxy,
@@ -386,7 +431,14 @@ if find_spec("quack") is not None:
         weight: torch.Tensor,
         rstd: torch.Tensor,
     ) -> torch.Tensor:
-        return _rmsnorm_backward(x, weight, grad, rstd)
+        original_shape = grad.shape
+        if requires_reshape := grad.ndim > 2:
+            grad = grad.view(-1, original_shape[-1])
+            x = x.view(-1, original_shape[-1])
+        ret = _rmsnorm_backward(x, weight, grad, rstd)
+        if requires_reshape:
+            ret = ret.view(original_shape)
+        return ret
 
     def quack_rms_norm_backward_meta(
         grad: TensorProxy,
@@ -411,21 +463,26 @@ if find_spec("quack") is not None:
         eps: float | None = None,
     ) -> bool:
         if (
-            a.ndim != 2
-            or weight.ndim != 1
+            weight.ndim != 1
             or a.shape[-1] != weight.shape[0]
             or a.dtype not in {dtypes.float16, dtypes.bfloat16, dtypes.float32}
             or weight.dtype not in {dtypes.float16, dtypes.bfloat16, dtypes.float32}
         ):
             return False
-        return weight is not None and is_device_quack_compat()
+        return weight is not None and is_device_quack_compat() and is_last_dim_divisible(a.dtype, a.shape[-1])
 
     def quack_rms_norm_aug_forward_impl(
         x: torch.Tensor,
         weight: torch.Tensor,
         eps: float = 1e-6,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        return _rmsnorm_fwd(x, weight, eps, return_rstd=True)
+        original_shape = x.shape
+        if requires_reshape := x.ndim > 2:
+            x = x.view(-1, original_shape[-1])
+        fwd, rstd = _rmsnorm_fwd(x, weight, eps, return_rstd=True)
+        if requires_reshape:
+            fwd = fwd.view(original_shape)
+        return fwd, rstd
 
     def quack_rms_norm_aug_forward_meta(
         x: TensorProxy,
@@ -451,6 +508,23 @@ if find_spec("quack") is not None:
             eps = 1e-6
         return quack_rms_norm_aug_forward(a, weight, eps)[0]
 
+    # NOTE: The backward looks not functioning:
+    #     def _engine_run_backward(
+    #         t_outputs: Sequence[Union[torch.Tensor, GradientEdge]],
+    #         *args: Any,
+    #         **kwargs: Any,
+    #     ) -> tuple[torch.Tensor, ...]:
+    #         attach_logging_hooks = log.getEffectiveLevel() <= logging.DEBUG
+    #         if attach_logging_hooks:
+    #             unregister_hooks = _register_logging_hooks_on_whole_graph(t_outputs)
+    #         try:
+    # >           return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+    #                 t_outputs, *args, **kwargs
+    #             )  # Calls into the C++ engine to run the backward pass
+    # E           RuntimeError: One of the differentiated Tensors does not require grad
+    #
+    # /pytorch/torch/autograd/graph.py:829: RuntimeError
+
     def quack_rms_norm_grad(
         a: TensorProxy,
         /,
@@ -471,5 +545,5 @@ if find_spec("quack") is not None:
         ltorch.rms_norm,
         checker=quack_rms_norm_checker,
         execution_transform=quack_rms_norm_transform,
-        grad_transform=quack_rms_norm_grad,
+        # grad_transform=quack_rms_norm_grad,
     )
