@@ -496,7 +496,7 @@ def test_te_activation_checkpointing_trace(fp8_recipe: recipe.Recipe, compile_pa
     assert len(saved_tensors) == 4
     # make sure that only two outputs from the second linear in the forward are passed to the backward
     if compile_path == "jit":
-        assert len(saved_tensors - {"x", "w" }) == 2
+        assert len(saved_tensors - {"x", "w"}) == 2
     else:
         assert len(saved_tensors - {"l_x_", "l_w_"}) == 2
 
