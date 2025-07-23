@@ -600,7 +600,7 @@ def jit(
                     from thunder.executors.transformer_engine_v2ex import _te_activation_checkpointing_transform
 
                     if _te_activation_checkpointing_transform:
-                        joint_trace = _te_activation_checkpointing_transform(computation_trc)
+                        computation_trc = _te_activation_checkpointing_transform(computation_trc)
 
                 computation_trc, backward_trc = split_into_forward_and_backward(computation_trc)
 
