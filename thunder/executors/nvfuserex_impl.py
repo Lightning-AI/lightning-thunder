@@ -536,7 +536,7 @@ class FusionDefinitionWrapper:
         if self.store_inputs:
             self.last_inputs = args
 
-        if any(isinstance(t, torch.distributed.tensor.DTensor) for t in args):
+        if IS_TORCH_DISTRIBUTED_AVAILABLE and any(isinstance(t, torch.distributed.tensor.DTensor) for t in args):
             with annotate_for_profile(self.name):
                 output = nvfd.execute_with_dtensors(fd, args)
                 return output
