@@ -377,28 +377,28 @@ class TransformerEngineTransformV2(Transform):
 
 def _te_activation_checkpointing_transform(joint_trace: TraceCtx) -> TraceCtx:
     """
-    Looks at the joint trace and removes the amax and scale updates that are not needed.
+    Optimizes FP8 state management in activation checkpointing by removing
+    redundant amax/scale updates, keeping only the final update for each state.
 
     Args:
         joint_trace: Joint trace after recomputation has been inserted.
     """
 
     swapmap: dict[Variable, Proxy] = {}
-
-    # state sym name(unique) and output
     state_swapmap: dict[str, Proxy] = {}
-
     new_bsyms = []
 
+    # Find the first call for every FP8 state and reuse it throughout the trace.
+    # Since get_te_fp8_state symbol names are unique, we use them to identify duplicates.
     for bsym in joint_trace.bound_symbols:
         if "get_te_fp8_state" in bsym.sym.name:
             out_proxy = state_swapmap.get(bsym.sym.name, None)
             if out_proxy is None:
-                # if it's the first occurance add it
+                # First occurrence - save it for reuse
                 state_swapmap[bsym.sym.name] = bsym.output
             else:
                 swapmap[variableify(bsym.output)] = out_proxy
-                # remove eccessive call to avoid duplicates
+                # Remove excessive duplicate calls to avoid redundant state creation
                 continue
 
         new_bsyms.append(bsym.from_bsym_swap_proxies(swapmap))
@@ -407,22 +407,27 @@ def _te_activation_checkpointing_transform(joint_trace: TraceCtx) -> TraceCtx:
     seen_updated_states = set()
     reversed_bsyms = []
 
-    # remove every occurance of te_fp8_amax_and_scale_update but the last one.
+    # Optimize amax/scale updates by keeping only the final update for each state.
+    # We iterate in reverse order so the "first" occurrence we keep is actually the last one,
+    # which ensures we maintain the most recent scaling information.
     for bsym in reversed(new_bsyms):
         if bsym.sym.name == "te_fp8_amax_and_scale_update":
-            # TODO is it possible to simplify?
+            # TODO: Is it possible to simplify this if staement?
             if all(variableify(state) in seen_updated_states for state in bsym.kwargs["states"]):
+                # All states have already been updated - redirect outputs to original tokens
                 tokens_to_swap = bsym.kwargs["tokens"]
                 for t, o in zip(tokens_to_swap, bsym.output):
                     if o is not None:
                         swapmap[variableify(o)] = t
                 continue
             else:
+                # Mark these states as having been updated
                 for state in bsym.kwargs["states"]:
                     seen_updated_states.add(variableify(state))
 
         reversed_bsyms.append(bsym)
 
+    # Reverse the trace back to original order and apply proxy updates from removed amax calls
     new_trace.bound_symbols = [bsym.from_bsym_swap_proxies(swapmap) for bsym in reversed(reversed_bsyms)]
 
     return new_trace
