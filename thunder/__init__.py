@@ -488,11 +488,13 @@ def jit(
                 [int(i) for i in s.split(",")] for s in alias_tensor_indices_str.split("-") if s != ""
             ]
 
-            if not compile_options.get("skip_inplace_alias_updates", True):
-                computation_traces.append(insert_alias_updates(computation_trc, alias_tensor_indices))
-                computation_trc = computation_traces[-1]
+            if not compile_options.get("skip_inplace_alias_updates", False):
+                aliased_trace = insert_alias_updates(computation_trc, alias_tensor_indices)
+                if aliased_trace is not computation_trc:
+                    computation_traces.append(aliased_trace)
+                    computation_trc = computation_traces[-1]
 
-            if not compile_options.get("skip_inplace_functionalization", False):
+            if not compile_options.get("skip_inplace_functionalization", True):
                 orig_to_view_swap_map = check_inplace_to_views(computation_trc)
                 computation_traces.extend(
                     functionalize_inplace_ops(
@@ -594,7 +596,7 @@ def jit(
             if requires_grad and delay_trace_split:
                 from thunder.transforms.autodiff import split_into_forward_and_backward
 
-                if "transformer_engine_v2" in set(ex.name for ex in cd.executors_list):
+                if "transformer_engine_v2" in {ex.name for ex in cd.executors_list}:
                     from thunder.executors.transformer_engine_v2ex import _te_activation_checkpointing_transform
 
                     if _te_activation_checkpointing_transform:
@@ -688,8 +690,8 @@ def jit(
         # aliases wouldn't matter, thus it'd be better to nullify this entry in such cases.
         # It however would require the functionalized computation trace to interact with `cache_info`,
         # which seems to break the consistency of cache_info, leading to a failure in cache_info check.
-        if not compile_options.get("skip_inplace_alias_updates", True) or not compile_options.get(
-            "skip_inplace_functionalization", False
+        if not compile_options.get("skip_inplace_alias_updates", False) or not compile_options.get(
+            "skip_inplace_functionalization", True
         ):
             cache_info["alias_tensor_indices"] = _alias_tensor_of_args_kwargs(*args, **kwargs)
 

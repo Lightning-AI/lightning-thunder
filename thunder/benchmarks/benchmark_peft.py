@@ -3,6 +3,7 @@ import argparse
 import os
 import random
 import time
+import logging
 from contextlib import contextmanager
 from datetime import timedelta
 from looseversion import LooseVersion
@@ -12,7 +13,6 @@ import torch.distributed as torch_dist
 from torch.nn.attention import SDPBackend, sdpa_kernel
 
 from tqdm import tqdm
-from loguru import logger
 
 from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokenizer, WordpieceTokenizer
 from peft import LoraConfig, get_peft_model
@@ -33,8 +33,14 @@ if WORLD_SIZE > 1:
 os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = "60"  # Increase timeout to 60 seconds
 os.environ["HF_HUB_ETAG_TIMEOUT"] = "60"  # Increase timeout to 60 seconds
 
+logger: logging.Logger = logging.getLogger("peft_benchmark")
+handler = logging.StreamHandler()
+fmt = logging.Formatter("%(asctime)-8s %(levelname)-4s %(message)s", datefmt="%y-%m-%d %H:%M:%S")
+handler.setFormatter(fmt)
+logger.addHandler(handler)
 
-# Configure loguru to only log on LOCAL_RANK 0
+
+# Filter to only log on LOCAL_RANK 0
 def rank_filter(record):
     return LOCAL_RANK == 0
 
@@ -361,12 +367,8 @@ def main(args: argparse.Namespace):
     """Main training function."""
 
     # Setup logger and log level
-    logger.remove()  # Remove default handler
-    logger.add(
-        sys.stdout,
-        filter=rank_filter,
-        level="DEBUG" if args.verbose else "INFO",
-    )
+    logger.addFilter(rank_filter)
+    logger.setLevel(logging.DEBUG if args.verbose else logging.INFO)
 
     logger.info(args)
     logger.debug(f"Initialized process group: rank {GLOBAL_RANK}, local rank {LOCAL_RANK}, world size {WORLD_SIZE}")
