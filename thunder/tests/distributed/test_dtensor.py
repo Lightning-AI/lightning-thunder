@@ -25,7 +25,8 @@ from thunder.tests.distributed.helper import executors_map
 functions_to_test = {
     "torch.mul": lambda x, w: torch.mul(x, w),
     "x.mul(w)": lambda x, w: torch.Tensor.mul(x, w),
-    "x * w": lambda x, w: x * w,
+    # skipping due to syntax error https://github.com/Lightning-AI/lightning-thunder/issues/2355
+    # "x * w": lambda x, w: x * w,
 }
 
 
