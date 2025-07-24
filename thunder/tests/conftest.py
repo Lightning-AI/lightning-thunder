@@ -2,6 +2,20 @@ import pytest
 import pytest_benchmark
 from thunder.dynamo.compiler_graph_benchmark import GRAPH_BY_GRAPH_BENCHMARK_PARAMS_KEYS
 
+import torch
+
+try:
+    import nvfuser
+except ImportError:
+    nvfuser = None
+
+
+@pytest.fixture(autouse=True)
+def test_cleanup(request):
+    yield
+    if nvfuser is not None:
+        nvfuser.FusionCache.reset()
+
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_benchmark_group_stats(config, benchmarks, group_by):
