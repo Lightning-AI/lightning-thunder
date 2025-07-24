@@ -25,8 +25,7 @@ from thunder.tests.distributed.helper import executors_map
 functions_to_test = {
     "torch.mul": lambda x, w: torch.mul(x, w),
     "x.mul(w)": lambda x, w: torch.Tensor.mul(x, w),
-    # skipping due to syntax error https://github.com/Lightning-AI/lightning-thunder/issues/2355
-    # "x * w": lambda x, w: x * w,
+    "x * w": lambda x, w: x * w,
 }
 
 
@@ -35,6 +34,7 @@ functions_to_test = {
     "DTensor test requires CUDA and NCCL `torch.distributed` backend",
 )
 class DTensorTest(DistributedParallelTestCase):
+    @pytest.mark.skip(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2355")
     @common_utils.parametrize("executor, fn_key", product(tuple(executors_map.keys()), functions_to_test.keys()))
     def test_dtensor_basic_op(self, executor, fn_key):
         num_devices = self.world_size
@@ -106,6 +106,7 @@ class DTensorTest(DistributedParallelTestCase):
         with pytest.raises(AssertionError):
             tmodel(in_dtensor, w)
 
+    @pytest.mark.skip(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2355")
     def test_dtensor_incorrect_cotangent(self):
         num_devices = self.world_size
         mesh = DeviceMesh("cuda", list(range(num_devices)))
