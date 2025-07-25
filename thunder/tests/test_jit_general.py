@@ -1686,9 +1686,6 @@ def test_partial_method():
     ]
 
     for fn in test_cases:
-        import inspect
-
-        print("testing", inspect.getsource(fn))
         jfn = thunder.jit(fn)
         print(fn(), jfn())
         assert fn() == jfn()
