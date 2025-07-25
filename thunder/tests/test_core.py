@@ -2158,7 +2158,6 @@ def test_cse(executor, device, _):
 
     x, y = (make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2))
     initial_trace = thunder.trace()(func, x, y, device)
-    print(initial_trace)
     compiled_func = thunder.jit(
         initial_trace.python_callable(),
         executors=executor.executors_list(),
