@@ -273,7 +273,7 @@ def test_validate_executors():
     assert thunder.resolve_executors((pythonex, pytorch_executor)) == (pythonex, pytorch_executor)
     assert thunder.resolve_executors(("python", "torch")) == (pythonex, pytorch_executor)
     assert thunder.resolve_executors(("python", pytorch_executor)) == (pythonex, pytorch_executor)
-    with pytest.raises(ValueError, match=re.compile("Expected an Executor or the name of a registered Executor")):
+    with pytest.raises(ValueError, match=re.compile("No executor found with name 'foo'")):
         assert thunder.resolve_executors(("python", "foo", pytorch_executor, "bar"))
 
 
