@@ -1,5 +1,6 @@
 from dataclasses import replace
 from typing import TYPE_CHECKING
+from collections.abc import Sequence
 
 import torch
 
@@ -84,6 +85,7 @@ class ThunderFunction(torch.autograd.Function):
         side_channel,
         saved_tensors,
         saved_other,
+        is_differentiable_outputs,
         flat_output,
         *flat_args,
     ):
@@ -114,6 +116,9 @@ class ThunderFunction(torch.autograd.Function):
 
         ctx.side_channel = side_channel
         if side_channel is not None:
+            assert is_differentiable_outputs is None, (
+                "is_differentiable_outputs is not supported when side_channel is not None"
+            )
             assert not side_channel
             ctx.side_channel["fw"] = flat_output
             # We must save tensors using ctx.save_for_backward but
@@ -123,7 +128,18 @@ class ThunderFunction(torch.autograd.Function):
             ctx.side_channel["tensors_to_save"] = saved_tensors
             return torch.randn(1, device="meta", requires_grad=True)
         else:
+            if is_differentiable_outputs is None:
+                # Default to original behavior of marking all outputs as differentiable.
+                is_differentiable_outputs = tuple(True for _ in flat_output)
+
             ctx.save_for_backward(*saved_tensors)
+
+            assert len(flat_output) == len(is_differentiable_outputs)
+            filter_non_differentiable = [
+                o for o, is_differentiable in zip(flat_output, is_differentiable_outputs) if not is_differentiable
+            ]
+            ctx.mark_non_differentiable(*filter_non_differentiable)
+
             return flat_output
 
     # NOTE: If `torch.autograd.function.once_differentiable` is to be removed,
@@ -162,11 +178,11 @@ class ThunderFunction(torch.autograd.Function):
         # TODO(crcrpar): Remove if-else once `dist_prims.stash_grad_for_fsdp` starts to return `None`
         # NOTE(crcrpar): In fsdp no-sync, unsharded gradients are attached and accumulated to their parameters as the attr of `_thunder_fsdp_unsharded_grad` in order to avoid shape mismatch of a param and its grad. When exiting the no_sync context, the accumulated, unsharded gradients are reduce-scattered into the attr of `grad` and `_thunder_fsdp_unsharded_grad` is removed.
         if not ctx.return_none_instead_of_grads:
-            return (None, None, None, None, None, None, *grads)
+            return (None, None, None, None, None, None, None, *grads)
         else:
             n_grads = len(grads)
             del grads
-            return (None, None, None, None, None, None, *([None] * n_grads))
+            return (None, None, None, None, None, None, None, *([None] * n_grads))
 
 
 class ThunderOutputFunction(torch.autograd.Function):
@@ -197,6 +213,7 @@ def connect_to_autograd(
     saved_other,
     return_none_instead_of_grads,
     disable_split_autograd,
+    is_differentiable_outputs: Sequence[bool] | None,
 ):
     # PyTorch seems to not like our side channel trick when capturing graphs
     # through dynamo and using cuda graphs.
@@ -208,12 +225,18 @@ def connect_to_autograd(
     else:
         side_channel = None
 
+    if is_differentiable_outputs is not None:
+        utils.check(
+            disable_split_autograd, lambda: "is_differentiable_outputs is not supported when split_autograd is enabled"
+        )
+
     dummy_res = ThunderFunction.apply(
         return_none_instead_of_grads,
         backward_fn,
         side_channel,
         saved_tensors,
         saved_other,
+        is_differentiable_outputs,
         flat_output,
         *flat_args,
     )
