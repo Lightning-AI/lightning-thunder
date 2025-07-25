@@ -20,10 +20,11 @@ def gpu_memory(request):
     if torch.cuda.is_available():
         gpu_mem = torch.cuda.max_memory_allocated() / 2**30
         gpu_mem_limit = request.config.getoption("--gpu-mem-limit")
+        gpu_mem_use = gpu_mem - gpu_mem_before
         if gpu_mem_limit:
-            assert gpu_mem - gpu_mem_before <= 2, (
-                f"test needs {gpu_mem - gpu_mem_before:.2f}GB VRAM, only 2GB allowed"
-            )  # allow at most 2GB
+            assert gpu_mem_use <= gpu_mem_limit, (
+                f"test needs {gpu_mem - gpu_mem_before:.2f}GB VRAM, only {gpu_mem_limit:.2f}GB allowed"
+            )
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats()
 
