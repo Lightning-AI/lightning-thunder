@@ -10,6 +10,7 @@ from collections.abc import Callable
 from collections.abc import Sequence
 from enum import Enum
 from functools import partial, reduce, wraps
+from looseversion import LooseVersion
 from numbers import Number
 from types import NoneType, ModuleType
 from typing import Any, overload
@@ -5620,9 +5621,11 @@ def linear(a: TensorLike, w: TensorLike, /, bias: None | TensorLike = None) -> T
     return prims.linear(a, w, bias)
 
 
-@torchsymbol(torch._grouped_mm)
-def _grouped_mm(a: TensorProxy, b: TensorProxy, offs: TensorProxy) -> TensorProxy:
-    return prims._grouped_mm(a, b, offs)
+if LooseVersion(torch.__version__) >= "2.8":
+
+    @torchsymbol(torch._grouped_mm)
+    def _grouped_mm(a: TensorProxy, b: TensorProxy, offs: TensorProxy) -> TensorProxy:
+        return prims._grouped_mm(a, b, offs)
 
 
 @torchsymbol(torch.logsumexp, is_method=True)

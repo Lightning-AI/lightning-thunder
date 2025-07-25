@@ -7251,11 +7251,6 @@ if LooseVersion(torch.__version__) >= "2.8":
                 executors=("torch",),
                 active_if=(not torch.cuda.is_available() or torch.cuda.get_device_capability() < (9, 0)),
             ),
-            DecorateInfo(
-                pytest.mark.skip,
-                "test_core_vs_torch_consistency",
-                executors=("nvfuser",),
-            ),
         ),
         no_fallback_with_double_inputs=True,
     )
