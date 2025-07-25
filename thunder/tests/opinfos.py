@@ -7224,8 +7224,9 @@ def _grouped_mm_sample_generator(op, device, dtype, requires_grad, **kwargs):
     a = make_tensor((M, K), device=device, dtype=dtype, low=0, high=1.0, requires_grad=False)
     b = make_tensor((G, K, N), device=device, dtype=dtype, low=0, high=1.0, requires_grad=False)
 
-    offests = [[0, 16], [0, 32]]
-    for offset in offests:
+    # torch._grouped_mm, the reference implementation, requires offsets to be
+    # multiples of 16. nvFuser doesn't have that restriction.
+    for offset in [[0, 16], [16, 16]]:
         c = torch.tensor(offset, device=device, dtype=torch.int32)
         bfloat16_comp = TorchTensorComp(atol=1e-1, rtol=1e-1)
         si = SampleInput(a, b, c)
