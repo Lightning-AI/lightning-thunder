@@ -5621,15 +5621,8 @@ def linear(a: TensorLike, w: TensorLike, /, bias: None | TensorLike = None) -> T
 
 
 @torchsymbol(torch._grouped_mm)
-def _grouped_mm(
-    a: TensorProxy,
-    b: TensorProxy,
-    offs: TensorProxy = None,  # Unused in meta, but type-checked
-    bias: TensorProxy = None,
-    dtype=None,
-) -> TensorProxy:
-    """Thunder support for torch._grouped_mm, accepts 2D or 3D tensors."""
-    return prims._grouped_mm(a, b, offs, bias, dtype)
+def _grouped_mm(a: TensorProxy, b: TensorProxy, offs: TensorProxy) -> TensorProxy:
+    return prims._grouped_mm(a, b, offs)
 
 
 @torchsymbol(torch.logsumexp, is_method=True)

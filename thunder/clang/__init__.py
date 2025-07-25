@@ -2048,9 +2048,6 @@ def argsort(a: TensorProxy, /, dim: None | int = None, descending: bool = False,
 def _grouped_mm(
     a: TensorProxy,
     b: TensorProxy,
-    offsets: TensorProxy = None,  # Unused in meta, but type-checked
-    bias: TensorProxy = None,
-    dtype=None,
+    offsets: TensorProxy,
 ) -> TensorProxy:
-    """Thunder support for torch._grouped_mm, accepts 2D or 3D tensors."""
-    return prims.grouped_mm(a, b, offsets, bias, dtype)
+    return prims.grouped_mm(a, b, offsets)

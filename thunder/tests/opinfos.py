@@ -7227,7 +7227,6 @@ def _grouped_mm_sample_generator(op, device, dtype, requires_grad, **kwargs):
     offests = [[0, 16], [0, 32]]
     for offset in offests:
         c = torch.tensor(offset, device=device, dtype=torch.int32)
-        c = torch.tensor(offset, device=device, dtype=torch.int32)
         bfloat16_comp = TorchTensorComp(atol=1e-1, rtol=1e-1)
         si = SampleInput(a, b, c)
         si.set_comparator(bfloat16_comp)
@@ -7246,15 +7245,13 @@ _grouped_mm_opinfo = OpInfo(
             pytest.mark.skip,
             "test_core_vs_torch_consistency",
             executors=("torch",),
-            active_if=(not torch.cuda.is_available())
-            or (torch.cuda.is_available() and torch.cuda.get_device_capability() < (8, 9)),
+            active_if=(not torch.cuda.is_available() or torch.cuda.get_device_capability() < (9, 0)),
         ),
         DecorateInfo(
             pytest.mark.skip,
             "test_core_vs_torch_consistency",
             executors=("nvfuser",),
-            active_if=(not torch.cuda.is_available())
-            or (torch.cuda.is_available() and torch.cuda.get_device_capability() < (9, 0)),
+            active_if=(not torch.cuda.is_available() or torch.cuda.get_device_capability() < (9, 0)),
         ),
     ),
     no_fallback_with_double_inputs=True,

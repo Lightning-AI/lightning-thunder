@@ -3764,21 +3764,18 @@ def sort_meta(a: TensorProxy, /, dim: int, descending: Number, sorted: Number) -
 sort = make_prim(PrimIDs.SORT, "sort", meta=sort_meta)
 
 
-def _grouped_mm_meta(
-    a: TensorProxy, b: TensorProxy, offs: None | TensorProxy = None, bias: None | TensorProxy = None, dtype=None
-) -> TensorProxy:
+def _grouped_mm_meta(a: TensorProxy, b: TensorProxy, offs: TensorProxy) -> TensorProxy:
     """Meta function for _grouped_mm primitive.
 
-    Accepts 2D or 3D tensors:
-      - If 2D: performs a regular matmul (m, k) x (k, n) -> (m, n)
-      - If 3D: performs grouped matmul (g, m, k) x (g, k, n) -> (g, m, n)
+    Accepts the following shape combinations:
+    1. (m, k) x (k, n) -> (groups, m, n)
+    2. (groups, m, k) x (k, n) -> (m, n)
+    3. (m, k) x (groups, k, n) -> (m, n)
 
     Args:
         a: Input tensor of shape (groups, m, k) or (m, k)
         b: Input tensor of shape (groups, k, n) or (k, n)
-        offs: TensorProxy, offset tensor (unused in meta, but type-checked)
-        bias: TensorProxy, bias tensor (unused in meta, but type-checked)
-        dtype: Optional dtype for output (unused in meta, but type-checked)
+        offs: Offset tensor of shape (groups,)
 
     Returns:
         TensorProxy with shape (groups, m, n) or (m, n)
@@ -3786,34 +3783,34 @@ def _grouped_mm_meta(
     # Validate types
     utils.check_type(a, TensorProxy)
     utils.check_type(b, TensorProxy)
-    if offs is not None:
-        utils.check_type(offs, TensorProxy)
-    if bias is not None:
-        utils.check_type(bias, TensorProxy)
+    utils.check_type(offs, TensorProxy)
 
     # Accept 2D or 3D tensors
     utils.check(a.ndim in (2, 3), lambda: f"Expected a to have 2 or 3 dimensions, got {a.ndim}")
     utils.check(b.ndim in (2, 3), lambda: f"Expected b to have 2 or 3 dimensions, got {b.ndim}")
 
-    # 2D case: regular matmul
-    if a.ndim == 2 and b.ndim == 3:
-        utils.check(a.shape[1] == b.shape[1], lambda: f"Inner dimension mismatch: {a.shape[2]} vs {b.shape[1]}")
+    utils.check(offs.ndim == 1, lambda: f"`offs` must be a vector, got shape {offs.shape}")
+    if a.ndim == 2 and b.ndim == 2:
+        utils.check(a.shape[1] == b.shape[0], lambda: f"Inner dimension mismatch: {a.shape} vs {b.shape}")
+        out_shape = (offs.shape[0], a.shape[0], b.shape[1])
+    if a.ndim == 3 and b.ndim == 2:
+        utils.check(a.shape[2] == b.shape[1], lambda: f"Inner dimension mismatch: {a.shape} vs {b.shape}")
+        utils.check(a.shape[0] == offs.shape[0], lambda: f"Group count mismatch: {a.shape} vs {offs.shape}")
+        out_shape = (a.shape[1], b.shape[1])
+    elif a.ndim == 2 and b.ndim == 3:
+        utils.check(a.shape[1] == b.shape[1], lambda: f"Inner dimension mismatch: {a.shape} vs {b.shape}")
+        utils.check(b.shape[0] == offs.shape[0], lambda: f"Group count mismatch: {b.shape} vs {offs.shape}")
         out_shape = (a.shape[0], b.shape[2])
-    # 3D case: grouped matmul
-    elif a.ndim == 3 and b.ndim == 3:
-        utils.check(a.shape[0] == b.shape[0], lambda: f"Group count mismatch: {a.shape[0]} vs {b.shape[0]}")
-        utils.check(a.shape[2] == b.shape[1], lambda: f"Inner dimension mismatch: {a.shape[2]} vs {b.shape[1]}")
-        out_shape = (a.shape[0], a.shape[1], b.shape[2])
     else:
-        raise AssertionError(
-            f"grouped_mm expects both inputs to be 2D or both to be 3D, got shapes {a.shape} and {b.shape}"
-        )
+        utils.check(False, lambda: f"Unexpected shape combination: {a.shape} and {b.shape}")
 
-    # Validate dtype and device
     utils.check_same_dtype(a, b)
+    utils.check(a.dtype in dtypes.float_math_dtypes, lambda: f"`a` must be 16-bit float or higher, got {a.dtype}")
+    utils.check(utils.is_integer_dtype(offs.dtype), lambda: f"`offs` must be integers, got {offs.dtype}")
+
     utils.check_same_device(a, b)
 
-    return TensorProxy(like=a, shape=out_shape, dtype=dtype if dtype is not None else a.dtype)
+    return TensorProxy(like=a, shape=out_shape, dtype=a.dtype)
 
 
 _grouped_mm = make_prim(

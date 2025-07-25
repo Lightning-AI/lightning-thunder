@@ -1819,10 +1819,15 @@ _register_implementation(prims.embedding, embedding, checker=_always_executable)
 _register_implementation(prims.embedding_backward, embedding_backward, checker=_always_executable)
 _register_implementation(prims.linear, linear, checker=_always_executable)
 
+
+def _grouped_mm_checker(a: TensorProxy, b: TensorProxy, offs: TensorProxy) -> bool:
+    return a.dtype == dtypes.bfloat16 and b.dtype == dtypes.bfloat16 and offs.dtype == dtypes.int32
+
+
 _register_implementation(ltorch.baddbmm, baddbmm, checker=_always_executable)
 _register_implementation(ltorch.bmm, bmm, checker=_always_executable)
-_register_implementation(prims._grouped_mm, _grouped_mm, checker=_always_executable)
-_register_implementation(ltorch._grouped_mm, _grouped_mm, checker=_always_executable)
+_register_implementation(prims._grouped_mm, _grouped_mm, checker=_grouped_mm_checker)
+_register_implementation(ltorch._grouped_mm, _grouped_mm, checker=_grouped_mm_checker)
 _register_implementation(ltorch.convolution, checker=_always_executable, execution_transform=_convolution_transform)
 _register_implementation(ltorch.conv1d, conv1d, checker=_always_executable)
 _register_implementation(ltorch.conv2d, conv2d, checker=_always_executable)

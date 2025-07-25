@@ -3193,10 +3193,11 @@ def _grouped_mm_check_(
     a: TensorProxy,
     b: TensorProxy,
     offs: TensorProxy,
-    bias: TensorProxy = None,
-    out_dtype=None,
 ) -> bool:
-    return True
+    if not are_supported_tensors(a, b, offs):
+        return False
+
+    return nvfuser_version() >= LooseVersion("0.2.28")
 
 
 def _grouped_mm_transform(
