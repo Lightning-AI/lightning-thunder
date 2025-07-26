@@ -7249,6 +7249,7 @@ if LooseVersion(torch.__version__) >= "2.8":
                 pytest.mark.skip,
                 "test_core_vs_torch_consistency",
                 executors=("torch",),
+                active_if=(not torch.cuda.is_available() or torch.cuda.get_device_capability() < (9, 0)),
             ),
         ),
         no_fallback_with_double_inputs=True,
