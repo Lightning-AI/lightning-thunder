@@ -3810,7 +3810,7 @@ def _grouped_mm_meta(a: TensorProxy, b: TensorProxy, offs: TensorProxy) -> Tenso
 
     utils.check_same_device(a, b)
 
-    return TensorProxy(like=a, shape=out_shape, dtype=a.dtype)
+    return TensorProxy(like=a, shape=out_shape)
 
 
 _grouped_mm = make_prim(
