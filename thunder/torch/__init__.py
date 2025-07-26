@@ -5624,7 +5624,19 @@ def linear(a: TensorLike, w: TensorLike, /, bias: None | TensorLike = None) -> T
 if LooseVersion(torch.__version__) >= "2.8":
 
     @torchsymbol(torch._grouped_mm)
-    def _grouped_mm(a: TensorProxy, b: TensorProxy, offs: TensorProxy) -> TensorProxy:
+    def _grouped_mm(
+        a: TensorProxy,
+        b: TensorProxy,
+        offs: None | TensorProxy = None,
+        bias: None | TensorProxy = None,
+        dtype: None | dtypeLike = None,
+    ) -> TensorProxy:
+        utils.check(offs is not None, lambda: "Current implementation requires `offs`.")
+        utils.check(bias is None, lambda: "Current implementation doesn't support `bias`.")
+        utils.check(
+            dtype in (None, a.dtype),
+            lambda: f"Current implementation requires `dtype` to be None or the same as `a`. Got: {dtype} vs {a.dtype}",
+        )
         return prims._grouped_mm(a, b, offs)
 
 
