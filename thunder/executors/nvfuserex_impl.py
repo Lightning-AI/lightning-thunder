@@ -3204,8 +3204,6 @@ def _grouped_mm_transform(
     a: TensorProxy,
     b: TensorProxy,
     offs: TensorProxy,
-    bias: TensorProxy = None,
-    out_dtype=None,
     *,
     fd: FusionDefinition,
     lc_to_nv_map: dict,

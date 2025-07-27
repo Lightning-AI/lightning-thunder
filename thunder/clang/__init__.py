@@ -2042,12 +2042,3 @@ def argsort(a: TensorProxy, /, dim: None | int = None, descending: bool = False,
     dim = utils.canonicalize_dim(a.ndim, dim)
 
     return prims.argsort(a, dim, descending, stable)
-
-
-@clangop()
-def _grouped_mm(
-    a: TensorProxy,
-    b: TensorProxy,
-    offsets: TensorProxy,
-) -> TensorProxy:
-    return prims.grouped_mm(a, b, offsets)
