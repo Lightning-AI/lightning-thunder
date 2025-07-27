@@ -3189,7 +3189,7 @@ def argsort_transform(
 register_supported(prims.argsort, argsort_transform, _argsort_check_)
 
 
-def _grouped_mm_check_(
+def _grouped_mm_check(
     a: TensorProxy,
     b: TensorProxy,
     offs: TensorProxy,
@@ -3216,7 +3216,7 @@ def _grouped_mm_transform(
     return fd.ops.grouped_mm(nva, nvb, nvoffs)
 
 
-register_supported(prims._grouped_mm, _grouped_mm_transform, _grouped_mm_check_)
+register_supported(prims._grouped_mm, _grouped_mm_transform, _grouped_mm_check)
 
 # At module/class level
 NVFUSER_SUPPORTS_OPTIONS = nvfuser_version() >= LooseVersion("0.2.23")
