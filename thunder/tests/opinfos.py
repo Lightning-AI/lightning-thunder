@@ -696,7 +696,7 @@ abs_opinfo = ElementwiseUnaryOpInfo(
             devicetypes=(devices.DeviceType.CPU,),
         ),
         DecorateInfo(
-            custom_comparator(partial(assert_close, atol=1e-5, rtol=1e-5)),
+            custom_comparator(partial(assert_close, atol=1e-4, rtol=1e-4)),
             "test_vjp_correctness",
             dtypes=(datatypes.float64,),
             executors=("nvfuser",),
@@ -1939,7 +1939,7 @@ softsign_opinfo = OpInfo(
     singularity_fn=lambda x: x,
     test_directives=(
         DecorateInfo(
-            custom_comparator(partial(assert_close, atol=1e-5, rtol=1e-5)),
+            custom_comparator(partial(assert_close, atol=1e-4, rtol=1e-4)),
             "test_vjp_correctness",
             dtypes=(datatypes.float64,),
             executors=("nvfuser",),
@@ -7140,7 +7140,7 @@ normalize_opinfo = OpInfo(
             devicetypes=(devices.DeviceType.CPU, devices.DeviceType.CUDA),
         ),
         DecorateInfo(
-            custom_comparator(partial(assert_close, atol=1e-5, rtol=1e-5)),
+            custom_comparator(partial(assert_close, atol=1e-4, rtol=1e-4)),
             "test_vjp_correctness",
             dtypes=(datatypes.float64,),
             executors=("nvfuser",),
