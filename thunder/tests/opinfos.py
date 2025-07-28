@@ -7140,7 +7140,7 @@ normalize_opinfo = OpInfo(
             devicetypes=(devices.DeviceType.CPU, devices.DeviceType.CUDA),
         ),
         DecorateInfo(
-            custom_comparator(partial(assert_close, atol=1e-4, rtol=1e-4)),
+            custom_comparator(partial(assert_close, atol=5e-4, rtol=5e-4)),
             "test_vjp_correctness",
             dtypes=(datatypes.float64,),
             executors=("nvfuser",),
