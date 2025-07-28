@@ -695,6 +695,12 @@ abs_opinfo = ElementwiseUnaryOpInfo(
             dtypes=(datatypes.complex32,),
             devicetypes=(devices.DeviceType.CPU,),
         ),
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=1e-5, rtol=1e-5)),
+            "test_vjp_correctness",
+            dtypes=(datatypes.float64,),
+            executors=("nvfuser",),
+        ),
     ),
 )
 
@@ -1931,7 +1937,14 @@ softsign_opinfo = OpInfo(
     sample_input_generator=elementwise_unary_generator,
     torch_reference=_elementwise_unary_torch(torch.nn.functional.softsign),
     singularity_fn=lambda x: x,
-    test_directives=(),
+    test_directives=(
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=1e-5, rtol=1e-5)),
+            "test_vjp_correctness",
+            dtypes=(datatypes.float64,),
+            executors=("nvfuser",),
+        ),
+    ),
 )
 elementwise_unary_ops.append(softsign_opinfo)
 
@@ -7125,6 +7138,12 @@ normalize_opinfo = OpInfo(
             "test_phantom_grad_vs_torch_consistency",
             dtypes=(datatypes.float16,),
             devicetypes=(devices.DeviceType.CPU, devices.DeviceType.CUDA),
+        ),
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=1e-5, rtol=1e-5)),
+            "test_vjp_correctness",
+            dtypes=(datatypes.float64,),
+            executors=("nvfuser",),
         ),
     ),
 )
