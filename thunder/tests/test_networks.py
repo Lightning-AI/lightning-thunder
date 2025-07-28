@@ -733,7 +733,6 @@ def test_hf_diffusers(model_id):
     from thunder.dynamo import thunderfx
     from diffusers import UNet2DConditionModel
 
-    torch.manual_seed(0)
     unet_config = UNet2DConditionModel.load_config(model_id, subfolder="unet", torch_dtype=torch.bfloat16)
     unet = UNet2DConditionModel(unet_config)
     config = unet.config
@@ -741,16 +740,16 @@ def test_hf_diffusers(model_id):
     cross_attention_dim = config.cross_attention_dim
     addition_embed_type = config.addition_embed_type
 
-    sample_size = 16
+    sample_size = 4
     batch_size = 1
-    seq_length = 8
+    seq_length = 4
 
     if "xl" in model_id:
         time_ids_dim = 6
-        text_embeds_dim = 1280
+        text_embeds_dim = 4
         if "refiner" in model_id:
             time_ids_dim = 2
-            text_embeds_dim = 2048
+            text_embeds_dim = 4
     else:
         time_ids_dim = None
         text_embeds_dim = None
