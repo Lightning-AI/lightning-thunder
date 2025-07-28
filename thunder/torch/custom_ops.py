@@ -45,7 +45,11 @@ def register_custom_op(custom_op: CustomOpDef) -> Symbol:
         meta=meta_fn,
         id=op_id,
         is_prim=False,
-        tags=(OpTags.AUTO_REGISTERED,),
+        # NOTE: Especially when this `custom_op` doesn't have backward, and the caller program
+        # involves parameter lifting, somehow the bsym of this custom_op seems to be removed
+        # by `thunder/transforms/autodiff.py`'s `AugmentedForwardProcessor` of `grad_transform_on_trace`
+        # So this tag marks the bsyms so that the processor does't see them as "constant" for VJP.
+        tags=(OpTags.TORCH_COMPILE_COMPLIANT_CUSTOM_OP,),
     )
     op = custom_op_ex.register_operator(fn_name, meta=meta_fn, fn=torch_opoverload)
     custom_op_ex.register_implementation(symbol, op, checker=_always_executable)
