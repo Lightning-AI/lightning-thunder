@@ -3620,6 +3620,9 @@ def _binary_slice_handler(inst: dis.Instruction, /, stack: InterpreterStack, **k
 def _binary_subscr_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     tos = stack.pop_wrapped()
     tos1 = stack.pop_wrapped()
+    print(str(isinstance(tos1, type)) + "is working")
+    print(type(tos1))
+    print(type(tos1).__mro__)
 
     def class_getitem_impl(cls, index):
         return cls.__class_getitem__(index)
@@ -3631,6 +3634,7 @@ def _binary_subscr_handler(inst: dis.Instruction, /, stack: InterpreterStack, **
         res = _interpret_call(class_getitem_impl, tos1, tos)
     else:
         res = _interpret_call(getitem_impl, tos1, tos)
+
     if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return res
 

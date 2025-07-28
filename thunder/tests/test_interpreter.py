@@ -3572,3 +3572,11 @@ def test_reraise_traceback():
         jfn()
     except Exception as e:
         assert 'print("A" * "A")' in "\n".join(traceback.format_tb(e.__traceback__))
+
+    
+def test_binary_subscr_on_types():
+    def fn():
+        return list[int]
+    jfn = thunder.jit(fn)
+    out = jfn()
+    assert out is list[int]
