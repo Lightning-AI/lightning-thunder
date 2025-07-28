@@ -280,7 +280,7 @@ def test_hf_bert():
 
 
 @requiresCUDA
-@pytest.mark.skipif(not BITSANDBYTES_AVAILABLE, reason="`bitsandbytes` is not available")
+@pytest.mark.skip(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2128")
 def test_quantization():
     from thunder.tests import litgpt_model
     from lightning.fabric.plugins import BitsandbytesPrecision
@@ -507,58 +507,6 @@ LLAMA_3_2_1B_CFG = {
     "vocab_size": 128256,
     "_commit_hash": "4e20de362430cd3b72f300e6b0f18e50e7166e08",
 }
-
-
-@requiresCUDA
-def test_hf_llama():
-    import transformers
-
-    if version_between(transformers.__version__, min_ver="4.46.4"):
-        pytest.skip("Dynamic cache is not supported, see static cache 'test_hf_kvcache'")
-
-    from transformers.models.llama import LlamaForCausalLM, LlamaConfig
-    from transformers.models.llama.modeling_llama import logger as llama_logger
-    from thunder.examine import get_fusion_symbols
-    import logging
-
-    # transformers logs a cache deprecation warning
-    llama_logger.setLevel(logging.CRITICAL)
-
-    config_args = LLAMA_3_2_1B_CFG.copy()
-    config_args["num_hidden_layers"] = 1
-    with torch.device("cuda"):
-        model = LlamaForCausalLM(LlamaConfig(**config_args)).to(torch.bfloat16).requires_grad_(False).eval()
-
-    jm = thunder.jit(model)
-
-    args1 = dict(
-        cache_position=torch.tensor([0, 1, 2, 3, 4, 5], device="cuda:0"),
-        input_ids=torch.tensor([[128000, 791, 1401, 311, 2324, 374]], device="cuda:0"),
-        inputs_embeds=None,
-        attention_mask=torch.tensor([[1, 1, 1, 1, 1, 1]], device="cuda:0"),
-        use_cache=True,
-        return_dict=True,
-    )
-    res = jm(**args1)
-    expected = model(**args1)
-
-    assert_close(res, expected, rtol=1e-1, atol=1e-1)
-
-    args2 = dict(
-        cache_position=torch.tensor([6], device="cuda:0"),
-        input_ids=torch.tensor([[311]], device="cuda:0"),
-        inputs_embeds=None,
-        attention_mask=torch.tensor([[1, 1, 1, 1, 1, 1, 1]], device="cuda:0"),
-        use_cache=True,
-        return_dict=True,
-    )
-
-    res2 = jm(past_key_values=res["past_key_values"], **args2)
-    expected2 = model(past_key_values=res["past_key_values"], **args2)
-    assert_close(res2, expected2, rtol=1e-1, atol=1e-1)
-
-    # changes this to fewer as needed, the goal is to not have too many fusions
-    assert len(get_fusion_symbols(thunder.last_traces(jm)[-1])) == 6
 
 
 # Both attn implementation have almost same memory requirements

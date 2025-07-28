@@ -488,11 +488,13 @@ def jit(
                 [int(i) for i in s.split(",")] for s in alias_tensor_indices_str.split("-") if s != ""
             ]
 
-            if not compile_options.get("skip_inplace_alias_updates", True):
-                computation_traces.append(insert_alias_updates(computation_trc, alias_tensor_indices))
-                computation_trc = computation_traces[-1]
+            if not compile_options.get("skip_inplace_alias_updates", False):
+                aliased_trace = insert_alias_updates(computation_trc, alias_tensor_indices)
+                if aliased_trace is not computation_trc:
+                    computation_traces.append(aliased_trace)
+                    computation_trc = computation_traces[-1]
 
-            if not compile_options.get("skip_inplace_functionalization", False):
+            if not compile_options.get("skip_inplace_functionalization", True):
                 orig_to_view_swap_map = check_inplace_to_views(computation_trc)
                 computation_traces.extend(
                     functionalize_inplace_ops(
@@ -682,8 +684,8 @@ def jit(
         # aliases wouldn't matter, thus it'd be better to nullify this entry in such cases.
         # It however would require the functionalized computation trace to interact with `cache_info`,
         # which seems to break the consistency of cache_info, leading to a failure in cache_info check.
-        if not compile_options.get("skip_inplace_alias_updates", True) or not compile_options.get(
-            "skip_inplace_functionalization", False
+        if not compile_options.get("skip_inplace_alias_updates", False) or not compile_options.get(
+            "skip_inplace_functionalization", True
         ):
             cache_info["alias_tensor_indices"] = _alias_tensor_of_args_kwargs(*args, **kwargs)
 
@@ -1090,15 +1092,15 @@ def get_auto_registered_torch_op_names(fn: Callable, /) -> set[str] | None:
 
 
 # TODO (mruberry) Update this
-def _grad_transform(trace):
-    grad_fwd_trace = from_trace(trace)
+def _grad_transform(original_trace):
+    grad_fwd_trace = from_trace(original_trace)
     trace_tok = set_tracectx(grad_fwd_trace)
     all_residuals = []
 
     # Constructs grad fwd and records info
     # TODO: make recursive (or iterative, whatever)
     current_inputs = grad_fwd_trace.args
-    for bsym in trace.bound_symbols:
+    for bsym in original_trace.bound_symbols:
         grad_defined = bsym.sym.grad_defined
         grad_ignored = bsym.sym.grad_ignored
         grad_fwd, grad_bwd = bsym.sym.grad_fwd, bsym.sym.grad_bwd
@@ -1121,7 +1123,7 @@ def _grad_transform(trace):
     # Constructs bwd part of the program
     current_grads = (prims.full(o.shape, 1.0, device=o.device, dtype=o.dtype) for o in fw_result)
 
-    for bsym, residuals in zip(reversed(trace.bound_symbols), reversed(all_residuals)):
+    for bsym, residuals in zip(reversed(original_trace.bound_symbols), reversed(all_residuals)):
         grad_fwd = bsym.sym.grad_fwd
         grad_bwd = bsym.sym.grad_bwd
         grad_defined = bsym.sym.grad_defined

@@ -76,7 +76,13 @@ def run_script(file_name, cmd):
 @instantiate(
     dtypes=NOTHING,
     executors=[DynamoThunderExecutor],
-    decorators=(pytest.mark.parametrize("dynamic", (True, False, None), ids=("dynamic", "static", "auto")),),
+    decorators=(
+        pytest.mark.parametrize("dynamic", (True, False, None), ids=("dynamic", "static", "auto")),
+        pytest.mark.skipif(
+            condition=IS_WINDOWS,
+            reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
+        ),
+    ),
 )
 def test_basic(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None):
     x = torch.ones(2, dtype=dtype, device=device, requires_grad=True)
@@ -1609,6 +1615,10 @@ def test_spliter_bwd():
     assert "boolean advanced indexing" in reason[0].exception
 
 
+@pytest.mark.skipif(
+    IS_WINDOWS,
+    reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
+)
 def test_get_proxy_inputs_from_node_symtype_hint():
     def fn(x, idx):
         return torch.select(x, 0, idx)
@@ -1619,3 +1629,19 @@ def test_get_proxy_inputs_from_node_symtype_hint():
     cfn(x, idx)
 
     assert cfn._backend.subgraph_infos[0].split_reasons == []
+
+
+@requiresCUDA
+def test_spliter_einops():
+    einops = pytest.importorskip("einops")
+
+    def f(input, expr):
+        return einops.rearrange(input, expr)
+
+    fc = thunderfx(f)
+    input = torch.randn(2, 3, 4, 5, device="cuda")
+    out = fc(input, "b c h w -> b (c h w)")
+    expected_out = f(input, "b c h w -> b (c h w)")
+
+    assert len(fc._backend.subgraph_infos[0].split_reasons) == 0
+    torch.testing.assert_close(out, expected_out)

@@ -10,6 +10,7 @@ documentation:
           - .azure/*
           - .github/*
           - .github/workflows/*
+          - .lightning/workflows/*
           - dockers/**/*
 
 "docker":

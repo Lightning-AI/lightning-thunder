@@ -1851,6 +1851,25 @@ relu6_opinfo = OpInfo(
 elementwise_unary_ops.append(relu6_opinfo)
 
 
+hardsigmoid_opinfo = OpInfo(
+    ltorch.hardsigmoid,
+    dtypes=(datatypes.floating,),
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=_elementwise_unary_torch(torch.nn.functional.hardsigmoid),
+    singularity_fn=lambda a: torch.where(a > 0, a - 3, a + 3),
+    test_directives=(
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=1e-3, rtol=1e-1)),
+            dtypes=(
+                datatypes.float16,
+                datatypes.bfloat16,
+            ),
+        ),
+    ),
+)
+elementwise_unary_ops.append(hardsigmoid_opinfo)
+
+
 # fdm.jvp, which is used in test_vjp_correctness, behaves badly at jump discontinuties of the partial derviatives
 def shrink_singularity_fn_producer(sample: SampleInput):
     lambd = sample.kwargs.get("lambd", 0.5)
@@ -6586,6 +6605,7 @@ def full_sample_generator(op, device, dtype, requires_grad, **kwargs):
         ((4, 4), make_fv()),
         ((8, 1, 6), make_fv()),
         ((8, 7, 5, 1), make_fv()),
+        ((4, 4), make_tensor((), dtype=dtype, device=device)),
     )
 
     for shape, fill_value in cases:
