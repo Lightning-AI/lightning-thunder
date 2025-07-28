@@ -72,8 +72,10 @@ from thunder.extend import FUEL_LEVEL, FusionExecutor, register_executor
 from thunder.executors.nvfuserex import nvfuser_version
 
 
-import nvfuser_direct as nvfd
-from nvfuser_direct import FusionDefinition as DirectFusionDefinition
+DTENSOR_SUPPORTED_VERSION = LooseVersion("0.2.28")
+if nvfuser_version() >= DTENSOR_SUPPORTED_VERSION:
+    import nvfuser_direct as nvfd
+    from nvfuser_direct import FusionDefinition as DirectFusionDefinition
 
 # NOTE This impl file is here because nvFuser may not be available, so it's imported conditionally
 #   by nvfuserex.py when nvFuser is available.
@@ -250,6 +252,14 @@ _translation_map: dict[Hashable, Callable] = {}
 
 def get_translator(bsym: BoundSymbol) -> Callable:
     return _translation_map[bsym.sym.id]
+
+
+def register_dtensor_supported(prim_id: int, fn: Callable, checker_fn: Callable) -> None:
+    if nvfuser_version() < DTENSOR_SUPPORTED_VERSION:
+        # Only register dtensor ops if supported version is available.
+        return
+
+    register_supported(prim_id, fn, checker_fn)
 
 
 def multidevice_schedule(fd: FusionDefinition, in_dtensors: list[Proxy]) -> None:
@@ -1983,7 +1993,7 @@ def mul(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinitio
 
 
 register_supported(PrimIDs.MUL, mul, _elementwise_binary_check)
-register_supported(dtensor_mul_prim.id, mul, _elementwise_binary_check)
+register_dtensor_supported(dtensor_mul_prim.id, mul, _elementwise_binary_check)
 
 
 def ne(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
