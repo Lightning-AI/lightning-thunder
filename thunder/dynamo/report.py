@@ -1453,6 +1453,7 @@ def save_thunderfx_repros(
     """
     from thunder.dynamo.utils import get_torch_compile_kwargs
 
+    folder_path = Path(folder_path)
     create_folder(folder_path, force_overwrite)
     torch_compile_kwargs = get_torch_compile_kwargs(**compile_kwargs)
     thunder_jit_kwargs = {k: v for k, v in compile_kwargs.items() if k not in torch_compile_kwargs}
