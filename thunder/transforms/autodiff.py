@@ -181,9 +181,8 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
             #    executing synchronize here terrible hack to cope with non-grad-needing sharded tensors
             #    as required by LoRA. We should have a symbol tag "always compute grad" instead.
             if (
-                (is_constant_for_vjp(bsym) and not bsym.sym.name == "synchronize")
-                or bsym.sym.tags
-                and (prims.OpTags.TORCH_COMPILE_COMPLIANT_CUSTOM_OP in bsym.sym.tags)
+                (is_constant_for_vjp(bsym) and not bsym.sym.name == "synchronize") or bsym.sym.tags
+                # and (prims.OpTags.TORCH_COMPILE_COMPLIANT_CUSTOM_OP in bsym.sym.tags)
             ):
                 self.add_processed_bsyms([bsym.from_bsym()])
                 self.set_result(bsym.output)
