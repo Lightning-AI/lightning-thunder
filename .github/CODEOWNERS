@@ -11,6 +11,7 @@
 # CI/CD and configs
 /.azure/        @borda @lantiga @t-vi
 /.github/       @borda @lantiga @t-vi
+/.lightning/    @borda @lantiga @t-vi
 /dockers/       @borda @lantiga @t-vi
 Makefile        @borda @lantiga @t-vi
 *.yml           @borda @lantiga @t-vi
