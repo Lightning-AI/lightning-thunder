@@ -2863,7 +2863,7 @@ register_supported(PrimIDs.EMBEDDING, embedding, _embedding_check)
 register_supported(ltorch.embedding, embedding, _embedding_check)
 
 
-def _cross_entropy_check_(
+def _cross_entropy_check(
     a: TensorLike,
     /,
     target: TensorLike,
@@ -3121,11 +3121,11 @@ ex.register_supported(
     ltorch.cross_entropy,
     execution_transform=cross_entropy_transform,
     grad_transform=cross_entropy_grad,
-    checker=_cross_entropy_check_,
+    checker=_cross_entropy_check,
 )
 
 
-def _topk_check_(
+def _topk_check(
     a: TensorProxy, /, k: int, dim: int | None = None, largest: Number = 1, sorted: Number = 1, *args
 ) -> bool:
     if a.ndim <= 0:
@@ -3151,10 +3151,10 @@ def topk_transform(
     return fd.ops.topk(nva, nvk, dim, bool(largest), bool(sorted))
 
 
-register_supported(prims.topk, topk_transform, _topk_check_)
+register_supported(prims.topk, topk_transform, _topk_check)
 
 
-def _argsort_check_(a: TensorProxy, /, dim: int | None = None, descending: bool = False, stable: bool = False) -> bool:
+def _argsort_check(a: TensorProxy, /, dim: int | None = None, descending: bool = False, stable: bool = False) -> bool:
     return True
 
 
@@ -3186,7 +3186,7 @@ def argsort_transform(
 
 
 # Register argsort with NVFuser
-register_supported(prims.argsort, argsort_transform, _argsort_check_)
+register_supported(prims.argsort, argsort_transform, _argsort_check)
 
 # At module/class level
 NVFUSER_SUPPORTS_OPTIONS = nvfuser_version() >= LooseVersion("0.2.23")
