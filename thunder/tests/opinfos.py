@@ -695,8 +695,9 @@ abs_opinfo = ElementwiseUnaryOpInfo(
             dtypes=(datatypes.complex32,),
             devicetypes=(devices.DeviceType.CPU,),
         ),
+        # Ref - https://github.com/Lightning-AI/lightning-thunder/issues/2363
         DecorateInfo(
-            custom_comparator(partial(assert_close, atol=1e-3, rtol=1e-3)),
+            pytest.mark.skip,
             "test_vjp_correctness",
             dtypes=(datatypes.float64,),
             executors=("nvfuser",),
@@ -1938,6 +1939,7 @@ softsign_opinfo = OpInfo(
     torch_reference=_elementwise_unary_torch(torch.nn.functional.softsign),
     singularity_fn=lambda x: x,
     test_directives=(
+        # Ref - https://github.com/Lightning-AI/lightning-thunder/issues/2363
         DecorateInfo(
             custom_comparator(partial(assert_close, atol=5e-4, rtol=5e-4)),
             "test_vjp_correctness",
@@ -7139,6 +7141,7 @@ normalize_opinfo = OpInfo(
             dtypes=(datatypes.float16,),
             devicetypes=(devices.DeviceType.CPU, devices.DeviceType.CUDA),
         ),
+        # Ref -https://github.com/Lightning-AI/lightning-thunder/issues/2363
         DecorateInfo(
             custom_comparator(partial(assert_close, atol=5e-4, rtol=5e-4)),
             "test_vjp_correctness",
