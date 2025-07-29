@@ -37,10 +37,6 @@ from thunder.core.transform_common import (
     unwrap_return_value,
     remove_context_manager_prims_from_trace,
 )
-from thunder.core.functionalization import (
-    check_inplace_to_views,
-    functionalize_inplace_ops,
-)
 from thunder.core.update_aliases import (
     insert_alias_updates,
 )
@@ -329,10 +325,7 @@ def jit(
     .. note::
 
         Thunder's support of PyTorch in-place support is experimental.
-        Thunder functionalizes in-place ops and adds required tensor copies.
-        The functionalization can be turned off with the kwarg of ``skip_inplace_functionalization``.
-        See :func:`thunder.core.functionalization.functionalize_inplace_ops`
-        for the details.
+        The in-place support can be turned off with the kwarg of ``skip_inplace_alias_updates``.
 
     Args:
         fn: A :class:`~torch.nn.Module` or a function to compile.
@@ -493,17 +486,6 @@ def jit(
                 if aliased_trace is not computation_trc:
                     computation_traces.append(aliased_trace)
                     computation_trc = computation_traces[-1]
-
-            if not compile_options.get("skip_inplace_functionalization", True):
-                orig_to_view_swap_map = check_inplace_to_views(computation_trc)
-                computation_traces.extend(
-                    functionalize_inplace_ops(
-                        computation_trace=computation_trc,
-                        orig_to_view_swap_map=orig_to_view_swap_map,
-                        alias_tensor_indices=alias_tensor_indices,
-                    )
-                )
-                computation_trc = computation_traces[-1]
 
             cs.last_trace_tracing_stop = time.perf_counter_ns()
 
@@ -682,11 +664,9 @@ def jit(
 
         # NOTE(crcrpar): If a callable is free from in-place ops whose operand is args and/or their views
         # aliases wouldn't matter, thus it'd be better to nullify this entry in such cases.
-        # It however would require the functionalized computation trace to interact with `cache_info`,
+        # It however would require the computation trace to interact with `cache_info`,
         # which seems to break the consistency of cache_info, leading to a failure in cache_info check.
-        if not compile_options.get("skip_inplace_alias_updates", False) or not compile_options.get(
-            "skip_inplace_functionalization", True
-        ):
+        if not compile_options.get("skip_inplace_alias_updates", False):
             cache_info["alias_tensor_indices"] = _alias_tensor_of_args_kwargs(*args, **kwargs)
 
         # Store the `is_grad_enabled` state of PyTorch. This is used by vjp transform
