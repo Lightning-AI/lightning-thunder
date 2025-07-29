@@ -255,6 +255,7 @@ class PrimIDs(Enum):
     ARGMAX = auto()
     ARGMIN = auto()
     TOPK = auto()
+    CUMSUM = auto()
     # Sort and dim permutations prims
     SORT = auto()
     ARGSORT = auto()
@@ -3720,6 +3721,19 @@ def topk_meta(a: TensorProxy, /, k: int, dim: int, largest: Number, sorted: Numb
 
 
 topk = make_prim(PrimIDs.TOPK, "topk", meta=topk_meta, tags=(OpTags.REDUCTION_OP,))
+
+
+def cumsum_meta(a: TensorProxy, dim: int, /, dtype : dtypes.dtype | None) -> TensorProxy:
+    utils.check_type(a, TensorProxy)
+    utils.check_type(dim, (int, IntegerProxy))
+    return TensorProxy(like=a)
+
+
+cumsum = make_prim(
+    PrimIDs.CUMSUM,
+    "cumsum",
+    meta=cumsum_meta,
+)
 
 
 def argsort_meta(a: TensorProxy, /, dim: int, descending: Number, stable: Number) -> TensorProxy:

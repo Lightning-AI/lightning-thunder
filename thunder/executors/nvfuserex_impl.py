@@ -220,11 +220,7 @@ def is_supported_tensor_or_number(a: TensorProxy | Number) -> bool:
 #   Throws an error if any arguments are not tensors
 # TODO Add a check for the tensor have > 0 elements?
 def are_supported_tensors(*args) -> bool:
-    for a in args:
-        if not is_supported_tensor(a):
-            return False
-
-    return True
+    return all(is_supported_tensor(arg) for arg in args)
 
 
 # Returns True when all arguments given are supported tensors or numbers
@@ -3187,6 +3183,16 @@ def argsort_transform(
 
 # Register argsort with NVFuser
 register_supported(prims.argsort, argsort_transform, _argsort_check_)
+
+
+def _cumsum_check(a: TensorProxy, dim: int, /, dtype: dtypes.dtype | None = None) -> bool:
+    return is_supported_tensor(a)
+
+def cumsum_transform(a: TensorProxy, dim: int, /, dtype: dtypes.dtype | None = None) -> TensorProxy:
+    nva = getnv(a, fd, lc_to_nv_map)
+    return fd.ops.cumsum(nva, dim)
+
+register_supported(prims.cumsum, cumsum_transform, _cumsum_check)
 
 # At module/class level
 NVFUSER_SUPPORTS_OPTIONS = nvfuser_version() >= LooseVersion("0.2.23")
