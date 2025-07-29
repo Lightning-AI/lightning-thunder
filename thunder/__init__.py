@@ -852,6 +852,8 @@ def jit(
             # ThunderFunction (which is a torch.autograd.Function subclass)
             data_for_autograd, (saved_tensors, saved_other) = result
 
+            is_differentiable_outputs = compile_options.get("is_differentiable_outputs", None)
+
             connect_to_autograd(
                 backward_fn=cache_entry.backward_fn,
                 flat_args=data_for_autograd["flat_args"],
@@ -860,6 +862,7 @@ def jit(
                 saved_other=saved_other,
                 return_none_instead_of_grads=cache_entry.return_none_instead_of_grads,
                 disable_split_autograd=disable_split_autograd,
+                is_differentiable_outputs=is_differentiable_outputs,
             )
             result = data_for_autograd["output"]
 
