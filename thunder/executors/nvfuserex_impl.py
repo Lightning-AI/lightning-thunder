@@ -3192,9 +3192,9 @@ register_supported(prims.argsort, argsort_transform, _argsort_check_)
 def _grouped_mm_check(
     a: TensorProxy,
     b: TensorProxy,
-    offs: TensorProxy,
+    offsets: TensorProxy,
 ) -> bool:
-    if not are_supported_tensors(a, b, offs):
+    if not are_supported_tensors(a, b, offsets):
         return False
 
     return nvfuser_version() >= LooseVersion("0.2.28")
@@ -3203,15 +3203,15 @@ def _grouped_mm_check(
 def _grouped_mm_transform(
     a: TensorProxy,
     b: TensorProxy,
-    offs: TensorProxy,
+    offsets: TensorProxy,
     *,
     fd: FusionDefinition,
     lc_to_nv_map: dict,
 ) -> list[TensorLike]:
     nva = getnv(a, fd, lc_to_nv_map)
     nvb = getnv(b, fd, lc_to_nv_map)
-    nvoffs = getnv(offs, fd, lc_to_nv_map) if offs is not None else None
-    return fd.ops.grouped_mm(nva, nvb, nvoffs)
+    nvoffsets = getnv(offsets, fd, lc_to_nv_map) if offsets is not None else None
+    return fd.ops.grouped_mm(nva, nvb, nvoffsets)
 
 
 register_supported(prims._grouped_mm, _grouped_mm_transform, _grouped_mm_check)

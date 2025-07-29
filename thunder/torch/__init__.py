@@ -5627,17 +5627,17 @@ if LooseVersion(torch.__version__) >= "2.8":
     def _grouped_mm(
         a: TensorProxy,
         b: TensorProxy,
-        offs: None | TensorProxy = None,
+        offsets: None | TensorProxy = None,
         bias: None | TensorProxy = None,
         dtype: None | dtypeLike = None,
     ) -> TensorProxy:
-        utils.check(offs is not None, lambda: "Current implementation requires `offs`.")
+        utils.check(offsets is not None, lambda: "Current implementation requires `offsets`.")
         utils.check(bias is None, lambda: "Current implementation doesn't support `bias`.")
         utils.check(
             dtype in (None, a.dtype),
             lambda: f"Current implementation requires `dtype` to be None or the same as `a`. Got: {dtype} vs {a.dtype}",
         )
-        return prims._grouped_mm(a, b, offs)
+        return prims._grouped_mm(a, b, offsets)
 
 
 @torchsymbol(torch.logsumexp, is_method=True)

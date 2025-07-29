@@ -1822,8 +1822,8 @@ _register_implementation(prims.embedding_backward, embedding_backward, checker=_
 _register_implementation(prims.linear, linear, checker=_always_executable)
 
 
-def _grouped_mm_checker(a: TensorProxy, b: TensorProxy, offs: TensorProxy) -> bool:
-    return a.dtype == dtypes.bfloat16 and b.dtype == dtypes.bfloat16 and offs.dtype == dtypes.int32
+def _grouped_mm_checker(a: TensorProxy, b: TensorProxy, offsets: TensorProxy) -> bool:
+    return a.dtype == dtypes.bfloat16 and b.dtype == dtypes.bfloat16 and offsets.dtype == dtypes.int32
 
 
 _register_implementation(ltorch.baddbmm, baddbmm, checker=_always_executable)
