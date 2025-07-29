@@ -86,6 +86,7 @@ for op in opinfos:
 @ops(_inplace_opinfos, supported_dtypes=(dtypes.float32,))
 def test_functionalization(op: OpInfo, device: str, dtype: dtypes.dtype, executor, _):
     import thunder
+    from thunder.core.pytree import tree_map
 
     is_polygamma = op.name == "polygamma_"
     inplace_op = op.torch_reference
@@ -107,7 +108,12 @@ def test_functionalization(op: OpInfo, device: str, dtype: dtypes.dtype, executo
             tmp = args[0]
             args[0] = args[1]
             args[1] = tmp
-        expected = inplace_op(*args, **sample.kwargs)
+        # in-place math op would change values of its first tensor argument,
+        # thus clone inputs to avoid doing math on the results of the first in-place math op call.
+        ref_args, ref_kwargs = tree_map(
+            lambda t: t.clone().detach() if isinstance(t, torch.Tensor) else t, (args, sample.kwargs)
+        )
+        expected = inplace_op(*ref_args, **ref_kwargs)
         actual = jitted_inplace_op(*args, **sample.kwargs)
         torch.testing.assert_close(actual, expected, equal_nan=True)
 

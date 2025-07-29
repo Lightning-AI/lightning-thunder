@@ -2192,6 +2192,14 @@ clone_opinfo = OpInfo(
 elementwise_unary_ops.append(clone_opinfo)
 
 
+square_opinfo = OpInfo(
+    ltorch.square,
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=_elementwise_unary_torch(torch.square),
+)
+elementwise_unary_ops.append(square_opinfo)
+
+
 # Puts all opinfos into the "opinfos" list
 opinfos.extend(elementwise_unary_ops)
 
