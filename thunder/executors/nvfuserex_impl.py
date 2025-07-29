@@ -2944,7 +2944,7 @@ def cross_entropy_fwd(
     nv_target = getnv(target, fd, lc_to_nv_map)
     nv_ignore_index = getnv(ignore_index, fd, lc_to_nv_map)
 
-    zero_scalar = fd.define_scalar(0, dtype=torch_dtype_to_nvfuser_dtype(dtypes.to_torch_dtype(a.dtype)))
+    zero_scalar = fd.define_scalar(0, dtype=lcdtype_to_nvdtype(a.dtype))
 
     # modify the labels to account for ignore index and then do a
     # gather/ take_along_axis on the input tensor
@@ -3186,13 +3186,41 @@ register_supported(prims.argsort, argsort_transform, _argsort_check_)
 
 
 def _cumsum_check(a: TensorProxy, dim: int, /, dtype: dtypes.dtype | None = None) -> bool:
+    if a.ndim != 1:
+        return False
+
     return is_supported_tensor(a)
 
-def cumsum_transform(a: TensorProxy, dim: int, /, dtype: dtypes.dtype | None = None) -> TensorProxy:
-    nva = getnv(a, fd, lc_to_nv_map)
-    return fd.ops.cumsum(nva, dim)
 
-register_supported(prims.cumsum, cumsum_transform, _cumsum_check)
+def cumsum_transform(
+    a: TensorProxy, dim: int, /, dtype: torch.dtype | None = None, *, fd: FusionDefinition, lc_to_nv_map: dict
+) -> TensorProxy:
+    # Emulate cumsum using matmul: cumsum(a) = a @ triu(ones)
+    if dtypes.is_integer_dtype(a.dtype) or dtypes.is_low_precision_dtype(a.dtype):
+        # torch.matmul can't do integers on GPU so we convert `a` to
+        # float. Low precision matmuls have large numerical errors so we
+        # convert `a` to float as well.
+        compute_dtype = DataType.Float
+    else:
+        compute_dtype = lcdtype_to_nvdtype(a.dtype)
+
+    if dtype is None:
+        out_dtype = lcdtype_to_nvdtype(a.dtype)
+    else:
+        out_dtype = torch_dtype_to_nvfuser_dtype(dtype)
+
+    nv_a = getnv(a, fd, lc_to_nv_map)
+    nv_a = fd.ops.cast(nv_a, compute_dtype)
+
+    mask = fd.ops.full((a.numel, a.numel), fd.define_scalar(1), compute_dtype)
+    mask = fd.ops.triu(mask)
+
+    out = fd.ops.matmul(nv_a, mask)
+    out = fd.ops.cast(out, out_dtype)
+    return out
+
+
+register_supported(ltorch.cumsum, cumsum_transform, _cumsum_check)
 
 # At module/class level
 NVFUSER_SUPPORTS_OPTIONS = nvfuser_version() >= LooseVersion("0.2.23")
