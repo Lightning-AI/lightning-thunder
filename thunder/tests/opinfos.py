@@ -7224,7 +7224,7 @@ def _grouped_mm_sample_generator(op, device, dtype, requires_grad, **kwargs):
     a = make_tensor((M, K), device=device, dtype=dtype, low=0, high=1.0, requires_grad=False)
     b = make_tensor((G, K, N), device=device, dtype=dtype, low=0, high=1.0, requires_grad=False)
 
-    # torch._grouped_mm, the reference implementation, requires offsets to be
+    # torch._grouped_mm, the torchex implementation, requires offsets to be
     # multiples of 16. nvFuser doesn't have that restriction.
     for offset in [[0, 16], [16, 16]]:
         c = torch.tensor(offset, device=device, dtype=torch.int32)
@@ -7234,14 +7234,54 @@ def _grouped_mm_sample_generator(op, device, dtype, requires_grad, **kwargs):
         yield si
 
 
+def _group_sizes_from_offsets(offsets: torch.Tensor) -> list[int]:
+    group_sizes = []
+    prev = 0
+    for offset in offsets:
+        group_sizes.append(offset - prev)
+        prev = offset
+    return group_sizes
+
+
+# torch._grouped_mm has too many constraints to be used as a reference
+# implementation. For example, it supports only Hopper and only bfloat16.
+def _grouped_mm_reference(a, b, offsets):
+    num_groups = offsets.numel()
+    group_sizes = _group_sizes_from_offsets(offsets)
+
+    if a.dim() == 2 and b.dim() == 2:
+        # [m, k] @ [k, n] => [g, m, n]
+        group_as = a.split(group_sizes, -1)
+        group_bs = b.split(group_sizes, 0)
+        out = torch.empty(num_groups, a.size(0), b.size(-1), dtype=a.dtype, device=a.device)
+        group_outs = out.unbind()
+    elif a.dim() == 3 and b.dim() == 2:
+        # [g, m, k] @ [k, n] => [m, n]
+        group_as = a.unbind()
+        group_bs = b.split(group_sizes, -1)
+        out = torch.empty(a.size(1), b.size(-1), dtype=a.dtype, device=a.device)
+        group_outs = out.split(group_sizes, -1)
+    elif a.dim() == 2 and b.dim() == 3:
+        # [m, k] @ [g, k, n] => [m, n]
+        group_as = a.split(group_sizes, 0)
+        group_bs = b.unbind()
+        out = torch.empty(a.size(0), b.size(-1), dtype=a.dtype, device=a.device)
+        group_outs = out.split(group_sizes, 0)
+    else:
+        assert False, f"Unexpected ranks: {a.size()} and {b.size()}"
+
+    for group_a, group_b, group_out in zip(group_as, group_bs, group_outs):
+        torch.matmul(group_a, group_b, out=group_out)
+
+    return out
+
+
 if LooseVersion(torch.__version__) >= "2.8":
     _grouped_mm_opinfo = OpInfo(
         prims._grouped_mm,
         supports_grad=False,
         sample_input_generator=_grouped_mm_sample_generator,
-        torch_reference=(
-            torch._grouped_mm if torch.cuda.is_available() and torch.cuda.get_device_capability() >= (9, 0) else None
-        ),
+        torch_reference=_grouped_mm_reference,
         dtypes=(datatypes.bfloat16,),
         devicetypes=(devices.DeviceType.CUDA,),
         test_directives=(
@@ -7249,10 +7289,11 @@ if LooseVersion(torch.__version__) >= "2.8":
                 pytest.mark.skip,
                 "test_core_vs_torch_consistency",
                 executors=("torch",),
+                # torch._grouped_mm, the torchex implementation, doesn't support pre-Hopper.
                 active_if=(not torch.cuda.is_available() or torch.cuda.get_device_capability() < (9, 0)),
             ),
         ),
-        no_fallback_with_double_inputs=True,
+        no_fallback_with_double_inputs=False,
     )
     linear_algebra_ops.append(_grouped_mm_opinfo)
 
