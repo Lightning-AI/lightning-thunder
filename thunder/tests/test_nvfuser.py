@@ -1239,3 +1239,39 @@ def test_slice_dynamic_extent(executor, device: str, dtype: dtypes.dtype):
 
     outside_fusion_syms = ["unpack_trivial", "python_return"]
     assert {el.sym.name for el in fw_trace.bound_symbols if not el.sym.is_fusion} == set(outside_fusion_syms)
+
+
+@instantiate(
+    executors=(nvFuserExecutor,),
+    dtypes=NOTHING,
+)
+def test_moe_infer_scatter(executor, device: str, dtype: dtypes.dtype):
+    def foo(inputs: list):
+        bmm_out: torch.Tensor  # [seq*top_k, hidden]
+        idxs: torch.Tensor  # [seq*top_k]
+        topk_weight: torch.Tensor  # [seq , top_k]]
+        bmm_out, idxs, topk_weight = inputs
+        out = bmm_out.index_put([idxs], bmm_out)  # [seq*top_k, hidden]
+        out = out.reshape(*topk_weight.shape, -1)  # [seq, top_k, hidden]
+        out = out * topk_weight.unsqueeze(-1)  # [seq, top_k, hidden]
+        return out.sum(dim=1)  # [seq, hidden]
+
+    # use smaller problem size to avoid OOM on dynamo test
+    seq_length = 8
+    topk_hidden = (2, 7)
+    hidden_states = torch.randn((seq_length * topk_hidden[0], topk_hidden[1]), device="cuda", requires_grad=True)
+    topk_weight = torch.randn((seq_length, topk_hidden[0]), device="cuda")
+    # use logits.argsort() to generate unique indices
+    logits = torch.randn(seq_length * topk_hidden[0], device="cuda")
+    idxs = logits.argsort()
+
+    # NOTE nv_enable_scatter to allow scatter operation to go through nvfuser
+    jfoo = thunder.jit(foo)
+
+    inputs = [hidden_states, idxs, topk_weight]
+
+    actual = jfoo(inputs)
+    expected = foo(inputs)
+    torch.testing.assert_close(actual, expected)
+    # this would clear up all allocated gpu memory
+    del actual, expected, hidden_states, topk_weight, idxs, logits, inputs
