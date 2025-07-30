@@ -516,7 +516,7 @@ def test_te_activation_checkpointing_correctness(fp8_recipe: recipe.Recipe, comp
 
     dtype = torch.bfloat16
     device = "cuda"
-    iterations = 3
+    iterations = 6
 
     checkpoint_fn = partial(torch.utils.checkpoint.checkpoint, use_reentrant=False)
 
@@ -529,8 +529,7 @@ def test_te_activation_checkpointing_correctness(fp8_recipe: recipe.Recipe, comp
 
     w1, w2, b1, b2 = clone_params(te_linear1.weight, te_linear2.weight, te_linear1.bias, te_linear2.bias)
 
-    target_value = torch.tensor(42, dtype=dtype, device=device)
-
+    target_value = torch.randint(42, (768,), dtype=torch.int64, device=device)
     inputs = tuple(torch.rand(*input_shape, device=device, dtype=dtype, requires_grad=True) for _ in range(iterations))
 
     def train_model(model, optimizer, loss_hist):
@@ -538,16 +537,15 @@ def test_te_activation_checkpointing_correctness(fp8_recipe: recipe.Recipe, comp
             x = inputs[iter_n]
             with te.fp8_autocast(enabled=True, fp8_recipe=fp8_recipe):
                 result = model(x)
-            loss = torch.nn.functional.mse_loss(result.sum(), target_value)
+            loss = torch.nn.functional.cross_entropy(result, target_value)
             loss_hist.append(loss.item())
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
 
     def te_model(x):
-        # Enable autocasting for the forward pass
-        a = te.checkpoint(te_linear1, x)
-        a = a + a
+        a = te_linear1(x)
+        a = torch.sin(a)
         return te_linear2(a)
 
     te_sgd_optimizer = torch.optim.SGD(list(te_linear1.parameters()) + list(te_linear2.parameters()))
@@ -557,7 +555,8 @@ def test_te_activation_checkpointing_correctness(fp8_recipe: recipe.Recipe, comp
 
     def fn_to_checkpoint(x, w1, b1):
         a = torch.nn.functional.linear(x, w1, b1)
-        return a + a
+        a = torch.sin(a)
+        return a
 
     def fn(x, w1, w2, b1, b2):
         o = checkpoint_fn(fn_to_checkpoint, x, w1, b1)
