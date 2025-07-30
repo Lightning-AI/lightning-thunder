@@ -106,7 +106,7 @@ class ThunderCompiler:
         self._torch_compile = torch.compile
 
     def __call__(self, gm: torch.fx.GraphModule, sample_args: list[torch.SymInt, torch.Tensor]):
-        gm = remove_empty_autocast(gm)
+        remove_empty_autocast(gm)
 
         # Dynamo uses lazy generation of the underlying Python code, so we need to
         # force recompilation of the GraphModule before passing it to Thunder.

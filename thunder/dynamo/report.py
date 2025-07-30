@@ -1093,8 +1093,9 @@ def analyze_thunder_splits(
     from thunder.dynamo.splitter import _splitter
     from thunder import jit
 
+    gm = copy.deepcopy(report.graph)
     # Splits the FX graph module using Thunder splitter
-    gm = remove_empty_autocast(report.graph)
+    remove_empty_autocast(gm)
     # Dynamo uses lazy generation of the underlying Python code, so we need to
     # force recompilation of the GraphModule before passing it to Thunder.
     recompile_graph(gm)

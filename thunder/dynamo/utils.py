@@ -685,7 +685,7 @@ def checkpoint_converter(gm: torch.fx.GraphModule, sub_gm: torch.fx.GraphModule)
                 _checkpoint_function_converter(function_module)
 
 
-def remove_empty_autocast(graph_module: torch.fx.GraphModule) -> torch.fx.GraphModule:
+def remove_empty_autocast(graph_module: torch.fx.GraphModule) -> None:
     """
     Function to remove empty autocast regions from GraphModule.
 
@@ -697,13 +697,10 @@ def remove_empty_autocast(graph_module: torch.fx.GraphModule) -> torch.fx.GraphM
         graph_module: Graph module to which this pass is applied.
 
     """
-
-    empty_autocast_removed_graph_module = copy.deepcopy(graph_module)
-
     # Dummy init node.
     prev_node = torch.fx.node.Node(graph_module.graph, "start_node", "call_function", lambda: None, None, None)
     nodes_to_erase = []
-    for node in empty_autocast_removed_graph_module.graph.nodes:
+    for node in graph_module.graph.nodes:
         # As _enter_autocast and _exit_autocast functions map the regions created by context manager,
         # previous `_enter_autocast` will always correspond with current `_exit_autocast`.
         if (
@@ -721,9 +718,9 @@ def remove_empty_autocast(graph_module: torch.fx.GraphModule) -> torch.fx.GraphM
 
     # Erase the marked nodes.
     for node in nodes_to_erase:
-        empty_autocast_removed_graph_module.graph.erase_node(node)
+        graph_module.graph.erase_node(node)
 
-    return empty_autocast_removed_graph_module
+    return graph_module
 
 
 def arg_like_tensor(arg: torch.Tensor | ExampleInputMetaData):
