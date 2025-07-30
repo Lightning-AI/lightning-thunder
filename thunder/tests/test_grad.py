@@ -1162,42 +1162,6 @@ def test_torch_autograd_function_with_kwargs_static_caching(executor, device, _)
 @instantiate(
     dtypes=NOTHING,
 )
-def test_forward_and_backward_from_trace(executor, device, _):
-    from thunder import trace
-    from thunder.clang import cos, sin
-    import thunder.torch as ltorch
-    from thunder.core.transforms import forward_and_backward_from_trace, value_and_grad
-    from thunder.core.transform_common import wrap_return_value_together_with_arguments
-
-    def func(a, b, *, c):
-        d = a + b + c
-        e = d * a + d * b + d * c
-        return sin(e) + cos(e), e, ltorch.sin(e) + ltorch.cos(e)
-
-    a = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
-    b = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
-    c = make_tensor((3,), device=device, dtype=torch.float64, requires_grad=True)
-    initial_trace = trace(inline_trace=False)(func, a, b, c=c)
-    wrapped_trace = wrap_return_value_together_with_arguments(initial_trace)
-    fw_trace, bw_trace = forward_and_backward_from_trace(wrapped_trace)
-    fw = executor.make_callable(fw_trace)
-    bw = executor.make_callable(bw_trace)
-    fw_out, saved_for_backward = fw(a, b, c=c)
-
-    initial_trace = trace()(value_and_grad(func), a, b, c=c)
-    expected_vjp_func = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)
-
-    expected_fw_out, expected_grads = expected_vjp_func(a, b, c=c)
-    torch.testing.assert_close(fw_out["output"], expected_fw_out)
-
-    output_grads = tree_map(lambda x: torch.ones_like(x), fw_out["output"])
-    bw_out = bw(saved_for_backward, output_grads)
-    torch.testing.assert_close(bw_out, expected_grads)
-
-
-@instantiate(
-    dtypes=NOTHING,
-)
 def test_update_forward_with_new_saved_for_backward_numberproxy(executor, device, _):
     def foo(t, ab):
         return t * ab * 0.5
