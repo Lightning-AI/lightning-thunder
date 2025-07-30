@@ -134,6 +134,7 @@ def test_te_linear_forward_backward_multiple_iteration(fp8_recipe: recipe.Recipe
         # Run for `iterations`.
         for iter_n in range(iterations):
             x = inputs[iter_n]
+            result = model(x)
             loss = torch.nn.functional.cross_entropy(result, target_value)
             loss.backward()
             optimizer.step()
