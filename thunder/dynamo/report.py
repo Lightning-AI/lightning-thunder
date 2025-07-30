@@ -1446,6 +1446,7 @@ def save_thunderfx_repros(
         save_fusion: If True, saves nvFusion repros
         save_trace: If True, saves trace information
         stream: Stream to write output log informationto
+        force_overwrite: If True, overwrites existing folder at folder_path
         **compile_kwargs: Keyword arguments for Thunder and torch.compile
 
     Returns:
