@@ -140,6 +140,7 @@ def _linear_fwd_impl(a, w, bias, input_quantizer: Quantizer, weight_quantizer: Q
         input=a,
         weight=w,
         bias=bias,
+        dtype=w.dtype,
         with_quantized_compute=True,
         input_quantizer=input_quantizer,
         weight_quantizer=weight_quantizer,
