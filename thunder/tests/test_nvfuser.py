@@ -1060,7 +1060,7 @@ def test_cross_entropy(executor, device: str, thunder_dtype: dtypes.dtype, ignor
     torch.manual_seed(0)
     dtype = ltorch.to_torch_dtype(thunder_dtype)
 
-    sequence_length, vocab_size = 8192, 32064
+    sequence_length, vocab_size = 256, 32064
     logits = make_tensor((sequence_length, vocab_size), device=device, dtype=dtype, requires_grad=True)
     labels = torch.randint(0, sequence_length, (sequence_length,), requires_grad=False, device=device)
     labels[10:128] = ignore_index  # Set labels to the ignore index

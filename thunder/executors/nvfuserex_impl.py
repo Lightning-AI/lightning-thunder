@@ -1438,27 +1438,35 @@ def squeeze(a: TensorProxy, /, dims: Sequence[int], *, fd: FusionDefinition, lc_
 
 register_supported(PrimIDs.SQUEEZE, squeeze, _squeeze_check)
 
-# TAKE is currently disabled
-# def _take_check(a: TensorProxy, /, index: TensorProxy, dim: int) -> bool:
-#     return are_supported_tensors(a, index)
 
-# def take(a: TensorProxy, /, index: TensorProxy, dim: int, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
-#     nv_a = getnv(a, fd, lc_to_nv_map)
-#     nv_index = getnv(index, fd, lc_to_nv_map)
+# NOTE: Currently `_advanced_indexing` seems to return a `TensorProxy` of wrong shape
+# when input is 0-size tensor, leading to a broken nvfuser definition.
+# So for now, it'd be reasonable to disallow 0-size tensors.
+# Related: https://github.com/Lightning-AI/lightning-thunder/issues/2068
+def _take_check(a: TensorProxy, /, index: TensorProxy, dim: int) -> bool:
+    return are_supported_tensors(a, index) and a.numel > 0
 
-#     return fd.ops.index_select(nv_a, nv_index, dim)
-# register_supported(PrimIDs.TAKE, take, _take_check)
 
-# TAKE_ALONG_AXIS is currently disabled
-# There was an nvFuser bug that prevented this which is now fixed; we should
-# investigate re-enabling take_along_axis.
-# # TODO Check that the nvFuser version is >= 0.0.10 when this operator was added
-# def take_along_axis(a: TensorProxy, /, index: TensorProxy, dim: int, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
-#     nv_a = getnv(a, fd, lc_to_nv_map)
-#     nv_index = getnv(index, fd, lc_to_nv_map)
+def take(a: TensorProxy, /, index: TensorProxy, dim: int, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+    nv_a = getnv(a, fd, lc_to_nv_map)
+    nv_index = getnv(index, fd, lc_to_nv_map)
 
-#     return fd.ops.take_along_axis(nv_a, nv_index, dim)
-# register_supported(PrimIDs.TAKE_ALONG_AXIS, take_along_axis, _take_check)
+    return fd.ops.index_select(nv_a, nv_index, dim)
+
+
+register_supported(PrimIDs.TAKE, take, _take_check)
+
+
+def take_along_axis(
+    a: TensorProxy, /, index: TensorProxy, dim: int, *, fd: FusionDefinition, lc_to_nv_map: dict
+) -> Any:
+    nv_a = getnv(a, fd, lc_to_nv_map)
+    nv_index = getnv(index, fd, lc_to_nv_map)
+
+    return fd.ops.take_along_axis(nv_a, nv_index, dim)
+
+
+register_supported(PrimIDs.TAKE_ALONG_AXIS, take_along_axis, _take_check)
 
 
 def _transpose_check(a: TensorProxy, /, permutation: Sequence[int]) -> bool:
