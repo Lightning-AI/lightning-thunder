@@ -121,12 +121,13 @@ if nvfuser_version() >= LooseVersion("0.2.27"):
 
 # TODO: Need to check the version which has https://github.com/NVIDIA/Fuser/pull/4715
 if nvfuser_version() >= LooseVersion("0.2.28"):
-    _lcdtype_to_nvdtype_map.update(
-        {
-            dtypes.uint8: DataType.Byte,
-            dtypes.uint8_: DataType.Byte,
-        }
-    )
+    pass
+    # _lcdtype_to_nvdtype_map.update(
+    #     {
+    #         dtypes.uint8: DataType.Byte,
+    #         dtypes.uint8_: DataType.Byte,
+    #     }
+    # )
 
 _lcfp8_to_nvfp8_map: dict[dtypes.dtype, DataType] = {
     dtypes.float8_e5m2: DataType.Float8_e5m2,
@@ -2006,6 +2007,9 @@ def le(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition
     nvb = getnv(b, fd, lc_to_nv_map)
 
     return fd.ops.le(nva, nvb)
+
+
+register_supported(PrimIDs.LE, le, _elementwise_binary_check)
 
 
 def lt(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
