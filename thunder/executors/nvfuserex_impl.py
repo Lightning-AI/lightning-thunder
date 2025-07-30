@@ -125,15 +125,6 @@ if nvfuser_version() >= LooseVersion("0.2.27"):
         }
     )
 
-# TODO: Need to check the version which has https://github.com/NVIDIA/Fuser/pull/4715
-if nvfuser_version() >= LooseVersion("0.2.28"):
-    _lcdtype_to_nvdtype_map.update(
-        {
-            dtypes.uint8: DataType.Byte,
-            dtypes.uint8_: DataType.Byte,
-        }
-    )
-
 _lcfp8_to_nvfp8_map: dict[dtypes.dtype, DataType] = {
     dtypes.float8_e5m2: DataType.Float8_e5m2,
     dtypes.float8_e5m2_: DataType.Float8_e5m2,
