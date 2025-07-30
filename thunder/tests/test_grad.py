@@ -391,323 +391,323 @@ def snippet_vjp_correctness(func, args, comp, executor, set_compile_data, prolog
 # With the slight revert for the mentioned issue, the VJP rule for `adaptive_avg_pool2d` is unavailable
 # unless compile data is available, as it's registered to `TorchExecutor.implmap` but not to
 # `thunder.core.transforms.augmented_forward_impls`.
-# @ops((op for op in opinfos if op.name in supported_vjp_ops), supported_dtypes=(dtypes.float64,))
-# def test_vjp_correctness(op, device, dtype, executor, comp):
-#     at_least_one_differentiable_input = False
-#     eps = 1e-2
-#     for sample in op.sample_inputs(device, dtype, requires_grad=True):
-#         # Here we convert any args in the sample to thunder args (specifically
-#         # to thunder dtypes). It was necessary to add this for the
-#         # convert_element_type tests, which have a non-differentiable argument
-#         # `dtype`. That argument is typically provided as a `torch.dtype`. In
-#         # the lines below, we strip non-differentiable arguments before
-#         # evaluating the op, which means stripped arguments do not undergo the
-#         # usual conversions in thunder.__init__._make_proxies(). The
-#         # sample.thunder() line below attempts to approximate those conversions
-#         # for non-differentiable arguments like dtypes so that the test will
-#         # execute properly.
-#         sample = sample.thunder()  # converts torch.dtype to thunder.dtype
-#         sample = sample.remove_singularities(op, eps)
+@ops((op for op in opinfos if op.name in supported_vjp_ops), supported_dtypes=(dtypes.float64,))
+def test_vjp_correctness(op, device, dtype, executor, comp):
+    at_least_one_differentiable_input = False
+    eps = 1e-2
+    for sample in op.sample_inputs(device, dtype, requires_grad=True):
+        # Here we convert any args in the sample to thunder args (specifically
+        # to thunder dtypes). It was necessary to add this for the
+        # convert_element_type tests, which have a non-differentiable argument
+        # `dtype`. That argument is typically provided as a `torch.dtype`. In
+        # the lines below, we strip non-differentiable arguments before
+        # evaluating the op, which means stripped arguments do not undergo the
+        # usual conversions in thunder.__init__._make_proxies(). The
+        # sample.thunder() line below attempts to approximate those conversions
+        # for non-differentiable arguments like dtypes so that the test will
+        # execute properly.
+        sample = sample.thunder()  # converts torch.dtype to thunder.dtype
+        sample = sample.remove_singularities(op, eps)
 
-#         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
+        flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
 
-#         filtered_op, filtered_args = _make_differentiable_wrapper(flat_op, flat_args)
-#         if len(filtered_args) == 0:
-#             continue
+        filtered_op, filtered_args = _make_differentiable_wrapper(flat_op, flat_args)
+        if len(filtered_args) == 0:
+            continue
 
-#         at_least_one_differentiable_input = True
-#         result = run_snippet(
-#             snippet_vjp_correctness,
-#             op,
-#             device,
-#             dtype,
-#             filtered_op,
-#             filtered_args,
-#             comp,
-#             executor,
-#             "adaptive_avg_pool2d" in op.name,
-#             len(sample.kwargs) != 0,
-#         )
-#         if result is not None:
-#             return result
+        at_least_one_differentiable_input = True
+        result = run_snippet(
+            snippet_vjp_correctness,
+            op,
+            device,
+            dtype,
+            filtered_op,
+            filtered_args,
+            comp,
+            executor,
+            "adaptive_avg_pool2d" in op.name,
+            len(sample.kwargs) != 0,
+        )
+        if result is not None:
+            return result
 
-#     if not at_least_one_differentiable_input:
-#         raise pytest.skip("No differentiable inputs found")
+    if not at_least_one_differentiable_input:
+        raise pytest.skip("No differentiable inputs found")
 
 
 # Embedding is a special case because its Jacobian product can't be approximated
 # with finite differences
-# @ops((op for op in opinfos if op.name == "embedding"), supported_dtypes=(dtypes.float64,))
-# def test_vjp_correctness_embedding_manual(op, device, dtype, executor, comp):
-#     for sample in op.sample_inputs(device, dtype, requires_grad=True):
-#         # Compute vjp result using PyTorch
-#         out = op.torch_reference(*sample.args, **sample.kwargs)
-#         v = make_tensor_like(out)
-#         expected = torch.autograd.grad(out, sample.args[1], v)
+@ops((op for op in opinfos if op.name == "embedding"), supported_dtypes=(dtypes.float64,))
+def test_vjp_correctness_embedding_manual(op, device, dtype, executor, comp):
+    for sample in op.sample_inputs(device, dtype, requires_grad=True):
+        # Compute vjp result using PyTorch
+        out = op.torch_reference(*sample.args, **sample.kwargs)
+        v = make_tensor_like(out)
+        expected = torch.autograd.grad(out, sample.args[1], v)
 
-#         # Compute vjp result using Thunder
-#         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
-#         filtered_op, filtered_args = _make_differentiable_wrapper(flat_op, flat_args)
-#         initial_trace = thunder.trace()(vjp(filtered_op), filtered_args, (v,))
-#         actual_out, (gindices, gweight) = executor.make_callable(
-#             initial_trace.python_callable(), disable_torch_autograd=True
-#         )(filtered_args, (v,))
-#         assert gindices is None, "gindices should be None"
-#         comp(gweight, expected[0])
-#         comp(actual_out, out)
-
-
-# @ops((op for op in opinfos if op.name == "type_as"), supported_dtypes=(dtypes.float64,))
-# def test_vjp_correctness_type_as_manual(op, device, dtype, executor, comp):
-#     for sample in op.sample_inputs(device, dtype, requires_grad=True):
-#         # Compute vjp result using PyTorch
-#         out = op.torch_reference(*sample.args, **sample.kwargs)
-#         v = make_tensor_like(out)
-#         expected = torch.autograd.grad(out, sample.args[0], v)
-
-#         # Compute vjp result using Thunder
-#         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
-#         filtered_op, filtered_args = _make_differentiable_wrapper(flat_op, flat_args)
-#         initial_trace = thunder.trace()(vjp(flat_op), filtered_args, (v,))
-#         actual_out = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)(
-#             filtered_args, (v,)
-#         )
-#         comp(actual_out[1][0], expected[0])
-#         comp(actual_out[0], out)
+        # Compute vjp result using Thunder
+        flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
+        filtered_op, filtered_args = _make_differentiable_wrapper(flat_op, flat_args)
+        initial_trace = thunder.trace()(vjp(filtered_op), filtered_args, (v,))
+        actual_out, (gindices, gweight) = executor.make_callable(
+            initial_trace.python_callable(), disable_torch_autograd=True
+        )(filtered_args, (v,))
+        assert gindices is None, "gindices should be None"
+        comp(gweight, expected[0])
+        comp(actual_out, out)
 
 
-# @ops(
-#     (get_opinfo("batch_norm"), get_opinfo("instance_norm")),
-#     supported_dtypes=(dtypes.float64,),
-# )
-# def test_vjp_correctness_batch_norm_manual(op, device, dtype, executor, comp):
-#     from thunder.tests.framework import nvFuserTestExecutor
+@ops((op for op in opinfos if op.name == "type_as"), supported_dtypes=(dtypes.float64,))
+def test_vjp_correctness_type_as_manual(op, device, dtype, executor, comp):
+    for sample in op.sample_inputs(device, dtype, requires_grad=True):
+        # Compute vjp result using PyTorch
+        out = op.torch_reference(*sample.args, **sample.kwargs)
+        v = make_tensor_like(out)
+        expected = torch.autograd.grad(out, sample.args[0], v)
 
-#     if type(executor) is nvFuserTestExecutor and dtype is dtypes.float64:
-#         pytest.skip("nvFuser issue #1964")
-
-#     for sample in op.sample_inputs(device, dtype, requires_grad=True):
-#         # Compute vjp result using PyTorch
-#         weight = sample.args[3]
-#         bias = sample.args[4]
-#         # Torch fails with "RuntimeError: tensor does not have a device"
-#         if weight is None and bias is not None:
-#             continue
-#         out = op.torch_reference(*sample.args, **sample.kwargs)
-#         v = make_tensor_like(out)
-#         grad_inputs = [x for x in (sample.args[0], weight, bias) if x is not None]
-#         expected = torch.autograd.grad(out, grad_inputs, v)
-#         # Compute vjp result using Thunder
-#         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
-#         initial_trace = thunder.trace()(vjp(flat_op), flat_args, (v,))
-#         actual_out, actual_grad = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)(
-#             flat_args, (v,)
-#         )
-#         actual_grad = [
-#             x
-#             for x, grad_input in zip(actual_grad, sample.args[:5])
-#             if grad_input is not None and grad_input.requires_grad
-#         ]
-
-#         comp = partial(comp, equal_nan=True)
-#         comp(actual_out, out)
-#         assert len(actual_grad) == len(expected)
-#         for actual, expect in zip(actual_grad, expected):
-#             comp(actual, expect)
+        # Compute vjp result using Thunder
+        flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
+        filtered_op, filtered_args = _make_differentiable_wrapper(flat_op, flat_args)
+        initial_trace = thunder.trace()(vjp(flat_op), filtered_args, (v,))
+        actual_out = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)(
+            filtered_args, (v,)
+        )
+        comp(actual_out[1][0], expected[0])
+        comp(actual_out[0], out)
 
 
-# # Testing with finite differences has flaky accuracy fails
-# @ops((op for op in opinfos if op.name == "index_put"), supported_dtypes=(dtypes.float64,))
-# def test_vjp_correctness_index_put_manual(op, device, dtype, executor, comp):
-#     for sample in op.sample_inputs(device, dtype, requires_grad=True):
-#         # skip the test cases when indices > 1D or indices are bool
-#         # values.requires_grad is used here just as a way to distinguish unsupported cases
-#         if not sample.args[2].requires_grad:
-#             continue
+@ops(
+    (get_opinfo("batch_norm"), get_opinfo("instance_norm")),
+    supported_dtypes=(dtypes.float64,),
+)
+def test_vjp_correctness_batch_norm_manual(op, device, dtype, executor, comp):
+    from thunder.tests.framework import nvFuserTestExecutor
 
-#         # Compute vjp result using PyTorch
-#         out = op.torch_reference(*sample.args, **sample.kwargs)
-#         v = make_tensor_like(out)
-#         # args: a, indices, values, accumulate
-#         grad_inputs = [sample.args[0], sample.args[2]]
-#         expected = torch.autograd.grad(out, grad_inputs, v)
+    if type(executor) is nvFuserTestExecutor and dtype is dtypes.float64:
+        pytest.skip("nvFuser issue #1964")
 
-#         # Compute vjp result using Thunder
-#         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
-#         initial_trace = thunder.trace()(vjp(flat_op), flat_args, (v,))
-#         actual_out, actual_grad = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)(
-#             flat_args, (v,)
-#         )
-#         comp(actual_out, out)
-#         comp(actual_grad[0], expected[0])
-#         comp(actual_grad[-2], expected[1])
+    for sample in op.sample_inputs(device, dtype, requires_grad=True):
+        # Compute vjp result using PyTorch
+        weight = sample.args[3]
+        bias = sample.args[4]
+        # Torch fails with "RuntimeError: tensor does not have a device"
+        if weight is None and bias is not None:
+            continue
+        out = op.torch_reference(*sample.args, **sample.kwargs)
+        v = make_tensor_like(out)
+        grad_inputs = [x for x in (sample.args[0], weight, bias) if x is not None]
+        expected = torch.autograd.grad(out, grad_inputs, v)
+        # Compute vjp result using Thunder
+        flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
+        initial_trace = thunder.trace()(vjp(flat_op), flat_args, (v,))
+        actual_out, actual_grad = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)(
+            flat_args, (v,)
+        )
+        actual_grad = [
+            x
+            for x, grad_input in zip(actual_grad, sample.args[:5])
+            if grad_input is not None and grad_input.requires_grad
+        ]
 
-
-# # NOTE Scaled_Dot_Product_Efficient_Attention_Backward does not support fp64 dtypes
-# # RuntimeError: Only fp32, half & bf16 supported at the moment
-# @ops(
-#     (get_opinfo("grad_forward_scaled_dot_product_attention"),),
-#     supported_dtypes=(dtypes.float16, dtypes.bfloat16),
-#     supported_devicetypes=(devices.DeviceType.CUDA,),
-# )
-# def test_vjp_correctness_sdpa_manual(op, device, dtype, executor, comp):
-#     from thunder.common import CompileData
-#     from thunder.core.compile_data import compile_data_and_stats
-
-#     for sample in op.sample_inputs(device, dtype, requires_grad=True):
-#         from thunder.executors.sdpaex import sdpa_ex
-
-#         # Enforce tensor arguments are contiguous for torch reference
-#         contiguous_args = list(map(lambda a: a.contiguous() if isinstance(a, torch.Tensor) else a, sample.args))
-
-#         # query, key, value
-#         grad_inputs = list(contiguous_args[:3])
-#         if (attn_mask := sample.args[3]) is not None and attn_mask.requires_grad:
-#             grad_inputs.append(attn_mask)
-
-#         # Compute vjp result using PyTorch
-#         expect_out = op.torch_reference(*contiguous_args, **sample.kwargs)
-#         v = make_tensor_like(expect_out)
-#         expected_grad = torch.autograd.grad(expect_out, grad_inputs, v)
-
-#         # Compute vjp result using Thunder
-#         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
-#         filtered_op, filtered_args = _make_differentiable_wrapper(flat_op, flat_args)
-#         cd = CompileData(
-#             fn=vjp(filtered_op),
-#             executors_list=[sdpa_ex, *executor.executors_list()],
-#             disable_preprocessing=True,
-#         )
-#         with compile_data_and_stats(cd, None):
-#             initial_trace = thunder.trace()(vjp(filtered_op), filtered_args, (v,))
-
-#         from thunder.executors.sdpaex import sdpea_gradfwd, sdpea_bwd, sdpfa_gradfwd, sdpfa_bwd
-
-#         # This is a workaround for the issue with python_ctx replacing symbols
-#         # with their "call_ctx" values which are not traceable and accept only
-#         # regular torch tensors
-#         initial_trace.python_ctx = lambda: {
-#             "sdpaex_grad_forward_scaled_dot_product_efficient_attention": sdpea_gradfwd,
-#             "sdpaex_scaled_dot_product_efficient_attention_backward": sdpea_bwd,
-#             "sdpafx_grad_forward_scaled_dot_product_efficient_attention": sdpfa_gradfwd,
-#             "sdpafx_scaled_dot_product_efficient_attention_backward": sdpfa_bwd,
-#         }
-#         actual_out, actual_grad = thunder.jit(
-#             initial_trace.python_callable(),
-#             disable_torch_autograd=True,
-#             executors=[sdpa_ex, *executor.executors_list()],
-#         )(filtered_args, (v,))
-#         comp(actual_out, expect_out, atol=1e-3, rtol=1e-3)
-
-#         # compare gradients of query, key, value, and attn_mask
-#         for eg, ag in zip(expected_grad, actual_grad):
-#             comp(eg, ag, atol=7e-3, rtol=7e-3)
+        comp = partial(comp, equal_nan=True)
+        comp(actual_out, out)
+        assert len(actual_grad) == len(expected)
+        for actual, expect in zip(actual_grad, expected):
+            comp(actual, expect)
 
 
-# @ops((get_opinfo("zeta"),), supported_dtypes=(dtypes.float64,))
-# def test_vjp_correctness_zeta_manual(op, device, dtype, executor, comp):
-#     for sample in op.sample_inputs(device, dtype, requires_grad=True, no_rhs_numbers=True):
-#         # Compute vjp result using PyTorch
-#         out = op.torch_reference(*sample.args, **sample.kwargs)
-#         v = make_tensor_like(out)
-#         expected_grad = torch.autograd.grad(out, sample.args[1], v)
+# Testing with finite differences has flaky accuracy fails
+@ops((op for op in opinfos if op.name == "index_put"), supported_dtypes=(dtypes.float64,))
+def test_vjp_correctness_index_put_manual(op, device, dtype, executor, comp):
+    for sample in op.sample_inputs(device, dtype, requires_grad=True):
+        # skip the test cases when indices > 1D or indices are bool
+        # values.requires_grad is used here just as a way to distinguish unsupported cases
+        if not sample.args[2].requires_grad:
+            continue
 
-#         # Compute vjp result using Thunder
-#         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
-#         initial_trace = thunder.trace()(vjp(flat_op), flat_args, (v,))
-#         actual_out, (grad_lhs, grad_rhs) = executor.make_callable(
-#             initial_trace.python_callable(), disable_torch_autograd=True
-#         )(flat_args, (v,))
-#         assert grad_lhs is None, "grad_lhs should be None"
-#         comp(actual_out, out, equal_nan=True)
-#         comp(grad_rhs, expected_grad[0], equal_nan=True)
+        # Compute vjp result using PyTorch
+        out = op.torch_reference(*sample.args, **sample.kwargs)
+        v = make_tensor_like(out)
+        # args: a, indices, values, accumulate
+        grad_inputs = [sample.args[0], sample.args[2]]
+        expected = torch.autograd.grad(out, grad_inputs, v)
 
-
-# @ops((get_opinfo("item"),), supported_dtypes=(dtypes.float64,))
-# def test_vjp_correctness_torch_item_manual(op, device, dtype, executor, comp):
-#     from thunder.torch import item
-
-#     for sample in op.sample_inputs(device, dtype, requires_grad=True, no_rhs_numbers=True):
-#         out = op.torch_reference(*sample.args, **sample.kwargs)
-#         flat_op, flat_args, spec = flatten_func(item, sample.args, sample.kwargs)
-#         initial_trace = thunder.trace()(vjp(flat_op), flat_args, (None,))
-#         actual_out, (grad_in,) = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)(
-#             flat_args, (None,)
-#         )
-#         assert grad_in is None, "grad_in should be None"
-#         comp(actual_out, out, equal_nan=True)
+        # Compute vjp result using Thunder
+        flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
+        initial_trace = thunder.trace()(vjp(flat_op), flat_args, (v,))
+        actual_out, actual_grad = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)(
+            flat_args, (v,)
+        )
+        comp(actual_out, out)
+        comp(actual_grad[0], expected[0])
+        comp(actual_grad[-2], expected[1])
 
 
-# @ops((get_opinfo("nll_loss"),), supported_dtypes=(dtypes.float64,))
-# def test_vjp_correctness_nll_loss_manual(op, device, dtype, executor, comp):
-#     for sample in op.sample_inputs(device, dtype, requires_grad=True, no_rhs_numbers=True):
-#         # Traced backwards function does not follow PyTorch nll_loss behavior with zero element tensors
-#         if sample.args[0].numel() == 0:
-#             continue
+# NOTE Scaled_Dot_Product_Efficient_Attention_Backward does not support fp64 dtypes
+# RuntimeError: Only fp32, half & bf16 supported at the moment
+@ops(
+    (get_opinfo("grad_forward_scaled_dot_product_attention"),),
+    supported_dtypes=(dtypes.float16, dtypes.bfloat16),
+    supported_devicetypes=(devices.DeviceType.CUDA,),
+)
+def test_vjp_correctness_sdpa_manual(op, device, dtype, executor, comp):
+    from thunder.common import CompileData
+    from thunder.core.compile_data import compile_data_and_stats
 
-#         # Compute vjp result using PyTorch
-#         out = op.torch_reference(*sample.args, **sample.kwargs)
-#         v = make_tensor_like(out)
-#         expected_grad = torch.autograd.grad(out, sample.args[0], v)
+    for sample in op.sample_inputs(device, dtype, requires_grad=True):
+        from thunder.executors.sdpaex import sdpa_ex
 
-#         # Compute vjp result using Thunder
-#         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
-#         initial_trace = thunder.trace()(vjp(flat_op), flat_args, (v,))
-#         actual_out, grad_out = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)(
-#             flat_args, (v,)
-#         )
+        # Enforce tensor arguments are contiguous for torch reference
+        contiguous_args = list(map(lambda a: a.contiguous() if isinstance(a, torch.Tensor) else a, sample.args))
 
-#         comp(actual_out, out)
-#         comp(grad_out[0], expected_grad[0])
+        # query, key, value
+        grad_inputs = list(contiguous_args[:3])
+        if (attn_mask := sample.args[3]) is not None and attn_mask.requires_grad:
+            grad_inputs.append(attn_mask)
+
+        # Compute vjp result using PyTorch
+        expect_out = op.torch_reference(*contiguous_args, **sample.kwargs)
+        v = make_tensor_like(expect_out)
+        expected_grad = torch.autograd.grad(expect_out, grad_inputs, v)
+
+        # Compute vjp result using Thunder
+        flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
+        filtered_op, filtered_args = _make_differentiable_wrapper(flat_op, flat_args)
+        cd = CompileData(
+            fn=vjp(filtered_op),
+            executors_list=[sdpa_ex, *executor.executors_list()],
+            disable_preprocessing=True,
+        )
+        with compile_data_and_stats(cd, None):
+            initial_trace = thunder.trace()(vjp(filtered_op), filtered_args, (v,))
+
+        from thunder.executors.sdpaex import sdpea_gradfwd, sdpea_bwd, sdpfa_gradfwd, sdpfa_bwd
+
+        # This is a workaround for the issue with python_ctx replacing symbols
+        # with their "call_ctx" values which are not traceable and accept only
+        # regular torch tensors
+        initial_trace.python_ctx = lambda: {
+            "sdpaex_grad_forward_scaled_dot_product_efficient_attention": sdpea_gradfwd,
+            "sdpaex_scaled_dot_product_efficient_attention_backward": sdpea_bwd,
+            "sdpafx_grad_forward_scaled_dot_product_efficient_attention": sdpfa_gradfwd,
+            "sdpafx_scaled_dot_product_efficient_attention_backward": sdpfa_bwd,
+        }
+        actual_out, actual_grad = thunder.jit(
+            initial_trace.python_callable(),
+            disable_torch_autograd=True,
+            executors=[sdpa_ex, *executor.executors_list()],
+        )(filtered_args, (v,))
+        comp(actual_out, expect_out, atol=1e-3, rtol=1e-3)
+
+        # compare gradients of query, key, value, and attn_mask
+        for eg, ag in zip(expected_grad, actual_grad):
+            comp(eg, ag, atol=7e-3, rtol=7e-3)
 
 
-# @ops((get_opinfo("cross_entropy"),), supported_dtypes=(dtypes.float64,))
-# def test_vjp_correctness_cross_entropy_manual(op, device, dtype, executor, comp):
-#     for sample in op.sample_inputs(device, dtype, requires_grad=True, no_rhs_numbers=True):
-#         # Traced backwards function does not follow PyTorch cross_entropy behavior with zero element tensors
-#         if sample.args[0].numel() == 0:
-#             continue
+@ops((get_opinfo("zeta"),), supported_dtypes=(dtypes.float64,))
+def test_vjp_correctness_zeta_manual(op, device, dtype, executor, comp):
+    for sample in op.sample_inputs(device, dtype, requires_grad=True, no_rhs_numbers=True):
+        # Compute vjp result using PyTorch
+        out = op.torch_reference(*sample.args, **sample.kwargs)
+        v = make_tensor_like(out)
+        expected_grad = torch.autograd.grad(out, sample.args[1], v)
 
-#         # Compute vjp result using PyTorch
-#         out = op.torch_reference(*sample.args, **sample.kwargs)
-#         v = make_tensor_like(out)
-#         expected_grad = torch.autograd.grad(out, sample.args[0], v)
-
-#         # Compute vjp result using Thunder
-#         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
-#         initial_trace = thunder.trace()(vjp(flat_op), flat_args, (v,))
-#         actual_out, grad_out = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)(
-#             flat_args, (v,)
-#         )
-
-#         comp(actual_out, out)
-#         comp(grad_out[0], expected_grad[0])
+        # Compute vjp result using Thunder
+        flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
+        initial_trace = thunder.trace()(vjp(flat_op), flat_args, (v,))
+        actual_out, (grad_lhs, grad_rhs) = executor.make_callable(
+            initial_trace.python_callable(), disable_torch_autograd=True
+        )(flat_args, (v,))
+        assert grad_lhs is None, "grad_lhs should be None"
+        comp(actual_out, out, equal_nan=True)
+        comp(grad_rhs, expected_grad[0], equal_nan=True)
 
 
-# @ops((get_opinfo("einsum"),), supported_dtypes=(dtypes.float64,))
-# def test_vjp_correctness_einsum_manual(op, device, dtype, executor, comp):
-#     from thunder.tests.framework import nvFuserTestExecutor
+@ops((get_opinfo("item"),), supported_dtypes=(dtypes.float64,))
+def test_vjp_correctness_torch_item_manual(op, device, dtype, executor, comp):
+    from thunder.torch import item
 
-#     if type(executor) is nvFuserTestExecutor and dtype is dtypes.float64:
-#         pytest.skip("nvFuser issue #1645")
+    for sample in op.sample_inputs(device, dtype, requires_grad=True, no_rhs_numbers=True):
+        out = op.torch_reference(*sample.args, **sample.kwargs)
+        flat_op, flat_args, spec = flatten_func(item, sample.args, sample.kwargs)
+        initial_trace = thunder.trace()(vjp(flat_op), flat_args, (None,))
+        actual_out, (grad_in,) = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)(
+            flat_args, (None,)
+        )
+        assert grad_in is None, "grad_in should be None"
+        comp(actual_out, out, equal_nan=True)
 
-#     for sample in op.sample_inputs(device, dtype, requires_grad=True, no_rhs_numbers=True):
-#         # Compute vjp result using PyTorch
-#         out = op.torch_reference(*sample.args, **sample.kwargs)
-#         v = make_tensor_like(out)
-#         expected_grads = torch.autograd.grad(out, sample.args[1:], v)
 
-#         # Compute vjp result using Thunder
-#         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
-#         initial_trace = thunder.trace()(vjp(flat_op), flat_args, (v,))
-#         actual_out, grads_out = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)(
-#             flat_args, (v,)
-#         )
+@ops((get_opinfo("nll_loss"),), supported_dtypes=(dtypes.float64,))
+def test_vjp_correctness_nll_loss_manual(op, device, dtype, executor, comp):
+    for sample in op.sample_inputs(device, dtype, requires_grad=True, no_rhs_numbers=True):
+        # Traced backwards function does not follow PyTorch nll_loss behavior with zero element tensors
+        if sample.args[0].numel() == 0:
+            continue
 
-#         comp(actual_out, out)
-#         assert len(expected_grads) == len(grads_out) - 1
-#         for torch_grad, thunder_grad in zip(expected_grads, grads_out[1:]):
-#             comp(torch_grad, thunder_grad)
+        # Compute vjp result using PyTorch
+        out = op.torch_reference(*sample.args, **sample.kwargs)
+        v = make_tensor_like(out)
+        expected_grad = torch.autograd.grad(out, sample.args[0], v)
+
+        # Compute vjp result using Thunder
+        flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
+        initial_trace = thunder.trace()(vjp(flat_op), flat_args, (v,))
+        actual_out, grad_out = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)(
+            flat_args, (v,)
+        )
+
+        comp(actual_out, out)
+        comp(grad_out[0], expected_grad[0])
+
+
+@ops((get_opinfo("cross_entropy"),), supported_dtypes=(dtypes.float64,))
+def test_vjp_correctness_cross_entropy_manual(op, device, dtype, executor, comp):
+    for sample in op.sample_inputs(device, dtype, requires_grad=True, no_rhs_numbers=True):
+        # Traced backwards function does not follow PyTorch cross_entropy behavior with zero element tensors
+        if sample.args[0].numel() == 0:
+            continue
+
+        # Compute vjp result using PyTorch
+        out = op.torch_reference(*sample.args, **sample.kwargs)
+        v = make_tensor_like(out)
+        expected_grad = torch.autograd.grad(out, sample.args[0], v)
+
+        # Compute vjp result using Thunder
+        flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
+        initial_trace = thunder.trace()(vjp(flat_op), flat_args, (v,))
+        actual_out, grad_out = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)(
+            flat_args, (v,)
+        )
+
+        comp(actual_out, out)
+        comp(grad_out[0], expected_grad[0])
+
+
+@ops((get_opinfo("einsum"),), supported_dtypes=(dtypes.float64,))
+def test_vjp_correctness_einsum_manual(op, device, dtype, executor, comp):
+    from thunder.tests.framework import nvFuserTestExecutor
+
+    if type(executor) is nvFuserTestExecutor and dtype is dtypes.float64:
+        pytest.skip("nvFuser issue #1645")
+
+    for sample in op.sample_inputs(device, dtype, requires_grad=True, no_rhs_numbers=True):
+        # Compute vjp result using PyTorch
+        out = op.torch_reference(*sample.args, **sample.kwargs)
+        v = make_tensor_like(out)
+        expected_grads = torch.autograd.grad(out, sample.args[1:], v)
+
+        # Compute vjp result using Thunder
+        flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
+        initial_trace = thunder.trace()(vjp(flat_op), flat_args, (v,))
+        actual_out, grads_out = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)(
+            flat_args, (v,)
+        )
+
+        comp(actual_out, out)
+        assert len(expected_grads) == len(grads_out) - 1
+        for torch_grad, thunder_grad in zip(expected_grads, grads_out[1:]):
+            comp(torch_grad, thunder_grad)
 
 
 # TODO Extend requires_grad so that tensors produced from thunder.jit functions requires_grad
@@ -1162,6 +1162,42 @@ def test_torch_autograd_function_with_kwargs_static_caching(executor, device, _)
 @instantiate(
     dtypes=NOTHING,
 )
+def test_forward_and_backward_from_trace(executor, device, _):
+    from thunder import trace
+    from thunder.clang import cos, sin
+    import thunder.torch as ltorch
+    from thunder.core.transforms import forward_and_backward_from_trace, value_and_grad
+    from thunder.core.transform_common import wrap_return_value_together_with_arguments
+
+    def func(a, b, *, c):
+        d = a + b + c
+        e = d * a + d * b + d * c
+        return sin(e) + cos(e), e, ltorch.sin(e) + ltorch.cos(e)
+
+    a = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
+    b = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
+    c = make_tensor((3,), device=device, dtype=torch.float64, requires_grad=True)
+    initial_trace = trace(inline_trace=False)(func, a, b, c=c)
+    wrapped_trace = wrap_return_value_together_with_arguments(initial_trace)
+    fw_trace, bw_trace = forward_and_backward_from_trace(wrapped_trace)
+    fw = executor.make_callable(fw_trace)
+    bw = executor.make_callable(bw_trace)
+    fw_out, saved_for_backward = fw(a, b, c=c)
+
+    initial_trace = trace()(value_and_grad(func), a, b, c=c)
+    expected_vjp_func = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)
+
+    expected_fw_out, expected_grads = expected_vjp_func(a, b, c=c)
+    torch.testing.assert_close(fw_out["output"], expected_fw_out)
+
+    output_grads = tree_map(lambda x: torch.ones_like(x), fw_out["output"])
+    bw_out = bw(saved_for_backward, output_grads)
+    torch.testing.assert_close(bw_out, expected_grads)
+
+
+@instantiate(
+    dtypes=NOTHING,
+)
 def test_update_forward_with_new_saved_for_backward_numberproxy(executor, device, _):
     def foo(t, ab):
         return t * ab * 0.5
@@ -1355,38 +1391,38 @@ def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp):
     )
 
 
-# @ops(
-#     tuple(op for op in opinfos if op.supports_grad and op.torch_reference is not None),
-#     supported_dtypes=dtypes.float_math_dtypes,
-# )
-# def test_phantom_grad_vs_torch_consistency(op, device: str, dtype: dtypes.dtype, executor, comp):
-#     if dtypes.is_complex_dtype(dtype) and not op.instantiate_complex_tests:
-#         pytest.skip("Skipping complex operator tests in CI for speed")
-#     if torch.device(device).type == "cuda" and dtype is dtypes.bfloat16 and not torch.cuda.is_bf16_supported():
-#         pytest.skip("Your CUDA device does not support bfloat16")
+@ops(
+    tuple(op for op in opinfos if op.supports_grad and op.torch_reference is not None),
+    supported_dtypes=dtypes.float_math_dtypes,
+)
+def test_phantom_grad_vs_torch_consistency(op, device: str, dtype: dtypes.dtype, executor, comp):
+    if dtypes.is_complex_dtype(dtype) and not op.instantiate_complex_tests:
+        pytest.skip("Skipping complex operator tests in CI for speed")
+    if torch.device(device).type == "cuda" and dtype is dtypes.bfloat16 and not torch.cuda.is_bf16_supported():
+        pytest.skip("Your CUDA device does not support bfloat16")
 
-#     for sample in op.sample_inputs(device, dtype, requires_grad=True):
-#         comp = sample.comp if sample.comp is not None else comp
+    for sample in op.sample_inputs(device, dtype, requires_grad=True):
+        comp = sample.comp if sample.comp is not None else comp
 
-#         sample = sample.remove_singularities(op, 1e-2)
+        sample = sample.remove_singularities(op, 1e-2)
 
-#         result = run_snippet(
-#             snippet_phantom_grad_vs_torch_consistency,
-#             op,
-#             device,
-#             dtype,
-#             executor.make_callable(op.op),
-#             op.torch_reference,
-#             sample,
-#             lambda a, b, **kwargs: comp(a, b, equal_nan=True, **kwargs),
-#         )
+        result = run_snippet(
+            snippet_phantom_grad_vs_torch_consistency,
+            op,
+            device,
+            dtype,
+            executor.make_callable(op.op),
+            op.torch_reference,
+            sample,
+            lambda a, b, **kwargs: comp(a, b, equal_nan=True, **kwargs),
+        )
 
-#         # See [NOTE] dynamo reset
-#         if any("torchcompile" in ex.name for ex in executor.executors_list()):
-#             torch._dynamo.reset()
+        # See [NOTE] dynamo reset
+        if any("torchcompile" in ex.name for ex in executor.executors_list()):
+            torch._dynamo.reset()
 
-#         if result is not None:
-#             return result
+        if result is not None:
+            return result
 
 
 from torch.testing import assert_close
