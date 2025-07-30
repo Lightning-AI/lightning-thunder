@@ -76,9 +76,6 @@ from thunder.executors.nvfuserex import nvfuser_version
 import nvfuser
 from nvfuser import DataType, FusionDefinition
 
-nvTensor = nvfuser._C.Tensor
-nvNumber = nvfuser._C.Scalar
-
 #
 # Helper functions
 #
@@ -3196,10 +3193,9 @@ def cumsum_transform(
     a: TensorProxy, dim: int, /, dtype: torch.dtype | None = None, *, fd: FusionDefinition, lc_to_nv_map: dict
 ) -> TensorProxy:
     # Emulate cumsum using matmul: cumsum(a) = a @ triu(ones)
-    if dtypes.is_integer_dtype(a.dtype) or dtypes.is_low_precision_dtype(a.dtype):
+    if dtypes.is_integer_dtype(a.dtype):
         # torch.matmul can't do integers on GPU so we convert `a` to
-        # float. Low precision matmuls have large numerical errors so we
-        # convert `a` to float as well.
+        # float.
         compute_dtype = DataType.Float
     else:
         compute_dtype = lcdtype_to_nvdtype(a.dtype)
