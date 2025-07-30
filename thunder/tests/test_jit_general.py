@@ -1480,7 +1480,7 @@ def test_tag_static_memory_location():
 def test_args_order():
     @thunder_jit
     def fn(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10):
-        # do not skip functionalization process
+        # do not skip alias update process
         a9 += 1
         # do not drop arguments by dce
         return a0 + a1 + a2 + a3 + a4 + a5 + a6 + a7 + a8 + a9 + a10
