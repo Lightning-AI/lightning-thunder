@@ -1,5 +1,6 @@
 from collections.abc import Sequence
 from functools import partial
+import gc
 from typing import Any
 
 # NOTE: Dependency on fdm and NumPy is temporary.
@@ -1533,6 +1534,9 @@ def test_populate_grads_nanogpt(executor, device, dtype):
 
     logits, loss = model(x, targets)
     torch.autograd.backward((logits, loss), (torch.ones_like(logits), torch.ones_like(loss)))
+    del logits, loss
+    gc.collect()
+    torch.cuda.empty_cache()
     torch_grads = extract_grads(model)
 
     clear_grads(model)
