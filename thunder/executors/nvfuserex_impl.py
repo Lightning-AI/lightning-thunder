@@ -3193,9 +3193,8 @@ def cumsum_transform(
     a: TensorProxy, dim: int, /, dtype: torch.dtype | None = None, *, fd: FusionDefinition, lc_to_nv_map: dict
 ) -> TensorProxy:
     # Emulate cumsum using matmul: cumsum(a) = a @ triu(ones)
-    if dtypes.is_integer_dtype(a.dtype):
-        # torch.matmul can't do integers on GPU so we convert `a` to
-        # float.
+    if dtypes.is_low_precision_dtype(a.dtype):
+        # nvFuser can't sum low-precision floats.
         compute_dtype = DataType.Float
     else:
         compute_dtype = lcdtype_to_nvdtype(a.dtype)
@@ -3208,10 +3207,13 @@ def cumsum_transform(
     nv_a = getnv(a, fd, lc_to_nv_map)
     nv_a = fd.ops.cast(nv_a, compute_dtype)
 
-    mask = fd.ops.full((a.numel, a.numel), fd.define_scalar(1), compute_dtype)
+    mask = fd.ops.full((a.numel, a.numel), fd.define_scalar(True), DataType.Bool)
     mask = fd.ops.triu(mask)
 
-    out = fd.ops.matmul(nv_a, mask)
+    masked_2d = fd.ops.where(
+        mask, fd.ops.broadcast_in_dim(nv_a, shape=[-1, 1], broadcast_dims=[0]), fd.define_scalar(0, dtype=compute_dtype)
+    )
+    out = fd.ops.sum(masked_2d, 0)
     out = fd.ops.cast(out, out_dtype)
     return out
 
