@@ -75,7 +75,7 @@ from thunder.core.proxies import (
 )
 from thunder.core.interpreter import print_interpreter_log, print_to_log
 from thunder.core.jit_ext import thunder_general_jit
-from thunder.executors.torch_autograd import split_forward_backward, connect_to_autograd
+from thunder.executors.torch_autograd import connect_to_autograd
 
 # NOTE This import is intentionally pytorch so that it thunder.torch doesn't import this
 import torch as pytorch
@@ -550,50 +550,35 @@ def jit(
             computation_trc = dce(computation_trc)
             computation_traces.append(computation_trc)
 
-            backward_trc = None
             if not cd.disable_torch_autograd_support:
                 tensor_cls = (pytorch.Tensor, TensorProxy)
                 requires_grad = any(isinstance(arg, tensor_cls) and arg.requires_grad for arg in computation_trc.args)
             else:
                 requires_grad = False
 
-            delay_trace_split = compile_options.get("delay_trace_split", True)
-
             if requires_grad:
-                if delay_trace_split:
-                    from thunder.transforms.autodiff import grad_transform_on_trace
+                from thunder.transforms.autodiff import grad_transform_on_trace
 
-                    computation_trc = grad_transform_on_trace(computation_trc)
-                else:
-                    # Currently split_forward_backward also includes
-                    # transform_for_execution and various sorting of symbols,
-                    # applying transform_for_execution after this would be
-                    # breaking the order of operations
-                    computation_trc, backward_trc = split_forward_backward(
-                        computation_trc, cd, cs, *computation_trc.args
-                    )
-                    # Note computation_trc and backward_trc have been appended to cs.last_(backward_)traces
-                    # by split_forward_backward
+                computation_trc = grad_transform_on_trace(computation_trc)
 
-            if backward_trc is None:
-                from thunder.executors.passes import transform_for_execution as transform_for_execution_pass
-                from thunder.executors.passes import _transform_for_operator_executor_execution
-                from thunder.distributed.utils import maybe_sort_waits
+            from thunder.executors.passes import _transform_for_operator_executor_execution
+            from thunder.distributed.utils import maybe_sort_waits
 
-                tmp_comp_trc = _transform_for_operator_executor_execution(computation_trc, cd.executors_list)
-                is_transformed, tmp_comp_trc = maybe_sort_waits(tmp_comp_trc)
-                if is_transformed:
-                    computation_trc = tmp_comp_trc
-                    computation_traces.append(computation_trc)
+            tmp_comp_trc = _transform_for_operator_executor_execution(computation_trc, cd.executors_list)
+            is_transformed, tmp_comp_trc = maybe_sort_waits(tmp_comp_trc)
+            if is_transformed:
+                computation_trc = tmp_comp_trc
+                computation_traces.append(computation_trc)
 
-                extraces = transform_for_execution(
-                    computation_trc,
-                    executors_list=cd.executors_list,
-                    use_del_last_used=False,
-                )
-                computation_trc = extraces[-1]
+            extraces = transform_for_execution(
+                computation_trc,
+                executors_list=cd.executors_list,
+                use_del_last_used=False,
+            )
+            computation_trc = extraces[-1]
 
-            if requires_grad and delay_trace_split:
+            backward_trc = None
+            if requires_grad:
                 from thunder.transforms.autodiff import split_into_forward_and_backward
 
                 computation_trc, backward_trc = split_into_forward_and_backward(computation_trc)

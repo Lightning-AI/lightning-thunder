@@ -9,12 +9,9 @@ import thunder.torch as ltorch
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
 import thunder.core.prims as prims
-from thunder.core.pytree import tree_map
-from thunder.core.transforms import value_and_grad
 
 from thunder.tests.framework import (
     instantiate,
-    TestExecutor,
     NOTHING,
     nvFuserExecutor,
 )
@@ -25,57 +22,6 @@ from thunder.tests.opinfos import (
     embedding_opinfo,
 )
 from looseversion import LooseVersion
-
-
-@instantiate(
-    dtypes=NOTHING,
-)
-def test_rematerialization_with_forward_and_backward_from_trace(executor: TestExecutor, device: str, _) -> None:
-    from thunder import trace
-    from thunder.clang import cos, sin
-    import thunder.torch as ltorch
-    from thunder.core.transforms import forward_and_backward_from_trace
-    from thunder.core.transform_common import wrap_return_value_together_with_arguments
-    from thunder.common import transform_for_execution
-    from thunder.core.rematerialization import rematerialize_forward_and_backward
-
-    def func(a, b, *, c):
-        d = a + b + c
-        e = d * a + d * b + d * c
-        return sin(e) + cos(e), e, ltorch.sin(e) + ltorch.cos(e)
-
-    a = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
-    b = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
-    c = make_tensor(
-        (
-            2,
-            3,
-        ),
-        device=device,
-        dtype=torch.float64,
-        requires_grad=True,
-    )
-    trace = trace(inline_trace=False)(func, a, b, c=c)
-    trace = wrap_return_value_together_with_arguments(trace)
-    fw_trace, bw_trace = forward_and_backward_from_trace(trace)
-
-    fw_extraces = transform_for_execution(fw_trace, executors_list=executor.executors_list())
-    bw_extraces = transform_for_execution(bw_trace, executors_list=executor.executors_list())
-    fw_extrace, bw_extrace = rematerialize_forward_and_backward(fw_extraces[-1], bw_extraces[-1])
-
-    fw = fw_extrace.python_callable()
-    bw = bw_extrace.python_callable()
-
-    fw_out, saved_for_backward = fw(a, b, c=c)
-
-    initial_trace = thunder.trace()(value_and_grad(func), a, b, c=c)
-    expected_vjp_func = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)
-    expected_fw_out, expected_grads = expected_vjp_func(a, b, c=c)
-    torch.testing.assert_close(fw_out["output"], expected_fw_out)
-
-    output_grads = tree_map(lambda x: torch.ones_like(x), fw_out["output"])
-    bw_out = bw(saved_for_backward, output_grads)
-    torch.testing.assert_close(bw_out, expected_grads)
 
 
 @instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
