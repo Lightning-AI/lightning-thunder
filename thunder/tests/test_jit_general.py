@@ -1194,6 +1194,38 @@ def test_custom_autograd_function():
     assert jitted.l1.weight.grad is not None
 
 
+@requiresCUDA
+def test_complex_backward_custom_autograd():
+    # This tests that backward tags are correctly propagated to the subsymbols of the custom autograd function.
+    # Without this propagation, operations for the backward pass could be fused with forward pass operations.
+    class CustomBackward(torch.autograd.Function):
+        @staticmethod
+        def forward(ctx, x):
+            return x
+
+        @staticmethod
+        def backward(ctx, grad_at_output):
+            x = torch.randn_like(grad_at_output)
+            index = torch.randint(0, 1, (0, x.shape[-1]), device="cuda", dtype=torch.int64)
+            # the descent to scatter_add_'s subsymbols doesn't happen until _transform_for_operator_executor_execution
+            x.scatter_add_(index=index, src=grad_at_output, dim=-1)
+            return grad_at_output * x
+
+    def f(x):
+        y = CustomBackward.apply(x)
+        # the in-place op introduces a fusion break
+        x.add_(1)
+        z = x + x
+        return y, z
+
+    jf = thunder_jit(f, fusion_type="dataflow")
+
+    x = torch.ones(2, 3, device="cuda", requires_grad=True)
+
+    # This should not raise an error about variables referenced before assignment.
+    jf(x)
+
+
 @pytest.mark.filterwarnings("ignore:Please use torch.vmap")
 def test_autograd_function_apply():
     # see https://github.com/Lightning-AI/lightning-thunder/issues/1248#issuecomment-2388655917
@@ -1448,7 +1480,7 @@ def test_tag_static_memory_location():
 def test_args_order():
     @thunder_jit
     def fn(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10):
-        # do not skip functionalization process
+        # do not skip alias update process
         a9 += 1
         # do not drop arguments by dce
         return a0 + a1 + a2 + a3 + a4 + a5 + a6 + a7 + a8 + a9 + a10
@@ -1654,9 +1686,6 @@ def test_partial_method():
     ]
 
     for fn in test_cases:
-        import inspect
-
-        print("testing", inspect.getsource(fn))
         jfn = thunder.jit(fn)
         print(fn(), jfn())
         assert fn() == jfn()
