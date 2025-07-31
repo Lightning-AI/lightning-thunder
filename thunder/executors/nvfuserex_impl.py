@@ -3189,18 +3189,21 @@ def _cumsum_check(a: TensorProxy, dim: int, /, dtype: dtypes.dtype | None = None
     return is_supported_tensor(a)
 
 
-# For reasons I don't yet understand, `dtype` is a `torch.dtype` in forward but
-# a `dtypes.dtype` in backprop.
+# Emulate cumsum using matmul: cumsum(a) = a @ triu(ones)
+#
+# This is suboptimal. Revisit this after nvFuser has a scan-based cumsum
+# implementation.
 def cumsum_transform(
     a: TensorProxy,
     dim: int,
     /,
+    # For reasons I don't yet understand, `dtype` is a `torch.dtype` in forward but
+    # a `dtypes.dtype` in backprop.
     dtype: torch.dtype | dtypes.dtype | None = None,
     *,
     fd: FusionDefinition,
     lc_to_nv_map: dict,
 ) -> TensorProxy:
-    # Emulate cumsum using matmul: cumsum(a) = a @ triu(ones)
     if dtypes.is_integer_dtype(a.dtype):
         # torch.matmul can't do integers on GPU so we convert `a` to
         # float.
