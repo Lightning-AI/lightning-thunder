@@ -99,7 +99,7 @@ def test_te_linear_forward_backward_multiple_iteration(fp8_recipe):
     # Running more iterations leads to `nan` for both eager and thunder
     # with BlockScaling.
     # Potentially because we are training on dummy data and task
-    iterations = 3
+    iterations = 6
 
     # TE inputs
     input_shape = (768, 4096)
