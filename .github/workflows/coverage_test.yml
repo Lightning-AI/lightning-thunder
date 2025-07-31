@@ -36,8 +36,17 @@ jobs:
           pip install torch transformers lightning_sdk
           pip install pytest pytest-benchmark
           pip install -r requirements/base.txt
+          pip install diffusers==0.34.0
+          pip install accelerate
 
       - name: Run Coverage Trace Test
         env:
           ALLOW_COVERAGE_TRACE: "1"
         run: PYTHONPATH=$(pwd)/thunder/tests pytest thunder/tests/test_coverage_trace.py
+
+      - name: Run Coverage HF Diffusers Test
+        env:
+          ALLOW_COVERAGE_TRACE: "1"
+        run: |
+          echo "Running HF Diffusers coverage test..."
+          PYTHONPATH=$(pwd)/thunder/tests pytest thunder/tests/test_coverage_hf_diffusers.py -v
