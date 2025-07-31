@@ -3189,8 +3189,16 @@ def _cumsum_check(a: TensorProxy, dim: int, /, dtype: dtypes.dtype | None = None
     return is_supported_tensor(a)
 
 
+# For reasons I don't yet understand, `dtype` is a `torch.dtype` in forward but
+# a `dtypes.dtype` in backprop.
 def cumsum_transform(
-    a: TensorProxy, dim: int, /, dtype: torch.dtype | None = None, *, fd: FusionDefinition, lc_to_nv_map: dict
+    a: TensorProxy,
+    dim: int,
+    /,
+    dtype: torch.dtype | dtypes.dtype | None = None,
+    *,
+    fd: FusionDefinition,
+    lc_to_nv_map: dict,
 ) -> TensorProxy:
     # Emulate cumsum using matmul: cumsum(a) = a @ triu(ones)
     if dtypes.is_integer_dtype(a.dtype):
@@ -3203,7 +3211,7 @@ def cumsum_transform(
     if dtype is None:
         out_dtype = lcdtype_to_nvdtype(a.dtype)
     else:
-        out_dtype = torch_dtype_to_nvfuser_dtype(dtype)
+        out_dtype = lcdtype_to_nvdtype(dtypes.to_dtype(dtype))
 
     nv_a = getnv(a, fd, lc_to_nv_map)
     nv_a = fd.ops.cast(nv_a, compute_dtype)
