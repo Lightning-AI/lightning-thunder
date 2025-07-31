@@ -78,17 +78,14 @@ def snippet_torch_consistency(op: OpInfo, torch_op, sample: SampleInput, comp: C
         comp(thunder_result, torch_result)
     except AssertionError:
 
-        def is_floating_point_dtype(dtype: torch.dtype) -> bool:
-            return torch.tensor([], dtype=dtype).is_floating_point()
-
         def upcast(x):
-            if isinstance(x, torch.Tensor) and torch.is_floating_point(x):
+            if isinstance(x, torch.Tensor) and x.is_floating_point():
                 return x.to(torch.double)
 
             # Some torch APIs (e.g. cumsum) take a `dtype` argument and use it
             # as the **compute** dtype. Replace that with torch.double so the
             # reference result is more likely to be computed in double.
-            if isinstance(x, torch.dtype) and is_floating_point_dtype(x):
+            if isinstance(x, torch.dtype) and x.is_floating_point:
                 return torch.double
 
             return x
