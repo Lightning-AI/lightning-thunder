@@ -115,7 +115,7 @@ def test_te_linear_forward_backward_multiple_iteration(fp8_recipe):
     # Parameters for thunder to optimize
     w1, w2, b1, b2 = clone_params(te_linear1.weight, te_linear2.weight, te_linear1.bias, te_linear2.bias)
 
-    target_value = torch.ones(768, 2048, dtype=dtype, device=device)
+    target_value = torch.randint(42, (768,), dtype=torch.int64, device=device)
 
     inputs = tuple(torch.rand(*input_shape, device=device, dtype=dtype) for _ in range(iterations))
 
@@ -124,7 +124,7 @@ def test_te_linear_forward_backward_multiple_iteration(fp8_recipe):
         for iter_n in range(iterations):
             x = inputs[iter_n]
             result = model(x)
-            loss = torch.nn.functional.mse_loss(result, target_value)
+            loss = torch.nn.functional.cross_entropy(result, target_value)
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
