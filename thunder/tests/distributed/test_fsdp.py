@@ -296,7 +296,7 @@ class FSDPTest(DistributedParallelTestCase):
         y.mean().backward()
 
         fw_extrace = thunder.last_traces(jitted)[-1]
-        # When bookend is turned off, `slice` and `pad` may appear in nvFusion subsymbols.
+        # `slice` and `pad` may appear in nvFusion subsymbols.
         fw_extrace = unwrap_one_level_of_subsymbols(fw_extrace)
         fw_symids = [bsym.sym.id for bsym in fw_extrace.bound_symbols]
         self.assertTrue(any(sym_id in {PrimIDs.SLICE, slice_prim_impl.id} for sym_id in fw_symids))
