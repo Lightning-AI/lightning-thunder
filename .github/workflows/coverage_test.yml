@@ -40,13 +40,11 @@ jobs:
           pip install accelerate
 
       - name: Run Coverage Trace Test
-        continue-on-error: true
         env:
           ALLOW_COVERAGE_TRACE: "1"
         run: PYTHONPATH=$(pwd)/thunder/tests pytest thunder/tests/test_coverage_trace.py
 
       - name: Run Coverage HF Diffusers Test
-        continue-on-error: true
         env:
           ALLOW_COVERAGE_TRACE: "1"
         run: |
