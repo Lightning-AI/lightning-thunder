@@ -1,84 +1,67 @@
+from collections import defaultdict, namedtuple
+from collections.abc import Callable, Sequence
+from contextvars import ContextVar
 from functools import wraps
 from typing import Any
-from collections import defaultdict, namedtuple
-from collections.abc import Callable
-from collections.abc import Sequence
-from contextvars import ContextVar
-import os
 import dis
+import os
 import time
 import warnings
 
-from looseversion import LooseVersion
-
-from thunder.core.module import ThunderModule
-from thunder.core.interpreter import InterpreterLogItem
-from thunder.core.options import (
-    CACHE_OPTIONS,
-    SHARP_EDGES_OPTIONS,
-    DebugOptions,
-)
-from thunder.core.trace import (
-    TraceResults,
-    TraceCtx,
-    from_trace,
-    set_tracectx,
-    reset_tracectx,
-    is_tracing,
-)
-
+# import this before anything else to avoid circular imports
 import thunder.core.prims as prims
-import thunder.core.dtypes as dtypes
+
+# imports unused in this file, but referenced as thunder.* elsewhere
+from thunder.common import trace
 import thunder.core.devices as devices
-from thunder.core.transform_common import (
-    dce,
-    Transform,
-    wrap_return_value_together_with_arguments,
-    unwrap_return_value,
-    remove_context_manager_prims_from_trace,
-)
-from thunder.core.update_aliases import (
-    insert_alias_updates,
-)
-from thunder.core.recipe import Recipe, Plugin
+from thunder.core.proxies import Proxy
+
 from thunder.common import (
     CompileData,
     CompileStats,
-    trace,
     transform_for_execution,
     transform_to_torch_types,
 )
-import thunder.extend as extend
-from thunder.extend import Executor, add_default_executor
-from thunder.core.compile_data import compile_data_and_stats, get_compile_data
+from thunder.core.baseutils import run_once
+from thunder.core.compile_data import compile_data_and_stats
+import thunder.core.dtypes as dtypes
+from thunder.core.interpreter import InterpreterLogItem, print_interpreter_log
+from thunder.core.jit_ext import thunder_general_jit
 from thunder.core.langctxs import LanguageContext
 import thunder.core.langctxs as langctxs
-from thunder.core.symbol import has_tags
-from thunder.core.baseutils import run_once, check
-from thunder.core.codeutils import Positions
-from thunder.core.proxies import (
-    Proxy,
-    TensorProxy,
-    NumberProxy,
-    StringProxy,
-    IntegerProxy,
-    FloatProxy,
-    ComplexProxy,
-    TupleProxy,
-    ListProxy,
-    DictProxy,
-    AnyProxy,
+from thunder.core.module import ThunderModule
+from thunder.core.options import (
+    CACHE_OPTIONS,
+    DebugOptions,
+    SHARP_EDGES_OPTIONS,
 )
-from thunder.core.interpreter import print_interpreter_log, print_to_log
-from thunder.core.jit_ext import thunder_general_jit
+from thunder.core.proxies import TensorProxy
+from thunder.core.pytree import tree_flatten
+from thunder.core.recipe import Recipe, Plugin
+from thunder.core.symbol import has_tags
+from thunder.core.trace import (
+    TraceCtx,
+    TraceResults,
+    from_trace,
+    is_tracing,
+    reset_tracectx,
+    set_tracectx,
+)
+from thunder.core.transform_common import (
+    Transform,
+    dce,
+    remove_context_manager_prims_from_trace,
+    unwrap_return_value,
+    wrap_return_value_together_with_arguments,
+)
+from thunder.core.update_aliases import insert_alias_updates
 from thunder.executors.torch_autograd import connect_to_autograd
+import thunder.extend as extend
+from thunder.extend import Executor, add_default_executor
+import thunder.transforms as transforms
 
 # NOTE This import is intentionally pytorch so that it thunder.torch doesn't import this
 import torch as pytorch
-
-import thunder.clang as clang
-from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
-import thunder.transforms as transforms
 
 # Imports executors (to populate default executors and make them accessible)
 import thunder.executors.pythonex
