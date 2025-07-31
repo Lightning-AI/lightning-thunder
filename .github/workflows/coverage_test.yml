@@ -39,25 +39,11 @@ jobs:
           pip install diffusers==0.34.0
           pip install accelerate
 
-      # - name: Run Coverage Trace Test
-      #   continue-on-error: true
-      #   env:
-      #     ALLOW_COVERAGE_TRACE: "1"
-      #   run: PYTHONPATH=$(pwd)/thunder/tests pytest thunder/tests/test_coverage_trace.py
-
-      - name: Check CUDA Availability
-        id: cuda_check
-        run: |
-          python -c "
-          import torch
-          cuda_available = torch.cuda.is_available()
-          print(f'CUDA available: {cuda_available}')
-          if cuda_available:
-              print(f'CUDA device count: {torch.cuda.device_count()}')
-              print(f'CUDA device name: {torch.cuda.get_device_name(0)}')
-          else:
-              print('Note: Tests requiring CUDA will be skipped automatically')
-          "
+      - name: Run Coverage Trace Test
+        continue-on-error: true
+        env:
+          ALLOW_COVERAGE_TRACE: "1"
+        run: PYTHONPATH=$(pwd)/thunder/tests pytest thunder/tests/test_coverage_trace.py
 
       - name: Run Coverage HF Diffusers Test
         continue-on-error: true
