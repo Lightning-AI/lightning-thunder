@@ -146,7 +146,7 @@ x = torch.randn(64, 2048)
 
 y = thunder_model(x)
 
-assert torch.testing.assert_close(y, model(x))
+torch.testing.assert_close(y, model(x))
 ```
 
 ## Examples
