@@ -1038,7 +1038,6 @@ instantiated) this heuristic actually leads to worse code.
 
         fusedtrace.bound_symbols = fused_bsyms
 
-        fusedtrace = remove_redundant_casts(fusedtrace)
         # Some of the operations might be better placed with its consumers (for
         # example residual connection in transformer block). This pass moves
         # them to the consumer.
