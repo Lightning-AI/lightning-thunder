@@ -46,7 +46,11 @@ from thunder.core.devices import Device, DeviceType, cpu
 from thunder.core.transform_common import dce, cse_single_bsym, replace_redundant_inputs
 from thunder.core.profile import annotate_for_profile
 from thunder.core.compile_data import get_compile_option
-from thunder.torch.experimental.dtensor_torch_and_prims import dtensor_mul_prim
+from thunder.torch.experimental.dtensor_torch_and_prims import (
+    dtensor_mul_prim,
+    dtensor_convert_element_type_prim,
+    dtensor_broadcast_in_dim_prim,
+)
 from thunder.torch.experimental.dtensor_proxy import DTensorProxy
 
 from thunder.core.transforms import (
@@ -1088,6 +1092,7 @@ def convert_element_type(
 
 
 register_supported(PrimIDs.CONVERT_ELEMENT_TYPE, convert_element_type, _convert_element_type_check)
+register_supported(dtensor_convert_element_type_prim, convert_element_type, _convert_element_type_check)
 
 #
 # Tensor creation operations
@@ -1290,6 +1295,7 @@ def broadcast_in_dim(
 
 
 register_supported(PrimIDs.BROADCAST_IN_DIM, broadcast_in_dim, _broadcast_in_dim_check)
+register_supported(dtensor_broadcast_in_dim_prim, broadcast_in_dim, _broadcast_in_dim_check)
 
 
 def _cat_check(tensors: list[TensorProxy], dim: int) -> bool:

@@ -190,10 +190,5 @@ dtensor_broadcast_in_dim_prim_impl = pytorchex.register_operator(
 pytorchex.register_implementation(dtensor_broadcast_in_dim_prim, dtensor_broadcast_in_dim_prim_impl)
 
 
-@dtensor_torchsymbol(lambda x, s, bd: x.broadcast_to(s), id="dtensor.broadcast_in_dim")
-def dtensor_broadcast_in_dim(a: TensorLike, shape, broadcast_dimensions) -> TensorLike:
-    return dtensor_broadcast_in_dim_prim(a, shape, broadcast_dimensions)
-
-
 def register_dtensor_torch_and_prims():
     register_function_for_dtensor(torch.mul, ltorch.mul, dtensor_mul, is_method=True)
