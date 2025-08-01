@@ -41,307 +41,366 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
             self.collected_bw_part_bsyms = []
 
         def process_bsym(self, bsym: BoundSymbol) -> None:
+            """Main dispatcher for processing bound symbols during autodiff."""
+            # Handle recomputation tagging first
+            self._handle_recomputation_tagging(bsym)
+
+            # Dispatch to specific handlers based on symbol type
+            if bsym.sym is prims.python_return:
+                self._handle_python_return(bsym)
+            elif is_constant_for_vjp(bsym) and not bsym.sym.name == "synchronize":
+                self._handle_constant_for_vjp(bsym)
+            elif bsym.sym == ltorch.checkpoint:
+                self._handle_checkpoint(bsym)
+            elif bsym.sym == prims.shallow_copy and bsym.output is bsym.args[0]:
+                self._handle_shallow_copy(bsym)
+            else:
+                self._handle_grad_transform_or_decomposition(bsym)
+
+        def _handle_recomputation_tagging(self, bsym: BoundSymbol) -> None:
+            """Handle recomputation tagging for bound symbols."""
             if _should_recompute_bsym_in_backward(bsym) and bsym.sym is not prims.python_return:
                 # potentially taking a recompute proxy tag and making it a bound symbol tag
                 bsym.tags.add(BoundSymbolTag.RECOMPUTE_IN_BACKWARD)
 
-            if bsym.sym is prims.python_return:
-                # BEGINNING of return handling (and putting the backward computation in the joint trace)
-                # This is big (and a bit messy):
-                # the return (of the input trace) signals the end of the forward processing
-                # all the backwards will have been put in self.collected_bw_part_syms
-                # special symbols are
-                # - get_grad "reads" the gradient of a variable from the forward to compute with it
-                #   (if you are used to torch.autograd.Function, this is a "grad_out" in the arguments
-                #    of the backward static method)
-                # - put_grad "writes" a computed gradients (similar to returning the "grad_in" in torch.autograd.Function)
-                # The backward computation in self.collected_bw_part_syms is in the order of the
-                # backward computation.
+        def _handle_python_return(self, bsym: BoundSymbol) -> None:
+            """Handle python return symbols and backward computation placement."""
+            # BEGINNING of return handling (and putting the backward computation in the joint trace)
+            # This is big (and a bit messy):
+            # the return (of the input trace) signals the end of the forward processing
+            # all the backwards will have been put in self.collected_bw_part_syms
+            # special symbols are
+            # - get_grad "reads" the gradient of a variable from the forward to compute with it
+            #   (if you are used to torch.autograd.Function, this is a "grad_out" in the arguments
+            #    of the backward static method)
+            # - put_grad "writes" computed gradients (similar to returning the "grad_in" in torch.autograd.Function)
+            # The backward computation in self.collected_bw_part_syms is in the order of the
+            # backward computation.
 
-                output_proxy_names = set()
-                for o in tree_iter(bsym.args[0]["output"]):
-                    if isinstance(o, Proxy):
-                        output_proxy_names.add(self.read(o).name)
-                grad_proxy_map = {}
+            # Setup gradient tracking data structures
+            output_proxy_names, grad_proxy_map, names_seen_get_grad = self._setup_gradient_tracking(bsym)
 
-                # which names we saw get_grad for, we cannot do put_grad on them anymore
-                names_seen_get_grad = set()
+            # Process backward symbols to handle put_grad and get_grad operations
+            self._process_backward_symbols(output_proxy_names, grad_proxy_map, names_seen_get_grad)
 
-                # we iterate through the collected symbols backward in order (from the generation of the list, this
-                # is the backward of the last forward instruction first, then then the backward of the second to last etc.
-                for bw_bsyms in self.collected_bw_part_bsyms:
-                    # if we don't have and grad_outs, we know that the grad_ins are not needed, so we don't compute them
-                    # (e.g. for `where(a * b > 0, a, b)` we do not need the grad components of a * b propagated
-                    if any(
-                        ((gg.name in grad_proxy_map) or (gg.name in output_proxy_names))
-                        for gg in (bs.args[0] for bs in bw_bsyms if bs.sym == prims.get_grad)
-                    ):
-                        for nbsym in bw_bsyms:
-                            if nbsym.sym == prims.put_grad:
-                                # put_grad adds something to the gradients
-                                # - if it is an output of the function, we also need to get the
-                                #   "grad_output" (but only once)
-                                # - if we already had a gradient, we need to add the new component
-                                # - structurally (for correctness), there should be no put_grad
-                                #   after a get_grad
-                                p = self.env.get(nbsym.args[0].name, nbsym.args[0])
-                                assert p.name not in names_seen_get_grad, f"put_grad after get_grad on {p.name}"
-                                current_grad = grad_proxy_map.get(p.name)
-                                new_grad = nbsym.args[1]
-                                if current_grad is None and p.name in output_proxy_names:
-                                    self.new_trace.push_scope([])
-                                    current_grad = prims.get_grad(p)
-                                    new_bsyms = self.new_trace.pop_scope()
-                                    for nbsym in new_bsyms:
-                                        nbsym.tags.add(BoundSymbolTag.BACKWARD)
-                                    self.add_processed_bsyms(new_bsyms)
+            # Build and set the return arguments
+            self._build_return_arguments(bsym, grad_proxy_map)
 
-                                if current_grad is not None:
-                                    new_grad = self.add_bsyms_from_function(
-                                        ltorch.add, current_grad, new_grad, tags={BoundSymbolTag.BACKWARD}
-                                    )
+        def _setup_gradient_tracking(self, bsym: BoundSymbol) -> tuple[set, dict, set]:
+            """Setup data structures for tracking gradients during python return handling."""
+            output_proxy_names = set()
+            for o in tree_iter(bsym.args[0]["output"]):
+                if isinstance(o, Proxy):
+                    output_proxy_names.add(self.read(o).name)
 
-                                grad_proxy_map[p.name] = new_grad
-                                self.write(new_grad, new_grad)
+            grad_proxy_map = {}
+            # which names we saw get_grad for, we cannot do put_grad on them anymore
+            names_seen_get_grad = set()
 
-                            elif nbsym.sym == prims.get_grad:
-                                # get grad reads a gradient, this could be
-                                # - the gradient of an intermediate (possibly combined with an output) form put_grad above
-                                #   note that all put_grads are happen before all get_grads from the dataflow of the forward,
-                                #   in this case we use the gradient from the put_grad(s)
-                                # - an output of the forward function (that has not been combined with an intermediate in put grad),
-                                #   then the gradient is like the "grad_out" in the parameter list of a autograd.Function.backward
-                                #   in this case we keep a get_grad in the trace.
-                                # - an intermediate that does not have a gradient computed. In this case the gradient is 0 in the shape
-                                #   of the get_grad argument. This happens e.g. if we have something like "a > 0" for a float a then
-                                #   a has grad 0.
-                                #   TODO: We could (and should) optimize this (see below).
-                                p = nbsym.args[0]
+            return output_proxy_names, grad_proxy_map, names_seen_get_grad
 
-                                # TODO: set proxy requires grad here!
-                                name = p.name
-                                names_seen_get_grad.add(name)
-                                current_grad = grad_proxy_map.get(name)
-                                if current_grad is not None:
-                                    # do we also need to map?
-                                    self.write(nbsym.output, current_grad)
-                                    # replace_output_with_current_grad
-                                    self.swap_map[variableify(nbsym.output)] = current_grad
-                                elif name in output_proxy_names:
-                                    # output here???
-                                    new_bsym = nbsym.from_bsym()
-                                    new_bsym.tags.add(BoundSymbolTag.BACKWARD)
-                                    self.add_processed_bsyms([new_bsym])
-                                    grad_proxy_map[name] = new_bsym.output
-                                else:
-                                    # TODO: mark this? if all inputs to the backward formula are unused, we would not want to compute it.
-                                    new_bsym = ltorch.zeros.bind(
-                                        *p.shape, device=p.device, dtype=p.dtype, output=nbsym.output
-                                    )
-                                    new_bsym.tags.add(BoundSymbolTag.BACKWARD)
-                                    self.add_processed_bsyms([new_bsym])
-                                    grad_proxy_map[name] = new_bsym.output
-                                    self.write(nbsym.output, new_bsym.output)
-                            else:
-                                # all other symbols are just computation
-                                self.add_processed_bsyms([nbsym.from_bsym()])
+        def _process_backward_symbols(
+            self, output_proxy_names: set, grad_proxy_map: dict, names_seen_get_grad: set
+        ) -> None:
+            """Process collected backward symbols to handle put_grad and get_grad operations."""
+            # we iterate through the collected symbols backward in order (from the generation of the list, this
+            # is the backward of the last forward instruction first, then then the backward of the second to last etc.
+            for bw_bsyms in self.collected_bw_part_bsyms:
+                # if we don't have any grad_outs, we know that the grad_ins are not needed, so we don't compute them
+                # (e.g. for `where(a * b > 0, a, b)` we do not need the grad components of a * b propagated
+                if any(
+                    ((gg.name in grad_proxy_map) or (gg.name in output_proxy_names))
+                    for gg in (bs.args[0] for bs in bw_bsyms if bs.sym == prims.get_grad)
+                ):
+                    for nbsym in bw_bsyms:
+                        if nbsym.sym == prims.put_grad:
+                            self._handle_put_grad(nbsym, output_proxy_names, grad_proxy_map, names_seen_get_grad)
+                        elif nbsym.sym == prims.get_grad:
+                            self._handle_get_grad(nbsym, output_proxy_names, grad_proxy_map, names_seen_get_grad)
+                        else:
+                            # all other symbols are just computation
+                            self.add_processed_bsyms([nbsym.from_bsym()])
 
-                self.collected_bw_part_bsyms.clear()
+            self.collected_bw_part_bsyms.clear()
 
-                # we collect the gradients fo the flat args in the output dictionary's 'grad_flat_args'
-                # this means that the joint trace has them as outputs, which is good.
-                grad_flat_args = []
-                for p in bsym.args[0]["flat_args"]:
-                    # or p = self.read(p) here?
-                    if isinstance(p, TensorProxy) and p.requires_grad and p.name in grad_proxy_map:
-                        # is it always OK if we don't have a gradient? (one case: unused input)
-                        # result of put_grad???
-                        grad_flat_args.append(grad_proxy_map[p.name])
-                    else:
-                        grad_flat_args.append(None)
+        def _handle_put_grad(
+            self, nbsym: BoundSymbol, output_proxy_names: set, grad_proxy_map: dict, names_seen_get_grad: set
+        ) -> None:
+            """Handle put_grad operations during backward processing."""
+            # put_grad adds something to the gradients
+            # - if it is an output of the function, we also need to get the
+            #   "grad_output" (but only once)
+            # - if we already had a gradient, we need to add the new component
+            # - structurally (for correctness), there should be no put_grad
+            #   after a get_grad
+            p = self.env.get(nbsym.args[0].name, nbsym.args[0])
+            assert p.name not in names_seen_get_grad, f"put_grad after get_grad on {p.name}"
+            current_grad = grad_proxy_map.get(p.name)
+            new_grad = nbsym.args[1]
 
-                # Store the outputs from the forward trace in fw_flat_out what will be used in
-                # the split logic to create the return for the forward trace.
-                new_return_args = {
-                    **bsym.args[0],
-                    "fw_flat_out": bsym.args[0]["output"],
-                    "output": tuple(grad_flat_args),
-                }
-
-                new_return_bsym = bsym.from_bsym(args=(new_return_args,))
-                self.add_processed_bsyms([new_return_bsym])
-
-                self.set_result(bsym.output)
-                return
-                # END of return handling (and putting the backward computation in the joint trace)
-
-            # we now handle various bound symbols by collecting augmented forward and backward symbols
-
-            # 1. constant for gradients (no grad required)
-            #    executing synchronize here terrible hack to cope with non-grad-needing sharded tensors
-            #    as required by LoRA. We should have a symbol tag "always compute grad" instead.
-            if is_constant_for_vjp(bsym) and not bsym.sym.name == "synchronize":
-                self.add_processed_bsyms([bsym.from_bsym()])
-                self.set_result(bsym.output)
-                return
-
-            # 2. Special case the ltorch.checkpoint higher order function
-            if bsym.sym == ltorch.checkpoint:
-                # Tag all intermediate outputs as to be recomputed.
-                function_arg_names = {a.name for a in bsym.flat_proxy_args}
-
-                for subsym in bsym.subsymbols:
-                    subsym.tags.add(BoundSymbolTag.RECOMPUTE_IN_BACKWARD)
-                    for o in subsym.flat_proxy_outs:
-                        if o.name not in function_arg_names:
-                            o.tags.add(ProxyTag.RECOMPUTE_IN_BACKWARD)
-
-                # decompose
-                decomposed_bsyms = bsym.subsymbols[:]
-                # shallow copies that need to be not recomputed and need their output replaced.
-                for x in bsym.flat_proxy_outs:
-                    x.tags.discard(ProxyTag.RECOMPUTE_IN_BACKWARD)
-                    decomposed_bsyms.append(prims.shallow_copy.bind(x, output=x))
-
-                self.add_unprocessed_bsyms(decomposed_bsyms)
-                return
-
-            # here we do the copy for the args from above
-            if bsym.sym == prims.shallow_copy and bsym.output is bsym.args[0]:
-                # this is a bit of a hack in order to only replace the output,
-                # not the input
-                (a,) = bsym.args
-                a_inp = self.swap_map.get(variableify(a), a)
-                with tracectx(self.new_trace):
-                    o = prims.shallow_copy(a_inp)
-                self.add_to_swap_map(a, o)
-                self.add_to_swap_map(a_inp, o)
-                self.write(a_inp, o)
-
+            if current_grad is None and p.name in output_proxy_names:
                 self.new_trace.push_scope([])
-                with tracectx(self.new_trace):
-                    prims.put_grad(a_inp, prims.get_grad(o))
-                backward_part_bsyms = self.new_trace.pop_scope()
-                for nbsym in backward_part_bsyms:
+                current_grad = prims.get_grad(p)
+                new_bsyms = self.new_trace.pop_scope()
+                for nbsym in new_bsyms:
                     nbsym.tags.add(BoundSymbolTag.BACKWARD)
-                self.collected_bw_part_bsyms.insert(0, backward_part_bsyms)
-                return
+                self.add_processed_bsyms(new_bsyms)
 
-            # 3a. see if we have a grad_transform (e.g. from OperatorExecutor.register_grad_transform)
+            if current_grad is not None:
+                new_grad = self.add_bsyms_from_function(
+                    ltorch.add, current_grad, new_grad, tags={BoundSymbolTag.BACKWARD}
+                )
+
+            grad_proxy_map[p.name] = new_grad
+            self.write(new_grad, new_grad)
+
+        def _handle_get_grad(
+            self, nbsym: BoundSymbol, output_proxy_names: set, grad_proxy_map: dict, names_seen_get_grad: set
+        ) -> None:
+            """Handle get_grad operations during backward processing."""
+            # get grad reads a gradient, this could be
+            # - the gradient of an intermediate (possibly combined with an output) from put_grad above
+            #   note that all put_grads are happen before all get_grads from the dataflow of the forward,
+            #   in this case we use the gradient from the put_grad(s)
+            # - an output of the forward function (that has not been combined with an intermediate in put grad),
+            #   then the gradient is like the "grad_out" in the parameter list of a autograd.Function.backward
+            #   in this case we keep a get_grad in the trace.
+            # - an intermediate that does not have a gradient computed. In this case the gradient is 0 in the shape
+            #   of the get_grad argument. This happens e.g. if we have something like "a > 0" for a float a then
+            #   a has grad 0.
+            #   TODO: We could (and should) optimize this (see below).
+            p = nbsym.args[0]
+
+            # TODO: set proxy requires grad here!
+            name = p.name
+            names_seen_get_grad.add(name)
+            current_grad = grad_proxy_map.get(name)
+
+            if current_grad is not None:
+                # do we also need to map?
+                self.write(nbsym.output, current_grad)
+                # replace_output_with_current_grad
+                self.swap_map[variableify(nbsym.output)] = current_grad
+            elif name in output_proxy_names:
+                # output here???
+                new_bsym = nbsym.from_bsym()
+                new_bsym.tags.add(BoundSymbolTag.BACKWARD)
+                self.add_processed_bsyms([new_bsym])
+                grad_proxy_map[name] = new_bsym.output
+            else:
+                # TODO: mark this? if all inputs to the backward formula are unused, we would not want to compute it.
+                new_bsym = ltorch.zeros.bind(*p.shape, device=p.device, dtype=p.dtype, output=nbsym.output)
+                new_bsym.tags.add(BoundSymbolTag.BACKWARD)
+                self.add_processed_bsyms([new_bsym])
+                grad_proxy_map[name] = new_bsym.output
+                self.write(nbsym.output, new_bsym.output)
+
+        def _build_return_arguments(self, bsym: BoundSymbol, grad_proxy_map: dict) -> None:
+            """Build and set the return arguments for python return handling."""
+            # we collect the gradients of the flat args in the output dictionary's 'grad_flat_args'
+            # this means that the joint trace has them as outputs, which is good.
+            grad_flat_args = []
+            for p in bsym.args[0]["flat_args"]:
+                # or p = self.read(p) here?
+                if isinstance(p, TensorProxy) and p.requires_grad and p.name in grad_proxy_map:
+                    # is it always OK if we don't have a gradient? (one case: unused input)
+                    # result of put_grad???
+                    grad_flat_args.append(grad_proxy_map[p.name])
+                else:
+                    grad_flat_args.append(None)
+
+            # Store the outputs from the forward trace in fw_flat_out which will be used in
+            # the split logic to create the return for the forward trace.
+            new_return_args = {
+                **bsym.args[0],
+                "fw_flat_out": bsym.args[0]["output"],
+                "output": tuple(grad_flat_args),
+            }
+
+            new_return_bsym = bsym.from_bsym(args=(new_return_args,))
+            self.add_processed_bsyms([new_return_bsym])
+
+            self.set_result(bsym.output)
+            # END of return handling (and putting the backward computation in the joint trace)
+
+        def _handle_constant_for_vjp(self, bsym: BoundSymbol) -> None:
+            """Handle constants for gradients (no grad required)."""
+            # executing synchronize here terrible hack to cope with non-grad-needing sharded tensors
+            # as required by LoRA. We should have a symbol tag "always compute grad" instead.
+            self.add_processed_bsyms([bsym.from_bsym()])
+            self.set_result(bsym.output)
+
+        def _handle_checkpoint(self, bsym: BoundSymbol) -> None:
+            """Handle ltorch.checkpoint higher order function."""
+            # Tag all intermediate outputs as to be recomputed.
+            function_arg_names = {a.name for a in bsym.flat_proxy_args}
+
+            for subsym in bsym.subsymbols:
+                subsym.tags.add(BoundSymbolTag.RECOMPUTE_IN_BACKWARD)
+                for o in subsym.flat_proxy_outs:
+                    if o.name not in function_arg_names:
+                        o.tags.add(ProxyTag.RECOMPUTE_IN_BACKWARD)
+
+            # decompose
+            decomposed_bsyms = bsym.subsymbols[:]
+            # shallow copies that need to be not recomputed and need their output replaced.
+            for x in bsym.flat_proxy_outs:
+                x.tags.discard(ProxyTag.RECOMPUTE_IN_BACKWARD)
+                decomposed_bsyms.append(prims.shallow_copy.bind(x, output=x))
+
+            self.add_unprocessed_bsyms(decomposed_bsyms)
+
+        def _handle_shallow_copy(self, bsym: BoundSymbol) -> None:
+            """Handle shallow copy operations for gradient computation."""
+            # this is a bit of a hack in order to only replace the output,
+            # not the input
+            (a,) = bsym.args
+            a_inp = self.swap_map.get(variableify(a), a)
+            with tracectx(self.new_trace):
+                o = prims.shallow_copy(a_inp)
+            self.add_to_swap_map(a, o)
+            self.add_to_swap_map(a_inp, o)
+            self.write(a_inp, o)
+
+            self.new_trace.push_scope([])
+            with tracectx(self.new_trace):
+                prims.put_grad(a_inp, prims.get_grad(o))
+            backward_part_bsyms = self.new_trace.pop_scope()
+            for nbsym in backward_part_bsyms:
+                nbsym.tags.add(BoundSymbolTag.BACKWARD)
+            self.collected_bw_part_bsyms.insert(0, backward_part_bsyms)
+
+        def _handle_grad_transform_or_decomposition(self, bsym: BoundSymbol) -> None:
+            """Handle gradient transforms or decomposition for symbols without specific handlers."""
+            # see if we have a grad_transform (e.g. from OperatorExecutor.register_grad_transform)
 
             # executor or global grad transform
             joint_forward_backward, _ = _get_gradfn_and_executor(bsym)
 
             if joint_forward_backward is None:
-                # 3b. if we don't have a grad_transform for a bsym, maybe we have old style augmented forward and backward
-                # registered. In this case, we make the joint_forward_backward which works like a grad_gransform.
-                # registered augmented forward impl (where aug fwd and backward are registered separately)
-                aug_fwd_impl = augmented_forward_impls.get(bsym.sym.id)
-                if aug_fwd_impl is not None:
-                    bwd_impl = backward_impls.get(bsym.sym.id)
+                # if we don't have a grad_transform for a bsym, maybe we have old style augmented forward and backward
+                # registered. In this case, we make the joint_forward_backward which works like a grad_transform.
+                joint_forward_backward = self._create_joint_forward_backward_from_legacy(bsym)
 
-                    # this is our ad hoc combined forward and backward function ("grad_transform")
-                    def joint_forward_backward(*args, **kwargs):
-                        arg_proxy_names = {a.name for a in bsym.flat_proxy_args}
-
-                        # run the augmented forward res
-                        aug_fwd_res = aug_fwd_impl(*bsym.args, **bsym.kwargs)
-
-                        # aug_fwd_res could be either VJPDual or just a tuple, in any case, we can decompose it.
-                        res, saved_for_backward = aug_fwd_res
-
-                        # we need to shallow copy inputs that are returned for "get_grad" and "put_grad" to properly work
-                        # (this shallow copy is the equivalent because we of an "edge" in the PyTorch autograd graph)
-                        def shallow_copy_if_input(p):
-                            if isinstance(p, TensorProxy) and p.name in arg_proxy_names:
-                                return prims.shallow_copy(p)
-                            return p
-
-                        res = tree_map(shallow_copy_if_input, res)
-
-                        # now we need the backward. it starts by getting the grad_outs
-                        grad_outs = []
-                        for r in tree_iter(res):
-                            if isinstance(r, TensorProxy):
-                                grad_outs.append(prims.get_grad(r))
-
-                        # The backward computes the grad_inps of the bsym from the grad_outs
-                        # TODO: non-grad outputs of bwd?
-                        grad_inps = bwd_impl(*saved_for_backward, *grad_outs)
-                        if isinstance(grad_inps, Proxy):
-                            grad_inps = [grad_inps]
-
-                        # match the grad_inps to the inputs of the boudnd symbol and put the grads
-
-                        flat_inps = args
-                        # for autograd_function_apply, skip the function args
-                        # TODO: fix the returned gradients to include two None?.
-                        if bsym.sym == ltorch.autograd_function_apply:
-                            flat_inps = args[2:]
-
-                        # there may be non-gradient requiring additional args (todo: maybe only support this for non-tensor ones?)
-                        num_flat_tensor_inps = sum(isinstance(i, TensorProxy) for i in flat_inps)
-                        utils.check(
-                            num_flat_tensor_inps <= len(grad_inps),
-                            lambda: f"Backward for {bsym.sym.id} returned {len(grad_inps)} value(s), but expected {num_flat_tensor_inps}",
-                        )
-
-                        assert len(grad_inps) <= len(flat_inps)
-                        for i, gi in zip(flat_inps, grad_inps):
-                            # for integer proxies etc. we expect gi to be None
-                            if isinstance(i, TensorProxy) and gi is not None:
-                                prims.put_grad(i, gi)
-                        return res
-
-            # 3c if we have a joint forward backward (either grad_transform or the ad hoc constructed one above), we can comptue the gradient
+            # if we have a joint forward backward (either grad_transform or the ad hoc constructed one above), we can compute the gradient
             if joint_forward_backward is not None:
-                self.new_trace.push_scope([])
-                result = joint_forward_backward(*bsym.args, **bsym.kwargs)
+                self._execute_joint_forward_backward(bsym, joint_forward_backward)
+            else:
+                # No gradient transform found, need to decompose the symbol
+                self._decompose_symbol(bsym)
 
-                # Check that the number of outputs of the original forward function is the
-                # same as the number of primal outputs of the augmented forward trace
+        def _create_joint_forward_backward_from_legacy(self, bsym: BoundSymbol) -> callable:
+            """Create a joint forward-backward function from legacy augmented forward and backward implementations."""
+            # registered augmented forward impl (where aug fwd and backward are registered separately)
+            aug_fwd_impl = augmented_forward_impls.get(bsym.sym.id)
+            if aug_fwd_impl is None:
+                return None
+
+            bwd_impl = backward_impls.get(bsym.sym.id)
+
+            # this is our ad hoc combined forward and backward function ("grad_transform")
+            def joint_forward_backward(*args, **kwargs):
+                arg_proxy_names = {a.name for a in bsym.flat_proxy_args}
+
+                # run the augmented forward res
+                aug_fwd_res = aug_fwd_impl(*bsym.args, **bsym.kwargs)
+
+                # aug_fwd_res could be either VJPDual or just a tuple, in any case, we can decompose it.
+                res, saved_for_backward = aug_fwd_res
+
+                # we need to shallow copy inputs that are returned for "get_grad" and "put_grad" to properly work
+                # (this shallow copy is the equivalent of an "edge" in the PyTorch autograd graph)
+                def shallow_copy_if_input(p):
+                    if isinstance(p, TensorProxy) and p.name in arg_proxy_names:
+                        return prims.shallow_copy(p)
+                    return p
+
+                res = tree_map(shallow_copy_if_input, res)
+
+                # now we need the backward. it starts by getting the grad_outs
+                grad_outs = []
+                for r in tree_iter(res):
+                    if isinstance(r, TensorProxy):
+                        grad_outs.append(prims.get_grad(r))
+
+                # The backward computes the grad_inps of the bsym from the grad_outs
+                # TODO: non-grad outputs of bwd?
+                grad_inps = bwd_impl(*saved_for_backward, *grad_outs)
+                if isinstance(grad_inps, Proxy):
+                    grad_inps = [grad_inps]
+
+                # match the grad_inps to the inputs of the bound symbol and put the grads
+
+                flat_inps = args
+                # for autograd_function_apply, skip the function args
+                # TODO: fix the returned gradients to include two None?.
+                if bsym.sym == ltorch.autograd_function_apply:
+                    flat_inps = args[2:]
+
+                # there may be non-gradient requiring additional args (todo: maybe only support this for non-tensor ones?)
+                num_flat_tensor_inps = sum(isinstance(i, TensorProxy) for i in flat_inps)
                 utils.check(
-                    len(utils.sequencify(bsym.output)) == len(utils.sequencify(result)),
-                    lambda: f"While generating forward and backward functions for {bsym.sym.name}, encountered an error.\n"
-                    "The number of outputs of the gradient transform function must be the same as the number of outputs of the original forward function.\n"
-                    f"Number of outputs of the original forward function: {len(utils.sequencify(bsym.output))}\n"
-                    f"Number of primal outputs of the gradient transform / augmented forward: {len(utils.sequencify(result))}\n"
-                    "Please check the forward function and the gradient transform function / augmented forward to ensure that they have the same number of outputs.",
+                    num_flat_tensor_inps <= len(grad_inps),
+                    lambda: f"Backward for {bsym.sym.id} returned {len(grad_inps)} value(s), but expected {num_flat_tensor_inps}",
                 )
-                self.set_result(result)
-                new_bsyms = self.new_trace.pop_scope()
 
-                # Let the new bound symbols inherit tags, in particular RECOMPUTE_IN_BACKWARD
-                for nbsym in new_bsyms:
-                    nbsym.tags |= bsym.tags
+                assert len(grad_inps) <= len(flat_inps)
+                for i, gi in zip(flat_inps, grad_inps):
+                    # for integer proxies etc. we expect gi to be None
+                    if isinstance(i, TensorProxy) and gi is not None:
+                        prims.put_grad(i, gi)
+                return res
 
-                # simple splitting: only compute in forward what is needed for the output
-                forward_part_proxy_names = {o.name for o in tree_iter(result) if isinstance(o, Proxy)}
-                forward_part_bsyms = []
-                backward_part_bsyms = []
-                for nbsym in reversed(new_bsyms):
-                    # argnames = {p.name for p in nbsym.flat_proxy_args}
-                    if nbsym.sym in {prims.get_grad, prims.put_grad}:
-                        nbsym.tags.add(BoundSymbolTag.BACKWARD)
-                        backward_part_bsyms.insert(0, nbsym)
-                        continue
-                    assert nbsym.sym != prims.unpack_trivial  # can unpack trivial happen here?
-                    if any((o.name in forward_part_proxy_names) for o in nbsym.flat_proxy_outs):
-                        forward_part_bsyms.insert(0, nbsym)
-                        bsym_arg_names = {a.name for a in nbsym.flat_proxy_args}
-                        bsym_out_names = {o.name for o in nbsym.flat_proxy_outs if o.name not in bsym_arg_names}
-                        forward_part_proxy_names.update(bsym_arg_names)
-                        forward_part_proxy_names.update(bsym_out_names)
-                        continue
+            return joint_forward_backward
+
+        def _execute_joint_forward_backward(self, bsym: BoundSymbol, joint_forward_backward: callable) -> None:
+            """Execute a joint forward-backward function and process the results."""
+            self.new_trace.push_scope([])
+            result = joint_forward_backward(*bsym.args, **bsym.kwargs)
+
+            # Check that the number of outputs of the original forward function is the
+            # same as the number of primal outputs of the augmented forward trace
+            utils.check(
+                len(utils.sequencify(bsym.output)) == len(utils.sequencify(result)),
+                lambda: f"While generating forward and backward functions for {bsym.sym.name}, encountered an error.\n"
+                "The number of outputs of the gradient transform function must be the same as the number of outputs of the original forward function.\n"
+                f"Number of outputs of the original forward function: {len(utils.sequencify(bsym.output))}\n"
+                f"Number of primal outputs of the gradient transform / augmented forward: {len(utils.sequencify(result))}\n"
+                "Please check the forward function and the gradient transform function / augmented forward to ensure that they have the same number of outputs.",
+            )
+            self.set_result(result)
+            new_bsyms = self.new_trace.pop_scope()
+
+            # Let the new bound symbols inherit tags, in particular RECOMPUTE_IN_BACKWARD
+            for nbsym in new_bsyms:
+                nbsym.tags |= bsym.tags
+
+            # simple splitting: only compute in forward what is needed for the output
+            forward_part_proxy_names = {o.name for o in tree_iter(result) if isinstance(o, Proxy)}
+            forward_part_bsyms = []
+            backward_part_bsyms = []
+            for nbsym in reversed(new_bsyms):
+                # argnames = {p.name for p in nbsym.flat_proxy_args}
+                if nbsym.sym in {prims.get_grad, prims.put_grad}:
                     nbsym.tags.add(BoundSymbolTag.BACKWARD)
                     backward_part_bsyms.insert(0, nbsym)
-                self.add_processed_bsyms(forward_part_bsyms)
+                    continue
+                assert nbsym.sym != prims.unpack_trivial  # can unpack trivial happen here?
+                if any((o.name in forward_part_proxy_names) for o in nbsym.flat_proxy_outs):
+                    forward_part_bsyms.insert(0, nbsym)
+                    bsym_arg_names = {a.name for a in nbsym.flat_proxy_args}
+                    bsym_out_names = {o.name for o in nbsym.flat_proxy_outs if o.name not in bsym_arg_names}
+                    forward_part_proxy_names.update(bsym_arg_names)
+                    forward_part_proxy_names.update(bsym_out_names)
+                    continue
+                nbsym.tags.add(BoundSymbolTag.BACKWARD)
+                backward_part_bsyms.insert(0, nbsym)
+            self.add_processed_bsyms(forward_part_bsyms)
 
-                self.collected_bw_part_bsyms.insert(0, backward_part_bsyms)
-                return
+            self.collected_bw_part_bsyms.insert(0, backward_part_bsyms)
 
-            # 4. No gradient transform found, need to decompose the symbol
-
+        def _decompose_symbol(self, bsym: BoundSymbol) -> None:
+            """Decompose a symbol when no gradient transform is found."""
             # error if this is a primitive
             utils.check(not bsym.sym.is_prim, lambda: f"Failed to find a gradient transform for bound symbol {bsym=}")
 
@@ -354,7 +413,7 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
 
             self.add_unprocessed_bsyms(bsym.subsymbols[:])
 
-            # end of 4 and end of the bsym processing loop.
+            # end of decomposition and end of the bsym processing loop.
 
     # This processes the bsyms to add duplicate symbols in the backward region for those that
     # are tagged for recomputation.
