@@ -1695,7 +1695,7 @@ def check_self(obj, potential_method):
 def plausibly_wrapper_of(wrapper, value):
     if wrapper.value is value or wrapper.original_value is value:
         return True
-    if callable(value):
+    if callable(value) or isinstance(value, torch.Size):
         if wrapper.value == value or wrapper.original_value == value:
             return True
     return False
