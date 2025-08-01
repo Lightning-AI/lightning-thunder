@@ -1695,10 +1695,9 @@ def check_self(obj, potential_method):
 def plausibly_wrapper_of(wrapper, value):
     # note: there are cases where "is" will always fail (e.g. BuiltinMethods,
     #       tensor.shape are recreated every time)
-    import torch
     if wrapper.value is value or wrapper.original_value is value:
         return True
-    if callable(value) or isinstance(value, torch.Size):
+    if callable(value):
         if wrapper.value == value or wrapper.original_value == value:
             return True
     return False
@@ -1711,10 +1710,10 @@ def wrap_attribute(plain_result, obj, name):
 
     known_wrapper = obj.attribute_wrappers.get(name.value)
     if known_wrapper is not None:
-        # this is overly strict, only enable for debugging
-        # assert plausibly_wrapper_of(known_wrapper, plain_result), (
-        #     f"attribute {name.value} of {type(obj.value).__name__} object out of sync: {known_wrapper.value} vs. {plain_result}"
-        # )
+        # this is known to be overly strict
+        assert plausibly_wrapper_of(known_wrapper, plain_result), (
+            f"attribute {name.value} of {type(obj.value).__name__} object out of sync: {known_wrapper.value} vs. {plain_result}"
+        )
         return known_wrapper
 
     pr = ProvenanceRecord(PseudoInst.LOAD_ATTR, inputs=[obj.provenance, name.provenance])
@@ -1761,10 +1760,15 @@ def _setattr_lookaside(obj: Any, name: str, value: Any):
 
 def _getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
     """Emulate slot_tp_getattr_hook()."""
-    result = _object_getattribute_lookaside(obj, name)
 
     ctx: InterpreterRuntimeCtx = get_interpreterruntimectx()
     compilectx: InterpreterCompileCtx = get_interpretercompilectx()
+    if compilectx._with_provenance_tracking:
+        uname = unwrap(name)
+        if uname in obj.attribute_wrappers:
+            return obj.attribute_wrappers[uname]
+
+    result = _object_getattribute_lookaside(obj, name)
 
     assert not isinstance(result, WrappedValue)
     if result is not INTERPRETER_SIGNALS.EXCEPTION_RAISED or not isinstance(ctx.curexc, AttributeError):
