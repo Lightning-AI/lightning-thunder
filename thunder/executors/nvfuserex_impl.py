@@ -3091,7 +3091,7 @@ def argsort_transform(
 
 
 # Register argsort with NVFuser
-register_supported(prims.argsort, argsort_transform, _argsort_check)
+register_supported(ltorch.argsort, argsort_transform, _argsort_check)
 
 
 def _cumsum_check(a: TensorProxy, dim: int, /, dtype: dtypes.dtype | None = None) -> bool:

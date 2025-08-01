@@ -3368,7 +3368,7 @@ def sort(
     return clang.sort(a, dim, descending, stable)
 
 
-@torchsymbol(torch.argsort, is_method=True)
+@torchsymbol(torch.argsort, is_method=True, is_prim=True)
 def argsort(a: TensorLike, /, dim: None | int = -1, descending: bool = False, stable: bool = False) -> TensorLike:
     """Returns the indices that would sort an array along the given dimension.
 
@@ -3381,7 +3381,18 @@ def argsort(a: TensorLike, /, dim: None | int = -1, descending: bool = False, st
     Returns:
         Tensor of indices that would sort the array
     """
-    return clang.argsort(a, dim, descending, stable)
+    if dim is None:
+        dim = a.ndim - 1 if a.ndim > 0 else 0
+    dim = utils.canonicalize_dim(a.ndim, dim)
+
+    # Validates types
+    utils.check_type(a, TensorProxy)
+    utils.check_type(dim, (int, IntegerProxy))
+    utils.check_type(descending, bool)
+    utils.check_type(stable, bool)
+
+    # Returns indices tensor with same shape as input but int64 dtype
+    return TensorProxy(like=a, dtype=dtypes.int64)
 
 
 #

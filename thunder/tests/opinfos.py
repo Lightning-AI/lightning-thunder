@@ -6510,7 +6510,7 @@ dim_perm_ops.append(sort_opinfo)
 
 
 argsort_opinfo = OpInfo(
-    clang.argsort,
+    ltorch.argsort,
     name="argsort",
     supports_grad=False,
     sample_input_generator=sort_sample_generator,
