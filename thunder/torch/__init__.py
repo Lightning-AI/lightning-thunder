@@ -36,6 +36,7 @@ from thunder.core.proxies import (
     NumberLike,
     TensorProxy,
     FutureTensorProxy,
+    pytype,
     pyval,
     TupleProxy,
     ListProxy,
@@ -3388,8 +3389,8 @@ def argsort(a: TensorLike, /, dim: None | int = -1, descending: bool = False, st
     # Validates types
     utils.check_type(a, TensorProxy)
     utils.check_type(dim, (int, IntegerProxy))
-    utils.check_type(descending, bool)
-    utils.check_type(stable, bool)
+    utils.check(pytype(descending) is bool, lambda: f"Expected {descending=} to be a boolean type")
+    utils.check(pytype(stable) is bool, lambda: f"Expected {stable=} to be a boolean type")
 
     # Returns indices tensor with same shape as input but int64 dtype
     return TensorProxy(like=a, dtype=dtypes.int64)
