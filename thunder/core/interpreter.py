@@ -1693,6 +1693,9 @@ def check_self(obj, potential_method):
 
 
 def plausibly_wrapper_of(wrapper, value):
+    # note: there are cases where "is" will always fail (e.g. BuiltinMethods,
+    #       tensor.shape are recreated every time)
+    import torch
     if wrapper.value is value or wrapper.original_value is value:
         return True
     if callable(value) or isinstance(value, torch.Size):
@@ -1707,8 +1710,6 @@ def wrap_attribute(plain_result, obj, name):
         return plain_result
 
     known_wrapper = obj.attribute_wrappers.get(name.value)
-    # note: there are cases where "is" will always fail (e.g. BuiltinMethods
-    #       are recreated every time)
     if known_wrapper is not None:
         assert plausibly_wrapper_of(known_wrapper, plain_result), (
             f"attribute {name.value} of {type(obj.value).__name__} object out of sync: {known_wrapper.value} vs. {plain_result}"
