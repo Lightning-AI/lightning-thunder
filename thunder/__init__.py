@@ -599,8 +599,7 @@ def jit(
                 if "transformer_engine_v2" in {ex.name for ex in cd.executors_list}:
                     from thunder.executors.transformer_engine_v2ex import _te_activation_checkpointing_transform
 
-                    if _te_activation_checkpointing_transform:
-                        computation_trc = _te_activation_checkpointing_transform(computation_trc)
+                    computation_trc = _te_activation_checkpointing_transform(computation_trc)
 
                 computation_trc, backward_trc = split_into_forward_and_backward(computation_trc)
 
