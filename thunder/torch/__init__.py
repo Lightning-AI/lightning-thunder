@@ -850,7 +850,7 @@ def randint(
     utils.check(generator is None, lambda: "generator is not None which is currently unsupported", NotImplementedError)
     utils.check(out is None, lambda: "out is not None which is currently unsupported", NotImplementedError)
     device = to_device(maybe_get_default_device(device))
-    dtype = to_dtype(maybe_get_default_dtype(dtype))
+    dtype = to_dtype(dtype if dtype is not None else torch.int64)
 
     # dispatch our two overloads:
     if len(args) == 2 and isinstance(args[1], (tuple, list)):
@@ -1492,7 +1492,6 @@ def unsqueeze(a: TensorLike, /, dim: int) -> TensorLike:
     return clang.unsqueeze(a, dim)
 
 
-# TODO Review view functionalization
 # TODO Add type annotations
 @torchsymbol(torch.Tensor.view, is_method=True)
 def view(a: TensorLike, /, *shape) -> TensorLike:
@@ -6758,7 +6757,6 @@ _torch_to_thunder_complete_map = {
 # records the torch symbols that may return tensor views
 # ref: https://pytorch.org/docs/stable/tensor_view.html
 # NOTE Symbols that return tensor views can interfere with in-place operators
-# See :func:`thunder.core.functionalization.check_inplace_to_views` for the details.
 _syms_that_may_return_views: set[Symbol] = {
     reshape,
     contiguous,

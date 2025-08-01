@@ -10,14 +10,11 @@ import networkx as nx
 
 from thunder.core import prims, utils
 from thunder.core.baseutils import BoundSymbolInterface, ProxyInterface
-from thunder.core.prims import PrimIDs
 from thunder.core.proxies import TensorProxy, variableify, NumberProxy, Proxy
-from thunder.core.pytree import tree_flatten
 from thunder.core.symbol import has_tags
 from thunder.core.trace import from_trace, TraceCtx, TraceProvenance
 from thunder.core.transforms import bsym_list_to_dag, toposort_bsym_dag, TOPOSORT_ORDER
-from thunder.core.transform_common import dce, order_proxies
-from thunder.executors.passes import update_fusion_call_ctx
+from thunder.core.transform_common import order_proxies
 
 
 def find_external_producer_outputs(
@@ -403,160 +400,6 @@ def find_cut(
     return tuple(sorted(cut_nodes))
 
 
-def rematerialize_all_gather(fw_trace: TraceCtx, bw_trace: TraceCtx) -> tuple[TraceCtx, TraceCtx]:
-    """Insert new allgather+wait for backward trace and update the return statement for forward trace"""
-
-    from thunder.core.proxies import FutureTensorProxy
-    from thunder.core.trace import reset_tracectx, set_tracectx
-    from thunder.distributed.prims import PrimIDs as distPrimIDs
-    from thunder.executors.torchex import all_gather_prim_impl, wait_prim_impl
-
-    new_bw_trace = from_trace(bw_trace)
-    consumers = utils.consumers(fw_trace)
-
-    # Find all waits that consume all_gather outputs
-    all_gathers = tuple(
-        x for x in fw_trace.bound_symbols if x.sym.id in {distPrimIDs.ALL_GATHER, all_gather_prim_impl.id}
-    )
-    all_gather_outputs = tuple(chain.from_iterable((y for y in x.flat_proxy_outs) for x in all_gathers))
-    waits = tuple(consumers[o][0] for o in all_gather_outputs)
-    assert all(x.sym.id in (distPrimIDs.WAIT, wait_prim_impl.id) for x in waits)
-    wait_outputs = tuple(chain.from_iterable((y for y in x.flat_proxy_outs) for x in waits))
-
-    (
-        new_required_for_backward_fw_to_bw_map,
-        new_required_for_backward_bw_to_fw_map,
-    ) = match_fw_and_bw_saved_for_bw_proxies(fw_trace, bw_trace)
-
-    wait_outputs = tuple(
-        new_required_for_backward_fw_to_bw_map[a.name] if a.name in new_required_for_backward_fw_to_bw_map else a
-        for a in wait_outputs
-    )
-
-    visited_wait_output = set()
-    # map the output of the original waitop to the output of the new waitop
-    wait_output_replacement_map = {}
-    wait_output_to_all_gather = utils.ProxyDict()
-    wait_output_to_wait = utils.ProxyDict()
-    for v, o in utils.safe_zip(wait_outputs, all_gathers):
-        wait_output_to_all_gather[v] = o
-    for v, w in utils.safe_zip(wait_outputs, waits):
-        wait_output_to_wait[v] = w
-
-    try:
-        token = set_tracectx(new_bw_trace)
-        new_symbols = []
-        new_bw_trace.bound_symbols = new_symbols
-        for bsym in bw_trace.bound_symbols:
-            if bsym.sym.id in {distPrimIDs.ALL_GATHER, all_gather_prim_impl.id}:
-                continue
-            if bsym.sym.id in {distPrimIDs.WAIT, wait_prim_impl.id} and bsym in waits:
-                continue
-            # update the unpack operators in the joint_fn trace
-            if bsym.sym.id in {
-                PrimIDs.UNPACK_TRIVIAL,
-                PrimIDs.UNPACK_SEQUENCE,
-                PrimIDs.UNPACK_EMPTY_DICT,
-                PrimIDs.UNPACK_KEY,
-            }:
-                new_symbols.append(bsym)
-                continue
-
-            used_wait_outputs = tuple(x for x in bsym.flat_proxy_args if x in wait_output_to_wait)
-            if used_wait_outputs:
-                for used_wait_output in used_wait_outputs:
-                    # Skip inserting all_gather+wait if it's not the first consumer of the wait op
-                    if used_wait_output.name in visited_wait_output:
-                        continue
-                    visited_wait_output.add(used_wait_output.name)
-                    all_gather_bsym = wait_output_to_all_gather[used_wait_output]
-                    all_gather_out = FutureTensorProxy(like=all_gather_bsym.output)
-                    new_all_gather_bsym = replace(all_gather_bsym, output=all_gather_out)
-                    new_symbols.append(new_all_gather_bsym)
-
-                    wait_bsym = wait_output_to_wait[used_wait_output]
-                    wait_out = TensorProxy(like=wait_bsym.output)
-                    new_wait_bsym = replace(wait_bsym, output=wait_out, args=(all_gather_out,))
-                    new_symbols.append(new_wait_bsym)
-                    wait_output_replacement_map[variableify(used_wait_output)] = wait_out
-
-                new_bsym = bsym.from_bsym_swap_proxies(wait_output_replacement_map)
-                new_symbols.append(new_bsym)
-                continue
-            new_symbols.append(bsym)
-
-    finally:
-        reset_tracectx(token)
-
-    new_bw_bsyms = list(
-        bsym
-        for bsym in new_bw_trace.bound_symbols
-        if bsym.sym.id
-        not in (
-            PrimIDs.UNPACK_TRIVIAL,
-            PrimIDs.UNPACK_SEQUENCE,
-            PrimIDs.UNPACK_EMPTY_DICT,
-            PrimIDs.UNPACK_KEY,
-            PrimIDs.RETURN,
-        )
-    )
-    all_args = tuple(
-        chain.from_iterable((x for x in bsym.flat_args if isinstance(x, ProxyInterface)) for bsym in new_bw_bsyms)
-    )
-    producers = utils.producers(new_bw_bsyms)
-    new_required_for_backward = tuple(
-        a
-        for a in all_args
-        if producers.get(a, None) is None
-        and a.name not in (y.name for y in tree_flatten(bw_trace.args[1])[0] if isinstance(y, ProxyInterface))
-        and a.name not in ("saved_for_backward", "cotangents", "C0", "C1")
-    )
-    new_required_for_backward = tuple(
-        sorted({x.name: x for x in new_required_for_backward}.values(), key=lambda a: a.name)
-    )  # Removes duplicates and sorts by name
-    # Now construct the updated backward and forward traces
-    from thunder.core.transforms import (
-        _update_backward_with_new_saved_for_backward,
-        _update_forward_with_new_saved_for_backward,
-    )
-
-    _update_backward_with_new_saved_for_backward(new_bw_trace, new_required_for_backward)
-
-    new_fw_trace = from_trace(fw_trace)
-    new_fw_trace.bound_symbols = list(fw_trace.bound_symbols)
-
-    new_required_for_backward = tuple(
-        new_required_for_backward_bw_to_fw_map[a.name] if a.name in new_required_for_backward_bw_to_fw_map else a
-        for a in new_required_for_backward
-    )
-    _update_forward_with_new_saved_for_backward(new_fw_trace, new_required_for_backward)
-    return new_fw_trace, new_bw_trace
-
-
-def match_fw_and_bw_saved_for_bw_proxies(
-    fw_trace: TraceCtx, bw_trace: TraceCtx
-) -> tuple[dict[str, Proxy], dict[str, Proxy]]:
-    """Outputs required for backward may have different names between forward and backward.
-    Args:
-        fw_trace: TraceCtx: Forward trace.
-        bw_trace: TraceCtx: Backward trace.
-
-    Returns:
-        new_required_for_bakward_fw_to_bw_map: Dict[str, Proxy]: mapping of bw names to forward proxies
-    """
-
-    old_saved_for_backward_fw = [*fw_trace.output[1][0], *fw_trace.output[1][1]]
-    old_saved_for_backward_bw = [*bw_trace.args[0][0], *bw_trace.args[0][1]]
-    assert len(old_saved_for_backward_fw) == len(old_saved_for_backward_bw)
-    new_required_for_backward_bw_to_fw_map = {
-        x.name: y for x, y in zip(old_saved_for_backward_bw, old_saved_for_backward_fw) if x is not None
-    }
-    new_required_for_backward_fw_to_bw_map = {
-        y.name: x for x, y in zip(old_saved_for_backward_bw, old_saved_for_backward_fw) if x is not None
-    }
-    return new_required_for_backward_fw_to_bw_map, new_required_for_backward_bw_to_fw_map
-
-
 def rematerialize(trace: TraceCtx) -> TraceCtx:
     """Rematerialize the trace.
 
@@ -621,136 +464,6 @@ def rematerialize(trace: TraceCtx) -> TraceCtx:
     return rematerialized_trace
 
 
-def rematerialize_forward_and_backward(fw_trace: TraceCtx, bw_trace: TraceCtx) -> tuple[TraceCtx, TraceCtx]:
-    """Apply rematerialization optimization to the forward and backward traces.
-
-    Args:
-        fw_trace (TraceCtx): Forward trace.
-        bw_trace (TraceCtx): Backward trace.
-
-    Returns:
-        tuple[TraceCtx, TraceCtx]: Rematerialized forward and backward traces.
-    """
-    # Circular dependency
-    from thunder.core.transforms import (
-        _update_backward_with_new_saved_for_backward,
-        _update_forward_with_new_saved_for_backward,
-    )
-    from thunder.core.trace import tracectx
-
-    def joint_fn(args, kwargs, cotangents):
-        pass
-
-    joint_extrace = TraceCtx(joint_fn)
-    joint_extrace.names = set.union(fw_trace.names, bw_trace.names)
-    # name clash in args?
-    joint_extrace.args = (fw_trace.args, fw_trace.kwargs, bw_trace.args[1])
-    assert fw_trace.bound_symbols[-1].sym.id == PrimIDs.RETURN
-    assert bw_trace.bound_symbols[-1].sym.id == PrimIDs.RETURN
-    # Omit the last RETURN symbol
-    joint_extrace.bound_symbols = fw_trace.bound_symbols[:-1]
-
-    def apply_to_proxy_outputs_and_subsymbols(bsym, fn):
-        for p in bsym.flat_proxy_outs:
-            fn(p)
-        for subsym in bsym.subsymbols:
-            apply_to_proxy_outputs_and_subsymbols(subsym, fn)
-
-    swapmap = {}
-    skipmap = set()
-
-    def add_to_swapmap(p):
-        v = variableify(p)
-        if isinstance(p, TensorProxy) and v not in swapmap and p.name not in skipmap:
-            with tracectx(joint_extrace):
-                swapmap[v] = p.replace_name(f"bw_{p.name}", disambiguate=True)
-
-    for bsym in bw_trace.bound_symbols[:-1]:
-        if bsym.sym.id != PrimIDs.UNPACK_SEQUENCE:
-            # we want rename except the saved for backwards tensors
-            apply_to_proxy_outputs_and_subsymbols(bsym, add_to_swapmap)
-        else:
-            for p in bsym.flat_proxy_outs:
-                skipmap.add(p.name)
-        joint_extrace.bound_symbols.append(bsym.from_bsym_swap_proxies(swapmap))
-
-    # Add a new RETURN symbol
-    joint_extrace.bound_symbols.append(
-        replace(
-            fw_trace.bound_symbols[-1],
-            args=(
-                fw_trace.bound_symbols[-1].args[0],
-                tuple(
-                    bw_trace.bound_symbols[-1].from_bsym_swap_proxies(swapmap).args,
-                ),
-            ),
-        )
-    )
-
-    joint_extrace = rematerialize(joint_extrace)
-
-    # We need to update "save_for_backward" sequence
-    new_bw_bsyms = joint_extrace.bound_symbols[len(fw_trace.bound_symbols) :]
-    new_bw_bsyms = list(
-        bsym
-        for bsym in new_bw_bsyms
-        if bsym.sym.id
-        not in (
-            PrimIDs.UNPACK_TRIVIAL,
-            PrimIDs.UNPACK_SEQUENCE,
-            PrimIDs.UNPACK_EMPTY_DICT,
-            PrimIDs.UNPACK_KEY,
-            PrimIDs.DEL,
-            PrimIDs.RETURN,
-        )
-    )
-    all_args = tuple(
-        chain.from_iterable((x for x in bsym.flat_args if isinstance(x, ProxyInterface)) for bsym in new_bw_bsyms)
-    )
-    producers = utils.producers(new_bw_bsyms)
-    new_required_for_backward = tuple(
-        a
-        for a in all_args
-        if producers.get(a, None) is None
-        and a.name not in (y.name for y in tree_flatten(bw_trace.args[1])[0] if isinstance(y, ProxyInterface))
-    )
-    new_required_for_backward = tuple(
-        sorted({x.name: x for x in new_required_for_backward}.values(), key=lambda a: a.name)
-    )  # Removes duplicates and sorts by name
-
-    # Now construct the updated backward and forward traces
-    new_bw_trace = from_trace(bw_trace)
-    new_bw_trace.set_provenance(TraceProvenance("Rematerialization"))
-    new_bw_trace.bound_symbols = new_bw_bsyms
-    new_bw_trace.bound_symbols.append(bw_trace.bound_symbols[-1].from_bsym_swap_proxies(swapmap))
-    _update_backward_with_new_saved_for_backward(new_bw_trace, new_required_for_backward)
-
-    new_fw_trace = from_trace(fw_trace)
-    new_fw_trace.set_provenance(TraceProvenance("Rematerialization"))
-    new_fw_trace.bound_symbols = list(
-        bsym for bsym in joint_extrace.bound_symbols[: len(fw_trace.bound_symbols) - 1] if bsym.sym.id != PrimIDs.DEL
-    )
-    new_fw_trace.bound_symbols.append(replace(fw_trace.bound_symbols[-1], args=fw_trace.bound_symbols[-1].args))
-
-    _, new_required_for_backward_bw_to_fw_map = match_fw_and_bw_saved_for_bw_proxies(fw_trace, bw_trace)
-    new_required_for_backward = tuple(
-        new_required_for_backward_bw_to_fw_map[a.name] if a.name in new_required_for_backward_bw_to_fw_map else a
-        for a in new_required_for_backward
-    )
-    _update_forward_with_new_saved_for_backward(new_fw_trace, new_required_for_backward)
-
-    # prims.python_return was updated and now DCE can remove the unused
-    # variables and symbols
-    new_fw_trace = dce(new_fw_trace)
-    new_bw_trace = dce(new_bw_trace)
-
-    # Update the call context
-    new_fw_trace = update_fusion_call_ctx(new_fw_trace)
-    new_bw_trace = update_fusion_call_ctx(new_bw_trace)
-
-    return new_fw_trace, new_bw_trace
-
-
 def replace_uniform(trace: TraceCtx) -> TraceCtx:
     """For better rematerialization, replace the uniform operator with the stateless uniform_philox operator and manually update the RNG state."""
     from thunder.core.compile_data import get_compile_option
@@ -763,7 +476,6 @@ def replace_uniform(trace: TraceCtx) -> TraceCtx:
 
     start_time_ns = time.perf_counter_ns()
     from thunder.core.trace import VariableInterface
-    from thunder.core.proxies import Proxy
     from thunder.core.devices import Device
     from thunder.core.transforms import VISIT_TYPE, visitor_transform
 
