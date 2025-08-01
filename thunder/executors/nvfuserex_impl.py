@@ -3094,6 +3094,34 @@ def argsort_transform(
 register_supported(prims.argsort, argsort_transform, _argsort_check)
 
 
+def _grouped_mm_check(
+    a: TensorProxy,
+    b: TensorProxy,
+    offsets: TensorProxy,
+) -> bool:
+    if not are_supported_tensors(a, b, offsets):
+        return False
+
+    return nvfuser_version() >= LooseVersion("0.2.28")
+
+
+def _grouped_mm_transform(
+    a: TensorProxy,
+    b: TensorProxy,
+    offsets: TensorProxy,
+    *,
+    fd: FusionDefinition,
+    lc_to_nv_map: dict,
+) -> list[TensorLike]:
+    nva = getnv(a, fd, lc_to_nv_map)
+    nvb = getnv(b, fd, lc_to_nv_map)
+    nvoffsets = getnv(offsets, fd, lc_to_nv_map) if offsets is not None else None
+    return fd.ops.grouped_mm(nva, nvb, nvoffsets)
+
+
+register_supported(prims._grouped_mm, _grouped_mm_transform, _grouped_mm_check)
+
+
 def _cumsum_check(a: TensorProxy, dim: int, /, dtype: dtypes.dtype | None = None) -> bool:
     if a.ndim != 1:
         return False
@@ -3140,6 +3168,7 @@ def cumsum_transform(
 
 
 register_supported(ltorch.cumsum, cumsum_transform, _cumsum_check)
+
 
 # At module/class level
 NVFUSER_SUPPORTS_OPTIONS = nvfuser_version() >= LooseVersion("0.2.23")

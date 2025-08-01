@@ -10,6 +10,7 @@ from collections.abc import Callable
 from collections.abc import Sequence
 from enum import Enum
 from functools import partial, reduce, wraps
+from looseversion import LooseVersion
 from numbers import Number
 from types import NoneType, ModuleType
 from typing import Any, overload
@@ -5611,6 +5612,25 @@ register_grad(item.id, item)
 @torchsymbol(torch.nn.functional.linear)
 def linear(a: TensorLike, w: TensorLike, /, bias: None | TensorLike = None) -> TensorLike:
     return prims.linear(a, w, bias)
+
+
+if LooseVersion(torch.__version__) >= "2.8":
+
+    @torchsymbol(torch._grouped_mm)
+    def _grouped_mm(
+        a: TensorProxy,
+        b: TensorProxy,
+        offsets: None | TensorProxy = None,
+        bias: None | TensorProxy = None,
+        dtype: None | dtypeLike = None,
+    ) -> TensorProxy:
+        utils.check(offsets is not None, lambda: "Current implementation requires `offsets`.")
+        utils.check(bias is None, lambda: "Current implementation doesn't support `bias`.")
+        utils.check(
+            dtype in (None, a.dtype),
+            lambda: f"Current implementation requires `dtype` to be None or the same as `a`. Got: {dtype} vs {a.dtype}",
+        )
+        return prims._grouped_mm(a, b, offsets)
 
 
 @torchsymbol(torch.logsumexp, is_method=True)
