@@ -366,6 +366,11 @@ def find_cut(
         add_edge("source", "source", capacity=float("inf"))
 
     for var in required_producer_vars:
+        # See https://github.com/Lightning-AI/lightning-thunder/issues/2365
+        # It seems that `thunder.transforms.autodiff.grad_transform_on_trace` could
+        # replace outputs with `None`.
+        if var is None:
+            continue
         add_edge("source", var.name + "_in", capacity=float("inf"))
         add_edges(var)
 
