@@ -311,7 +311,8 @@ def register_custom_op(custom_op: CustomOpDef) -> Symbol:
     An example schema is ``my_lib::foo(Tensor a, Tensor b, float? c=None, str d="") -> Tensor``.
 
     This function does three things:
-    1. Register ``custom_op`` as a new :class:`~thunder.core.symbol.Symbol` whose ``fn`` as ``custom_op._opoverload``. 2. Trace ``custom_op._abstract_fn``
+    1. Register ``custom_op`` as a new :class:`~thunder.core.symbol.Symbol` whose ``fn`` is ``custom_op._opoverload`` and ``meta`` is based on ``custom_op._abstract_fn``
+    2. When ``_setup_context_fn`` and ``_backward_fn`` are defined, register augmented forward and backward through :func:`thunder.core.transforms.register_augmented_forward` and :func:`thunder.core.transforms.register_backward`.
 
     Args:
         custom_op: :func:`torch.library.custom_op`'ed function. This is not ``torch.ops.{namespace}.{name}``.
