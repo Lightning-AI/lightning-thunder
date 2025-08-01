@@ -6560,9 +6560,10 @@ def register_default_torch_op(torchfn: Callable, torch_module):
 
     _torch_to_thunder_function_map[torchfn] = sym
 
-    # TODO: convert to an assert after #1140 is fixed
-    if torchfn_name not in __builtins__ and not hasattr(sys.modules["thunder.torch"], torchfn_name):
-        setattr(sys.modules["thunder.torch"], torchfn_name, sym)
+    utils.check(
+        torchfn_name in __builtins__ or hasattr(sys.modules["thunder.torch"], torchfn_name),
+        lambda: f"{torchfn_name=} should be found in {__builtins__} or {thunder.torch} but not.",
+    )
 
     # We need to invoke `register_method` on methods
     # so that `x.method` is registered to the TensorProxy.
