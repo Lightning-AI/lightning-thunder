@@ -3630,7 +3630,7 @@ def _binary_subscr_handler(inst: dis.Instruction, /, stack: InterpreterStack, **
     def getitem_impl(obj, index):
         return obj.__getitem__(index)
 
-    if isinstance(tos1, type):
+    if isinstance(unwrap(tos1), type):
         res = _interpret_call(class_getitem_impl, tos1, tos)
     else:
         res = _interpret_call(getitem_impl, tos1, tos)
