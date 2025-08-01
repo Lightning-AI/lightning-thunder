@@ -6562,7 +6562,7 @@ def register_default_torch_op(torchfn: Callable, torch_module):
 
     utils.check(
         torchfn_name in __builtins__ or hasattr(sys.modules["thunder.torch"], torchfn_name),
-        lambda: f"{torchfn_name=} should be found in {__builtins__} or {thunder.torch} but not.",
+        lambda: f"{torchfn_name=} should be found in {__builtins__} or {sys.modules['thunder.torch']} but not.",
     )
 
     # We need to invoke `register_method` on methods
