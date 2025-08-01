@@ -3627,10 +3627,16 @@ def _binary_subscr_handler(inst: dis.Instruction, /, stack: InterpreterStack, **
     tos = stack.pop_wrapped()
     tos1 = stack.pop_wrapped()
 
-    def impl(tos1, tos):
-        return tos1.__getitem__(tos)
+    def class_getitem_impl(cls, index):
+        return cls.__class_getitem__(index)
 
-    res = _interpret_call(impl, tos1, tos)
+    def getitem_impl(obj, index):
+        return obj.__getitem__(index)
+
+    if isinstance(unwrap(tos1), type):
+        res = _interpret_call(class_getitem_impl, tos1, tos)
+    else:
+        res = _interpret_call(getitem_impl, tos1, tos)
 
     if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return res
