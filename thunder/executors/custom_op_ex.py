@@ -1,12 +1,6 @@
 """Executor for `torch.library.custom_op` operators"""
 
-from __future__ import annotations
-from typing import TYPE_CHECKING
-
 from thunder.extend import OperatorExecutor
-
-if TYPE_CHECKING:
-    pass
 
 
 __all__ = [
