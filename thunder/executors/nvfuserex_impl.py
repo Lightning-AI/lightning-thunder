@@ -76,9 +76,6 @@ from thunder.executors.nvfuserex import nvfuser_version
 import nvfuser
 from nvfuser import DataType, FusionDefinition
 
-nvTensor = nvfuser._C.Tensor
-nvNumber = nvfuser._C.Scalar
-
 #
 # Helper functions
 #
@@ -220,11 +217,7 @@ def is_supported_tensor_or_number(a: TensorProxy | Number) -> bool:
 #   Throws an error if any arguments are not tensors
 # TODO Add a check for the tensor have > 0 elements?
 def are_supported_tensors(*args) -> bool:
-    for a in args:
-        if not is_supported_tensor(a):
-            return False
-
-    return True
+    return all(is_supported_tensor(arg) for arg in args)
 
 
 # Returns True when all arguments given are supported tensors or numbers
@@ -2956,7 +2949,7 @@ def cross_entropy_fwd(
     nv_target = getnv(target, fd, lc_to_nv_map)
     nv_ignore_index = getnv(ignore_index, fd, lc_to_nv_map)
 
-    zero_scalar = fd.define_scalar(0, dtype=torch_dtype_to_nvfuser_dtype(dtypes.to_torch_dtype(a.dtype)))
+    zero_scalar = fd.define_scalar(0, dtype=lcdtype_to_nvdtype(a.dtype))
 
     # modify the labels to account for ignore index and then do a
     # gather/ take_along_axis on the input tensor
@@ -3195,6 +3188,54 @@ def argsort_transform(
 
 # Register argsort with NVFuser
 register_supported(prims.argsort, argsort_transform, _argsort_check)
+
+
+def _cumsum_check(a: TensorProxy, dim: int, /, dtype: dtypes.dtype | None = None) -> bool:
+    if a.ndim != 1:
+        return False
+
+    return is_supported_tensor(a)
+
+
+# Emulate cumsum using matmul: cumsum(a) = a @ triu(ones)
+#
+# This is suboptimal. Revisit this after nvFuser has a scan-based cumsum
+# implementation.
+def cumsum_transform(
+    a: TensorProxy,
+    dim: int,
+    /,
+    # For reasons I don't yet understand, `dtype` is a `torch.dtype` in forward but
+    # a `dtypes.dtype` in backprop.
+    dtype: torch.dtype | dtypes.dtype | None = None,
+    *,
+    fd: FusionDefinition,
+    lc_to_nv_map: dict,
+) -> TensorProxy:
+    if dtypes.is_integer_dtype(a.dtype):
+        # torch.matmul can't do integers on GPU so we convert `a` to
+        # float.
+        compute_dtype = DataType.Float
+    else:
+        compute_dtype = lcdtype_to_nvdtype(a.dtype)
+
+    if dtype is None:
+        out_dtype = lcdtype_to_nvdtype(a.dtype)
+    else:
+        out_dtype = lcdtype_to_nvdtype(dtypes.to_dtype(dtype))
+
+    nv_a = getnv(a, fd, lc_to_nv_map)
+    nv_a = fd.ops.cast(nv_a, compute_dtype)
+
+    mask = fd.ops.full((a.numel, a.numel), fd.define_scalar(1), compute_dtype)
+    mask = fd.ops.triu(mask)
+
+    out = fd.ops.matmul(nv_a, mask)
+    out = fd.ops.cast(out, out_dtype)
+    return out
+
+
+register_supported(ltorch.cumsum, cumsum_transform, _cumsum_check)
 
 # At module/class level
 NVFUSER_SUPPORTS_OPTIONS = nvfuser_version() >= LooseVersion("0.2.23")
