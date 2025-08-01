@@ -3575,14 +3575,9 @@ def test_reraise_traceback():
 
 
 def test_binary_subscr_on_types():
-    class A:
-        @classmethod
-        def __class_getitem__(cls, index):
-            return index
-
     def fn():
-        return A[int]
+        return (str(list[int]), str(dict[int, int]))
 
     jfn = thunder.jit(fn)
     out = jfn()
-    assert out is int
+    assert out == ("list[int]", "dict[int, int]")
