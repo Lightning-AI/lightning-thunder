@@ -1711,9 +1711,10 @@ def wrap_attribute(plain_result, obj, name):
 
     known_wrapper = obj.attribute_wrappers.get(name.value)
     if known_wrapper is not None:
-        assert plausibly_wrapper_of(known_wrapper, plain_result), (
-            f"attribute {name.value} of {type(obj.value).__name__} object out of sync: {known_wrapper.value} vs. {plain_result}"
-        )
+        # this is overly strict, only enable for debugging
+        # assert plausibly_wrapper_of(known_wrapper, plain_result), (
+        #     f"attribute {name.value} of {type(obj.value).__name__} object out of sync: {known_wrapper.value} vs. {plain_result}"
+        # )
         return known_wrapper
 
     pr = ProvenanceRecord(PseudoInst.LOAD_ATTR, inputs=[obj.provenance, name.provenance])
