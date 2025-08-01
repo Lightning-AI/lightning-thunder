@@ -1896,6 +1896,9 @@ def le(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition
     return fd.ops.le(nva, nvb)
 
 
+register_supported(PrimIDs.LE, le, _elementwise_binary_check)
+
+
 def lt(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
     nvb = getnv(b, fd, lc_to_nv_map)
