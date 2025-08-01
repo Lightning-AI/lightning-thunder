@@ -13,7 +13,6 @@ from thunder.core.transforms import (
     _get_gradfn_and_executor,
     augmented_forward_impls,
     backward_impls,
-    ForwardBackwardTraces,
 )
 import thunder.torch as ltorch
 
@@ -609,15 +608,3 @@ def split_into_forward_and_backward(joint_trace: TraceCtx):
     backward_trace = check_dtensor_cotangent_metadata_in_backward(backward_trace)
 
     return forward_trace, backward_trace
-
-
-def forward_and_backward_from_trace(trace: TraceCtx, torch_autograd=False) -> ForwardBackwardTraces:
-    if not torch_autograd:
-        from thunder.core.transforms import forward_and_backward_from_trace as legacy_autodiff
-
-        return legacy_autodiff(trace, torch_autograd=torch_autograd)
-
-    joint_trace = grad_transform_on_trace(trace)
-
-    forward_trace, backward_trace = split_into_forward_and_backward(joint_trace)
-    return ForwardBackwardTraces(forward_trace, backward_trace)

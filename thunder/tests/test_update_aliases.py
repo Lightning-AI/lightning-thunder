@@ -1,12 +1,73 @@
+from collections.abc import Callable
+from functools import partial
 import pytest
 import torch.testing
 
 import thunder
 from thunder.examine import get_fusions
 import thunder.core.dtypes as dtypes
+from thunder.core.symbol import Symbol
+from thunder.tests.opinfos import opinfos, OpInfo, make_number, SampleInput
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
 from thunder.tests.framework import instantiate, ops, NOTHING, TorchExecutor, TorchCompileExecutor, nvFuserExecutor
-from thunder.tests.test_inplace_functionalization import _inplace_opinfos
+from thunder.torch import _torch_to_thunder_function_map, _inplace_to_out_of_place
+
+
+# `SampleInput`s of ops with `inplace` argument do not seem to come with `inplace` arg, so give it to them.
+def sample_generator_wrapper(sample_generator):
+    def f(*args, **kwargs):
+        for sample in sample_generator(*args, **kwargs):
+            sample.kwargs["inplace"] = True
+            yield SampleInput(*sample.args, **sample.kwargs)
+
+    return f
+
+
+def inplace_masked_fill_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    number = partial(make_number, dtype=dtype)
+
+    # pred_shape, a_shape, value
+    cases = (((2, 2, 2), (2, 2, 2), number()),)
+
+    for pred_shape, a_shape, value in cases:
+        pred, a = make(pred_shape, dtype=torch.bool, requires_grad=False), make(a_shape)
+        yield SampleInput(a, pred, value)
+
+
+_torchsymbol_to_torch: dict[Symbol, Callable] = {v: k for k, v in _torch_to_thunder_function_map.items()}
+_functional_to_inplace: dict[Callable, Callable] = {
+    functional: inplace for inplace, (functional, index) in _inplace_to_out_of_place.items() if index == -1
+}
+_functional_to_functional_with_inplace_arg: dict[Callable, tuple[Callable, int]] = {
+    functional: (inplace, index) for inplace, (functional, index) in _inplace_to_out_of_place.items() if index >= 0
+}
+
+_inplace_opinfos: list[OpInfo] = []
+for op in opinfos:
+    if not (op.op in _functional_to_inplace or op.op in _functional_to_functional_with_inplace_arg):
+        continue
+    # ops that have an argument of `inplace` such as `F.relu` and `F.gelu`
+    if op.op in _functional_to_functional_with_inplace_arg:
+        inplace_op, _ = _functional_to_functional_with_inplace_arg[op.op]
+        assert op.name != "masked_fill"
+        inplace_opinfo = OpInfo(
+            inplace_op,
+            sample_input_generator=sample_generator_wrapper(op.sample_input_generator),
+            torch_reference=getattr(torch.nn.functional, op.name),
+        )
+        _inplace_opinfos.append(inplace_opinfo)
+    # in-place ops whose name ends with `_`
+    if op.op in _functional_to_inplace:
+        inplace_op = _functional_to_inplace[op.op]
+        inplace_opinfo = OpInfo(
+            inplace_op,
+            sample_input_generator=(
+                op.sample_input_generator if op.name != "masked_fill" else inplace_masked_fill_sample_generator
+            ),
+            torch_reference=_torchsymbol_to_torch[inplace_op],
+        )
+        _inplace_opinfos.append(inplace_opinfo)
 
 
 @ops(_inplace_opinfos, supported_dtypes=(dtypes.float32,))
@@ -19,9 +80,7 @@ def test_update_aliases(op, device, dtype, executor, _):
     if op.name == "polygamma_":
         args[0], args[1] = args[1], args[0]
 
-    j_op = executor.make_callable(
-        op.torch_reference, skip_inplace_alias_updates=False, skip_inplace_functionalization=True
-    )
+    j_op = executor.make_callable(op.torch_reference)
     actual = j_op(*args, **sample.kwargs)
     expected = op.torch_reference(*args, **sample.kwargs)
     torch.testing.assert_close(actual, expected, equal_nan=True)
@@ -50,7 +109,7 @@ def test_setitem_on_view(executor, device, dtype):
         a = make_tensor((2, 3), dtype=torch.float32, device=device)
         b = make_tensor((2, 3), dtype=torch.float32, device=device)
         a_, b_ = a.clone().detach(), b.clone().detach()
-        jfn = executor.make_callable(fn, skip_inplace_alias_updates=False, skip_inplace_functionalization=True)
+        jfn = executor.make_callable(fn)
         actual = jfn(a, b)
         expected = fn(a_, b_)
         torch.testing.assert_close(actual, expected)
@@ -92,7 +151,7 @@ def test_inplace_on_view(executor, device, dtype):
         a = make_tensor((2, 3), dtype=torch.float32, device=device)
         b = make_tensor((2, 3), dtype=torch.float32, device=device)
         a_, b_ = a.clone().detach(), b.clone().detach()
-        jfn = executor.make_callable(fn, skip_inplace_alias_updates=False, skip_inplace_functionalization=True)
+        jfn = executor.make_callable(fn)
         actual = jfn(a, b)
         expected = fn(a_, b_)
         torch.testing.assert_close(actual, expected)
@@ -116,7 +175,7 @@ def test_inplace_on_chunk_non_default_dim(executor, device, dtype):
     for fn in [f]:
         a = make_tensor((2, 3), dtype=torch.float32, device=device)
         a_ = a.clone().detach()
-        jfn = executor.make_callable(fn, skip_inplace_alias_updates=False, skip_inplace_functionalization=True)
+        jfn = executor.make_callable(fn)
         actual = jfn(a)
         expected = fn(a_)
         torch.testing.assert_close(actual, expected)
@@ -141,7 +200,7 @@ def test_inplace_on_chunk(executor, device, dtype):
     for fn in [g, h]:
         a = make_tensor((2, 3), dtype=torch.float32, device=device)
         a_ = a.clone().detach()
-        jfn = executor.make_callable(fn, skip_inplace_alias_updates=False, skip_inplace_functionalization=True)
+        jfn = executor.make_callable(fn)
         actual = jfn(a)
         expected = fn(a_)
         torch.testing.assert_close(actual, expected)
@@ -168,7 +227,7 @@ def test_chained_inplace(executor, device, dtype):
     for fn in [f, g, h]:
         a = make_tensor((2, 3), dtype=torch.float32, device=device)
         a_ = a.clone().detach()
-        jfn = executor.make_callable(fn, skip_inplace_alias_updates=False, skip_inplace_functionalization=True)
+        jfn = executor.make_callable(fn)
         actual = jfn(a)
         expected = fn(a_)
         torch.testing.assert_close(actual, expected)
@@ -185,7 +244,7 @@ def test_nn_module_inplace(executor, device, dtype):
 
     a = make_tensor((2, 3), dtype=torch.float32, device=device)
     a_ = a.clone().detach()
-    jf = executor.make_callable(f, skip_inplace_alias_updates=False, skip_inplace_functionalization=True)
+    jf = executor.make_callable(f)
     actual = jf(a)
     expected = f(a_)
     torch.testing.assert_close(actual, expected)
@@ -212,7 +271,7 @@ def test_inplace(executor, device, dtype):
         a = make_tensor((2, 3), dtype=torch.float32, device=device)
         b = make_tensor((2, 3), dtype=torch.float32, device=device)
         a_, b_ = a.clone().detach(), b.clone().detach()
-        jfn = executor.make_callable(fn, skip_inplace_alias_updates=False, skip_inplace_functionalization=True)
+        jfn = executor.make_callable(fn)
         actual = jfn(a, b)
         expected = fn(a_, b_)
         torch.testing.assert_close(actual, expected)
@@ -231,7 +290,7 @@ def test_aliased_input(executor, device, dtype):
     a_ = a.clone().detach()
     b_ = b.clone().detach()
     c_ = c.clone().detach()
-    jfn = executor.make_callable(f, skip_inplace_alias_updates=False, skip_inplace_functionalization=True)
+    jfn = executor.make_callable(f)
     actual = jfn(a, b, c)
     expected = f(a_, b_, c_)
     torch.testing.assert_close(actual, expected)
@@ -253,7 +312,7 @@ def test_write_to_intermediate_result(executor, device, dtype):
         return y
 
     a = make_tensor((2, 3), dtype=torch.float32, device=device)
-    jfn = executor.make_callable(fn, skip_inplace_alias_updates=True, skip_inplace_functionalization=True)
+    jfn = executor.make_callable(fn, skip_inplace_alias_updates=True)
     actual = jfn(a)
     expected = fn(a)
     torch.testing.assert_close(actual, expected)
@@ -270,8 +329,7 @@ def test_inplace_to_alias_func_args(executor, device, dtype):
     def f(a, b):
         return a.exp_() + b.tanh_(), a
 
-    jitted_f = executor.make_callable(f, skip_inplace_alias_updates=False, skip_inplace_functionalization=True)
-
+    jitted_f = executor.make_callable(f)
     a = make_tensor(shape, device=device, dtype=torch_dtype)
     b = make_tensor(shape, device=device, dtype=torch_dtype)
     a_ref, b_ref = a.clone().detach(), b.clone().detach()
@@ -311,7 +369,7 @@ def test_inplace_to_alias_func_args(executor, device, dtype):
     def f(a, b):
         return a.exp() + b.tanh()
 
-    jitted_f = executor.make_callable(f, skip_inplace_alias_updates=False, skip_inplace_functionalization=True)
+    jitted_f = executor.make_callable(f)
     jitted_f(a, a)
     assert (thunder.cache_hits(jitted_f), thunder.cache_misses(jitted_f)) == (0, 1)
     jitted_f(a, b)
@@ -330,7 +388,7 @@ def test_inplace_to_alias_func_args(executor, device, dtype):
     a = make_tensor(shape, device=device, dtype=torch_dtype)
     a_expected = a.exp().tanh().cosh()
 
-    jitted_f = executor.make_callable(f, skip_inplace_alias_updates=False, skip_inplace_functionalization=True)
+    jitted_f = executor.make_callable(f)
     out = jitted_f(a, a, a)
 
     torch.testing.assert_close(a, a_expected)
@@ -354,7 +412,7 @@ def test_inplace_to_alias_func_args(executor, device, dtype):
     a = make_tensor(shape, device=device, dtype=torch_dtype)
     out_expected = torch.zeros_like(a)
 
-    jitted_f = executor.make_callable(f, skip_inplace_alias_updates=False, skip_inplace_functionalization=True)
+    jitted_f = executor.make_callable(f)
     out = jitted_f(a)
 
     torch.testing.assert_close(out, out_expected)
