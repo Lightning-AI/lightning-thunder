@@ -309,6 +309,11 @@ def find_cut(
         chain.from_iterable((y.name for y in x.flat_outs if y is not None) for x in required_consumer_symbols)
     )
 
+    # If there is overlap between required consumer and producer variables,
+    # it's impossible to find a valid mincut, so return empty tuple
+    if any(x.name in required_consumer_vars for x in required_producer_vars):
+        return tuple()
+
     # TODO: Use TensorProxy properties to compute the weights
     WEIGHT = 1.0
 

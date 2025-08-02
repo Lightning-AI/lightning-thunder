@@ -1104,7 +1104,6 @@ def test_bsym_toposort(executor: TestExecutor, device: str, dtype: dtypes.dtype)
     assert sub_preferring_sub_bsym.sym.id == "torch.sub"
 
     # Tests collection and reshape with -1 input
-    # NOTE Additions before and after the reshape are to prevent nvFuser from "bookending" the operation
     def bar(a, shape):
         b = a + 3
         c = a + 2.0
