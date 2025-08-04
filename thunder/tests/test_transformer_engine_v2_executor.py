@@ -115,7 +115,7 @@ def test_te_linear_forward_backward_multiple_iteration(fp8_recipe: recipe.Recipe
     # Running more iterations leads to `nan` for both eager and thunder
     # with BlockScaling.
     # Potentially because we are training on dummy data and task
-    iterations = 3
+    iterations = 6
 
     # TE inputs
     input_shape = (768, 4096)
@@ -128,7 +128,7 @@ def test_te_linear_forward_backward_multiple_iteration(fp8_recipe: recipe.Recipe
     # Parameters for thunder to optimize
     w1, w2, b1, b2 = clone_params(te_linear1.weight, te_linear2.weight, te_linear1.bias, te_linear2.bias)
 
-    target_value = torch.tensor(42, dtype=dtype, device=device)
+    target_value = torch.randint(42, (768,), dtype=torch.int64, device=device)
 
     inputs = tuple(torch.rand(*input_shape, device=device, dtype=dtype) for _ in range(iterations))
 
@@ -137,7 +137,7 @@ def test_te_linear_forward_backward_multiple_iteration(fp8_recipe: recipe.Recipe
         for iter_n in range(iterations):
             x = inputs[iter_n]
             result = model(x)
-            loss = torch.nn.functional.mse_loss(result.sum(), target_value)
+            loss = torch.nn.functional.cross_entropy(result, target_value)
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
@@ -192,7 +192,7 @@ def test_te_linear_forward_backward_multiple_iteration_multiple_recipes():
     # Running more iterations leads to `nan` for both eager and thunder
     # with BlockScaling.
     # Potentially because we are training on dummy data and task
-    iterations = 3
+    iterations = 6
 
     # TE inputs
     input_shape = (768, 4096)
@@ -205,7 +205,7 @@ def test_te_linear_forward_backward_multiple_iteration_multiple_recipes():
     # Parameters for thunder to optimize
     w1, w2, b1, b2 = clone_params(te_linear1.weight, te_linear2.weight, te_linear1.bias, te_linear2.bias)
 
-    target_value = torch.tensor(42, dtype=dtype, device=device)
+    target_value = torch.randint(42, (768,), dtype=torch.int64, device=device)
 
     inputs = tuple(torch.rand(*input_shape, device=device, dtype=dtype) for _ in range(iterations))
 
@@ -215,7 +215,7 @@ def test_te_linear_forward_backward_multiple_iteration_multiple_recipes():
             te_recipe = recipes[iter_n % 2]
             x = inputs[iter_n]
             result = model(x, te_recipe)
-            loss = torch.nn.functional.mse_loss(result.sum(), target_value)
+            loss = torch.nn.functional.cross_entropy(result, target_value)
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
