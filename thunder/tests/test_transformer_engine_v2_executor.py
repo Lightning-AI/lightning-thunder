@@ -553,20 +553,24 @@ def test_te_activation_checkpointing_correctness(fp8_recipe: recipe.Recipe, comp
     te_loss_hist = []
     train_model(te_model, te_sgd_optimizer, te_loss_hist)
 
-    from transformer_engine.pytorch.fp8 import FP8GlobalStateManager
+    # TE does not expose the scales for MXFP8
+    if fp8_recipe.delayed():
+        from transformer_engine.pytorch.fp8 import FP8GlobalStateManager
 
-    te_scales = []
-    te_amax_hist = []
-    with te.fp8_autocast(enabled=True, fp8_recipe=fp8_recipe):
-        for buffer_key, _ in FP8GlobalStateManager.global_amax_buffer.items():
-            # needs to clone the tensors because TE will use in-place copy to modify it any time autocast is called
-            te_scales += [t.detach().clone() for t in FP8GlobalStateManager.global_scale_buffer[buffer_key]]
-            te_amax_hist += [t.detach().clone() for t in FP8GlobalStateManager.global_amax_history_buffer[buffer_key]]
+        te_scales = []
+        te_amax_hist = []
+        with te.fp8_autocast(enabled=True, fp8_recipe=fp8_recipe):
+            for buffer_key, _ in FP8GlobalStateManager.global_amax_buffer.items():
+                # needs to clone the tensors because TE will use in-place copy to modify it any time autocast is called
+                te_scales += [t.detach().clone() for t in FP8GlobalStateManager.global_scale_buffer[buffer_key]]
+                te_amax_hist += [
+                    t.detach().clone() for t in FP8GlobalStateManager.global_amax_history_buffer[buffer_key]
+                ]
 
-    # Make sure that the global state manager has been reset and
-    # that there are only the buffers we need and not more
-    assert len(te_scales) == 4
-    assert len(te_amax_hist) == 4
+        # Make sure that the global state manager has been reset and
+        # that there are only the buffers we need and not more
+        assert len(te_scales) == 4
+        assert len(te_amax_hist) == 4
 
     def fn_to_checkpoint(x, w1, b1):
         a = torch.nn.functional.linear(x, w1, b1)
@@ -601,41 +605,43 @@ def test_te_activation_checkpointing_correctness(fp8_recipe: recipe.Recipe, comp
     assert_close(b1, te_linear1.bias)
     assert_close(b2, te_linear2.bias)
 
-    if compile_path == "jit":
-        fwd_trc_py_ctx = thunder.last_traces(cfn)[-1].python_ctx()
-    else:
-        fwd_trc_py_ctx = cfn.last_traces[-1].python_ctx()
+    # TE does not expose the scales for MXFP8
+    if fp8_recipe.delayed():
+        if compile_path == "jit":
+            fwd_trc_py_ctx = thunder.last_traces(cfn)[-1].python_ctx()
+        else:
+            fwd_trc_py_ctx = cfn.last_traces[-1].python_ctx()
 
-    if compile_path == "jit":
-        bwd_trc_py_ctx = thunder.last_backward_traces(cfn)[-1].python_ctx()
-    else:
-        bwd_trc_py_ctx = cfn.last_backward_traces[-1].python_ctx()
+        if compile_path == "jit":
+            bwd_trc_py_ctx = thunder.last_backward_traces(cfn)[-1].python_ctx()
+        else:
+            bwd_trc_py_ctx = cfn.last_backward_traces[-1].python_ctx()
 
-    th_scales = []
-    th_amax_hist = []
+        th_scales = []
+        th_amax_hist = []
 
-    for k in fwd_trc_py_ctx.keys():
-        if "get_te_fp8_state" in k:
-            th_scales += [fwd_trc_py_ctx[k].state.scale]
-            th_amax_hist += [fwd_trc_py_ctx[k].state.amax_history]
+        for k in fwd_trc_py_ctx.keys():
+            if "get_te_fp8_state" in k:
+                th_scales += [fwd_trc_py_ctx[k].state.scale]
+                th_amax_hist += [fwd_trc_py_ctx[k].state.amax_history]
 
-    th_bwd_scales = []
-    th_bwd_amax_hist = []
-    for k in bwd_trc_py_ctx.keys():
-        if "get_te_fp8_state" in k:
-            th_bwd_scales += [bwd_trc_py_ctx[k].state.scale]
-            th_bwd_amax_hist += [bwd_trc_py_ctx[k].state.amax_history]
+        th_bwd_scales = []
+        th_bwd_amax_hist = []
+        for k in bwd_trc_py_ctx.keys():
+            if "get_te_fp8_state" in k:
+                th_bwd_scales += [bwd_trc_py_ctx[k].state.scale]
+                th_bwd_amax_hist += [bwd_trc_py_ctx[k].state.amax_history]
 
-    th_scales.extend(reversed(th_bwd_scales))
-    th_amax_hist.extend(reversed(th_bwd_amax_hist))
+        th_scales.extend(reversed(th_bwd_scales))
+        th_amax_hist.extend(reversed(th_bwd_amax_hist))
 
-    # check the scales are the same but for last dimension which is always on in TE
-    for te_scale, th_scale in zip(te_scales, th_scales):
-        assert_close(te_scale[:-1], th_scale)
+        # check the scales are the same but for last dimension which is always on in TE
+        for te_scale, th_scale in zip(te_scales, th_scales):
+            assert_close(te_scale[:-1], th_scale)
 
-    # check that amax history is the same as TE
-    for te_amax, th_amax in zip(te_amax_hist, th_amax_hist):
-        assert_close(te_amax[:, :-1], th_amax)
+        # check that amax history is the same as TE
+        for te_amax, th_amax in zip(te_amax_hist, th_amax_hist):
+            assert_close(te_amax[:, :-1], th_amax)
 
-    # Reset state manager before next run.
-    FP8GlobalStateManager.reset()
+        # Reset state manager before next run.
+        FP8GlobalStateManager.reset()
