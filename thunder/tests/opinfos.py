@@ -5318,13 +5318,6 @@ take_opinfo = OpInfo(
     supports_grad=True,
     sample_input_generator=take_sample_generator,
     torch_reference=torch_index_select_wrapper,
-    test_directives=(
-        DecorateInfo(
-            pytest.mark.xfail,
-            executors=("nvfuser",),
-            active_if=nvfuser_version < "0.0.3",
-        ),
-    ),
 )
 shape_ops.append(take_opinfo)
 
@@ -6835,7 +6828,7 @@ randint_opinfo = OpInfo(
     sample_input_generator=varargs_tensor_creation_op_sample_generator_with_bounds,
     error_input_generator=randn_error_generator,  # Does not depend on the distribution
     torch_reference=lambda *args, **kwargs: torch.randint(*args, **kwargs).fill_(0),
-    dtypes=(datatypes.int64,),
+    dtypes=(datatypes.int64, datatypes.floating),
 )
 tensor_creation_ops.append(randint_opinfo)
 

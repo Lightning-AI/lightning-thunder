@@ -1104,7 +1104,6 @@ def test_bsym_toposort(executor: TestExecutor, device: str, dtype: dtypes.dtype)
     assert sub_preferring_sub_bsym.sym.id == "torch.sub"
 
     # Tests collection and reshape with -1 input
-    # NOTE Additions before and after the reshape are to prevent nvFuser from "bookending" the operation
     def bar(a, shape):
         b = a + 3
         c = a + 2.0
@@ -2863,6 +2862,14 @@ def test_arange_default_dtype():
     assert jfn() == torch.int64
 
 
+def test_randint_default_dtype():
+    def fn():
+        return torch.randint(0, 5, (2, 3))
+
+    jfn = thunder.jit(fn)
+    assert jfn().dtype == fn().dtype == torch.int64
+
+
 def test_cat_mixed_dtypes():
     # We add a special test here instead of a sample in OpInfo.
     # When we add a mixed input sample in OpInfo, it will also be picked up for the test which
@@ -3218,6 +3225,7 @@ def test_apply_autograd_memory(thunderfx_disable_split_autograd):
             saved_other=(),
             return_none_instead_of_grads=True,
             disable_split_autograd=thunderfx_disable_split_autograd,
+            is_differentiable_outputs=None,
         )
         return [weakref.ref(x), weakref.ref(o)]
 
