@@ -563,6 +563,11 @@ def test_te_activation_checkpointing_correctness(fp8_recipe: recipe.Recipe, comp
             te_scales += [t.detach().clone() for t in FP8GlobalStateManager.global_scale_buffer[buffer_key]]
             te_amax_hist += [t.detach().clone() for t in FP8GlobalStateManager.global_amax_history_buffer[buffer_key]]
 
+    # Make sure that the global state manager has been reset and
+    # that there are only the buffers we need and not more
+    assert len(te_scales) == 4
+    assert len(te_amax_hist) == 4
+
     def fn_to_checkpoint(x, w1, b1):
         a = torch.nn.functional.linear(x, w1, b1)
         a = torch.sin(a)
@@ -631,3 +636,6 @@ def test_te_activation_checkpointing_correctness(fp8_recipe: recipe.Recipe, comp
     # check that amax history is the same as TE
     for te_amax, th_amax in zip(te_amax_hist, th_amax_hist):
         assert_close(te_amax[:, :-1], th_amax)
+
+    # Reset state manager before next run.
+    FP8GlobalStateManager.reset()
