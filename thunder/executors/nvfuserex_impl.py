@@ -76,9 +76,6 @@ from thunder.executors.nvfuserex import nvfuser_version
 import nvfuser
 from nvfuser import DataType, FusionDefinition
 
-nvTensor = nvfuser._C.Tensor
-nvNumber = nvfuser._C.Scalar
-
 #
 # Helper functions
 #
@@ -220,11 +217,7 @@ def is_supported_tensor_or_number(a: TensorProxy | Number) -> bool:
 #   Throws an error if any arguments are not tensors
 # TODO Add a check for the tensor have > 0 elements?
 def are_supported_tensors(*args) -> bool:
-    for a in args:
-        if not is_supported_tensor(a):
-            return False
-
-    return True
+    return all(is_supported_tensor(arg) for arg in args)
 
 
 # Returns True when all arguments given are supported tensors or numbers
@@ -590,67 +583,6 @@ def all_tagged(bsym: BoundSymbol, tag: prims.OpTags) -> bool:
     return True
 
 
-# Group bookend meta operations into separate regions
-# This function returns a List[Region] which changes the executor of meta regions to torchex
-#
-# NOTE this function assumes bound_symbols in region is toposorted
-def group_bookend_meta_ops(producers, consumers, region: Region) -> Mapping[str, Region]:
-    front_meta_cluster = list()
-    middle_cluster = list()
-    rear_meta_cluster = list()
-    region_inputs = copy(region.inputs)
-
-    # bsym can be moved to the front if all their inputs are direct region inputs
-    def can_move_to_front(bsym: BoundSymbol) -> bool:
-        # non proxy don't need to be checked here.
-        for x in bsym.flat_args:
-            if not isinstance(x, Proxy):
-                continue
-
-            if variableify(x) not in region_inputs:
-                return False
-
-        return True
-
-    # when bsym has no consumer in current region, it can be safely moved to the rear
-    def can_move_to_rear(bsym: BoundSymbol) -> bool:
-        # check no existing bsym in region depends on current bsym
-        for out in bsym.flat_outs:
-            if not isinstance(out, Proxy):
-                continue
-
-            consumed_by = consumers.get(out, list())
-            for consumer in consumed_by:
-                # TODO: switch query to set for faster query
-                if consumer in middle_cluster:
-                    return False
-        return True
-
-    # traversing all bound_symbols in topo order
-    for bsym in region.bound_symbols:
-        # we look at meta operations that can be moved to the front
-        if all_tagged(bsym, prims.OpTags.SHAPE_OP) and can_move_to_front(bsym):
-            # when we remove a node, we add all the bsym's flat_outs to region_inputs
-            front_meta_cluster.append(bsym)
-            for out in bsym.flat_outs:
-                if isinstance(out, Proxy):
-                    region_inputs.add(variableify(out))
-        else:
-            # otherwise we just keep the bound_symbol in the middle_cluster
-            middle_cluster.append(bsym)
-    # traversing all bound_symbols in reverse topo order
-    for bsym in reversed(copy(middle_cluster)):
-        if all_tagged(bsym, prims.OpTags.SHAPE_OP) and can_move_to_rear(bsym):
-            middle_cluster.remove(bsym)
-            rear_meta_cluster.insert(0, bsym)
-
-    return {
-        "front_bsyms": front_meta_cluster,
-        "fusion": None if len(middle_cluster) == 0 else Region(producers, consumers, middle_cluster),
-        "rear_bsyms": rear_meta_cluster,
-    }
-
-
 def create_fusion_definition_wrapper(
     bsyms: list[BoundSymbol], name: str, sorted_unique_inputs: list[Proxy], sorted_unique_outputs: list[Proxy]
 ) -> FusionDefinitionWrapper:
@@ -974,28 +906,6 @@ class nvFuserExecutor(FusionExecutor):
             # if len(bsyms) > 1:
             region = Region(producers, consumers, bsyms)
 
-            # Acquires the nv_enable_bookend compile option, which defaults to True
-            bookend_help = """\
-nvFuser's 'bookending' heuristic tries to gather metadata operations---such as
-transpose, reshape, or view---into the beginning and ends of blocks that utilize
-nvFuser. By pushing these ops to the edges, they will get dropped by the nvFuser
-executor and picked up by other executors, such as Torch's eager mode, that will
-often just instantly return an alias. For some complicated cases (typically when
-the metadata operation is awkward enough to force the output tensor to be
-instantiated) this heuristic actually leads to worse code.
-"""
-            enable_bookend: None | bool = get_compile_option("nv_enable_bookend", bookend_help)
-            if enable_bookend is None:
-                # Set the default value. Before 0.2.10, bookending was needed
-                # to hide https://github.com/NVIDIA/Fuser/issues/2395.
-                enable_bookend = nvfuser_version() < LooseVersion("0.2.10")
-            assert isinstance(enable_bookend, bool)
-
-            if enable_bookend:
-                bookend_result = group_bookend_meta_ops(producers, consumers, region)
-            else:
-                bookend_result = {"front_bsyms": [], "fusion": region, "rear_bsyms": []}
-
             nv_enable_shape_only_fusion: None | bool = get_compile_option(
                 "nv_enable_shape_only_fusion",
                 "Allow nvFuser to create Fusion with shape only operations. Defaults to False.",
@@ -1016,25 +926,12 @@ instantiated) this heuristic actually leads to worse code.
                     fused_bsyms.append(bsym)
                     continue
 
-            # TODO bookend_result probably shouldn't return a dict
-            prologue: list
-            fusion: None | Region
-            epilogue: list
-            prologue, fusion, epilogue = (
-                bookend_result["front_bsyms"],
-                bookend_result["fusion"],
-                bookend_result["rear_bsyms"],
-            )
-
-            fused_bsyms.extend(prologue)
-            if fusion is not None:
-                if self.get_fuel():
-                    fusion_bsym: BoundSymbol = self.fuse(fusion, fusion_counter)
-                    fused_bsyms.append(fusion_bsym)
-                    fusion_counter += 1
-                else:
-                    fused_bsyms.extend(fusion.bound_symbols)
-            fused_bsyms.extend(epilogue)
+            if self.get_fuel():
+                fusion_bsym: BoundSymbol = self.fuse(region, fusion_counter)
+                fused_bsyms.append(fusion_bsym)
+                fusion_counter += 1
+            else:
+                fused_bsyms.extend(region.bound_symbols)
 
         fusedtrace.bound_symbols = fused_bsyms
 
@@ -2871,7 +2768,7 @@ register_supported(PrimIDs.EMBEDDING, embedding, _embedding_check)
 register_supported(ltorch.embedding, embedding, _embedding_check)
 
 
-def _cross_entropy_check_(
+def _cross_entropy_check(
     a: TensorLike,
     /,
     target: TensorLike,
@@ -2956,7 +2853,7 @@ def cross_entropy_fwd(
     nv_target = getnv(target, fd, lc_to_nv_map)
     nv_ignore_index = getnv(ignore_index, fd, lc_to_nv_map)
 
-    zero_scalar = fd.define_scalar(0, dtype=torch_dtype_to_nvfuser_dtype(dtypes.to_torch_dtype(a.dtype)))
+    zero_scalar = fd.define_scalar(0, dtype=lcdtype_to_nvdtype(a.dtype))
 
     # modify the labels to account for ignore index and then do a
     # gather/ take_along_axis on the input tensor
@@ -3129,11 +3026,11 @@ ex.register_supported(
     ltorch.cross_entropy,
     execution_transform=cross_entropy_transform,
     grad_transform=cross_entropy_grad,
-    checker=_cross_entropy_check_,
+    checker=_cross_entropy_check,
 )
 
 
-def _topk_check_(
+def _topk_check(
     a: TensorProxy, /, k: int, dim: int | None = None, largest: Number = 1, sorted: Number = 1, *args
 ) -> bool:
     if a.ndim <= 0:
@@ -3159,10 +3056,10 @@ def topk_transform(
     return fd.ops.topk(nva, nvk, dim, bool(largest), bool(sorted))
 
 
-register_supported(prims.topk, topk_transform, _topk_check_)
+register_supported(prims.topk, topk_transform, _topk_check)
 
 
-def _argsort_check_(a: TensorProxy, /, dim: int | None = None, descending: bool = False, stable: bool = False) -> bool:
+def _argsort_check(a: TensorProxy, /, dim: int | None = None, descending: bool = False, stable: bool = False) -> bool:
     return True
 
 
@@ -3194,7 +3091,55 @@ def argsort_transform(
 
 
 # Register argsort with NVFuser
-register_supported(prims.argsort, argsort_transform, _argsort_check_)
+register_supported(prims.argsort, argsort_transform, _argsort_check)
+
+
+def _cumsum_check(a: TensorProxy, dim: int, /, dtype: dtypes.dtype | None = None) -> bool:
+    if a.ndim != 1:
+        return False
+
+    return is_supported_tensor(a)
+
+
+# Emulate cumsum using matmul: cumsum(a) = a @ triu(ones)
+#
+# This is suboptimal. Revisit this after nvFuser has a scan-based cumsum
+# implementation.
+def cumsum_transform(
+    a: TensorProxy,
+    dim: int,
+    /,
+    # For reasons I don't yet understand, `dtype` is a `torch.dtype` in forward but
+    # a `dtypes.dtype` in backprop.
+    dtype: torch.dtype | dtypes.dtype | None = None,
+    *,
+    fd: FusionDefinition,
+    lc_to_nv_map: dict,
+) -> TensorProxy:
+    if dtypes.is_integer_dtype(a.dtype):
+        # torch.matmul can't do integers on GPU so we convert `a` to
+        # float.
+        compute_dtype = DataType.Float
+    else:
+        compute_dtype = lcdtype_to_nvdtype(a.dtype)
+
+    if dtype is None:
+        out_dtype = lcdtype_to_nvdtype(a.dtype)
+    else:
+        out_dtype = lcdtype_to_nvdtype(dtypes.to_dtype(dtype))
+
+    nv_a = getnv(a, fd, lc_to_nv_map)
+    nv_a = fd.ops.cast(nv_a, compute_dtype)
+
+    mask = fd.ops.full((a.numel, a.numel), fd.define_scalar(1), compute_dtype)
+    mask = fd.ops.triu(mask)
+
+    out = fd.ops.matmul(nv_a, mask)
+    out = fd.ops.cast(out, out_dtype)
+    return out
+
+
+register_supported(ltorch.cumsum, cumsum_transform, _cumsum_check)
 
 # At module/class level
 NVFUSER_SUPPORTS_OPTIONS = nvfuser_version() >= LooseVersion("0.2.23")

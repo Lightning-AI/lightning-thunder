@@ -1981,7 +1981,9 @@ def process_recorded_modifications(ctx, epilogue_trace):
                         setattr_obj_provenance = modified_object.provenance.inputs[0]
                         if hasattr(setattr_obj_provenance, "proxy"):
                             assert isinstance(
-                                value.value, (Proxy, int, float, tuple, NoneType)
+                                value.value, (Proxy, int, float, tuple, NoneType, thunder.devices.Device)
+                            ), (
+                                f"trying to set .{name} of {str(setattr_obj_provenance)}to object of type {type(value.value).__name__}"
                             )  # todo: better criterion
                             setattr_obj_proxy = setattr_obj_provenance.proxy
                             with tracectx(epilogue_trace):

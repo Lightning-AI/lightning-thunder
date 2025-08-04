@@ -1,88 +1,67 @@
+from collections import defaultdict, namedtuple
+from collections.abc import Callable, Sequence
+from contextvars import ContextVar
 from functools import wraps
 from typing import Any
-from collections import defaultdict, namedtuple
-from collections.abc import Callable
-from collections.abc import Sequence
-from contextvars import ContextVar
-import os
 import dis
+import os
 import time
 import warnings
 
-from looseversion import LooseVersion
-
-from thunder.core.module import ThunderModule
-from thunder.core.interpreter import InterpreterLogItem
-from thunder.core.options import (
-    CACHE_OPTIONS,
-    SHARP_EDGES_OPTIONS,
-    DebugOptions,
-)
-from thunder.core.trace import (
-    TraceResults,
-    TraceCtx,
-    from_trace,
-    set_tracectx,
-    reset_tracectx,
-    is_tracing,
-)
-
+# import this before anything else to avoid circular imports
 import thunder.core.prims as prims
-import thunder.core.dtypes as dtypes
+
+# imports unused in this file, but referenced as thunder.* elsewhere
+from thunder.common import trace
 import thunder.core.devices as devices
-from thunder.core.transform_common import (
-    dce,
-    Transform,
-    wrap_return_value_together_with_arguments,
-    unwrap_return_value,
-    remove_context_manager_prims_from_trace,
-)
-from thunder.core.functionalization import (
-    check_inplace_to_views,
-    functionalize_inplace_ops,
-)
-from thunder.core.update_aliases import (
-    insert_alias_updates,
-)
-from thunder.core.recipe import Recipe, Plugin
+from thunder.core.proxies import Proxy
+
 from thunder.common import (
     CompileData,
     CompileStats,
-    trace,
     transform_for_execution,
     transform_to_torch_types,
 )
-import thunder.extend as extend
-from thunder.extend import Executor, add_default_executor
-from thunder.core.compile_data import compile_data_and_stats, get_compile_data
+from thunder.core.baseutils import run_once
+from thunder.core.compile_data import compile_data_and_stats
+import thunder.core.dtypes as dtypes
+from thunder.core.interpreter import InterpreterLogItem, print_interpreter_log
+from thunder.core.jit_ext import thunder_general_jit
 from thunder.core.langctxs import LanguageContext
 import thunder.core.langctxs as langctxs
-from thunder.core.symbol import has_tags
-from thunder.core.baseutils import run_once, check
-from thunder.core.codeutils import Positions
-from thunder.core.proxies import (
-    Proxy,
-    TensorProxy,
-    NumberProxy,
-    StringProxy,
-    IntegerProxy,
-    FloatProxy,
-    ComplexProxy,
-    TupleProxy,
-    ListProxy,
-    DictProxy,
-    AnyProxy,
+from thunder.core.module import ThunderModule
+from thunder.core.options import (
+    CACHE_OPTIONS,
+    DebugOptions,
+    SHARP_EDGES_OPTIONS,
 )
-from thunder.core.interpreter import print_interpreter_log, print_to_log
-from thunder.core.jit_ext import thunder_general_jit
-from thunder.executors.torch_autograd import split_forward_backward, connect_to_autograd
+from thunder.core.proxies import TensorProxy
+from thunder.core.pytree import tree_flatten
+from thunder.core.recipe import Recipe, Plugin
+from thunder.core.symbol import has_tags
+from thunder.core.trace import (
+    TraceCtx,
+    TraceResults,
+    from_trace,
+    is_tracing,
+    reset_tracectx,
+    set_tracectx,
+)
+from thunder.core.transform_common import (
+    Transform,
+    dce,
+    remove_context_manager_prims_from_trace,
+    unwrap_return_value,
+    wrap_return_value_together_with_arguments,
+)
+from thunder.core.update_aliases import insert_alias_updates
+from thunder.executors.torch_autograd import connect_to_autograd
+import thunder.extend as extend
+from thunder.extend import Executor, add_default_executor
+import thunder.transforms as transforms
 
 # NOTE This import is intentionally pytorch so that it thunder.torch doesn't import this
 import torch as pytorch
-
-import thunder.clang as clang
-from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
-import thunder.transforms as transforms
 
 # Imports executors (to populate default executors and make them accessible)
 import thunder.executors.pythonex
@@ -329,10 +308,7 @@ def jit(
     .. note::
 
         Thunder's support of PyTorch in-place support is experimental.
-        Thunder functionalizes in-place ops and adds required tensor copies.
-        The functionalization can be turned off with the kwarg of ``skip_inplace_functionalization``.
-        See :func:`thunder.core.functionalization.functionalize_inplace_ops`
-        for the details.
+        The in-place support can be turned off with the kwarg of ``skip_inplace_alias_updates``.
 
     Args:
         fn: A :class:`~torch.nn.Module` or a function to compile.
@@ -494,17 +470,6 @@ def jit(
                     computation_traces.append(aliased_trace)
                     computation_trc = computation_traces[-1]
 
-            if not compile_options.get("skip_inplace_functionalization", True):
-                orig_to_view_swap_map = check_inplace_to_views(computation_trc)
-                computation_traces.extend(
-                    functionalize_inplace_ops(
-                        computation_trace=computation_trc,
-                        orig_to_view_swap_map=orig_to_view_swap_map,
-                        alias_tensor_indices=alias_tensor_indices,
-                    )
-                )
-                computation_trc = computation_traces[-1]
-
             cs.last_trace_tracing_stop = time.perf_counter_ns()
 
             # Makes the prologue callable
@@ -550,50 +515,35 @@ def jit(
             computation_trc = dce(computation_trc)
             computation_traces.append(computation_trc)
 
-            backward_trc = None
             if not cd.disable_torch_autograd_support:
                 tensor_cls = (pytorch.Tensor, TensorProxy)
                 requires_grad = any(isinstance(arg, tensor_cls) and arg.requires_grad for arg in computation_trc.args)
             else:
                 requires_grad = False
 
-            delay_trace_split = compile_options.get("delay_trace_split", True)
-
             if requires_grad:
-                if delay_trace_split:
-                    from thunder.transforms.autodiff import grad_transform_on_trace
+                from thunder.transforms.autodiff import grad_transform_on_trace
 
-                    computation_trc = grad_transform_on_trace(computation_trc)
-                else:
-                    # Currently split_forward_backward also includes
-                    # transform_for_execution and various sorting of symbols,
-                    # applying transform_for_execution after this would be
-                    # breaking the order of operations
-                    computation_trc, backward_trc = split_forward_backward(
-                        computation_trc, cd, cs, *computation_trc.args
-                    )
-                    # Note computation_trc and backward_trc have been appended to cs.last_(backward_)traces
-                    # by split_forward_backward
+                computation_trc = grad_transform_on_trace(computation_trc)
 
-            if backward_trc is None:
-                from thunder.executors.passes import transform_for_execution as transform_for_execution_pass
-                from thunder.executors.passes import _transform_for_operator_executor_execution
-                from thunder.distributed.utils import maybe_sort_waits
+            from thunder.executors.passes import _transform_for_operator_executor_execution
+            from thunder.distributed.utils import maybe_sort_waits
 
-                tmp_comp_trc = _transform_for_operator_executor_execution(computation_trc, cd.executors_list)
-                is_transformed, tmp_comp_trc = maybe_sort_waits(tmp_comp_trc)
-                if is_transformed:
-                    computation_trc = tmp_comp_trc
-                    computation_traces.append(computation_trc)
+            tmp_comp_trc = _transform_for_operator_executor_execution(computation_trc, cd.executors_list)
+            is_transformed, tmp_comp_trc = maybe_sort_waits(tmp_comp_trc)
+            if is_transformed:
+                computation_trc = tmp_comp_trc
+                computation_traces.append(computation_trc)
 
-                extraces = transform_for_execution(
-                    computation_trc,
-                    executors_list=cd.executors_list,
-                    use_del_last_used=False,
-                )
-                computation_trc = extraces[-1]
+            extraces = transform_for_execution(
+                computation_trc,
+                executors_list=cd.executors_list,
+                use_del_last_used=False,
+            )
+            computation_trc = extraces[-1]
 
-            if requires_grad and delay_trace_split:
+            backward_trc = None
+            if requires_grad:
                 from thunder.transforms.autodiff import split_into_forward_and_backward
 
                 if "transformer_engine_v2" in {ex.name for ex in cd.executors_list}:
@@ -687,11 +637,9 @@ def jit(
 
         # NOTE(crcrpar): If a callable is free from in-place ops whose operand is args and/or their views
         # aliases wouldn't matter, thus it'd be better to nullify this entry in such cases.
-        # It however would require the functionalized computation trace to interact with `cache_info`,
+        # It however would require the computation trace to interact with `cache_info`,
         # which seems to break the consistency of cache_info, leading to a failure in cache_info check.
-        if not compile_options.get("skip_inplace_alias_updates", False) or not compile_options.get(
-            "skip_inplace_functionalization", True
-        ):
+        if not compile_options.get("skip_inplace_alias_updates", False):
             cache_info["alias_tensor_indices"] = _alias_tensor_of_args_kwargs(*args, **kwargs)
 
         # Store the `is_grad_enabled` state of PyTorch. This is used by vjp transform
