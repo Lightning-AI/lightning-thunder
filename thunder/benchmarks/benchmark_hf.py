@@ -13,8 +13,6 @@ from torch.profiler import profile, record_function, ProfilerActivity
 class DebugRecipe(BaseRecipe):
     def setup_config(self):
         config = super().setup_config()
-        config["skip_inplace_functionalization"] = False
-        config["skip_alias_functionalization"] = True
         return config
 
 
