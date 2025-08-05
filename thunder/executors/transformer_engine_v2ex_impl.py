@@ -295,12 +295,6 @@ class TransformerEngineTransformV2(Transform):
         self.redundant_map: dict[Variable, Proxy] = {}
         self.new_saved_for_backward = None
 
-    def reset(self):
-        self.fp8_recipe = None
-        self.swap_map: dict[VariableInterface, TensorProxy] = {}
-        self.rhs_to_bsym_map: dict[BoundSymbolRHS, BoundSymbol] = {}
-        self.redundant_map: dict[Variable, Proxy] = {}
-        self.new_saved_for_backward = None
 
     def transform_trace_post_optimization(self, computation_trace, **kwargs):
         """
@@ -366,11 +360,13 @@ class TransformerEngineTransformV2(Transform):
             assert return_bsym.sym.id == prims.PrimIDs.RETURN
             _, (saved_for_backward, env) = return_bsym.args
             unique_env = list(dict.fromkeys(Variable(x) for x in env))
-            self.new_saved_for_backward = (*saved_for_backward, *(unvariableify(x) for x in unique_env))
+            self.new_saved_for_backward = (
+                *saved_for_backward,
+                *(unvariableify(x) for x in unique_env),
+                self.fp8_recipe.output,
+            )
 
             _update_forward_with_new_saved_for_backward(new_trace, self.new_saved_for_backward)
-            # After transforming one pair of forward and backward, reset the transform.
-            self.reset()
 
         sync_trace = del_last_used(new_trace)
 
