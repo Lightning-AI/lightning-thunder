@@ -180,18 +180,18 @@ if torch.distributed.is_available():
             self.rank = rank
             self.file_name = file_name
 
+            local_rank = self.rank % torch.cuda.device_count()
+            torch.cuda.set_device(local_rank)
+            os.environ["LOCAL_RANK"] = str(local_rank)
+
             torch.distributed.init_process_group(
                 init_method=self.init_method,
                 backend=self.DISTRIBUTED_BACKEND,
                 world_size=self.world_size,
                 rank=self.rank,
+                device_id=torch.device("cuda", local_rank),
             )
 
-            local_rank = self.rank % torch.cuda.device_count()
-            torch.cuda.set_device(local_rank)
-            os.environ["LOCAL_RANK"] = str(local_rank)
-
-            torch.distributed.barrier()
             try:
                 self.run_test(test_name, pipe)
             except Exception:
@@ -214,7 +214,16 @@ if torch.distributed.is_available():
         else:
             raise ValueError(f"Unknown devicetype {devicetype}")
 
-        torch.distributed.init_process_group(init_method=init_method, backend=backend, world_size=world_size, rank=rank)
+        local_rank = rank % torch.cuda.device_count()
+        torch.cuda.set_device(local_rank)
+
+        torch.distributed.init_process_group(
+            init_method=init_method,
+            backend=backend,
+            world_size=world_size,
+            rank=rank,
+            device_id=torch.device("cuda", local_rank),
+        )
 
         # NOTE _get_default_group is not a public PyTorch function, but there is no
         #   public mechanism to acquire the default process group, which is specified
