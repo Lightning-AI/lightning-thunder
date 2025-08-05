@@ -1142,7 +1142,7 @@ def setitem(inp, idx, val):
 
 @torchsymbol(torch.Tensor.__setitem__, id="setitem_", is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def setitem_(inp, idx, val):
-    _copy_(inp, setitem(inp, idx, val))
+    return _copy_(inp, setitem(inp, idx, val))
 
 
 @torchsymbol(torch.Tensor.__getitem__, id="torch.Tensor.__getitem__", method_name="getitem")
