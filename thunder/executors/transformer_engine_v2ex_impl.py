@@ -295,6 +295,13 @@ class TransformerEngineTransformV2(Transform):
         self.redundant_map: dict[Variable, Proxy] = {}
         self.new_saved_for_backward = None
 
+    def reset(self):
+        self.fp8_recipe = None
+        self.swap_map: dict[VariableInterface, TensorProxy] = {}
+        self.rhs_to_bsym_map: dict[BoundSymbolRHS, BoundSymbol] = {}
+        self.redundant_map: dict[Variable, Proxy] = {}
+        self.new_saved_for_backward = None
+
     def transform_trace_post_optimization(self, computation_trace, **kwargs):
         """
         Finds and replaces TE executor recipe calls and replaces them with one.
@@ -362,6 +369,8 @@ class TransformerEngineTransformV2(Transform):
             self.new_saved_for_backward = (*saved_for_backward, *(unvariableify(x) for x in unique_env))
 
             _update_forward_with_new_saved_for_backward(new_trace, self.new_saved_for_backward)
+            # After transforming one pair of forward and backward, reset the transform.
+            self.reset()
 
         sync_trace = del_last_used(new_trace)
 
