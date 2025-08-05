@@ -10,7 +10,7 @@ import thunder.torch as ltorch
 from thunder import Transform
 from thunder.core import prims
 from thunder.core.proxies import Proxy, Variable, unvariableify, variableify
-from thunder.core.trace import from_trace, TraceProvenance, TraceTag
+from thunder.core.trace import from_trace, TraceProvenance, TraceTag, TraceCtx
 from thunder.core.transforms import (
     _update_forward_with_new_saved_for_backward,
     _update_backward_with_new_saved_for_backward,
@@ -208,10 +208,10 @@ def _te_linear_grad_transform(a, w, bias):
 
     primal, quantized_a, quantized_w = _te_linear_fwd(a, w, bias, input_quantizer, weight_quantizer)
 
-    (primal,) = _te_fp8_amax_and_scale_update(
+    (primal, quantized_a, quantized_w) = _te_fp8_amax_and_scale_update(
         recipe,
         states=(forward_recipe_state,),
-        tokens=(primal,),
+        tokens=(primal, quantized_a, quantized_w),
     )
 
     grad_out = get_grad(primal)
@@ -374,3 +374,62 @@ class TransformerEngineTransformV2(Transform):
         )
 
         return sync_trace
+
+
+def _te_activation_checkpointing_transform(joint_trace: TraceCtx) -> TraceCtx:
+    """
+    Optimizes FP8 state management in activation checkpointing by removing
+    redundant amax/scale updates, keeping only the final update for each state.
+
+    Args:
+        joint_trace: Joint trace after recomputation has been inserted.
+    """
+
+    swapmap: dict[Variable, Proxy] = {}
+    state_swapmap: dict[str, Proxy] = {}
+    new_bsyms = []
+
+    # Find the first call for every FP8 state and reuse it throughout the trace.
+    # Since get_te_fp8_state symbol names are unique, we use them to identify duplicates.
+    for bsym in joint_trace.bound_symbols:
+        if "get_te_fp8_state" in bsym.sym.name:
+            out_proxy = state_swapmap.get(bsym.sym.name, None)
+            if out_proxy is None:
+                # First occurrence - save it for reuse
+                state_swapmap[bsym.sym.name] = bsym.output
+            else:
+                swapmap[variableify(bsym.output)] = out_proxy
+                # Remove excessive duplicate calls to avoid redundant state creation
+                continue
+
+        new_bsyms.append(bsym.from_bsym_swap_proxies(swapmap))
+
+    new_trace = from_trace(joint_trace)
+    seen_updated_states = set()
+    reversed_bsyms = []
+
+    # Optimize amax/scale updates by keeping only the final update for each state.
+    # We iterate in reverse order so the "first" occurrence we keep is actually the last one,
+    # which ensures we maintain the most recent scaling information.
+    for bsym in reversed(new_bsyms):
+        if bsym.sym.name == "te_fp8_amax_and_scale_update":
+            # TODO: This takes into account multiple states and does remove the update call only
+            # in the case that all the states have been updated already. When update grouping will be added this needs to be revised.
+            if all(variableify(state) in seen_updated_states for state in bsym.kwargs["states"]):
+                # All states have already been updated - redirect outputs to original tokens
+                tokens_to_swap = bsym.kwargs["tokens"]
+                for t, o in zip(tokens_to_swap, bsym.output):
+                    if o is not None:
+                        swapmap[variableify(o)] = t
+                continue
+            else:
+                # Mark these states as having been updated
+                for state in bsym.kwargs["states"]:
+                    seen_updated_states.add(variableify(state))
+
+        reversed_bsyms.append(bsym)
+
+    # Reverse the trace back to original order and apply proxy updates from removed amax calls
+    new_trace.bound_symbols = [bsym.from_bsym_swap_proxies(swapmap) for bsym in reversed(reversed_bsyms)]
+
+    return new_trace
