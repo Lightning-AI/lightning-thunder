@@ -9,12 +9,9 @@ import thunder.torch as ltorch
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
 import thunder.core.prims as prims
-from thunder.core.pytree import tree_map
-from thunder.core.transforms import value_and_grad
 
 from thunder.tests.framework import (
     instantiate,
-    TestExecutor,
     NOTHING,
     nvFuserExecutor,
 )
@@ -25,57 +22,6 @@ from thunder.tests.opinfos import (
     embedding_opinfo,
 )
 from looseversion import LooseVersion
-
-
-@instantiate(
-    dtypes=NOTHING,
-)
-def test_rematerialization_with_forward_and_backward_from_trace(executor: TestExecutor, device: str, _) -> None:
-    from thunder import trace
-    from thunder.clang import cos, sin
-    import thunder.torch as ltorch
-    from thunder.core.transforms import forward_and_backward_from_trace
-    from thunder.core.transform_common import wrap_return_value_together_with_arguments
-    from thunder.common import transform_for_execution
-    from thunder.core.rematerialization import rematerialize_forward_and_backward
-
-    def func(a, b, *, c):
-        d = a + b + c
-        e = d * a + d * b + d * c
-        return sin(e) + cos(e), e, ltorch.sin(e) + ltorch.cos(e)
-
-    a = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
-    b = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
-    c = make_tensor(
-        (
-            2,
-            3,
-        ),
-        device=device,
-        dtype=torch.float64,
-        requires_grad=True,
-    )
-    trace = trace(inline_trace=False)(func, a, b, c=c)
-    trace = wrap_return_value_together_with_arguments(trace)
-    fw_trace, bw_trace = forward_and_backward_from_trace(trace)
-
-    fw_extraces = transform_for_execution(fw_trace, executors_list=executor.executors_list())
-    bw_extraces = transform_for_execution(bw_trace, executors_list=executor.executors_list())
-    fw_extrace, bw_extrace = rematerialize_forward_and_backward(fw_extraces[-1], bw_extraces[-1])
-
-    fw = fw_extrace.python_callable()
-    bw = bw_extrace.python_callable()
-
-    fw_out, saved_for_backward = fw(a, b, c=c)
-
-    initial_trace = thunder.trace()(value_and_grad(func), a, b, c=c)
-    expected_vjp_func = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)
-    expected_fw_out, expected_grads = expected_vjp_func(a, b, c=c)
-    torch.testing.assert_close(fw_out["output"], expected_fw_out)
-
-    output_grads = tree_map(lambda x: torch.ones_like(x), fw_out["output"])
-    bw_out = bw(saved_for_backward, output_grads)
-    torch.testing.assert_close(bw_out, expected_grads)
 
 
 @instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
@@ -302,7 +248,6 @@ def test_cse_subsymbol_redundant_args(executor, device, _):
 
 @instantiate(dtypes=NOTHING, devicetypes=(devices.DeviceType.CUDA,), executors=(nvFuserExecutor,))
 def test_cse_rematerialization(executor, device, _):
-    # Unit test for "llama2.c example failed with bookend disabled."
     from thunder.tests.llama2_model import Transformer, ModelArgs
 
     batch_size = 2
@@ -328,7 +273,6 @@ def test_cse_rematerialization(executor, device, _):
         model.eval(),
         disable_torch_autograd=True,
         executors=executor.executors_list(),
-        nv_enable_bookend=False,
     )
     compiled_func(x, y)
 
@@ -612,220 +556,6 @@ def test_cse_issue1789(executor, device, _):
 
 @instantiate(
     dtypes=NOTHING,
-    executors=(
-        nvFuserExecutor,
-        # NOTE We might want to do transpose bookend optimization for other executors than nvFuser.
-    ),
-)
-def test_bookend_meta_optimization(executor, device, _):
-    a = torch.ones(2, 3, 5, device=device, dtype=torch.float32)
-
-    def subtest(fn, n):
-        # Enable bookending so it gets tested.
-        cfn = thunder.jit(fn, nv_enable_bookend=True)
-
-        _ = cfn(a)
-        traces = thunder.last_traces(cfn)
-        execution_trace = traces[-1]
-
-        transposes_in_fusions = 0
-        for bsym in execution_trace.bound_symbols:
-            sym = bsym.sym
-            if sym.is_fusion:
-                for sbsym in bsym.subsymbols:
-                    ssym = sbsym.sym
-                    if ssym.id is prims.PrimIDs.TRANSPOSE:
-                        transposes_in_fusions += 1
-
-        assert transposes_in_fusions == n, (
-            f"Expected {n} prims.transpose operations in fusions, but found {transposes_in_fusions} transpose in fusions in the trace {traces[-1]}"
-        )
-
-    # one transpose at the beginning
-    # should be moved out of fusion
-    def func_0(t):
-        t0 = t.transpose(0, 1)
-        t1 = t0.tanh()
-        t2 = t1.sin()
-        return t2
-
-    subtest(func_0, 0)
-
-    # one transpose at the end
-    # should be moved out of fusion
-    def func_1(t):
-        t0 = t.tanh()
-        t1 = t0.sin()
-        t2 = t1.transpose(0, 1)
-        return t2
-
-    subtest(func_1, 0)
-
-    # one transpose at the beginning and another at the end
-    # both should be moved out of fusion
-    def func_2(t):
-        t0 = t.transpose(0, 1)
-        t1 = t0.tanh()
-        t2 = t1.sin()
-        t3 = t2.transpose(0, 2)
-        return t3
-
-    subtest(func_2, 0)
-
-    # a couple independent transposes at the beginning
-    # both should be moved out of fusion
-    def func_3(t):
-        t0 = t.transpose(0, 1)
-        t1 = t0.tanh()
-        t2 = t1.sin()
-
-        t3 = t.transpose(0, 2)
-        t4 = t3.sin()
-        t5 = t4.tanh()
-        return t2, t5
-
-    subtest(func_3, 0)
-
-    # a couple independent transposes at the end
-    # both should be moved out of fusion
-    def func_4(t):
-        t0 = t.tanh()
-        t1 = t0.sin()
-        t2 = t1.transpose(0, 1)
-
-        t3 = t.sin()
-        t4 = t3.tanh()
-        t5 = t4.transpose(0, 2)
-        return t2, t5
-
-    subtest(func_4, 0)
-
-    # a couple chained transposes at the beginning
-    # both should be moved out of fusion
-    def func_5(t):
-        t0 = t.transpose(0, 1)
-        t1 = t0.transpose(0, 2)
-        t2 = t1.tanh()
-        t3 = t2.sin()
-        return t3
-
-    subtest(func_5, 0)
-
-    # a couple chained transposes at the end
-    # both should be moved out of fusion
-    def func_6(t):
-        t0 = t.tanh()
-        t1 = t0.sin()
-        t2 = t1.transpose(0, 1)
-        t3 = t2.transpose(0, 2)
-        return t3
-
-    subtest(func_6, 0)
-
-    # a couple chained transposes at the beginning and end
-    # both should be moved out of fusion
-    def func_7(t):
-        t0 = t.transpose(0, 1)
-        t1 = t0.transpose(0, 2)
-        t2 = t1.tanh()
-        t3 = t2.sin()
-        t4 = t3.transpose(0, 1)
-        t5 = t4.transpose(0, 2)
-        return t5
-
-    subtest(func_7, 0)
-
-    # complicated case, where two non-meta ops are each sandwiched by transpose
-    # the two transposes on the edge should be moved out of fusion
-    def func_8(t):
-        t0 = t.transpose(0, 1)
-        t1 = t0.tanh()
-        # transpose in the middle should stay
-        t2 = t1.transpose(0, 1)
-        t3 = t2.sin()
-        t4 = t3.transpose(0, 2)
-        return t4
-
-    subtest(func_8, 1)
-
-    # NOTE func_9 and func_10 are symmetrical, this is designed to double check our toposort based approach can break
-    # ties
-
-    # complicated case, where two branches have transpose ops towards the end
-    # the two transposes on the edge should be moved out of fusion
-    def func_9(t):
-        t0 = t.tanh()
-        t1 = t0.sin()
-        t2 = t1.transpose(0, 1)
-        t3 = t2.transpose(2, 1)
-
-        t4 = t.sin()
-        t5 = t4.tanh()
-        t6 = t5.transpose(0, 2)
-        t7 = t6.sin()
-        return t3, t7
-
-    subtest(func_9, 1)
-
-    # complicated case, where two branches have transpose ops towards the end
-    # the two transposes on the edge should be moved out of fusion
-    def func_10(t):
-        t0 = t.tanh()
-        t1 = t0.sin()
-        t2 = t1.transpose(0, 1)
-        t3 = t2.sin()
-
-        t4 = t.sin()
-        t5 = t4.tanh()
-        t6 = t5.transpose(0, 2)
-        t7 = t6.transpose(2, 1)
-        return t3, t7
-
-    subtest(func_10, 1)
-
-    # complicated case, where a chain of transposed operations is both an output and consumed as an intermediate
-    # no transposes should be removed
-    def func_11(t):
-        t0 = t.tanh()
-        t1 = t0.sin()
-        t2 = t1.transpose(0, 1)
-        t3 = t2.transpose(0, 2)
-
-        t4 = t3.sin()
-        return t3, t4
-
-    subtest(func_11, 2)
-
-    # complicated case
-    def func_12(t):
-        t0 = t.transpose(0, 1)
-        t1 = t0.transpose(0, 2)
-        t2 = t1.tanh()
-        t3 = t2 + 1.0
-        t4 = t3.transpose(2, 1)
-        t4 = t4.transpose(0, 1)
-
-        t5 = t * 0.5
-        # this is the only transpose that should stay in fusion, because it is surrounded by non-meta ops
-        t6 = t5.transpose(0, 2)
-        t7 = t6.tanh()
-
-        t8 = t1.transpose(1, 2)
-
-        t9 = t.transpose(2, 1)
-        t10 = t9.tanh()
-
-        t11 = t.transpose(1, 2)
-        t12 = t11.transpose(0, 2)
-        t13 = t12.transpose(0, 1)
-
-        return t4, t6, t7, t8, t10, t13
-
-    subtest(func_12, 1)
-
-
-@instantiate(
-    dtypes=NOTHING,
     executors=(nvFuserExecutor,),
 )
 def test_optimization_fuel(executor, device, _):
@@ -925,12 +655,10 @@ def test_rm_unused_inputs_of_nvfusion(executor, device, _):
 
     t = make_tensor(5, 3, device=device, dtype=torch.float32)
     ab = (slice(3, 1), slice(1, 2))
-    # enable bookend would remove the error and let you look at the trace without fusion.
     jfoo = thunder.jit(
         foo,
         cache="no caching",
         disable_torch_autograd=True,
-        nv_enable_bookend=False,
     )
     out = jfoo(t, ab)
     out_ref = foo(t, ab)

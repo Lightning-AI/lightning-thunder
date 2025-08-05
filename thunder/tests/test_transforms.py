@@ -800,7 +800,7 @@ def test_dce_duplicate_number_proxies():
 
     def fn(x):
         shape_0 = x.shape
-        shape_1 = x.shape  # duplicate shape query
+        shape_1 = x.clone().shape  # duplicate shape query
         return sum(shape_0)
 
     # symbolic values is necessary to have the shape query in trace
