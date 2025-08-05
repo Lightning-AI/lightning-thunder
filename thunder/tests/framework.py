@@ -395,10 +395,13 @@ class ops:
         )
         self.supported_devicetypes = set(filter_ci_devicetypes(self.supported_devicetypes))
 
+        # TODO: add support for float4_e2m1fn_x2 and float_8bit_dtypes
+        skip_dtypes = datatypes.float_8bit_dtypes | {datatypes.float4_e2m1fn_x2, datatypes.float4_e2m1fn_x2_}
+
         self.supported_dtypes = (
             datatypes.resolve_dtypes(supported_dtypes)
             if supported_dtypes is not None
-            else datatypes.all_dtypes - datatypes.float_8bit_dtypes
+            else datatypes.all_dtypes - skip_dtypes
         )
 
         if supported_dtypes == NOTHING:
