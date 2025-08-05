@@ -750,6 +750,16 @@ def _cat_prim_grad(tensors: list[TensorProxy], /, dim: int) -> TensorProxy:
 register_grad(pids.CAT, _cat_prim_grad)
 
 
+def _shallow_copy_prim_grad(a: TensorProxy) -> TensorProxy:
+    fwd = prims.shallow_copy(a)
+    g = get_grad(fwd)
+    put_grad(a, g)
+    return fwd
+
+
+register_grad(pids.SHALLOW_COPY, _shallow_copy_prim_grad)
+
+
 def _update_aliases_prim_grad(tensors: tuple[TensorProxy, ...]) -> tuple[TensorProxy, ...]:
     fwd_tensors = prims.update_aliases(tensors)
     for fwd_t, t in zip(fwd_tensors, tensors):

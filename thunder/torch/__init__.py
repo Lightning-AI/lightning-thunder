@@ -1434,7 +1434,7 @@ def warn_ndim_not_2():
 def reverse_dims_T(a: TensorLike, /) -> TensorLike:
     if a.ndim != 2:
         warn_ndim_not_2()
-    return a if a.ndim < 2 else prims.transpose(a, tuple(reversed(range(a.ndim))))
+    return prims.shallow_copy(a) if a.ndim < 2 else prims.transpose(a, tuple(reversed(range(a.ndim))))
 
 
 register_method("T", reverse_dims_T)
@@ -3329,7 +3329,7 @@ def topk(
 
 @torchsymbol(torch.atleast_1d, is_method=True)
 def atleast_1d(*args: Union[TensorLike, Sequence[TensorLike]]) -> Union[TensorLike, tuple[TensorLike, ...]]:
-    res = tuple(prims.clone(a) if a.ndim >= 1 else unsqueeze(a, 0) for a in args)
+    res = tuple(prims.shallow_copy(a) if a.ndim >= 1 else unsqueeze(a, 0) for a in args)
     return res if len(res) > 1 else res[0]
 
 
@@ -3340,9 +3340,9 @@ def atleast_2d(*args: Union[TensorLike, Sequence[TensorLike]]) -> Union[TensorLi
             return a.unsqueeze(0).unsqueeze(1)
         elif a.ndim == 1:
             return a.unsqueeze(0)
-        return prims.clone(a)
+        return prims.shallow_copy(a)
 
-    res = tuple(_unsqueeze_atleast(a) if isinstance(a, TensorProxy) else prims.clone(a) for a in args)
+    res = tuple(_unsqueeze_atleast(a) if isinstance(a, TensorProxy) else prims.shallow_copy(a) for a in args)
     return res if len(res) > 1 else res[0]
 
 
@@ -3355,9 +3355,9 @@ def atleast_3d(*args: Union[TensorLike, Sequence[TensorLike]]) -> Union[TensorLi
             return a.reshape(1, -1, 1)
         elif a.ndim == 2:
             return a.unsqueeze(-1)
-        return prims.clone(a)
+        return prims.shallow_copy(a)
 
-    res = tuple(_unsqueeze_atleast(a) if isinstance(a, TensorProxy) else prims.clone(a) for a in args)
+    res = tuple(_unsqueeze_atleast(a) if isinstance(a, TensorProxy) else prims.shallow_copy(a) for a in args)
     return res if len(res) > 1 else res[0]
 
 

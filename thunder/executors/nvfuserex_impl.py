@@ -1760,6 +1760,16 @@ def clone(a: TensorProxy, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
 
 register_supported(PrimIDs.CLONE, clone, _elementwise_unary_check)
 
+
+def shallow_copy(a: TensorProxy, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+    nva = getnv(a, fd, lc_to_nv_map)
+
+    return nva
+
+
+register_supported(PrimIDs.SHALLOW_COPY, shallow_copy, _elementwise_unary_check)
+
+
 # update_aliases is disabled.  nvfuser does not support it.
 # TODO: Enable this once nvfuser supports it.
 # def update_aliases(aliases: tuple[TensorProxy], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
