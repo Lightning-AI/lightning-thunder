@@ -1061,7 +1061,7 @@ class BaseBenchmarkForQuack(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     @property
     def description(self) -> str:
-        return f"Benchmark for cross_entropy, softmax, layernorm, and rmsnorm with cutlass_dsl_ex, nvfuserex, and torch_compile_executor"
+        return "Benchmark for cross_entropy, softmax, layernorm, and rmsnorm with cutlass_dsl_ex, nvfuserex, and torch_compile_executor"
 
 
 class CrossEntropyBenchmarkForQuack(BaseBenchmarkForQuack):
