@@ -506,7 +506,7 @@ if find_spec("quack") is not None:
     ) -> TensorProxy:
         if eps is None:
             eps = 1e-6
-        return quack_rms_norm_aug_forward(a, weight, eps)[0]
+        return quack_rms_norm_forward(a, weight, eps)
 
     # NOTE: The backward looks not functioning:
     #     def _engine_run_backward(
