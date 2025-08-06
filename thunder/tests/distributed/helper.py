@@ -13,10 +13,7 @@ from thunder.core import devices
 from thunder.tests.framework import TorchExecutor, nvFuserExecutor
 from thunder.tests.make_tensor import make_tensor
 
-try:
-    import expecttest
-    import hypothesis
-except ImportError:
+if importlib.util.find_spec("expecttest") is None or importlib.util.find_spec("hypothesis") is None:
     raise ImportError(
         "Required packages of `expecttest` and/or `hypothesis` are missing. "
         "Install them with `pip install expecttest hypothesis`"
