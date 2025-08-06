@@ -1111,7 +1111,7 @@ def test_cache_symbolic_values_reshape():
     def foo(t, batch_size):
         return t.reshape(batch_size, -1).sum(-1)
 
-    jfoo = thunder_jit(foo, cache="symbolic values", nv_enable_bookend=False)
+    jfoo = thunder_jit(foo, cache="symbolic values")
     expected = foo(a, 32)
     actual = jfoo(a, 32)
 
@@ -1480,7 +1480,7 @@ def test_tag_static_memory_location():
 def test_args_order():
     @thunder_jit
     def fn(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10):
-        # do not skip functionalization process
+        # do not skip alias update process
         a9 += 1
         # do not drop arguments by dce
         return a0 + a1 + a2 + a3 + a4 + a5 + a6 + a7 + a8 + a9 + a10
