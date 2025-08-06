@@ -16,7 +16,7 @@ try:
     if not is_available():
         raise ImportError
     import fused_layer_norm_cuda
-    from apex.normalization.fused_layer_norm import FusedRMSNormAffineMixedDtypesFunction
+    from apex.normalization.fused_layer_norm import FusedRMSNormAffineMixedDtypesFunction  # noqa: F401
 except ImportError:
     APEX_FUSED_NORMS_AVAILABLE = False
 

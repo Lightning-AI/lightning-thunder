@@ -78,7 +78,26 @@ _PROJECT_ROOT = os.path.dirname(_PACKAGE_ROOT)
 
 # TODO RC1 Review exposed names
 __all__ = [
+    # module aliases
+    "clang",
+    "dtypes",
+    "devices",
     "transforms",
+    # function aliases
+    "get_compile_data",
+    "trace",
+    # class aliases
+    "Proxy",
+    "TensorProxy",
+    "NumberProxy",
+    "StringProxy",
+    "IntegerProxy",
+    "FloatProxy",
+    "ComplexProxy",
+    "TupleProxy",
+    "ListProxy",
+    "DictProxy",
+    "AnyProxy",
     # dtype aliases
     "bool8",
     "uint8",
