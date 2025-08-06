@@ -15,6 +15,7 @@ import re
 from hypothesis import strategies as st
 from hypothesis import given, settings
 from hypothesis import HealthCheck
+import copy
 
 from thunder import dtypes
 from thunder.dynamo import thunderfx
@@ -1629,3 +1630,59 @@ def test_get_proxy_inputs_from_node_symtype_hint():
     cfn(x, idx)
 
     assert cfn._backend.subgraph_infos[0].split_reasons == []
+
+
+@requiresCUDA
+def test_spliter_einops():
+    einops = pytest.importorskip("einops")
+
+    def f(input, expr):
+        return einops.rearrange(input, expr)
+
+    fc = thunderfx(f)
+    input = torch.randn(2, 3, 4, 5, device="cuda")
+    out = fc(input, "b c h w -> b (c h w)")
+    expected_out = f(input, "b c h w -> b (c h w)")
+
+    assert len(fc._backend.subgraph_infos[0].split_reasons) == 0
+    torch.testing.assert_close(out, expected_out)
+
+
+@requiresCUDA
+def test_thunderfx_with_intermediate_output_marked_as_non_differentiable():
+    class Model(torch.nn.Module):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.fc = torch.nn.Linear(2, 2)
+            self.register_buffer("buf", None, False)
+
+        def forward(self, x):
+            if self.buf is None:
+                self.buf = torch.ones(1, 2, device=x.device)
+            return self.fc(x) + self.buf
+
+    with torch.device("cuda"):
+        org_m = Model()
+        thunder_m = copy.deepcopy(org_m)
+        m = thunderfx(thunder_m)
+
+        x = torch.randn(2, 2)
+
+        # First iteration
+        expected_output = org_m(x).sum()
+        actual_output = m(x).sum()
+
+        torch.testing.assert_close(actual_output, expected_output)
+        actual_output.backward()
+        expected_output.backward()
+        torch.testing.assert_close(org_m.fc.weight.grad, thunder_m.fc.weight.grad)
+
+        # Second iteration
+        x = torch.randn(2, 2)
+        expected_output = org_m(x).sum()
+        actual_output = m(x).sum()
+
+        torch.testing.assert_close(actual_output, expected_output)
+        actual_output.backward()
+        expected_output.backward()
+        torch.testing.assert_close(org_m.fc.weight.grad, thunder_m.fc.weight.grad)

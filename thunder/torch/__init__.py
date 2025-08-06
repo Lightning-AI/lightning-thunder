@@ -10,6 +10,7 @@ from collections.abc import Callable
 from collections.abc import Sequence
 from enum import Enum
 from functools import partial, reduce, wraps
+from looseversion import LooseVersion
 from numbers import Number
 from types import NoneType, ModuleType
 from typing import Any, overload
@@ -850,7 +851,7 @@ def randint(
     utils.check(generator is None, lambda: "generator is not None which is currently unsupported", NotImplementedError)
     utils.check(out is None, lambda: "out is not None which is currently unsupported", NotImplementedError)
     device = to_device(maybe_get_default_device(device))
-    dtype = to_dtype(maybe_get_default_dtype(dtype))
+    dtype = to_dtype(dtype if dtype is not None else torch.int64)
 
     # dispatch our two overloads:
     if len(args) == 2 and isinstance(args[1], (tuple, list)):
@@ -1021,7 +1022,7 @@ def empty_like(
 
 
 # TODO Update this to take a *args series of tensors or a sequence of tensors
-@torchsymbol(torch.cat)
+@torchsymbol(torch.cat, torch.concat, torch.concatenate, id="torch.cat")
 def cat(tensors: Sequence[TensorLike], dim: int = 0) -> TensorLike:
     return clang.cat(tensors, dim)
 
@@ -1096,7 +1097,9 @@ def diagonal(a: TensorLike, /, offset: int = 0, dim1: int = 0, dim2: int = 1) ->
     return clang.diagonal(a, offset, dim1, dim2)
 
 
-@torchsymbol(torch.Tensor.expand, is_method=True)
+@torchsymbol(
+    torch.Tensor.expand, torch.broadcast_to, torch.Tensor.broadcast_to, id="torch.Tensor.expand", is_method=True
+)
 def expand(a: TensorLike, /, *shape: int) -> TensorLike:
     return clang.expand(a, *shape)
 
@@ -1177,7 +1180,7 @@ def movedim(a: TensorLike, /, source: int | Sequence[int], destination: int | Se
     return clang.movedim(a, source, destination)
 
 
-@torchsymbol(torch.nn.functional.pad)
+@torchsymbol(torch.nn.functional.pad, torch._C._nn.pad, id="torch.nn.functional.pad")
 def pad(a: TensorProxy, /, pad: tuple[int, ...], mode: str | None = "constant", value: NumberLike | None = None):
     utils.check(mode == "constant", lambda: "Mode arguments other than constant are not supported")
     utils.check(len(pad) % 2 == 0, lambda: "Padding length must be divisible by 2")
@@ -1490,7 +1493,6 @@ def unsqueeze(a: TensorLike, /, dim: int) -> TensorLike:
     return clang.unsqueeze(a, dim)
 
 
-# TODO Review view functionalization
 # TODO Add type annotations
 @torchsymbol(torch.Tensor.view, is_method=True)
 def view(a: TensorLike, /, *shape) -> TensorLike:
@@ -1910,7 +1912,7 @@ def tan_(a):
     return _copy_(a, tan(a))
 
 
-@torchsymbol(torch.tanh, is_method=True)
+@torchsymbol(torch.tanh, torch.nn.functional.tanh, id="torch.tanh", is_method=True)
 def tanh(a):
     return clang.tanh(a)
 
@@ -4384,15 +4386,9 @@ def _native_batch_norm(
 
     # Handles weight and bias
     if weight is not None:
-        # Inserting a conversion to the computation_dtype for weight and bias to
-        # disable nvFuser executors's bookend optimization (nv_enable_bookend),
-        # preventing the executor to push out the shape operations out of the
-        # fusion region.
-        weight = to(weight, computation_dtype)
         weight = reshape(weight, params_shape)
         out = out * weight
     if bias is not None:
-        bias = to(bias, computation_dtype)
         bias = reshape(bias, params_shape)
         out = out + bias
 
@@ -5618,6 +5614,25 @@ def linear(a: TensorLike, w: TensorLike, /, bias: None | TensorLike = None) -> T
     return prims.linear(a, w, bias)
 
 
+if LooseVersion(torch.__version__) >= "2.8":
+
+    @torchsymbol(torch._grouped_mm)
+    def _grouped_mm(
+        a: TensorProxy,
+        b: TensorProxy,
+        offsets: None | TensorProxy = None,
+        bias: None | TensorProxy = None,
+        dtype: None | dtypeLike = None,
+    ) -> TensorProxy:
+        utils.check(offsets is not None, lambda: "Current implementation requires `offsets`.")
+        utils.check(bias is None, lambda: "Current implementation doesn't support `bias`.")
+        utils.check(
+            dtype in (None, a.dtype),
+            lambda: f"Current implementation requires `dtype` to be None or the same as `a`. Got: {dtype} vs {a.dtype}",
+        )
+        return prims._grouped_mm(a, b, offsets)
+
+
 @torchsymbol(torch.logsumexp, is_method=True)
 def logsumexp(a: TensorLike, /, dim: int | Sequence[int], keepdim: bool = False) -> TensorLike:
     input_max = amax(a, dim, keepdim=True)
@@ -6756,7 +6771,6 @@ _torch_to_thunder_complete_map = {
 # records the torch symbols that may return tensor views
 # ref: https://pytorch.org/docs/stable/tensor_view.html
 # NOTE Symbols that return tensor views can interfere with in-place operators
-# See :func:`thunder.core.functionalization.check_inplace_to_views` for the details.
 _syms_that_may_return_views: set[Symbol] = {
     reshape,
     contiguous,

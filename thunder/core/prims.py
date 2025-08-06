@@ -270,6 +270,7 @@ class PrimIDs(Enum):
     COPY_WITH_SETITEM = auto()
     # Linear algebra prims (Mostly experimental)
     MATMUL = auto()
+    _GROUPED_MM = auto()  # Used for grouped matmuls
     # NN prims (Experimental!)
     CONVOLUTION = auto()
     EMBEDDING = auto()
@@ -300,7 +301,7 @@ class OpTags(Enum):
     AUTO_REGISTERED = auto()
     # Label for operations representing enter/exit of context managers.
     CTX_MANAGER_ENTER_EXIT_OP = auto()
-    # Label to explicitly disable an operation from recomputing in backward - see function `recompute_saved_for_backward`.
+    # Label to explicitly disable an operation from recomputing in backward.
     DONT_RECOMPUTE_IN_BACKWARD = auto()
     # Don't automatically tag operation to be recomputed in backward
     DONT_AUTO_RECOMPUTE_IN_BACKWARD = auto()
@@ -3761,6 +3762,62 @@ def sort_meta(a: TensorProxy, /, dim: int, descending: Number, sorted: Number) -
 
 
 sort = make_prim(PrimIDs.SORT, "sort", meta=sort_meta)
+
+
+def _grouped_mm_meta(a: TensorProxy, b: TensorProxy, offsets: TensorProxy) -> TensorProxy:
+    """Meta function for _grouped_mm primitive.
+
+    Accepts the following shape combinations:
+    1. (m, k) x (k, n) -> (groups, m, n)
+    2. (groups, m, k) x (k, n) -> (m, n)
+    3. (m, k) x (groups, k, n) -> (m, n)
+
+    Args:
+        a: Input tensor of shape (groups, m, k) or (m, k)
+        b: Input tensor of shape (groups, k, n) or (k, n)
+        offsets: Offset tensor of shape (groups,)
+
+    Returns:
+        TensorProxy with shape (groups, m, n) or (m, n)
+    """
+    # Validate types
+    utils.check_type(a, TensorProxy)
+    utils.check_type(b, TensorProxy)
+    utils.check_type(offsets, TensorProxy)
+
+    # Accept 2D or 3D tensors
+    utils.check(a.ndim in (2, 3), lambda: f"Expected a to have 2 or 3 dimensions, got {a.ndim}")
+    utils.check(b.ndim in (2, 3), lambda: f"Expected b to have 2 or 3 dimensions, got {b.ndim}")
+
+    utils.check(offsets.ndim == 1, lambda: f"`offsets` must be a vector, got shape {offsets.shape}")
+    if a.ndim == 2 and b.ndim == 2:
+        utils.check(a.shape[1] == b.shape[0], lambda: f"Inner dimension mismatch: {a.shape} vs {b.shape}")
+        out_shape = (offsets.shape[0], a.shape[0], b.shape[1])
+    if a.ndim == 3 and b.ndim == 2:
+        utils.check(a.shape[2] == b.shape[1], lambda: f"Inner dimension mismatch: {a.shape} vs {b.shape}")
+        utils.check(a.shape[0] == offsets.shape[0], lambda: f"Group count mismatch: {a.shape} vs {offsets.shape}")
+        out_shape = (a.shape[1], b.shape[1])
+    elif a.ndim == 2 and b.ndim == 3:
+        utils.check(a.shape[1] == b.shape[1], lambda: f"Inner dimension mismatch: {a.shape} vs {b.shape}")
+        utils.check(b.shape[0] == offsets.shape[0], lambda: f"Group count mismatch: {b.shape} vs {offsets.shape}")
+        out_shape = (a.shape[0], b.shape[2])
+    else:
+        utils.check(False, lambda: f"Unexpected shape combination: {a.shape} and {b.shape}")
+
+    utils.check_same_dtype(a, b)
+    utils.check(a.dtype in dtypes.float_math_dtypes, lambda: f"`a` must be 16-bit float or higher, got {a.dtype}")
+    utils.check(utils.is_integer_dtype(offsets.dtype), lambda: f"`offsets` must be integers, got {offsets.dtype}")
+
+    utils.check_same_device(a, b)
+
+    return TensorProxy(like=a, shape=out_shape)
+
+
+_grouped_mm = make_prim(
+    PrimIDs._GROUPED_MM,
+    "_grouped_mm",
+    meta=_grouped_mm_meta,
+)
 
 
 def transpose_meta(a: TensorProxy, /, permutation: tuple[int, ...]) -> TensorProxy:

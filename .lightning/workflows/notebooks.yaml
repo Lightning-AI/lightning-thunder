@@ -1,0 +1,46 @@
+trigger:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+timeout: "50" # minutes
+machine: "L4"
+parametrize:
+  matrix:
+    image:
+      - "pytorchlightning/lightning-thunder:ubuntu24.04-cuda12.6.3-cudnn-fe1.10.0-py3.10-pt_2.7.1-dev"
+      - "pytorchlightning/lightning-thunder:ubuntu24.04-cuda12.6.3-cudnn-fe1.10.0-py3.10-pt_main-dev"
+  exclude: []
+  include: []
+
+run: |
+  whereis nvidia
+  nvidia-smi
+  python --version
+  pip --version
+  pip list
+  set -ex
+
+  # drop pt from requirements so not to interfere with the existing one
+  bash scripts/remove-torch-lines.sh requirements/base.txt
+  cat requirements/base.txt
+  # double check on test requirements
+  pip install -q -U -r requirements/base.txt -r requirements/notebooks.txt
+  # install this package
+  python setup.py develop
+
+  bash scripts/sanity-check.sh
+
+  # list all notebooks in this folder
+  cd notebooks/
+  find . -name "*.ipynb" > all.txt
+  # drop all "./" from beginning of each line
+  sed -i 's/^\.\///' all.txt
+  # filter out the ones that are listed in .ignore.ci
+  grep -Fxv -f .ignore.ci all.txt > ci.txt
+  # iterate over all listed notebooks and execute them with jupyter
+  while read -r line; do
+      echo "Processing $line"
+      jupyter execute $line --timeout=300
+  done <<< $(cat ci.txt)

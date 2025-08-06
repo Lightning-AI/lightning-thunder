@@ -38,7 +38,6 @@ torch_auto_registered_ops = {
         torch.binomial,
         torch.block_diag,
         torch.broadcast_tensors,
-        torch.broadcast_to,
         torch.bucketize,
         torch.cartesian_prod,
         torch.cdist,
@@ -54,8 +53,6 @@ torch_auto_registered_ops = {
         torch.column_stack,
         torch.combinations,
         torch.complex,
-        torch.concat,
-        torch.concatenate,
         torch.conj,
         torch.conj_physical,
         torch.constant_pad_nd,
@@ -240,6 +237,7 @@ torch_auto_registered_ops = {
         torch.rsub,
         torch.saddmm,
         torch.scatter_reduce,
+        torch.scalar_tensor,
         torch.searchsorted,
         torch.select_copy,
         torch.select_scatter,
@@ -381,7 +379,6 @@ torch_auto_registered_ops = {
         torch.Tensor.bfloat16,
         torch.Tensor.bincount,
         torch.Tensor.bool,
-        torch.Tensor.broadcast_to,
         torch.Tensor.byte,
         torch.Tensor.ccol_indices,
         torch.Tensor.cdouble,
@@ -698,7 +695,6 @@ torch_auto_registered_ops = {
 # Records all the auto-registered Torch operators that return tensor views
 # Ref: https://pytorch.org/docs/stable/tensor_view.html
 # NOTE this list is used to update the `_syms_returning_views`, so that the symbol returning tensor views can be processed correctly when they interact with in-place operators.
-# See :func:`thunder.core.functionalization.check_inplace_to_views` for the details.
 _auto_registered_operators_returning_views = [
     torch.adjoint,
     torch.Tensor.adjoint,
