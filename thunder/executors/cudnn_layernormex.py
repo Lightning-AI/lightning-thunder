@@ -115,7 +115,7 @@ def layer_norm_checker(a, normalized_shape, weight=None, bias=None, eps=1e-5):
 
     try:
         _make_cudnn_layer_norm_graph(a_4d, weight_4d, bias_4d)
-    except:
+    except Exception:
         return False
 
     return True
