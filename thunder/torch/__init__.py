@@ -10,6 +10,7 @@ from collections.abc import Callable
 from collections.abc import Sequence
 from enum import Enum
 from functools import partial, reduce, wraps
+from looseversion import LooseVersion
 from numbers import Number
 from types import NoneType, ModuleType
 from typing import Any, overload
@@ -2246,6 +2247,25 @@ def threshold_(a: TensorProxy, /, threshold: float, value: float) -> TensorLike:
 
 
 _inplace_to_out_of_place[threshold_] = threshold, -1
+
+
+@torchsymbol(torch.square, is_method=True)
+def square(a):
+    if isinstance(dtypes.to_dtype(a), dtypes.bool_):
+        a = clang.maybe_convert_to_dtype(a, dtypes.int64)
+    return a * a
+
+
+@torchsymbol(torch.square_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def square_(a):
+    utils.check(
+        not isinstance(dtypes.to_dtype(a), dtypes.bool_),
+        lambda: f"Result type of {dtypes.int64} cannot be stored into {dtypes.to_dtype(a)}",
+    )
+    return _copy_(a, square(a))
+
+
+_inplace_to_out_of_place[square_] = square, -1
 
 
 #
@@ -5623,6 +5643,25 @@ register_grad(item.id, item)
 @torchsymbol(torch.nn.functional.linear)
 def linear(a: TensorLike, w: TensorLike, /, bias: None | TensorLike = None) -> TensorLike:
     return prims.linear(a, w, bias)
+
+
+if LooseVersion(torch.__version__) >= "2.8":
+
+    @torchsymbol(torch._grouped_mm)
+    def _grouped_mm(
+        a: TensorProxy,
+        b: TensorProxy,
+        offsets: None | TensorProxy = None,
+        bias: None | TensorProxy = None,
+        dtype: None | dtypeLike = None,
+    ) -> TensorProxy:
+        utils.check(offsets is not None, lambda: "Current implementation requires `offsets`.")
+        utils.check(bias is None, lambda: "Current implementation doesn't support `bias`.")
+        utils.check(
+            dtype in (None, a.dtype),
+            lambda: f"Current implementation requires `dtype` to be None or the same as `a`. Got: {dtype} vs {a.dtype}",
+        )
+        return prims._grouped_mm(a, b, offsets)
 
 
 @torchsymbol(torch.logsumexp, is_method=True)

@@ -6,6 +6,7 @@ from numbers import Number
 from typing import TYPE_CHECKING
 from collections.abc import Callable
 from collections.abc import Hashable, Sequence
+from looseversion import LooseVersion
 from types import ModuleType
 
 import torch
@@ -129,6 +130,7 @@ _register_implementation(
     execution_transform=_convert_element_type_transform,
 )
 _register_implementation(ltorch.to, checker=_always_executable, execution_transform=_to_transform)
+
 
 #
 # Disable torch.autocast operations
@@ -1524,6 +1526,8 @@ _register_implementation(ltorch.local_response_norm, local_response_norm, checke
 
 bmm = _register_torch_operation("bmm")
 baddbmm = _register_torch_operation("baddbmm")
+if LooseVersion(torch.__version__) >= "2.8":
+    _grouped_mm = _register_torch_operation("_grouped_mm")
 convolution = _register_torch_operation("convolution")
 conv1d = _register_torch_operation("conv1d", module=torch.nn.functional)
 conv2d = _register_torch_operation("conv2d", module=torch.nn.functional)
@@ -1814,8 +1818,16 @@ _register_implementation(prims.embedding, embedding, checker=_always_executable)
 _register_implementation(prims.embedding_backward, embedding_backward, checker=_always_executable)
 _register_implementation(prims.linear, linear, checker=_always_executable)
 
+
+def _grouped_mm_checker(a: TensorProxy, b: TensorProxy, offsets: TensorProxy) -> bool:
+    return a.dtype == dtypes.bfloat16 and b.dtype == dtypes.bfloat16 and offsets.dtype == dtypes.int32
+
+
 _register_implementation(ltorch.baddbmm, baddbmm, checker=_always_executable)
 _register_implementation(ltorch.bmm, bmm, checker=_always_executable)
+if LooseVersion(torch.__version__) >= "2.8":
+    _register_implementation(prims._grouped_mm, _grouped_mm, checker=_grouped_mm_checker)
+    _register_implementation(ltorch._grouped_mm, _grouped_mm, checker=_grouped_mm_checker)
 _register_implementation(ltorch.convolution, checker=_always_executable, execution_transform=_convolution_transform)
 _register_implementation(ltorch.conv1d, conv1d, checker=_always_executable)
 _register_implementation(ltorch.conv2d, conv2d, checker=_always_executable)

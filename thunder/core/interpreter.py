@@ -2250,6 +2250,13 @@ class SequenceWrapperMethods(WrappedValue):
         self.track_items()
         return _interpret_call(SequenceIter, self, wrap_const(True))
 
+    @classmethod
+    def __class_getitem__(cls, index):
+        try:
+            return wrap_const(unwrap(cls).__class_getitem__(unwrap(index)))
+        except Exception as e:
+            return do_raise(e)
+
 
 class MutSequenceWrapperMethods(SequenceWrapperMethods):
     def __new__(cls, iterable=()):
@@ -2751,6 +2758,13 @@ class MutMappingWrapperMethods(WrappedValue):
 
         return _interpret_call(impl, self, other)
 
+    @classmethod
+    def __class_getitem__(cls, index):
+        try:
+            return wrap_const(unwrap(cls).__class_getitem__(unwrap(index)))
+        except Exception as e:
+            return do_raise(e)
+
 
 def _collections_namedtuple_lookaside(
     typename: str,
@@ -2951,7 +2965,14 @@ def _register_provenance_tracking_lookasides(typ, wrapper):
             if meth in _default_provenance_tracking_lookaside_map:
                 pass
             elif hasattr(wrapper, meth_name):
-                _default_provenance_tracking_lookaside_map[meth] = getattr(wrapper, meth_name)
+                wrapper_meth = getattr(wrapper, meth_name)
+                if (
+                    isinstance(meth, BuiltinMethodType)
+                    and hasattr(meth, "__self__")
+                    and isinstance(wrapper_meth, MethodType)
+                ):  # classmethod
+                    wrapper_meth = functools.partial(wrapper_meth.__func__, meth.__self__)
+                _default_provenance_tracking_lookaside_map[meth] = wrapper_meth
             elif is_opaque(meth):
 
                 def get_unimplemented_fn(meth_name):
