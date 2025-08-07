@@ -154,6 +154,9 @@ def _splitter(
             submodule.graph.output(())
     if not split_gm.graph.find_nodes(op="output"):
         split_gm.graph.output(())
+
+    # If split_gm contains Parameters or Tensors then deepcopy would also create their copies.
+    # TODO: Eliminate deepcopy
     original_split_gm = copy.deepcopy(split_gm)
 
     def is_thunder_supported_partition(node: torch.fx.Node) -> bool:
