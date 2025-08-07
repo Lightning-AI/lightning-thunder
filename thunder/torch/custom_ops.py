@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 
 __all__ = [
-    "register_custom_op",
+    "_register_custom_op",
 ]
 
 
@@ -302,7 +302,7 @@ def define_backward_for(
 
 
 # TODO: Figure out if we can access `triton_op` of the same name
-def register_custom_op(custom_op: CustomOpDef) -> Symbol:
+def _register_custom_op(custom_op: CustomOpDef) -> Symbol:
     """Register :func:`~torch.library.custom_op`'ed function to Thunder.
 
     :func:`torch.library.custom_op` operators always have schema as per https://docs.google.com/document/d/1_W62p8WJOQQUzPsJYa7s701JXt0qf2OfLub2sbkHOaU/edit?tab=t.0#heading=h.aotf6sastysc saying
