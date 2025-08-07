@@ -116,7 +116,7 @@ def _transform_layer_norm_inputs(a, normalized_shape, weight, bias):
 
 def layer_norm_impl(
     a: torch.Tensor,
-    normalized_shape: torch.Tensor,
+    normalized_shape: Sequence[int],
     weight: torch.Tensor | None = None,
     bias: torch.Tensor | None = None,
     eps: Number = 1e-5,
@@ -223,7 +223,6 @@ def _make_cudnn_layer_norm_bwd_graph(
         compute_data_type=cudnn.data_type.FLOAT,
     )
 
-    # Create tensors for backward pass
     DY = bwd_graph.tensor(
         name="DY", dim=grad_4d.size, stride=grad_4d.stride, data_type=torch_to_cudnn_dtype(grad_4d.dtype)
     )
@@ -238,17 +237,14 @@ def _make_cudnn_layer_norm_bwd_graph(
         name="inv_var", dim=inv_var_4d.size, stride=inv_var_4d.stride, data_type=torch_to_cudnn_dtype(inv_var_4d.dtype)
     )
 
-    # Add layernorm backward operation
     DX, DWeight, Dbias = bwd_graph.layernorm_backward(
         name="layernorm_bwd", grad=DY, input=X_bwd, scale=weight_bwd, mean=mean_bwd, inv_variance=inv_var_bwd
     )
 
-    # Set outputs
     DX.set_output(True).set_data_type(torch_to_cudnn_dtype(a_4d.dtype))
     DWeight.set_output(True).set_data_type(torch_to_cudnn_dtype(weight_4d.dtype))
     Dbias.set_output(True).set_data_type(torch_to_cudnn_dtype(weight_4d.dtype))
 
-    # Build the graph
     bwd_graph.build([cudnn.heur_mode.A, cudnn.heur_mode.FALLBACK])
 
     return DY, X_bwd, weight_bwd, mean_bwd, inv_var_bwd, DX, DWeight, Dbias, bwd_graph
@@ -276,30 +272,27 @@ def layer_norm_bwd_impl(
     mean: torch.Tensor,
     inv_var: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
-    # Transform inputs to 4D format for cuDNN
     normalized_shape = weight.shape
     grad_4d, _, _ = _transform_layer_norm_inputs(grad, normalized_shape, weight, bias)
     a_4d, weight_4d, bias_4d = _transform_layer_norm_inputs(a, normalized_shape, weight, bias)
 
-    # Transform mean and inv_var to 4D
-    # mean and inv_var have shape [batch_size, 1, 1, 1] from forward pass
     mean_4d = CudnnTensorAttributes(mean.shape, mean.stride(), mean.dtype, mean.device.index)
     inv_var_4d = CudnnTensorAttributes(inv_var.shape, inv_var.stride(), inv_var.dtype, inv_var.device.index)
 
-    # Get the backward graph
     DY, X_bwd, weight_bwd, mean_bwd, inv_var_bwd, DX, DWeight, Dbias, bwd_graph = _make_cudnn_layer_norm_bwd_graph(
-        grad_4d, a_4d, weight_4d, mean_4d, inv_var_4d
+        grad_4d,
+        a_4d,
+        weight_4d,
+        mean_4d,
+        inv_var_4d,
     )
 
-    # Allocate output tensors
     grad_a = torch.empty_like(a)
     grad_weight = torch.empty_like(weight) if weight is not None else None
     grad_bias = torch.empty_like(bias) if bias is not None else None
 
-    # Create workspace
     workspace = torch.empty(bwd_graph.get_workspace_size(), device="cuda", dtype=torch.uint8)
 
-    # Create tensor mapping for execution
     tensor_map = {
         DY: grad,
         X_bwd: a,
@@ -311,7 +304,6 @@ def layer_norm_bwd_impl(
         Dbias: grad_bias,
     }
 
-    # Execute the backward graph
     bwd_graph.execute(tensor_map, workspace)
 
     return grad_a, grad_weight, grad_bias
@@ -347,10 +339,14 @@ if cudnn_available():
 
     layer_norm = cudnn_layernorm_ex.register_operator("cudnn_layernorm", like=ltorch.layer_norm, fn=layer_norm_impl)
     layer_norm_aug_fwd = cudnn_layernorm_ex.register_operator(
-        "cudnn_layernorm_aug_fwd", meta=_layer_norm_aug_fwd_meta, fn=layer_norm_aug_fwd_impl
+        "cudnn_layernorm_aug_fwd",
+        meta=_layer_norm_aug_fwd_meta,
+        fn=layer_norm_aug_fwd_impl,
     )
     layer_norm_bwd = cudnn_layernorm_ex.register_operator(
-        "cudnn_layernorm_bwd", meta=_layer_norm_bwd_meta, fn=layer_norm_bwd_impl
+        "cudnn_layernorm_bwd",
+        meta=_layer_norm_bwd_meta,
+        fn=layer_norm_bwd_impl,
     )
     cudnn_layernorm_ex.register_implementation(
         ltorch.layer_norm,
