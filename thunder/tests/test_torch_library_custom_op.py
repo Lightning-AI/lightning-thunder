@@ -1,10 +1,10 @@
 from typing import TYPE_CHECKING
+
 import numpy as np
+import pytest
 import torch
 import torch.nn as nn
 from torch._library.custom_ops import CustomOpDef
-import triton
-import triton.language as tl
 
 import thunder
 from thunder.core import dtypes
@@ -60,7 +60,10 @@ torch.library.register_autograd(
 )
 
 
-if torch.cuda.is_available():
+if has_triton_op := (torch.cuda.is_available() and package_available("triton")):
+    import triton
+    import triton.language as tl
+
     DEVICE = triton.runtime.driver.active.get_active_torch_device()
 
     @triton.jit
@@ -154,6 +157,7 @@ def test_torch_library_custom_op(_, device: str, dtype: dtypes.dtype):
     _run_test(MyModule, mul, devices.to_torch_device(device), dtypes.to_torch_dtype(dtype))
 
 
+@pytest.mark.skipif(not has_triton_op, reason="triton is not available")
 @instantiate(
     executors=(TorchExecutor,),
     devicetypes=(devices.DeviceType.CUDA,),
