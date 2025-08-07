@@ -51,7 +51,7 @@ from thunder.core.transforms import register_grad, register_augmented_forward, r
 from thunder.core.prims import get_grad, put_grad
 import thunder
 from thunder.torch.default_torch_ops import _auto_registered_operators_returning_views
-from thunder.torch.custom_ops import _register_custom_op
+from thunder.torch.custom_op import _register_custom_op
 
 
 __all__ = [
