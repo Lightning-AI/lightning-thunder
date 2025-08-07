@@ -685,7 +685,7 @@ def checkpoint_converter(gm: torch.fx.GraphModule, sub_gm: torch.fx.GraphModule)
                 _checkpoint_function_converter(function_module)
 
 
-def remove_empty_autocast(graph_module: torch.fx.GraphModule) -> None:
+def remove_empty_autocast(graph_module: torch.fx.GraphModule) -> torch.fx.GraphModule:
     """
     Function to remove empty autocast regions from GraphModule.
 
