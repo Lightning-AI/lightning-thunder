@@ -1267,14 +1267,14 @@ def _sort_prim_grad(
 register_grad(pids.SORT, _sort_prim_grad)
 
 
-def _argsort_prim_grad(
+def _argsort_grad(
     a: TensorProxy, /, dim: None | int = None, descending: bool = False, stable: bool = False
 ) -> TensorProxy:
     # Note: argsort returns only indices, not sorted values
-    return prims.argsort(a, dim, descending, stable)
+    return ltorch.argsort(a, dim, descending, stable)
 
 
-register_grad(pids.ARGSORT, _argsort_prim_grad)
+register_grad("torch.argsort", _argsort_grad)
 
 
 # TODO Fix division by zero when n_elem_reduced == 0 or when mean.numel == 0
