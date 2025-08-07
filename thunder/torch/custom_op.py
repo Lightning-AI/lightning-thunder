@@ -43,7 +43,6 @@ class SavedIndices:
     input_indices: list[int]
     # Which output indices to save: [1] means save outputs[1]
     output_indices: list[int]
-    # TODO: Think about removing `scalar_data`
     # Non-tensor data saved on ctx: {'multiplier': 2.0}
     scalar_data: dict[str, Any]
 
@@ -303,7 +302,6 @@ def define_backward_for(
     return _convert_to_meta_function(wrapped_backward), wrapped_backward
 
 
-# TODO: Figure out if we can access `triton_op` of the same name
 def _register_custom_op(custom_op: CustomOpDef) -> Symbol:
     """Register :func:`~torch.library.custom_op`'ed function to Thunder.
 
