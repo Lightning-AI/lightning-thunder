@@ -266,7 +266,6 @@ def _te_fp8_amax_and_scale_update_meta(recipe: AnyProxy, *, states: tuple[AnyPro
 # TODO can gather and scatter be made explicit here for ddp
 def _te_fp8_amax_and_scale_update_impl(recipe: Recipe, states: tuple[RecipeState], tokens: tuple[TensorProxy]):
     for state in states:
-        
         if recipe.reduce_amax and torch_dist.is_initialized():
             from torch.distributed import distributed_c10d
 
