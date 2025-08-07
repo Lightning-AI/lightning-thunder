@@ -1,16 +1,18 @@
-from typing import Any
-
-import torch
-import numpy as np
-
-
 # WARNING: cudnn layernorm executor is experimental. Tests that use cudnn might fail.
 from dataclasses import dataclass
 from functools import lru_cache
 
+import torch
+import numpy as np
 
 from thunder.executors.cudnnex import cudnn_available, torch_to_cudnn_dtype
 from thunder.extend import OperatorExecutor
+
+
+__all__ = [
+    "cudnn_layernorm_ex",
+]
+cudnn_layernorm_ex: None | OperatorExecutor = None
 
 
 @dataclass(frozen=True)
@@ -118,8 +120,6 @@ def layer_norm_checker(a, normalized_shape, weight=None, bias=None, eps=1e-5):
 
     return True
 
-
-cudnn_layernorm_ex: None | OperatorExecutor = None
 
 if cudnn_available():
     from thunder.extend import register_executor
