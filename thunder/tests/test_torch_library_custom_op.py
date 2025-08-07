@@ -9,7 +9,7 @@ import triton.language as tl
 import thunder
 from thunder.core import dtypes
 from thunder.core import devices
-from thunder.torch import _register_custom_op
+from thunder.torch.custom_op import _register_custom_op
 from thunder.executors.custom_op_ex import custom_op_ex
 from thunder.tests.framework import TorchExecutor
 from thunder.tests.framework import instantiate
