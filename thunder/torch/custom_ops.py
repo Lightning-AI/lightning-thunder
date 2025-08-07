@@ -254,7 +254,9 @@ def _get_meta_function_from(custom_op: CustomOpDef) -> Callable[[Any], TensorPro
 
 
 def _has_autograd_def(custom_op: CustomOpDef) -> bool:
-    return hasattr(custom_op, _BACKWARD_FN) and hasattr(custom_op, _SETUP_CONTEXT_FN)
+    return (
+        getattr(custom_op, _BACKWARD_FN, None) is not None and getattr(custom_op, _SETUP_CONTEXT_FN, None) is not None
+    )
 
 
 def create_augmented_forward_for_custom_op(
