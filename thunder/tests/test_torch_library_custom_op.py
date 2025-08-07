@@ -1,5 +1,6 @@
 from typing import TYPE_CHECKING
 
+from lightning_utilities.core.imports import package_available
 import numpy as np
 import pytest
 import torch
