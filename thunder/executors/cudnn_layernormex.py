@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING
 import torch
 import numpy as np
 
+from thunder.core.devices import to_torch_device
+from thunder.core.dtypes import to_torch_dtype
 from thunder.core.transforms import get_grad, put_grad
 from thunder.core.proxies import TensorProxy
 from thunder.executors.cudnnex import cudnn_available, torch_to_cudnn_dtype
@@ -121,6 +123,10 @@ def layer_norm_impl(
     bias: torch.Tensor | None = None,
     eps: Number = 1e-5,
 ) -> torch.Tensor:
+    if weight is None:
+        weight = torch.ones(normalized_shape, dtype=a.dtype, device=a.device)
+    if bias is None:
+        bias = torch.zeros(normalized_shape, dtype=a.dtype, device=a.device)
     a_4d, weight_4d, bias_4d = _transform_layer_norm_inputs(a, normalized_shape, weight, bias)
     input, scale, B, epsilon, Y, graph = _make_cudnn_layer_norm_graph(a_4d, weight_4d, bias_4d, is_inference=True)
 
@@ -141,6 +147,12 @@ def layer_norm_checker(a, normalized_shape, weight=None, bias=None, eps=1e-5):
     if cudnn is None:
         return False
 
+    t_device = to_torch_device(a.device)
+    t_dtype = to_torch_dtype(a.dtype)
+    if weight is None:
+        weight = torch.ones(normalized_shape, dtype=t_dtype, device=t_device)
+    if bias is None:
+        bias = torch.zeros(normalized_shape, dtype=t_dtype, device=t_device)
     a_4d, weight_4d, bias_4d = _transform_layer_norm_inputs(a, normalized_shape, weight, bias)
 
     try:
@@ -173,6 +185,10 @@ def layer_norm_aug_fwd_impl(
     bias: torch.Tensor | None = None,
     eps: float = 1e-5,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    if weight is None:
+        weight = torch.ones(normalized_shape, dtype=a.dtype, device=a.device)
+    if bias is None:
+        bias = torch.zeros(normalized_shape, dtype=a.dtype, device=a.device)
     a_4d, weight_4d, bias_4d = _transform_layer_norm_inputs(a, normalized_shape, weight, bias)
     input, scale, B, epsilon, (Y, mean, inv_var), graph = _make_cudnn_layer_norm_graph(
         a_4d, weight_4d, bias_4d, is_inference=False
@@ -257,11 +273,12 @@ def _layer_norm_bwd_meta(
     bias: TensorProxy | None,
     mean: TensorProxy,
     inv_var: TensorProxy,
+    normalized_shape: Sequence[int],
 ) -> tuple[TensorProxy, TensorProxy | None, TensorProxy | None]:
-    if weight is not None and bias is not None:
-        return TensorProxy(like=a), TensorProxy(like=weight), TensorProxy(like=bias)
-    else:
-        return TensorProxy(like=a), None, None
+    a_grad = TensorProxy(like=a)
+    weight_grad = TensorProxy(like=a, shape=normalized_shape) if weight is not None else None
+    bias_grad = TensorProxy(like=a, shape=normalized_shape) if grad is not None else None
+    return a_grad, weight_grad, bias_grad
 
 
 def layer_norm_bwd_impl(
@@ -271,7 +288,12 @@ def layer_norm_bwd_impl(
     bias: torch.Tensor | None,
     mean: torch.Tensor,
     inv_var: torch.Tensor,
+    normalized_shape: Sequence[int],
 ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
+    if no_weight_grad := weight is None:
+        weight = torch.ones(normalized_shape, dtype=a.dtype, device=a.device)
+    if no_bias_grad := bias is None:
+        bias = torch.zeros(normalized_shape, dtype=a.dtype, device=a.device)
     normalized_shape = weight.shape
     grad_4d, _, _ = _transform_layer_norm_inputs(grad, normalized_shape, weight, bias)
     a_4d, weight_4d, bias_4d = _transform_layer_norm_inputs(a, normalized_shape, weight, bias)
@@ -306,6 +328,10 @@ def layer_norm_bwd_impl(
 
     bwd_graph.execute(tensor_map, workspace)
 
+    if no_weight_grad:
+        grad_weight = None
+    if no_bias_grad:
+        grad_bias = None
     return grad_a, grad_weight, grad_bias
 
 
@@ -318,7 +344,7 @@ def cudnn_layer_norm_grad_transform(
 ):
     normalized, mean, inv_var = layer_norm_aug_fwd(a, normalized_shape, weight, bias, eps)
     grad = get_grad(normalized)
-    d_a, d_weight, d_bias = layer_norm_bwd(grad, a, weight, bias, mean, inv_var)
+    d_a, d_weight, d_bias = layer_norm_bwd(grad, a, weight, bias, mean, inv_var, normalized_shape)
     put_grad(a, d_a)
     if weight is not None:
         put_grad(weight, d_weight)
