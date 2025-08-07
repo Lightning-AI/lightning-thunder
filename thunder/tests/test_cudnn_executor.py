@@ -163,12 +163,17 @@ def layer_norm_wrapper(*args, **kwargs):
     return thunder.torch.layer_norm(*args, **kwargs)
 
 
+def rms_norm_wrapper(*args, **kwargs):
+    return thunder.torch.rms_norm(*args, **kwargs)
+
+
 def spda_wrapper(*args, **kwargs):
     return thunder.torch.scaled_dot_product_attention(*args, **kwargs)
 
 
 op_name_to_fn = {
     "layer_norm": layer_norm_wrapper,
+    "rms_norm": rms_norm_wrapper,
     "scaled_dot_product_attention": spda_wrapper,
     "grad_forward_scaled_dot_product_attention": spda_wrapper,
 }
@@ -187,6 +192,7 @@ def snippet_torch_consistency(op, torch_op, sample):
 @ops(
     (
         get_opinfo("layer_norm"),
+        get_opinfo("rms_norm"),
         get_opinfo("scaled_dot_product_attention"),
         grad_sdpa_cudnn_opinfo,
     ),
