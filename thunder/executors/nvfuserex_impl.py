@@ -70,6 +70,7 @@ from thunder.executors.utils import (
 from thunder.executors.passes import update_fusion_call_ctx
 from thunder.extend import FUEL_LEVEL, FusionExecutor, register_executor
 from thunder.executors.nvfuserex import nvfuser_version
+from thunder._logging import get_logger
 
 
 DTENSOR_SUPPORTED_VERSION = LooseVersion("0.2.28")
@@ -82,6 +83,8 @@ if nvfuser_version() >= DTENSOR_SUPPORTED_VERSION:
 import nvfuser
 from nvfuser import DataType, FusionDefinition
 
+
+logger = get_logger(__name__)
 #
 # Helper functions
 #
@@ -186,7 +189,10 @@ _low_precision_floats = (dtypes.float16, dtypes.float16_, dtypes.bfloat16, dtype
 
 def device_supports_fp8() -> bool:
     cuda_major, _ = torch.cuda.get_device_capability()
-    return cuda_major > 8
+    if cuda_major <= 8:
+        logger.warn("FP8 requires CUDA >= 8 but found %d", cuda_major)
+        return False
+    return True
 
 
 def is_supported_dtype(dtype: type | dtypes.dtype, *, allow_low_precision_floats: bool = True) -> bool:
@@ -206,6 +212,11 @@ def is_supported_tensor(a: TensorProxy, *, allow_low_precision_floats: bool = Tr
 
     if not allow_low_precision_floats:
         if a.dtype in _low_precision_floats:
+            logger.warn(
+                "Input has low-precision dtype of %s but allow_low_precision_floats=%s",
+                a.dtype,
+                allow_low_precision_floats,
+            )
             return False
 
     rank_supported = a.ndim <= 8
@@ -229,8 +240,9 @@ def are_supported_tensors(*args) -> bool:
 # Returns True when all arguments given are supported tensors or numbers
 #   Throws an error if any arguments are not numbers or tensors
 def are_supported_tensors_or_numbers(*args) -> bool:
-    for a in args:
+    for i, a in enumerate(args):
         if not is_supported_tensor_or_number(a):
+            logger.warn("%d-th tensor or number of %s is not supported", i, a)
             return False
 
     return True
@@ -955,7 +967,13 @@ def register_supported(sym_or_id: Hashable, translator: Callable, checker: Calla
 
 
 def _convert_element_type_check(a: TensorProxy | Number, dtype: type | dtypes.dtype) -> bool:
-    return is_supported_tensor_or_number(a) and is_supported_dtype(dtype)
+    if not is_supported_tensor_or_number(a):
+        logger.warn("%s is not supported", a)
+        return False
+    if not is_supported_dtype(dtype):
+        logger.warn("%s is not supported", dtype)
+        return False
+    return True
 
 
 # TODO Review conversion of numbers vs. tensors
@@ -1007,7 +1025,11 @@ def _select_device(fd: FusionDefinition, device: None | Device):
 
 
 def _full_check(shape: Sequence[int], fill_value: Number, *, device: Device, dtype: dtypes.dtype) -> bool:
-    return is_supported_device(device) and is_supported_dtype(dtype)
+    if is_supported_device(device) and is_supported_dtype(dtype):
+        return True
+    else:
+        logger.warn("device=%s and/or dtype=%s are not supported", device, dtype)
+        return False
 
 
 # TODO Improve device handling
@@ -1036,7 +1058,11 @@ register_supported(PrimIDs.FULL, full, _full_check)
 
 
 def _iota_check(length: Number, *, start: Number, step: Number, device: Device, dtype: dtypes.dtype) -> bool:
-    return is_supported_device(device) and is_supported_dtype(dtype)
+    if is_supported_device(device) and is_supported_dtype(dtype):
+        return True
+    else:
+        logger.warn("device=%s and/or dtype=%s are not supported", device, dtype)
+        return False
 
 
 # TODO Improve device handling
@@ -1066,7 +1092,11 @@ register_supported(PrimIDs.IOTA, iota, _iota_check)
 def _uniform_check(
     shape: Sequence[int], minval: Number, maxval: Number, *, device: Device, dtype: dtypes.dtype
 ) -> bool:
-    return is_supported_device(device) and is_supported_dtype(dtype)
+    if is_supported_device(device) and is_supported_dtype(dtype):
+        return True
+    else:
+        logger.warn("device=%s and/or dtype=%s are not supported", device, dtype)
+        return False
 
 
 # TODO Add type annotations
@@ -1100,12 +1130,16 @@ def _uniform_philox_check(
     seed: int | NumberProxy | TensorProxy,
     offset: int | NumberProxy | TensorProxy,
 ) -> bool:
-    return (
+    if (
         is_supported_device(device)
         and is_supported_dtype(dtype)
         and is_supported_tensor_or_number(seed)
         and is_supported_tensor_or_number(offset)
-    )
+    ):
+        return True
+    else:
+        logger.warn("device=%s, dtype=%s, seed=%s, and/or offset=%s are not supported", device, dtype, seed, offset)
+        return False
 
 
 def uniform_philox(
@@ -1151,7 +1185,10 @@ register_supported(PrimIDs.UNIFORM_PHILOX, uniform_philox, _uniform_philox_check
 
 # TODO Check that the tensor dtype is supported by nvFuser -- extract to tensor_supported()?
 def _broadcast_in_dim_check(a: TensorProxy, shape: list[int], broadcast_dimensions: list[int]) -> bool:
-    return is_supported_tensor(a)
+    if is_supported_tensor(a):
+        return True
+    logger.warn("%s is not supported", a)
+    return False
 
 
 # TODO Carefully consider how shape and broadcast dimensions being constant here relates to
@@ -1175,8 +1212,9 @@ register_supported(PrimIDs.BROADCAST_IN_DIM, broadcast_in_dim, _broadcast_in_dim
 
 def _cat_check(tensors: list[TensorProxy], dim: int) -> bool:
     # Validates tensors and concatenated dimension lengths
-    for t in tensors:
+    for i, t in enumerate(tensors):
         if not is_supported_tensor(t):
+            logger.warn("%d-th tensor of %s is not supported", i, t)
             return False
 
     return True
@@ -1193,7 +1231,10 @@ register_supported(PrimIDs.CAT, cat, _cat_check)
 
 
 def _stride_order_check(a: TensorProxy, order: Sequence[int]) -> bool:
-    return is_supported_tensor(a)
+    if is_supported_tensor(a):
+        return True
+    logger.warn("%s is not supported", a)
+    return False
 
 
 def stride_order(a: TensorProxy, order: Sequence[int], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
@@ -1208,10 +1249,19 @@ register_supported(PrimIDs.STRIDE_ORDER, stride_order, _stride_order_check)
 # NOTE nvFuser does not support dilation > 0
 def _pad_check(a: TensorProxy, padding_value: Number, padding_config: tuple[int, int, int]) -> bool:
     if not is_supported_tensor(a):
+        logger.warn("%s is not supported", a)
         return False
 
     for lo, hi, dilation in padding_config:
         if dilation > 0:
+            logger.warn(
+                "padding_config=%s's (lo=%d, hi=%d, dilation=%d) is not supported due to dilation=%d",
+                padding_config,
+                lo,
+                hi,
+                dilation,
+                dilation,
+            )
             return False
 
     return True
@@ -1247,7 +1297,10 @@ register_supported(PrimIDs.PAD, pad, _pad_check)
 
 
 def _reshape_check(a: TensorProxy, shape: list[int]) -> bool:
-    return is_supported_tensor(a)
+    if is_supported_tensor(a):
+        return True
+    logger.warn("%s is not supported", a)
+    return False
 
 
 def reshape(a: TensorProxy, shape: list[int, NumberProxy, ...], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
@@ -1268,12 +1321,14 @@ def _slice_check(
     a: TensorProxy, start_indices: Sequence[int], end_indices: Sequence[int], strides: Sequence[int] | None = None
 ) -> bool:
     if not is_supported_tensor(a):
+        logger.warn("%s is not supported", a)
         return False
 
     # Checks that strides are not specified or all are explicitly set to 1
     if strides is not None:
         for stride in strides:
             if stride != 1:
+                logger.warn("stride of %s include unsupported value of %d", strides, stride)
                 return False
 
     return True
@@ -1307,7 +1362,10 @@ register_supported(PrimIDs.SLICE, nv_slice, _slice_check)
 
 
 def _squeeze_check(a: TensorProxy, /, dims: Sequence[int]) -> bool:
-    return is_supported_tensor(a)
+    if is_supported_tensor(a):
+        return True
+    logger.warn("%s is not supported", a)
+    return False
 
 
 # NOTE nvFuser's squeeze operation requires the shape of the tensor be specified
@@ -1351,7 +1409,10 @@ register_supported(PrimIDs.TAKE_ALONG_AXIS, take_along_axis, _take_check)
 
 
 def _transpose_check(a: TensorProxy, /, permutation: Sequence[int]) -> bool:
-    return is_supported_tensor(a)
+    if is_supported_tensor(a):
+        return True
+    logger.warn("%s is not supported", a)
+    return False
 
 
 def transpose(a: TensorProxy, /, permutation: Sequence[int], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
@@ -1369,7 +1430,11 @@ register_supported(PrimIDs.TRANSPOSE, transpose, _transpose_check)
 
 # TODO Check that the tensor dtype is supported by nvFuser -- extract to tensor_supported()?
 def _elementwise_unary_check(a: Number | TensorProxy) -> bool:
-    return is_supported_tensor_or_number(a)
+    if is_supported_tensor_or_number(a):
+        return True
+    else:
+        logger.warn("%s is not supported")
+        return False
 
 
 def _elementwise_nnary_check(args: tuple[TensorProxy]) -> bool:
@@ -2053,9 +2118,13 @@ register_supported(PrimIDs.WHERE, where, _elementwise_ternary_check)
 
 # TODO Checks that the dtype is supported by nvFuser
 def _reduction_check(a: TensorProxy, dims: Sequence[int]) -> bool:
-    return is_supported_tensor(a, allow_low_precision_floats=False) and not any(
+    if is_supported_tensor(a, allow_low_precision_floats=False) and not any(
         isinstance(dim, NumberProxy) for dim in dims
-    )
+    ):
+        return True
+    else:
+        logger.warn("%s is not supported and/or %s is not supported due to {NumberProxy}", a, dims)
+        return False
 
 
 # TODO Review if this accepts empty dim sequences
@@ -2132,7 +2201,10 @@ register_supported(PrimIDs.SUM, sum, _reduction_check)
 # NOTE https://github.com/NVIDIA/Fuser/pull/121
 #   nvFuser's var operation does not support 0-dim inputs
 def _var_check(a: TensorProxy, dims: Sequence[int], *, correction: Number) -> bool:
-    return is_supported_tensor(a, allow_low_precision_floats=False) and len(a.shape) > 0
+    if is_supported_tensor(a, allow_low_precision_floats=False) and len(a.shape) > 0:
+        return True
+    logger.warn("%s is not supported or a.ndim=%d is not supported", a, a.ndim)
+    return False
 
 
 # TODO Add type annotations
@@ -2159,12 +2231,15 @@ def _var_mean_check(
     correction: None | int = None,
 ) -> bool:
     if not is_supported_tensor(a, allow_low_precision_floats=False):
+        logger.warn("%s is not supported", a)
         return False
 
     if len(a.shape) == 0:
+        logger.warn("0-dim tensor of %s is not supported", a)
         return False
 
     if dtypes.is_complex_dtype(dtypes.to_dtype(a)):
+        logger.warn("Complex dtype of a %s is not supported", a.dtype)
         return False
 
     return True
@@ -2380,9 +2455,11 @@ def remove_redundant_casts(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
 def _linear_check(a: TensorProxy, b: TensorProxy, bias: TensorProxy | None) -> bool:
     enable_linear: None | bool = get_compile_option("nv_enable_linear", "Enable nvFuser linear.")
     if not enable_linear:
+        logger.warn("linear is not enabled: nv_enable_linear: %s", enable_linear)
         return False
     # Verify linear inputs and bias (optional) are supported tensors.
     if not are_supported_tensors(a, b) or (bias is not None and not is_supported_tensor(bias)):
+        logger.warn("%s and/or %s are not supported or %s is not supported", a, b, bias)
         return False
     return True
 
@@ -2411,6 +2488,9 @@ def _matmul_check(
     enable_matmul: None | bool = get_compile_option("nv_enable_matmul", "Enable nvFuser matmul.")
 
     if not enable_matmul or not are_supported_tensors(a, b):
+        logger.warn(
+            "nvfuser matmul is not enabled: nv_enable_matmul=%s or %s and/or %s are not supported", enable_matmul, a, b
+        )
         return False
     return True
 
@@ -2437,6 +2517,7 @@ def _shape_check(
     # updated to ensure that the fused region consumes all NumberProxy within
     # and not leak it out as a fusion output, since nvfuser cannot yet produce
     # scalar outputs.
+    logger.warn("shape op is not supported")
     return False
 
 
@@ -2604,22 +2685,31 @@ def _scaled_dot_product_flash_attention_check(
 ) -> bool:
     # fd.ops.sdpfa_fwd and fd.ops.sdpfa_bwd are adding in versions 0.2.9 and 0.2.10 respectively.
     if nvfuser_version() < LooseVersion("0.2.10"):
+        logger.warn("nvFuser needs to be >= 0.2.10 but %s", nvfuser_version())
         return False
 
     # SDPA requires nvfuser version 0.2.27 or higher for torch 2.7.0 or higher.
     if LooseVersion(torch.__version__) >= LooseVersion("2.7.0") and nvfuser_version() < LooseVersion("0.2.27"):
+        logger.warn(
+            "PyTorch and nvFuser need to be >= 2.7.0 and 0.2.27 respectively but %s and %s",
+            torch.__version__,
+            nvfuser_version(),
+        )
         return False
 
     enable_sdpa: None | bool = get_compile_option("nv_enable_sdpa", "Enable nvFuser flash attention SDPA.")
 
     if not enable_sdpa:
+        logger.warn("nvFuser sdpa is not enabled: nv_enable_sdpa=%s", enable_sdpa)
         return False
 
     # Flash attn does not support attn_mask currently.
     if attn_mask is not None:
+        logger.warn("attn_mask is not supported")
         return False
 
     if not are_supported_tensors(query, key, value):
+        logger.warn("%s, %s, and/or %s are not supported", query, key, value)
         return False
 
     # FP64 is not supported by flash attention
@@ -2629,7 +2719,10 @@ def _scaled_dot_product_flash_attention_check(
 
     # nvFuser only implements flash attention currently.
     backend = _fused_sdp_choice(query, key, value, None, dropout_p, is_causal, scale)
-    return backend == SpdaBackend.FLASH_ATTENTION
+    if backend == SpdaBackend.FLASH_ATTENTION:
+        return True
+    logger.warn("sdpa only supports SpdaBackend.FLASH_ATTENTION but %s", backend)
+    return False
 
 
 # SDPA execution_transform -- calls nv_sdpfa_fwd operator registered above
@@ -2700,6 +2793,7 @@ def _embedding_check(
     sparse: None | bool,
 ) -> bool:
     if nvfuser_version() < LooseVersion("0.2.25"):
+        logger.warn("nvFuser needs to be >= 0.2.25 but %s}", nvfuser_version())
         return False
     enable_embedding: None | bool = get_compile_option("nv_enable_embedding", "Enable nvFuser embedding.")
     if enable_embedding is not None:
@@ -2708,6 +2802,7 @@ def _embedding_check(
         )
     # Verify input and weight are supported tensors.
     if not are_supported_tensors(input, weight) or (weight.ndim != 2):
+        logger.warn("%s and/or %s are not supported or %d != 2", input, weight, weight.ndim)
         return False
     return True
 
@@ -2768,31 +2863,39 @@ def _cross_entropy_check(
     *args,
 ) -> bool:
     if nvfuser_version() < LooseVersion("0.2.10"):
+        logger.warn("nvFuser needs to be >= 0.2.10 but %s", nvfuser_version())
         return False
 
     # TODO: support higher dim inputs
     if a.ndim != 2 or a.ndim - 1 != target.ndim:
+        logger.warn("a.ndim of %d is not 2 or a.ndim-1=%d != target.ndim=%d", a.ndim, a.ndim - 1, target.ndim)
         return False
 
     if a.shape[0] != target.shape[0]:
+        logger.warn("a.shape[0]=%d does not match target.shape[0]=%d", a.shape[0], target.shape[0])
         return False
 
     # input must be cast to float32
     # since we use fmax which only supports float32
     if dtypes.to_torch_dtype(a.dtype) != torch.float32:
+        logger.warn("Input dtype needs to be float32 but %s", a.dtype)
         return False
 
     # We only optimize for the following cases
     if reduction != "mean":
+        logger.warn('reduction of "mean" is only supported but %s', reduction)
         return False
 
     if ignore_index >= 0:
+        logger.warn("ignore_index of %d is not supported", ignore_index)
         return False
 
     if any(x is not None for x in (weight, size_average, reduce)):
+        logger.warn("weight=%s, size_average=%s, and/or reduce=%s should be None", weight, size_average, reduce)
         return False
 
     if label_smoothing != 0.0:
+        logger.warn("cross entropy with label_smoothing=%f is not supported", label_smoothing)
         return False
 
     return True
@@ -3021,8 +3124,10 @@ def _topk_check(
     a: TensorProxy, /, k: int, dim: int | None = None, largest: Number = 1, sorted: Number = 1, *args
 ) -> bool:
     if a.ndim <= 0:
+        logger.warn("Top-K does not support a.ndim=%d <= 0", a.ndim)
         return False
     if dim >= a.ndim or (dim is not None and dim < -a.ndim):
+        logger.warn("Top-K does not support dim=%d >= a.ndim=%d or dim=%d < -a.ndim=%d", dim, a.ndim, dim, -a.ndim)
         return False
     return True
 

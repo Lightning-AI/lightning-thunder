@@ -78,6 +78,7 @@ The compiled function ``jitted_foo`` takes and returns PyTorch tensors, just lik
    Install <fundamentals/installation>
    Hello World <fundamentals/hello_world>
    Using examine <fundamentals/examine>
+   Logging <fundamentals/logging>
 
 .. toctree::
    :maxdepth: 1
