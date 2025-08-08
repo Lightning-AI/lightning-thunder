@@ -162,28 +162,13 @@ def dce(trace: Trace, needed_proxies: None | set[Variable] = None) -> Trace:
         else:
             needed = False
 
-        # NOTE This block is run even if we know we're preserving the operation, because it
-        #   may mark some of the operation's outputs as unused
-        some_unused = False
         for out in bsym.flat_proxy_outs:
             if variableify(out) in needed_proxies and producer_map[out] == bsym:
                 needed = True
-            else:
-                some_unused = True
+                break
 
         if needed:
             nbsym: BoundSymbol = bsym
-
-            # Replaces unused Proxy outputs with None
-            if some_unused:
-
-                def _helper(x):
-                    if isinstance(x, Proxy) and (variableify(x) not in needed_proxies or producer_map[x] != bsym):
-                        return None
-                    return x
-
-                nbsym_output = tree_map(_helper, bsym.output)
-                nbsym = bsym.from_bsym(output=nbsym_output)
 
             # Eliminates no-op subsymbols
             # NOTE In general editing subsymbols doesn't do anything, but no-op subsymbols are a pain
