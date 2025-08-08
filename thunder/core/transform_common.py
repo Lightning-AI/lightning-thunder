@@ -76,9 +76,9 @@ def _inplace_copy_sanity_check(extrace: Trace):
         [t2] = nvFusion0(x, y)
             # result = prims.mul(x, y)
             # a = prims.copy_(result, x)
-            # t2 = prims.add(a, y) or t2 = prims.add(x, y)
+            # t2 = prims.add(x, y)
 
-    Do not use the `copy_to` variable `x` or `a` after it has been updated, use the `copy_from` variable `result` instead to reflect the dependency:
+    Do not use the `copy_to` variable `x` after it has been updated, use the `copy_from` variable `result` instead to reflect the dependency:
 
     .. code-block:: python
 
@@ -96,7 +96,6 @@ def _inplace_copy_sanity_check(extrace: Trace):
         inplace_copy_idx = ((idx, sym) for idx, sym in enumerate(bsym.subsymbols) if sym.sym.id == prims.PrimIDs.COPY_)
         for idx, subbsym in inplace_copy_idx:
             copy_to_arg = subbsym.flat_args[1]
-            copy_to_out = subbsym.output
 
             def check(inp, log_str):
                 if inp is not None and inp in consumer_dict:
@@ -108,7 +107,6 @@ def _inplace_copy_sanity_check(extrace: Trace):
                         )
 
             check(copy_to_arg, "'copy_to' argument")
-            check(copy_to_out, "output")
 
 
 def remove_duplicate_number_proxies(bsyms: Sequence[BoundSymbol]) -> list[BoundSymbol]:
