@@ -994,8 +994,7 @@ def test_moe_infer_scatter(executor, device: str, dtype: dtypes.dtype):
     idxs = logits.argsort()
 
     # NOTE nv_enable_scatter to allow scatter operation to go through nvfuser
-    # jfoo = thunder.jit(foo, nv_enable_scatter=True)
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.jit(foo, nv_enable_scatter=True)
 
     inputs = [hidden_states, idxs, topk_weight]
 
