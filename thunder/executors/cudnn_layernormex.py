@@ -400,7 +400,7 @@ def register_rms_norm() -> None:
         Y.set_output(True).set_data_type(torch_to_cudnn_dtype(a_4d.dtype)).set_stride(a_4d.stride)
         inv_var.set_output(True).set_data_type(torch_to_cudnn_dtype(torch.float32))
 
-        graph.build([cudnn.heur_mode.A])
+        graph.build([cudnn.heur_mode.A, cudnn.heur_mode.FALLBACK])
 
         return input, scale, bias, epsilon, (Y, inv_var), graph
 
@@ -542,7 +542,7 @@ def register_rms_norm() -> None:
         DX.set_output(True).set_data_type(torch_to_cudnn_dtype(a_4d.dtype))
         DWeight.set_output(True).set_data_type(torch_to_cudnn_dtype(weight_4d.dtype))
 
-        bwd_graph.build([cudnn.heur_mode.A])
+        bwd_graph.build([cudnn.heur_mode.A, cudnn.heur_mode.FALLBACK])
 
         return DY, X_bwd, weight_bwd, bias_bwd, inv_var_bwd, DX, DWeight, Dbias, bwd_graph
 
@@ -599,11 +599,6 @@ def register_rms_norm() -> None:
             DWeight: grad_weight,
             Dbias: grad_bias,
         }
-        import warnings
-
-        for k, v in tensor_map.items():
-            msg = f"{type(v)}"
-            warnings.warn(msg)
         bwd_graph.execute(tensor_map, workspace)
 
         return grad_a, grad_weight if not no_weight_grad else None
