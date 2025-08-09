@@ -102,7 +102,7 @@ def _make_cudnn_layer_norm_graph(a_4d, weight_4d, bias_4d, *, is_inference: bool
 # input tensor shape: N, C, (D), H, W
 # normalized shape:  (C, (D), H, W)
 # convert all tensor shapes to above format
-def _transform_layer_norm_inputs(a, normalized_shape, weight, bias):
+def _transform_layer_norm_inputs(a, normalized_shape, weight, bias=None):
     elements_to_normalize = np.prod(normalized_shape)
     batch_size = np.prod(a.shape[: -len(normalized_shape)], dtype=int)
 
@@ -112,7 +112,11 @@ def _transform_layer_norm_inputs(a, normalized_shape, weight, bias):
     weight_4d = CudnnTensorAttributes(
         (1, elements_to_normalize, 1, 1), assumed_stride, weight.dtype, weight.device.index
     )
-    bias_4d = CudnnTensorAttributes((1, elements_to_normalize, 1, 1), assumed_stride, bias.dtype, bias.device.index)
+    bias_4d = (
+        CudnnTensorAttributes((1, elements_to_normalize, 1, 1), assumed_stride, bias.dtype, bias.device.index)
+        if bias is not None
+        else None
+    )
 
     return a_4d, weight_4d, bias_4d
 
@@ -358,9 +362,10 @@ def cudnn_layer_norm_grad_transform(
 def register_rms_norm() -> None:
     import cudnn
 
+    # PyTorch rms_norm does not have bias term.
     @make_cacheable_cudnn_graph_inputs
     @lru_cache(maxsize=1024)
-    def _make_cudnn_rms_norm_graph(a_4d, weight_4d, bias_4d):
+    def _make_cudnn_rms_norm_graph(a_4d, weight_4d):
         graph = cudnn.pygraph(intermediate_data_type=cudnn.data_type.FLOAT, compute_data_type=cudnn.data_type.FLOAT)
 
         input = graph.tensor(
@@ -375,12 +380,6 @@ def register_rms_norm() -> None:
             stride=weight_4d.stride,
             data_type=torch_to_cudnn_dtype(weight_4d.dtype),
         )
-        bias = graph.tensor(
-            name="bias",
-            dim=bias_4d.size,
-            stride=bias_4d.stride,
-            data_type=torch_to_cudnn_dtype(bias_4d.dtype),
-        )
         epsilon = graph.tensor(
             name="epsilon",
             dim=[1, 1, 1, 1],
@@ -394,7 +393,7 @@ def register_rms_norm() -> None:
             norm_forward_phase=cudnn.norm_forward_phase.TRAINING,
             input=input,
             scale=scale,
-            bias=bias,
+            bias=None,
             epsilon=epsilon,
         )
         Y.set_output(True).set_data_type(torch_to_cudnn_dtype(a_4d.dtype)).set_stride(a_4d.stride)
@@ -402,7 +401,7 @@ def register_rms_norm() -> None:
 
         graph.build([cudnn.heur_mode.A, cudnn.heur_mode.FALLBACK])
 
-        return input, scale, bias, epsilon, (Y, inv_var), graph
+        return input, scale, epsilon, (Y, inv_var), graph
 
     def rms_norm_checker(a, normalized_shape, weight=None, eps=None) -> bool:
         if cudnn is None:
@@ -412,12 +411,10 @@ def register_rms_norm() -> None:
         t_dtype = to_torch_dtype(a.dtype)
         if weight is None:
             weight = torch.empty(normalized_shape, dtype=t_dtype, device=t_device)
-        bias = torch.empty(normalized_shape, dtype=t_dtype, device=t_device)
-        a_4d, weight_4d, bias_4d = _transform_layer_norm_inputs(a, normalized_shape, weight, bias)
+        a_4d, weight_4d, _ = _transform_layer_norm_inputs(a, normalized_shape, weight, None)
         try:
-            _make_cudnn_rms_norm_graph(a_4d, weight_4d, bias_4d)
+            _make_cudnn_rms_norm_graph(a_4d, weight_4d)
         except Exception as e:
-            print(f"!!! Failing to building RMSNorm {e}")
             return False
         else:
             return True
@@ -430,11 +427,10 @@ def register_rms_norm() -> None:
     ) -> torch.Tensor:
         if weight is None:
             weight = torch.ones(normalized_shape, dtype=a.dtype, device=a.device)
-        bias_tensor = torch.zeros(normalized_shape, dtype=a.dtype, device=a.device)
         if eps is None:
             eps = 1.19209e-07
-        a_4d, weight_4d, bias_4d = _transform_layer_norm_inputs(a, normalized_shape, weight, bias_tensor)
-        input, scale, bias, epsilon, (Y, inv_var), graph = _make_cudnn_rms_norm_graph(a_4d, weight_4d, bias_4d)
+        a_4d, weight_4d, _ = _transform_layer_norm_inputs(a, normalized_shape, weight, None)
+        input, scale, epsilon, (Y, inv_var), graph = _make_cudnn_rms_norm_graph(a_4d, weight_4d)
         Y_actual = torch.empty_like(a)
         inv_var_actual = torch.empty((a.size(0), 1, 1, 1), device="cuda", dtype=torch.float32)
         epsilon_cpu = torch.full((1, 1, 1, 1), eps, dtype=torch.float32, device="cpu")
@@ -442,7 +438,7 @@ def register_rms_norm() -> None:
         cudnn_to_torch_tensor = {
             input: a,
             scale: weight,
-            bias: bias_tensor,
+            # bias: bias_tensor,
             epsilon: epsilon_cpu,
             Y: Y_actual,
             inv_var: inv_var_actual,
@@ -467,11 +463,10 @@ def register_rms_norm() -> None:
     ) -> tuple[torch.Tensor, torch.Tensor]:
         if weight is None:
             weight = torch.ones(normalized_shape, dtype=a.dtype, device=a.device)
-        bias_tensor = torch.zeros(normalized_shape, dtype=a.dtype, device=a.device)
         if eps is None:
             eps = 1.19209e-07
-        a_4d, weight_4d, bias_4d = _transform_layer_norm_inputs(a, normalized_shape, weight, bias_tensor)
-        input, scale, bias, epsilon, (Y, inv_var), graph = _make_cudnn_rms_norm_graph(a_4d, weight_4d, bias_4d)
+        a_4d, weight_4d = _transform_layer_norm_inputs(a, normalized_shape, weight)
+        input, scale, epsilon, (Y, inv_var), graph = _make_cudnn_rms_norm_graph(a_4d, weight_4d)
         Y_actual = torch.empty_like(a)
         inv_var_actual = torch.empty((a.size(0), 1, 1, 1), device="cuda", dtype=torch.float32)
         epsilon_cpu = torch.full((1, 1, 1, 1), eps, dtype=torch.float32, device="cpu")
@@ -479,7 +474,6 @@ def register_rms_norm() -> None:
         cudnn_to_torch_tensor = {
             input: a,
             scale: weight,
-            bias: bias_tensor,
             epsilon: epsilon_cpu,
             Y: Y_actual,
             inv_var: inv_var_actual,
@@ -492,7 +486,6 @@ def register_rms_norm() -> None:
         grad_4d,
         a_4d,
         weight_4d,
-        bias_4d,
         inv_var_4d,
     ):
         bwd_graph = cudnn.pygraph(
@@ -517,12 +510,6 @@ def register_rms_norm() -> None:
             dim=weight_4d.size,
             stride=weight_4d.stride,
             data_type=torch_to_cudnn_dtype(weight_4d.dtype),
-        )
-        bias_bwd = bwd_graph.tensor(
-            name="bias",
-            dim=bias_4d.size,
-            stride=bias_4d.stride,
-            data_type=torch_to_cudnn_dtype(bias_4d.dtype),
         )
         inv_var_bwd = bwd_graph.tensor(
             name="inv_var",
@@ -568,10 +555,9 @@ def register_rms_norm() -> None:
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
         if no_weight_grad := weight is None:
             weight = torch.ones(normalized_shape, dtype=a.dtype, device=a.device)
-        bias_tensor = torch.zeros(normalized_shape, dtype=a.dtype, device=a.device)
 
-        grad_4d, _, _ = _transform_layer_norm_inputs(grad, normalized_shape, weight, bias_tensor)
-        a_4d, weight_4d, bias_4d = _transform_layer_norm_inputs(a, normalized_shape, weight, bias_tensor)
+        grad_4d, _, _ = _transform_layer_norm_inputs(grad, normalized_shape, weight)
+        a_4d, weight_4d, bias_4d = _transform_layer_norm_inputs(a, normalized_shape, weight)
 
         inv_var_4d = CudnnTensorAttributes(inv_var.shape, inv_var.stride(), inv_var.dtype, inv_var.device.index)
 
@@ -579,13 +565,11 @@ def register_rms_norm() -> None:
             grad_4d,
             a_4d,
             weight_4d,
-            bias_4d,
             inv_var_4d,
         )
 
         grad_a = torch.empty_like(a)
         grad_weight = torch.empty_like(weight)
-        grad_bias = torch.empty_like(bias_tensor)
 
         workspace = torch.empty(bwd_graph.get_workspace_size(), device="cuda", dtype=torch.uint8)
 
@@ -593,11 +577,10 @@ def register_rms_norm() -> None:
             DY: grad,
             X_bwd: a,
             weight_bwd: weight,
-            bias_bwd: bias_tensor,
             inv_var_bwd: inv_var,
             DX: grad_a,
             DWeight: grad_weight,
-            Dbias: grad_bias,
+            Dbias: None,
         }
         bwd_graph.execute(tensor_map, workspace)
 
