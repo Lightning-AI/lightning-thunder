@@ -1,3 +1,6 @@
+# just reuse the base requirements
+-r base.txt
+
 ipython[all] ~=8.37.0
 numpy
 liger-kernel == 0.4.0
