@@ -81,7 +81,7 @@ jobs:
         run: |
           pip install -e . -U \
             ${PIP_EXTRA_FLAG} -r requirements/test.txt \
-            --index-url=${TORCH_URL}
+            --extra-index-url=${TORCH_URL}
           # download script and adjust torch versions in requirements
           python -m wget https://raw.githubusercontent.com/Lightning-AI/utilities/main/scripts/adjust-torch-versions.py
           for fpath in `ls requirements/*.txt`; do \
