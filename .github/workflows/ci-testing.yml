@@ -85,6 +85,7 @@ jobs:
           pip list
 
       - name: re-Install dependencies
+        if: matrix.requires != 'nightly'
         run: |
           pip install -q wget
           # download script and adjust torch versions in requirements
