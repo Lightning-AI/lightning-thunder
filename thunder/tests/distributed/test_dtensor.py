@@ -1,5 +1,6 @@
 import unittest
 from itertools import product
+from collections.abc import Sequence
 
 import pytest
 import torch
@@ -17,6 +18,10 @@ from torch.distributed.tensor.placement_types import Placement, Shard, Replicate
 from torch.testing._internal import common_utils
 
 from thunder.tests.distributed.helper import executors_map
+from thunder.tests.opinfos import OpInfo, SampleInput, opinfos, reshape_opinfo
+import thunder.core.dtypes as dtypes
+from thunder.core.utils import tree_map, tree_flatten
+from thunder.core.transforms import grad
 
 
 # NOTE: We run all these similar functions seperately
@@ -27,6 +32,8 @@ functions_to_test = {
     "x.mul(w)": lambda x, w: torch.Tensor.mul(x, w),
     "x * w": lambda x, w: x * w,
 }
+
+dtensor_supported_ops = (reshape_opinfo,)
 
 
 @unittest.skipUnless(
@@ -160,6 +167,96 @@ class DTensorTest(DistributedParallelTestCase):
 
         with pytest.raises(RuntimeError, match="has changed for cotangent between tracing and runtime"):
             torch.autograd.grad(actual, (in_dtensor, w_dtensor), g_o)
+
+    @common_utils.parametrize(
+        "op, executor",
+        product(dtensor_supported_ops, tuple(executors_map.keys())),
+        lambda op, executor: op.name + "_" + executor,
+    )
+    def test_dtensor_opinfo(self, op: OpInfo, executor):
+        num_devices = self.world_size
+        mesh = DeviceMesh("cuda", list(range(num_devices)))
+
+        def to_dtensor(x):
+            if isinstance(x, torch.Tensor):
+                return distribute_tensor(x, mesh, [Replicate()])
+            return x
+
+        for sample in op.sample_inputs("cpu", dtypes.float32, requires_grad=True):
+            args = tree_map(to_dtensor, sample.args)
+            kwargs = tree_map(to_dtensor, sample.kwargs)
+            torch_op = op.torch_reference
+            torch_result = torch_op(*args, **kwargs)
+            thunder_op = thunder.jit(op.op, executors=executors_map[executor].executors_list())
+            thunder_result = thunder_op(*args, **kwargs)
+            torch.testing.assert_close(thunder_result, torch_result)
+
+            def is_output_differentiable(x):
+                # grad_fn is set only if one of the input `requires_grad=True`
+                # and the op is differentiable.
+                # Example:
+                # >>> x = torch.ones(3, requires_grad=True)
+                # >>> y = torch.ones(3, requires_grad=False)
+                # >>> (x + x).grad_fn  # <AddBackward0 object at 0x7f0502edcf40>
+                # >>> (y + y).grad_fn  # None
+                # >>> (y + x).grad_fn  # <AddBackward0 object at 0x7f0502e21060>
+                # >>> (x < 1).grad_fn  # None (non-differentiable op)
+                # Op with differentiable and non-differentiable outputs.
+                # >>> torch.topk(x, k=2)
+                # torch.return_types.topk(
+                # values=tensor([1., 1.], grad_fn=<TopkBackward0>),
+                # indices=tensor([0, 1]))
+                # >>> torch.topk(torch.ones(3, requires_grad=False), k=2)
+                # torch.return_types.topk(
+                # values=tensor([1., 1.]),
+                # indices=tensor([0, 1]))
+                return x.grad_fn is not None or is_returning_self(x)
+
+            def is_returning_self(x):
+                if x.is_leaf and x.requires_grad:
+                    return True
+                return False
+
+            def filter_differentiable_outputs(outputs):
+                if isinstance(outputs, torch.Tensor):
+                    # Otherwise `filter` below will
+                    # iterate over the Tensor data.
+                    outputs = [outputs]
+
+                return list(filter(is_output_differentiable, outputs))
+
+            # Computes PyTorch (competition) result
+            torch_flats, spec = tree_flatten((args, kwargs))
+            torch_result = filter_differentiable_outputs(torch_result)
+            if torch_result == []:
+                raise RuntimeError(
+                    f"phantom_grad: Expected atleast 1 differentiable output. If {op.name} is non-differentiable, set op.supports_grad=False."
+                )
+
+            grads = []
+            assert isinstance(torch_result, torch.Tensor) or isinstance(torch_result, Sequence), (
+                "Expected a single torch tensor or a sequence of torch tensors when testing phantom grad torch consistency"
+            )
+            if isinstance(torch_result, Sequence):
+                for x in torch_result:
+                    assert isinstance(x, torch.Tensor), (
+                        "Expected a single torch tensor or a sequence of torch tensors when testing phantom grad torch consistency"
+                    )
+                    if is_output_differentiable(x):
+                        grads.append(torch.ones_like(x))
+            else:
+                if is_output_differentiable(torch_result):
+                    grads = [torch.ones_like(torch_result)]
+
+            torch_tensors_requiring_grad = tuple(
+                f for f in torch_flats if isinstance(f, torch.Tensor) and f.requires_grad
+            )
+            torch_grad_result = torch.autograd.grad(torch_result, torch_tensors_requiring_grad, grads)
+
+            thunder_result = thunder_op(*args, **kwargs)
+            thunder_result = filter_differentiable_outputs(thunder_result)
+            thunder_grad_result = torch.autograd.grad(thunder_result, torch_tensors_requiring_grad, grads)
+            torch.testing.assert_close(thunder_grad_result, torch_grad_result)
 
 
 common_utils.instantiate_parametrized_tests(DTensorTest)
