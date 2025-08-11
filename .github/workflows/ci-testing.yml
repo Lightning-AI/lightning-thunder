@@ -82,18 +82,11 @@ jobs:
           pip install -e . -U \
             ${PIP_EXTRA_FLAG} -r requirements/test.txt \
             --extra-index-url=${TORCH_URL}
-          # download script and adjust torch versions in requirements
-          python -m wget https://raw.githubusercontent.com/Lightning-AI/utilities/main/scripts/adjust-torch-versions.py
-          for fpath in `ls requirements/*.txt`; do \
-            python ./adjust-torch-versions.py $fpath ${{ matrix.pytorch-version }}; \
-          done
-          # re-install with adjusted torch versions
-          pip install ${PIP_EXTRA_FLAG} -r requirements/devel.txt \
-            --index-url=${TORCH_URL}
           pip list
 
       - name: re-Install dependencies
         run: |
+          pip install -q wget
           # download script and adjust torch versions in requirements
           python -m wget https://raw.githubusercontent.com/Lightning-AI/utilities/main/scripts/adjust-torch-versions.py
           for fpath in `ls requirements/*.txt`; do \
