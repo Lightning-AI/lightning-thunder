@@ -76,19 +76,30 @@ jobs:
             echo "TORCH_URL=$TORCH_URL_STABLE" >> $GITHUB_ENV
           fi
 
+      - name: Install Mac specific dependencies
+        if: runner.os == 'macOS'
+        run: brew install libomp
+
       - name: Install package & dependencies
         run: |
-          if [[ "${{ runner.os }}" == "macOS" ]]; then
-             brew install libomp
-          fi
-          pip --version
-          pip install -U \
-            ${PIP_EXTRA_FLAG} torch torchvision torchaudio \
-            --index-url=${TORCH_URL}
           pip install -e . -U \
-            ${PIP_EXTRA_FLAG} -r requirements/test.txt
+            ${PIP_EXTRA_FLAG} -r requirements/test.txt \
+            --extra-index-url=${TORCH_URL}
           pip list
-        shell: bash
+
+      - name: re-Install dependencies
+        if: matrix.requires != 'nightly'
+        run: |
+          pip install -q wget
+          # download script and adjust torch versions in requirements
+          python -m wget https://raw.githubusercontent.com/Lightning-AI/utilities/main/scripts/adjust-torch-versions.py
+          for fpath in `ls requirements/*.txt`; do \
+            python ./adjust-torch-versions.py $fpath ${{ matrix.pytorch-version }}; \
+          done
+          # re-install with adjusted torch versions
+          pip install ${PIP_EXTRA_FLAG} -r requirements/devel.txt \
+            --extra-index-url=${TORCH_URL}
+          pip list
 
       - name: Testing Local
         if: matrix.suite == 'core'
