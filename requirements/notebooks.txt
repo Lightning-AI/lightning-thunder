@@ -1,5 +1,5 @@
 ipython[all] ~=8.37.0
 numpy
 liger-kernel == 0.4.0
-cuda-python
+cuda-python >=12.0, <=13.0.0  # todo
 litgpt == 0.5.1
