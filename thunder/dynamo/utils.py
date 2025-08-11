@@ -462,6 +462,18 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
         did_run, opt_split_reason = try_execute_thunder_symbol(method, node)
         return did_run, opt_split_reason
 
+    # checks einops operators
+    if hasattr(target, "__module__") and target.__module__ == "einops.einops":
+        from thunder.executors.torchex import has_einops
+
+        if has_einops:
+            import einops
+
+            # According to https://github.com/Lightning-AI/lightning-thunder/blob/4f92190d/thunder/tests/test_einops.py
+            einops_ops = (einops.reduce, einops.rearrange, einops.repeat, einops.einsum)
+            if target in einops_ops:
+                return True, None
+
     # We found no automatic fallback registration and no mapping to thunder symbol.
     split_reason = SplitReason(
         SplitReasonType.MISSING_OP_SUPPORT,
@@ -518,7 +530,12 @@ def _get_storage_shape(t: torch.Tensor):
 
 def _get_min_and_val(t: torch.Tensor) -> tuple[Number | None, Number | None]:
     # We assume that for TensorSubclass, `aminmax` is not supported which is true for FakeTensor and DTensor.
-    if (isinstance(t, torch.Tensor) and type(t) is not torch.Tensor) or t.device.type == "meta" or t.numel() == 0:
+    if (
+        (isinstance(t, torch.Tensor) and type(t) is not torch.Tensor)
+        or t.device.type == "meta"
+        or t.numel() == 0
+        or t.dtype.is_complex
+    ):
         return None, None
     if t.dtype in (torch.float8_e4m3fn, torch.float8_e4m3fnuz, torch.float8_e5m2, torch.float8_e5m2fnuz):
         t = t.to(torch.float32)
