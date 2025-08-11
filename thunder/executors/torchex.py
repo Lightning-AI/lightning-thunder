@@ -1359,9 +1359,6 @@ def _argsort_transform(a: TensorProxy, /, dim: int | None = None, descending: bo
     return argsort(a, dim=dim, descending=descending, stable=stable)
 
 
-# Register the implementation
-_register_implementation(prims.argsort, checker=_always_executable, execution_transform=_argsort_transform)
-
 _register_implementation(ltorch.argsort, checker=_always_executable, execution_transform=_argsort_transform)
 
 #
