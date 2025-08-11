@@ -17,6 +17,7 @@ This benchmark implements the methodology from the SemiAnalysis article: ["AMD v
 ## Standard Benchmark Scenarios
 
 ### 1. Summarization (Prefill-Heavy) 4k -> 1k
+
 - **Configuration**: 4,000 input → 1,000 output tokens
 - **Workload Balance**: 80% prefill, 20% decode computational cost
 - **Hardware Focus**: Compute optimization provides maximum impact
@@ -24,6 +25,7 @@ This benchmark implements the methodology from the SemiAnalysis article: ["AMD v
 - **Target**: Primary demonstration scenario for B300 hardware
 
 ### 2. Chat (Balanced) 1k -> 1k
+
 - **Configuration**: 1,000 input → 1,000 output tokens
 - **Workload Balance**: 50% prefill, 50% decode computational cost
 - **Hardware Focus**: Mixed optimization requirements
@@ -31,6 +33,7 @@ This benchmark implements the methodology from the SemiAnalysis article: ["AMD v
 - **Target**: Baseline comparison scenario
 
 ### 3. Reasoning (Decode-Heavy) 1k -> 4k
+
 - **Configuration**: 1,000 input → 4,000 output tokens
 - **Workload Balance**: 20% prefill, 80% decode computational cost
 - **Hardware Focus**: Memory bandwidth optimization dominates
@@ -51,6 +54,7 @@ Can lower memory requirements by specifying lower number of layers! `--num-layer
 ## Compilation Modes
 
 ### Thunder Mode (Default)
+
 Thunder compilation with various executor configurations:
 
 - **Default**: Standard Thunder jit executors
@@ -59,9 +63,11 @@ Thunder compilation with various executor configurations:
 - **transformerengine_v2**: Thunder jit/fx + TransformerEngine V2 executor
 
 ### Eager Mode
+
 Pure PyTorch eager execution (no compilation)
 
 ### Inductor Mode
+
 PyTorch torch.compile
 
 ## Command Line Reference
@@ -75,6 +81,7 @@ python benchmark_inference.py [OPTIONS]
 ### Core Options
 
 #### Model Configuration
+
 ```bash
 --model-name {llama3.1-8b,llama3.1-70b,llama3.1-405b,deepseekv3-670b,llama4-scout,llama4-maverick}
     Model to benchmark (default: llama3.1-8b)
@@ -87,6 +94,7 @@ python benchmark_inference.py [OPTIONS]
 ```
 
 #### Scenario Configuration
+
 ```bash
 --scenario {summarization,chat,reasoning}
     Use standardized benchmark scenario
@@ -99,6 +107,7 @@ python benchmark_inference.py [OPTIONS]
 ```
 
 #### Custom Workload Configuration
+
 ```bash
 --batch-size INTEGER
     Batch size for inference (default: 1)
@@ -111,6 +120,7 @@ python benchmark_inference.py [OPTIONS]
 ```
 
 #### Execution Configuration
+
 ```bash
 --mode {thunder,eager,inductor}
     Compilation mode (default: thunder)
@@ -121,6 +131,7 @@ python benchmark_inference.py [OPTIONS]
 ```
 
 #### Benchmark Configuration
+
 ```bash
 --num-iterations INTEGER
     Number of benchmark iterations (default: 100)
@@ -130,6 +141,7 @@ python benchmark_inference.py [OPTIONS]
 ```
 
 #### Output Configuration
+
 ```bash
 --save-results
     Save detailed results to JSON file
@@ -143,16 +155,19 @@ python benchmark_inference.py [OPTIONS]
 ### Standard Scenarios
 
 #### Run Chat Scenario with Default Thunder
+
 ```bash
 python benchmark_inference.py --scenario chat --model-name llama3.1-8b
 ```
 
 #### Run Summarization Scenario with Thunder + Inductor
+
 ```bash
 python benchmark_inference.py --scenario summarization --mode thunder --thunder-executors inductor
 ```
 
 #### Run Reasoning Scenario with Eager Mode
+
 ```bash
 python benchmark_inference.py --scenario reasoning --mode eager --save-results
 ```
@@ -160,16 +175,19 @@ python benchmark_inference.py --scenario reasoning --mode eager --save-results
 ### Custom Configurations
 
 #### Custom Input/Output Lengths
+
 ```bash
 python benchmark_inference.py --input-length 2048 --output-length 512 --mode thunder
 ```
 
 #### Large Model with Multiple Iterations
+
 ```bash
 python benchmark_inference.py --model-name llama3.1-70b --scenario chat --num-iterations 50
 ```
 
 #### Experimentation with Different Executors
+
 ```bash
 # Thunder with TransformerEngine
 python benchmark_inference.py --scenario chat --mode thunder --thunder-executors transformerengine_v2
@@ -184,6 +202,7 @@ python benchmark_inference.py --scenario summarization --mode eager
 ### Performance Comparison
 
 #### Compare Different Modes for Same Scenario
+
 ```bash
 # Thunder (default executors)
 python benchmark_inference.py --scenario chat --mode thunder --save-results
@@ -201,23 +220,27 @@ python benchmark_inference.py --scenario chat --mode eager --save-results
 ## Output Metrics
 
 ### Throughput Metrics
+
 - **Overall Throughput**: Total tokens processed per second
 - **Prefill Throughput**: Input processing tokens per second
 - **Decode Throughput**: Output generation tokens per second
 - **Latency**: Milliseconds per generated token
 
 ### Latency Breakdown
+
 - **Time to First Token (TTFT)**: Time from input to first generated token
 - **Time Between Output Tokens (TBOT)**: Average time between consecutive output tokens
 - **Prefill Time**: Time to process input prompt
 - **Decode Time**: Time for output generation phase
 
 ### Resource Usage
+
 - **Current Memory**: GPU memory usage during inference
 - **Peak Memory**: Maximum GPU memory usage
 - **Cost per Million Tokens**: Estimated cost based on GPU pricing
 
 ### Variance Analysis
+
 - **Throughput Standard Deviation**: Consistency of performance
 - **TTFT Standard Deviation**: First token latency variance
 - **TBOT Standard Deviation**: Output token timing consistency
@@ -225,10 +248,11 @@ python benchmark_inference.py --scenario chat --mode eager --save-results
 ## Best Practices
 
 ### Performance Optimization
+
 1. **For Compute-Bound Workloads**: Use summarization scenario, focus on Thunder + specialized executors
-2. **For Memory-Bound Workloads**: Use reasoning scenario, optimize for memory bandwidth
-3. **For Balanced Workloads**: Use chat scenario for general optimization
-4. **For Baseline Comparison**: Always include eager mode results
+1. **For Memory-Bound Workloads**: Use reasoning scenario, optimize for memory bandwidth
+1. **For Balanced Workloads**: Use chat scenario for general optimization
+1. **For Baseline Comparison**: Always include eager mode results
 
 ## Troubleshooting
 
