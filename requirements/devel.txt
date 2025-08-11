@@ -1,4 +1,5 @@
 packaging
+-r base.txt
 -r test.txt
 
 datasets>=3.5.0
