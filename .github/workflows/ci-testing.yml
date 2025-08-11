@@ -91,7 +91,18 @@ jobs:
           pip install ${PIP_EXTRA_FLAG} -r requirements/devel.txt \
             --index-url=${TORCH_URL}
           pip list
-        shell: bash
+
+      - name: re-Install dependencies
+        run: |
+          # download script and adjust torch versions in requirements
+          python -m wget https://raw.githubusercontent.com/Lightning-AI/utilities/main/scripts/adjust-torch-versions.py
+          for fpath in `ls requirements/*.txt`; do \
+            python ./adjust-torch-versions.py $fpath ${{ matrix.pytorch-version }}; \
+          done
+          # re-install with adjusted torch versions
+          pip install ${PIP_EXTRA_FLAG} -r requirements/devel.txt \
+            --index-url=${TORCH_URL}
+          pip list
 
       - name: Testing Local
         if: matrix.suite == 'core'
