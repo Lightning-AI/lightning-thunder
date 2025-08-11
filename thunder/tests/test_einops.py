@@ -111,8 +111,7 @@ def test_reduce(device: str, dtype: torch.dtype):
     def f(input, expr, **kwargs):
         return einops.reduce(input, expr, **kwargs)
 
-    # TODO(#1993): don't enforce `nv_enable_bookend` when #1993 is resolved.
-    fc = thunder.jit(f, nv_enable_bookend=True)
+    fc = thunder.jit(f)
 
     for shape, expr, kwargs in cases:
         input = make_tensor(shape, dtype=dtype, device=device)

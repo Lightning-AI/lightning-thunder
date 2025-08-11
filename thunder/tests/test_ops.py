@@ -78,13 +78,20 @@ def snippet_torch_consistency(op: OpInfo, torch_op, sample: SampleInput, comp: C
         comp(thunder_result, torch_result)
     except AssertionError:
 
-        def upcast_tensors(x):
-            if isinstance(x, torch.Tensor) and torch.is_floating_point(x):
+        def upcast(x):
+            if isinstance(x, torch.Tensor) and x.is_floating_point():
                 return x.to(torch.double)
+
+            # Some torch APIs (e.g. cumsum) take a `dtype` argument and use it
+            # as the **compute** dtype. Replace that with torch.double so the
+            # reference result is more likely to be computed in double.
+            if isinstance(x, torch.dtype) and x.is_floating_point:
+                return torch.double
+
             return x
 
-        reference_args = tree_map(upcast_tensors, args)
-        reference_kwargs = tree_map(upcast_tensors, kwargs)
+        reference_args = tree_map(upcast, args)
+        reference_kwargs = tree_map(upcast, kwargs)
         reference_result = torch_op(*reference_args, **reference_kwargs)
 
         assert_closer(
@@ -418,6 +425,23 @@ def test_setitem(requires_grad):
     _test_forward_and_backward(
         fn, torch.randn(5, requires_grad=requires_grad), torch.tensor([1.0, 2.0, 3.0], requires_grad=requires_grad)
     )
+
+
+@requiresCUDA
+def test_double_setitem():
+    query_states = torch.zeros((1, 40, 16, 96), dtype=torch.bfloat16, device="cuda:0", requires_grad=False)
+    q_nope = torch.ones((1, 40, 16, 64), dtype=torch.bfloat16, device="cuda:0", requires_grad=True)
+    q_pe_1 = torch.zeros((1, 40, 16, 32), dtype=torch.bfloat16, device="cuda:0", requires_grad=True)
+
+    @thunder.jit
+    def computation(query_states, q_nope, q_pe_1):
+        # Perform the in-place setitem operation
+        query_states[:, :, :, :64] = q_nope
+        query_states[:, :, :, 64:] = q_pe_1
+        return None
+
+    computation(query_states, q_nope, q_pe_1)
+    assert query_states.sum() > 1
 
 
 # TODO: Add random operator support to OpInfo
