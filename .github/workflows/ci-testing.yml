@@ -94,7 +94,7 @@ jobs:
           done
           # re-install with adjusted torch versions
           pip install ${PIP_EXTRA_FLAG} -r requirements/devel.txt \
-            --index-url=${TORCH_URL}
+            --extra-index-url=${TORCH_URL}
           pip list
 
       - name: Testing Local
