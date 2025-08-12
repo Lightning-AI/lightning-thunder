@@ -1686,3 +1686,27 @@ def test_thunderfx_with_intermediate_output_marked_as_non_differentiable():
         actual_output.backward()
         expected_output.backward()
         torch.testing.assert_close(org_m.fc.weight.grad, thunder_m.fc.weight.grad)
+
+
+# Ref: https://github.com/Lightning-AI/lightning-thunder/issues/2420
+def test_splitter_with_symint_node():
+
+    class GraphModule(torch.nn.Module):
+        def forward(self, L_self_cumulative_length_1_: "Sym(s27)"):
+            l_self_cumulative_length_1_ = L_self_cumulative_length_1_
+
+            add: "Sym(s27 + 1)" = l_self_cumulative_length_1_ + 1
+            l_self_cumulative_length_1_ = None
+            return (add,)
+
+    module = GraphModule()
+    ref_inputs = (100,)
+    reference = module(*ref_inputs)
+
+    jitted = thunderfx(GraphModule(), dynamic=True)
+    inputs = (100,)
+    actual = jitted(*inputs)
+    assert reference == actual
+
+    for subgraph in jitted._backend.subgraph_infos:
+        assert not subgraph.split_reasons
