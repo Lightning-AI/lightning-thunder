@@ -955,4 +955,12 @@ Examples:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        raise
+    finally:
+        from torch.distributed.distributed_c10d import destroy_process_group
+
+        for process_group in mesh.get_all_groups():
+            destroy_process_group(process_group)
