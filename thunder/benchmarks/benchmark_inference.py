@@ -849,11 +849,15 @@ def list_scenarios():
     print("Or use --input-length and --output-length for custom configurations")
 
 
+class CustomFormatter(argparse.RawDescriptionHelpFormatter, argparse.ArgumentDefaultsHelpFormatter):
+    pass
+
+
 def main():
     """Command line interface for the benchmark"""
     parser = argparse.ArgumentParser(
         description="Thunder Inference Benchmark following SemiAnalysis Methodology",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+        formatter_class=CustomFormatter,
         epilog="""
 Standard Benchmark Scenarios:
   summarization  - Prefill-Heavy: 4,000 input → 1,000 output tokens
