@@ -45,7 +45,7 @@ from thunder.core.devices import Device, DeviceType, cpu
 from thunder.core.transform_common import dce, cse_single_bsym, replace_redundant_inputs
 from thunder.core.profile import annotate_for_profile
 from thunder.core.compile_data import get_compile_option
-from thunder.torch.experimental.dtensor_torch_and_prims import dtensor_mul_prim
+from thunder.torch.experimental.dtensor_torch_and_prims import dtensor_mul_prim, dtensor_reshape_prim
 from thunder.torch.experimental.dtensor_proxy import DTensorProxy
 
 from thunder.core.transforms import (
@@ -1256,6 +1256,7 @@ def reshape(a: TensorProxy, shape: list[int, NumberProxy, ...], *, fd: FusionDef
 
 
 register_supported(PrimIDs.RESHAPE, reshape, _reshape_check)
+register_supported(dtensor_reshape_prim, reshape, _reshape_check)
 
 
 # NOTE nvFuser's slice operation only supports all strides == 1
@@ -3073,7 +3074,7 @@ def argsort_transform(
 
 
 # Register argsort with NVFuser
-register_supported(prims.argsort, argsort_transform, _argsort_check)
+register_supported(ltorch.argsort, argsort_transform, _argsort_check)
 
 
 def _grouped_mm_check(
@@ -3134,7 +3135,7 @@ def cumsum_transform(
         compute_dtype = lcdtype_to_nvdtype(a.dtype)
 
     if dtype is None:
-        out_dtype = lcdtype_to_nvdtype(a.dtype)
+        out_dtype = lcdtype_to_nvdtype(a.dtype if a.dtype not in dtypes.integer_dtypes else dtypes.int64)
     else:
         out_dtype = lcdtype_to_nvdtype(dtypes.to_dtype(dtype))
 

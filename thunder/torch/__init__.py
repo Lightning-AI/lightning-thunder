@@ -37,6 +37,7 @@ from thunder.core.proxies import (
     NumberLike,
     TensorProxy,
     FutureTensorProxy,
+    pytype,
     pyval,
     TupleProxy,
     ListProxy,
@@ -2248,6 +2249,25 @@ def threshold_(a: TensorProxy, /, threshold: float, value: float) -> TensorLike:
 _inplace_to_out_of_place[threshold_] = threshold, -1
 
 
+@torchsymbol(torch.square, is_method=True)
+def square(a):
+    if isinstance(dtypes.to_dtype(a), dtypes.bool_):
+        a = clang.maybe_convert_to_dtype(a, dtypes.int64)
+    return a * a
+
+
+@torchsymbol(torch.square_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def square_(a):
+    utils.check(
+        not isinstance(dtypes.to_dtype(a), dtypes.bool_),
+        lambda: f"Result type of {dtypes.int64} cannot be stored into {dtypes.to_dtype(a)}",
+    )
+    return _copy_(a, square(a))
+
+
+_inplace_to_out_of_place[square_] = square, -1
+
+
 #
 # Elementwise binary operations
 #
@@ -3214,7 +3234,7 @@ def repeat_interleave(
     if output_size is not None:
         raise NotImplementedError("thunder.torch.repeat_interleave does not support dim argument yet")
     if isinstance(repeats, TensorProxy):
-        raise NotImplementedErrror("thunder.torch.repeat_interleave does not support tensor repeats yet")
+        raise NotImplementedError("thunder.torch.repeat_interleave does not support tensor repeats yet")
     if dim is None:
         return input.reshape((-1, 1)).expand(-1, repeats).reshape(-1)
 
@@ -3369,7 +3389,7 @@ def sort(
     return clang.sort(a, dim, descending, stable)
 
 
-@torchsymbol(torch.argsort, is_method=True)
+@torchsymbol(torch.argsort, is_method=True, is_prim=True)
 def argsort(a: TensorLike, /, dim: None | int = -1, descending: bool = False, stable: bool = False) -> TensorLike:
     """Returns the indices that would sort an array along the given dimension.
 
@@ -3382,7 +3402,18 @@ def argsort(a: TensorLike, /, dim: None | int = -1, descending: bool = False, st
     Returns:
         Tensor of indices that would sort the array
     """
-    return clang.argsort(a, dim, descending, stable)
+    if dim is None:
+        dim = a.ndim - 1 if a.ndim > 0 else 0
+    dim = utils.canonicalize_dim(a.ndim, dim)
+
+    # Validates types
+    utils.check_type(a, TensorProxy)
+    utils.check_type(dim, (int, IntegerProxy))
+    utils.check(pytype(descending) is bool, lambda: f"Expected {descending=} to be a boolean type")
+    utils.check(pytype(stable) is bool, lambda: f"Expected {stable=} to be a boolean type")
+
+    # Returns indices tensor with same shape as input but int64 dtype
+    return TensorProxy(like=a, dtype=dtypes.int64)
 
 
 #

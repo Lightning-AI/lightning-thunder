@@ -2192,6 +2192,14 @@ clone_opinfo = OpInfo(
 elementwise_unary_ops.append(clone_opinfo)
 
 
+square_opinfo = OpInfo(
+    ltorch.square,
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=_elementwise_unary_torch(torch.square),
+)
+elementwise_unary_ops.append(square_opinfo)
+
+
 # Puts all opinfos into the "opinfos" list
 opinfos.extend(elementwise_unary_ops)
 
@@ -6257,8 +6265,8 @@ def cumsum_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
     for shape, dim in cases:
         # torch.cumsum not implemented for dtype='Bool'
-        output_dtype = torch.float if dtype is torch.bool else dtype
-        yield (SampleInput(make(shape), dim, dtype=output_dtype))
+        for output_dtype in (None, torch.float if dtype is torch.bool else dtype):
+            yield (SampleInput(make(shape), dim, dtype=output_dtype))
 
 
 cumsum_opinfo = OpInfo(
@@ -6510,7 +6518,7 @@ dim_perm_ops.append(sort_opinfo)
 
 
 argsort_opinfo = OpInfo(
-    clang.argsort,
+    ltorch.argsort,
     name="argsort",
     supports_grad=False,
     sample_input_generator=sort_sample_generator,
