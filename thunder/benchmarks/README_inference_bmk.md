@@ -49,7 +49,7 @@ This benchmark implements the methodology from the SemiAnalysis article: ["AMD v
 - **Llama 4 Scout 17B** - ~LOTS VRAM required
 - **Llama 4 Maverick** - ~LOTS VRAM required
 
-Can lower memory requirements by specifying lower number of layers! `--num-layers 4` a minimum of 4 is reccomended with Llama4.
+Can lower memory requirements by specifying lower number of layers! `--num-layers 4` a minimum of 4 is recommended with Llama4.
 
 ## Compilation Modes
 
