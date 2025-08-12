@@ -2,7 +2,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 import copy
 from functools import partial
-import time
 
 import torch
 from torch.fx.passes.split_module import split_module
@@ -154,7 +153,6 @@ def _splitter(
         # There is a flip. Either from supported to unsupported or unsupported to supported.
         if prev_value is not None:
             partition_cnt += 1  # Bump the region cnt.
-
         prev_value = is_thunder_supported
 
         if is_thunder_supported:
@@ -170,7 +168,6 @@ def _splitter(
     gm.recompile()
 
     # `split_module` iterates over nodes and determines the partition to place them based on the callback.
-    split_begin_time = time.time()
     original_split_gm: torch.fx.GraphModule = split_module(
         gm, root_m=None, split_callback=callback, keep_original_order=True, keep_original_node_name=True
     )
@@ -193,17 +190,9 @@ def _splitter(
     thunder_compiled_fns = []
     example_input_metadatas = []
     submodule_to_compiled_fns = {}
-
-    thunder_module_count = 0
-    inductor_module_count = 0
-
-    thunder_compilation_total_time = 0
-    inductor_compilation_total_time = 0
-
     for node in split_gm.graph.nodes:
         node_name = node.name
         if is_thunder_supported_partition(node):
-            thunder_module_count += 1
             graph_module = getattr(split_gm, node.name)
 
             is_differentiable_outputs = []
@@ -245,26 +234,16 @@ def _splitter(
                 ),
             )
 
-            compile_start_time = time.time()
             jit_fn = thunder_jit(graph_module, is_differentiable_outputs=is_differentiable_outputs)
-            compile_end_time = time.time()
-            thunder_compilation_time = compile_end_time - compile_start_time
-            thunder_compilation_total_time += thunder_compilation_time
-
             # Update the node name from "submod_*" to "thunder_*" for more user-friendly names
             update_node_and_submodule(split_gm, node, node.name.replace("submod", "thunder"), jit_fn)
             thunder_compiled_fns.append(jit_fn)
             submodule_to_compiled_fns[getattr(original_split_gm, node_name)] = CompiledFunction(
                 jit_fn, CompilerType.THUNDER
             )
-
-            module_compilation_end = time.time()
-
         elif node.name.startswith("submod"):  # For inductor
-            inductor_module_count += 1
             graph_module = getattr(split_gm, node.name)
 
-            module_compilation_start = time.time()
             trace_structured_artifact(
                 name=f"inductor_module_{inductor_module_count}_original",
                 encoding="string",
@@ -275,18 +254,12 @@ def _splitter(
                 ),
             )
 
-            compile_start_time = time.time()
             jit_fn = torch_inductor(graph_module)
-            compile_end_time = time.time()
-            inductor_compilation_time = compile_end_time - compile_start_time
-            inductor_compilation_total_time += inductor_compilation_time
-
             # Update the node name from "submod_*" to "inductor_*" for more user-friendly names
             update_node_and_submodule(split_gm, node, node.name.replace("submod", "inductor"), jit_fn)
             submodule_to_compiled_fns[getattr(original_split_gm, node_name)] = CompiledFunction(
                 jit_fn, CompilerType.TORCH_INDUCTOR
             )
-
         else:
             # Everything else is a glue code to call and pass outputs between the other partitions.
             pass

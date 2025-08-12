@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING
 import warnings
 from pathlib import Path
 import copy
-import time
 
 import torch
 from torch._logging._internal import trace_structured_artifact
