@@ -63,6 +63,7 @@ import thunder.transforms as transforms
 
 # NOTE This import is intentionally pytorch so that it thunder.torch doesn't import this
 import torch as pytorch
+from torch._logging._internal import trace_structured, trace_structured_artifact
 
 # Imports executors (to populate default executors and make them accessible)
 import thunder.executors.pythonex
@@ -597,6 +598,18 @@ def jit(
 
             computation_trc = transform_to_torch_types(computation_trc)
             comp = computation_trc.python_callable()
+
+            for name_in_artifact, trace_to_store in (
+                ("computation", computation_trc),
+                ("prologue", prologue_trc),
+                ("epilogue", epilogue_trc),
+            ):
+                trace_structured_artifact(
+                    name=f"thunder_module_execution_{name_in_artifact}_trc",
+                    encoding="string",
+                    payload_fn=lambda: f"{trace_to_store}\n",
+                    compile_id=compile_options.get("torch_compile_compile_id", None),
+                )
 
             # TODO RC1 Update the cache
             cache_entry = CacheEntry(

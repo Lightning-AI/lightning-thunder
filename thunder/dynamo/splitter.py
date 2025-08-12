@@ -293,16 +293,6 @@ def _splitter(
             )
 
             module_compilation_end = time.time()
-            trace_structured(
-                "thunder_module_compile_complete",
-                metadata_fn=lambda n=node, idx=thunder_module_count, t=thunder_compilation_time: {
-                    "module_name": n.name.replace("submod", "thunder"),
-                    "module_id": idx,
-                    "timestamp": module_compilation_end,
-                    "compile_duration_seconds": t,
-                    "total_duration_seconds": module_compilation_end - module_compilation_start,
-                },
-            )
 
         elif node.name.startswith("submod"):  # For inductor
             inductor_module_count += 1

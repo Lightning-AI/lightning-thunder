@@ -108,6 +108,10 @@ class ThunderCompiler:
         self._torch_compile = torch.compile
 
     def __call__(self, gm: torch.fx.GraphModule, sample_args: list[torch.SymInt, torch.Tensor]):
+        from thunder import jit
+
+        torch_compile_compile_id = torch._guards.CompileContext.current_compile_id()
+        wrapped_thunder_jit = partial(jit, torch_compile_compile_id=torch_compile_compile_id, **self.thunder_options)
         start_time = time.time()
         remove_empty_autocast(gm)
 
@@ -135,7 +139,7 @@ class ThunderCompiler:
 
         # The whole graph may not be supported by `thunder`, so we split it in `thunder` supported sections
         # and unsupported sections which are passed to `torch.compile(backend='inductor')`
-        split_module, subgraph_info = _splitter(gm, self._thunder_jit, self._torch_compile, sample_args)
+        split_module, subgraph_info = _splitter(gm, wrapped_thunder_jit, self._torch_compile, sample_args)
         self.subgraph_infos.append(subgraph_info)
 
         end_time = time.time()
