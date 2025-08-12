@@ -606,10 +606,6 @@ def jit(
             ):
                 trace_structured(
                     "artifact",
-                    metadata_fn=lambda: {
-                        "name": f"thunder_module_execution_{name_in_artifact}_trc",
-                        "encoding": "string",
-                    },
                     metadata_fn=lambda name=name_in_artifact: {
                         "name": f"thunder_module_execution_{name}_trc",
                         "encoding": "string",
