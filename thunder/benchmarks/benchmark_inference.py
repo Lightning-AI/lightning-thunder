@@ -883,7 +883,7 @@ Examples:
         type=str,
         choices=list(BENCHMARK_SCENARIOS.keys()),
         help="Use standardized benchmark scenario. Available: "
-        + ", ".join([f"{k} ({v['description']})" for k, v in BENCHMARK_SCENARIOS.items()])
+        + ", ".join([f"{k} ({v['description'].replace('%', '%%')})" for k, v in BENCHMARK_SCENARIOS.items()])
         + ". If specified, overrides --input-length and --output-length.",
     )
 
