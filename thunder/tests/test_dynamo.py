@@ -1690,7 +1690,6 @@ def test_thunderfx_with_intermediate_output_marked_as_non_differentiable():
 
 # Ref: https://github.com/Lightning-AI/lightning-thunder/issues/2420
 def test_splitter_with_symint_node():
-
     class GraphModule(torch.nn.Module):
         def forward(self, L_self_cumulative_length_1_: "Sym(s27)"):
             l_self_cumulative_length_1_ = L_self_cumulative_length_1_
