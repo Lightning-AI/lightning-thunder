@@ -3078,7 +3078,7 @@ def argsort_transform(
 
 
 # Register argsort with NVFuser
-register_supported(prims.argsort, argsort_transform, _argsort_check)
+register_supported(ltorch.argsort, argsort_transform, _argsort_check)
 
 
 def _grouped_mm_check(
@@ -3139,7 +3139,7 @@ def cumsum_transform(
         compute_dtype = lcdtype_to_nvdtype(a.dtype)
 
     if dtype is None:
-        out_dtype = lcdtype_to_nvdtype(a.dtype)
+        out_dtype = lcdtype_to_nvdtype(a.dtype if a.dtype not in dtypes.integer_dtypes else dtypes.int64)
     else:
         out_dtype = lcdtype_to_nvdtype(dtypes.to_dtype(dtype))
 
