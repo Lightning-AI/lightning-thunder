@@ -212,7 +212,7 @@ def _splitter(
             example_input_metadatas.append(list(example_input_metadata))
 
             trace_structured_artifact(
-                name=f"thunder_module_{thunder_module_count}_original",
+                name="thunder_module_original",
                 encoding="string",
                 payload_fn=lambda gm=graph_module: gm.print_readable(
                     print_output=False,
@@ -225,7 +225,7 @@ def _splitter(
             checkpoint_converter(split_gm, graph_module)
 
             trace_structured_artifact(
-                name=f"thunder_module_{thunder_module_count}_post_checkpoint_converter_applied",
+                name="thunder_module_post_checkpoint_converter_applied",
                 encoding="string",
                 payload_fn=lambda gm=graph_module: gm.print_readable(
                     print_output=False,
