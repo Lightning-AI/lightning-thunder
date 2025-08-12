@@ -8,7 +8,7 @@ import copy
 import time
 
 import torch
-from torch._logging._internal import trace_structured, trace_structured_artifact
+from torch._logging._internal import trace_structured_artifact
 
 from thunder.dynamo.utils import (
     recompile_graph,
@@ -112,19 +112,6 @@ class ThunderCompiler:
 
         torch_compile_compile_id = torch._guards.CompileContext.current_compile_id()
         wrapped_thunder_jit = partial(jit, torch_compile_compile_id=torch_compile_compile_id, **self.thunder_options)
-        start_time = time.time()
-
-        trace_structured(
-            "thunder_compiler_start",
-            metadata_fn=lambda: {
-                "num_nodes": len(list(gm.graph.nodes)),
-                "fusion_type": self.thunder_options.get("fusion_type", _DEFAULT_THUNDER_FUSION_TYPE),
-                "disable_split_autograd": self.thunder_options.get(
-                    "thunderfx_disable_split_autograd", _DEFAULT_THUNDERFX_DISABLE_SPLIT_AUTOGRAD
-                ),
-                "timestamp": start_time,
-            },
-        )
 
         trace_structured_artifact(
             name="thunder_original_graph",
@@ -142,26 +129,6 @@ class ThunderCompiler:
         # and unsupported sections which are passed to `torch.compile(backend='inductor')`
         split_module, subgraph_info = _splitter(gm, wrapped_thunder_jit, self._torch_compile, sample_args)
         self.subgraph_infos.append(subgraph_info)
-
-        end_time = time.time()
-        thunder_count = len(subgraph_info.thunder_compiled_fns or [])
-        inductor_count = sum(
-            1
-            for fn in subgraph_info.submodule_to_compiled_functions.values()
-            if fn.compiler == CompilerType.TORCH_INDUCTOR
-        )
-
-        trace_structured(
-            "thunder_compiler_complete",
-            metadata_fn=lambda: {
-                "num_thunder_modules": thunder_count,
-                "num_inductor_modules": inductor_count,
-                "total_modules": len(subgraph_info.submodule_to_compiled_functions),
-                "split_reasons_count": len(subgraph_info.split_reasons or []),
-                "timestamp": end_time,
-                "duration_seconds": end_time - start_time,
-            },
-        )
 
         trace_structured_artifact(
             name="thunder_split_graph",
