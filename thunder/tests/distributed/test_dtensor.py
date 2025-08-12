@@ -64,6 +64,43 @@ class DTensorTest(DistributedParallelTestCase):
         # Verify torch API works
         _helper(functions_to_test[fn_key], in_dtensor, w_dtensor)
 
+    @common_utils.parametrize("executor", tuple(executors_map.keys()))
+    def test_dtensor_reshape(self, executor):
+        num_devices = self.world_size
+        mesh = DeviceMesh("cuda", list(range(num_devices)))
+
+        dim_size = 16
+
+        def fn_reshape(x, shape):
+            return torch.reshape(x, shape)
+
+        def fn_reshape_method(x, shape):
+            return x.reshape(shape)
+
+        in_dtensor = distribute_tensor(torch.randn(dim_size, dim_size, requires_grad=True), mesh, [Shard(0)])
+
+        # Test different reshape shapes
+        test_shapes = [
+            (dim_size * dim_size,),  # Flatten to 1D
+            (dim_size, dim_size),  # Keep original shape
+            (4, 4, dim_size),  # Reshape to 3D
+        ]
+
+        def _test(fn, *args):
+            expected = fn(*args)
+            tmodel = thunder.jit(fn, executors=executors_map[executor].executors_list())
+            actual = tmodel(*args)
+            torch.testing.assert_close(actual, expected)
+
+            # Test gradient
+            g_o = distribute_tensor(torch.ones(shape), mesh, [Shard(0)])
+            expected_g = torch.autograd.grad(expected, (in_dtensor,), g_o)
+            actual_g = torch.autograd.grad(actual, (in_dtensor,), g_o)
+            torch.testing.assert_close(actual_g, expected_g)
+
+        for shape, fn in product(test_shapes, (fn_reshape, fn_reshape_method)):
+            _test(fn, in_dtensor, shape)
+
     def test_dtensor_unsupported(self):
         num_devices = self.world_size
         mesh = DeviceMesh("cuda", list(range(num_devices)))
