@@ -172,7 +172,8 @@ def _splitter(
             for n in graph_module.graph.nodes:
                 if n.op == "output":
                     for n in n.all_input_nodes:
-                        if n.meta["example_value"].grad_fn is None:
+                        # `n.meta["example_value"]` could be `torch.SymInt`.
+                        if getattr(n.meta["example_value"], "grad_fn", None) is None:
                             is_differentiable_outputs.append(False)
                         else:
                             is_differentiable_outputs.append(True)
