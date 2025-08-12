@@ -382,7 +382,11 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
 
                 trace_structured(
                     "thunder_execute_symbol_success",
-                    metadata_fn=lambda n=node, s=thunder_symbol, start=execute_fn_start, end=execute_fn_end, total=execute_start_time: {
+                    metadata_fn=lambda n=node,
+                    s=thunder_symbol,
+                    start=execute_fn_start,
+                    end=execute_fn_end,
+                    total=execute_start_time: {
                         "node_name": n.name,
                         "node_target": str(n.target),
                         "thunder_symbol": str(s),
@@ -396,9 +400,11 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
                 execute_fn_end = time.time()
                 trace_structured(
                     "thunder_execute_symbol_failed",
-                    metadata_fn=lambda n=node, exc=str(
-                        e
-                    ), start=execute_fn_start, end=execute_fn_end, total=execute_start_time: {
+                    metadata_fn=lambda n=node,
+                    exc=str(e),
+                    start=execute_fn_start,
+                    end=execute_fn_end,
+                    total=execute_start_time: {
                         "node_name": n.name,
                         "node_target": str(n.target),
                         "exception": exc,
