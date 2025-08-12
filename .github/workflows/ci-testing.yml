@@ -67,14 +67,13 @@ jobs:
               open(fpath, 'w').write(req)
         shell: python
 
-      - name: switch Torch source
+      - name: set default Torch source
+        run: echo "TORCH_URL=$TORCH_URL_STABLE" >> $GITHUB_ENV
+      - name: switch Torch source to nightly
+        if: matrix.requires == 'nightly'
         run: |
-          if [[ "${{ matrix.requires }}" == "nightly" ]]; then
-            echo "TORCH_URL=$TORCH_URL_NIGHTLY" >> $GITHUB_ENV
-            echo "PIP_EXTRA_FLAG=--pre" >> $GITHUB_ENV
-          else
-            echo "TORCH_URL=$TORCH_URL_STABLE" >> $GITHUB_ENV
-          fi
+          echo "TORCH_URL=$TORCH_URL_NIGHTLY" >> $GITHUB_ENV
+          echo "PIP_EXTRA_FLAG=--pre" >> $GITHUB_ENV
 
       - name: Install Mac specific dependencies
         if: runner.os == 'macOS'
