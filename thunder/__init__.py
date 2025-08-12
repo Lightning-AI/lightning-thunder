@@ -610,7 +610,11 @@ def jit(
                         "name": f"thunder_module_execution_{name_in_artifact}_trc",
                         "encoding": "string",
                     },
-                    payload_fn=lambda: f"{trace_to_store}\n",
+                    metadata_fn=lambda name=name_in_artifact: {
+                        "name": f"thunder_module_execution_{name}_trc",
+                        "encoding": "string",
+                    },
+                    payload_fn=lambda trace=trace_to_store: f"{trace}\n",
                     compile_id=compile_options.get("torch_compile_compile_id", None),
                 )
 
