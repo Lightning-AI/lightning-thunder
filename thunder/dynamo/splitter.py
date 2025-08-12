@@ -245,7 +245,7 @@ def _splitter(
             graph_module = getattr(split_gm, node.name)
 
             trace_structured_artifact(
-                name=f"inductor_module_original",
+                name="inductor_module_original",
                 encoding="string",
                 payload_fn=lambda gm=graph_module: gm.print_readable(
                     print_output=False,
