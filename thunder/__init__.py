@@ -610,7 +610,7 @@ def jit(
                         "name": f"thunder_module_execution_{name}_trc",
                         "encoding": "string",
                     },
-                    payload_fn=lambda trace=trace_to_store: f"{trace}\n",
+                    payload_fn=lambda trace_to_stringify=trace_to_store: f"{trace_to_stringify}\n",
                     compile_id=compile_options.get("torch_compile_compile_id", None),
                 )
 
