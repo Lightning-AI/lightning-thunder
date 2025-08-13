@@ -603,7 +603,10 @@ def jit(
                 ("computation", computation_trc),
                 ("prologue", prologue_trc),
                 ("epilogue", epilogue_trc),
+                ("backward", backward_trc),
             ):
+                if trace_to_store is None:
+                    continue
                 trace_structured(
                     "artifact",
                     metadata_fn=lambda name=name_in_artifact: {
