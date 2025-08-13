@@ -565,7 +565,6 @@ def jit(
                         "encoding": "string",
                     },
                     payload_fn=lambda trace_to_stringify=computation_trc: f"{trace_to_stringify}\n",
-                    compile_id=compile_options.get("torch_compile_compile_id", None),
                 )
                 computation_trc = grad_transform_on_trace(computation_trc)
                 _trace_structured(
@@ -575,7 +574,6 @@ def jit(
                         "encoding": "string",
                     },
                     payload_fn=lambda trace_to_stringify=computation_trc: f"{trace_to_stringify}\n",
-                    compile_id=compile_options.get("torch_compile_compile_id", None),
                 )
 
             from thunder.executors.passes import _transform_for_operator_executor_execution
