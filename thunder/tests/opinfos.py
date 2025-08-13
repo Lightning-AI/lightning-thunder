@@ -6265,8 +6265,8 @@ def cumsum_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
     for shape, dim in cases:
         # torch.cumsum not implemented for dtype='Bool'
-        output_dtype = torch.float if dtype is torch.bool else dtype
-        yield (SampleInput(make(shape), dim, dtype=output_dtype))
+        for output_dtype in (None, torch.float if dtype is torch.bool else dtype):
+            yield (SampleInput(make(shape), dim, dtype=output_dtype))
 
 
 cumsum_opinfo = OpInfo(
