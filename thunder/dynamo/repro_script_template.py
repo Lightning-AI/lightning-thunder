@@ -2,6 +2,10 @@ FXGRAPH_CLASS_NAME = "DynamoModule"
 INPUTS_NAME = "inputs"
 CALLABLE_NAME = "model"
 COMPILED_CALLABLE_NAME = "compiled_model"
+THUNDER_IMPORT_STRS = """
+from thunder.dev_utils import nvtx_profile_transform
+from thunder.dev_utils import debug_transform
+"""
 
 pytest_benchmark_multi_exe_code_template = '''
 # NOTE: This script requires `pytest-benchmark==4.0.0` to be installed.
@@ -18,6 +22,7 @@ import pytest
 from thunder.benchmarks.targets import parametrize_compute_type_only_training, benchmark_for_compute_type, ComputeType
 {torch_import_str}
 {import_str}
+{THUNDER_IMPORT_STRS}
 
 # NOTE: The reproducer function has already been processed by TorchDynamo.
 # If we let it go through TorchDynamo again, it could be segmented further.
@@ -93,6 +98,7 @@ torch_compiled_callable = make_torch_compile_callable(bsym.subsymbols, bsym.flat
 
 repro_bench_code_template = f"""
 {{import_str}}
+{THUNDER_IMPORT_STRS}
 
 {{dynamo_module}}
 def test_{{graph_name}}():
