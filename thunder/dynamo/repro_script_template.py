@@ -4,7 +4,6 @@ CALLABLE_NAME = "model"
 COMPILED_CALLABLE_NAME = "compiled_model"
 THUNDER_IMPORT_STRS = """
 from thunder.dev_utils import nvtx_profile_transform
-from thunder.dev_utils import debug_transform
 """
 
 pytest_benchmark_multi_exe_code_template = '''
