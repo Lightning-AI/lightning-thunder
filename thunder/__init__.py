@@ -386,6 +386,8 @@ def jit(
     cs = CompileStats()
     weakref_cs = weakref.ref(cs)
 
+    # todo: use `trace_structured_artifact` once `compile_id` is merged.
+    #   https://github.com/pytorch/pytorch/pull/160440.
     # note: `compile_id` is a kwarg since v2.7.0.
     if _trace_structured_has_compile_id := "compile_id" in inspect.signature(trace_structured).parameters:
         _trace_structured = partial(trace_structured, compile_id=compile_options.get("torch_compile_compile_id", None))
