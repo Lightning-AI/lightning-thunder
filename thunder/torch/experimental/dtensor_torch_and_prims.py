@@ -183,6 +183,7 @@ def dtensor_linear_meta(a, w, bias):
     return create_dtensor_proxy_from_proxies(local_tensor_proxy, spec_proxy, False)
 
 
+# TODO: Add grad rule once the prims used for linear grad-rule are available.
 dtensor_linear_prim = make_prim("dtensor_linear_prim", "dtensor_linear_prim", meta=dtensor_linear_meta)
 
 dtensor_linear_prim_impl = pytorchex.register_operator(
