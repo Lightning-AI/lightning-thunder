@@ -437,6 +437,23 @@ def jit(
             last_interpreter_log = jit_results.interpreter_log
             cs.last_interpreter_log = last_interpreter_log
             cs.last_interpreted_instructions = (i for i in last_interpreter_log if isinstance(i, dis.Instruction))
+
+            for name_in_artifact, trace_to_store in (
+                ("computation", computation_trc),
+                ("prologue", prologue_trc),
+                ("epilogue", epilogue_trc),
+            ):
+                if trace_to_store is None:
+                    continue
+                trace_structured(
+                    "artifact",
+                    metadata_fn=lambda name=name_in_artifact: {
+                        "name": f"thunder_module_initial_{name}_trc",
+                        "encoding": "string",
+                    },
+                    payload_fn=lambda trace_to_stringify=trace_to_store: f"{trace_to_stringify}\n",
+                    compile_id=compile_options.get("torch_compile_compile_id", None),
+                )
             return prologue_trc, computation_trc, epilogue_trc
 
     def apply_transforms_and_build_cache_entry(cd, cs, cache_info, prologue_trc, computation_trc, epilogue_trc):
@@ -533,7 +550,25 @@ def jit(
             if requires_grad:
                 from thunder.transforms.autodiff import grad_transform_on_trace
 
+                trace_structured(
+                    "artifact",
+                    metadata_fn=lambda: {
+                        "name": "thunder_module_computation_trc_before_grad_transform",
+                        "encoding": "string",
+                    },
+                    payload_fn=lambda trace_to_stringify=computation_trc: f"{trace_to_stringify}\n",
+                    compile_id=compile_options.get("torch_compile_compile_id", None),
+                )
                 computation_trc = grad_transform_on_trace(computation_trc)
+                trace_structured(
+                    "artifact",
+                    metadata_fn=lambda: {
+                        "name": "thunder_module_computation_trc_after_grad_transform",
+                        "encoding": "string",
+                    },
+                    payload_fn=lambda trace_to_stringify=computation_trc: f"{trace_to_stringify}\n",
+                    compile_id=compile_options.get("torch_compile_compile_id", None),
+                )
 
             from thunder.executors.passes import _transform_for_operator_executor_execution
             from thunder.distributed.utils import maybe_sort_waits
