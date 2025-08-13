@@ -172,6 +172,32 @@ def dtensor_reshape(a: TensorLike, shape: tuple[int, ...]) -> TensorLike:
     return dtensor_reshape_prim(a, shape)
 
 
+def dtensor_linear_meta(a, w, bias):
+    output = run_with_fake_tensor(torch.nn.functional.linear, a, w, bias)
+    local_tensor_proxy = TensorProxy(like=a.local_tensor)
+    local_tensor_proxy = TensorProxy(
+        like=a.local_tensor, shape=output._local_tensor.shape, dtype=dtypes.to_dtype(output._local_tensor.dtype)
+    )
+    spec = output._spec
+    spec_proxy = AnyProxy(spec, history=a.history)
+    return create_dtensor_proxy_from_proxies(local_tensor_proxy, spec_proxy, False)
+
+
+dtensor_linear_prim = make_prim("dtensor_linear_prim", "dtensor_linear_prim", meta=dtensor_linear_meta)
+
+dtensor_linear_prim_impl = pytorchex.register_operator(
+    "dtensor_linear_prim", like=dtensor_linear_prim, fn=torch.nn.functional.linear
+)
+
+pytorchex.register_implementation(dtensor_linear_prim, dtensor_linear_prim_impl)
+
+
+@dtensor_torchsymbol(torch.nn.functional.linear, id="dtensor.torch.nn.functional.linear")
+def dtensor_linear(a: TensorLike, w: TensorLike, bias: None | TensorLike = None) -> TensorLike:
+    return dtensor_linear_prim(a, w, bias)
+
+
 def register_dtensor_torch_and_prims():
     register_function_for_dtensor(torch.mul, ltorch.mul, dtensor_mul, is_method=True)
     register_function_for_dtensor(torch.reshape, ltorch.reshape, dtensor_reshape, is_method=True)
+    register_function_for_dtensor(torch.nn.functional.linear, ltorch.linear, dtensor_linear, is_method=False)

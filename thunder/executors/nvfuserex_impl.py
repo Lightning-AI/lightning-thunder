@@ -46,7 +46,11 @@ from thunder.core.devices import Device, DeviceType, cpu
 from thunder.core.transform_common import dce, cse_single_bsym, replace_redundant_inputs
 from thunder.core.profile import annotate_for_profile
 from thunder.core.compile_data import get_compile_option
-from thunder.torch.experimental.dtensor_torch_and_prims import dtensor_mul_prim, dtensor_reshape_prim
+from thunder.torch.experimental.dtensor_torch_and_prims import (
+    dtensor_mul_prim,
+    dtensor_reshape_prim,
+    dtensor_linear_prim,
+)
 from thunder.torch.experimental.dtensor_proxy import DTensorProxy
 
 from thunder.core.transforms import (
@@ -2403,6 +2407,7 @@ def linear(
 
 
 register_supported(PrimIDs.LINEAR, linear, _linear_check)
+register_supported(dtensor_linear_prim, linear, _linear_check)
 
 
 def _matmul_check(
