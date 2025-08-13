@@ -66,6 +66,9 @@ def _bitsandbytes_available():
         return False
     try:
         import bitsandbytes
+        import bitsandbytes.diagnostics.main
+
+        bitsandbytes.diagnostics.main.sanity_check()
     except (ImportError, RuntimeError):
         return False
     return True
