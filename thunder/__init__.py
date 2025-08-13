@@ -1,9 +1,10 @@
 from collections import defaultdict, namedtuple
 from collections.abc import Callable, Sequence
 from contextvars import ContextVar
-from functools import wraps
+from functools import partial, wraps
 from typing import Any
 import dis
+import inspect
 import os
 import time
 import warnings
@@ -385,6 +386,12 @@ def jit(
     cs = CompileStats()
     weakref_cs = weakref.ref(cs)
 
+    # note: `compile_id` is a kwarg since v2.7.0.
+    if _trace_structured_has_compile_id := "compile_id" in inspect.signature(trace_structured).parameters:
+        _trace_structured = partial(trace_structured, compile_id=compile_options.get("torch_compile_compile_id", None))
+    else:
+        _trace_structured = trace_structured
+
     def _alias_tensor_of_args_kwargs_dict(*args, **kwargs) -> dict[int, list[int]]:
         flat_args, _ = tree_flatten((args, kwargs))
         data_ptr_to_tensor_group_index = {}
@@ -445,14 +452,13 @@ def jit(
             ):
                 if trace_to_store is None:
                     continue
-                trace_structured(
+                _trace_structured(
                     "artifact",
                     metadata_fn=lambda name=name_in_artifact: {
                         "name": f"thunder_module_initial_{name}_trc",
                         "encoding": "string",
                     },
                     payload_fn=lambda trace_to_stringify=trace_to_store: f"{trace_to_stringify}\n",
-                    compile_id=compile_options.get("torch_compile_compile_id", None),
                 )
             return prologue_trc, computation_trc, epilogue_trc
 
@@ -550,7 +556,7 @@ def jit(
             if requires_grad:
                 from thunder.transforms.autodiff import grad_transform_on_trace
 
-                trace_structured(
+                _trace_structured(
                     "artifact",
                     metadata_fn=lambda: {
                         "name": "thunder_module_computation_trc_before_grad_transform",
@@ -560,7 +566,7 @@ def jit(
                     compile_id=compile_options.get("torch_compile_compile_id", None),
                 )
                 computation_trc = grad_transform_on_trace(computation_trc)
-                trace_structured(
+                _trace_structured(
                     "artifact",
                     metadata_fn=lambda: {
                         "name": "thunder_module_computation_trc_after_grad_transform",
@@ -642,7 +648,7 @@ def jit(
             ):
                 if trace_to_store is None:
                     continue
-                trace_structured(
+                _trace_structured(
                     "artifact",
                     metadata_fn=lambda name=name_in_artifact: {
                         "name": f"thunder_module_execution_{name}_trc",
