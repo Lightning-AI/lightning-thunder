@@ -6,9 +6,9 @@ THUNDER_IMPORT_STRS = """
 from thunder.dev_utils import nvtx_profile_transform
 """
 
-pytest_benchmark_multi_exe_code_template = '''
+pytest_benchmark_multi_exe_code_template = f'''
 # NOTE: This script requires `pytest-benchmark==4.0.0` to be installed.
-# To execute the script, run `pytest {graph_name}_benchmark.py --benchmark-timer=torch.utils.benchmark.utils.timer.timer --benchmark-warmup=on --benchmark-group-by=param:compute_type`
+# To execute the script, run `pytest {{graph_name}}_benchmark.py --benchmark-timer=torch.utils.benchmark.utils.timer.timer --benchmark-warmup=on --benchmark-group-by=param:compute_type`
 # To check the peak allocated CUDA memory, use --benchmark-json=json_file_name and look at the "max_allocated_memory_MB" field in the json file
 # To run tests for a specific compute_type, use the pytest `-k` option.
 # For example:
@@ -19,8 +19,8 @@ pytest_benchmark_multi_exe_code_template = '''
 
 import pytest
 from thunder.benchmarks.targets import parametrize_compute_type_only_training, benchmark_for_compute_type, ComputeType
-{torch_import_str}
-{import_str}
+{{torch_import_str}}
+{{import_str}}
 {THUNDER_IMPORT_STRS}
 
 # NOTE: The reproducer function has already been processed by TorchDynamo.
@@ -34,19 +34,19 @@ def torch_inductor(fn, inputs):
     fx_graph = symbolic_trace(fn)
     return inductor_compile(fx_graph, inputs)
 
-{executors}
-{executor_names}
+{{executors}}
+{{executor_names}}
 
-{dynamo_module}
+{{dynamo_module}}
 
 @pytest.mark.parametrize(
     "executor",
     executors,
     ids=executor_names,
 )
-{compute_type_decorator}
-def test_{graph_name}(benchmark, executor, compute_type):
-{inputs}
+{{compute_type_decorator}}
+def test_{{graph_name}}(benchmark, executor, compute_type):
+{{inputs}}
 
     model = DynamoModule()
     if executor is None:
@@ -55,16 +55,16 @@ def test_{graph_name}(benchmark, executor, compute_type):
         compiled_model = executor(model, inputs)
     else:
         compiled_model = executor(model)
-    {call_benchmark}
+    {{call_benchmark}}
 
 """
 Environment information get from `torch.utils.collect_env.get_pretty_env_info()`:
-{torch_env}
+{{torch_env}}
 
 Versions of Thunder related libraries:
-{thunder_pkgs}
+{{thunder_pkgs}}
 
-{extra_comment_str}
+{{extra_comment_str}}
 """
 '''
 
