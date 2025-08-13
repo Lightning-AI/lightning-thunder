@@ -389,7 +389,7 @@ def jit(
     # todo: use `trace_structured_artifact` once `compile_id` is merged.
     #   https://github.com/pytorch/pytorch/pull/160440.
     # note: `compile_id` is a kwarg since v2.7.0.
-    if _trace_structured_has_compile_id := "compile_id" in inspect.signature(trace_structured).parameters:
+    if _trace_structured_has_compile_id := ("compile_id" in inspect.signature(trace_structured).parameters):
         _trace_structured = partial(trace_structured, compile_id=compile_options.get("torch_compile_compile_id", None))
     else:
         _trace_structured = trace_structured
@@ -657,7 +657,6 @@ def jit(
                         "encoding": "string",
                     },
                     payload_fn=lambda trace_to_stringify=trace_to_store: f"{trace_to_stringify}\n",
-                    compile_id=compile_options.get("torch_compile_compile_id", None),
                 )
 
             # TODO RC1 Update the cache
