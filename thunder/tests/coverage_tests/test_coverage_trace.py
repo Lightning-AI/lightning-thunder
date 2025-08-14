@@ -17,7 +17,7 @@ from transformers import (
     AutoModelForSeq2SeqLM,
     AutoModelForImageClassification,
 )
-from test_core import run_prologue
+from thunder.tests.test_core import run_prologue
 
 
 MODEL_LIST = [
