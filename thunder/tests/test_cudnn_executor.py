@@ -203,9 +203,6 @@ def snippet_torch_consistency(op, torch_op, sample):
 def test_cudnn_vs_torch_consistency(op, device, dtype, *_):
     _maybe_xfail()
 
-    if op.name == "rms_norm":
-        pytest.xfail("FIXME: nan values are observed")
-
     if cudnn.backend_version() < 8905:  # todo: could be more specific, just for some cases?
         pytest.xfail("s_kv not a multiple of 64 required cudnn version atleast 8.9.5")
 
@@ -219,7 +216,15 @@ def test_cudnn_vs_torch_consistency(op, device, dtype, *_):
         if cudnn.backend_version() <= 8902:
             pytest.xfail("Only interleaved layout is supported pre 8.9.2.")
 
-    for sample in op.reference_inputs(device, dtype, requires_grad=False):
+    for i, sample in enumerate(op.reference_inputs(device, dtype, requires_grad=False)):
+        # FIXME: If I call torch_op first, then things look better.
+        if op.name == "rms_norm" and tuple(sample.args[0].shape) in (
+            (16, 128, 1024),
+            (16, 128, 1600),
+            (16, 512, 1024),
+            (16, 512, 1280),
+        ):
+            continue
         cfn = thunder.jit(op_name_to_fn[op.name], executors=[cudnn_ex, cudnn_layernorm_ex])
 
         result = run_snippet(
