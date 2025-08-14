@@ -39,9 +39,6 @@ class DTensorTest(DistributedParallelTestCase):
         num_devices = self.world_size
         mesh = DeviceMesh("cuda", list(range(num_devices)))
 
-        if executor == "nvfuser":
-            raise unittest.SkipTest("See PR: https://github.com/Lightning-AI/lightning-thunder/pull/2423")
-
         dim_size = 16
 
         def _helper(fn, in_dtensor, w_dtensor):
@@ -71,9 +68,6 @@ class DTensorTest(DistributedParallelTestCase):
     def test_dtensor_reshape(self, executor):
         num_devices = self.world_size
         mesh = DeviceMesh("cuda", list(range(num_devices)))
-
-        if executor == "nvfuser":
-            raise unittest.SkipTest("See PR: https://github.com/Lightning-AI/lightning-thunder/pull/2423")
 
         dim_size = 16
 
