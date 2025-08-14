@@ -31,6 +31,9 @@ jobs:
         requires: ["latest", "nightly"] # , 'oldest'
         suite: ["core", "ops", "grads"]
         include:
+          - { os: "ubuntu-22.04", python-version: "3.10", requires: "oldest", suite: "core" }
+          - { os: "ubuntu-22.04", python-version: "3.10", requires: "oldest", suite: "ops" }
+          - { os: "ubuntu-22.04", python-version: "3.10", requires: "oldest", suite: "grads" }
           - { os: "ubuntu-24.04", python-version: "3.11", requires: "latest" }
           - { os: "ubuntu-24.04", python-version: "3.12", requires: "latest" }
           - { os: "ubuntu-24.04", python-version: "3.13", requires: "latest" }
@@ -64,14 +67,13 @@ jobs:
               open(fpath, 'w').write(req)
         shell: python
 
-      - name: switch Torch source
+      - name: set default Torch source
+        run: echo "TORCH_URL=$TORCH_URL_STABLE" >> $GITHUB_ENV
+      - name: switch Torch source to nightly
+        if: matrix.requires == 'nightly'
         run: |
-          if [[ "${{ matrix.requires }}" == "nightly" ]]; then
-            echo "TORCH_URL=$TORCH_URL_NIGHTLY" >> $GITHUB_ENV
-            echo "PIP_EXTRA_FLAG=--pre" >> $GITHUB_ENV
-          else
-            echo "TORCH_URL=$TORCH_URL_STABLE" >> $GITHUB_ENV
-          fi
+          echo "TORCH_URL=$TORCH_URL_NIGHTLY" >> $GITHUB_ENV
+          echo "PIP_EXTRA_FLAG=--pre" >> $GITHUB_ENV
 
       - name: Install Mac specific dependencies
         if: runner.os == 'macOS'

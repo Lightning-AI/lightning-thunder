@@ -3234,7 +3234,7 @@ def repeat_interleave(
     if output_size is not None:
         raise NotImplementedError("thunder.torch.repeat_interleave does not support dim argument yet")
     if isinstance(repeats, TensorProxy):
-        raise NotImplementedErrror("thunder.torch.repeat_interleave does not support tensor repeats yet")
+        raise NotImplementedError("thunder.torch.repeat_interleave does not support tensor repeats yet")
     if dim is None:
         return input.reshape((-1, 1)).expand(-1, repeats).reshape(-1)
 
