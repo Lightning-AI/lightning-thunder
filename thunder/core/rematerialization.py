@@ -289,6 +289,10 @@ def find_cut(
                 if not has_tags(x, tags) and not consumer.sym.executor.can_fuse(x)
             )
         )
+    # See https://github.com/Lightning-AI/lightning-thunder/issues/2365
+    # It seems that `thunder.transforms.autodiff.grad_transform_on_trace` could
+    # replace outputs with `None`.
+    required_producer_vars = tuple(x for x in required_producer_vars if x is not None)
 
     # Required consumer variables. These are the variables that are required to
     # be connected to the "sink" node.
