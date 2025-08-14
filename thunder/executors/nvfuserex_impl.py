@@ -2765,7 +2765,11 @@ def _scatter_check(a: TensorProxy, /, index: TensorProxy, src: TensorProxy | Num
     return True
 
 
-def scatter(a: TensorProxy, /, index: TensorProxy, src: TensorProxy | Number, dim: int) -> TensorProxy:
+def scatter(a: TensorProxy, /, index: TensorProxy, src: TensorProxy | Number, dim: int,
+    *,
+    fd: FusionDefinition,
+    lc_to_nv_map: dict,
+) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
     nvi = getnv(index, fd, lc_to_nv_map)
     nvs = getnv(src, fd, lc_to_nv_map)
