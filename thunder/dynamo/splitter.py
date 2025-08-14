@@ -5,6 +5,7 @@ from functools import partial
 
 import torch
 from torch.fx.passes.split_module import split_module
+from torch._logging._internal import trace_structured_artifact
 
 from thunder.dynamo.utils import (
     SubgraphInfo,
@@ -118,10 +119,33 @@ def _splitter(
                 info=f"node with name: {node.name} and target: {node.target} is not supported probably because it is in unsupported context.",
             )
             split_reasons.append(split_reason)
+
+            trace_structured_artifact(
+                name="thunder_unsupported_ctx_regions",
+                encoding="json",
+                payload_fn=lambda n=node, r=split_reason: {
+                    "node_name": n.name,
+                    "node_target": str(n.target),
+                    "reason_type": r.reason_type.name,
+                    "reason_info": r.info,
+                },
+            )
         else:
             is_thunder_supported, split_reason = is_node_supported_by_thunder(node)
             if split_reason is not None:
                 split_reasons.append(split_reason)
+
+                trace_structured_artifact(
+                    name="thunder_unsupported_node",
+                    encoding="json",
+                    payload_fn=lambda n=node, r=split_reason: {
+                        "node_name": n.name,
+                        "node_target": str(n.target),
+                        "reason_type": r.reason_type.name,
+                        "reason_info": r.info,
+                        "exception": r.exception,
+                    },
+                )
 
         if prev_value == is_thunder_supported:  # We are in the same region.
             return partition_cnt
@@ -183,9 +207,31 @@ def _splitter(
                 partial(_get_example_inputs_from_placeholder, only_metadata=True), placeholders
             )
             example_input_metadatas.append(list(example_input_metadata))
+
+            trace_structured_artifact(
+                name="thunder_module_original",
+                encoding="string",
+                payload_fn=lambda gm=graph_module: gm.print_readable(
+                    print_output=False,
+                    include_stride=True,
+                    include_device=True,
+                ),
+            )
+
             # Replace PyTorch operators within the checkpointed function with the corresponding Thunder operators
             checkpoint_converter(split_gm, graph_module)
 
+            trace_structured_artifact(
+                name="thunder_module_post_checkpoint_converter_applied",
+                encoding="string",
+                payload_fn=lambda gm=graph_module: gm.print_readable(
+                    print_output=False,
+                    include_stride=True,
+                    include_device=True,
+                ),
+            )
+
+            # TODO: propagate the index of the node to differentiate execution transforms
             jit_fn = thunder_jit(graph_module, is_differentiable_outputs=is_differentiable_outputs)
             # Update the node name from "submod_*" to "thunder_*" for more user-friendly names
             update_node_and_submodule(split_gm, node, node.name.replace("submod", "thunder"), jit_fn)
@@ -195,6 +241,17 @@ def _splitter(
             )
         elif node.name.startswith("submod"):  # For inductor
             graph_module = getattr(split_gm, node.name)
+
+            trace_structured_artifact(
+                name="inductor_module_original",
+                encoding="string",
+                payload_fn=lambda gm=graph_module: gm.print_readable(
+                    print_output=False,
+                    include_stride=True,
+                    include_device=True,
+                ),
+            )
+
             jit_fn = torch_inductor(graph_module)
             # Update the node name from "submod_*" to "inductor_*" for more user-friendly names
             update_node_and_submodule(split_gm, node, node.name.replace("submod", "inductor"), jit_fn)

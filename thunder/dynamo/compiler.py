@@ -7,6 +7,7 @@ from pathlib import Path
 import copy
 
 import torch
+from torch._logging._internal import trace_structured_artifact
 
 from thunder.dynamo.utils import (
     recompile_graph,
@@ -106,6 +107,17 @@ class ThunderCompiler:
         self._torch_compile = torch.compile
 
     def __call__(self, gm: torch.fx.GraphModule, sample_args: list[torch.SymInt, torch.Tensor]):
+        from thunder import jit
+
+        torch_compile_compile_id = torch._guards.CompileContext.current_compile_id()
+        wrapped_thunder_jit = partial(jit, torch_compile_compile_id=torch_compile_compile_id, **self.thunder_options)
+
+        trace_structured_artifact(
+            name="thunder_original_graph",
+            encoding="string",
+            payload_fn=lambda: gm.print_readable(print_output=False, include_stride=True, include_device=True),
+        )
+
         gm = remove_empty_autocast(gm)
 
         # Dynamo uses lazy generation of the underlying Python code, so we need to
@@ -114,8 +126,29 @@ class ThunderCompiler:
 
         # The whole graph may not be supported by `thunder`, so we split it in `thunder` supported sections
         # and unsupported sections which are passed to `torch.compile(backend='inductor')`
-        split_module, subgraph_info = _splitter(gm, self._thunder_jit, self._torch_compile, sample_args)
+        split_module, subgraph_info = _splitter(gm, wrapped_thunder_jit, self._torch_compile, sample_args)
         self.subgraph_infos.append(subgraph_info)
+
+        trace_structured_artifact(
+            name="thunder_split_graph",
+            encoding="string",
+            payload_fn=lambda: split_module.print_readable(
+                print_output=False,
+                include_stride=True,
+                include_device=True,
+            ),
+        )
+
+        if subgraph_info.split_reasons:
+            trace_structured_artifact(
+                name="thunder_split_reasons",
+                encoding="json",
+                payload_fn=lambda: [
+                    {"reason_type": reason.reason_type.name, "info": reason.info, "exception": reason.exception}
+                    for reason in subgraph_info.split_reasons
+                ],
+            )
+
         return split_module
 
     def save_reproducer_to_folder(

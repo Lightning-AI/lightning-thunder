@@ -1,9 +1,10 @@
 from collections import defaultdict, namedtuple
 from collections.abc import Callable, Sequence
 from contextvars import ContextVar
-from functools import wraps
+from functools import partial, wraps
 from typing import Any
 import dis
+import inspect
 import os
 import time
 import warnings
@@ -62,6 +63,7 @@ import thunder.transforms as transforms
 
 # NOTE This import is intentionally pytorch so that it thunder.torch doesn't import this
 import torch as pytorch
+from torch._logging._internal import trace_structured
 
 # Imports executors (to populate default executors and make them accessible)
 import thunder.executors.pythonex
@@ -376,6 +378,14 @@ def jit(
     cd.transforms = transforms
     cs = CompileStats()
 
+    # todo: use `trace_structured_artifact` once `compile_id` is merged.
+    #   https://github.com/pytorch/pytorch/pull/160440.
+    # note: `compile_id` is a kwarg since v2.7.0.
+    if _trace_structured_has_compile_id := ("compile_id" in inspect.signature(trace_structured).parameters):
+        _trace_structured = partial(trace_structured, compile_id=compile_options.get("torch_compile_compile_id", None))
+    else:
+        _trace_structured = trace_structured
+
     def _alias_tensor_of_args_kwargs_dict(*args, **kwargs) -> dict[int, list[int]]:
         flat_args, _ = tree_flatten((args, kwargs))
         data_ptr_to_tensor_group_index = {}
@@ -428,6 +438,22 @@ def jit(
             last_interpreter_log = jit_results.interpreter_log
             cs.last_interpreter_log = last_interpreter_log
             cs.last_interpreted_instructions = (i for i in last_interpreter_log if isinstance(i, dis.Instruction))
+
+            for name_in_artifact, trace_to_store in (
+                ("computation", computation_trc),
+                ("prologue", prologue_trc),
+                ("epilogue", epilogue_trc),
+            ):
+                if trace_to_store is None:
+                    continue
+                _trace_structured(
+                    "artifact",
+                    metadata_fn=lambda name=name_in_artifact: {
+                        "name": f"thunder_module_initial_{name}_trc",
+                        "encoding": "string",
+                    },
+                    payload_fn=lambda trace_to_stringify=trace_to_store: f"{trace_to_stringify}\n",
+                )
             return prologue_trc, computation_trc, epilogue_trc
 
     def apply_transforms_and_build_cache_entry(cd, cs, cache_info, prologue_trc, computation_trc, epilogue_trc):
@@ -524,7 +550,23 @@ def jit(
             if requires_grad:
                 from thunder.transforms.autodiff import grad_transform_on_trace
 
+                _trace_structured(
+                    "artifact",
+                    metadata_fn=lambda: {
+                        "name": "thunder_module_computation_trc_before_grad_transform",
+                        "encoding": "string",
+                    },
+                    payload_fn=lambda trace_to_stringify=computation_trc: f"{trace_to_stringify}\n",
+                )
                 computation_trc = grad_transform_on_trace(computation_trc)
+                _trace_structured(
+                    "artifact",
+                    metadata_fn=lambda: {
+                        "name": "thunder_module_computation_trc_after_grad_transform",
+                        "encoding": "string",
+                    },
+                    payload_fn=lambda trace_to_stringify=computation_trc: f"{trace_to_stringify}\n",
+                )
 
             from thunder.executors.passes import _transform_for_operator_executor_execution
             from thunder.distributed.utils import maybe_sort_waits
@@ -589,6 +631,23 @@ def jit(
 
             computation_trc = transform_to_torch_types(computation_trc)
             comp = computation_trc.python_callable()
+
+            for name_in_artifact, trace_to_store in (
+                ("computation", computation_trc),
+                ("prologue", prologue_trc),
+                ("epilogue", epilogue_trc),
+                ("backward", backward_trc),
+            ):
+                if trace_to_store is None:
+                    continue
+                _trace_structured(
+                    "artifact",
+                    metadata_fn=lambda name=name_in_artifact: {
+                        "name": f"thunder_module_execution_{name}_trc",
+                        "encoding": "string",
+                    },
+                    payload_fn=lambda trace_to_stringify=trace_to_store: f"{trace_to_stringify}\n",
+                )
 
             # TODO RC1 Update the cache
             cache_entry = CacheEntry(
