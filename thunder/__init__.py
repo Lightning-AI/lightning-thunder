@@ -648,10 +648,12 @@ def jit(
             ):
                 if trace_to_store is None:
                     continue
+
+                _idx_of_graph_module = compile_options.get("graph_module_idx", 0)
                 _trace_structured(
                     "artifact",
                     metadata_fn=lambda name=name_in_artifact: {
-                        "name": f"thunder_module_execution_{name}_trc",
+                        "name": f"thunder_module_execution_{name}_trc_of_module_{_idx_of_graph_module}",
                         "encoding": "string",
                     },
                     payload_fn=lambda trace_to_stringify=trace_to_store: f"{trace_to_stringify}\n",

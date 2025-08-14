@@ -23,6 +23,7 @@ from thunder.dynamo.utils import (
 )
 
 if TYPE_CHECKING:
+    from typing import Any
     from collections.abc import Callable
 
 
@@ -31,6 +32,8 @@ def _splitter(
     thunder_jit: Callable,
     torch_inductor: Callable,
     _unused_sample_args: list[torch.SymInt, torch.Tensor],
+    *,
+    thunder_options: dict[str, Any] = {},
 ) -> tuple[torch.fx.GraphModule, SubgraphInfo]:
     """
     This method will split graph into multiple graph modules based on thunder supported operations.
@@ -190,7 +193,7 @@ def _splitter(
     thunder_compiled_fns = []
     example_input_metadatas = []
     submodule_to_compiled_fns = {}
-    for node in split_gm.graph.nodes:
+    for node_idx, node in enumerate(split_gm.graph.nodes):
         node_name = node.name
         if is_thunder_supported_partition(node):
             graph_module = getattr(split_gm, node.name)
@@ -234,8 +237,19 @@ def _splitter(
                 ),
             )
 
-            # TODO: propagate the index of the node to differentiate execution transforms
-            jit_fn = thunder_jit(graph_module, is_differentiable_outputs=is_differentiable_outputs)
+            if not thunder_options:
+                jit_fn = thunder_jit(graph_module, is_differentiable_outputs=is_differentiable_outputs)
+            else:
+                from thunder import jit
+
+                jit_fn = jit(
+                    graph_module,
+                    **{
+                        "is_differentiable_outputs": is_differentiable_outputs,
+                        "graph_module_idx": node_idx,
+                        **thunder_options,
+                    },
+                )
             # Update the node name from "submod_*" to "thunder_*" for more user-friendly names
             update_node_and_submodule(split_gm, node, node.name.replace("submod", "thunder"), jit_fn)
             thunder_compiled_fns.append(jit_fn)
