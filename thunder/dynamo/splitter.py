@@ -234,6 +234,7 @@ def _splitter(
                 ),
             )
 
+            # TODO: propagate the index of the node to differentiate execution transforms
             jit_fn = thunder_jit(graph_module, is_differentiable_outputs=is_differentiable_outputs)
             # Update the node name from "submod_*" to "thunder_*" for more user-friendly names
             update_node_and_submodule(split_gm, node, node.name.replace("submod", "thunder"), jit_fn)
