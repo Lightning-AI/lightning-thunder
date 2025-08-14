@@ -2376,6 +2376,14 @@ shape = ex.register_operator("shape", meta=prims.shape_meta, fn=_shape_impl)
 _register_implementation(prims.shape, shape, checker=_always_executable)
 
 
+def _bitcast_impl(src, dtype):
+    return src.view(dtypes.to_torch_dtype(dtype))
+
+
+bitcast = ex.register_operator("bitcast", meta=prims.bitcast, fn=_bitcast_impl)
+_register_implementation(prims.bitcast, bitcast, checker=_always_executable)
+
+
 shallow_copy = ex.register_operator("shallow_copy", meta=prims.shallow_copy, fn=lambda x: x)
 _register_implementation(prims.shallow_copy, shallow_copy, checker=_always_executable)
 

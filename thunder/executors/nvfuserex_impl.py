@@ -970,6 +970,25 @@ def convert_element_type(
 
 register_supported(PrimIDs.CONVERT_ELEMENT_TYPE, convert_element_type, _convert_element_type_check)
 
+
+def _bitcast_check(src: TensorProxy, dtype: dtypes.dtype) -> bool:
+    return (
+        nvfuser_version() > LooseVersion("0.29.0")
+        and _convert_element_type_check(src, dtype)
+        and src.dtype.bytes == dtype.bytes
+    )
+
+
+# TODO: Expose bitcast in nvfuser to Python.
+# def bitcast(src: TensorProxy, dtype: dtypes.dtype, *, fd: FusionDefinition, lc_to_nv_map: dict):
+#     nva = getnv(src, fd, lc_to_nv_map)
+#     nvdtype = lcdtype_to_nvdtype(dtype)
+#
+#     return fd.ops.bitcast(nva, nvdtype)
+#
+#
+# register_supported(PrimIDs.BITCAST, bitcast, _bitcast_check)
+
 #
 # Tensor creation operations
 #
