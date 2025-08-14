@@ -1,0 +1,9 @@
+coverage ~=7.9.1
+pytest ==8.3.5
+pytest-cov ==6.2.1
+pytest-benchmark ==5.1.0
+transformers ==4.52.4
+lightning_sdk
+diffusers==0.34.0
+accelerate
+bitsandbytes==0.46.1
