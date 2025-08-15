@@ -14,6 +14,7 @@ import thunder
 from thunder.tests.distributed.helper import DistributedParallelTestCase
 from torch.distributed._tensor import DeviceMesh, distribute_tensor
 from torch.distributed.tensor.placement_types import Placement, Shard, Replicate
+from torch.testing._internal.distributed._tensor.common_dtensor import DTensorConverter
 
 from torch.testing._internal import common_utils
 
@@ -184,52 +185,65 @@ class DTensorTest(DistributedParallelTestCase):
         num_devices = self.world_size
         mesh = DeviceMesh("cuda", list(range(num_devices)))
 
-        def to_dtensor(x):
-            if isinstance(x, torch.Tensor):
-                return distribute_tensor(x, mesh, [Replicate()])
-            return x
-
+        tested_sample_count = 0
         for sample in op.sample_inputs("cpu", dtypes.float32, requires_grad=True):
-            args = tree_map(to_dtensor, sample.args)
-            kwargs = tree_map(to_dtensor, sample.kwargs)
-            torch_op = op.torch_reference
-            torch_result = torch_op(*args, **kwargs)
-            thunder_op = thunder.jit(op.op, executors=executors_map[executor].executors_list())
-            thunder_result = thunder_op(*args, **kwargs)
-            torch.testing.assert_close(thunder_result, torch_result)
+            # DTensorConverter converts inputs tensors to DTensor and creates DTensor
+            # with possible placements based on the input shapes.
+            # See - https://github.com/pytorch/pytorch/blob/eaa5d9d3d3dc642832b269b184f0c3ab8c990274/torch/testing/_internal/distributed/_tensor/common_dtensor.py#L521
+            dtensor_converter = DTensorConverter(mesh, sample.args, sample.kwargs)
+            for dtensor_args, dtensor_kwargs in dtensor_converter:
+                if not dtensor_converter.successful():
+                    continue
 
-            # Computes PyTorch (competition) result
-            torch_flats, spec = tree_flatten((args, kwargs))
-            torch_result = filter_differentiable_outputs(torch_result)
-            if torch_result == []:
-                raise RuntimeError(
-                    f"phantom_grad: Expected atleast 1 differentiable output. If {op.name} is non-differentiable, set op.supports_grad=False."
-                )
+                torch_op = op.torch_reference
 
-            grads = []
-            assert isinstance(torch_result, torch.Tensor) or isinstance(torch_result, Sequence), (
-                "Expected a single torch tensor or a sequence of torch tensors when testing phantom grad torch consistency"
-            )
-            if isinstance(torch_result, Sequence):
-                for x in torch_result:
-                    assert isinstance(x, torch.Tensor), (
-                        "Expected a single torch tensor or a sequence of torch tensors when testing phantom grad torch consistency"
+                try:
+                    torch_result = torch_op(*dtensor_args, **dtensor_kwargs)
+                except Exception:
+                    # Unsupported input passed to `torch_op`.
+                    # print(f"Unsupported input passed to `torch_op`: {dtensor_args}, {dtensor_kwargs}")
+                    continue
+
+                thunder_op = thunder.jit(op.op, executors=executors_map[executor].executors_list())
+                thunder_result = thunder_op(*dtensor_args, **dtensor_kwargs)
+                torch.testing.assert_close(thunder_result, torch_result)
+
+                # Computes PyTorch (competition) result
+                torch_flats, spec = tree_flatten((dtensor_args, dtensor_kwargs))
+                torch_result = filter_differentiable_outputs(torch_result)
+                if torch_result == []:
+                    raise RuntimeError(
+                        f"phantom_grad: Expected atleast 1 differentiable output. If {op.name} is non-differentiable, set op.supports_grad=False."
                     )
-                    if is_output_differentiable(x):
-                        grads.append(torch.ones_like(x))
-            else:
-                if is_output_differentiable(torch_result):
-                    grads = [torch.ones_like(torch_result)]
 
-            torch_tensors_requiring_grad = tuple(
-                f for f in torch_flats if isinstance(f, torch.Tensor) and f.requires_grad
-            )
-            torch_grad_result = torch.autograd.grad(torch_result, torch_tensors_requiring_grad, grads)
+                grads = []
+                assert isinstance(torch_result, torch.Tensor) or isinstance(torch_result, Sequence), (
+                    "Expected a single torch tensor or a sequence of torch tensors when testing phantom grad torch consistency"
+                )
+                if isinstance(torch_result, Sequence):
+                    for x in torch_result:
+                        assert isinstance(x, torch.Tensor), (
+                            "Expected a single torch tensor or a sequence of torch tensors when testing phantom grad torch consistency"
+                        )
+                        if is_output_differentiable(x):
+                            grads.append(torch.ones_like(x))
+                else:
+                    if is_output_differentiable(torch_result):
+                        grads = [torch.ones_like(torch_result)]
 
-            thunder_result = thunder_op(*args, **kwargs)
-            thunder_result = filter_differentiable_outputs(thunder_result)
-            thunder_grad_result = torch.autograd.grad(thunder_result, torch_tensors_requiring_grad, grads)
-            torch.testing.assert_close(thunder_grad_result, torch_grad_result)
+                torch_tensors_requiring_grad = tuple(
+                    f for f in torch_flats if isinstance(f, torch.Tensor) and f.requires_grad
+                )
+                torch_grad_result = torch.autograd.grad(torch_result, torch_tensors_requiring_grad, grads)
+
+                thunder_result = filter_differentiable_outputs(thunder_result)
+                thunder_grad_result = torch.autograd.grad(thunder_result, torch_tensors_requiring_grad, grads)
+                torch.testing.assert_close(thunder_grad_result, torch_grad_result)
+
+                # Increment tested sample count
+                tested_sample_count += 1
+
+        assert tested_sample_count > 0, f"No samples tested for {op.name} with {executor} executor"
 
 
 common_utils.instantiate_parametrized_tests(DTensorTest)
