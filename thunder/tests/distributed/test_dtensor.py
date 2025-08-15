@@ -19,6 +19,7 @@ from torch.testing._internal import common_utils
 
 from thunder.tests.distributed.helper import executors_map
 from thunder.tests.opinfos import OpInfo, SampleInput, opinfos, reshape_opinfo
+from thunder.tests.utils import is_output_differentiable, filter_differentiable_outputs
 import thunder.core.dtypes as dtypes
 from thunder.core.utils import tree_map, tree_flatten
 from thunder.core.transforms import grad
@@ -78,6 +79,9 @@ class DTensorTest(DistributedParallelTestCase):
     def test_dtensor_reshape(self, executor):
         num_devices = self.world_size
         mesh = DeviceMesh("cuda", list(range(num_devices)))
+
+        if executor == "nvfuser":
+            raise unittest.SkipTest("See PR: https://github.com/Lightning-AI/lightning-thunder/pull/2423")
 
         dim_size = 16
 
@@ -193,40 +197,6 @@ class DTensorTest(DistributedParallelTestCase):
             thunder_op = thunder.jit(op.op, executors=executors_map[executor].executors_list())
             thunder_result = thunder_op(*args, **kwargs)
             torch.testing.assert_close(thunder_result, torch_result)
-
-            def is_output_differentiable(x):
-                # grad_fn is set only if one of the input `requires_grad=True`
-                # and the op is differentiable.
-                # Example:
-                # >>> x = torch.ones(3, requires_grad=True)
-                # >>> y = torch.ones(3, requires_grad=False)
-                # >>> (x + x).grad_fn  # <AddBackward0 object at 0x7f0502edcf40>
-                # >>> (y + y).grad_fn  # None
-                # >>> (y + x).grad_fn  # <AddBackward0 object at 0x7f0502e21060>
-                # >>> (x < 1).grad_fn  # None (non-differentiable op)
-                # Op with differentiable and non-differentiable outputs.
-                # >>> torch.topk(x, k=2)
-                # torch.return_types.topk(
-                # values=tensor([1., 1.], grad_fn=<TopkBackward0>),
-                # indices=tensor([0, 1]))
-                # >>> torch.topk(torch.ones(3, requires_grad=False), k=2)
-                # torch.return_types.topk(
-                # values=tensor([1., 1.]),
-                # indices=tensor([0, 1]))
-                return x.grad_fn is not None or is_returning_self(x)
-
-            def is_returning_self(x):
-                if x.is_leaf and x.requires_grad:
-                    return True
-                return False
-
-            def filter_differentiable_outputs(outputs):
-                if isinstance(outputs, torch.Tensor):
-                    # Otherwise `filter` below will
-                    # iterate over the Tensor data.
-                    outputs = [outputs]
-
-                return list(filter(is_output_differentiable, outputs))
 
             # Computes PyTorch (competition) result
             torch_flats, spec = tree_flatten((args, kwargs))
