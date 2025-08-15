@@ -14,18 +14,16 @@ from collections.abc import Callable, Hashable, Iterable
 from collections.abc import Sequence
 
 import thunder.core.baseutils as baseutils
+from thunder.core.baseutils import BoundSymbolInterface, TagBase
 import thunder.core.codeutils as codeutils
 from thunder.core.codeutils import Printable, Positions
-from thunder.core.baseutils import BoundSymbolInterface, TagBase
-from thunder.core.utils import FrozenDict, make_hashable
-from thunder.core.pytree import tree_flatten_with_dataclass, tree_unflatten, tree_map
-from thunder.core.proxies import Proxy, TensorProxy, variableify, CollectionProxy, ProxyTag
 from thunder.core.compile_data import get_compile_data
+import thunder.core.prims as prims
+from thunder.core.proxies import Proxy, TensorProxy, variableify, CollectionProxy, ProxyTag
+from thunder.core.pytree import tree_flatten, tree_flatten_with_dataclass, tree_unflatten, tree_map
+from thunder.core.trace import get_tracectx, VariableInterface
+from thunder.core.utils import FrozenDict, make_hashable
 
-from thunder.core.trace import (
-    get_tracectx,
-    VariableInterface,
-)
 
 #
 # Support for querying "traceable" functions
@@ -314,6 +312,17 @@ class Symbol:
         else:
             trace.push_scope(subsymbols)
             result = self.meta(*args, **kwargs)
+
+            # To avoid passing an arg directly to output, we use shallow_copy
+            flat_results, spec = tree_flatten(result)
+            flat_args, _ = tree_flatten((args, kwargs))
+            for i, result_ in enumerate(flat_results):
+                for arg in flat_args:
+                    if arg is result_:
+                        flat_results[i] = prims.shallow_copy(arg)
+
+            result = tree_unflatten(flat_results, spec)
+
             trace.pop_scope()
 
         cd = get_compile_data()
