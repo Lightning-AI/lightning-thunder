@@ -695,6 +695,13 @@ abs_opinfo = ElementwiseUnaryOpInfo(
             dtypes=(datatypes.complex32,),
             devicetypes=(devices.DeviceType.CPU,),
         ),
+        # PyTorch doesn't support abs for bool on cpu
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.bool8,),
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
         # Ref - https://github.com/Lightning-AI/lightning-thunder/issues/2363
         DecorateInfo(
             pytest.mark.skip,
