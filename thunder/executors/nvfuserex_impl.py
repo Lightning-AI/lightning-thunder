@@ -2765,7 +2765,12 @@ def _scatter_check(a: TensorProxy, /, index: TensorProxy, src: TensorProxy | Num
     return True
 
 
-def scatter(a: TensorProxy, /, index: TensorProxy, src: TensorProxy | Number, dim: int,
+def scatter(
+    a: TensorProxy,
+    /,
+    index: TensorProxy,
+    src: TensorProxy | Number,
+    dim: int,
     *,
     fd: FusionDefinition,
     lc_to_nv_map: dict,
@@ -2776,7 +2781,7 @@ def scatter(a: TensorProxy, /, index: TensorProxy, src: TensorProxy | Number, di
 
     # index_put is translated to scatter in nvfuser
     return fd.ops.scatter(nva, nvi, nvs, 0)
-    
+
 
 register_supported(PrimIDs.SCATTER, scatter, _scatter_check)
 
