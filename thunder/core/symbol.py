@@ -313,12 +313,12 @@ class Symbol:
             trace.push_scope(subsymbols)
             result = self.meta(*args, **kwargs)
 
-            # To avoid passing an arg directly to output, we use shallow_copy
+            # To avoid passing an arg directly to output, we make a shallow_copy
             flat_results, spec = tree_flatten(result)
             flat_args, _ = tree_flatten((args, kwargs))
             for i, result_ in enumerate(flat_results):
                 for arg in flat_args:
-                    if arg is result_:
+                    if arg is result_ and isinstance(arg, Proxy):
                         flat_results[i] = prims.shallow_copy(arg)
 
             result = tree_unflatten(flat_results, spec)
