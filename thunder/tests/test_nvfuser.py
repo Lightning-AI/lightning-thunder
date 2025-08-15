@@ -979,12 +979,12 @@ def test_scatter(executor, device: str, dtype: dtypes.dtype):
         idxs: torch.Tensor
         src: torch.Tensor
         inp, idxs, src = inputs
-        out = torch.scatter(inp, idx, src, 0)
+        out = torch.scatter(inp, 0, idxs, src)
         return out
 
     bsz = 4
     hidden = 8
-    scatter_size = 64
+    scatter_size = 3
     x = torch.randn([bsz, hidden], device=device, dtype=dtype)
     _, ind = torch.topk(x, k=scatter_size, dim=0)
     src = torch.randn(scatter_size, hidden, device=device, dtype=dtype)
