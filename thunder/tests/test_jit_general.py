@@ -1111,7 +1111,7 @@ def test_cache_symbolic_values_reshape():
     def foo(t, batch_size):
         return t.reshape(batch_size, -1).sum(-1)
 
-    jfoo = thunder_jit(foo, cache="symbolic values", nv_enable_bookend=False)
+    jfoo = thunder_jit(foo, cache="symbolic values")
     expected = foo(a, 32)
     actual = jfoo(a, 32)
 
