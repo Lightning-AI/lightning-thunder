@@ -39,6 +39,9 @@ class DTensorTest(DistributedParallelTestCase):
         num_devices = self.world_size
         mesh = DeviceMesh("cuda", list(range(num_devices)))
 
+        if executor == "nvfuser":
+            raise unittest.SkipTest("See PR: https://github.com/Lightning-AI/lightning-thunder/pull/2423")
+
         dim_size = 16
 
         def _helper(fn, in_dtensor, w_dtensor):
@@ -68,6 +71,9 @@ class DTensorTest(DistributedParallelTestCase):
     def test_dtensor_reshape(self, executor):
         num_devices = self.world_size
         mesh = DeviceMesh("cuda", list(range(num_devices)))
+
+        if executor == "nvfuser":
+            raise unittest.SkipTest("See PR: https://github.com/Lightning-AI/lightning-thunder/pull/2423")
 
         dim_size = 16
 
@@ -138,7 +144,7 @@ class DTensorTest(DistributedParallelTestCase):
 
         in_dtensor = distribute_tensor(torch.randn(dim_size, dim_size, requires_grad=True), mesh, [Shard(0)])
 
-        tmodel = thunder.jit(fn)
+        tmodel = thunder.jit(fn, executors=thunder.get_always_executors())
         with pytest.raises(AssertionError):
             tmodel(in_dtensor, w)
 
@@ -154,7 +160,7 @@ class DTensorTest(DistributedParallelTestCase):
         def fn(x, w):
             return torch.mul(x, w)
 
-        tmodel = thunder.jit(fn)
+        tmodel = thunder.jit(fn, executors=thunder.get_always_executors())
         actual = tmodel(in_dtensor, w_dtensor)
         g_o = distribute_tensor(torch.ones(dim_size, dim_size), mesh, [Shard(1)])
 
