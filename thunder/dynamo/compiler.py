@@ -23,6 +23,7 @@ from thunder.dynamo.utils import (
 )
 from thunder.dynamo.splitter import _splitter
 from thunder.dynamo.benchmark_utils import ThunderCompileSpecification
+from thunder.dynamo._trace_structured import _log_to_torch_trace
 from thunder.transforms.extraction_only_prologue_transform import ExtractionOnlyPrologueTransform
 
 if TYPE_CHECKING:
@@ -110,26 +111,12 @@ class ThunderCompiler:
         torch_compile_compile_id = torch._guards.CompileContext.current_compile_id()
         thunder_options = {"torch_compile_compile_id": torch_compile_compile_id, **self.thunder_options}
 
-        start_time = time.time()
-        remove_empty_autocast(gm)
-
-        trace_structured(
-            "thunder_compiler_start",
-            metadata_fn=lambda: {
-                "num_nodes": len(list(gm.graph.nodes)),
-                "fusion_type": self.thunder_options.get("fusion_type", _DEFAULT_THUNDER_FUSION_TYPE),
-                "disable_split_autograd": self.thunder_options.get(
-                    "thunderfx_disable_split_autograd", _DEFAULT_THUNDERFX_DISABLE_SPLIT_AUTOGRAD
-                ),
-                "timestamp": start_time,
-            },
-        )
-
-        trace_structured_artifact(
-            name="thunder_original_graph",
-            encoding="string",
-            payload_fn=lambda: gm.print_readable(print_output=False, include_stride=True, include_device=True),
-        )
+        # trace_structured_artifact(
+        #     name="thunder_original_graph",
+        #     encoding="string",
+        #     payload_fn=lambda: gm.print_readable(print_output=False, include_stride=True, include_device=True),
+        # )
+        _log_to_torch_trace("thunder_original_graph", gm)
 
         # Dynamo uses lazy generation of the underlying Python code, so we need to
         # force recompilation of the GraphModule before passing it to Thunder.
@@ -146,15 +133,16 @@ class ThunderCompiler:
         )
         self.subgraph_infos.append(subgraph_info)
 
-        trace_structured_artifact(
-            name="thunder_split_graph",
-            encoding="string",
-            payload_fn=lambda: split_module.print_readable(
-                print_output=False,
-                include_stride=True,
-                include_device=True,
-            ),
-        )
+        # trace_structured_artifact(
+        #     name="thunder_split_graph",
+        #     encoding="string",
+        #     payload_fn=lambda: split_module.print_readable(
+        #         print_output=False,
+        #         include_stride=True,
+        #         include_device=True,
+        #     ),
+        # )
+        _log_to_torch_trace("thunder_split_graph", split_module)
 
         if subgraph_info.split_reasons:
             trace_structured_artifact(

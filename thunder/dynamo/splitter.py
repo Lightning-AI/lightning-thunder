@@ -21,6 +21,7 @@ from thunder.dynamo.utils import (
     _get_example_inputs_from_placeholder,
     _ThunderSplitGraphModule,
 )
+from thunder.dynamo._trace_structured import _log_to_torch_trace
 
 if TYPE_CHECKING:
     from typing import Any
@@ -214,15 +215,16 @@ def _splitter(
             )
             example_input_metadatas.append(list(example_input_metadata))
 
-            trace_structured_artifact(
-                name="thunder_module_original",
-                encoding="string",
-                payload_fn=lambda gm=graph_module: gm.print_readable(
-                    print_output=False,
-                    include_stride=True,
-                    include_device=True,
-                ),
-            )
+            # trace_structured_artifact(
+            #     name="thunder_module_original",
+            #     encoding="string",
+            #     payload_fn=lambda gm=graph_module: gm.print_readable(
+            #         print_output=False,
+            #         include_stride=True,
+            #         include_device=True,
+            #     ),
+            # )
+            _log_to_torch_trace("thunder_module_original", graph_module)
 
             # Replace PyTorch operators within the checkpointed function with the corresponding Thunder operators
             checkpoint_converter(split_gm, graph_module)
@@ -236,6 +238,7 @@ def _splitter(
                     include_device=True,
                 ),
             )
+            _log_to_torch_trace("thunder_module_post_checkpoint_converter_applied", graph_module)
 
             if not thunder_options:
                 jit_fn = thunder_jit(graph_module, is_differentiable_outputs=is_differentiable_outputs)
@@ -259,15 +262,16 @@ def _splitter(
         elif node.name.startswith("submod"):  # For inductor
             graph_module = getattr(split_gm, node.name)
 
-            trace_structured_artifact(
-                name="inductor_module_original",
-                encoding="string",
-                payload_fn=lambda gm=graph_module: gm.print_readable(
-                    print_output=False,
-                    include_stride=True,
-                    include_device=True,
-                ),
-            )
+            # trace_structured_artifact(
+            #     name="inductor_module_original",
+            #     encoding="string",
+            #     payload_fn=lambda gm=graph_module: gm.print_readable(
+            #         print_output=False,
+            #         include_stride=True,
+            #         include_device=True,
+            #     ),
+            # )
+            _log_to_torch_trace("inductor_module_original", graph_module)
 
             jit_fn = torch_inductor(graph_module)
             # Update the node name from "submod_*" to "inductor_*" for more user-friendly names
