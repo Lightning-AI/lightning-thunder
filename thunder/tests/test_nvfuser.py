@@ -975,6 +975,7 @@ def test_slice_dynamic_extent(executor, device: str, dtype: dtypes.dtype):
 )
 def test_scatter(executor, device: str, dtype: dtypes.dtype):
     for dim in (0, 1):
+
         def foo(inputs: list):
             inp: torch.Tensor
             idxs: torch.Tensor
