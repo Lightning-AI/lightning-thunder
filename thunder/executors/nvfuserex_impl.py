@@ -2766,7 +2766,7 @@ def _index_put_check(a: TensorProxy, /, indices: Sequence[TensorProxy], values: 
     if len(indices) != 1 or indices[0].ndim != 1:
         return False
 
-    if accumulate == True:
+    if accumulate:
         return False
 
     return True
