@@ -232,4 +232,4 @@ module = [
     "thunder.tests.test_reductions",
     "thunder.tests.test_script",
 ]
-ignore_errors = true
+ignore_errors = True
