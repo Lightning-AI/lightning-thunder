@@ -2805,6 +2805,35 @@ def index_put(
 register_supported(PrimIDs.INDEX_PUT, index_put, _index_put_check)
 
 
+def _scatter_check(a: TensorProxy, /, index: TensorProxy, src: TensorProxy | Number, dim: int) -> bool:
+    # temporary flag to allow scatter-like operations to be consumed by nvfuserex
+    enable_scatter: None | bool = get_compile_option("nv_enable_scatter", "Enable nvFuser scatter-like operations.")
+    if not enable_scatter:
+        return False
+    return True
+
+
+def scatter(
+    a: TensorProxy,
+    /,
+    index: TensorProxy,
+    src: TensorProxy | Number,
+    dim: int,
+    *,
+    fd: FusionDefinition,
+    lc_to_nv_map: dict,
+) -> Any:
+    nva = getnv(a, fd, lc_to_nv_map)
+    nvi = getnv(index, fd, lc_to_nv_map)
+    nvs = getnv(src, fd, lc_to_nv_map)
+
+    # index_put is translated to scatter in nvfuser
+    return fd.ops.scatter(nva, nvi, nvs, 0)
+
+
+register_supported(PrimIDs.SCATTER, scatter, _scatter_check)
+
+
 def _cross_entropy_check_(
     a: TensorLike,
     /,
