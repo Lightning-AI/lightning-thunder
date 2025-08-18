@@ -446,14 +446,6 @@ def jit(
             ):
                 if trace_to_store is None:
                     continue
-                # _trace_structured(
-                #     "artifact",
-                #     metadata_fn=lambda name=name_in_artifact: {
-                #         "name": f"thunder_module_initial_{name}_trc",
-                #         "encoding": "string",
-                #     },
-                #     payload_fn=lambda trace_to_stringify=trace_to_store: f"{trace_to_stringify}\n",
-                # )
                 _log_to_torch_trace(
                     f"thunder_module_initial_{name_in_artifact}_trc",
                     trace_to_store,
@@ -555,28 +547,12 @@ def jit(
             if requires_grad:
                 from thunder.transforms.autodiff import grad_transform_on_trace
 
-                # _trace_structured(
-                #     "artifact",
-                #     metadata_fn=lambda: {
-                #         "name": "thunder_module_computation_trc_before_grad_transform",
-                #         "encoding": "string",
-                #     },
-                #     payload_fn=lambda trace_to_stringify=computation_trc: f"{trace_to_stringify}\n",
-                # )
                 _log_to_torch_trace(
                     "thunder_module_computation_trc_before_grad_transform",
                     computation_trc,
                     compile_id=compile_options.get("torch_compile_compile_id", None),
                 )
                 computation_trc = grad_transform_on_trace(computation_trc)
-                # _trace_structured(
-                #     "artifact",
-                #     metadata_fn=lambda: {
-                #         "name": "thunder_module_computation_trc_after_grad_transform",
-                #         "encoding": "string",
-                #     },
-                #     payload_fn=lambda trace_to_stringify=computation_trc: f"{trace_to_stringify}\n",
-                # )
                 _log_to_torch_trace(
                     "thunder_module_computation_trc_after_grad_transform",
                     computation_trc,
@@ -657,14 +633,6 @@ def jit(
                     continue
 
                 _idx_of_graph_module = compile_options.get("graph_module_idx", 0)
-                # _trace_structured(
-                #     "artifact",
-                #     metadata_fn=lambda name=name_in_artifact: {
-                #         "name": f"thunder_module_execution_{name}_trc_of_module_{_idx_of_graph_module}",
-                #         "encoding": "string",
-                #     },
-                #     payload_fn=lambda trace_to_stringify=trace_to_store: f"{trace_to_stringify}\n",
-                # )
                 _log_to_torch_trace(
                     f"thunder_module_execution_{name_in_artifact}_trc_of_module_{_idx_of_graph_module}",
                     trace_to_store,

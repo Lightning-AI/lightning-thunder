@@ -215,29 +215,11 @@ def _splitter(
             )
             example_input_metadatas.append(list(example_input_metadata))
 
-            # trace_structured_artifact(
-            #     name="thunder_module_original",
-            #     encoding="string",
-            #     payload_fn=lambda gm=graph_module: gm.print_readable(
-            #         print_output=False,
-            #         include_stride=True,
-            #         include_device=True,
-            #     ),
-            # )
             _log_to_torch_trace("thunder_module_original", graph_module)
 
             # Replace PyTorch operators within the checkpointed function with the corresponding Thunder operators
             checkpoint_converter(split_gm, graph_module)
 
-            trace_structured_artifact(
-                name="thunder_module_post_checkpoint_converter_applied",
-                encoding="string",
-                payload_fn=lambda gm=graph_module: gm.print_readable(
-                    print_output=False,
-                    include_stride=True,
-                    include_device=True,
-                ),
-            )
             _log_to_torch_trace("thunder_module_post_checkpoint_converter_applied", graph_module)
 
             if not thunder_options:
@@ -261,16 +243,6 @@ def _splitter(
             )
         elif node.name.startswith("submod"):  # For inductor
             graph_module = getattr(split_gm, node.name)
-
-            # trace_structured_artifact(
-            #     name="inductor_module_original",
-            #     encoding="string",
-            #     payload_fn=lambda gm=graph_module: gm.print_readable(
-            #         print_output=False,
-            #         include_stride=True,
-            #         include_device=True,
-            #     ),
-            # )
             _log_to_torch_trace("inductor_module_original", graph_module)
 
             jit_fn = torch_inductor(graph_module)

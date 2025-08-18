@@ -111,11 +111,6 @@ class ThunderCompiler:
         torch_compile_compile_id = torch._guards.CompileContext.current_compile_id()
         thunder_options = {"torch_compile_compile_id": torch_compile_compile_id, **self.thunder_options}
 
-        # trace_structured_artifact(
-        #     name="thunder_original_graph",
-        #     encoding="string",
-        #     payload_fn=lambda: gm.print_readable(print_output=False, include_stride=True, include_device=True),
-        # )
         _log_to_torch_trace("thunder_original_graph", gm)
 
         # Dynamo uses lazy generation of the underlying Python code, so we need to
@@ -133,15 +128,6 @@ class ThunderCompiler:
         )
         self.subgraph_infos.append(subgraph_info)
 
-        # trace_structured_artifact(
-        #     name="thunder_split_graph",
-        #     encoding="string",
-        #     payload_fn=lambda: split_module.print_readable(
-        #         print_output=False,
-        #         include_stride=True,
-        #         include_device=True,
-        #     ),
-        # )
         _log_to_torch_trace("thunder_split_graph", split_module)
 
         if subgraph_info.split_reasons:
