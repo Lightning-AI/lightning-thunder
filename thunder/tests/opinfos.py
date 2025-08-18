@@ -695,9 +695,8 @@ abs_opinfo = ElementwiseUnaryOpInfo(
             dtypes=(datatypes.complex32,),
             devicetypes=(devices.DeviceType.CPU,),
         ),
-        # PyTorch doesn't support abs for bool on cpu
         DecorateInfo(
-            pytest.mark.skip,
+            pytest.mark.skip(reason="PyTorch doesn't support abs for bool on cpu"),
             "test_core_vs_torch_consistency",
             dtypes=(datatypes.bool8,),
             devicetypes=(devices.DeviceType.CPU,),
