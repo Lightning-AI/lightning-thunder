@@ -455,7 +455,7 @@ def jit(
                 #     payload_fn=lambda trace_to_stringify=trace_to_store: f"{trace_to_stringify}\n",
                 # )
                 _log_to_torch_trace(
-                    f"thunder_module_initial_{name}_trc",
+                    f"thunder_module_initial_{name_in_artifact}_trc",
                     trace_to_store,
                     compile_id=compile_options.get("torch_compile_compile_id", None),
                 )
@@ -666,7 +666,7 @@ def jit(
                 #     payload_fn=lambda trace_to_stringify=trace_to_store: f"{trace_to_stringify}\n",
                 # )
                 _log_to_torch_trace(
-                    f"thunder_module_execution_{name}_trc_of_module_{_idx_of_graph_module}",
+                    f"thunder_module_execution_{name_in_artifact}_trc_of_module_{_idx_of_graph_module}",
                     trace_to_store,
                     compile_id=compile_options.get("torch_compile_compile_id", None),
                 )
