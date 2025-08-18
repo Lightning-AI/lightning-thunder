@@ -26,6 +26,7 @@ thunder_alias_operator_list = (
     "contiguous",
     "split",
     "torch_wait_prim_impl",
+    "shallow_copy",
 )
 
 # A registry of symbols that require special memory calculation;
