@@ -2763,6 +2763,7 @@ def _index_put_check(a: TensorProxy, /, indices: Sequence[TensorProxy], values: 
         return False
 
     # TODO: limited support inside nvfuser. remove this when codegen support is generalized.
+    # see nvfuser issue: https://github.com/NVIDIA/Fuser/issues/4857 tracking indexing operation support.
     if len(indices) != 1 or indices[0].ndim != 1:
         return False
 
@@ -2834,7 +2835,7 @@ def scatter(
 register_supported(PrimIDs.SCATTER, scatter, _scatter_check)
 
 
-def _cross_entropy_check_(
+def _cross_entropy_check(
     a: TensorLike,
     /,
     target: TensorLike,
@@ -3092,7 +3093,7 @@ ex.register_supported(
     ltorch.cross_entropy,
     execution_transform=cross_entropy_transform,
     grad_transform=cross_entropy_grad,
-    checker=_cross_entropy_check_,
+    checker=_cross_entropy_check,
 )
 
 

@@ -986,7 +986,6 @@ def test_moe_infer_scatter(executor, device: str, dtype: dtypes.dtype):
         # out = out.sum(dim=1)  # [seq, hidden]
         return out
 
-    # use smaller problem size to avoid OOM on dynamo test
     seq_length = 1024
     topk_hidden = (2, 128)
     hidden_states = torch.randn((seq_length * topk_hidden[0], topk_hidden[1]), device="cuda", requires_grad=True)
