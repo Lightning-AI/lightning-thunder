@@ -1012,6 +1012,7 @@ def test_moe_infer_scatter(executor, device: str, dtype: dtypes.dtype):
     outside_fusion_syms = ["unpack_trivial", "python_return"]
     assert {el.sym.name for el in fw_trace.bound_symbols if not el.sym.is_fusion} == set(outside_fusion_syms)
 
+
 @instantiate(
     executors=(nvFuserExecutor,),
     dtypes=NOTHING,
