@@ -2780,7 +2780,7 @@ def scatter(
     nvs = getnv(src, fd, lc_to_nv_map)
 
     # index_put is translated to scatter in nvfuser
-    return fd.ops.scatter(nva, nvi, nvs, 0)
+    return fd.ops.scatter(nva, nvi, nvs, dim)
 
 
 register_supported(PrimIDs.SCATTER, scatter, _scatter_check)
