@@ -157,33 +157,31 @@ class DTensorTest(DistributedParallelTestCase):
 
                 torch_op = op.torch_reference
 
+                # Computes PyTorch result
                 try:
                     torch_result = torch_op(*dtensor_args, **dtensor_kwargs)
                 except Exception:
                     # Unsupported input passed to `torch_op`.
-                    # print(f"Unsupported input passed to `torch_op`: {dtensor_args}, {dtensor_kwargs}")
+                    # print(f"test_dtensor_opinfo: Unsupported input passed to `torch_op`: {dtensor_args}, {dtensor_kwargs}")
                     continue
 
                 thunder_op = thunder.jit(op.op, executors=executors_map[executor].executors_list())
                 thunder_result = thunder_op(*dtensor_args, **dtensor_kwargs)
                 torch.testing.assert_close(thunder_result, torch_result)
 
-                # Computes PyTorch (competition) result
-                torch_flats, spec = tree_flatten((dtensor_args, dtensor_kwargs))
+                torch_flats, _ = tree_flatten((dtensor_args, dtensor_kwargs))
                 torch_result = filter_differentiable_outputs(torch_result)
                 if torch_result == []:
-                    raise RuntimeError(
-                        f"phantom_grad: Expected atleast 1 differentiable output. If {op.name} is non-differentiable, set op.supports_grad=False."
-                    )
+                    raise RuntimeError("test_dtensor_opinfo: Expected atleast 1 differentiable output.")
 
                 grads = []
                 assert isinstance(torch_result, torch.Tensor) or isinstance(torch_result, Sequence), (
-                    "Expected a single torch tensor or a sequence of torch tensors when testing phantom grad torch consistency"
+                    "test_dtensor_opinfo:Expected a single torch tensor or a sequence of torch tensors"
                 )
                 if isinstance(torch_result, Sequence):
                     for x in torch_result:
                         assert isinstance(x, torch.Tensor), (
-                            "Expected a single torch tensor or a sequence of torch tensors when testing phantom grad torch consistency"
+                            "test_dtensor_opinfo: Expected a single torch tensor or a sequence of torch tensors"
                         )
                         if is_output_differentiable(x):
                             grads.append(torch.ones_like(x))
@@ -203,7 +201,7 @@ class DTensorTest(DistributedParallelTestCase):
                 # Increment tested sample count
                 tested_sample_count += 1
 
-        assert tested_sample_count > 0, f"No samples tested for {op.name} with {executor} executor"
+        assert tested_sample_count > 0, f"test_dtensor_opinfo:No samples tested for {op.name} with {executor} executor"
 
 
 common_utils.instantiate_parametrized_tests(DTensorTest)
