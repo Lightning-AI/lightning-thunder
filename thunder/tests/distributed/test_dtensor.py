@@ -19,11 +19,10 @@ from torch.testing._internal.distributed._tensor.common_dtensor import DTensorCo
 from torch.testing._internal import common_utils
 
 from thunder.tests.distributed.helper import executors_map
-from thunder.tests.opinfos import OpInfo, SampleInput, opinfos, reshape_opinfo
+from thunder.tests.opinfos import OpInfo, reshape_opinfo
 from thunder.tests.utils import is_output_differentiable, filter_differentiable_outputs
 import thunder.core.dtypes as dtypes
-from thunder.core.utils import tree_map, tree_flatten
-from thunder.core.transforms import grad
+from thunder.core.utils import tree_flatten
 
 
 # NOTE: We run all these similar functions seperately
@@ -35,6 +34,8 @@ functions_to_test = {
     "x * w": lambda x, w: x * w,
 }
 
+
+# TODO: Use a better way to add opinfo rather than importing one at a time.
 dtensor_supported_ops = (reshape_opinfo,)
 
 
@@ -142,6 +143,8 @@ class DTensorTest(DistributedParallelTestCase):
         lambda op, executor: op.name + "_" + executor,
     )
     def test_dtensor_opinfo(self, op: OpInfo, executor):
+        # NOTE: This test only tests for dtype=torch.float32 and requires_grad=True
+        #       not for all dtype which are supported by the operation.
         num_devices = self.world_size
         mesh = DeviceMesh("cuda", list(range(num_devices)))
 
