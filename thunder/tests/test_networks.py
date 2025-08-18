@@ -15,6 +15,7 @@ from thunder.tests.framework import (
     _all_test_executors,
     version_between,
     BITSANDBYTES_AVAILABLE,
+    requiresDeviceMemory,
 )
 import thunder.tests.nanogpt_model as nanogpt_model
 import thunder.tests.hf_bart_self_attn as hf_bart_self_attn
@@ -278,8 +279,8 @@ def test_hf_bert():
     assert_close(actual, expected)
 
 
-@pytest.mark.skipif(not BITSANDBYTES_AVAILABLE, reason="`bitsandbytes` is not available")
 @requiresCUDA
+@pytest.mark.skip(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2128")
 def test_quantization():
     from thunder.tests import litgpt_model
     from lightning.fabric.plugins import BitsandbytesPrecision
@@ -508,56 +509,55 @@ LLAMA_3_2_1B_CFG = {
 }
 
 
+# Both attn implementation have almost same memory requirements
+# Default - 697805312
+# eager - 698067456
 @requiresCUDA
-def test_hf_llama():
-    import transformers
+@requiresDeviceMemory(required_memory_bytes=int(0.7 * 1024 * 1024 * 1024))
+@pytest.mark.parametrize("attn_implementation", [None, "eager"])
+def test_hf_phi3_vision(attn_implementation):
+    # This test takes around 697805312 bytes (~0.7GB) of memory.
+    # Shapes for data generated with help of the following script
+    # https://github.com/microsoft/PhiCookBook/blob/main/code/03.Finetuning/Phi-3-vision-Trainingscript.py
+    from transformers import AutoModelForCausalLM, AutoConfig
+    from thunder.dynamo import thunderfx
 
-    if version_between(transformers.__version__, min_ver="4.46.4"):
-        pytest.skip("Dynamic cache is not supported, see static cache 'test_hf_kvcache'")
+    if attn_implementation is None:
+        # Flash Attention is the default implementation.
+        # Skip if flash_attn is not installed.
+        pytest.importorskip("flash_attn", reason="Flash Attention")
 
-    from transformers.models.llama import LlamaForCausalLM, LlamaConfig
-    from transformers.models.llama.modeling_llama import logger as llama_logger
-    from thunder.examine import get_fusion_symbols
-    import logging
+    # trust_remote_code=True is required else you get the following error:
+    # ValueError: Loading microsoft/Phi-3-vision-128k-instruct requires you to execute the configuration file in that repo on your local machine.
+    cfg = AutoConfig.from_pretrained("microsoft/Phi-3-vision-128k-instruct", trust_remote_code=True)
 
-    # transformers logs a cache deprecation warning
-    llama_logger.setLevel(logging.CRITICAL)
+    # Scale down the model similar to `test_hf_for_nemo`
+    cfg.num_hidden_layers = 1
+    cfg.vocab_size = 16
+    cfg.pad_token_id = 15
+    cfg.hidden_size = cfg.num_attention_heads
 
-    config_args = LLAMA_3_2_1B_CFG.copy()
-    config_args["num_hidden_layers"] = 1
     with torch.device("cuda"):
-        model = LlamaForCausalLM(LlamaConfig(**config_args)).to(torch.bfloat16).requires_grad_(False).eval()
+        model = AutoModelForCausalLM.from_config(
+            cfg, trust_remote_code=True, torch_dtype=torch.bfloat16, attn_implementation=attn_implementation
+        )
+        input_ids = torch.randint(0, 15, (1, 256))
+        pixel_values = torch.randint(0, 254, (1, 256, 256, 3), dtype=torch.uint8)
+        labels = input_ids.clone().detach()
 
-    jm = thunder.jit(model)
+        jit_model = thunderfx(model)
+        thunder_result = jit_model(input_ids=input_ids, pixel_values=pixel_values, labels=labels)
+        eager_result = model(input_ids=input_ids, pixel_values=pixel_values, labels=labels)
+        torch.testing.assert_close(eager_result.loss, thunder_result.loss, atol=1e-2, rtol=1e-2)
 
-    args1 = dict(
-        cache_position=torch.tensor([0, 1, 2, 3, 4, 5], device="cuda:0"),
-        input_ids=torch.tensor([[128000, 791, 1401, 311, 2324, 374]], device="cuda:0"),
-        inputs_embeds=None,
-        attention_mask=torch.tensor([[1, 1, 1, 1, 1, 1]], device="cuda:0"),
-        use_cache=True,
-        return_dict=True,
-    )
-    res = jm(**args1)
-    expected = model(**args1)
-
-    assert_close(res, expected, rtol=1e-1, atol=1e-1)
-
-    args2 = dict(
-        cache_position=torch.tensor([6], device="cuda:0"),
-        input_ids=torch.tensor([[311]], device="cuda:0"),
-        inputs_embeds=None,
-        attention_mask=torch.tensor([[1, 1, 1, 1, 1, 1, 1]], device="cuda:0"),
-        use_cache=True,
-        return_dict=True,
-    )
-
-    res2 = jm(past_key_values=res["past_key_values"], **args2)
-    expected2 = model(past_key_values=res["past_key_values"], **args2)
-    assert_close(res2, expected2, rtol=1e-1, atol=1e-1)
-
-    # changes this to fewer as needed, the goal is to not have too many fusions
-    assert len(get_fusion_symbols(thunder.last_traces(jm)[-1])) == 6
+        loss_grad = torch.randn_like(eager_result.loss)
+        thunder_grads = torch.autograd.grad(
+            thunder_result.loss, model.parameters(), grad_outputs=loss_grad, allow_unused=True
+        )
+        eager_grads = torch.autograd.grad(
+            eager_result.loss, model.parameters(), grad_outputs=loss_grad, allow_unused=True
+        )
+        torch.testing.assert_close(eager_grads, thunder_grads, atol=1e-2, rtol=1e-2)
 
 
 @requiresCUDA

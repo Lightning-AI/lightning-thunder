@@ -13,7 +13,6 @@ from thunder.recipes import HFTransformers
 from thunder.executors import nvfuser_available
 from thunder.executors.cudnnex import cudnn_available
 from thunder.tests.framework import version_between, IS_WINDOWS
-from thunder.tests.framework import IS_WINDOWS
 
 
 @pytest.mark.skipif(not cudnn_available(), reason="cuDNN is not available")

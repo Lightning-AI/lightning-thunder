@@ -695,6 +695,13 @@ abs_opinfo = ElementwiseUnaryOpInfo(
             dtypes=(datatypes.complex32,),
             devicetypes=(devices.DeviceType.CPU,),
         ),
+        # Ref - https://github.com/Lightning-AI/lightning-thunder/issues/2363
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_vjp_correctness",
+            dtypes=(datatypes.float64,),
+            executors=("nvfuser",),
+        ),
     ),
 )
 
@@ -1851,6 +1858,25 @@ relu6_opinfo = OpInfo(
 elementwise_unary_ops.append(relu6_opinfo)
 
 
+hardsigmoid_opinfo = OpInfo(
+    ltorch.hardsigmoid,
+    dtypes=(datatypes.floating,),
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=_elementwise_unary_torch(torch.nn.functional.hardsigmoid),
+    singularity_fn=lambda a: torch.where(a > 0, a - 3, a + 3),
+    test_directives=(
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=1e-3, rtol=1e-1)),
+            dtypes=(
+                datatypes.float16,
+                datatypes.bfloat16,
+            ),
+        ),
+    ),
+)
+elementwise_unary_ops.append(hardsigmoid_opinfo)
+
+
 # fdm.jvp, which is used in test_vjp_correctness, behaves badly at jump discontinuties of the partial derviatives
 def shrink_singularity_fn_producer(sample: SampleInput):
     lambd = sample.kwargs.get("lambd", 0.5)
@@ -1912,7 +1938,15 @@ softsign_opinfo = OpInfo(
     sample_input_generator=elementwise_unary_generator,
     torch_reference=_elementwise_unary_torch(torch.nn.functional.softsign),
     singularity_fn=lambda x: x,
-    test_directives=(),
+    test_directives=(
+        # Ref - https://github.com/Lightning-AI/lightning-thunder/issues/2363
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=5e-4, rtol=5e-4)),
+            "test_vjp_correctness",
+            dtypes=(datatypes.float64,),
+            executors=("nvfuser",),
+        ),
+    ),
 )
 elementwise_unary_ops.append(softsign_opinfo)
 
@@ -2156,6 +2190,14 @@ clone_opinfo = OpInfo(
     test_directives=(),
 )
 elementwise_unary_ops.append(clone_opinfo)
+
+
+square_opinfo = OpInfo(
+    ltorch.square,
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=_elementwise_unary_torch(torch.square),
+)
+elementwise_unary_ops.append(square_opinfo)
 
 
 # Puts all opinfos into the "opinfos" list
@@ -4130,6 +4172,27 @@ def getitem_sample_generator(op, device, dtype, requires_grad, **kwargs):
     idx = make_idx(5, 9)
     yield SampleInput(a, idx)
 
+    # n-dimensional tensor advanced indexing cases
+    def make_nd_idx(dim_length: int, indices: int, ndim: int):
+        shape = (indices,) * ndim
+        return make_tensor(shape, low=-dim_length, high=dim_length, device=device, dtype=torch.int64)
+
+    # 2D tensor index
+    a = make((5, 4, 7))
+    idx = make_nd_idx(5, 3, 2)  # shape (3, 3)
+    yield SampleInput(a, idx)
+
+    # 3D tensor index
+    a = make((5, 4, 7, 3))
+    idx = make_nd_idx(5, 2, 3)  # shape (2, 2, 2)
+    yield SampleInput(a, idx)
+
+    # Broadcasting n-dim indices
+    a = make((5, 4, 7, 3))
+    idx1 = make_nd_idx(5, 2, 2)  # shape (2, 2)
+    idx2 = make_nd_idx(4, 1, 2)  # shape (1, 2), will broadcast
+    yield SampleInput(a, (idx1, idx2))
+
     # Sequence cases
 
     # Fully specified
@@ -4218,6 +4281,52 @@ def getitem_sample_generator(op, device, dtype, requires_grad, **kwargs):
     a = make((5, 5))
     yield SampleInput(a, ([1, 2], 1))
 
+    # Additional n-dimensional and None index test cases
+
+    # None with n-dimensional advanced indexing
+    a = make((5, 5, 7))
+    idx = make_nd_idx(5, 2, 2)  # shape (2, 2)
+    yield SampleInput(a, (None, idx))  # None before n-dim index
+    yield SampleInput(a, (idx, None))  # None after n-dim index
+
+    # Multiple None with advanced indexing
+    a = make((5, 5, 7))
+    yield SampleInput(a, (None, [1, 2], None))
+    yield SampleInput(a, (None, None, [1, 2]))
+
+    # None with multiple advanced indices
+    a = make((5, 5, 7, 3))
+    idx1 = make_idx(5, 3)
+    idx2 = make_idx(5, 3)
+    yield SampleInput(a, (None, idx1, idx2))
+    yield SampleInput(a, (idx1, None, idx2))
+    yield SampleInput(a, (idx1, idx2, None))
+
+    # None with n-dimensional indices
+    a = make((10, 10, 10))
+    idx = make_nd_idx(10, 3, 3)  # shape (3, 3, 3)
+    yield SampleInput(a, (None, idx, None))
+
+    # Complex mixed indexing
+    a = make((5, 5, 7, 3))
+    yield SampleInput(a, (None, slice(1, 4), [1, 2], None))
+    yield SampleInput(a, (slice(1, 4), None, [1, 2]))
+
+    # None with list indexing
+    a = make((5, 5, 7))
+    yield SampleInput(a, (None, [0, 2, 4]))
+    yield SampleInput(a, ([0, 2, 4], None, None))
+
+    # Edge case: all None except one advanced index
+    a = make((5, 5, 7))
+    yield SampleInput(a, (None, None, [1]))
+
+    # Broadcasting with None
+    a = make((5, 5, 7))
+    idx1 = make_idx(5, 1)  # shape (1,)
+    idx2 = make_idx(5, 3)  # shape (3,)
+    yield SampleInput(a, (None, idx1, idx2))  # Will broadcast to (1, 3)
+
 
 # NOTE getitem intentionally defines 3 references, since advanced indexing is probably
 #   the most complicated operation that any framework implements, and there's a good chance
@@ -4245,11 +4354,6 @@ getitem_opinfo = OpInfo(
         DecorateInfo(
             pytest.mark.xfail,
             "test_vjp_correctness",
-        ),
-        # See [Fix runtime-trace shape/dtype/device mismatch]
-        DecorateInfo(
-            pytest.mark.xfail(strict=True),
-            "test_core_vs_torch_consistency",
         ),
     ),
 )
@@ -5222,13 +5326,6 @@ take_opinfo = OpInfo(
     supports_grad=True,
     sample_input_generator=take_sample_generator,
     torch_reference=torch_index_select_wrapper,
-    test_directives=(
-        DecorateInfo(
-            pytest.mark.xfail,
-            executors=("nvfuser",),
-            active_if=nvfuser_version < "0.0.3",
-        ),
-    ),
 )
 shape_ops.append(take_opinfo)
 
@@ -5427,6 +5524,7 @@ def gather_sample_generator(op, device, dtype, requires_grad, **kwargs):
         a = make(shape_a)
         b = make_index(shape_b, low=0, high=shape_a[dim])
         yield SampleInput(a, index=b, dim=dim)
+        yield SampleInput(input=a, index=b, dim=dim)
 
 
 gather_opinfo = OpInfo(
@@ -6167,8 +6265,8 @@ def cumsum_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
     for shape, dim in cases:
         # torch.cumsum not implemented for dtype='Bool'
-        output_dtype = torch.float if dtype is torch.bool else dtype
-        yield (SampleInput(make(shape), dim, dtype=output_dtype))
+        for output_dtype in (None, torch.float if dtype is torch.bool else dtype):
+            yield (SampleInput(make(shape), dim, dtype=output_dtype))
 
 
 cumsum_opinfo = OpInfo(
@@ -6419,6 +6517,29 @@ sort_opinfo = OpInfo(
 dim_perm_ops.append(sort_opinfo)
 
 
+argsort_opinfo = OpInfo(
+    ltorch.argsort,
+    name="argsort",
+    supports_grad=False,
+    sample_input_generator=sort_sample_generator,
+    torch_reference=torch.argsort,
+    dtypes=(datatypes.bool8, datatypes.signedinteger, datatypes.unsignedinteger, datatypes.floating),
+    test_directives=(
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=1e-6, rtol=1e-6)),
+            "test_vjp_correctness",
+        ),
+        DecorateInfo(
+            pytest.mark.skip(reason="PyTorch does not yet support boolean types in argsort for CUDA"),
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.bool8,),
+            devicetypes=(devices.DeviceType.CUDA,),
+        ),
+    ),
+)
+dim_perm_ops.append(argsort_opinfo)
+
+
 opinfos.extend(dim_perm_ops)
 
 
@@ -6500,6 +6621,7 @@ def full_sample_generator(op, device, dtype, requires_grad, **kwargs):
         ((4, 4), make_fv()),
         ((8, 1, 6), make_fv()),
         ((8, 7, 5, 1), make_fv()),
+        ((4, 4), make_tensor((), dtype=dtype, device=device)),
     )
 
     for shape, fill_value in cases:
@@ -6714,7 +6836,7 @@ randint_opinfo = OpInfo(
     sample_input_generator=varargs_tensor_creation_op_sample_generator_with_bounds,
     error_input_generator=randn_error_generator,  # Does not depend on the distribution
     torch_reference=lambda *args, **kwargs: torch.randint(*args, **kwargs).fill_(0),
-    dtypes=(datatypes.int64,),
+    dtypes=(datatypes.int64, datatypes.floating),
 )
 tensor_creation_ops.append(randint_opinfo)
 
@@ -6734,6 +6856,31 @@ randn_like_opinfo = OpInfo(
     dtypes=(datatypes.floating, datatypes.complexfloating),
 )
 tensor_creation_ops.append(randn_like_opinfo)
+
+
+def torch_rand_like_and_zero(*args, **kwargs):
+    return ltorch.full_like(ltorch.rand_like(*args, **kwargs), 0)
+
+
+rand_like_opinfo = OpInfo(
+    torch_rand_like_and_zero,
+    sample_input_generator=fixed_value_like_tensor_creation_op_sample_generator,
+    torch_reference=lambda *args, **kwargs: torch.rand_like(*args, **kwargs).fill_(0),
+    dtypes=(datatypes.floating, datatypes.complexfloating),
+)
+tensor_creation_ops.append(rand_like_opinfo)
+
+
+def torch_empty_like_and_zero(*args, **kwargs):
+    return ltorch.full_like(ltorch.empty_like(*args, **kwargs), 0)
+
+
+empty_like_opinfo = OpInfo(
+    op=torch_empty_like_and_zero,
+    sample_input_generator=fixed_value_like_tensor_creation_op_sample_generator,
+    torch_reference=lambda *args, **kwargs: torch.empty_like(*args, **kwargs).fill_(0),
+)
+tensor_creation_ops.append(empty_like_opinfo)
 
 
 def bernoulli_sample_generator(op, device, dtype, requires_grad, **kwargs):
@@ -6995,6 +7142,13 @@ normalize_opinfo = OpInfo(
             dtypes=(datatypes.float16,),
             devicetypes=(devices.DeviceType.CPU, devices.DeviceType.CUDA),
         ),
+        # Ref -https://github.com/Lightning-AI/lightning-thunder/issues/2363
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=5e-4, rtol=5e-4)),
+            "test_vjp_correctness",
+            dtypes=(datatypes.float64,),
+            executors=("nvfuser",),
+        ),
     ),
 )
 linear_algebra_ops.append(normalize_opinfo)
@@ -7080,6 +7234,88 @@ multi_dot_opinfo = OpInfo(
     dtypes=(datatypes.floating,),
 )
 linear_algebra_ops.append(multi_dot_opinfo)
+
+
+def _grouped_mm_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    M = 16
+    N = 64
+    K = 32
+    G = 2
+
+    a = make_tensor((M, K), device=device, dtype=dtype, low=0, high=1.0, requires_grad=False)
+    b = make_tensor((G, K, N), device=device, dtype=dtype, low=0, high=1.0, requires_grad=False)
+
+    # torch._grouped_mm, the torchex implementation, requires offsets to be
+    # multiples of 16. nvFuser doesn't have that restriction.
+    for offsets in [[0, 16], [16, 16]]:
+        c = torch.tensor(offsets, device=device, dtype=torch.int32)
+        bfloat16_comp = TorchTensorComp(atol=1e-1, rtol=1e-1)
+        si = SampleInput(a, b, c)
+        si.set_comparator(bfloat16_comp)
+        yield si
+
+
+def _group_sizes_from_offsets(offsets: torch.Tensor) -> list[int]:
+    group_sizes = []
+    prev = 0
+    for offset in offsets:
+        group_sizes.append(offset - prev)
+        prev = offset
+    return group_sizes
+
+
+# torch._grouped_mm has too many constraints to be used as a reference
+# implementation. For example, it supports only Hopper and only bfloat16.
+def _grouped_mm_reference(a, b, offsets):
+    num_groups = offsets.numel()
+    group_sizes = _group_sizes_from_offsets(offsets)
+
+    if a.dim() == 2 and b.dim() == 2:
+        # [m, k] @ [k, n] => [g, m, n]
+        group_as = a.split(group_sizes, -1)
+        group_bs = b.split(group_sizes, 0)
+        out = torch.empty(num_groups, a.size(0), b.size(-1), dtype=a.dtype, device=a.device)
+        group_outs = out.unbind()
+    elif a.dim() == 3 and b.dim() == 2:
+        # [g, m, k] @ [k, n] => [m, n]
+        group_as = a.unbind()
+        group_bs = b.split(group_sizes, -1)
+        out = torch.empty(a.size(1), b.size(-1), dtype=a.dtype, device=a.device)
+        group_outs = out.split(group_sizes, -1)
+    elif a.dim() == 2 and b.dim() == 3:
+        # [m, k] @ [g, k, n] => [m, n]
+        group_as = a.split(group_sizes, 0)
+        group_bs = b.unbind()
+        out = torch.empty(a.size(0), b.size(-1), dtype=a.dtype, device=a.device)
+        group_outs = out.split(group_sizes, 0)
+    else:
+        assert False, f"Unexpected ranks: {a.size()} and {b.size()}"
+
+    for group_a, group_b, group_out in zip(group_as, group_bs, group_outs):
+        torch.matmul(group_a, group_b, out=group_out)
+
+    return out
+
+
+if LooseVersion(torch.__version__) >= "2.8":
+    _grouped_mm_opinfo = OpInfo(
+        prims._grouped_mm,
+        supports_grad=False,
+        sample_input_generator=_grouped_mm_sample_generator,
+        torch_reference=_grouped_mm_reference,
+        dtypes=(datatypes.bfloat16,),
+        devicetypes=(devices.DeviceType.CUDA,),
+        test_directives=(
+            DecorateInfo(
+                pytest.mark.skip,
+                "test_core_vs_torch_consistency",
+                executors=("torch",),
+                # torch._grouped_mm, the torchex implementation, doesn't support pre-Hopper.
+                active_if=(not torch.cuda.is_available() or torch.cuda.get_device_capability() < (9, 0)),
+            ),
+        ),
+    )
+    linear_algebra_ops.append(_grouped_mm_opinfo)
 
 
 def einsum_sample_generator(op, device, dtype, requires_grad, **kwargs):

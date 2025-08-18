@@ -35,6 +35,7 @@ import thunder.core.prims as prims
 from thunder.core.trace import TraceCtx, set_tracectx, reset_tracectx, tracectx
 from thunder.core.symbol import BoundSymbol
 
+
 #
 # Tests related to the test framework itself
 #
@@ -43,6 +44,19 @@ from thunder.core.symbol import BoundSymbol
 # Using instantiate with parametrize
 
 _parametrize_decorator = pytest.mark.parametrize("num, s", ((2, "hi"), (-5, "bye")))
+
+
+@thunder._with_cache_info_ctx
+def run_prologue(jfn, *args, **kwargs):
+    cd = thunder.compile_data(jfn)
+    cs = thunder.compile_stats(jfn)
+    ci = thunder._get_cache_info()
+    cd.populate_cache_info(ci, *args, **kwargs)
+    traces = cd.acquire_initial_trace(cd.fn, args, kwargs, cd, cs, cd.executors_list[0])
+    cache_entry = cd.apply_transforms_and_build_cache_entry(cd, cs, ci, *traces)
+    with thunder.compile_data_and_stats(cd, cs):
+        pro_to_comp, pro_to_epi = cache_entry.prologue_fn(*args, **kwargs)
+    return cache_entry, pro_to_comp, pro_to_epi
 
 
 @instantiate(dtypes=NOTHING, decorators=(_parametrize_decorator,))
@@ -1090,7 +1104,6 @@ def test_bsym_toposort(executor: TestExecutor, device: str, dtype: dtypes.dtype)
     assert sub_preferring_sub_bsym.sym.id == "torch.sub"
 
     # Tests collection and reshape with -1 input
-    # NOTE Additions before and after the reshape are to prevent nvFuser from "bookending" the operation
     def bar(a, shape):
         b = a + 3
         c = a + 2.0
@@ -2144,7 +2157,6 @@ def test_cse(executor, device, _):
 
     x, y = (make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2))
     initial_trace = thunder.trace()(func, x, y, device)
-    print(initial_trace)
     compiled_func = thunder.jit(
         initial_trace.python_callable(),
         executors=executor.executors_list(),
@@ -2850,6 +2862,14 @@ def test_arange_default_dtype():
     assert jfn() == torch.int64
 
 
+def test_randint_default_dtype():
+    def fn():
+        return torch.randint(0, 5, (2, 3))
+
+    jfn = thunder.jit(fn)
+    assert jfn().dtype == fn().dtype == torch.int64
+
+
 def test_cat_mixed_dtypes():
     # We add a special test here instead of a sample in OpInfo.
     # When we add a mixed input sample in OpInfo, it will also be picked up for the test which
@@ -3205,6 +3225,7 @@ def test_apply_autograd_memory(thunderfx_disable_split_autograd):
             saved_other=(),
             return_none_instead_of_grads=True,
             disable_split_autograd=thunderfx_disable_split_autograd,
+            is_differentiable_outputs=None,
         )
         return [weakref.ref(x), weakref.ref(o)]
 
@@ -3219,20 +3240,6 @@ def test_thunder_jit_parts():
     )
 
     inp = torch.randn((32, 64))
-
-    @thunder._with_cache_info_ctx
-    def run_prologue(jfn, /, *args, **kwargs):
-        cd = thunder.compile_data(jfn)
-        cs = thunder.compile_stats(jfn)
-        ci = thunder._get_cache_info()
-        cd.populate_cache_info(ci, *args, **kwargs)
-        prologue_trc, computation_trc, epilogue_trc = cd.acquire_initial_trace(
-            cd.fn, args, kwargs, cd, cs, cd.executors_list[0]
-        )
-        cache_entry = cd.apply_transforms_and_build_cache_entry(cd, cs, ci, prologue_trc, computation_trc, epilogue_trc)
-        with thunder.compile_data_and_stats(cd, cs):
-            pro_to_comp, pro_to_epi = cache_entry.prologue_fn(*args, **kwargs)
-        return cache_entry, pro_to_comp, pro_to_epi
 
     jm = thunder.jit(m)
 

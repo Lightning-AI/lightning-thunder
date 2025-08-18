@@ -26,17 +26,20 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ["ubuntu-22.04", "macOS-14", "windows-2022"]
+        os: ["ubuntu-22.04", "macOS-15", "windows-latest"]
         python-version: ["3.10"]
         requires: ["latest", "nightly"] # , 'oldest'
         suite: ["core", "ops", "grads"]
         include:
-          - { os: "ubuntu-22.04", python-version: "3.11", requires: "latest" }
-          - { os: "ubuntu-22.04", python-version: "3.12", requires: "latest" }
-          - { os: "ubuntu-22.04", python-version: "3.13", requires: "latest" }
+          - { os: "ubuntu-22.04", python-version: "3.10", requires: "oldest", suite: "core" }
+          - { os: "ubuntu-22.04", python-version: "3.10", requires: "oldest", suite: "ops" }
+          - { os: "ubuntu-22.04", python-version: "3.10", requires: "oldest", suite: "grads" }
+          - { os: "ubuntu-24.04", python-version: "3.11", requires: "latest" }
+          - { os: "ubuntu-24.04", python-version: "3.12", requires: "latest" }
+          - { os: "ubuntu-24.04", python-version: "3.13", requires: "latest" }
         exclude:
-          - { os: "windows-2022", suite: "ops" }
-          - { os: "windows-2022", suite: "grads" }
+          - { os: "windows-latest", suite: "ops" }
+          - { os: "windows-latest", suite: "grads" }
 
     # Timeout: https://stackoverflow.com/a/59076067/4521646
     timeout-minutes: 35
@@ -47,11 +50,14 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: "pip"
 
       - name: Setup Ubuntu
-        if: runner.os == 'ubuntu'
+        if: runner.os == 'Linux'
         run: |
-          sudo apt-get install -y graphviz
+          sudo apt-get update -qq --fix-missing
+          sudo apt-get install -y libblas3 liblapack3 libopenblas-dev
+          pip install --force-reinstall numpy
 
       - name: Set min. dependencies
         if: matrix.requires == 'oldest'
@@ -61,42 +67,41 @@ jobs:
               open(fpath, 'w').write(req)
         shell: python
 
-      - name: Get pip cache dir
-        id: pip-cache
-        run: echo "dir=$(pip cache dir)" >> $GITHUB_OUTPUT
-
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ${{ steps.pip-cache.outputs.dir }}
-          key: ${{ runner.os }}-${{ matrix.python-version }}-${{ matrix.requires }}-pip-${{ hashFiles('requirements/*.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ matrix.python-version }}-${{ matrix.requires }}-pip-
-      - name: switch Torch source
+      - name: set default Torch source
+        run: echo "TORCH_URL=$TORCH_URL_STABLE" >> $GITHUB_ENV
+      - name: switch Torch source to nightly
+        if: matrix.requires == 'nightly'
         run: |
-          if [[ "${{ matrix.requires }}" == "nightly" ]]; then
-            echo "TORCH_URL=$TORCH_URL_NIGHTLY" >> $GITHUB_ENV
-            echo "PIP_EXTRA_FLAG=--pre" >> $GITHUB_ENV
-          else
-            echo "TORCH_URL=$TORCH_URL_STABLE" >> $GITHUB_ENV
-          fi
+          echo "TORCH_URL=$TORCH_URL_NIGHTLY" >> $GITHUB_ENV
+          echo "PIP_EXTRA_FLAG=--pre" >> $GITHUB_ENV
+
+      - name: Install Mac specific dependencies
+        if: runner.os == 'macOS'
+        run: brew install libomp
 
       - name: Install package & dependencies
         run: |
-          if [[ "${{ runner.os }}" == "macOS" ]]; then
-             brew install libomp
-          fi
-          pip --version
-          pip install -U \
-            ${PIP_EXTRA_FLAG} torch torchvision torchaudio \
-            --index-url=${TORCH_URL}
           pip install -e . -U \
-            ${PIP_EXTRA_FLAG} -r requirements/test.txt
+            ${PIP_EXTRA_FLAG} -r requirements/test.txt \
+            --extra-index-url=${TORCH_URL}
           pip list
-        shell: bash
+
+      - name: re-Install dependencies
+        if: matrix.requires != 'nightly'
+        run: |
+          pip install -q wget
+          # download script and adjust torch versions in requirements
+          python -m wget https://raw.githubusercontent.com/Lightning-AI/utilities/main/scripts/adjust-torch-versions.py
+          for fpath in `ls requirements/*.txt`; do \
+            python ./adjust-torch-versions.py $fpath ${{ matrix.pytorch-version }}; \
+          done
+          # re-install with adjusted torch versions
+          pip install ${PIP_EXTRA_FLAG} -r requirements/devel.txt \
+            --extra-index-url=${TORCH_URL}
+          pip list
 
       - name: Testing Local
-        if: matrix.python-version == '3.10' && matrix.suite == 'core'
+        if: matrix.suite == 'core'
         run: |
           coverage run --source thunder -m \
             pytest thunder/tests/ \
@@ -109,7 +114,7 @@ jobs:
 
       - name: Testing Distributed
         # run all found tests in given past as standalone
-        if: matrix.python-version == '3.10' && runner.os == 'Linux' && matrix.suite == 'core'
+        if: runner.os == 'Linux' && matrix.suite == 'core'
         run: |
           pytest thunder/tests/distributed/ \
             -v --datefmt="%Y%m%d-%H:%M:%S.%f" \
@@ -117,7 +122,7 @@ jobs:
             --durations=250
 
       - name: Testing Ops
-        if: matrix.python-version == '3.10' && matrix.suite == 'ops' && runner.os != 'Windows'
+        if: matrix.suite == 'ops'
         run: |
           coverage run --source thunder -m \
             pytest thunder/tests/test_ops.py \
@@ -126,7 +131,7 @@ jobs:
               -n 4 --durations=250
 
       - name: Testing Grads
-        if: matrix.python-version == '3.10' && matrix.suite == 'grads' && runner.os != 'Windows'
+        if: matrix.suite == 'grads'
         run: |
           coverage run --source thunder -m \
             pytest thunder/tests/test_grad.py \
@@ -135,7 +140,7 @@ jobs:
               -n 4 --durations=250
 
       - name: Testing interpreter
-        if: matrix.python-version == '3.11' || matrix.python-version == '3.12' || matrix.python-version == '3.13'
+        if: matrix.python-version != '3.10'
         run: |
           python -m pytest \
             thunder/tests/test_interpreter.py \

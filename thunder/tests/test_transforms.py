@@ -525,13 +525,14 @@ def test_cudagraph_fw_bw():
     import torch
     import thunder
     import litgpt
+    from thunder.tests.litgpt_model import Config
     from torch.testing import make_tensor
     from functools import partial
     from thunder.transforms.cudagraph import CUDAGraphTransform
 
     device = torch.device("cuda")
 
-    cfg = litgpt.Config.from_name("open_llama_3b", n_layer=2)
+    cfg = Config.from_name("llama2-like")
     with device:
         make = partial(make_tensor, low=0, high=255, device=device, dtype=torch.long, requires_grad=False)
         shape = (1,) + (cfg.block_size,)
@@ -659,7 +660,7 @@ def test_buffer_dtype_casting():
             }
 
             # here we switch the prologue_trace to a copy with new metadata
-            prologue_trace = thunder.transforms.quantization.trace_with_replaced_proxy_metadata(
+            prologue_trace = thunder.transforms.utils.trace_with_replaced_proxy_metadata(
                 prologue_trace, prologue_proxy_map
             )
 
@@ -685,7 +686,7 @@ def test_buffer_dtype_casting():
                 if psym.shape != csym.shape or psym.dtype != csym.dtype
             }
 
-            new_computation_trace = thunder.transforms.quantization.trace_with_replaced_proxy_metadata(
+            new_computation_trace = thunder.transforms.utils.trace_with_replaced_proxy_metadata(
                 computation_trace, computation_proxy_map
             )
 
@@ -713,7 +714,7 @@ def test_buffer_dtype_casting():
 
             new_computation_trace.bound_symbols = new_bound_symbols
 
-            new_computation_trace = thunder.transforms.quantization.trace_with_replaced_proxy_metadata(
+            new_computation_trace = thunder.transforms.utils.trace_with_replaced_proxy_metadata(
                 new_computation_trace, computation_proxy_map
             )
 
@@ -798,7 +799,7 @@ def test_dce_duplicate_number_proxies():
 
     def fn(x):
         shape_0 = x.shape
-        shape_1 = x.shape  # duplicate shape query
+        shape_1 = x.clone().shape  # duplicate shape query
         return sum(shape_0)
 
     # symbolic values is necessary to have the shape query in trace

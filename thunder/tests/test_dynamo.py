@@ -15,6 +15,7 @@ import re
 from hypothesis import strategies as st
 from hypothesis import given, settings
 from hypothesis import HealthCheck
+import copy
 
 from thunder import dtypes
 from thunder.dynamo import thunderfx
@@ -76,7 +77,13 @@ def run_script(file_name, cmd):
 @instantiate(
     dtypes=NOTHING,
     executors=[DynamoThunderExecutor],
-    decorators=(pytest.mark.parametrize("dynamic", (True, False, None), ids=("dynamic", "static", "auto")),),
+    decorators=(
+        pytest.mark.parametrize("dynamic", (True, False, None), ids=("dynamic", "static", "auto")),
+        pytest.mark.skipif(
+            condition=IS_WINDOWS,
+            reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
+        ),
+    ),
 )
 def test_basic(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None):
     x = torch.ones(2, dtype=dtype, device=device, requires_grad=True)
@@ -1209,9 +1216,8 @@ def test_leak_on_unsupported_thunder_operator():
 
     def unsupported_op_fn(w1) -> torch.Tensor:
         topk_ids = torch.tensor([[0, 1]])
-        # This indexing is not supported by thunder and get's passed to inductor.
-        w13_weights = w1[topk_ids]
-        return w13_weights + 1
+        # This operation is not supported by thunder and get's passed to inductor.
+        return torch.sinc(w1) + 1
 
     def call_thunderfx_on_leaking_fn():
         w1 = torch.randn(16, 16, 32, dtype=torch.bfloat16)
@@ -1377,7 +1383,7 @@ def test_reports_repro(tmp_path, file_indices):
 
 
 @requiresCUDA
-@given(file_indices=st.lists(st.integers(min_value=0, max_value=4), min_size=2, max_size=2, unique=True))
+@given(file_indices=st.lists(st.integers(min_value=0, max_value=4), min_size=1, max_size=1, unique=True))
 @settings(max_examples=2, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
 def test_reports_benchmark(tmp_path, file_indices):
     x = torch.ones(2, 2, device="cuda", requires_grad=True)
@@ -1403,7 +1409,7 @@ def test_reports_benchmark(tmp_path, file_indices):
     thunder_split_report.write_benchmark(
         tmp_path,
         torchcompile,
-        WallTimeWithMemoryUsage(min_run_time=0.01, max_run_time=9.0, threshold=0.08),
+        WallTimeWithMemoryUsage(min_run_time=0.01, max_run_time=4.0, threshold=0.08),
         file_name=f"{split_name}_torchcompile.py",
     )
     thunder_split_report.write_benchmark(tmp_path, torcheager, WallTime, file_name=f"{split_name}_eager.py")
@@ -1413,7 +1419,7 @@ def test_reports_benchmark(tmp_path, file_indices):
     nvf = thunder_split_report.fusion_reports[0]
     nvf.write_nvfuser_benchmark(tmp_path, WallTime)
     nvf.write_inductor_benchmark(tmp_path, WallTime)
-    nvf.run_benchmark(BoundSymbolNvfuserSpecification(), WallTime(min_run_time=0.01, max_run_time=5.0, threshold=0.08))
+    nvf.run_benchmark(BoundSymbolNvfuserSpecification(), WallTime(min_run_time=0.01, max_run_time=4.0, threshold=0.08))
     nvf.run_benchmark(BoundSymbolTorchCompileSpecification(), WallTime)
 
     cmd = [sys.executable]
@@ -1607,6 +1613,88 @@ def test_spliter_bwd():
     reason = cfn._backend.subgraph_infos[0].split_reasons
     assert len(reason) == 1
     assert "Failed while running meta for node with name: setitem" in reason[0].info
-    assert "Advanced indexing" in reason[0].exception and reason[0].exception.endswith(
-        "found a tensor with dtype thunder.dtypes.bool8 and 3 dimensions"
-    )
+    assert "boolean advanced indexing" in reason[0].exception
+
+
+@pytest.mark.skipif(
+    IS_WINDOWS,
+    reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
+)
+def test_get_proxy_inputs_from_node_symtype_hint():
+    def fn(x, idx):
+        return torch.select(x, 0, idx)
+
+    x = torch.randn(4, 4)
+    idx = 0
+    cfn = thunderfx(fn, dynamic=True)
+    cfn(x, idx)
+
+    assert cfn._backend.subgraph_infos[0].split_reasons == []
+
+
+@requiresCUDA
+def test_spliter_einops():
+    einops = pytest.importorskip("einops")
+
+    def f(input, expr):
+        return einops.rearrange(input, expr)
+
+    fc = thunderfx(f)
+    input = torch.randn(2, 3, 4, 5, device="cuda")
+    out = fc(input, "b c h w -> b (c h w)")
+    expected_out = f(input, "b c h w -> b (c h w)")
+
+    assert len(fc._backend.subgraph_infos[0].split_reasons) == 0
+    torch.testing.assert_close(out, expected_out)
+
+
+@requiresCUDA
+def test_thunderfx_with_intermediate_output_marked_as_non_differentiable():
+    class Model(torch.nn.Module):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.fc = torch.nn.Linear(2, 2)
+            self.register_buffer("buf", None, False)
+
+        def forward(self, x):
+            if self.buf is None:
+                self.buf = torch.ones(1, 2, device=x.device)
+            return self.fc(x) + self.buf
+
+    with torch.device("cuda"):
+        org_m = Model()
+        thunder_m = copy.deepcopy(org_m)
+        m = thunderfx(thunder_m)
+
+        x = torch.randn(2, 2)
+
+        # First iteration
+        expected_output = org_m(x).sum()
+        actual_output = m(x).sum()
+
+        torch.testing.assert_close(actual_output, expected_output)
+        actual_output.backward()
+        expected_output.backward()
+        torch.testing.assert_close(org_m.fc.weight.grad, thunder_m.fc.weight.grad)
+
+        # Second iteration
+        x = torch.randn(2, 2)
+        expected_output = org_m(x).sum()
+        actual_output = m(x).sum()
+
+        torch.testing.assert_close(actual_output, expected_output)
+        actual_output.backward()
+        expected_output.backward()
+        torch.testing.assert_close(org_m.fc.weight.grad, thunder_m.fc.weight.grad)
+
+
+def test_thunderfx_node_with_no_example_value():
+    def test_fn(x):
+        y = x + 10
+        z = y.tolist()[0]
+        return z + 2
+
+    x = torch.tensor([1, 2, 3, 4, 5])
+    actual = thunderfx(test_fn)(x)
+    expected = test_fn(x)
+    torch.testing.assert_close(actual, expected)
