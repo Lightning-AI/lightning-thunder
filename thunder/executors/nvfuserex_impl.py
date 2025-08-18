@@ -2805,7 +2805,7 @@ def index_put(
 register_supported(PrimIDs.INDEX_PUT, index_put, _index_put_check)
 
 
-def _cross_entropy_check(
+def _cross_entropy_check_(
     a: TensorLike,
     /,
     target: TensorLike,
