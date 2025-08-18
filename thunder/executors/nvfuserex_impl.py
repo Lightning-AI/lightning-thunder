@@ -3092,7 +3092,7 @@ ex.register_supported(
     ltorch.cross_entropy,
     execution_transform=cross_entropy_transform,
     grad_transform=cross_entropy_grad,
-    checker=_cross_entropy_check,
+    checker=_cross_entropy_check_,
 )
 
 
