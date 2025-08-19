@@ -207,7 +207,8 @@ class ThunderCompiler:
 
 
 def thunderfx(fn: Callable, /, **kwargs) -> Callable:
-    """Compiles a callable (function or model) by using Thunder as the backend of :func:`torch.compile`
+    """Compiles a callable (function or model) by using Thunder as the backend of :func:`torch.compile`.
+
     Args:
         fn: A :class:`~torch.nn.Module` or a function to compile.
     Keyword Args:
