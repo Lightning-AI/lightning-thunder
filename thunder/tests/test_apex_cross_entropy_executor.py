@@ -36,10 +36,10 @@ def test_apex_cross_entropy(device: str, dtype: torch.dtype):
     assert any(bsym.sym.name == "apex_cross_entropy" for bsym in extrace.bound_symbols)
 
 
-def snippet_torch_consistency(op, torch_op, sample):
+def snippet_torch_consistency(op, torch_op, sample, comparator):
     thunder_result = op(*sample.args, **sample.kwargs)
     torch_result = torch_op(*sample.args, **sample.kwargs)
-    assert_close(thunder_result, torch_result, equal_nan=True, atol=1e-3, rtol=1e-4)
+    comparator(thunder_result, torch_result)
 
     last_trace = thunder.last_traces(op)[-1]
     assert any(bsym.sym.name == "apex_cross_entropy" for bsym in last_trace.bound_symbols)
@@ -65,6 +65,10 @@ def test_apex_torch_consistency(device: str, dtype: torch.dtype):
         if not _cross_entropy_checker(*sample.args, **sample.kwargs):
             continue
 
+        # relax tolerances for lower precision dtypes
+        atol, rtol = (1e-2, 1e-3) if dtype == torch.float16 else (1e-3, 1e-4)
+        comparator = partial(assert_close, equal_nan=True, atol=atol, rtol=rtol)
+
         at_least_one_supported_input = True
         result = run_snippet(
             snippet_torch_consistency,
@@ -74,6 +78,7 @@ def test_apex_torch_consistency(device: str, dtype: torch.dtype):
             cfn,
             op.torch_reference,
             sample,
+            comparator,
         )
 
         if result is not None:
