@@ -138,7 +138,7 @@ class DTensorTest(DistributedParallelTestCase):
 
         in_dtensor = distribute_tensor(torch.randn(dim_size, dim_size, requires_grad=True), mesh, [Shard(0)])
 
-        tmodel = thunder.jit(fn)
+        tmodel = thunder.jit(fn, executors=thunder.get_always_executors())
         with pytest.raises(AssertionError):
             tmodel(in_dtensor, w)
 
@@ -154,7 +154,7 @@ class DTensorTest(DistributedParallelTestCase):
         def fn(x, w):
             return torch.mul(x, w)
 
-        tmodel = thunder.jit(fn)
+        tmodel = thunder.jit(fn, executors=thunder.get_always_executors())
         actual = tmodel(in_dtensor, w_dtensor)
         g_o = distribute_tensor(torch.ones(dim_size, dim_size), mesh, [Shard(1)])
 
