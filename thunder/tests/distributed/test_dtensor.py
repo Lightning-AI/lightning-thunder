@@ -19,7 +19,7 @@ from torch.testing._internal.distributed._tensor.common_dtensor import DTensorCo
 from torch.testing._internal import common_utils
 
 from thunder.tests.distributed.helper import executors_map
-from thunder.tests.opinfos import OpInfo, reshape_opinfo
+from thunder.tests.opinfos import OpInfo, get_opinfo
 from thunder.tests.utils import is_output_differentiable, filter_differentiable_outputs
 import thunder.core.dtypes as dtypes
 from thunder.core.pytree import tree_flatten
@@ -36,7 +36,10 @@ functions_to_test = {
 
 
 # TODO: Use a better way to add opinfo rather than importing one at a time.
-dtensor_supported_ops = (reshape_opinfo,)
+# DTensor supported ops
+dtensor_supported_ops = ("reshape",)
+
+dtensor_supported_opinfos = [get_opinfo(op) for op in dtensor_supported_ops]
 
 
 @unittest.skipUnless(
@@ -136,7 +139,7 @@ class DTensorTest(DistributedParallelTestCase):
 
     @common_utils.parametrize(
         "op, executor",
-        product(dtensor_supported_ops, tuple(executors_map.keys())),
+        product(dtensor_supported_opinfos, tuple(executors_map.keys())),
         lambda op, executor: op.name + "_" + executor,
     )
     def test_dtensor_opinfo(self, op: OpInfo, executor):
@@ -144,6 +147,8 @@ class DTensorTest(DistributedParallelTestCase):
         #       not for all dtype which are supported by the operation.
         num_devices = self.world_size
         mesh = DeviceMesh("cuda", list(range(num_devices)))
+
+        thunder_op = thunder.jit(op.op, executors=executors_map[executor].executors_list())
 
         tested_sample_count = 0
         for sample in op.sample_inputs("cpu", dtypes.float32, requires_grad=True):
@@ -164,7 +169,6 @@ class DTensorTest(DistributedParallelTestCase):
                     # Unsupported input passed to `torch_op`.
                     continue
 
-                thunder_op = thunder.jit(op.op, executors=executors_map[executor].executors_list())
                 thunder_result = thunder_op(*dtensor_args, **dtensor_kwargs)
                 torch.testing.assert_close(thunder_result, torch_result)
 
