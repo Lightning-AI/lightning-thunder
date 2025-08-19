@@ -59,6 +59,7 @@ def get_dummy_input(model_name, config):
         return {"input_ids": torch.randint(0, 1000, (1, 16), device="cpu")}
 
 
+@pytest.mark.skip(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2436")
 @pytest.mark.parametrize("model_name", MODEL_LIST)
 def test_model_trace(model_name):
     print(f"\n=== Testing {model_name} ===")
