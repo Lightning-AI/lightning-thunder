@@ -162,7 +162,6 @@ class DTensorTest(DistributedParallelTestCase):
                     torch_result = torch_op(*dtensor_args, **dtensor_kwargs)
                 except Exception:
                     # Unsupported input passed to `torch_op`.
-                    # print(f"test_dtensor_opinfo: Unsupported input passed to `torch_op`: {dtensor_args}, {dtensor_kwargs}")
                     continue
 
                 thunder_op = thunder.jit(op.op, executors=executors_map[executor].executors_list())
