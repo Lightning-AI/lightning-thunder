@@ -157,7 +157,6 @@ ignore = [
     "F841",  # https://docs.astral.sh/ruff/rules/unused-variable/
     "F821",  # https://docs.astral.sh/ruff/rules/undefined-name/
     "E402",  # https://docs.astral.sh/ruff/rules/module-import-not-at-top-of-file/
-    "F401",  # https://docs.astral.sh/ruff/rules/unused-import/
     "F405",  # https://docs.astral.sh/ruff/rules/undefined-local-with-import-star-usage/
     "E712",  # https://docs.astral.sh/ruff/rules/true-false-comparison/
     "E711",  # https://docs.astral.sh/ruff/rules/none-comparison/

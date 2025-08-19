@@ -131,8 +131,6 @@ class Recipe:
         for plugin in post_plugins:
             lookasides.extend(plugin.setup_lookasides() or [])
 
-        from thunder.core import jit_ext, interpreter
-
         if lookasides is not None:
             self._lookaside_executor = TemporaryExecutor()
             for lookaside in lookasides:

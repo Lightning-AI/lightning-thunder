@@ -2,10 +2,9 @@ from dataclasses import dataclass, replace
 from functools import partial, lru_cache
 from numbers import Number
 from typing import Any
-from collections.abc import Callable, Mapping, Hashable, Sequence
+from collections.abc import Callable, Hashable, Sequence
 import os
 import time
-from copy import copy
 from itertools import chain, filterfalse
 import warnings
 from typing import cast
@@ -17,7 +16,7 @@ from torch import Tensor
 IS_TORCH_DISTRIBUTED_AVAILABLE = torch.distributed.is_available()
 if IS_TORCH_DISTRIBUTED_AVAILABLE:
     from torch.distributed.tensor import DTensor
-    from torch.distributed.tensor.placement_types import Placement, Shard, Replicate
+    from torch.distributed.tensor.placement_types import Placement, Shard
     import torch.distributed as dist
 
 import thunder.core.dtypes as dtypes
@@ -52,10 +51,6 @@ from thunder.torch.experimental.dtensor_proxy import DTensorProxy
 from thunder.core.transforms import (
     get_grad,
     put_grads,
-)
-
-from nvfuser.pytorch_utils import (
-    torch_dtype_to_nvfuser_dtype,
 )
 
 
