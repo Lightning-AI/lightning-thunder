@@ -716,7 +716,7 @@ class BoundSymbol(BoundSymbolInterface):
         return "\n".join(self.python(indent=0, print_depth=-1))
 
 
-def gather_tags(bsym: BoundSymbol) -> set[OpTags | BoundSymbolTags]:
+def gather_tags(bsym: BoundSymbol) -> set[OpTags | BoundSymbolTag]:
     tags = set(bsym.sym.tags) if bsym.sym.tags is not None else set()
     tags |= bsym.tags
 
@@ -726,7 +726,7 @@ def gather_tags(bsym: BoundSymbol) -> set[OpTags | BoundSymbolTags]:
     return tags
 
 
-def has_tags(bsym: BoundSymbol, tags: set[OpTags | BoundSymbolTags]) -> bool:
+def has_tags(bsym: BoundSymbol, tags: set[OpTags | BoundSymbolTag]) -> bool:
     """:obj:`True` if `bsym` and its subsymbols has any of ``tags``."""
     return not tags.isdisjoint(gather_tags(bsym))
 
