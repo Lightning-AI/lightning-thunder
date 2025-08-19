@@ -166,7 +166,9 @@ class DTensorTest(DistributedParallelTestCase):
                 try:
                     torch_result = torch_op(*dtensor_args, **dtensor_kwargs)
                 except Exception:
-                    # Unsupported input passed to `torch_op`.
+                    # Unsupported input passed to `torch_op`, we expect an exception from `thunder_op` as well.
+                    with pytest.raises(Exception):
+                        thunder_op(*dtensor_args, **dtensor_kwargs)
                     continue
 
                 thunder_result = thunder_op(*dtensor_args, **dtensor_kwargs)
