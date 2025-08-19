@@ -46,7 +46,7 @@ from thunder.core.devices import Device, DeviceType, cpu
 from thunder.core.transform_common import dce, cse_single_bsym, replace_redundant_inputs
 from thunder.core.profile import annotate_for_profile
 from thunder.core.compile_data import get_compile_option
-from thunder.torch.experimental.dtensor_torch_and_prims import dtensor_mul_prim
+from thunder.torch.experimental.dtensor_torch_and_prims import dtensor_mul_prim, dtensor_reshape_prim
 from thunder.torch.experimental.dtensor_proxy import DTensorProxy
 
 from thunder.core.transforms import (
@@ -1261,6 +1261,7 @@ def reshape(a: TensorProxy, shape: list[int, NumberProxy, ...], *, fd: FusionDef
 
 
 register_supported(PrimIDs.RESHAPE, reshape, _reshape_check)
+register_supported(dtensor_reshape_prim, reshape, _reshape_check)
 
 
 # NOTE nvFuser's slice operation only supports all strides == 1
@@ -2755,6 +2756,36 @@ register_supported(PrimIDs.EMBEDDING, embedding, _embedding_check)
 register_supported(ltorch.embedding, embedding, _embedding_check)
 
 
+def _scatter_check(a: TensorProxy, /, index: TensorProxy, src: TensorProxy | Number, dim: int) -> bool:
+    # temporary flag to allow scatter-like operations to be consumed by nvfuserex
+    enable_scatter: None | bool = get_compile_option("nv_enable_scatter", "Enable nvFuser scatter-like operations.")
+    if not enable_scatter:
+        return False
+
+    return True
+
+
+def scatter(
+    a: TensorProxy,
+    /,
+    index: TensorProxy,
+    src: TensorProxy | Number,
+    dim: int,
+    *,
+    fd: FusionDefinition,
+    lc_to_nv_map: dict,
+) -> Any:
+    nva = getnv(a, fd, lc_to_nv_map)
+    nvi = getnv(index, fd, lc_to_nv_map)
+    nvs = getnv(src, fd, lc_to_nv_map)
+
+    # index_put is translated to scatter in nvfuser
+    return fd.ops.scatter(nva, nvi, nvs, 0)
+
+
+register_supported(PrimIDs.SCATTER, scatter, _scatter_check)
+
+
 def _cross_entropy_check(
     a: TensorLike,
     /,
@@ -3078,7 +3109,7 @@ def argsort_transform(
 
 
 # Register argsort with NVFuser
-register_supported(prims.argsort, argsort_transform, _argsort_check)
+register_supported(ltorch.argsort, argsort_transform, _argsort_check)
 
 
 def _grouped_mm_check(
@@ -3139,7 +3170,7 @@ def cumsum_transform(
         compute_dtype = lcdtype_to_nvdtype(a.dtype)
 
     if dtype is None:
-        out_dtype = lcdtype_to_nvdtype(a.dtype)
+        out_dtype = lcdtype_to_nvdtype(a.dtype if a.dtype not in dtypes.integer_dtypes else dtypes.int64)
     else:
         out_dtype = lcdtype_to_nvdtype(dtypes.to_dtype(dtype))
 
