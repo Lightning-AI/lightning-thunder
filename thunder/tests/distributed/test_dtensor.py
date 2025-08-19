@@ -22,7 +22,7 @@ from thunder.tests.distributed.helper import executors_map
 from thunder.tests.opinfos import OpInfo, reshape_opinfo
 from thunder.tests.utils import is_output_differentiable, filter_differentiable_outputs
 import thunder.core.dtypes as dtypes
-from thunder.core.utils import tree_flatten
+from thunder.core.pytree import tree_flatten
 
 
 # NOTE: We run all these similar functions seperately
