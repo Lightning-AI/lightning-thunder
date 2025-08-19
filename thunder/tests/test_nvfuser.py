@@ -183,8 +183,8 @@ def test_redundant_no_op(executor, device: str, dtype: dtypes.dtype):
     d, e, f, g = extrace.output
     assert d.name == "d"
     assert e.name == "d"
-    assert f.name == "a"
-    assert g.name == "a"
+    assert f.name == "f"
+    assert g.name == "b"
 
 
 @instantiate(dtypes=NOTHING, devicetypes=(devices.DeviceType.CUDA,), executors=(nvFuserExecutor,))
