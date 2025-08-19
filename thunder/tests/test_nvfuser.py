@@ -980,29 +980,17 @@ def test_scatter(executor, device: str, dtype: dtypes.dtype):
     x = torch.randn([bsz, hidden], device=device, dtype=dtype)
 
     for dim in (0, 1):
-
-        def foo(inputs: list):
-            inp: torch.Tensor
-            idxs: torch.Tensor
-            src: torch.Tensor
-            axis: int
-            inp, idxs, src, axis = inputs
-            out = torch.scatter(inp, axis, idxs, src)
-            return out
-
         _, ind = torch.topk(x, k=scatter_size, dim=dim)
         src = torch.randn(ind.shape, device=device, dtype=dtype)
+        inputs = [x, dim, ind, src]
 
         # NOTE nv_enable_scatter to allow scatter operation to go through nvfuser
-        jfoo = thunder.jit(foo, nv_enable_scatter=True)
-
-        inputs = [x, ind, src, dim]
-
-        actual = jfoo(inputs)
-        expected = foo(inputs)
+        jit_scatter = thunder.jit(torch.scatter, nv_enable_scatter=True)
+        actual = jit_scatter(*inputs)
+        expected = torch.scatter(*inputs)
         torch.testing.assert_close(actual, expected)
 
-        fw_trace = thunder.last_traces(jfoo)[-1]
+        fw_trace = thunder.last_traces(jit_scatter)[-1]
         fusion_bsyms = tuple(filter(lambda a: a.sym.is_fusion, fw_trace.bound_symbols))
 
         # assert that everything is merged as a single nvfuser operation
