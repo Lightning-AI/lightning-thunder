@@ -974,27 +974,29 @@ def test_slice_dynamic_extent(executor, device: str, dtype: dtypes.dtype):
     dtypes=NOTHING,
 )
 def test_scatter(executor, device: str, dtype: dtypes.dtype):
+    bsz = 4
+    hidden = 8
+    scatter_size = 3
+    x = torch.randn([bsz, hidden], device=device, dtype=dtype)
+
     for dim in (0, 1):
 
         def foo(inputs: list):
             inp: torch.Tensor
             idxs: torch.Tensor
             src: torch.Tensor
-            inp, idxs, src = inputs
-            out = torch.scatter(inp, dim, idxs, src)
+            axis: int
+            inp, idxs, src, axis = inputs
+            out = torch.scatter(inp, axis, idxs, src)
             return out
 
-        bsz = 4
-        hidden = 8
-        scatter_size = 3
-        x = torch.randn([bsz, hidden], device=device, dtype=dtype)
         _, ind = torch.topk(x, k=scatter_size, dim=dim)
         src = torch.randn(ind.shape, device=device, dtype=dtype)
 
         # NOTE nv_enable_scatter to allow scatter operation to go through nvfuser
         jfoo = thunder.jit(foo, nv_enable_scatter=True)
 
-        inputs = [x, ind, src]
+        inputs = [x, ind, src, dim]
 
         actual = jfoo(inputs)
         expected = foo(inputs)
