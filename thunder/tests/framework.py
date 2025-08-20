@@ -66,6 +66,11 @@ def _bitsandbytes_available():
         return False
     try:
         import bitsandbytes
+
+        if torch.cuda.is_available():
+            import bitsandbytes.diagnostics.main
+
+            bitsandbytes.diagnostics.main.sanity_check()
     except (ImportError, RuntimeError):
         return False
     return True
