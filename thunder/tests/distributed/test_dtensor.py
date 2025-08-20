@@ -35,7 +35,6 @@ functions_to_test = {
 }
 
 
-# TODO: Use a better way to add opinfo rather than importing one at a time.
 # DTensor supported ops
 dtensor_supported_ops = ("reshape",)
 
