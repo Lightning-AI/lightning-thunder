@@ -965,8 +965,8 @@ def test_slice_dynamic_extent(executor, device: str, dtype: dtypes.dtype):
     # There are two nvfuser fusion groups separated by the matmul operation.
     assert len(fusion_bsyms) == 1
 
-    outside_fusion_syms = ["unpack_trivial", "python_return"]
-    assert {el.sym.name for el in fw_trace.bound_symbols if not el.sym.is_fusion} == set(outside_fusion_syms)
+    outside_fusion_sym_set = {"unpack_trivial", "python_return"}
+    assert {el.sym.name for el in fw_trace.bound_symbols if not el.sym.is_fusion} == outside_fusion_sym_set
 
 
 @instantiate(
@@ -1010,7 +1010,6 @@ def test_moe_infer_scatter(executor, device: str, dtype: dtypes.dtype):
     assert len(fusion_bsyms) == 1
     outside_fusion_sym_set = {"unpack_trivial", "python_return"}
     assert {el.sym.name for el in fw_trace.bound_symbols if not el.sym.is_fusion} == outside_fusion_sym_set
-    assert {el.sym.name for el in fw_trace.bound_symbols if not el.sym.is_fusion} == set(outside_fusion_syms)
 
 
 @instantiate(
@@ -1047,5 +1046,5 @@ def test_scatter(executor, device: str, dtype: dtypes.dtype):
 
     # assert that everything is merged as a single nvfuser operation
     assert len(fusion_bsyms) == 1
-    outside_fusion_syms = ["unpack_trivial", "python_return"]
-    assert {el.sym.name for el in fw_trace.bound_symbols if not el.sym.is_fusion} == set(outside_fusion_syms)
+    outside_fusion_sym_set = {"unpack_trivial", "python_return"}
+    assert {el.sym.name for el in fw_trace.bound_symbols if not el.sym.is_fusion} == outside_fusion_sym_set
