@@ -1008,7 +1008,8 @@ def test_moe_infer_scatter(executor, device: str, dtype: dtypes.dtype):
 
     # assert that everything is merged as a single nvfuser operation
     assert len(fusion_bsyms) == 1
-    outside_fusion_syms = ["unpack_trivial", "python_return"]
+    outside_fusion_sym_set = {"unpack_trivial", "python_return"}
+    assert {el.sym.name for el in fw_trace.bound_symbols if not el.sym.is_fusion} == outside_fusion_sym_set
     assert {el.sym.name for el in fw_trace.bound_symbols if not el.sym.is_fusion} == set(outside_fusion_syms)
 
 
