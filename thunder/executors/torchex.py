@@ -602,7 +602,7 @@ def _slice_prim_impl(
     # tuple expected from https://github.com/pytorch/pytorch/pull/160794 onwards
     slices = tuple(slice(start, stop, step) for start, stop, step in zip(start_indices, end_indices, _strides))
 
-    return operator.getitem(a, tuple(slices))
+    return operator.getitem(a, slices)
 
 
 # NOTE PyTorch has a bug where it doesn't interpret calls like squeeze(a, None) correctly
