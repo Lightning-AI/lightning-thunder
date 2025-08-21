@@ -2871,7 +2871,7 @@ def cross_entropy_fwd(
     nv_ignore_index = getnv(ignore_index, fd, lc_to_nv_map)
 
     if a.dtype in (dtypes.float16, dtypes.bfloat16):
-      nv_a = fd.ops.cast(nv_a, lcdtype_to_nvdtype(dtypes.float32))
+        nv_a = fd.ops.cast(nv_a, lcdtype_to_nvdtype(dtypes.float32))
 
     zero_scalar = fd.define_scalar(0, lcdtype_to_nvdtype(dtypes.float32))
 
@@ -2908,7 +2908,7 @@ def cross_entropy_fwd(
     div = fd.ops.div(sum_3, sum_2_cvt)
 
     if a.dtype in (dtypes.float16, dtypes.bfloat16):
-      div = fd.ops.cast(div, lcdtype_to_nvdtype(a.dtype))
+        div = fd.ops.cast(div, lcdtype_to_nvdtype(a.dtype))
 
     return div, max, log, sum_2_cvt
 
