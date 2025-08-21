@@ -13,7 +13,6 @@ from thunder.core.transforms import (
     _get_gradfn_and_executor,
     augmented_forward_impls,
     backward_impls,
-    ForwardBackwardTraces,
 )
 import thunder.torch as ltorch
 
@@ -462,18 +461,13 @@ def _group_get_grad_bsyms(trace):
 
 
 def split_into_forward_and_backward(joint_trace: TraceCtx):
-    """split a joint trace for forward and backward into separate ones, including recomputation (aka activation checkpointing)"""
+    """split a joint trace for forward and backward into separate ones"""
 
     # the joint trace will have the forward computation at the beginning and then the backward computation
     # from how it is constructed.
     # we split the trace:
     # - forward symbols go into forward_part_bsyms
     # - all symbols not in the forward go into backward_part_bsyms
-    # - for recomputation (aka activation checkpointing), we want to insert symbols going into the forward also into the
-    #   backward, but we want to do so "just in time". To this end, we gather the symbols in a dict and later
-    #   insert it when their respective outputs are needed. This is in backward_part_bsyms_recomputed
-    #   The just in time recomputation is a heuristic to save memory mimicking checkpointing: e.g. for a checkpointed
-    #   block, the forward would be recomputed just before computing the gradient.
     # the splitting is done in the reverse order of the bound symbols, and works out which bits are needed for the forward
     # from there.
     forward_part_bsyms = []
@@ -613,15 +607,3 @@ def split_into_forward_and_backward(joint_trace: TraceCtx):
     backward_trace = check_dtensor_cotangent_metadata_in_backward(backward_trace)
 
     return forward_trace, backward_trace
-
-
-def forward_and_backward_from_trace(trace: TraceCtx, torch_autograd=False) -> ForwardBackwardTraces:
-    if not torch_autograd:
-        from thunder.core.transforms import forward_and_backward_from_trace as legacy_autodiff
-
-        return legacy_autodiff(trace, torch_autograd=torch_autograd)
-
-    joint_trace = grad_transform_on_trace(trace)
-
-    forward_trace, backward_trace = split_into_forward_and_backward(joint_trace)
-    return ForwardBackwardTraces(forward_trace, backward_trace)
