@@ -21,6 +21,7 @@ def main(gh_run_id: str = ""):
     print("Starting studio...")
     s.start(machine=Machine.L40S, interruptible=False)
     print("Installing Thunder and other requirements...")
+    s.run("conda install -c conda-forge libstdcxx-ng")
     s.run(f"pip install {pkg_path} -U -r requirements/test.txt")
     s.run("pip install --no-build-isolation 'transformer_engine[pytorch]'")
 
