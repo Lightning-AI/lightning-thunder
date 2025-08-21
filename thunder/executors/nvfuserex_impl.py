@@ -2808,9 +2808,8 @@ def _cross_entropy_check(
     if a.shape[0] != target.shape[0]:
         return False
 
-    # input must be cast to float32
-    # since we use fmax which only supports float32
-    if dtypes.to_torch_dtype(a.dtype) != torch.float32:
+    # input must be float16, float32, or bfloat16
+    if a.dtype in (dtypes.float16, dtypes.bfloat16, dtypes.float32):
         return False
 
     # We only optimize for the following cases
@@ -2871,7 +2870,10 @@ def cross_entropy_fwd(
     nv_target = getnv(target, fd, lc_to_nv_map)
     nv_ignore_index = getnv(ignore_index, fd, lc_to_nv_map)
 
-    zero_scalar = fd.define_scalar(0, dtype=lcdtype_to_nvdtype(a.dtype))
+    if a.dtype in (dtypes.float16, dtypes.bfloat16):
+      nv_a = fd.ops.cast(nv_a, lcdtype_to_nvdtype(dtypes.float32))
+
+    zero_scalar = fd.define_scalar(0, lcdtype_to_nvdtype(dtypes.float32))
 
     # modify the labels to account for ignore index and then do a
     # gather/ take_along_axis on the input tensor
@@ -2904,6 +2906,10 @@ def cross_entropy_fwd(
     # compute the mean
     sum_3 = fd.ops.sum(where_1)
     div = fd.ops.div(sum_3, sum_2_cvt)
+
+    if a.dtype in (dtypes.float16, dtypes.bfloat16):
+      div = fd.ops.cast(div, lcdtype_to_nvdtype(a.dtype))
+
     return div, max, log, sum_2_cvt
 
 
