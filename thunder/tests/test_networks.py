@@ -885,7 +885,7 @@ def test_llama4_moe(jit_fn, config):
         assert expected.dtype == torch.bfloat16
         assert expected.is_cuda
 
-        tmodel = jit_fn(model, nv_enable_linear=True)
+        tmodel = jit_fn(model, nv_enable_linear=True, nv_enable_scatter=True)
 
         actual = tmodel(inp)
 
@@ -898,12 +898,11 @@ def test_llama4_moe(jit_fn, config):
 
         fusion_bsyms = tuple(filter(lambda a: a.sym.is_fusion, exec_trc.bound_symbols))
 
-        assert len(fusion_bsyms) == 2
+        assert len(fusion_bsyms) == 1
         assert {el.sym.name for el in exec_trc.bound_symbols if not el.sym.is_fusion} == {
             "unpack_trivial",
             "python_return",
             "python_del",
-            "scatter",
         }
 
         # TODO: Verify that thunder output is closer to higher precision than PyTorch eager
