@@ -599,9 +599,8 @@ def _slice_prim_impl(
 ) -> torch.Tensor:
     _strides = strides if strides is not None else [1] * len(start_indices)
 
-    slices: list = []
-    for start, stop, step in zip(start_indices, end_indices, _strides):
-        slices.append(slice(start, stop, step))
+    # tuple expected from https://github.com/pytorch/pytorch/pull/160794 onwards
+    slices = tuple(slice(start, stop, step) for start, stop, step in zip(start_indices, end_indices, _strides))
 
     return operator.getitem(a, slices)
 
@@ -1359,9 +1358,6 @@ def _argsort_transform(a: TensorProxy, /, dim: int | None = None, descending: bo
     return argsort(a, dim=dim, descending=descending, stable=stable)
 
 
-# Register the implementation
-_register_implementation(prims.argsort, checker=_always_executable, execution_transform=_argsort_transform)
-
 _register_implementation(ltorch.argsort, checker=_always_executable, execution_transform=_argsort_transform)
 
 #
@@ -1811,7 +1807,8 @@ def _pad_prim_impl(
         return torch.nn.functional.pad(a, pad_config, value=padding_value)
 
     result = torch.full(intermediate_shape, padding_value, device=a.device, dtype=a.dtype)
-    result[intermediate_slices] = a
+    # tuple expected from https://github.com/pytorch/pytorch/pull/160794 onwards
+    result[tuple(intermediate_slices)] = a
     result = torch.nn.functional.pad(result, pad_config, value=padding_value)
     return result
 

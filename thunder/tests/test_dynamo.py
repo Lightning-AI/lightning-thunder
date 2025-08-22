@@ -1685,3 +1685,15 @@ def test_thunderfx_with_intermediate_output_marked_as_non_differentiable():
         actual_output.backward()
         expected_output.backward()
         torch.testing.assert_close(org_m.fc.weight.grad, thunder_m.fc.weight.grad)
+
+
+def test_thunderfx_node_with_no_example_value():
+    def test_fn(x):
+        y = x + 10
+        z = y.tolist()[0]
+        return z + 2
+
+    x = torch.tensor([1, 2, 3, 4, 5])
+    actual = thunderfx(test_fn)(x)
+    expected = test_fn(x)
+    torch.testing.assert_close(actual, expected)
