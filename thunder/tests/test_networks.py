@@ -726,6 +726,8 @@ class Config:
     intermediate_size: int
     num_routed_experts: int
     num_shared_experts: int
+    dtype: torch.dtype = torch.bfloat16
+    device: str = "cuda"
 
 
 small_config = Config(name="small", hidden_size=256, intermediate_size=512, num_routed_experts=8, num_shared_experts=1)
@@ -735,11 +737,11 @@ llama4_config = Config(
 
 
 class SwiGLU(nn.Module):
-    def __init__(self, hidden_size: int, intermediate_size: int):
+    def __init__(self, hidden_size: int, intermediate_size: int, dtype: torch.dtype, device: str):
         super().__init__()
-        self.gate_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
-        self.up_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
-        self.down_proj = nn.Linear(intermediate_size, hidden_size, bias=False)
+        self.gate_proj = nn.Linear(hidden_size, intermediate_size, bias=False, dtype=dtype, device=device)
+        self.up_proj = nn.Linear(hidden_size, intermediate_size, bias=False, dtype=dtype, device=device)
+        self.down_proj = nn.Linear(intermediate_size, hidden_size, bias=False, dtype=dtype, device=device)
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         return self.down_proj(torch.nn.functional.silu(self.gate_proj(hidden_states)) * self.up_proj(hidden_states))
@@ -775,9 +777,9 @@ def grouped_mm(a: torch.Tensor, b: torch.Tensor, offsets: torch.Tensor) -> torch
 
 
 class GroupedLinear(nn.Module):
-    def __init__(self, groups: int, in_features: int, out_features: int):
+    def __init__(self, groups: int, in_features: int, out_features: int, dtype: torch.dtype, device: str):
         super().__init__()
-        self.weight = nn.Parameter(torch.empty(groups, in_features, out_features))
+        self.weight = nn.Parameter(torch.empty(groups, in_features, out_features, dtype=dtype, device=device))
         # Initialize the weight in the same way as nn.Linear
         nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
 
@@ -786,11 +788,11 @@ class GroupedLinear(nn.Module):
 
 
 class GroupedSwiGLU(nn.Module):
-    def __init__(self, groups: int, hidden_size: int, intermediate_size: int):
+    def __init__(self, groups: int, hidden_size: int, intermediate_size: int, dtype: torch.dtype, device: str):
         super().__init__()
-        self.gate_proj = GroupedLinear(groups, hidden_size, intermediate_size)
-        self.up_proj = GroupedLinear(groups, hidden_size, intermediate_size)
-        self.down_proj = GroupedLinear(groups, intermediate_size, hidden_size)
+        self.gate_proj = GroupedLinear(groups, hidden_size, intermediate_size, dtype, device)
+        self.up_proj = GroupedLinear(groups, hidden_size, intermediate_size, dtype, device)
+        self.down_proj = GroupedLinear(groups, intermediate_size, hidden_size, dtype, device)
 
     def forward(self, hidden_states: torch.Tensor, offsets: torch.Tensor) -> torch.Tensor:
         return self.down_proj(
@@ -803,9 +805,15 @@ class Llama4MoE(nn.Module):
     def __init__(self, config: Config):
         super().__init__()
         self.config = config
-        self.gate = nn.Linear(config.hidden_size, config.num_routed_experts, bias=False)
-        self.shared_experts = SwiGLU(config.hidden_size, config.intermediate_size * config.num_shared_experts)
-        self.routed_experts = GroupedSwiGLU(config.num_routed_experts, config.hidden_size, config.intermediate_size)
+        self.gate = nn.Linear(
+            config.hidden_size, config.num_routed_experts, bias=False, dtype=config.dtype, device=config.device
+        )
+        self.shared_experts = SwiGLU(
+            config.hidden_size, config.intermediate_size * config.num_shared_experts, config.dtype, config.device
+        )
+        self.routed_experts = GroupedSwiGLU(
+            config.num_routed_experts, config.hidden_size, config.intermediate_size, config.dtype, config.device
+        )
 
     def run_routed_experts(self, hidden_states: torch.Tensor) -> torch.Tensor:
         batch_size, seq_len, _ = hidden_states.size()
@@ -872,10 +880,7 @@ def test_llama4_moe(jit_fn, config):
 
     @requiresDeviceMemory(required_memory_bytes=required_memory)
     def _test():
-        # This is much faster than creating the module with CPU float parameters
-        # and then doing `.to("cuda").to(torch.bfloat16)`.
-        with default_tensor_type(dtype=torch.bfloat16, device="cuda"):
-            model = Llama4MoE(config)
+        model = Llama4MoE(config)
 
         # Without this, `thunderfx` falls back to `inductor` for `_grouped_mm`
         # as it doesn't have a grad-rule for the same.
