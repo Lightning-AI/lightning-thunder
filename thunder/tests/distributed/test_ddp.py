@@ -846,7 +846,7 @@ def test_ddp_transformer_engine_llama_sanity(executor, devices, dtype):
         # `torch.compile` creates a new process and that leads to
         # the error : daemonic processes are not allowed to have children
         # when running the tests.
-        # With the setting below, we use `torch.jit` for this test suite
+        # With the setting below, we use `thunder.jit` for this test suite
         # See: https://github.com/NVIDIA/TransformerEngine/blob/a38b291b0d1b04847e8ab1df8550df642a03a27d/transformer_engine/pytorch/jit.py#L11-L19
         # NOTE: We don't pass `clear=True` to `unittest.mock.patch.dict` as that may clear paths
         # from environment leading to picking up of incorrect dependencies in the spawned process.
