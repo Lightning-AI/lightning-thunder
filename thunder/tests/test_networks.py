@@ -3,6 +3,7 @@ from functools import partial
 import warnings
 from dataclasses import dataclass
 from contextlib import contextmanager
+from looseversion import LooseVersion
 
 import pytest
 import torch
@@ -753,8 +754,9 @@ def _group_sizes_from_offsets(offsets: torch.Tensor) -> list[int]:
     return group_sizes
 
 
-# Required otherwise, there is a graph-break.
-_grouped_mm = torch.compiler.allow_in_graph(torch._grouped_mm)
+if LooseVersion(torch.__version__) >= LooseVersion("2.8.0"):
+    # Required otherwise, there is a graph-break.
+    _grouped_mm = torch.compiler.allow_in_graph(torch._grouped_mm)
 
 
 # This function should be replaced with torch._grouped_mm.  However,
@@ -858,6 +860,9 @@ def default_tensor_type(dtype=torch.float32, device="cpu"):
 
 
 @requiresCUDA
+@pytest.mark.skipif(
+    LooseVersion(torch.__version__) < LooseVersion("2.8.0"), reason="torch._grouped_mm is not available"
+)
 @pytest.mark.parametrize("jit_fn", (thunder.dynamo.thunderfx, thunder.jit), ids=("thunderfx", "thunder.jit"))
 @pytest.mark.parametrize("config", (small_config, llama4_config), ids=("small", "llama4"))
 def test_llama4_moe(jit_fn, config):
@@ -901,7 +906,6 @@ def test_llama4_moe(jit_fn, config):
         assert {el.sym.name for el in exec_trc.bound_symbols if not el.sym.is_fusion} == {
             "unpack_trivial",
             "python_return",
-            "python_del",
         }
 
         # TODO: Verify that thunder output is closer to higher precision than PyTorch eager
