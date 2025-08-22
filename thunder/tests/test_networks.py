@@ -871,7 +871,6 @@ def test_llama4_moe(jit_fn, config):
         # and then doing `.to("cuda").to(torch.bfloat16)`.
         with default_tensor_type(dtype=torch.bfloat16, device="cuda"):
             model = Llama4MoE(config)
-            # model = nn.Linear(config.hidden_size * 4, config.hidden_size * 4)
 
         # Without this, `thunderfx` falls back to `inductor` for `_grouped_mm`
         # as it doesn't have a grad-rule for the same.
