@@ -762,6 +762,7 @@ _grouped_mm = torch.compiler.allow_in_graph(torch._grouped_mm)
 # multiples of 16.
 def grouped_mm(a: torch.Tensor, b: torch.Tensor, offsets: torch.Tensor) -> torch.Tensor:
     if torch.compiler.is_compiling():
+        # NOTE: This path also works for `thunder.jit` as it has a lookaside for `torch.compiler.is_compiling`.
         return _grouped_mm(a, b, offsets)
 
     group_sizes = _group_sizes_from_offsets(offsets)
