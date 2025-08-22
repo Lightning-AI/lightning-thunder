@@ -19,7 +19,9 @@ xlsxwriter # thunder/benchmarks/test_benchmark_litgpt.py
 jsonargparse # thunder/benchmarks/benchmark_litgpt.py
 bitsandbytes==0.46.1; 'arm' not in platform_machine and 'aarch' not in platform_machine
 bitsandbytes>=0.42,<0.43; 'arm' in platform_machine or 'aarch' in platform_machine
-transformers==4.54.1 # for test_networks.py
+transformers==4.55.4 # for test_networks.py
+diffusers==0.34.0 # for test_networks.py
+accelerate # for test_networks.py
 
 # Installs JAX on Linux and MacOS
 jaxlib; sys_platform == 'linux' or sys_platform == 'darwin'  # required for jax, see https://github.com/google/jax#installation

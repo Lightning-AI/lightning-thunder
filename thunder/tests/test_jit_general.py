@@ -1,5 +1,6 @@
 from functools import partial
 from contextlib import nullcontext
+import weakref
 
 import operator
 import sys
@@ -1689,3 +1690,21 @@ def test_partial_method():
         jfn = thunder.jit(fn)
         print(fn(), jfn())
         assert fn() == jfn()
+
+
+@requiresCUDA
+def test_jit_compile_data_cycle_leak():
+    memory_at_start = torch.cuda.memory_allocated()
+
+    def _allocate_model_in_function():
+        model = torch.nn.Linear(256, 256, device="cuda")
+
+        tfn = thunder.jit(model)
+        cd = tfn._lc_cd
+        return weakref.ref(cd), weakref.ref(model)
+
+    refs = _allocate_model_in_function()
+
+    assert torch.cuda.memory_allocated() == memory_at_start
+    for ref in refs:
+        assert ref() is None
