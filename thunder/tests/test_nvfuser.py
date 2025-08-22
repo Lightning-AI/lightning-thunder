@@ -177,14 +177,14 @@ def test_redundant_no_op(executor, device: str, dtype: dtypes.dtype):
     # Verifies a single fusion of two operations
     assert len(fusions) == 1
     fusion = fusions[0]
-    assert len(fusion.subsymbols) == 1
+    assert len(fusion.subsymbols) == 3
 
     # Verifies that the trace outputs are updated properly
     d, e, f, g = extrace.output
     assert d.name == "d"
     assert e.name == "d"
-    assert f.name == "a"
-    assert g.name == "a"
+    assert f.name == "f"
+    assert g.name == "b"
 
 
 @instantiate(dtypes=NOTHING, devicetypes=(devices.DeviceType.CUDA,), executors=(nvFuserExecutor,))

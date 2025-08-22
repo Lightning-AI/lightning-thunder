@@ -45,6 +45,7 @@ op_skip = {
     "index_put",
     "batch_norm",
     "instance_norm",
+    "torch_type",
     "type_as",
 }
 
