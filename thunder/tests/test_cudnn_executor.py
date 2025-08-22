@@ -158,22 +158,6 @@ def test_cudnn_sdpa_NumberProxy_dropout():
     assert any(bsym.sym.name == "cudnn_sdpa_fwd" for bsym in last_trace.bound_symbols)
 
 
-# NOTE These wrappers are necessary because preprocessing cannot compile the function directly
-def layer_norm_wrapper(*args, **kwargs):
-    return thunder.torch.layer_norm(*args, **kwargs)
-
-
-def spda_wrapper(*args, **kwargs):
-    return thunder.torch.scaled_dot_product_attention(*args, **kwargs)
-
-
-op_name_to_fn = {
-    "layer_norm": layer_norm_wrapper,
-    "scaled_dot_product_attention": spda_wrapper,
-    "grad_forward_scaled_dot_product_attention": spda_wrapper,
-}
-
-
 def snippet_torch_consistency(op, torch_op, sample):
     thunder_result = op(*sample.args, **sample.kwargs)
     torch_result = torch_op(*sample.args, **sample.kwargs)
@@ -209,10 +193,9 @@ def test_cudnn_vs_torch_consistency(op, device, dtype, *_):
     if op.name == "scaled_dot_product_attention":
         if cudnn.backend_version() <= 8902:
             pytest.xfail("Only interleaved layout is supported pre 8.9.2.")
+    cfn = thunder.jit(op.op, executors=[cudnn_ex, cudnn_layernorm_ex])
 
     for sample in op.reference_inputs(device, dtype, requires_grad=False):
-        cfn = thunder.jit(op_name_to_fn[op.name], executors=[cudnn_ex, cudnn_layernorm_ex])
-
         result = run_snippet(
             snippet_torch_consistency,
             op,
