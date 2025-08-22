@@ -5517,7 +5517,7 @@ def _interpolate_scale_factor_helper(
             # is not yet implemented
             x_src_f = to((x_dst + 0.5) * scale_w - 0.5, a.dtype)
             x0 = clamp(clang.floor(x_src_f), 0, in_w - 1).to(to_dtype(torch.int64))
-            x1 = clamp((x0 + 1), max=in_w - 1)
+            x1 = clamp(clang.ceil(x_src_f), 0, in_w - 1).to(to_dtype(torch.int64))
             wx = unsqueeze(unsqueeze((x_src_f - x0.to(x_src_f.dtype)), 0), 0)
 
             v0 = clang.take(t, x0, dim=dim_w)
@@ -5530,7 +5530,7 @@ def _interpolate_scale_factor_helper(
             scale_h = to(in_h / out_h, a.dtype)
             y_src_f = to((y_dst + 0.5) * scale_h - 0.5, a.dtype)
             y0 = clamp(clang.floor(y_src_f), 0, in_h - 1).to(to_dtype(torch.int64))
-            y1 = clamp((y0 + 1), max=in_h - 1)
+            y1 = clamp(clang.ceil(y_src_f), 0, in_h - 1).to(to_dtype(torch.int64))
             wy = unsqueeze(unsqueeze(unsqueeze((y_src_f - y0.to(y_src_f.dtype)), 0), 0), -1)
 
             v0 = clang.take(t_x, y0, dim=dim_h)
