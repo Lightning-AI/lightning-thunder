@@ -599,9 +599,8 @@ def _slice_prim_impl(
 ) -> torch.Tensor:
     _strides = strides if strides is not None else [1] * len(start_indices)
 
-    slices: list = []
-    for start, stop, step in zip(start_indices, end_indices, _strides):
-        slices.append(slice(start, stop, step))
+    # tuple expected from https://github.com/pytorch/pytorch/pull/160794 onwards
+    slices = tuple(slice(start, stop, step) for start, stop, step in zip(start_indices, end_indices, _strides))
 
     return operator.getitem(a, slices)
 
@@ -1808,7 +1807,8 @@ def _pad_prim_impl(
         return torch.nn.functional.pad(a, pad_config, value=padding_value)
 
     result = torch.full(intermediate_shape, padding_value, device=a.device, dtype=a.dtype)
-    result[intermediate_slices] = a
+    # tuple expected from https://github.com/pytorch/pytorch/pull/160794 onwards
+    result[tuple(intermediate_slices)] = a
     result = torch.nn.functional.pad(result, pad_config, value=padding_value)
     return result
 
@@ -2374,6 +2374,14 @@ def _shape_impl(t):
 
 shape = ex.register_operator("shape", meta=prims.shape_meta, fn=_shape_impl)
 _register_implementation(prims.shape, shape, checker=_always_executable)
+
+
+def _bitcast_impl(src, dtype):
+    return src.view(dtypes.to_torch_dtype(dtype))
+
+
+bitcast = ex.register_operator("bitcast", meta=prims.bitcast, fn=_bitcast_impl)
+_register_implementation(prims.bitcast, bitcast, checker=_always_executable)
 
 
 shallow_copy = ex.register_operator("shallow_copy", meta=prims.shallow_copy, fn=lambda x: x)
