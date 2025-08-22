@@ -779,10 +779,10 @@ def jit(
         return wrapped
 
     get_computation_and_inputs = decorate_computation_function(get_computation_and_inputs, host_execution_timer)
-    cd.get_computation_and_inputs = get_computation_and_inputs
-    cd.populate_cache_info = populate_cache_info
-    cd.acquire_initial_trace = acquire_initial_trace
-    cd.apply_transforms_and_build_cache_entry = apply_transforms_and_build_cache_entry
+    # cd.get_computation_and_inputs = get_computation_and_inputs
+    # cd.populate_cache_info = populate_cache_info
+    # cd.acquire_initial_trace = acquire_initial_trace
+    # cd.apply_transforms_and_build_cache_entry = apply_transforms_and_build_cache_entry
 
     def update_call_statistics(fn):
         def wrapped(*args, **kwargs):
@@ -846,7 +846,7 @@ def jit(
         cd._thunder_module_map[id(fn)] = fn_
 
     # Sets compile options and statistics attributes
-    cd._get_computation_and_inputs = get_computation_and_inputs
+    # cd._get_computation_and_inputs = get_computation_and_inputs
     fn_._lc_cd = cd
     fn_._lc_cs = cs
 
