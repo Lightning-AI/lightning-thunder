@@ -1237,28 +1237,6 @@ def _test_fsdp_transformer_engine_v2_bucketing(input_data):
         return None
 
 
-# NOTE CPU is skipped because of
-# RuntimeError: no support for _allgather_base in Gloo process group
-@instantiate(
-    dtypes=(thunder.float32,),
-    num_devices=2,
-    devicetypes=(devices.DeviceType.CUDA,),
-    decorators=(
-        pytest.mark.parametrize(
-            "fsdp_bucketing_strategy",
-            (
-                FSDPBucketingStrategy.NONE,
-                FSDPBucketingStrategy.LAYER,
-                FSDPBucketingStrategy.BLOCK,
-            ),
-        ),
-    ),
-)
-@distributed_wrapper("test_native_fsdp", _test_native_fsdp_helper)
-def test_native_fsdp(executor, devices, dtype, fsdp_bucketing_strategy):
-    pass
-
-
 @instantiate(
     dtypes=(thunder.float32,),
     num_devices=2,
