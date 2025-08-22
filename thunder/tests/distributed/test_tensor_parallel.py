@@ -76,7 +76,7 @@ class TensorParallelTest(DistributedParallelTestCase):
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="")
     @common_utils.parametrize("name", tuple(_name_to_transform.keys()))
-    def test_embedding(self, name):
+    def test_input_embedding(self, name):
         num_embeddings = 128
         embedding_dim = 32
 
@@ -130,6 +130,25 @@ class TensorParallelTest(DistributedParallelTestCase):
             expected=ref_model.embed.weight.grad.chunk(self.world_size, dim)[self.rank],
             actual=tp_jitted_model.get_parameter("embed.weight").grad,
         )
+
+    @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="")
+    def test_output_embedding(self):
+        num_embeddings = 128
+        embedding_dim = 32
+
+        class OutputEmbedding(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.embed = nn.Embedding(num_embeddings, embedding_dim)
+
+            def forward(self, x: torch.Tensor) -> torch.Tensor:
+                # x: [b, h]
+                # self.embed.weight: [v, h]
+                # out: [b, v]
+                out: torch.Tensor = x @ self.embed.weight.T
+                # indices: [b]
+                indices = out.argmax(dim=1)
+                return indices
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="")
     @common_utils.parametrize("bias", (True, False))
