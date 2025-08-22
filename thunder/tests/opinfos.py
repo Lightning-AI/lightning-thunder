@@ -9930,6 +9930,11 @@ interpolate_opinfo = OpInfo(
             pytest.mark.xfail,
             "test_vjp_correctness",
         ),
+        DecorateInfo(
+            pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2452"),
+            "test_core_vs_torch_consistency",
+            executors=("nvfuser",),
+        ),
     ),
 )
 nn_ops.append(interpolate_opinfo)
