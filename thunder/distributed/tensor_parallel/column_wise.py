@@ -15,6 +15,7 @@ from thunder.distributed.tensor_parallel.common import PrePostProcessInterface
 from thunder.distributed.tensor_parallel.common import ComputationTraceTransformVisitorForTensorParallel
 from thunder.distributed.tensor_parallel.common import TransformForTensorParallel
 from thunder.distributed.tensor_parallel.common import TensorParallelLayerType
+from thunder.distributed.tensor_parallel.common import register
 
 if TYPE_CHECKING:
     from typing import Any
@@ -58,7 +59,7 @@ class ColumnParallelLinearPrePostProcess(PrePostProcessInterface):
 
 
 @dataclass
-class ColumnParallelEmbeddingPrePostProcess(PrePostProcessInterface):
+class ColumnParallelEmbeddingPreProcess(PrePostProcessInterface):
     num_local_embeddings: int
     process_group: ProcessGroup
 
@@ -100,8 +101,32 @@ class ColumnParallelEmbeddingPrePostProcess(PrePostProcessInterface):
         return dist_prims.synchronize_tensor_parallel_output(
             y,
             self.process_group,
-            ColumnParallelEmbeddingPrePostProcess.layer_type,
+            ColumnParallelEmbeddingPreProcess.layer_type,
         )
+
+
+@dataclass(frozen=True)
+class ColumnParallelOutputEmbeddingPrePostProcess(PrePostProcessInterface):
+    num_local_embeddings: int
+    process_group: ProcessGroup
+    layer_type: ClassVar[TensorParallelLayerType] = TensorParallelLayerType.COLUMN_PARALLEL_OUTPUT_EMBED
+
+    def preprocess(self, x: TensorProxy) -> tuple[TensorProxy, tuple[Any, ...]]:
+        return x, None
+
+    def postprocess(self, y: TensorProxy, _: None) -> TensorProxy:
+        from thunder.distributed.prims import synchronize_tensor_parallel_output
+
+        return synchronize_tensor_parallel_output(
+            y,
+            self.process_group,
+            ColumnParallelOutputEmbeddingPrePostProcess.layer_type,
+        )
+
+
+register(ColumnParallelEmbeddingPreProcess)
+register(ColumnParallelLinearPrePostProcess)
+register(ColumnParallelOutputEmbeddingPrePostProcess)
 
 
 @dataclass
@@ -127,23 +152,32 @@ class TransformForColumnWiseParallel(TransformForTensorParallel):
         flat_args, _ = tree_flatten((computation_trace.args, computation_trace.kwargs))
         bsym_to_prepostprocess: dict[BoundSymbol, PrePostProcessInterface] = {}
         for proxy in filter(lambda p: isinstance(p, TensorProxy), flat_args):
-            if (layer_type := self.chunked_param_name_to_layer_type.get(proxy.name, None)) is not None:
+            if (
+                layer_type_and_prepost_process := self.chunked_param_name_to_layer_type.get(proxy.name, None)
+            ) is not None:
+                layer_type, prepost_process = layer_type_and_prepost_process
                 consumer_bsym = consumers[proxy][0]
                 if consumer_bsym not in bsym_to_prepostprocess:
-                    match layer_type:
-                        case nn.Linear:
-                            bsym_to_prepostprocess[consumer_bsym] = ColumnParallelLinearPrePostProcess(
-                                process_group=self.process_group
-                            )
-                        case nn.Embedding:
-                            bsym_to_prepostprocess[consumer_bsym] = ColumnParallelEmbeddingPrePostProcess(
-                                num_local_embeddings=proxy.shape[0], process_group=self.process_group
-                            )
-                        case _:
-                            utils.check(
-                                False,
-                                lambda: f"{self.chunked_param_name_to_layer_type[proxy.name]=} is not supported",
-                            )
+                    if prepost_process is not None:
+                        utils.check(prepost_process is ColumnParallelOutputEmbeddingPrePostProcess)
+                        bsym_to_prepostprocess[consumer_bsym] = prepost_process(
+                            num_local_embeddings=proxy.shape[0], process_group=self.process_group
+                        )
+                    else:
+                        match layer_type:
+                            case nn.Linear:
+                                bsym_to_prepostprocess[consumer_bsym] = ColumnParallelLinearPrePostProcess(
+                                    process_group=self.process_group
+                                )
+                            case nn.Embedding:
+                                bsym_to_prepostprocess[consumer_bsym] = ColumnParallelEmbeddingPreProcess(
+                                    num_local_embeddings=proxy.shape[0], process_group=self.process_group
+                                )
+                            case _:
+                                utils.check(
+                                    False,
+                                    lambda: f"{self.chunked_param_name_to_layer_type[proxy.name]=} is not supported",
+                                )
         utils.check(bsym_to_prepostprocess, lambda: f"{bsym_to_prepostprocess} must not be empty")
 
         visit = ComputationTraceTransformVisitorForTensorParallel(bsym_to_prepostprocess, self.distparallel_type)
@@ -153,7 +187,7 @@ class TransformForColumnWiseParallel(TransformForTensorParallel):
 # TODO(crcrpar): Add an option to turn off output all-gather.
 def column_parallel(
     thunder_module: ThunderModule,
-    target_modules: Sequence[str],
+    target_modules: Sequence[str] | dict[TensorParallelLayerType, Sequence[str]],
     process_group: ProcessGroup | None = None,
     *,
     device: torch.device | None = None,
@@ -166,8 +200,12 @@ def column_parallel(
 
     Args:
         thunder_module:
-        target_modules: Names of modules to convert into column-wise.
+        target_modules: Names of modules to convert into column-wise,
+            or a dict of layer type to names of modules to convert into column-wise.
         process_group:
+
+    Keyword Args:
+        device:
 
 
     Example:

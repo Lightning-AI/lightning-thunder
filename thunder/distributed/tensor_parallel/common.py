@@ -18,7 +18,7 @@ from thunder.core.trace_interpreter import rerun_trace
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from typing import Any
+    from typing import Any, Type
     from torch.distributed import ProcessGroup
     from thunder.core.module import ThunderModule
     from thunder.core.proxies import ProxyInterface
@@ -45,6 +45,8 @@ class TensorParallelLayerType(Enum):
     COLUMN_PARALLEL_EMBED = auto()
     ROW_PARALLEL_EMBED = auto()
 
+    COLUMN_PARALLEL_OUTPUT_EMBED = auto()
+
 
 class PrePostProcessInterface(ABC):
     """Defining interfaces of pre/post-process of tensor parallelized ops."""
@@ -65,6 +67,18 @@ class PrePostProcessInterface(ABC):
     def maybe_modify_args_and_kwargs(self, bsym: BoundSymbol) -> BoundSymbol:
         """No-op. Mainly for row-wise parallel linear."""
         return bsym
+
+
+_TPLayerType_TO_PrePostProcess: dict[TensorParallelLayerType, PrePostProcessInterface] = {}
+
+
+def register(prepost_process_cls: type[PrePostProcessInterface]) -> None:
+    global _TPLayerType_TO_PrePostProcess
+    _TPLayerType_TO_PrePostProcess[prepost_process_cls.layer_type] = prepost_process_cls
+
+
+def get_prepostprocess_of(layer_type: TensorParallelLayerType) -> PrePostProcessInterface:
+    return _TPLayerType_TO_PrePostProcess[layer_type]
 
 
 @dataclass(frozen=True)
@@ -171,13 +185,23 @@ class TransformForTensorParallel(Transform):
     rank: int
     world_size: int
     process_group: ProcessGroup
-    target_modules: Sequence[str]
-    chunked_param_name_to_layer_type: dict[str, Any] = field(init=False, default_factory=dict)
+    target_modules: Sequence[str] | dict[TensorParallelLayerType, Sequence[str]]
+    chunked_param_name_to_layer_type: dict[str, tuple[type[nn.Module], PrePostProcessInterface | None]] = field(
+        init=False, default_factory=dict
+    )
     params_to_shard: dict[str, Any] = field(init=False, default_factory=dict)
     dim_to_shard: int = field(init=False, default=-1)
+    modules_to_prepostprocess_map: dict[str, PrePostProcessInterface | None] = field(init=False, default_factory=dict)
 
     def __post_init__(self):
         self.device = torch.device("cuda", self.rank)
+        if isinstance(self.target_modules, dict):
+            for tp_layer_type in self.target_modules:
+                for mod_name in self.target_modules[tp_layer_type]:
+                    self.modules_to_prepostprocess_map[mod_name] = get_prepostprocess_of(tp_layer_type)
+        else:
+            for mod_name in self.target_modules:
+                self.modules_to_prepostprocess_map[mod_name] = None
 
         if self.dim_to_shard == -1:
             raise ValueError(f"Set valid {self.dim_to_shard=} in inheritance")
@@ -278,7 +302,7 @@ class TransformForTensorParallel(Transform):
         from thunder.core import utils
         from thunder.distributed import _shard_tensor
 
-        for target_mod_name in self.target_modules:
+        for target_mod_name in self.modules_to_prepostprocess_map:
             mod = model.get_submodule(target_mod_name)
             utils.check_type(
                 mod,
@@ -290,7 +314,10 @@ class TransformForTensorParallel(Transform):
             for name, p in mod.named_parameters(prefix=target_mod_name, recurse=False):
                 if p.ndim <= self.dim_to_shard:
                     continue
-                self.chunked_param_name_to_layer_type["t_" + name.replace(".", "_")] = type(mod)
+                self.chunked_param_name_to_layer_type["t_" + name.replace(".", "_")] = (
+                    type(mod),
+                    self.modules_to_prepostprocess_map[target_mod_name],
+                )
                 self.params_to_shard[name] = None
 
         # Modify module

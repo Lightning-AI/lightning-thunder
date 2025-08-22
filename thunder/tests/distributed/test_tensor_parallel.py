@@ -9,6 +9,7 @@ if not torch.distributed.is_available():
 
 import thunder
 from thunder.distributed import column_parallel, row_parallel
+from thunder.distributed.tensor_parallel import TensorParallelLayerType
 import thunder.executors
 from thunder.tests.distributed.helper import ToyModel, DistributedParallelTestCase
 from thunder.tests.distributed.modules import ParallelMLP
@@ -149,6 +150,48 @@ class TensorParallelTest(DistributedParallelTestCase):
                 # indices: [b]
                 indices = out.argmax(dim=1)
                 return indices
+
+        device = torch.device(f"cuda:{self.rank}")
+        x = torch.randint(0, num_embeddings - 1, (16, 16), device=device)
+        x_ref = x.clone().detach()
+
+        process_group = None
+        ref_model = OutputEmbedding().to(device)
+
+        ref_state_dict = ref_model.state_dict()
+        expected = ref_model(x_ref)
+
+        model = OutputEmbedding().to(device)
+        model.load_state_dict(ref_state_dict)
+        jitted_model = thunder.jit(model)
+        tp_jitted_model = column_parallel(
+            jitted_model,
+            target_modules={TensorParallelLayerType.COLUMN_PARALLEL_OUTPUT_EMBED: ("embed",)},
+            process_group=process_group,
+        )
+        y = tp_jitted_model(x)
+
+        dim: int
+        orig_size: int
+        if name == _COL:
+            dim = 0
+            orig_size = num_embeddings
+        else:
+            dim = 1
+            orig_size = embedding_dim
+        torch.testing.assert_close(
+            tp_jitted_model.get_parameter("embed.weight").size(dim),
+            orig_size // self.world_size,
+        )
+        torch.testing.assert_close(expected=expected, actual=y)
+
+        expected.mean().backward()
+        y.mean().backward()
+
+        torch.testing.assert_close(
+            expected=ref_model.embed.weight.grad.chunk(self.world_size, dim)[self.rank],
+            actual=tp_jitted_model.get_parameter("embed.weight").grad,
+        )
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="")
     @common_utils.parametrize("bias", (True, False))

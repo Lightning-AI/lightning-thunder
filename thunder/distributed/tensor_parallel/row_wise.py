@@ -16,6 +16,7 @@ from thunder.distributed.tensor_parallel.common import PrePostProcessInterface
 from thunder.distributed.tensor_parallel.common import ComputationTraceTransformVisitorForTensorParallel
 from thunder.distributed.tensor_parallel.common import TransformForTensorParallel
 from thunder.distributed.tensor_parallel.common import TensorParallelLayerType
+from thunder.distributed.tensor_parallel.common import register
 
 if TYPE_CHECKING:
     from typing import Any
@@ -99,6 +100,10 @@ class RowParallelEmbeddingPreProcess(PrePostProcessInterface):
         )
 
 
+register(RowParallelEmbeddingPreProcess)
+register(RowParallelLinearPrePostProcess)
+
+
 @dataclass
 class TransformForRowWiseParallel(TransformForTensorParallel):
     dim_to_shard: int = field(default=1, init=False)
@@ -122,7 +127,11 @@ class TransformForRowWiseParallel(TransformForTensorParallel):
         flat_args, _ = tree_flatten((computation_trace.args, computation_trace.kwargs))
         bsym_to_prepostprocess: dict[BoundSymbol, PrePostProcessInterface] = {}
         for proxy in filter(lambda p: isinstance(p, TensorProxy), flat_args):
-            if (layer_type := self.chunked_param_name_to_layer_type.get(proxy.name, None)) is not None:
+            if (
+                layer_type_and_prepost_process := self.chunked_param_name_to_layer_type.get(proxy.name, None)
+            ) is not None:
+                layer_type, prepost_process = layer_type_and_prepost_process
+                utils.check(prepost_process is None, lambda: "Row-wise does not support prepostprocess specified")
                 consumer_bsym = consumers[proxy][0]
                 if consumer_bsym not in bsym_to_prepostprocess:
                     match layer_type:

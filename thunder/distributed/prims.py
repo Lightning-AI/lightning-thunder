@@ -309,13 +309,18 @@ def synchronize_tensor_parallel_output_meta(
         TensorParallelLayerType.COLUMN_PARALLEL_LINEAR,
         TensorParallelLayerType.ROW_PARALLEL_LINEAR,
         TensorParallelLayerType.ROW_PARALLEL_EMBED,
+        TensorParallelLayerType.COLUMN_PARALLEL_OUTPUT_EMBED,
     )
     utils.check(
         layer_type in supported_ops,
         lambda: f"Unsupported {layer_type=}, supported ones are {supported_ops=}",
     )
     result_shape = list(t.shape)
-    if layer_type in (TensorParallelLayerType.COLUMN_PARALLEL_LINEAR, TensorParallelLayerType.ROW_PARALLEL_EMBED):
+    if layer_type in (
+        TensorParallelLayerType.COLUMN_PARALLEL_LINEAR,
+        TensorParallelLayerType.ROW_PARALLEL_EMBED,
+        TensorParallelLayerType.COLUMN_PARALLEL_OUTPUT_EMBED,
+    ):
         result_shape[-1] *= group.size()
     return TensorProxy(like=t, shape=result_shape)
 
@@ -477,6 +482,8 @@ def synchronize_tensor_parallel_output_forward_rule(
         case TensorParallelLayerType.COLUMN_PARALLEL_EMBED:
             return FwdAllReduceBwdIdentity.forward(t, group), (group, layer_type)
         case TensorParallelLayerType.ROW_PARALLEL_EMBED:
+            return FwdGatherBwdSplitAlongLastDim.forward(t, group), (group, layer_type)
+        case TensorParallelLayerType.COLUMN_PARALLEL_OUTPUT_EMBED:
             return FwdGatherBwdSplitAlongLastDim.forward(t, group), (group, layer_type)
         case _:
             utils.check(False, lambda: f"Invalid {layer_type=}")
