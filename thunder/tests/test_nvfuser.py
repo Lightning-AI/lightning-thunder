@@ -1017,34 +1017,26 @@ def test_moe_infer_scatter(executor, device: str, dtype: dtypes.dtype):
     dtypes=NOTHING,
 )
 def test_scatter(executor, device: str, dtype: dtypes.dtype):
-    def foo(inputs: list):
-        inp: torch.Tensor
-        idxs: torch.Tensor
-        src: torch.Tensor
-        inp, idxs, src = inputs
-        out = torch.scatter(inp, 0, idxs, src)
-        return out
-
     bsz = 4
     hidden = 8
     scatter_size = 3
     x = torch.randn([bsz, hidden], device=device, dtype=dtype)
-    _, ind = torch.topk(x, k=scatter_size, dim=0)
-    src = torch.randn(scatter_size, hidden, device=device, dtype=dtype)
 
-    # NOTE nv_enable_scatter to allow scatter operation to go through nvfuser
-    jfoo = thunder.jit(foo, nv_enable_scatter=True)
+    for dim in (0, 1):
+        _, ind = torch.topk(x, k=scatter_size, dim=dim)
+        src = torch.randn(ind.shape, device=device, dtype=dtype)
+        inputs = [x, dim, ind, src]
 
-    inputs = [x, ind, src]
+        # NOTE nv_enable_scatter to allow scatter operation to go through nvfuser
+        jit_scatter = thunder.jit(torch.scatter, nv_enable_scatter=True)
+        actual = jit_scatter(*inputs)
+        expected = torch.scatter(*inputs)
+        torch.testing.assert_close(actual, expected)
 
-    actual = jfoo(inputs)
-    expected = foo(inputs)
-    torch.testing.assert_close(actual, expected)
+        fw_trace = thunder.last_traces(jit_scatter)[-1]
+        fusion_bsyms = tuple(filter(lambda a: a.sym.is_fusion, fw_trace.bound_symbols))
 
-    fw_trace = thunder.last_traces(jfoo)[-1]
-    fusion_bsyms = tuple(filter(lambda a: a.sym.is_fusion, fw_trace.bound_symbols))
-
-    # assert that everything is merged as a single nvfuser operation
-    assert len(fusion_bsyms) == 1
-    outside_fusion_sym_set = {"unpack_trivial", "python_return"}
-    assert {el.sym.name for el in fw_trace.bound_symbols if not el.sym.is_fusion} == outside_fusion_sym_set
+        # assert that everything is merged as a single nvfuser operation
+        assert len(fusion_bsyms) == 1
+        outside_fusion_syms = ["unpack_trivial", "python_return"]
+        assert {el.sym.name for el in fw_trace.bound_symbols if not el.sym.is_fusion} == set(outside_fusion_syms)
