@@ -750,6 +750,16 @@ def _cat_prim_grad(tensors: list[TensorProxy], /, dim: int) -> TensorProxy:
 register_grad(pids.CAT, _cat_prim_grad)
 
 
+def _shallow_copy_prim_grad(a: TensorProxy) -> TensorProxy:
+    fwd = prims.shallow_copy(a)
+    g = get_grad(fwd)
+    put_grad(a, g)
+    return fwd
+
+
+register_grad(pids.SHALLOW_COPY, _shallow_copy_prim_grad)
+
+
 def _update_aliases_prim_grad(tensors: tuple[TensorProxy, ...]) -> tuple[TensorProxy, ...]:
     fwd_tensors = prims.update_aliases(tensors)
     for fwd_t, t in zip(fwd_tensors, tensors):
@@ -1649,6 +1659,7 @@ augmented_forward_impls = {
     prims.PrimIDs.FMOD: lambda x, y: (prims.fmod(x, y), (x, y)),
     prims.PrimIDs.COPY_: lambda x, y, grad_enabled: (prims.copy_(x, y, grad_enabled=grad_enabled), tuple()),
     prims.PrimIDs.CLONE: lambda x: (prims.clone(x), tuple()),
+    prims.PrimIDs.BITCAST: lambda x, dtype: (prims.bitcast(x, dtype), (x.dtype,)),
 }
 
 
@@ -1679,6 +1690,7 @@ backward_impls = {
     prims.PrimIDs.FMOD: lambda x, y, g: (g, -g * prims.trunc(x / y)),
     prims.PrimIDs.COPY_: lambda g: (g, None),
     prims.PrimIDs.CLONE: lambda g: g,
+    prims.PrimIDs.BITCAST: lambda x_dtype, g: (prims.bitcast(g, x_dtype), None),
 }
 
 

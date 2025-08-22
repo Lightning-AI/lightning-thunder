@@ -45,6 +45,7 @@ op_skip = {
     "index_put",
     "batch_norm",
     "instance_norm",
+    "torch_type",
     "type_as",
 }
 
@@ -408,7 +409,11 @@ def test_vjp_correctness(op, device, dtype, executor, comp):
         # sample.thunder() line below attempts to approximate those conversions
         # for non-differentiable arguments like dtypes so that the test will
         # execute properly.
-        sample = sample.thunder()  # converts torch.dtype to thunder.dtype
+        # NOTE: While `convert_element_type` is skipeed as of https://github.com/Lightning-AI/lightning-thunder/pull/2213
+        # as in https://github.com/Lightning-AI/lightning-thunder/blob/dbf6bad3/thunder/tests/opinfos.py#L3324-L3346,
+        # `torch.Tensor.view(dtype)` seems to require `torch.dtype` to be kept as is, opposite to `convert_element_type`.
+        if op.name != "view":
+            sample = sample.thunder()  # converts torch.dtype to thunder.dtype
         sample = sample.remove_singularities(op, eps)
 
         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
