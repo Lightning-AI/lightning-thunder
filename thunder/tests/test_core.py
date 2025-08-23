@@ -1112,7 +1112,7 @@ def test_bsym_toposort(executor: TestExecutor, device: str, dtype: dtypes.dtype)
     a = make((4, 3, 2, 3))
 
     cbar = executor.make_callable(bar)
-    expected = cbar(a, (12, -1))
+    cbar(a, (12, -1))
     traces = thunder.last_traces(cbar)
     trc = traces[0]
 
@@ -2377,7 +2377,7 @@ def test_bound_symbol_source_location_context(executor, device: str, dtype: dtyp
     trace = thunder.last_traces(jfn)[0]
 
     assert len(trace.bound_symbols) == 3
-    sin_symbol = trace.bound_symbols[1]
+    trace.bound_symbols[1]
     assert str(trace).count("return clang.sin(x)") == 1
     assert str(trace).count(f"# {__file__}:{lineno}") == 1
 
@@ -3136,9 +3136,9 @@ def test_proxy_same_name():
     from thunder.core.devices import cpu
 
     with detached_trace():
-        t = TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32)
+        TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32)
         with pytest.raises(RuntimeError, match="already used"):
-            t2 = TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32)
+            TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32)
 
 
 def test_save_trace():

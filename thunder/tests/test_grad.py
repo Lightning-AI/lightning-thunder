@@ -815,11 +815,11 @@ def test_multiple_output_vjp(executor, device, _):
 
     # Let's check that we get the correct error if we don't pass the right number of cotangents
     with pytest.raises(RuntimeError, match="Expected cotangents to be a sequence of length 2"):
-        initial_trace = thunder.trace()(vjp(func), (x,), (v,))
+        thunder.trace()(vjp(func), (x,), (v,))
 
     # The "vjp" function defined above is incorrect, let's check that we get the correct error
     with pytest.raises(RuntimeError, match="Backward for sincos returned 2 values, but expected at most 1"):
-        initial_trace = thunder.trace()(vjp(func), (x,), (v, v))
+        thunder.trace()(vjp(func), (x,), (v, v))
 
     # Let's define a correct sincos_backward function
     @register_backward("sincos")
@@ -1544,7 +1544,7 @@ def test_too_few_results_from_backward():
 
     myex = thunder.extend.OperatorExecutor("myex", version="0.1")
     thunder.extend.register_executor(myex)
-    myadd_op = myex.register_operator("myadd", like=myadd_meta, fn=lambda a, b: a + b)
+    myex.register_operator("myadd", like=myadd_meta, fn=lambda a, b: a + b)
 
     @register_augmented_forward("myadd")
     def myadd_augmented_fw(a, b):
@@ -1565,7 +1565,7 @@ def test_too_few_results_from_backward():
     b = torch.tensor(1.0, requires_grad=True)
 
     with pytest.raises(RuntimeError, match=r"Backward for myadd returned 1 value\(s\), but expected 2"):
-        fw_out = cfunc(a, b)
+        cfunc(a, b)
 
     thunder.extend.deregister_executor(myex)
 

@@ -401,7 +401,6 @@ def main(args: argparse.Namespace):
     iteration_times = []
     max_allocated_memory = 0
     total_tokens = 0
-    t0 = None  # For tracking throughput after warmup
 
     logger.info("Loading tokenizer")
     tokenizer = get_tokenizer(args.model, args.trust_remote_code)

@@ -78,7 +78,7 @@ def examine(fn: Callable, *args, show_call_stack: bool | int = False, **kwargs):
 
     with CollectFunctionsUsed(collected_ops):
         try:
-            torch_result = fn(*args, **kwargs)
+            fn(*args, **kwargs)
         except Exception as e:
             print("Failed to run the unmodified function. Please verify that your code runs without thunder")
             print(f"The code failed with exception - {e}")
@@ -175,7 +175,7 @@ def examine(fn: Callable, *args, show_call_stack: bool | int = False, **kwargs):
     # Step 4 Attempt to execute the function using thunder.jit
     lc_result: Any
     try:
-        lc_result = cfn(*args, **kwargs)
+        cfn(*args, **kwargs)
     except Exception as e:
         print("Encountered an error while running the compiled function")
         print(

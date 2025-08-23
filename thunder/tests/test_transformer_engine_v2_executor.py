@@ -349,7 +349,7 @@ def test_te_trace_metadata_propagation():
             MyNoopTransform(),
         ],
     )
-    out = cfunc(x, w)
+    cfunc(x, w)
 
     fwd_traces = thunder.last_traces(cfunc)
 
@@ -399,7 +399,7 @@ def test_te_trace_correctness(fp8_recipe: recipe.Recipe):
     )
 
     with te.fp8_autocast(fp8_recipe=fp8_recipe):
-        out = cfunc(x, w)
+        cfunc(x, w)
 
     fwd_trace = thunder.last_traces(cfunc)[-1]
     fwd_trace_pyctx = fwd_trace.python_ctx()
