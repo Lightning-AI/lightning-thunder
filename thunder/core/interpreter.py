@@ -2590,11 +2590,6 @@ class MutMappingWrapperMethods(WrappedValue):
         self.track_items()
         assert self.item_wrappers is not None
 
-        if last is Py_NULL():
-            pass
-        else:
-            pass
-
         try:
             uk, uv = self.value.popitem(last=last)
         except Exception as e:
