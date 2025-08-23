@@ -5644,7 +5644,6 @@ shape_ops.append(scatter_add_opinfo)
 
 
 def scatter_sample_generator(op, device, dtype, requires_grad, **kwargs):
-
     if not requires_grad:
         # If not requires_grad, we allow repeated indices
         for sample in scatter_add_sample_generator(op, device, dtype, requires_grad, **kwargs):

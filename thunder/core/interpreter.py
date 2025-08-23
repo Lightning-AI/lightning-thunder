@@ -3272,7 +3272,6 @@ def _async_gen_wrap_handler(inst: dis.Instruction, /, stack: InterpreterStack, *
 def _before_async_with_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, **kwargs
 ) -> None | INTERPRETER_SIGNALS:
-
     mgr = stack.pop()
 
     # python does a "special lookup"
@@ -3302,7 +3301,6 @@ def _before_async_with_handler(
 # https://docs.python.org/3.11/library/dis.html#opcode-BEFORE_WITH
 @register_opcode_handler("BEFORE_WITH", min_ver=(3, 11))
 def _before_with_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
-
     mgr = stack.pop()
 
     # python does a "special lookup"
@@ -5291,7 +5289,6 @@ def _make_function_handler_313(
 ) -> None:
     fn_co: CodeType = unwrap(stack.pop_wrapped())
     name = fn_co.co_name
-
 
     if fn_co.co_freevars:
         # will be overridden by SET_FUNCTION_ATTRIBUTE call but we cannot
