@@ -2377,7 +2377,6 @@ def test_bound_symbol_source_location_context(executor, device: str, dtype: dtyp
     trace = thunder.last_traces(jfn)[0]
 
     assert len(trace.bound_symbols) == 3
-    trace.bound_symbols[1]
     assert str(trace).count("return clang.sin(x)") == 1
     assert str(trace).count(f"# {__file__}:{lineno}") == 1
 

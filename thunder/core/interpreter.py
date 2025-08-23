@@ -1630,7 +1630,6 @@ def _object_getattribute_lookaside(obj: Any, name: str):
         assert cls_var is not null
         if lookup_descriptor_field("__set__") is not null or lookup_descriptor_field("__delete__") is not null:
             assert callable(descr_get)
-            get_interpretercompilectx()
 
             # if it is opaque, don't _interpret_call here, to avoid a wrap/unwrap dance
             if is_opaque(descr_get):
@@ -1735,7 +1734,6 @@ def wrap_attribute(plain_result, obj, name):
 def _setattr_lookaside(obj: Any, name: str, value: Any):
     uobj = unwrap(obj)
     uname = unwrap(name)
-    unwrap(value)
     typ = type(uobj)
 
     compilectx: InterpreterCompileCtx = get_interpretercompilectx()
@@ -3274,7 +3272,6 @@ def _async_gen_wrap_handler(inst: dis.Instruction, /, stack: InterpreterStack, *
 def _before_async_with_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, **kwargs
 ) -> None | INTERPRETER_SIGNALS:
-    get_interpreterruntimectx()
 
     mgr = stack.pop()
 
@@ -3305,7 +3302,6 @@ def _before_async_with_handler(
 # https://docs.python.org/3.11/library/dis.html#opcode-BEFORE_WITH
 @register_opcode_handler("BEFORE_WITH", min_ver=(3, 11))
 def _before_with_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
-    get_interpreterruntimectx()
 
     mgr = stack.pop()
 
@@ -5296,7 +5292,6 @@ def _make_function_handler_313(
     fn_co: CodeType = unwrap(stack.pop_wrapped())
     name = fn_co.co_name
 
-    get_interpretercompilectx()
 
     if fn_co.co_freevars:
         # will be overridden by SET_FUNCTION_ATTRIBUTE call but we cannot

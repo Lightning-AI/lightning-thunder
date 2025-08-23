@@ -211,7 +211,6 @@ def _cudnn_sdpa_forward_meta(
     scale: float | None = None,
 ) -> tuple[TensorProxy, TensorProxy, TensorProxy, TensorProxy]:
     batch_size, num_heads, query_seq_len, E = query.shape
-    key.shape[-2]
     Ev = value.shape[-1]
 
     return (

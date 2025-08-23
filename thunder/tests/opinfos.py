@@ -414,7 +414,6 @@ class OpInfo:
     # NOTE Today all benchmarks are generated with PyTorch, so Thunder objects,
     #   like dtypes, need to be translated into PyTorch objects
     def benchmarks(self, device: devices.Device, dtype: datatypes.dtype, *, requires_grad: bool = False, **kwargs):
-        to_torch_dtype(dtype)
         return self.benchmark_generator(self, device, dtype, requires_grad, **kwargs)
 
     def devicetypes(self):
@@ -5527,7 +5526,6 @@ def gather_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make_index = partial(make_tensor, device=device, dtype=torch.long, requires_grad=False)
 
     for shape_a, dim, shape_b in take_along_axis_cases:
-        dim if dim >= 0 else dim + len(shape_a)
         a = make(shape_a)
         b = make_index(shape_b, low=0, high=shape_a[dim])
         yield SampleInput(a, index=b, dim=dim)
@@ -5646,7 +5644,6 @@ shape_ops.append(scatter_add_opinfo)
 
 
 def scatter_sample_generator(op, device, dtype, requires_grad, **kwargs):
-    partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
     if not requires_grad:
         # If not requires_grad, we allow repeated indices
@@ -9440,7 +9437,7 @@ def cross_entropy_error_generator(op, device, dtype=torch.float32, **kwargs):
     )
 
     # input tensor has 0 dimensions
-    scalar_input = make(_scalar_shape := ())
+    scalar_input = make(())
     yield (
         SampleInput(scalar_input, valid_target),
         RuntimeError,
@@ -9639,7 +9636,7 @@ def nll_loss_error_generator(op, device, dtype=torch.float32, **kwargs):
     )
 
     # input tensor has 0 dimensions
-    scalar_input = make(_scalar_shape := ())
+    scalar_input = make(())
     yield (
         SampleInput(scalar_input, valid_target),
         RuntimeError,
@@ -9734,7 +9731,6 @@ def mse_loss_sample_generator(op, device, dtype, requires_grad, **kwards):
     for shape, reduction_str in itertools.product(shapes, reduction_options):
         input_shape, target_shape = shape
 
-        input_shape[1] if len(input_shape) >= 2 else input_shape[0]
         yield SampleInput(
             make(input_shape, low=0.0, high=1.0, dtype=dtype, requires_grad=True),
             make(target_shape, low=0.0, high=1.0, dtype=dtype, requires_grad=True),

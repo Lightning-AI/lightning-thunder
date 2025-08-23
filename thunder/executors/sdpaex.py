@@ -130,7 +130,6 @@ def _grad_forward_scaled_dot_product_efficient_attention_meta(
     _input_shape_check_fused_scaled_dot_product_attention(query, key, value, attn_mask)
 
     batch_size, num_heads, query_seq_len, E = query.shape
-    key.shape[-2]
     Ev = value.shape[-1]
     logsumexp_dim = math.ceil(query_seq_len / 32) * 32
 
