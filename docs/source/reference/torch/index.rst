@@ -13,6 +13,7 @@ A PyTorch dialect in thunder.
     torchsymbol
     size
     to_float
+    _register_custom_op
 
 Under Construction
 
