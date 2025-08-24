@@ -5547,7 +5547,7 @@ def _interpolate_scale_factor_helper(
         out_h = int(in_h * scale_factor[0])
         out_w = int(in_w * scale_factor[1])
         utils.check(out_h > 0 and out_w > 0, lambda: f"scale_factor leads to zero-size output ({out_h}x{out_w})")
-        return _bilinear_sampler_2d(a, in_h, in_w, out_h, out_w)
+        return _bilinear_sampler_2d(a, in_h, in_w, out_h, out_w, math_dtype=utils.get_computation_dtype(a.dtype))
     elif mode == "nearest" or mode == "nearest-exact":
         # perform nearest up/down-sampling
         def nearest_sampler(
