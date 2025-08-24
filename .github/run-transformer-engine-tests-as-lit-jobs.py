@@ -7,11 +7,17 @@ import os.path
 from lightning_sdk import Studio, Job, Machine, Status
 
 
-def main(gh_run_id: str = ""):
+def main(gh_run_id: str = "", te_version: str = "stable"):
+    assert te_version in ["stable", "main"]
     if not gh_run_id:
         gh_run_id = datetime.now().strftime("%Y-%m-%d|%H:%M:%S")
     print("Creating studio...")
-    s = Studio(f"thunder-transformer-engine-tests-run{gh_run_id}", "oss-thunder", org="lightning-ai", create_ok=True)
+    s = Studio(
+        f"thunder-transformer-engine-tests-run{gh_run_id}-{te_version}",
+        "oss-thunder",
+        org="lightning-ai",
+        create_ok=True,
+    )
     print("Uploading package and scripts...")
     s.upload_folder("dist", remote_path="dist")
     s.upload_folder("requirements", remote_path="requirements")
@@ -23,7 +29,16 @@ def main(gh_run_id: str = ""):
     print("Installing Thunder and other requirements...")
     s.run("conda install -c conda-forge libstdcxx-ng")
     s.run(f"pip install {pkg_path} -U -r requirements/test.txt")
-    s.run("pip install --no-build-isolation 'transformer_engine[pytorch]'")
+    if te_version == "stable":
+        s.run("pip install --no-build-isolation 'transformer_engine[pytorch]'")
+    else:
+        # Need to install build dependencies manually
+        # as pip doesn't install them with `--no-build-isolation`
+        # See https://github.com/pypa/pip/issues/9314
+        s.run("pip install cmake 'pybind11[global]' ninja")
+        s.run(
+            "NVTE_FRAMEWORK=pytorch pip install --no-build-isolation 'git+https://github.com/NVIDIA/TransformerEngine.git@main'"
+        )
 
     # Define test commands
     test_commands = [
