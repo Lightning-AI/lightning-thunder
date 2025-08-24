@@ -5510,7 +5510,7 @@ def _interpolate_scale_factor_helper(
             math_dtype: torch.dtype = torch.float32,
         ) -> TensorLike:
             # The X pass
-            x_dst = arange(out_w, device=t.device)
+            x_dst = arange(out_w, device=t.device).to(math_dtype)
             scale_w = to(in_w / out_w, math_dtype)
             # The 0.5s come from the fact that we treat each element as a pixel,
             # that has its centerpoint at x0 + 0.5. With the formula below we
@@ -5527,7 +5527,7 @@ def _interpolate_scale_factor_helper(
             t_x = v0 * (1 - wx) + v1 * wx
 
             # The Y pass
-            y_dst = arange(out_h, device=t.device)
+            y_dst = arange(out_h, device=t.device).to(math_dtype)
             scale_h = to(in_h / out_h, math_dtype)
             y_src_f = to((y_dst + 0.5) * scale_h - 0.5, math_dtype)
             y0 = clamp(clang.floor(y_src_f), 0, in_h - 1).to(to_dtype(torch.int64))
