@@ -1051,7 +1051,7 @@ def test_torch_autograd_crazy_collections_in_and_out(executor, device, dtype):
         g = e + f
         h = f + ka + kb
         # NOTE The following computation is intentionally unused
-        i = ka + ka  # noqa
+        i = ka + ka
         j = kc[0] + kc[1]
 
         d["j"] = j

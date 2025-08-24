@@ -190,7 +190,7 @@ def test_crazy_collections_in_and_out(executor, device, dtype):
         g = e + f
         h = f + ka + kb
         # NOTE The following line is intentionally not returned
-        i = ka + ka  # noqa
+        i = ka + ka
         j = kc[0] + kc[1]
 
         d["j"] = j
@@ -436,7 +436,7 @@ def test_varargs_and_kwargs(executor, device, dtype):
 @instantiate(dtypes=(thunder.float32,))
 def test_no_return(executor, device, dtype):
     def foo(a, b):
-        c = a + b  # noqa
+        c = a + b
         pass
 
     traced_foo = executor.make_callable(foo)

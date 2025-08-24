@@ -5507,17 +5507,18 @@ def _interpolate_scale_factor_helper(
             *,
             dim_h: int = 2,
             dim_w: int = 3,
+            math_dtype: torch.dtype = torch.float32,
         ) -> TensorLike:
             # The X pass
-            x_dst = arange(out_w, device=t.device)
-            scale_w = to(in_w / out_w, a.dtype)
+            x_dst = arange(out_w, device=t.device).to(math_dtype)
+            scale_w = to(in_w / out_w, math_dtype)
             # The 0.5s come from the fact that we treat each element as a pixel,
             # that has its centerpoint at x0 + 0.5. With the formula below we
             # make sure that the centerpoints of these "images" align, because align_corners
             # is not yet implemented
-            x_src_f = to((x_dst + 0.5) * scale_w - 0.5, a.dtype)
+            x_src_f = to((x_dst + 0.5) * scale_w - 0.5, math_dtype)
             x0 = clamp(clang.floor(x_src_f), 0, in_w - 1).to(to_dtype(torch.int64))
-            x1 = clamp((x0 + 1), max=in_w - 1)
+            x1 = clamp(clang.ceil(x_src_f), 0, in_w - 1).to(to_dtype(torch.int64))
             wx = unsqueeze(unsqueeze((x_src_f - x0.to(x_src_f.dtype)), 0), 0)
 
             v0 = clang.take(t, x0, dim=dim_w)
@@ -5526,16 +5527,17 @@ def _interpolate_scale_factor_helper(
             t_x = v0 * (1 - wx) + v1 * wx
 
             # The Y pass
-            y_dst = arange(out_h, device=t.device)
-            scale_h = to(in_h / out_h, a.dtype)
-            y_src_f = to((y_dst + 0.5) * scale_h - 0.5, a.dtype)
+            y_dst = arange(out_h, device=t.device).to(math_dtype)
+            scale_h = to(in_h / out_h, math_dtype)
+            y_src_f = to((y_dst + 0.5) * scale_h - 0.5, math_dtype)
             y0 = clamp(clang.floor(y_src_f), 0, in_h - 1).to(to_dtype(torch.int64))
-            y1 = clamp((y0 + 1), max=in_h - 1)
+            y1 = clamp(clang.ceil(y_src_f), 0, in_h - 1).to(to_dtype(torch.int64))
             wy = unsqueeze(unsqueeze(unsqueeze((y_src_f - y0.to(y_src_f.dtype)), 0), 0), -1)
 
             v0 = clang.take(t_x, y0, dim=dim_h)
             v1 = clang.take(t_x, y1, dim=dim_h)
-            return v0 * (1 - wy) + v1 * wy
+            result = v0 * (1 - wy) + v1 * wy
+            return to(result, a.dtype)
 
         utils.check(
             len(spatial_dims) == 2,
@@ -5545,7 +5547,7 @@ def _interpolate_scale_factor_helper(
         out_h = int(in_h * scale_factor[0])
         out_w = int(in_w * scale_factor[1])
         utils.check(out_h > 0 and out_w > 0, lambda: f"scale_factor leads to zero-size output ({out_h}x{out_w})")
-        return _bilinear_sampler_2d(a, in_h, in_w, out_h, out_w)
+        return _bilinear_sampler_2d(a, in_h, in_w, out_h, out_w, math_dtype=utils.get_computation_dtype(a.dtype))
     elif mode == "nearest" or mode == "nearest-exact":
         # perform nearest up/down-sampling
         def nearest_sampler(
