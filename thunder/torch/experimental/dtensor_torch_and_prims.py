@@ -172,6 +172,23 @@ def dtensor_reshape(a: TensorLike, shape: tuple[int, ...]) -> TensorLike:
     return dtensor_reshape_prim(a, shape)
 
 
+def dtensor_take_meta(a, index, dim):
+    output = run_with_fake_tensor(torch.take, a, index, dim)
+    local_tensor_proxy = TensorProxy(
+        like=a.local_tensor, shape=output._local_tensor.shape, dtype=dtypes.to_dtype(output._local_tensor.dtype)
+    )
+    spec = output._spec
+    spec_proxy = AnyProxy(spec, history=a.history)
+    return create_dtensor_proxy_from_proxies(local_tensor_proxy, spec_proxy, False)
+
+
+dtensor_take_prim = make_prim("dtensor_take_prim", "dtensor_take_prim", meta=dtensor_take_meta)
+
+dtensor_take_prim_impl = pytorchex.register_operator("dtensor_take_prim", like=dtensor_take_prim, fn=torch.take)
+
+pytorchex.register_implementation(dtensor_take_prim, dtensor_take_prim_impl)
+
+
 def register_dtensor_torch_and_prims():
     register_function_for_dtensor(torch.mul, ltorch.mul, dtensor_mul, is_method=True)
     register_function_for_dtensor(torch.reshape, ltorch.reshape, dtensor_reshape, is_method=True)
