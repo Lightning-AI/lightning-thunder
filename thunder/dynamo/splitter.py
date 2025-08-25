@@ -2,6 +2,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 import copy
 from functools import partial
+import inspect
 
 import torch
 from torch.fx.passes.split_module import split_module
@@ -99,6 +100,45 @@ def _splitter(
 
     nodes_in_unsupported_ctx_regions = get_nodes_in_unsupported_ctx_regions(gm)
 
+    for node in gm.graph.nodes:
+        from thunder.torch.experimental.dtensor_torch_and_prims import (
+            dtensor_from_local_prim,
+            dtensor_redistribute_prim,
+            dtensor_to_local_prim,
+        )
+
+        try:
+            closure_vars = inspect.getclosurevars(node.target)
+
+            if "from_local" in node.target.__name__:
+                mesh = closure_vars.nonlocals["args_as_value"][0]
+                placements = closure_vars.nonlocals["args_as_value"][1]
+
+                def dtensor_from_local_prim_wrapper(x, mesh=mesh, placements=placements):
+                    return dtensor_from_local_prim(x, mesh, placements)
+
+                dtensor_from_local_prim_wrapper.thunder_supported = True
+                node.target = dtensor_from_local_prim_wrapper
+            if "redistribute" in node.target.__name__:
+                args = closure_vars.nonlocals["args_as_value"]
+                kwargs = closure_vars.nonlocals["kwargs_as_value"]
+                placements = kwargs["placements"]
+
+                def dtensor_redistribute_prim_wrapper(x, placements=placements):
+                    return dtensor_redistribute_prim(x, placements=placements)
+
+                dtensor_redistribute_prim_wrapper.thunder_supported = True
+                node.target = dtensor_redistribute_prim_wrapper
+            if "to_local" in node.target.__name__:
+
+                def dtensor_to_local_prim_wrapper(x):
+                    return dtensor_to_local_prim(x)
+
+                dtensor_to_local_prim_wrapper.thunder_supported = True
+                node.target = dtensor_to_local_prim_wrapper
+        except Exception as e:
+            pass
+
     def callback(node) -> int:
         nonlocal prev_value, partition_cnt, split_reasons, supported_partitions
 
@@ -119,9 +159,13 @@ def _splitter(
             )
             split_reasons.append(split_reason)
         else:
-            is_thunder_supported, split_reason = is_node_supported_by_thunder(node)
-            if split_reason is not None:
-                split_reasons.append(split_reason)
+            # Hack to support dynamo generated prims for `parallelize_module`.
+            if hasattr(node.target, "thunder_supported") and node.target.thunder_supported:
+                is_thunder_supported, split_reason = True, None
+            else:
+                is_thunder_supported, split_reason = is_node_supported_by_thunder(node)
+                if split_reason is not None:
+                    split_reasons.append(split_reason)
 
         if prev_value == is_thunder_supported:  # We are in the same region.
             return partition_cnt
@@ -207,7 +251,7 @@ def _splitter(
 
     # We update the GraphModule in `update_node_and_submodule`, so we need to recompile.
     recompile_graph(split_gm)
-
+    print(split_reasons)
     return split_gm, SubgraphInfo(
         gm,
         _ThunderSplitGraphModule(original_split_gm, supported_partitions),

@@ -48,6 +48,14 @@ from thunder.core.profile import annotate_for_profile
 from thunder.core.compile_data import get_compile_option
 from thunder.torch.experimental.dtensor_torch_and_prims import dtensor_mul_prim, dtensor_reshape_prim
 from thunder.torch.experimental.dtensor_proxy import DTensorProxy
+from thunder.torch.experimental.dtensor_torch_and_prims import (
+    dtensor_linear_prim,
+    dtensor_convert_element_type_prim,
+    dtensor_add_prim,
+    dtensor_neg_prim,
+    dtensor_exp_prim,
+    dtensor_reciprocal_prim,
+)
 
 from thunder.core.transforms import (
     get_grad,
@@ -875,7 +883,23 @@ class nvFuserExecutor(FusionExecutor):
                 cuda_in_or_out: bool = self.has_cuda_input_or_output(bsym)
                 return can_fuse and cuda_in_or_out
 
-            return _can_fuse_node(a) and _can_fuse_node(b)
+            # return _can_fuse_node(a) and _can_fuse_node(b)
+            def bsym_input_types_match(a, b):
+                # NOTE: Don't allow creating a Fusion with mix of DTensor and Tensor inputs.
+                bsym_a: BoundSymbol = a.group_bsyms[0]
+                bsym_b: BoundSymbol = b.group_bsyms[0]
+                bsym_a_args_type = {type(arg) for arg in bsym_a.flat_proxy_args}
+                bsym_b_args_type = {type(arg) for arg in bsym_b.flat_proxy_args}
+
+                if DTensorProxy in bsym_a_args_type:
+                    assert bsym_a_args_type == {DTensorProxy}
+                    return bsym_b_args_type == bsym_a_args_type
+                if DTensorProxy in bsym_b_args_type:
+                    assert bsym_b_args_type == {DTensorProxy}
+                    return bsym_a_args_type == bsym_b_args_type
+                return True
+
+            return _can_fuse_node(a) and _can_fuse_node(b) and bsym_input_types_match(a, b)
 
         bound_symbol_groups = fuse_bound_symbols(trace, _should_fuse)
 
@@ -969,6 +993,7 @@ def convert_element_type(
 
 
 register_supported(PrimIDs.CONVERT_ELEMENT_TYPE, convert_element_type, _convert_element_type_check)
+register_supported(dtensor_convert_element_type_prim.id, convert_element_type, _convert_element_type_check)
 
 #
 # Tensor creation operations
@@ -1520,6 +1545,7 @@ def exp(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) ->
 
 
 register_supported(PrimIDs.EXP, exp, _elementwise_unary_check)
+register_supported(dtensor_exp_prim.id, exp, _elementwise_unary_check)
 
 
 def exp2(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
@@ -1617,6 +1643,7 @@ def neg(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) ->
 
 
 register_supported(PrimIDs.NEG, neg, _elementwise_unary_check)
+register_supported(dtensor_neg_prim.id, neg, _elementwise_unary_check)
 
 
 def real(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
@@ -1644,6 +1671,7 @@ def reciprocal(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: d
 
 
 register_supported(PrimIDs.RECIPROCAL, reciprocal, _elementwise_unary_check)
+register_supported(dtensor_reciprocal_prim.id, reciprocal, _elementwise_unary_check)
 
 
 # NOTE nv_round to avoid a name conflict with the builtin round
@@ -1775,6 +1803,7 @@ def _add(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefiniti
 
 
 register_supported(PrimIDs.ADD, _add, _elementwise_binary_check)
+register_supported(dtensor_add_prim.id, _add, _elementwise_binary_check)
 
 
 def atan2(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
@@ -2403,6 +2432,7 @@ def linear(
 
 
 register_supported(PrimIDs.LINEAR, linear, _linear_check)
+register_supported(dtensor_linear_prim, linear, _linear_check)
 
 
 def _matmul_check(

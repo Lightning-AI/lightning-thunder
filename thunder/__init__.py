@@ -588,6 +588,7 @@ def jit(
                 computation_traces.append(computation_trc)
 
             computation_trc = transform_to_torch_types(computation_trc)
+            print(computation_trc)
             comp = computation_trc.python_callable()
 
             # TODO RC1 Update the cache
