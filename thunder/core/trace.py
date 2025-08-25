@@ -494,11 +494,9 @@ class TraceCtx:
         ctx["__function_obj_weakref"] = weakref.ref(self.fn) if self.fn is not None else None
         ctx["thunder"] = thunder
 
-        callable = baseutils.build_callable(
+        return baseutils.build_callable(
             self.siginfo().name, python_str=python_str, file_name=f"thunder.{self.siginfo().name}", ctx=ctx
         )
-
-        return callable
 
     def __repr__(self) -> str:
         return self.python(print_depth=-1)
