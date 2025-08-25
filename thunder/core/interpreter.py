@@ -7572,7 +7572,7 @@ def interpret(
                     del e
                     raise
 
-            interpreter_log = runtimectx.interp_log
+            interpreter_log.extend(runtimectx.interp_log)
 
             if interpretation_result is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
                 e = runtimectx.curexc
