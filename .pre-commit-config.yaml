@@ -63,7 +63,7 @@ repos:
       - id: sphinx-lint
 
   - repo: https://github.com/JoC0de/pre-commit-prettier
-    rev: b3e25fa39aa676c36bc18eb9eae6f26d9bb63f39 # v3.6.2 using SHA as tags are not persistent
+    rev: v3.6.2 # v3.6.2 using SHA as tags are not persistent
     hooks:
       - id: prettier
         files: \.(json|yml|yaml|toml)
