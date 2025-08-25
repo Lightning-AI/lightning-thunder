@@ -251,7 +251,7 @@ def _splitter(
 
     # We update the GraphModule in `update_node_and_submodule`, so we need to recompile.
     recompile_graph(split_gm)
-    print(split_reasons)
+
     return split_gm, SubgraphInfo(
         gm,
         _ThunderSplitGraphModule(original_split_gm, supported_partitions),
