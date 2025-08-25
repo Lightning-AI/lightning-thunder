@@ -7,7 +7,6 @@ from typing import Any
 from enum import Enum
 from collections.abc import Callable
 from types import ModuleType
-import weakref
 
 import thunder
 import thunder.core.codeutils as codeutils
