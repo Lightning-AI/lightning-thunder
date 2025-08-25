@@ -103,7 +103,7 @@ class DDPTest(DistributedParallelTestCase):
         ):
             cm = thunder.jit(DDP(model, device_ids=[self.rank]))
             x = torch.randn(20, 12).to(self.rank)
-            outputs = cm(x)
+            cm(x)
 
     # `apply_bucketing_to_grad_allreduce` needs to be updated to work correctly with joint trace
     @pytest.mark.xfail(strict=True, reason="This is not updated yet for joint forward-backward trace")

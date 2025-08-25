@@ -89,7 +89,6 @@ def _class_indices_forward(
         m_prev = m_curr
         logit_ptrs += BLOCK
     logit_ptrs = logit_start_ptrs + cols
-    output_ptrs = PROBS + row * N + cols
     WRIT_PROBS = PROBS + row * N + cols
     if LABEL_SMOOTHING:
         sum_total = 0.0
@@ -194,7 +193,6 @@ def _class_probs_forward(
         m_prev = m_curr
         logit_ptrs += BLOCK
     logit_ptrs = logit_start_ptrs + cols
-    output_ptrs = PROBS + row * N + cols
     WRIT_PROBS = PROBS + row * N + cols
 
     sum_total = 0.0
