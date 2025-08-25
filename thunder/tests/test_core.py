@@ -2970,7 +2970,6 @@ def test_thunder_optimized_module_is_freed():
     assert ref_opt_mod() is None
 
 
-@pytest.mark.xfail(strict=True)
 def test_user_module_is_freed():
     mod = torch.nn.ReLU()
     opt_mod = thunder.jit(mod)
