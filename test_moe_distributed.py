@@ -184,12 +184,12 @@ class GroupedLinearColwiseParallel(ParallelStyle):
         self,
         *,
         input_layouts: tuple[Placement | None] | None = None,
-        output_layout: Placement | None = None,
+        output_layouts: Placement | None = None,
         use_local_output: bool = True,
     ):
         super().__init__()
         self.input_layouts = input_layouts or (Replicate(), Replicate())
-        self.output_layout = output_layout or Shard(-1)
+        self.output_layout = output_layouts or Shard(-1)
         self.desired_input_layouts = (Replicate(), Replicate())
         self.use_local_output = use_local_output
 
@@ -233,12 +233,12 @@ class GroupedLinearRowwiseParallel(ParallelStyle):
         self,
         *,
         input_layouts: tuple[Placement | None] | None = None,
-        output_layout: Placement | None = None,
+        output_layouts: Placement | None = None,
         use_local_output: bool = True,
     ):
         super().__init__()
         self.input_layouts = input_layouts or (Shard(-1), Replicate())
-        self.output_layout = output_layout or Replicate()
+        self.output_layout = output_layouts or Replicate()
         self.desired_input_layouts = (Shard(-1), Shard(-1))
         self.use_local_output = use_local_output
 
@@ -282,12 +282,12 @@ def parallelize_moe_model(model: Llama4MoE, device_mesh: torch.distributed.Devic
     parallelize_plan = {
         # "gate": ColwiseParallel(use_local_output=True),
         # Shared experts - SwiGLU components
-        "shared_experts.gate_proj": ColwiseParallel(use_local_output=False),
-        "shared_experts.up_proj": ColwiseParallel(use_local_output=False),
+        "shared_experts.gate_proj": ColwiseParallel(use_local_output=False, output_layouts=Shard(2)),
+        "shared_experts.up_proj": ColwiseParallel(use_local_output=False, output_layouts=Shard(2)),
         "shared_experts.down_proj": RowwiseParallel(),
         # Routed experts
-        "routed_experts.gate_proj": GroupedLinearColwiseParallel(),
-        "routed_experts.up_proj": GroupedLinearColwiseParallel(),
+        "routed_experts.gate_proj": GroupedLinearColwiseParallel(use_local_output=False, output_layouts=Shard(1)),
+        "routed_experts.up_proj": GroupedLinearColwiseParallel(use_local_output=False, output_layouts=Shard(1)),
         "routed_experts.down_proj": GroupedLinearRowwiseParallel(),
     }
 
