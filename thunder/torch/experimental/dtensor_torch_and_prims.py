@@ -173,7 +173,7 @@ register_grad(dtensor_mul_prim, _dtensor_mul_prim_grad)
 
 @dtensor_torchsymbol(torch.mul, id="dtensor.torch.mul")
 def dtensor_mul(a: TensorLike, b: TensorLike) -> TensorLike:
-    return dtensor_mul_prim(a, b)
+    return _dtensor_elementwise_binary_wrapper(a, b, prim=dtensor_mul_prim)
 
 
 def dtensor_reshape_meta(a, shape):
