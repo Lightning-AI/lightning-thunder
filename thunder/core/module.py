@@ -3,6 +3,7 @@ from contextlib import contextmanager
 import itertools
 from typing import TYPE_CHECKING
 import collections
+import weakref
 
 import torch as pytorch
 from torch.utils.weak import WeakTensorKeyDictionary
@@ -388,8 +389,11 @@ class ThunderModule(pytorch.nn.Module):
 
 
 def get_thunder_module(model):
-    assert model() is not None
-    model = model()
+    if isinstance(model, weakref.ReferenceType):
+        # NOTE: `prologue` holds a reference to the original `nn.Module` via `__function_obj_weakref`.
+        assert model() is not None
+        model = model()
+
     cd = get_compile_data()
 
     # to not hold a reference to model in the _thunder_module_map dict, we index by id.
