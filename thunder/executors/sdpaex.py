@@ -134,12 +134,16 @@ def _grad_forward_scaled_dot_product_efficient_attention_meta(
     logsumexp_dim = math.ceil(query_seq_len / 32) * 32
 
     return (
-        output := TensorProxy(like=query, shape=(batch_size, num_heads, query_seq_len, Ev)),
-        log_sumexp := TensorProxy(
+        # output
+        TensorProxy(like=query, shape=(batch_size, num_heads, query_seq_len, Ev)),
+        # log_sumexp
+        TensorProxy(
             shape=(batch_size, num_heads, logsumexp_dim), dtype=dtypes.float32, device=query.device, requires_grad=False
         ),
-        philox_seed := TensorProxy(shape=(), dtype=dtypes.int64, device=query.device, requires_grad=False),
-        philox_offset := TensorProxy(shape=(), dtype=dtypes.int64, device=query.device, requires_grad=False),
+        # philox_seed
+        TensorProxy(shape=(), dtype=dtypes.int64, device=query.device, requires_grad=False),
+        # philox_offset
+        TensorProxy(shape=(), dtype=dtypes.int64, device=query.device, requires_grad=False),
     )
 
 
@@ -158,7 +162,7 @@ def _grad_forward_scaled_dot_product_efficient_attention_impl(
         _sdpa_enforce_input_tensor_contiguity(key),
         _sdpa_enforce_input_tensor_contiguity(value),
         _attention_mask_memory_efficient_helper(attn_mask, query),
-        compute_logsumexp := True,
+        True,  # compute_logsumexp
         dropout_p,
         is_causal,
         scale=scale,
@@ -192,8 +196,8 @@ def _grad_forward_scaled_dot_product_flash_attention_meta(
 
     # FP64 is not supported by aten memory efficient implementation
     supported_dtypes = (dtypes.float16, dtypes.bfloat16)
-    _input_dtype_check_fused_scaled_dot_product_attention(query, key, value, attn_mask := None, supported_dtypes)
-    _input_shape_check_fused_scaled_dot_product_attention(query, key, value, attn_mask := None)
+    _input_dtype_check_fused_scaled_dot_product_attention(query, key, value, None, supported_dtypes)
+    _input_shape_check_fused_scaled_dot_product_attention(query, key, value, None)
 
     batch_size, num_heads, query_seq_len, E = query.shape
     key_seq_len = key.shape[2]
@@ -205,17 +209,24 @@ def _grad_forward_scaled_dot_product_flash_attention_meta(
     )
 
     return (
-        output := TensorProxy(like=query, shape=(batch_size, num_heads, query_seq_len, E)),
-        log_sumexp := TensorProxy(
+        # output
+        TensorProxy(like=query, shape=(batch_size, num_heads, query_seq_len, E)),
+        # log_sumexp
+        TensorProxy(
             shape=(batch_size, num_heads, logsumexp_dim), dtype=dtypes.float32, device=query.device, requires_grad=False
         ),
-        cum_seq_q := TensorProxy(shape=(batch_size + 1,), dtype=dtypes.int64, device=query.device, requires_grad=False),
-        cum_seq_k := TensorProxy(shape=(batch_size + 1,), dtype=dtypes.int64, device=query.device, requires_grad=False),
+        # cum_seq_q
+        TensorProxy(shape=(batch_size + 1,), dtype=dtypes.int64, device=query.device, requires_grad=False),
+        # cum_seq_k
+        TensorProxy(shape=(batch_size + 1,), dtype=dtypes.int64, device=query.device, requires_grad=False),
         query_seq_len,
         key_seq_len,
-        philox_seed := TensorProxy(shape=(), dtype=dtypes.int64, device=query.device, requires_grad=False),
-        philox_offset := TensorProxy(shape=(), dtype=dtypes.int64, device=query.device, requires_grad=False),
-        debug_attn_mask := TensorProxy(shape=(), dtype=dtypes.int64, device=query.device, requires_grad=False),
+        # philox_seed
+        TensorProxy(shape=(), dtype=dtypes.int64, device=query.device, requires_grad=False),
+        # philox_offset
+        TensorProxy(shape=(), dtype=dtypes.int64, device=query.device, requires_grad=False),
+        # debug_attn_mask
+        TensorProxy(shape=(), dtype=dtypes.int64, device=query.device, requires_grad=False),
     )
 
 
@@ -360,8 +371,8 @@ def _scaled_dot_product_flash_attention_backward_meta(
 ) -> tuple[TensorProxy, TensorProxy, TensorProxy]:
     # FP64 is not supported by aten memory efficient implementation
     supported_dtypes = (dtypes.float16, dtypes.bfloat16)
-    _input_dtype_check_fused_scaled_dot_product_attention(query, key, value, attn_mask := None, supported_dtypes)
-    _input_shape_check_fused_scaled_dot_product_attention(query, key, value, attn_mask := None)
+    _input_dtype_check_fused_scaled_dot_product_attention(query, key, value, None, supported_dtypes)
+    _input_shape_check_fused_scaled_dot_product_attention(query, key, value, None)
 
     batch_size, num_heads, query_seq_len, E = query.shape
 

@@ -9229,12 +9229,12 @@ def grad_scaled_dot_product_attention_sample_generator(op, device, dtype, requir
     # Test Case: kv_seq_len > head_dim
     q, k, v = make(1, n_head, 12, 8), make(1, n_head, 14, 8), make(1, n_head, 14, 8)
     bool_attn_mask = make((1, n_head, 12, 14), dtype=torch.bool, low=1, high=1, requires_grad=False).tril()
-    yield SampleInput(q, k, v, bool_attn_mask, dropout_p := 0.0, is_causal := False, scale=0.5)
+    yield SampleInput(q, k, v, bool_attn_mask, 0.0, False, scale=0.5)
 
     # Test Case: kv_seq_len < head_dim
     q, k, v = make(1, n_head, 12, 16), make(1, n_head, 14, 16), make(1, n_head, 14, 16)
     bool_attn_mask = make((1, n_head, 12, 14), dtype=torch.bool, low=1, high=1, requires_grad=False).tril()
-    yield SampleInput(q, k, v, bool_attn_mask, dropout_p := 0.0, is_causal := False, scale=0.5)
+    yield SampleInput(q, k, v, bool_attn_mask, 0.0, False, scale=0.5)
 
     for L in query_seq_length:
         is_flash_attention = L <= flash_attn_threshold
@@ -9255,7 +9255,7 @@ def grad_scaled_dot_product_attention_sample_generator(op, device, dtype, requir
 
         # 4-dim (multiheaded) causal cases
         q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
-        yield SampleInput(q, k, v, attn_mask := None, dropout_p := 0.0, is_causal := False)
+        yield SampleInput(q, k, v, None, 0.0, False)
 
         # Test padding case when head size is not a multiple of 8
         if is_flash_attention:
@@ -9265,33 +9265,33 @@ def grad_scaled_dot_product_attention_sample_generator(op, device, dtype, requir
             # Skip these test cases if the flash attention kernel is not selected.
             # If the flash attention kernel is unavailable, _fused_sdp_choice uses the math reference.
             # When the dtype is not fp64, there is inconsistent results with torch autograd.
-            backend = torch._fused_sdp_choice(q, k, v, attn_mask := None, dropout_p := 0.0, is_causal := False)
+            backend = torch._fused_sdp_choice(q, k, v, None, 0.0, False)
             if SpdaBackend(backend) == SpdaBackend.FLASH_ATTENTION:
                 # fixed scale
-                yield SampleInput(q, k, v, attn_mask := None, dropout_p := 0.0, is_causal := False, scale=0.5)
+                yield SampleInput(q, k, v, None, 0.0, is_causal=False, scale=0.5)
 
                 # default scale
-                yield SampleInput(q, k, v, attn_mask := None, dropout_p := 0.0, is_causal := False)
+                yield SampleInput(q, k, v, None, 0.0, is_causal=False)
 
         # Non-contiguous input tensor case
         nq = make(N, n_head, L, E).permute(0, 1, 3, 2)
         nk = make(N, n_head, L, E).permute(0, 1, 3, 2)
         nv = make(N, n_head, L, E).permute(0, 1, 3, 2)
-        yield SampleInput(nq, nk, nv, attn_mask := None, dropout_p := 0.0, is_causal := False)
+        yield SampleInput(nq, nk, nv, None, 0.0, is_causal=False)
 
         # Test the scale factor which was added in torch 2.1
         if LooseVersion(torch.__version__) >= LooseVersion("2.1.0"):
             q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
-            yield SampleInput(q, k, v, attn_mask := None, dropout_p := 0.0, is_causal := False, scale=0.125)
+            yield SampleInput(q, k, v, None, 0.0, False, scale=0.125)
 
         # NOTE Flash attention sdpa does not support attn_mask argument; These cases always use memory efficient sdpa.
         q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
         bool_attn_mask = make((N, n_head, L, S), dtype=torch.bool, low=1, high=1, requires_grad=False).tril()
-        yield SampleInput(q, k, v, attn_mask := bool_attn_mask, is_causal=False)
+        yield SampleInput(q, k, v, bool_attn_mask, is_causal=False)
 
         q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
         additive_attn_mask = make((N, n_head, L, S), dtype=q.dtype).tril()
-        yield SampleInput(q, k, v, attn_mask := additive_attn_mask, is_causal=False)
+        yield SampleInput(q, k, v, additive_attn_mask, is_causal=False)
 
 
 # NOTE When calculating the gradient in the backwards pass, the torch executor calls fused sdpa functions.
@@ -9603,8 +9603,8 @@ def nll_loss_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # Test empty input and target tensor short-circuit
     for reduction_str, ignore_index in itertools.product(reduction_options, ignore_index_options):
         yield SampleInput(
-            empty_input_tensor := torch.tensor([], device=device, dtype=dtype),
-            empty_target_tensor := torch.tensor([], device=device, dtype=torch.long),
+            torch.tensor([], device=device, dtype=dtype),
+            torch.tensor([], device=device, dtype=torch.long),
             ignore_index=ignore_index,
             reduction=reduction_str,
         )

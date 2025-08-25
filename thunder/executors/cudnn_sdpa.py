@@ -214,15 +214,19 @@ def _cudnn_sdpa_forward_meta(
     Ev = value.shape[-1]
 
     return (
-        output := TensorProxy(like=query, shape=(batch_size, num_heads, query_seq_len, Ev)),
-        softmax_stats := TensorProxy(
+        # output
+        TensorProxy(like=query, shape=(batch_size, num_heads, query_seq_len, Ev)),
+        # softmax_stats
+        TensorProxy(
             shape=(batch_size, num_heads, query_seq_len, 1),
             dtype=dtypes.float32,
             device=query.device,
             requires_grad=False,
         ),
-        seed := TensorProxy(shape=(1, 1, 1, 1), dtype=dtypes.int32, device=query.device, requires_grad=False),
-        offset := TensorProxy(shape=(1, 1, 1, 1), dtype=dtypes.int32, device=query.device, requires_grad=False),
+        # seed
+        TensorProxy(shape=(1, 1, 1, 1), dtype=dtypes.int32, device=query.device, requires_grad=False),
+        # offset
+        TensorProxy(shape=(1, 1, 1, 1), dtype=dtypes.int32, device=query.device, requires_grad=False),
     )
 
 

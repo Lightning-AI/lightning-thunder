@@ -1674,11 +1674,11 @@ def test_match_fallthrough(jit):
         match dct:
             case 1:
                 assert False
-            case [a, b]:
+            case [a, b]:  # noqa: F841
                 assert False
             case "str":
                 assert False
-            case {"y": y, "z": z}:
+            case {"y": y, "z": z}:  # noqa: F841
                 assert False
             case _:
                 return True

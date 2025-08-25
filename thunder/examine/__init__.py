@@ -57,7 +57,7 @@ def examine(fn: Callable, *args, show_call_stack: bool | int = False, **kwargs):
     # Step 0, runs the operation with our torch function mode to collection information
     #   and ensure the operation itself is working correctly
     collected_ops = {}
-    torch_result: Any
+    # torch_result: Any
 
     if not callable(fn):
         # `examine` doesn't throw error and doesn't crash the user program.
@@ -173,7 +173,7 @@ def examine(fn: Callable, *args, show_call_stack: bool | int = False, **kwargs):
         raise e
 
     # Step 4 Attempt to execute the function using thunder.jit
-    lc_result: Any
+    # lc_result: Any
     try:
         cfn(*args, **kwargs)
     except Exception as e:
