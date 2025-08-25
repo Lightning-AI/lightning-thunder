@@ -1,6 +1,8 @@
 import time
 from typing import TYPE_CHECKING
 
+import torch.distributed as torch_dist
+
 from thunder.core.prims import linear as linear_prim
 from thunder.core.prims import get_grad, put_grad
 from thunder.core.proxies import AnyProxy, TensorProxy
@@ -263,8 +265,20 @@ def _te_fp8_amax_and_scale_update_meta(recipe: AnyProxy, *, states: tuple[AnyPro
 
 # TODO can gather and scatter be made explicit here for ddp
 def _te_fp8_amax_and_scale_update_impl(recipe: Recipe, states: tuple[RecipeState], tokens: tuple[TensorProxy]):
-    if recipe.delayed():
-        for state in states:
+    for state in states:
+        if getattr(recipe, "reduce_amax", False) and torch_dist.is_available() and torch_dist.is_initialized():
+            from torch.distributed import distributed_c10d
+
+            pg = distributed_c10d._get_default_group()
+            if torch_dist.get_world_size(group=pg) > 1:
+                torch_dist.all_reduce(
+                    state.amax_history,
+                    op=torch_dist.ReduceOp.MAX,
+                    group=pg,
+                    async_op=False,
+                )
+
+        if recipe.delayed():
             _amax_and_scale_update(
                 state.amax_history, state.scale, get_fp8_max(recipe, state.mode == "forward"), recipe
             )

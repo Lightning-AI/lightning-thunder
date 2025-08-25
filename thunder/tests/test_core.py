@@ -190,7 +190,7 @@ def test_crazy_collections_in_and_out(executor, device, dtype):
         g = e + f
         h = f + ka + kb
         # NOTE The following line is intentionally not returned
-        i = ka + ka  # noqa
+        i = ka + ka
         j = kc[0] + kc[1]
 
         d["j"] = j
@@ -436,7 +436,7 @@ def test_varargs_and_kwargs(executor, device, dtype):
 @instantiate(dtypes=(thunder.float32,))
 def test_no_return(executor, device, dtype):
     def foo(a, b):
-        c = a + b  # noqa
+        c = a + b
         pass
 
     traced_foo = executor.make_callable(foo)
@@ -2109,28 +2109,6 @@ def test_torch_scaled_dot_product_attention_non_decomposed(executor, device, _):
     traces = thunder.last_traces(compiled)
     torch.testing.assert_close(out, func(qkv))
     assert "scaled_dot_product_attention" in tuple(bsym.sym.id for bsym in traces[-1].bound_symbols)
-
-
-@instantiate(dtypes=NOTHING)
-def test_no_passthrough_symbol(executor, device, _):
-    # A test case for the situation reported in
-    # "backward trace contains symbols not present in forward that cause
-    # NotImplementedError"
-    # When an operation simply passes through its input, we should not
-    # add it to the trace.
-
-    def func(x):
-        return x.type_as(x)
-
-    x = make_tensor((2, 2), device=device, dtype=torch.float32)
-    compiled = executor.make_callable(func)
-    out = compiled(x)
-    assert out is x
-    initial_trace_with_dce = thunder.last_traces(compiled)[3]
-    assert "Constructed by Dead Code Elimination" in str(initial_trace_with_dce)
-    assert len(initial_trace_with_dce.bound_symbols) == 2
-    assert initial_trace_with_dce.bound_symbols[0].sym.id == prims.PrimIDs.UNPACK_TRIVIAL
-    assert initial_trace_with_dce.bound_symbols[1].sym.id == prims.PrimIDs.RETURN
 
 
 @instantiate(

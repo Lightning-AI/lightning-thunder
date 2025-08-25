@@ -18,8 +18,8 @@ assert TRITON_AVAILABLE, (
 triton_ex: OperatorExecutor = OperatorExecutor("triton", version=triton_version)
 register_executor(triton_ex)
 
-import triton  # noqa: E402
-import triton.language as tl  # noqa: E402
+import triton
+import triton.language as tl
 
 # Temporarily borrowed from https://github.com/openai/triton
 FORWARD_NUM_STAGES = 1

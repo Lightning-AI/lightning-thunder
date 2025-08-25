@@ -358,11 +358,11 @@ class CUDAGraphTransform(Transform):
             assert self.outputs_from_forward is not None, "called on backward without forward before"
             assert len(trace.bound_symbols[2].args) == 2 and trace.bound_symbols[2].args[0].name == "saved_for_backward"
             assert (
-                trace.bound_symbols[8].sym.name == "unpack_sequence"
-                and trace.bound_symbols[8].args[0] is trace.bound_symbols[2].output[0]
+                trace.bound_symbols[9].sym.name == "unpack_sequence"
+                and trace.bound_symbols[9].args[0] is trace.bound_symbols[2].output[0]
             )
 
-            saved_for_backwards_unpacked = trace.bound_symbols[8].output
+            saved_for_backwards_unpacked = trace.bound_symbols[9].output
             assert len(saved_for_backwards_unpacked) == len(self.outputs_from_forward)
             for is_static, p_bw in zip(self.outputs_from_forward, saved_for_backwards_unpacked):
                 if is_static:
