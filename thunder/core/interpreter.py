@@ -7514,6 +7514,8 @@ def interpret(
     if hasattr(fn, "__thunder_interpreter_orig_fn"):
         fn = fn.__thunder_interpreter_orig_fn
 
+    interpreter_log = []
+
     @functools.wraps(fn)
     def fn_(*args, **kwargs) -> Any:
         runtimectx: InterpreterRuntimeCtx = InterpreterRuntimeCtx(debug_log=debug_log, record_history=record_history)
@@ -7571,6 +7573,7 @@ def interpret(
                     raise
 
             # NOTE: Wrapped functions are valid to assign new attributes to.
+            # interpreter_log = runtimectx.interp_log  # type: ignore
             fn_._last_interpreter_log = runtimectx.interp_log  # type: ignore
 
             if interpretation_result is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
@@ -7587,6 +7590,7 @@ def interpret(
             return interpretation_result
 
     fn_.__thunder_interpreter_orig_fn = fn  # type: ignore
+    fn_._last_interpreter_log = interpreter_log  # type: ignore
     return fn_
 
 
