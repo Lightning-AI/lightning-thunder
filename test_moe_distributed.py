@@ -237,7 +237,7 @@ class GroupedLinearRowwiseParallel(ParallelStyle):
         super().__init__()
         self.input_layouts = input_layouts or (Shard(-1), Replicate())
         self.output_layout = output_layouts or Replicate()
-        self.desired_input_layouts = (Shard(-1), Shard(-1))
+        self.desired_input_layouts = (Shard(-1), Replicate())
         self.use_local_output = use_local_output
 
     @staticmethod
@@ -322,14 +322,15 @@ def test_llama4_moe_distributed():
     inp = torch.randn(batch_size, seq_len, config.hidden_size, dtype=torch.bfloat16, device=device)
 
     # Run forward pass
-    actual = parallelized_model(inp)
+    expected = parallelized_model(inp)
 
     # torch.compile(parallelized_model)(inp)
     tfn = thunderfx(parallelized_model, nv_enable_linear=True, nv_enable_scatter=True)
-    tfn(inp)
+    actual = tfn(inp)
 
     print(torch.cuda.max_memory_allocated())
-    torch.distributed.barrier()
+
+    torch.testing.assert_close(actual, expected, atol=1e-2, rtol=1e-2)
     print(f"Rank {local_rank}: Distributed MoE test passed!")
 
 
