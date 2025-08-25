@@ -388,6 +388,8 @@ class ThunderModule(pytorch.nn.Module):
 
 
 def get_thunder_module(model):
+    assert model() is not None
+    model = model()
     cd = get_compile_data()
 
     # to not hold a reference to model in the _thunder_module_map dict, we index by id.

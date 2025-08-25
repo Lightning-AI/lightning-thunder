@@ -7,6 +7,7 @@ from typing import Any
 from enum import Enum
 from collections.abc import Callable
 from types import ModuleType
+import weakref
 
 import thunder
 import thunder.core.codeutils as codeutils
@@ -490,12 +491,14 @@ class TraceCtx:
         ctx = self.python_ctx()
         if global_dicts is not None:
             ctx["__global_dicts"] = global_dicts
-        ctx["__function_obj"] = self.fn
+        ctx["__function_obj_weakref"] = weakref.ref(self.fn) if self.fn is not None else None
         ctx["thunder"] = thunder
 
-        return baseutils.build_callable(
+        callable = baseutils.build_callable(
             self.siginfo().name, python_str=python_str, file_name=f"thunder.{self.siginfo().name}", ctx=ctx
         )
+
+        return callable
 
     def __repr__(self) -> str:
         return self.python(print_depth=-1)

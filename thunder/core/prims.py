@@ -732,7 +732,7 @@ def unpack_function_obj_printer(
     )
 
     result_str = "_" if bsym.output is None else f"{codeutils.prettyprint(out_printables, with_type=True)}"
-    s = f"{result_str} = globals()['__function_obj']"
+    s = f"{result_str} = globals()['__function_obj_weakref']"
     return s
 
 
