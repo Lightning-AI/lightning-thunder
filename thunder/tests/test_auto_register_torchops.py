@@ -80,7 +80,7 @@ def test_torch_ops_trace(device, requires_grad, op_info):
         for sample in gen:
             try:
                 jfun = thunder.jit(func)
-                out = jfun(sample.input, *sample.args, **sample.kwargs)
+                jfun(sample.input, *sample.args, **sample.kwargs)
             except Exception as e:
                 assert isinstance(e, NotImplementedError)
                 assert str(e).startswith("Exception encountered when doing automatic registration") or str(

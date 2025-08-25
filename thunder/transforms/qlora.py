@@ -120,10 +120,9 @@ class LORATransform(Transform):
         new_bsyms = []
         new_compute_inputs = []
         for n, qs in self.lora_linear_states.items():
-            param = tm.get_parameter(n)
+            tm.get_parameter(n)
             n_lora_a = f"{n}.lora_a"
             n_lora_b = f"{n}.lora_b"
-            n_linear = f"{n}"
             check, get_param = checks[n]
             lora_linear_proxies[get_param.output.name] = n
             # check has args: tensor, shape, device, dtype, requires_grad
@@ -227,7 +226,7 @@ class LORATransform(Transform):
                     new_computation_trace.bound_symbols.append(
                         prims.add.bind(original_weight, lora_scaled, output=original_proxy_output)
                     )
-                    new_scope = new_computation_trace.pop_scope()
+                    new_computation_trace.pop_scope()
             elif bsym.sym == prims.python_return:
                 assert len(bsym.args) == 1 and isinstance(bsym.args[0], dict)
                 new_return_dict = bsym.args[0].copy()

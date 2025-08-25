@@ -1073,7 +1073,6 @@ def _grad_transform(original_trace):
     current_inputs = grad_fwd_trace.args
     for bsym in original_trace.bound_symbols:
         grad_defined = bsym.sym.grad_defined
-        grad_ignored = bsym.sym.grad_ignored
         grad_fwd, grad_bwd = bsym.sym.grad_fwd, bsym.sym.grad_bwd
 
         if not grad_defined:
@@ -1124,7 +1123,7 @@ def grad(fn):
         original_result, original_trace = cfn(*args, **kwargs)
         original_trace = last_traces(cfn)
 
-        gradir = _grad_transform(original_trace)
+        _grad_transform(original_trace)
 
         return original_result, original_trace
 

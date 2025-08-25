@@ -414,7 +414,6 @@ class OpInfo:
     # NOTE Today all benchmarks are generated with PyTorch, so Thunder objects,
     #   like dtypes, need to be translated into PyTorch objects
     def benchmarks(self, device: devices.Device, dtype: datatypes.dtype, *, requires_grad: bool = False, **kwargs):
-        torch_dtype = to_torch_dtype(dtype)
         return self.benchmark_generator(self, device, dtype, requires_grad, **kwargs)
 
     def devicetypes(self):
@@ -5527,7 +5526,6 @@ def gather_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make_index = partial(make_tensor, device=device, dtype=torch.long, requires_grad=False)
 
     for shape_a, dim, shape_b in take_along_axis_cases:
-        canonicalized_dim = dim if dim >= 0 else dim + len(shape_a)
         a = make(shape_a)
         b = make_index(shape_b, low=0, high=shape_a[dim])
         yield SampleInput(a, index=b, dim=dim)
@@ -5646,8 +5644,6 @@ shape_ops.append(scatter_add_opinfo)
 
 
 def scatter_sample_generator(op, device, dtype, requires_grad, **kwargs):
-    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
-
     if not requires_grad:
         # If not requires_grad, we allow repeated indices
         for sample in scatter_add_sample_generator(op, device, dtype, requires_grad, **kwargs):
@@ -9233,12 +9229,12 @@ def grad_scaled_dot_product_attention_sample_generator(op, device, dtype, requir
     # Test Case: kv_seq_len > head_dim
     q, k, v = make(1, n_head, 12, 8), make(1, n_head, 14, 8), make(1, n_head, 14, 8)
     bool_attn_mask = make((1, n_head, 12, 14), dtype=torch.bool, low=1, high=1, requires_grad=False).tril()
-    yield SampleInput(q, k, v, bool_attn_mask, dropout_p := 0.0, is_causal := False, scale=0.5)
+    yield SampleInput(q, k, v, bool_attn_mask, 0.0, False, scale=0.5)
 
     # Test Case: kv_seq_len < head_dim
     q, k, v = make(1, n_head, 12, 16), make(1, n_head, 14, 16), make(1, n_head, 14, 16)
     bool_attn_mask = make((1, n_head, 12, 14), dtype=torch.bool, low=1, high=1, requires_grad=False).tril()
-    yield SampleInput(q, k, v, bool_attn_mask, dropout_p := 0.0, is_causal := False, scale=0.5)
+    yield SampleInput(q, k, v, bool_attn_mask, 0.0, False, scale=0.5)
 
     for L in query_seq_length:
         is_flash_attention = L <= flash_attn_threshold
@@ -9259,7 +9255,7 @@ def grad_scaled_dot_product_attention_sample_generator(op, device, dtype, requir
 
         # 4-dim (multiheaded) causal cases
         q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
-        yield SampleInput(q, k, v, attn_mask := None, dropout_p := 0.0, is_causal := False)
+        yield SampleInput(q, k, v, None, 0.0, False)
 
         # Test padding case when head size is not a multiple of 8
         if is_flash_attention:
@@ -9269,33 +9265,33 @@ def grad_scaled_dot_product_attention_sample_generator(op, device, dtype, requir
             # Skip these test cases if the flash attention kernel is not selected.
             # If the flash attention kernel is unavailable, _fused_sdp_choice uses the math reference.
             # When the dtype is not fp64, there is inconsistent results with torch autograd.
-            backend = torch._fused_sdp_choice(q, k, v, attn_mask := None, dropout_p := 0.0, is_causal := False)
+            backend = torch._fused_sdp_choice(q, k, v, None, 0.0, False)
             if SpdaBackend(backend) == SpdaBackend.FLASH_ATTENTION:
                 # fixed scale
-                yield SampleInput(q, k, v, attn_mask := None, dropout_p := 0.0, is_causal := False, scale=0.5)
+                yield SampleInput(q, k, v, None, 0.0, is_causal=False, scale=0.5)
 
                 # default scale
-                yield SampleInput(q, k, v, attn_mask := None, dropout_p := 0.0, is_causal := False)
+                yield SampleInput(q, k, v, None, 0.0, is_causal=False)
 
         # Non-contiguous input tensor case
         nq = make(N, n_head, L, E).permute(0, 1, 3, 2)
         nk = make(N, n_head, L, E).permute(0, 1, 3, 2)
         nv = make(N, n_head, L, E).permute(0, 1, 3, 2)
-        yield SampleInput(nq, nk, nv, attn_mask := None, dropout_p := 0.0, is_causal := False)
+        yield SampleInput(nq, nk, nv, None, 0.0, is_causal=False)
 
         # Test the scale factor which was added in torch 2.1
         if LooseVersion(torch.__version__) >= LooseVersion("2.1.0"):
             q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
-            yield SampleInput(q, k, v, attn_mask := None, dropout_p := 0.0, is_causal := False, scale=0.125)
+            yield SampleInput(q, k, v, None, 0.0, False, scale=0.125)
 
         # NOTE Flash attention sdpa does not support attn_mask argument; These cases always use memory efficient sdpa.
         q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
         bool_attn_mask = make((N, n_head, L, S), dtype=torch.bool, low=1, high=1, requires_grad=False).tril()
-        yield SampleInput(q, k, v, attn_mask := bool_attn_mask, is_causal=False)
+        yield SampleInput(q, k, v, bool_attn_mask, is_causal=False)
 
         q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
         additive_attn_mask = make((N, n_head, L, S), dtype=q.dtype).tril()
-        yield SampleInput(q, k, v, attn_mask := additive_attn_mask, is_causal=False)
+        yield SampleInput(q, k, v, additive_attn_mask, is_causal=False)
 
 
 # NOTE When calculating the gradient in the backwards pass, the torch executor calls fused sdpa functions.
@@ -9440,7 +9436,7 @@ def cross_entropy_error_generator(op, device, dtype=torch.float32, **kwargs):
     )
 
     # input tensor has 0 dimensions
-    scalar_input = make(scalar_shape := ())
+    scalar_input = make(())
     yield (
         SampleInput(scalar_input, valid_target),
         RuntimeError,
@@ -9607,8 +9603,8 @@ def nll_loss_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # Test empty input and target tensor short-circuit
     for reduction_str, ignore_index in itertools.product(reduction_options, ignore_index_options):
         yield SampleInput(
-            empty_input_tensor := torch.tensor([], device=device, dtype=dtype),
-            empty_target_tensor := torch.tensor([], device=device, dtype=torch.long),
+            torch.tensor([], device=device, dtype=dtype),
+            torch.tensor([], device=device, dtype=torch.long),
             ignore_index=ignore_index,
             reduction=reduction_str,
         )
@@ -9639,7 +9635,7 @@ def nll_loss_error_generator(op, device, dtype=torch.float32, **kwargs):
     )
 
     # input tensor has 0 dimensions
-    scalar_input = make(scalar_shape := ())
+    scalar_input = make(())
     yield (
         SampleInput(scalar_input, valid_target),
         RuntimeError,
@@ -9734,7 +9730,6 @@ def mse_loss_sample_generator(op, device, dtype, requires_grad, **kwards):
     for shape, reduction_str in itertools.product(shapes, reduction_options):
         input_shape, target_shape = shape
 
-        C = input_shape[1] if len(input_shape) >= 2 else input_shape[0]
         yield SampleInput(
             make(input_shape, low=0.0, high=1.0, dtype=dtype, requires_grad=True),
             make(target_shape, low=0.0, high=1.0, dtype=dtype, requires_grad=True),

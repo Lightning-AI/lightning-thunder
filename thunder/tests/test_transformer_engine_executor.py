@@ -259,7 +259,7 @@ def test_te_trace_metadata_propagation():
             MyNoopTransform(),
         ],
     )
-    out = cfunc(x, w)
+    cfunc(x, w)
 
     fwd_traces = thunder.last_traces(cfunc)
 

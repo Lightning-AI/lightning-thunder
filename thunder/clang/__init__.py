@@ -484,9 +484,6 @@ def _basic_indexing(a: TensorLike, /, key) -> TensorLike:
     strides = []
 
     # Resolves ellipses and unsqueezes
-    unsqueeze_dims_pre_ellipsis = []
-    unsqueeze_dims_post_ellipsis = []
-    specified_slices = 0
 
     assert isinstance(key, list)
 
@@ -613,9 +610,6 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
         if all(isinstance(i, int) for i in x):
             x = tensor_from_sequence(x, dtype=dtypes.int64, device=device)
         return x
-
-    basic_keys = []  # (key index, key)
-    advanced_keys = []  # (key index, key)
 
     input_shape = prims.shape(a)
 

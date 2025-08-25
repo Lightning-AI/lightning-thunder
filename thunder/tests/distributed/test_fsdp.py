@@ -627,7 +627,7 @@ class FSDPDDPHybridTest(DistributedParallelTestCase):
         torch.manual_seed(1337)
 
         mesh = torch.distributed.device_mesh.init_device_mesh("cuda", (2, 2), mesh_dim_names=("ddp", "fsdp"))
-        global_rank = mesh.get_rank()
+        mesh.get_rank()
         fsdp_rank = mesh.get_local_rank("fsdp")
 
         with torch.device("cuda"):

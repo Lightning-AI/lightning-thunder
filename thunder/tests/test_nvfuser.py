@@ -436,7 +436,7 @@ def test_nvfuser_toposort_dependent2(executor, device: str, dtype: dtypes.dtype)
 
     cfoo = thunder.jit(foo, fusion_type="dataflow")
 
-    result = cfoo(a, b)
+    cfoo(a, b)
     traces = thunder.last_traces(cfoo)
 
     fusions = examine.get_fusions(traces[-1])
@@ -859,7 +859,7 @@ def test_enable_disable_options(executor, device: str, thunder_dtype: dtypes.dty
     # If this support is added, the test will need to be updated since it will no longer
     # verify the functionality of the above flags.
     with pytest.raises(RuntimeError, match="Can not find a scheduler to schedule fusion segment"):
-        out = compiled_func(*inps)
+        compiled_func(*inps)
 
 
 @instantiate(

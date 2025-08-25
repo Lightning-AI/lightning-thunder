@@ -171,7 +171,6 @@ class TestExecutor:
 
     @make_callable.register
     def make_callable_from_trace(self, trace: TraceCtx, **kwargs):
-        executors = thunder.executors
         # transform_for_execution doesn't work without a set trace
         # So we use detached_trace to get the tracectx and then use it
         with detached_trace():
