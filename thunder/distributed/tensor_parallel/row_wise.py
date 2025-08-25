@@ -81,7 +81,7 @@ class RowParallelLinearPrePostProcess(PrePostProcessInterface):
 
 
 @dataclass
-class RowParallelEmbeddingPreProcess(PrePostProcessInterface):
+class RowParallelEmbeddingPrePostProcess(PrePostProcessInterface):
     process_group: ProcessGroup
 
     layer_type: ClassVar[TensorParallelLayerType] = TensorParallelLayerType.ROW_PARALLEL_EMBED
@@ -95,7 +95,7 @@ class RowParallelEmbeddingPreProcess(PrePostProcessInterface):
         return dist_prims.synchronize_tensor_parallel_output(
             y,
             self.process_group,
-            RowParallelEmbeddingPreProcess.layer_type,
+            RowParallelEmbeddingPrePostProcess.layer_type,
         )
 
 
@@ -142,7 +142,7 @@ class TransformForRowWiseParallel(TransformForTensorParallel):
                                 bias_or_none=bias_or_none,
                             )
                         case nn.Embedding:
-                            bsym_to_prepostprocess[consumer_bsym] = RowParallelEmbeddingPreProcess(
+                            bsym_to_prepostprocess[consumer_bsym] = RowParallelEmbeddingPrePostProcess(
                                 process_group=self.process_group
                             )
                         case _:
