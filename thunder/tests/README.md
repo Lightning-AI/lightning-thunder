@@ -2,7 +2,7 @@ Testing is important!
 
 Most Thunder operators are tested by automatically generated tests that use data from the operator's "OpInfo", defined
 in `opinfos.py`. These tests typically compare Thunder's operator behavior with another framework, using the
-"sample inputs" defined by its OpInfo. Each OpInfo should define a sample input generator and at least one “reference” implementation in PyTorch or JAX (and in the future, NumPy).
+"sample inputs" defined by its OpInfo. Each OpInfo should define a sample input generator and “reference” implementation in PyTorch (and in the future, NumPy).
 
 When an operator is very similar across the three language levels (user, core, and primitive), like cos, only one variation is typically tested (the core language variant is preferred).
 However, there are also cases where testing a torch language operation or primitive operation directly makes sense.
