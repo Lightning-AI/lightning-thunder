@@ -593,9 +593,13 @@ def split_into_forward_and_backward(joint_trace: TraceCtx):
 
     # Importing here to avoid cyclical dependencies in future.
     # NOTE: This is required only for v1 executor.
-    from thunder.executors.transformer_engineex import transformer_engine_v1_bwd_fp8_meta_sync
+    from thunder.executors.transformer_engineex import (
+        transformer_engine_v1_requires_grad_transform_and_bwd_fp8_meta_sync,
+    )
 
-    transformer_engine_v1_bwd_fp8_meta_sync(forward_trace, backward_trace)
+    forward_trace, backward_trace = transformer_engine_v1_requires_grad_transform_and_bwd_fp8_meta_sync(
+        forward_trace, backward_trace
+    )
 
     # We only want to apply it on backward trace.
     from thunder.torch.experimental.dtensor_utils import check_dtensor_cotangent_metadata_in_backward
