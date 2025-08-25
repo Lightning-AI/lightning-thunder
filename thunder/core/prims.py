@@ -270,6 +270,7 @@ class PrimIDs(Enum):
     # Linear algebra prims (Mostly experimental)
     MATMUL = auto()
     _GROUPED_MM = auto()  # Used for grouped matmuls
+    _SCALED_MATMUL = auto()
     # NN prims (Experimental!)
     CONVOLUTION = auto()
     EMBEDDING = auto()
@@ -4128,6 +4129,59 @@ def matmul_meta(a: TensorProxy, b: TensorProxy, /) -> TensorProxy:
 
 matmul = make_prim(
     PrimIDs.MATMUL, "matmul", meta=matmul_meta, tags=(OpTags.MATMUL_OP, OpTags.DONT_AUTO_RECOMPUTE_IN_BACKWARD)
+)
+
+
+# TODO: Check `b`'s being column-major.
+def _scaled_mm_meta(
+    a: TensorProxy,
+    b: TensorProxy,
+    scale_a: TensorProxy,
+    scale_b: TensorProxy,
+    bias: TensorProxy | None = None,
+    scale_result: TensorProxy | None = None,
+    out_dtype: dtypes.dtype | None = None,
+    use_fast_accum: bool = False,
+) -> TensorProxy:
+    # NOTE: Currently this only supports fp8 a & b and per-tensor scales.
+    # TODO: Devise a way to make sure `a` is row-major and `b` is column-major.
+    args = [a, b, scale_a, scale_b]
+    if bias is not None:
+        args.append(bias)
+    utils.check_same_device(args)
+    utils.check(
+        (
+            (a.ndim == 2 and b.ndim == 2)
+            and (a.shape[1] == b.shape[0])
+            and (a.shape[1] % 16 == 0 and b.shape[0] % 16 == 0 and b.shape[1] % 16 == 0)
+            and (a.dtype.bytes == 1 and b.dtype.bytes == 1)
+            and not (a.dtype == dtypes.float8_e5m2 and b.dtype == dtypes.float8_e5m2)
+            and a.device.type == "cuda"
+            and b.device.type == "cuda"
+        ),
+        lambda: f"data matrices of {a=} and {b=} do not satisfy the condition.",
+    )
+    utils.check(
+        (
+            (scale_a.numel == 1 and scale_b.numel == 1)
+            and (scale_a.dtype == dtypes.float32 and scale_b.dtype == dtypes.float32)
+        ),
+        lambda: f"Only tensor-wise scaling is supported but {scale_a.shape = } and {scale_b.shape = }",
+        exception_type=NotImplementedError,
+    )
+    return TensorProxy(
+        like=a,
+        shape=(a.shape[0], b.shape[1]),
+        device=a.device,
+        dtype=out_dtype,
+    )
+
+
+_scaled_mm = make_prim(
+    PrimIDs._SCALED_MATMUL,
+    "_scaled_mm",
+    meta=_scaled_mm_meta,
+    tags=(OpTags.MATMUL_OP, OpTags.DONT_AUTO_RECOMPUTE_IN_BACKWARD),
 )
 
 #
