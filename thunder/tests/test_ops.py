@@ -82,7 +82,7 @@ def snippet_torch_consistency(
         if no_fallback_with_double_inputs:
             raise
 
-        def upcast_tensors(x):
+        def upcast(x):
             if isinstance(x, torch.Tensor) and torch.is_floating_point(x):
                 return x.to(torch.double)
 
