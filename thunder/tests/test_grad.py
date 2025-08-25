@@ -1263,7 +1263,6 @@ def test_backward_none_propagation(executor, device, _):
 #
 # Phantom grad tests
 #
-# TODO Jax consistency testing (slice and slice_in_dim don't have torch references)
 # TODO Double-backward testing
 # TODO Add more module tests
 
