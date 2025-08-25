@@ -363,7 +363,6 @@ def dtensor_reciprocal(a: TensorLike) -> TensorLike:
 
 
 def dtensor_cumsum_meta(a, dim, *, dtype=None):
-    print(a, dim, dtype)
     output = run_with_fake_tensor(torch.cumsum, a, dim, dtype=dtype)
     local_tensor_proxy = TensorProxy(
         like=a.local_tensor, dtype=dtypes.to_dtype(output._local_tensor.dtype), shape=output._local_tensor.shape
