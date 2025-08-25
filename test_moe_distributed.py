@@ -130,12 +130,6 @@ class Llama4MoE(nn.Module):
         router_scores = topk_weight.sigmoid()  # [s, 1]
         hidden_states = hidden_states * router_scores  # [s, h]
 
-        # counts = hidden_states.new_zeros(
-        #     topk_ids.size(0),
-        #     self.config.num_routed_experts,
-        #     device=topk_ids.device,
-        #     dtype=torch.int32,
-        # )  # [s, n]
         counts = torch.zeros(
             topk_ids.size(0),
             self.config.num_routed_experts,
