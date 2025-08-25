@@ -327,7 +327,7 @@ def test_llama4_moe_distributed():
     actual = parallelized_model(inp)
 
     # torch.compile(parallelized_model)(inp)
-    tfn = thunderfx(parallelized_model, nv_enable_linear=True)
+    tfn = thunderfx(parallelized_model, nv_enable_linear=True, nv_enable_scatter=True)
     tfn(inp)
 
     print(torch.cuda.max_memory_allocated())
