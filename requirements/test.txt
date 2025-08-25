@@ -23,9 +23,5 @@ transformers==4.52.4 # for test_networks.py
 diffusers==0.34.0 # for test_networks.py
 accelerate # for test_networks.py
 
-# Installs JAX on Linux and MacOS
-jaxlib; sys_platform == 'linux' or sys_platform == 'darwin'  # required for jax, see https://github.com/google/jax#installation
-jax; sys_platform == 'linux' or sys_platform == 'darwin'  # for test_ops.py
-
 asvdb @ git+https://github.com/rapidsai/asvdb.git
 asv >=0.6.4

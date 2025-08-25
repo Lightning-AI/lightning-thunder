@@ -24,7 +24,7 @@ import thunder.core.prims as prims
 from thunder.core.pytree import tree_map
 from thunder.core.symbol import Symbol
 import thunder.executors as executors
-from thunder.tests.framework import _all_devicetypes, JAX_AVAILABLE, custom_comparator, IS_WINDOWS
+from thunder.tests.framework import _all_devicetypes, custom_comparator, IS_WINDOWS
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
 import thunder.tests.bf16
 import thunder.torch as ltorch
@@ -114,26 +114,6 @@ _torch_to_numpy_dtype_map = {
     torch.complex128: np.complex128,
 }
 
-_torch_to_jax_dtype_map = None
-if JAX_AVAILABLE:
-    import jax
-    import jax.numpy as jnp
-
-    _torch_to_jax_dtype_map = {
-        torch.bool: jnp.bool_,
-        torch.uint8: jnp.uint8,
-        torch.int8: jnp.int8,
-        torch.int16: jnp.int16,
-        torch.int32: jnp.int32,
-        torch.int64: jnp.int64,
-        torch.bfloat16: jnp.bfloat16,
-        torch.float16: jnp.float16,
-        torch.float32: jnp.float32,
-        torch.float64: jnp.float64,
-        torch.complex64: jnp.complex64,
-        torch.complex128: jnp.complex128,
-    }
-
 
 class TorchTensorComp:
     """
@@ -220,21 +200,6 @@ class SampleInput:
 
         args, kwargs = tree_map(_remove_singularities, self.args), tree_map(_remove_singularities, self.kwargs)
         return SampleInput(*args, **kwargs)
-
-    # NOTE This conversion is always to a jax cpu array, we could consider
-    #   converting to a jax gpu array, although we would probably have to update
-    #   how we're installing jax in ci
-    def jax(self):
-        def to_jax(t):
-            if isinstance(t, torch.Tensor):
-                return jnp.array(t.cpu().numpy())
-            if isinstance(t, torch.dtype):
-                return _torch_to_jax_dtype_map[t]
-
-            return t
-
-        args, kwargs = tree_map(to_jax, self.args), tree_map(to_jax, self.kwargs)
-        return SampleInput(*args, **kwargs).set_comparator(self.comp)
 
     def numpy(self):
         def to_numpy(t):
@@ -340,7 +305,6 @@ class OpInfo:
         operator_variant=None,
         torch_reference=None,
         numpy_reference=None,
-        jax_reference=None,
         test_directives=(),
         domain=(None, None),
         singularity_fn=None,
@@ -377,7 +341,6 @@ class OpInfo:
         self.operator_variant = operator_variant
         self.torch_reference = torch_reference
         self.numpy_reference = numpy_reference
-        self.jax_reference = jax_reference
         self.test_directives = test_directives
         self.domain = Domain(*domain)
         self.singularity_fn = singularity_fn
@@ -2740,7 +2703,6 @@ remainder_prim_opinfo = OpInfo(
     dtypes=(datatypes.all_dtypes - datatypes.low_precision_dtypes),
     sample_input_generator=partial(elementwise_binary_prims_generator, exclude_zero=True),
     torch_reference=torch.remainder,
-    jax_reference=jax.numpy.remainder if JAX_AVAILABLE else None,
     test_directives=(
         # torch doesn't support bool or complex remainder.
         # torch_reference is inaccurate since it computes in the lower precision dtype.
@@ -2751,12 +2713,6 @@ remainder_prim_opinfo = OpInfo(
         ),
         # Torch executor doesn't support bool or complex remainder
         DecorateInfo(pytest.mark.xfail, dtypes=(datatypes.bool8, datatypes.complexfloating), executors=("torch",)),
-        # JAX doesn't support complex remainder
-        DecorateInfo(
-            pytest.mark.skip,
-            "test_core_vs_jax_consistency",
-            dtypes=(datatypes.complexfloating,),
-        ),
     ),
 )
 elementwise_binary_ops.append(remainder_prim_opinfo)
@@ -3363,7 +3319,6 @@ data_movement_ops = []
 #     prims.convert_element_type,
 #     sample_input_generator=convert_element_type_sample_generator,
 #     torch_reference=torch.Tensor.to,
-#     jax_reference=jax.lax.convert_element_type if JAX_AVAILABLE else None,
 #     test_directives=(
 #         # These usually pass but tols are still too tight to perform these tests
 #         DecorateInfo(
@@ -3688,7 +3643,6 @@ broadcast_in_dim_opinfo = OpInfo(
     prims.broadcast_in_dim,
     sample_input_generator=broadcast_in_dim_sample_generator,
     error_input_generator=broadcast_in_dim_error_generator,
-    jax_reference=jax.lax.broadcast_in_dim if JAX_AVAILABLE else None,
     test_directives=(
         # AttributeError("module 'thunder.torch' has no attribute 'gt'"
         DecorateInfo(
@@ -4357,7 +4311,6 @@ getitem_opinfo = OpInfo(
     supports_grad=True,
     sample_input_generator=getitem_sample_generator,
     torch_reference=operator.getitem,
-    jax_reference=operator.getitem,
     numpy_reference=operator.getitem,
     test_directives=(
         DecorateInfo(
@@ -4367,9 +4320,6 @@ getitem_opinfo = OpInfo(
         ),
         DecorateInfo(pytest.mark.xfail, "test_vjp_correctness", active_if=IS_WINDOWS),
         DecorateInfo(pytest.mark.xfail, "test_phantom_grad_vs_torch_consistency", active_if=IS_WINDOWS),
-        # TypeError: Using a non-tuple sequence for multidimensional indexing is not allowed; use `arr[array(seq)]`
-        # instead of `arr[seq]`. See https://github.com/google/jax/issues/4564 for more information.
-        DecorateInfo(pytest.mark.xfail, "test_core_vs_jax_consistency"),
         # TODO: https://github.com/Lightning-AI/lightning-thunder/issues/841
         # check_slice_value(p0, slice(1, 3, 1)) in prologue trace fails
         DecorateInfo(
@@ -4433,16 +4383,9 @@ def pad_sample_generator(op, device, dtype, requires_grad, **kwargs):
         yield SampleInput(make(shape), make_number(dtype=dtype), padding_config)
 
 
-# NOTE: jax is very strict about tensor dtype vs number type, necessitating this helper
-def _jax_pad(a, padding_value, padding_config):
-    padding_value = jax.lax.convert_element_type(padding_value, a.dtype)
-    return jax.lax.pad(a, padding_value, padding_config)
-
-
 pad_opinfo = OpInfo(
     prims.pad,
     sample_input_generator=pad_sample_generator,
-    jax_reference=_jax_pad if JAX_AVAILABLE else None,
     test_directives=(
         # PyTorch's pad doesn't support complex padding values
         DecorateInfo(
@@ -4757,7 +4700,6 @@ slice_in_dim = OpInfo(
     clang.slice_in_dim,
     supports_grad=True,
     sample_input_generator=slice_in_dim_sample_generator,
-    jax_reference=jax.lax.slice_in_dim if JAX_AVAILABLE else None,
     test_directives=(
         # TODO: nvfuser executor didn't support pad correctly, but now it should.
         # Test and re-enable.
@@ -4792,7 +4734,6 @@ slice_prim_opinfo = OpInfo(
     name="slice_prim",
     supports_grad=True,
     sample_input_generator=slice_prim_sample_generator,
-    jax_reference=jax.lax.slice if JAX_AVAILABLE else None,
     test_directives=(
         # TODO: nvfuser executor didn't support pad correctly, but now it should.
         # Test and re-enable.
@@ -4995,7 +4936,6 @@ squeeze_opinfo = OpInfo(
     clang.squeeze,
     supports_grad=True,
     sample_input_generator=squeeze_sample_generator,
-    jax_reference=jax.lax.squeeze if JAX_AVAILABLE else None,
 )
 shape_ops.append(squeeze_opinfo)
 
@@ -5341,7 +5281,6 @@ def torch_index_select_wrapper(a, b, dim):
     return torch.index_select(a, dim, b)
 
 
-# TODO: mapping jax.lax.gather for testing
 take_opinfo = OpInfo(
     clang.take,
     supports_grad=True,
@@ -5734,7 +5673,6 @@ unsqueeze_opinfo = OpInfo(
     clang.unsqueeze,
     supports_grad=True,
     sample_input_generator=unsqueeze_sample_generator,
-    jax_reference=jax.lax.expand_dims if JAX_AVAILABLE else None,
     test_directives=(
         DecorateInfo(
             pytest.mark.skip,

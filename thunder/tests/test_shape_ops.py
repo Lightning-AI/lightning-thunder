@@ -1,9 +1,5 @@
 import thunder
 import torch
-from thunder.tests.framework import JAX_AVAILABLE
-
-if JAX_AVAILABLE:
-    pass
 
 
 def test_pad_cast_value_itof():
