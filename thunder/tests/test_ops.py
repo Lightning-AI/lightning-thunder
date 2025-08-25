@@ -78,13 +78,20 @@ def snippet_torch_consistency(op: OpInfo, torch_op, sample: SampleInput, comp: C
         comp(thunder_result, torch_result)
     except AssertionError:
 
-        def upcast_tensors(x):
-            if isinstance(x, torch.Tensor) and torch.is_floating_point(x):
+        def upcast(x):
+            if isinstance(x, torch.Tensor) and x.is_floating_point():
                 return x.to(torch.double)
+
+            # Some torch APIs (e.g. cumsum) take a `dtype` argument and use it
+            # as the **compute** dtype. Replace that with torch.double so the
+            # reference result is more likely to be computed in double.
+            if isinstance(x, torch.dtype) and x.is_floating_point:
+                return torch.double
+
             return x
 
-        reference_args = tree_map(upcast_tensors, args)
-        reference_kwargs = tree_map(upcast_tensors, kwargs)
+        reference_args = tree_map(upcast, args)
+        reference_kwargs = tree_map(upcast, kwargs)
         reference_result = torch_op(*reference_args, **reference_kwargs)
 
         assert_closer(
@@ -350,8 +357,10 @@ def test_notimplemented_interpolate_modes():
         return t1
 
     tfoo = thunder.jit(foo)
-    for mode in ["linear", "bilinear", "bicubic", "trilinear", "area"]:
-        match = f"only modes 'nearest' and 'nearest-exact' are supported at the moment, but got mode='{mode}'"
+    for mode in ["linear", "bicubic", "trilinear", "area"]:
+        match = (
+            f"only modes 'nearest', 'nearest-exact' and 'bilinear' are supported at the moment, but got mode='{mode}'"
+        )
         with pytest.raises(NotImplementedError, match=match):
             tfoo(mode)
 

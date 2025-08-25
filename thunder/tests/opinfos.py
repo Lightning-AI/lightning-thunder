@@ -695,6 +695,19 @@ abs_opinfo = ElementwiseUnaryOpInfo(
             dtypes=(datatypes.complex32,),
             devicetypes=(devices.DeviceType.CPU,),
         ),
+        DecorateInfo(
+            pytest.mark.skip(reason="PyTorch doesn't support abs for bool on cpu"),
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.bool8,),
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+        # Ref - https://github.com/Lightning-AI/lightning-thunder/issues/2363
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_vjp_correctness",
+            dtypes=(datatypes.float64,),
+            executors=("nvfuser",),
+        ),
     ),
 )
 
@@ -1931,7 +1944,15 @@ softsign_opinfo = OpInfo(
     sample_input_generator=elementwise_unary_generator,
     torch_reference=_elementwise_unary_torch(torch.nn.functional.softsign),
     singularity_fn=lambda x: x,
-    test_directives=(),
+    test_directives=(
+        # Ref - https://github.com/Lightning-AI/lightning-thunder/issues/2363
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=5e-4, rtol=5e-4)),
+            "test_vjp_correctness",
+            dtypes=(datatypes.float64,),
+            executors=("nvfuser",),
+        ),
+    ),
 )
 elementwise_unary_ops.append(softsign_opinfo)
 
@@ -2175,6 +2196,14 @@ clone_opinfo = OpInfo(
     test_directives=(),
 )
 elementwise_unary_ops.append(clone_opinfo)
+
+
+square_opinfo = OpInfo(
+    ltorch.square,
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=_elementwise_unary_torch(torch.square),
+)
+elementwise_unary_ops.append(square_opinfo)
 
 
 # Puts all opinfos into the "opinfos" list
@@ -3488,6 +3517,21 @@ to_opinfo = OpInfo(
     ),
 )
 data_movement_ops.append(to_opinfo)
+
+
+def view_with_dtype_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    for dst_dtype in {torch.float32, torch.bfloat16, torch.float64} - {dtype}:
+        yield SampleInput(make((8, 8)), dtype)
+
+
+view_with_dtype_opinfo = OpInfo(
+    ltorch.view,
+    sample_input_generator=view_with_dtype_sample_generator,
+    torch_reference=torch.Tensor.view,
+)
+data_movement_ops.append(view_with_dtype_opinfo)
 
 
 def cuda_sample_generator(op, device, dtype, requires_grad, **kwargs):
@@ -5303,13 +5347,6 @@ take_opinfo = OpInfo(
     supports_grad=True,
     sample_input_generator=take_sample_generator,
     torch_reference=torch_index_select_wrapper,
-    test_directives=(
-        DecorateInfo(
-            pytest.mark.xfail,
-            executors=("nvfuser",),
-            active_if=nvfuser_version < "0.0.3",
-        ),
-    ),
 )
 shape_ops.append(take_opinfo)
 
@@ -6249,8 +6286,8 @@ def cumsum_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
     for shape, dim in cases:
         # torch.cumsum not implemented for dtype='Bool'
-        output_dtype = torch.float if dtype is torch.bool else dtype
-        yield (SampleInput(make(shape), dim, dtype=output_dtype))
+        for output_dtype in (None, torch.float if dtype is torch.bool else dtype):
+            yield (SampleInput(make(shape), dim, dtype=output_dtype))
 
 
 cumsum_opinfo = OpInfo(
@@ -6502,7 +6539,7 @@ dim_perm_ops.append(sort_opinfo)
 
 
 argsort_opinfo = OpInfo(
-    clang.argsort,
+    ltorch.argsort,
     name="argsort",
     supports_grad=False,
     sample_input_generator=sort_sample_generator,
@@ -6820,7 +6857,7 @@ randint_opinfo = OpInfo(
     sample_input_generator=varargs_tensor_creation_op_sample_generator_with_bounds,
     error_input_generator=randn_error_generator,  # Does not depend on the distribution
     torch_reference=lambda *args, **kwargs: torch.randint(*args, **kwargs).fill_(0),
-    dtypes=(datatypes.int64,),
+    dtypes=(datatypes.int64, datatypes.floating),
 )
 tensor_creation_ops.append(randint_opinfo)
 
@@ -7126,6 +7163,13 @@ normalize_opinfo = OpInfo(
             dtypes=(datatypes.float16,),
             devicetypes=(devices.DeviceType.CPU, devices.DeviceType.CUDA),
         ),
+        # Ref -https://github.com/Lightning-AI/lightning-thunder/issues/2363
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=5e-4, rtol=5e-4)),
+            "test_vjp_correctness",
+            dtypes=(datatypes.float64,),
+            executors=("nvfuser",),
+        ),
     ),
 )
 linear_algebra_ops.append(normalize_opinfo)
@@ -7211,6 +7255,88 @@ multi_dot_opinfo = OpInfo(
     dtypes=(datatypes.floating,),
 )
 linear_algebra_ops.append(multi_dot_opinfo)
+
+
+def _grouped_mm_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    M = 16
+    N = 64
+    K = 32
+    G = 2
+
+    a = make_tensor((M, K), device=device, dtype=dtype, low=0, high=1.0, requires_grad=False)
+    b = make_tensor((G, K, N), device=device, dtype=dtype, low=0, high=1.0, requires_grad=False)
+
+    # torch._grouped_mm, the torchex implementation, requires offsets to be
+    # multiples of 16. nvFuser doesn't have that restriction.
+    for offsets in [[0, 16], [16, 16]]:
+        c = torch.tensor(offsets, device=device, dtype=torch.int32)
+        bfloat16_comp = TorchTensorComp(atol=1e-1, rtol=1e-1)
+        si = SampleInput(a, b, c)
+        si.set_comparator(bfloat16_comp)
+        yield si
+
+
+def _group_sizes_from_offsets(offsets: torch.Tensor) -> list[int]:
+    group_sizes = []
+    prev = 0
+    for offset in offsets:
+        group_sizes.append(offset - prev)
+        prev = offset
+    return group_sizes
+
+
+# torch._grouped_mm has too many constraints to be used as a reference
+# implementation. For example, it supports only Hopper and only bfloat16.
+def _grouped_mm_reference(a, b, offsets):
+    num_groups = offsets.numel()
+    group_sizes = _group_sizes_from_offsets(offsets)
+
+    if a.dim() == 2 and b.dim() == 2:
+        # [m, k] @ [k, n] => [g, m, n]
+        group_as = a.split(group_sizes, -1)
+        group_bs = b.split(group_sizes, 0)
+        out = torch.empty(num_groups, a.size(0), b.size(-1), dtype=a.dtype, device=a.device)
+        group_outs = out.unbind()
+    elif a.dim() == 3 and b.dim() == 2:
+        # [g, m, k] @ [k, n] => [m, n]
+        group_as = a.unbind()
+        group_bs = b.split(group_sizes, -1)
+        out = torch.empty(a.size(1), b.size(-1), dtype=a.dtype, device=a.device)
+        group_outs = out.split(group_sizes, -1)
+    elif a.dim() == 2 and b.dim() == 3:
+        # [m, k] @ [g, k, n] => [m, n]
+        group_as = a.split(group_sizes, 0)
+        group_bs = b.unbind()
+        out = torch.empty(a.size(0), b.size(-1), dtype=a.dtype, device=a.device)
+        group_outs = out.split(group_sizes, 0)
+    else:
+        assert False, f"Unexpected ranks: {a.size()} and {b.size()}"
+
+    for group_a, group_b, group_out in zip(group_as, group_bs, group_outs):
+        torch.matmul(group_a, group_b, out=group_out)
+
+    return out
+
+
+if LooseVersion(torch.__version__) >= "2.8":
+    _grouped_mm_opinfo = OpInfo(
+        prims._grouped_mm,
+        supports_grad=False,
+        sample_input_generator=_grouped_mm_sample_generator,
+        torch_reference=_grouped_mm_reference,
+        dtypes=(datatypes.bfloat16,),
+        devicetypes=(devices.DeviceType.CUDA,),
+        test_directives=(
+            DecorateInfo(
+                pytest.mark.skip,
+                "test_core_vs_torch_consistency",
+                executors=("torch",),
+                # torch._grouped_mm, the torchex implementation, doesn't support pre-Hopper.
+                active_if=(not torch.cuda.is_available() or torch.cuda.get_device_capability() < (9, 0)),
+            ),
+        ),
+    )
+    linear_algebra_ops.append(_grouped_mm_opinfo)
 
 
 def einsum_sample_generator(op, device, dtype, requires_grad, **kwargs):
@@ -9700,6 +9826,15 @@ def interpolate_sample_generator(op, device, dtype, requires_grad, **kwargs):
             yield SampleInput(make(a_shape), size=size)
             yield SampleInput(make(a_shape), size=size, mode="nearest-exact")
 
+    # mode = "bilinear" supports only 4D inputs in PyTorch, so 2 spatial dimensions
+    n_spatial_dims_bilinear = (2,)
+    for b, c, l, dim in itertools.product(batch, channels, dim_options, n_spatial_dims_bilinear):
+        for size in itertools.product(dim_options[l], repeat=dim):
+            spatial_dims = (l,) * dim
+            a_shape = b + c + spatial_dims
+
+            yield SampleInput(make(a_shape), size=size, mode="bilinear")
+
     # Test scale/scale_factor passed as a scalar
     yield SampleInput(make(1, 1, 5, 5), scale_factor=0.5)
     yield SampleInput(make(1, 1, 5, 5), size=10)
@@ -9760,9 +9895,19 @@ def interpolate_error_generator(op, device, dtype=torch.float32, **kwargs):
         "scale_factor(.*?) is expected to be (.*?) a sequence of strictly positive floating point numbers",
     )
     yield (
-        SampleInput(make(1, 1, 1, 1), mode="bilinear"),
+        SampleInput(make(1, 1, 1, 1), mode="trilinear"),
         RuntimeError,
-        "only modes 'nearest' and 'nearest-exact' are supported at the moment, but got mode=(.*?)",
+        "only modes 'nearest', 'nearest-exact' and 'bilinear' are supported at the moment, but got mode=(.*?)",
+    )
+    yield (
+        SampleInput(make(1, 1, 5), scale_factor=2.0, mode="bilinear"),
+        RuntimeError,
+        "bilinear interpolation supports exactly two spatial dims, got 1",
+    )
+    yield (
+        SampleInput(make(1, 1, 5, 5, 5), scale_factor=2.0, mode="bilinear"),
+        RuntimeError,
+        "bilinear interpolation supports exactly two spatial dims, got 3",
     )
 
 

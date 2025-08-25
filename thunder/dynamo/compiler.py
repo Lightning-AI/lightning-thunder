@@ -271,7 +271,7 @@ class ThunderFXCompiledObject:
 
 
 def thunderfx(fn: Callable, /, **kwargs) -> ThunderFXCompiledObject:
-    """Compiles a callable (function or model) by using :class:`thunder.dynamo.ThunderCompiler` as the backend of :func:`torch.compile`
+    """Compiles a callable (function or model) by using Thunder as the backend of :func:`torch.compile`.
 
     Args:
         fn: A :class:`~torch.nn.Module` or a function to compile.

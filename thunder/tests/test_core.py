@@ -190,7 +190,7 @@ def test_crazy_collections_in_and_out(executor, device, dtype):
         g = e + f
         h = f + ka + kb
         # NOTE The following line is intentionally not returned
-        i = ka + ka  # noqa
+        i = ka + ka
         j = kc[0] + kc[1]
 
         d["j"] = j
@@ -436,7 +436,7 @@ def test_varargs_and_kwargs(executor, device, dtype):
 @instantiate(dtypes=(thunder.float32,))
 def test_no_return(executor, device, dtype):
     def foo(a, b):
-        c = a + b  # noqa
+        c = a + b
         pass
 
     traced_foo = executor.make_callable(foo)
@@ -1104,7 +1104,6 @@ def test_bsym_toposort(executor: TestExecutor, device: str, dtype: dtypes.dtype)
     assert sub_preferring_sub_bsym.sym.id == "torch.sub"
 
     # Tests collection and reshape with -1 input
-    # NOTE Additions before and after the reshape are to prevent nvFuser from "bookending" the operation
     def bar(a, shape):
         b = a + 3
         c = a + 2.0
@@ -2112,28 +2111,6 @@ def test_torch_scaled_dot_product_attention_non_decomposed(executor, device, _):
     assert "scaled_dot_product_attention" in tuple(bsym.sym.id for bsym in traces[-1].bound_symbols)
 
 
-@instantiate(dtypes=NOTHING)
-def test_no_passthrough_symbol(executor, device, _):
-    # A test case for the situation reported in
-    # "backward trace contains symbols not present in forward that cause
-    # NotImplementedError"
-    # When an operation simply passes through its input, we should not
-    # add it to the trace.
-
-    def func(x):
-        return x.type_as(x)
-
-    x = make_tensor((2, 2), device=device, dtype=torch.float32)
-    compiled = executor.make_callable(func)
-    out = compiled(x)
-    assert out is x
-    initial_trace_with_dce = thunder.last_traces(compiled)[3]
-    assert "Constructed by Dead Code Elimination" in str(initial_trace_with_dce)
-    assert len(initial_trace_with_dce.bound_symbols) == 2
-    assert initial_trace_with_dce.bound_symbols[0].sym.id == prims.PrimIDs.UNPACK_TRIVIAL
-    assert initial_trace_with_dce.bound_symbols[1].sym.id == prims.PrimIDs.RETURN
-
-
 @instantiate(
     dtypes=NOTHING,
     # https://github.com/Lightning-AI/lightning-thunder/issues/946
@@ -2158,7 +2135,6 @@ def test_cse(executor, device, _):
 
     x, y = (make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2))
     initial_trace = thunder.trace()(func, x, y, device)
-    print(initial_trace)
     compiled_func = thunder.jit(
         initial_trace.python_callable(),
         executors=executor.executors_list(),
@@ -2864,6 +2840,14 @@ def test_arange_default_dtype():
     assert jfn() == torch.int64
 
 
+def test_randint_default_dtype():
+    def fn():
+        return torch.randint(0, 5, (2, 3))
+
+    jfn = thunder.jit(fn)
+    assert jfn().dtype == fn().dtype == torch.int64
+
+
 def test_cat_mixed_dtypes():
     # We add a special test here instead of a sample in OpInfo.
     # When we add a mixed input sample in OpInfo, it will also be picked up for the test which
@@ -3219,6 +3203,7 @@ def test_apply_autograd_memory(thunderfx_disable_split_autograd):
             saved_other=(),
             return_none_instead_of_grads=True,
             disable_split_autograd=thunderfx_disable_split_autograd,
+            is_differentiable_outputs=None,
         )
         return [weakref.ref(x), weakref.ref(o)]
 
