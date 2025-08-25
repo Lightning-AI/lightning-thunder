@@ -55,6 +55,8 @@ from thunder.torch.experimental.dtensor_torch_and_prims import (
     dtensor_neg_prim,
     dtensor_exp_prim,
     dtensor_reciprocal_prim,
+    dtensor_cumsum_prim,
+    dtensor_grouped_mm_prim,
 )
 
 from thunder.core.transforms import (
@@ -544,6 +546,13 @@ class FusionDefinitionWrapper:
 
         if self.store_inputs:
             self.last_inputs = args
+
+        # When using DTensor with FXGraph, argument can be AsyncCollectiveTensor.
+        # Eg. https://github.com/pytorch/pytorch/blob/0ab075a69e4577a60c4dcbff7bcc2ecd0a15ce46/torch/distributed/tensor/parallel/style.py#L142-L145
+        args = tuple(
+            arg.wait() if isinstance(arg, torch.distributed._functional_collectives.AsyncCollectiveTensor) else arg
+            for arg in args
+        )
 
         if dist.is_available() and any(isinstance(t, torch.distributed.tensor.DTensor) for t in args):
             with annotate_for_profile(self.name):
@@ -3246,6 +3255,7 @@ def _grouped_mm_transform(
 
 
 register_supported(prims._grouped_mm, _grouped_mm_transform, _grouped_mm_check)
+register_supported(dtensor_grouped_mm_prim, _grouped_mm_transform, _grouped_mm_check)
 
 
 def _cumsum_check(a: TensorProxy, dim: int, /, dtype: dtypes.dtype | None = None) -> bool:
@@ -3294,6 +3304,7 @@ def cumsum_transform(
 
 
 register_supported(ltorch.cumsum, cumsum_transform, _cumsum_check)
+register_supported(dtensor_cumsum_prim, cumsum_transform, _cumsum_check)
 
 
 # At module/class level

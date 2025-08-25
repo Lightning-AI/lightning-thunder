@@ -212,8 +212,6 @@ register_grad(dtensor_reshape_prim, _dtensor_reshape_prim_grad)
 def dtensor_reshape(a: TensorLike, shape: tuple[int, ...]) -> TensorLike:
     return dtensor_reshape_prim(a, shape)
 
-    return _dtensor_elementwise_binary_wrapper(a, b, prim=dtensor_mul_prim)
-
 
 def dtensor_add_meta(a, b):
     output = run_with_fake_tensor(torch.add, a, b)
@@ -364,6 +362,55 @@ def dtensor_reciprocal(a: TensorLike) -> TensorLike:
     )
 
 
+def dtensor_cumsum_meta(a, dim, *, dtype=None):
+    print(a, dim, dtype)
+    output = run_with_fake_tensor(torch.cumsum, a, dim, dtype=dtype)
+    local_tensor_proxy = TensorProxy(
+        like=a.local_tensor, dtype=dtypes.to_dtype(output._local_tensor.dtype), shape=output._local_tensor.shape
+    )
+    spec = output._spec
+    spec_proxy = AnyProxy(spec, history=a.history)
+    return create_dtensor_proxy_from_proxies(local_tensor_proxy, spec_proxy, False)
+
+
+dtensor_cumsum_prim = make_prim("dtensor_cumsum_prim", "dtensor_cumsum_prim", meta=dtensor_cumsum_meta)
+
+dtensor_cumsum_prim_impl = pytorchex.register_operator("dtensor_cumsum_prim", like=dtensor_cumsum_prim, fn=torch.cumsum)
+
+pytorchex.register_implementation(dtensor_cumsum_prim, dtensor_cumsum_prim_impl)
+
+
+@dtensor_torchsymbol(torch.cumsum, id="dtensor.torch.cumsum")
+def dtensor_cumsum(a: TensorLike, dim: int, *, dtype=None) -> TensorLike:
+    return dtensor_cumsum_prim(a, dim, dtype=dtype)
+
+
+def dtensor_grouped_mm_meta(a, b, offsets):
+    output = run_with_fake_tensor(torch._grouped_mm, a, b, offsets)
+    local_tensor_proxy = TensorProxy(
+        like=a.local_tensor, dtype=dtypes.to_dtype(output._local_tensor.dtype), shape=output._local_tensor.shape
+    )
+    spec = output._spec
+    spec_proxy = AnyProxy(spec, history=a.history)
+    return create_dtensor_proxy_from_proxies(local_tensor_proxy, spec_proxy, False)
+
+
+dtensor_grouped_mm_prim = make_prim("dtensor_grouped_mm_prim", "dtensor_grouped_mm_prim", meta=dtensor_grouped_mm_meta)
+
+dtensor_grouped_mm_prim_impl = pytorchex.register_operator(
+    "dtensor_grouped_mm_prim", like=dtensor_grouped_mm_prim, fn=torch._grouped_mm
+)
+
+pytorchex.register_implementation(dtensor_grouped_mm_prim, dtensor_grouped_mm_prim_impl)
+
+
+@dtensor_torchsymbol(torch._grouped_mm, id="dtensor.torch._grouped_mm")
+def dtensor_grouped_mm(a: TensorLike, b: TensorLike, offsets: TensorLike, *, bias=None, dtype=None) -> TensorLike:
+    assert bias is None, "bias is not supported"
+    assert dtype is None, "dtype is not supported"
+    return dtensor_grouped_mm_prim(a, b, offsets)
+
+
 def dtensor_linear_meta(a, w, bias):
     output = run_with_fake_tensor(torch.nn.functional.linear, a, w, bias)
     local_tensor_proxy = TensorProxy(like=a.local_tensor)
@@ -479,4 +526,6 @@ def register_dtensor_torch_and_prims():
     register_function_for_dtensor(torch.neg, ltorch.neg, dtensor_neg, is_method=True)
     register_function_for_dtensor(torch.exp, ltorch.exp, dtensor_exp, is_method=True)
     register_function_for_dtensor(torch.reciprocal, ltorch.reciprocal, dtensor_reciprocal, is_method=True)
+    register_function_for_dtensor(torch.cumsum, ltorch.cumsum, dtensor_cumsum, is_method=True)
+    register_function_for_dtensor(torch._grouped_mm, ltorch._grouped_mm, dtensor_grouped_mm, is_method=False)
     register_function_for_dtensor(torch.nn.functional.silu, ltorch.silu, dtensor_silu, is_method=False)
