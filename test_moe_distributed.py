@@ -75,14 +75,13 @@ _grouped_mm = torch.compiler.allow_in_graph(torch._grouped_mm)
 # This function should be replaced with torch._grouped_mm.  However,
 # torch._grouped_mm is yet to be usable because it requires offsets being
 # multiples of 16.
-def grouped_mm(a: torch.Tensor, b: torch.Tensor, tokens_per_expert: torch.Tensor) -> torch.Tensor:
+def grouped_mm(a: torch.Tensor, b: torch.Tensor, tokens_per_expert_or_offsets: torch.Tensor) -> torch.Tensor:
     if torch.compiler.is_compiling():
-        # Without `torch.int32`, we see `RuntimeError: Offsets tensor must be integer (int32) tensor, but got torch.int64.`
-        # from PyTorch when calling _grouped_mm.
-        offsets = torch.cumsum(tokens_per_expert, 0, dtype=torch.int32)  # [n]
+        offsets = tokens_per_expert_or_offsets  # [n]
         return _grouped_mm(a, b, offsets)
 
     group_outs = []
+    tokens_per_expert = tokens_per_expert_or_offsets
     for idx, group_a in enumerate(a.split(tokens_per_expert)):
         group_outs.append(group_a @ b[idx])
     return torch.cat(group_outs)
@@ -95,8 +94,8 @@ class GroupedLinear(nn.Module):
         # Initialize the weight in the same way as nn.Linear
         nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
 
-    def forward(self, hidden_states: torch.Tensor, tokens_per_expert: torch.Tensor) -> torch.Tensor:
-        return grouped_mm(hidden_states, self.weight, tokens_per_expert)
+    def forward(self, hidden_states: torch.Tensor, tokens_per_expert_or_offsets: torch.Tensor) -> torch.Tensor:
+        return grouped_mm(hidden_states, self.weight, tokens_per_expert_or_offsets)
 
 
 class GroupedSwiGLU(nn.Module):
@@ -106,10 +105,11 @@ class GroupedSwiGLU(nn.Module):
         self.up_proj = GroupedLinear(groups, hidden_size, intermediate_size)
         self.down_proj = GroupedLinear(groups, intermediate_size, hidden_size)
 
-    def forward(self, hidden_states: torch.Tensor, offsets: torch.Tensor) -> torch.Tensor:
+    def forward(self, hidden_states: torch.Tensor, tokens_per_expert_or_offsets: torch.Tensor) -> torch.Tensor:
         return self.down_proj(
-            F.silu(self.gate_proj(hidden_states, offsets)) * self.up_proj(hidden_states, offsets),
-            offsets,
+            F.silu(self.gate_proj(hidden_states, tokens_per_expert_or_offsets))
+            * self.up_proj(hidden_states, tokens_per_expert_or_offsets),
+            tokens_per_expert_or_offsets,
         )
 
 
@@ -149,9 +149,13 @@ class Llama4MoE(nn.Module):
         tokens_sorted_by_expert_id = hidden_states[token_ids_sorted_by_expert_id]  # [s, h]
 
         if not torch.compiler.is_compiling():
-            tokens_per_expert = tokens_per_expert.tolist()
+            tokens_per_expert_or_offsets = tokens_per_expert.tolist()
+        else:
+            tokens_per_expert_or_offsets = torch.cumsum(tokens_per_expert, 0, dtype=torch.int32)  # [n]
 
-        outs_sorted_by_expert_id = self.routed_experts(tokens_sorted_by_expert_id, tokens_per_expert)  # [s, h]
+        outs_sorted_by_expert_id = self.routed_experts(
+            tokens_sorted_by_expert_id, tokens_per_expert_or_offsets
+        )  # [s, h]
 
         token_ids_sorted_by_expert_inverse_id = torch.argsort(token_ids_sorted_by_expert_id)
         outs_sorted_by_token_id = outs_sorted_by_expert_id[token_ids_sorted_by_expert_inverse_id]
