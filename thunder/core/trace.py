@@ -491,12 +491,20 @@ class TraceCtx:
         ctx = self.python_ctx()
         if global_dicts is not None:
             ctx["__global_dicts"] = global_dicts
-        ctx["__function_obj_weakref"] = weakref.ref(self.fn) if self.fn is not None else None
+        ctx["__function_obj"] = self.fn
         ctx["thunder"] = thunder
 
-        return baseutils.build_callable(
+        callable = baseutils.build_callable(
             self.siginfo().name, python_str=python_str, file_name=f"thunder.{self.siginfo().name}", ctx=ctx
         )
+
+        if "prologue" in self.siginfo().name:
+            # For `prologue`` trace, we remove a reference to itself to avoid a circular reference.
+            # This is because `prologue` holds a reference to the original `nn.Module` via `__function_obj`.
+            # NOTE: Due to the `del`, `prologue` can't be recursive (which should be ok)
+            del callable.__globals__["prologue"]
+
+        return callable
 
     def __repr__(self) -> str:
         return self.python(print_depth=-1)
