@@ -3283,7 +3283,7 @@ def _scaled_mm_check(
     out_dtype: dtypes.dtype | None = None,
     use_fast_accum: bool = False,
 ) -> bool:
-    return nvfuser_version() >= LooseVersion("0.2.27")
+    return nvfuser_version() > LooseVersion("0.2.27")
 
 
 # FIXME: Somehow the expected fd.ops does not seem to appear in the trace
