@@ -153,7 +153,7 @@ def test_cudnn_sdpa_NumberProxy_dropout():
         return torch.nn.functional.scaled_dot_product_attention(q, k, v, dropout_p=dropout_p)
 
     cf = thunder.jit(func, cache="symbolic values", executors=[cudnn_ex])
-    out = cf(q, k, v, dropout_p=0.5)
+    cf(q, k, v, dropout_p=0.5)
     last_trace = thunder.last_traces(cf)[-1]
     assert any(bsym.sym.name == "cudnn_sdpa_fwd" for bsym in last_trace.bound_symbols)
 

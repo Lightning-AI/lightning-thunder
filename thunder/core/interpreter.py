@@ -979,7 +979,6 @@ class ProvenanceRecord:
             nonlocal counter
             inputs = [recurse_str(i) for i in self.inputs]
             inputs_str = ", ".join(inputs)
-            i = counter
             counter += 1
             l = f"  i{counter} = {self.inst}({inputs_str})"
             if self.output_idx != 0 or self.output_key is not None:
@@ -1631,7 +1630,6 @@ def _object_getattribute_lookaside(obj: Any, name: str):
         assert cls_var is not null
         if lookup_descriptor_field("__set__") is not null or lookup_descriptor_field("__delete__") is not null:
             assert callable(descr_get)
-            compilectx = get_interpretercompilectx()
 
             # if it is opaque, don't _interpret_call here, to avoid a wrap/unwrap dance
             if is_opaque(descr_get):
@@ -1736,7 +1734,6 @@ def wrap_attribute(plain_result, obj, name):
 def _setattr_lookaside(obj: Any, name: str, value: Any):
     uobj = unwrap(obj)
     uname = unwrap(name)
-    uvalue = unwrap(value)
     typ = type(uobj)
 
     compilectx: InterpreterCompileCtx = get_interpretercompilectx()
@@ -2360,7 +2357,7 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
 
     def __iadd__(self, iterable, /):
         self.track_items()
-        res = _interpret_call(list.extend, self, iterable)
+        _interpret_call(list.extend, self, iterable)
         return self
 
     def __imul__(self, n, /):
@@ -2592,11 +2589,6 @@ class MutMappingWrapperMethods(WrappedValue):
     def popitem(self, last=Py_NULL()):
         self.track_items()
         assert self.item_wrappers is not None
-
-        if last is Py_NULL():
-            last_d = {}
-        else:
-            last_d = {"last": last.value}
 
         try:
             uk, uv = self.value.popitem(last=last)
@@ -3275,8 +3267,6 @@ def _async_gen_wrap_handler(inst: dis.Instruction, /, stack: InterpreterStack, *
 def _before_async_with_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, **kwargs
 ) -> None | INTERPRETER_SIGNALS:
-    runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
-
     mgr = stack.pop()
 
     # python does a "special lookup"
@@ -3306,8 +3296,6 @@ def _before_async_with_handler(
 # https://docs.python.org/3.11/library/dis.html#opcode-BEFORE_WITH
 @register_opcode_handler("BEFORE_WITH", min_ver=(3, 11))
 def _before_with_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
-    runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
-
     mgr = stack.pop()
 
     # python does a "special lookup"
@@ -4292,7 +4280,7 @@ def _end_async_for_handler_3_10(
 
         assert len(stack) >= try_block.level + 3
         del stack[try_block.level + 3 :]
-        exc_type = frame.interpreter_stack.pop()  # we ignore that and assume == type(exc_value)
+        frame.interpreter_stack.pop()  # we ignore that and assume == type(exc_value)
         exc_value = frame.interpreter_stack.pop()
         exc_traceback = frame.interpreter_stack.pop()
         if exc_value != None:
@@ -5297,8 +5285,6 @@ def _make_function_handler_313(
     fn_co: CodeType = unwrap(stack.pop_wrapped())
     name = fn_co.co_name
 
-    ctx: InterpreterCompileCtx = get_interpretercompilectx()
-
     if fn_co.co_freevars:
         # will be overridden by SET_FUNCTION_ATTRIBUTE call but we cannot
         # create the FunctionType below without
@@ -5552,9 +5538,9 @@ def _pop_except_handler_3_10(
     assert try_block.typ == PyTryBlock.EXCEPT_HANDLER_TYPE
     assert try_block.level + 3 <= len(stack) <= try_block.level + 4
     assert exception_stack
-    exc_type = stack.pop()
+    stack.pop()
     exc_value = stack.pop()
-    exc_traceback = stack.pop()
+    stack.pop()
     # we assume that type and traceback are set on exc_value already (check?)
     # CPython sets exc_info->exc_type/value/traceback, see RuntimeCtx inititalization of exception_stack for more info
     exception_stack[-1] = exc_value
@@ -5927,7 +5913,7 @@ def _reraise_handler_3_10(
     if inst.arg != 0:
         frame.lasti = try_stack[-1].handler
 
-    exc = stack.pop()
+    stack.pop()
     val = stack.pop()
     tb = stack.pop()
     assert isinstance(val, BaseException)
@@ -7192,10 +7178,9 @@ def _setup_frame_and_run_python_function(
 
     if compilectx._with_provenance_tracking:
         frame_globals = wrap_attribute(wrapped_fn.value.__globals__, wrapped_fn, wrap_const("__globals__"))
-        frame_builtins = wrap(builtins_dict, provenance=ProvenanceRecord(inst=PseudoInst.BUILTINS, inputs=[]))
+        wrap(builtins_dict, provenance=ProvenanceRecord(inst=PseudoInst.BUILTINS, inputs=[]))
     else:
         frame_globals = fn.__globals__
-        frame_builtins = builtins_dict
 
     # Creates the current ready to run stack frame for the current function
     frame = InterpreterFrame(
@@ -7319,7 +7304,7 @@ def _run_frame(
                             assert len(frame.interpreter_stack) >= try_block.level + 3
                             with frame.interpreter_stack.set_cur_instruction(PseudoInst.EXCEPTION_HANDLER):
                                 del frame.interpreter_stack[try_block.level + 3 :]
-                                exc_type = frame.interpreter_stack.pop()  # we ignore that and assume == type(exc_value)
+                                frame.interpreter_stack.pop()  # we ignore that and assume == type(exc_value)
                                 exc_value = frame.interpreter_stack.pop()
                                 exc_traceback = frame.interpreter_stack.pop()
                             if exc_value != None:
@@ -7514,6 +7499,8 @@ def interpret(
     if hasattr(fn, "__thunder_interpreter_orig_fn"):
         fn = fn.__thunder_interpreter_orig_fn
 
+    interpreter_log: list[InterpreterLogItem] = []
+
     @functools.wraps(fn)
     def fn_(*args, **kwargs) -> Any:
         runtimectx: InterpreterRuntimeCtx = InterpreterRuntimeCtx(debug_log=debug_log, record_history=record_history)
@@ -7570,8 +7557,7 @@ def interpret(
                     del e
                     raise
 
-            # NOTE: Wrapped functions are valid to assign new attributes to.
-            fn_._last_interpreter_log = runtimectx.interp_log  # type: ignore
+            interpreter_log.extend(runtimectx.interp_log)
 
             if interpretation_result is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
                 e = runtimectx.curexc
@@ -7587,6 +7573,7 @@ def interpret(
             return interpretation_result
 
     fn_.__thunder_interpreter_orig_fn = fn  # type: ignore
+    fn_._last_interpreter_log = interpreter_log  # type:ignore
     return fn_
 
 

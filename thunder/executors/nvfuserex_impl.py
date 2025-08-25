@@ -2521,12 +2521,12 @@ def _scaled_dot_product_flash_attention_forward_meta(
     device = query.device if UPDATED_SDPA else "cpu"
 
     return (
-        output := TensorProxy(like=query, shape=(batch_size, num_heads, query_seq_len, E)),
-        log_sumexp := TensorProxy(
+        TensorProxy(like=query, shape=(batch_size, num_heads, query_seq_len, E)),
+        TensorProxy(
             shape=(batch_size, num_heads, query_seq_len), dtype=dtypes.float32, device=query.device, requires_grad=False
         ),
-        philox_seed := TensorProxy(shape=philox_shape, dtype=dtype, device=device, requires_grad=False),
-        philox_offset := TensorProxy(shape=(), dtype=dtype, device=device, requires_grad=False),
+        TensorProxy(shape=philox_shape, dtype=dtype, device=device, requires_grad=False),
+        TensorProxy(shape=(), dtype=dtype, device=device, requires_grad=False),
     )
 
 

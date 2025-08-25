@@ -190,7 +190,7 @@ def test_crazy_collections_in_and_out(executor, device, dtype):
         g = e + f
         h = f + ka + kb
         # NOTE The following line is intentionally not returned
-        i = ka + ka
+        # i = ka + ka
         j = kc[0] + kc[1]
 
         d["j"] = j
@@ -436,8 +436,7 @@ def test_varargs_and_kwargs(executor, device, dtype):
 @instantiate(dtypes=(thunder.float32,))
 def test_no_return(executor, device, dtype):
     def foo(a, b):
-        c = a + b
-        pass
+        a + b
 
     traced_foo = executor.make_callable(foo)
     tdtype = ltorch.to_torch_dtype(dtype)
@@ -1112,7 +1111,7 @@ def test_bsym_toposort(executor: TestExecutor, device: str, dtype: dtypes.dtype)
     a = make((4, 3, 2, 3))
 
     cbar = executor.make_callable(bar)
-    expected = cbar(a, (12, -1))
+    cbar(a, (12, -1))
     traces = thunder.last_traces(cbar)
     trc = traces[0]
 
@@ -2377,7 +2376,6 @@ def test_bound_symbol_source_location_context(executor, device: str, dtype: dtyp
     trace = thunder.last_traces(jfn)[0]
 
     assert len(trace.bound_symbols) == 3
-    sin_symbol = trace.bound_symbols[1]
     assert str(trace).count("return clang.sin(x)") == 1
     assert str(trace).count(f"# {__file__}:{lineno}") == 1
 
@@ -3136,9 +3134,9 @@ def test_proxy_same_name():
     from thunder.core.devices import cpu
 
     with detached_trace():
-        t = TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32)
+        TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32)
         with pytest.raises(RuntimeError, match="already used"):
-            t2 = TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32)
+            TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32)
 
 
 def test_save_trace():

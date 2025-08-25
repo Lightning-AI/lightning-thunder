@@ -5155,10 +5155,10 @@ def cross_entropy(
             output_shape = list(a.shape)
             output_shape.pop(class_dim)
             return full(output_shape, 0.0, device=a.device, dtype=a.dtype)
-        elif reduction == "sum":
-            return full(result_shape := [], fill_value := 0.0, device=a.device, dtype=a.dtype)
-        elif reduction == "mean":
-            return full(result_shape := [], fill_value := float("nan"), device=a.device, dtype=a.dtype)
+        if reduction == "sum":
+            return full([], fill_value=0.0, device=a.device, dtype=a.dtype)
+        if reduction == "mean":
+            return full([], fill_value=float("nan"), device=a.device, dtype=a.dtype)
 
     if a.shape == target.shape:
         return _cross_entropy_loss_probability_target(a, target, weight, ignore_index, reduction, label_smoothing)
@@ -5783,11 +5783,11 @@ def _nll_loss_helper(
         if reduction == "none":
             # Keep target shape if it is non-trivial
             result_shape = target.shape if target.shape != (0,) else []
-            return full(result_shape, fill_value := 0.0, device=a.device, dtype=a.dtype), None
+            return full(result_shape, fill_value=0.0, device=a.device, dtype=a.dtype), None
         elif reduction == "sum":
-            return full(result_shape := [], fill_value := 0.0, device=a.device, dtype=a.dtype), None
+            return full(shape=[], fill_value=0.0, device=a.device, dtype=a.dtype), None
         elif reduction == "mean":
-            return full(result_shape := [], fill_value := float("nan"), device=a.device, dtype=a.dtype), None
+            return full(shape=[], fill_value=float("nan"), device=a.device, dtype=a.dtype), None
 
     utils.check(
         utils.is_integer_dtype(target.dtype),
