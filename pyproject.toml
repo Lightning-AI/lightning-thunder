@@ -164,7 +164,6 @@ ignore = [
     "E721",  # https://docs.astral.sh/ruff/rules/type-comparison/
     "E722",  # https://docs.astral.sh/ruff/rules/bare-except/
     "F403",  # https://docs.astral.sh/ruff/rules/undefined-local-with-import-star/
-    "F822",  # https://docs.astral.sh/ruff/rules/undefined-export/
     "E741",  # https://docs.astral.sh/ruff/rules/ambiguous-variable-name/
 ]
 
