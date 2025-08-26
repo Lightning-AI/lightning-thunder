@@ -20,7 +20,6 @@ import thunder.clang as clang
 import thunder.core.dtypes as dtypes
 import thunder.core.prims as prims
 import thunder.core.utils as utils
-import thunder.torch as ltorch
 from thunder.clang import (
     convolution,
     full_like,
@@ -986,10 +985,12 @@ register_grad(pids.STRIDE_ORDER, _stride_order_prim_grad)
 # Elementwise unary operator grads
 #
 def _abs_prim_grad(a: Number | TensorProxy) -> Number | TensorProxy:
+    from thunder.torch import sign
+
     fwd = prims.abs(a)
 
     g = get_grad(fwd)
-    put_grad(a, g * ltorch.sign(a))
+    put_grad(a, g * sign(a))
 
     return fwd
 
@@ -1010,10 +1011,12 @@ register_grad(pids.COS, _cos_prim_grad)
 
 
 def _erf_prim_grad(a: Number | TensorProxy) -> Number | TensorProxy:
+    from thunder.torch import exp
+
     fwd = prims.erf(a)
 
     g = get_grad(fwd)
-    a_grad = 2 / math.sqrt(math.pi) * ltorch.exp(-(a**2)) * g
+    a_grad = 2 / math.sqrt(math.pi) * exp(-(a**2)) * g
     put_grad(a, a_grad)
 
     return fwd
@@ -1194,11 +1197,13 @@ register_grad(pids.SUB, _sub_prim_grad)
 
 
 def _where_prim_grad(pred: Number | TensorProxy, a: Number | TensorProxy, b: Number | TensorProxy) -> TensorProxy:
+    from thunder.torch import where
+
     fwd = prims.where(pred, a, b)
 
     g = get_grad(fwd)
-    a_grad = ltorch.where(pred, g, 0)
-    b_grad = ltorch.where(pred, 0, g)
+    a_grad = where(pred, g, 0)
+    b_grad = where(pred, 0, g)
     put_grads((a, b), (a_grad, b_grad))
 
     return fwd
@@ -1239,15 +1244,17 @@ register_grad(pids.SUM, _sum_prim_grad)
 
 
 def _topk_prim_grad(a: TensorProxy, /, k: int, dim: None | int = None, largest: bool = True, sorted: bool = True):
+    from thunder.torch import scatter_add, zeros_like
+
     fwd = prims.topk(a, k, dim, largest, sorted)
     val, idx = fwd
 
     val_grad = get_grad(val)
 
-    a_grad = ltorch.zeros_like(a)
+    a_grad = zeros_like(a)
     # TODO: replace with scatter once we have it.
     # scatter_add is a prim and it relies on atomic ops.
-    a_grad = ltorch.scatter_add(a_grad, dim, idx, val_grad)
+    a_grad = scatter_add(a_grad, dim, idx, val_grad)
     put_grad(a, a_grad)
 
     return fwd
@@ -1259,6 +1266,8 @@ register_grad(pids.TOPK, _topk_prim_grad)
 def _sort_prim_grad(
     a: TensorProxy, /, dim: None | int = None, descending: bool = False, stable: bool = False
 ) -> (TensorProxy, TensorProxy):
+    from thunder.torch import scatter_add, zeros_like
+
     dim = -1 if dim is None else dim
     sorted_a, sort_idx = prims.sort(a, dim, descending, stable)
 
@@ -1267,8 +1276,8 @@ def _sort_prim_grad(
     if a.ndim != 0:
         # TODO(nikitaved): replace with scatter once we have it.
         # scatter_add uses atomic ops which are slow!
-        a_grad = ltorch.zeros_like(a)
-        a_grad = ltorch.scatter_add(a_grad, dim, sort_idx, sorted_a_grad)
+        a_grad = zeros_like(a)
+        a_grad = scatter_add(a_grad, dim, sort_idx, sorted_a_grad)
     else:
         a_grad = sorted_a_grad
     put_grad(a, a_grad)
@@ -1282,8 +1291,10 @@ register_grad(pids.SORT, _sort_prim_grad)
 def _argsort_grad(
     a: TensorProxy, /, dim: None | int = None, descending: bool = False, stable: bool = False
 ) -> TensorProxy:
+    from thunder.torch import argsort
+
     # Note: argsort returns only indices, not sorted values
-    return ltorch.argsort(a, dim, descending, stable)
+    return argsort(a, dim, descending, stable)
 
 
 register_grad("torch.argsort", _argsort_grad)
@@ -1322,24 +1333,26 @@ register_grad(pids.VAR_MEAN, _var_mean_prim_grad)
 # Linear algebra operator grads
 #
 def _linear_prim_grad(a: TensorProxy, w: TensorProxy, bias: None | TensorProxy) -> TensorProxy:
+    from thunder.torch import matmul, sum
+
     fwd = prims.linear(a, w, bias)
 
     g = get_grad(fwd)
 
     first_dim = -2
-    grad_a = ltorch.matmul(g.reshape(-1, g.shape[-1]), w).reshape(a.shape)
+    grad_a = matmul(g.reshape(-1, g.shape[-1]), w).reshape(a.shape)
 
     grad_w: TensorProxy
     if a.ndim == 1:
-        grad_w = ltorch.matmul(g.unsqueeze(first_dim).mT, a.unsqueeze(first_dim))
+        grad_w = matmul(g.unsqueeze(first_dim).mT, a.unsqueeze(first_dim))
     else:
-        grad_w = ltorch.matmul(g.reshape(-1, g.shape[-1]).mT, a.reshape(-1, a.shape[-1]))
+        grad_w = matmul(g.reshape(-1, g.shape[-1]).mT, a.reshape(-1, a.shape[-1]))
 
     put_grads((a, w), (grad_a, grad_w))
 
     if bias is not None:
         if g.ndim > 1:
-            grad_bias = ltorch.sum(g, tuple(range(g.ndim - 1)))
+            grad_bias = sum(g, tuple(range(g.ndim - 1)))
         else:
             grad_bias = g
         put_grad(bias, grad_bias)
@@ -2530,6 +2543,8 @@ if torch.distributed.is_available():
 
 
 def sum_to(a: TensorProxy, shape: Sequence[int]) -> TensorProxy:
+    from thunder.torch import sum, view
+
     if utils.same_shape(a.shape, shape):
         return a
     if not shape:
@@ -2538,14 +2553,16 @@ def sum_to(a: TensorProxy, shape: Sequence[int]) -> TensorProxy:
     reduce_dims = tuple(range(leading_dims)) + tuple(
         i for i in range(leading_dims, a.ndim) if shape[i - leading_dims] == 1 and a.shape[i] != 1
     )
-    a = ltorch.sum(a, dim=reduce_dims, keepdim=True)
+    a = sum(a, dim=reduce_dims, keepdim=True)
     if leading_dims > 0:
-        return ltorch.view(a, shape)
+        return view(a, shape)
     return a
 
 
 @register_backward("torch.index_put")
 def index_put_backward(indices: Sequence[TensorProxy], values: TensorProxy, accumulate: bool, g: TensorProxy):
+    from thunder.torch import zeros_like
+
     indices = tuple(indices)
     g_values = g[indices]
     # torch has extra logic to handle the expanded values
@@ -2554,7 +2571,7 @@ def index_put_backward(indices: Sequence[TensorProxy], values: TensorProxy, accu
             g_values = sum_to(g_values, values.shape)
     if accumulate:
         return g, g_values
-    return clang.index_put(g, indices, ltorch.zeros_like(values), False), g_values
+    return clang.index_put(g, indices, zeros_like(values), False), g_values
 
 
 def uniform_aug_fwd(shape, minval, maxval, *, device, dtype):
