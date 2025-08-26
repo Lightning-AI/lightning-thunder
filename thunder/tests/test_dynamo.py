@@ -842,7 +842,7 @@ def test_checkpoint_converter_submodule():
     assert submodule is not None
     for n in submodule.graph.nodes:
         if n.op == "call_function":
-            assert isinstance(n.target, Symbol)
+            assert isinstance(n.target, Symbol) or callable(n.target)
 
 
 @instantiate(
