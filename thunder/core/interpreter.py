@@ -902,7 +902,7 @@ def get_python_tb(tb: list | TracebackType | None) -> list:
         return tb
 
     res = []
-    while tb != None:
+    while tb is not None:
         res.append(PythonFrameWrapper(tb.tb_frame))
         tb = tb.tb_next
     return res
@@ -4283,7 +4283,7 @@ def _end_async_for_handler_3_10(
         frame.interpreter_stack.pop()  # we ignore that and assume == type(exc_value)
         exc_value = frame.interpreter_stack.pop()
         exc_traceback = frame.interpreter_stack.pop()
-        if exc_value != None:
+        if exc_value is not None:
             exc_value.__traceback__ = exc_traceback
         assert runtimectx.exception_stack
         # CPython sets exc_info->exc_type/value/traceback
@@ -5787,7 +5787,7 @@ def do_raise(exc: Any = Py_NULL(), cause: Any = Py_NULL()) -> Literal[INTERPRETE
         # Re-raise
         assert runtimectx.exception_stack
         value = runtimectx.exception_stack[0]
-        if value == None:
+        if value is None:
             return do_raise(RuntimeError("No active exception to reraise"))
         assert isinstance(value, BaseException)
         # check for cause being PY_NULL? Python does not do this, but it would seem to be a bug
@@ -7307,7 +7307,7 @@ def _run_frame(
                                 frame.interpreter_stack.pop()  # we ignore that and assume == type(exc_value)
                                 exc_value = frame.interpreter_stack.pop()
                                 exc_traceback = frame.interpreter_stack.pop()
-                            if exc_value != None:
+                            if exc_value is not None:
                                 exc_value.__traceback__ = exc_traceback
                             assert runtimectx.exception_stack
                             # CPython sets exc_info->exc_type/value/traceback

@@ -5660,7 +5660,7 @@ def interpolate(
     utils.check(a.ndim >= 3, lambda: f"Expected {a.ndim=} >= 3")
     utils.check(a.numel() > 0, lambda: f"Expected {a.numel=} to be greater than 0")
     utils.check(
-        align_corners == None,
+        align_corners is None,
         lambda: "Thunder does not yet support 'align_corners'.",
         exception_type=NotImplementedError,
     )
