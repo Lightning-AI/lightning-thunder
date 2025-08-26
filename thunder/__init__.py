@@ -7,6 +7,7 @@ import dis
 import os
 import time
 import warnings
+import weakref
 
 # import this before anything else to avoid circular imports
 import thunder.core.prims as prims
@@ -135,7 +136,7 @@ __all__ = [
 ]
 
 
-from thunder.__about__ import *  # import all
+from thunder.__about__ import *  # noqa: F403
 
 
 # TODO maybe move these aliases to the core language?
@@ -374,6 +375,12 @@ def jit(
         debug_options=debug_options,
     )
     cd.transforms = transforms
+    # NOTE: Below in the code, there is `cd.populate_cache_info = populate_cache_info`.
+    #       But `populate_cache_info` also captures `cd` in the closure which leads to a reference cycle.
+    #       To break the cycle, we instead create a weakref to `cd` which should be captured by `populate_cache_info`
+    #       (and other such functions).
+    weakref_cd = weakref.ref(cd)
+
     cs = CompileStats()
 
     def _alias_tensor_of_args_kwargs_dict(*args, **kwargs) -> dict[int, list[int]]:
@@ -605,6 +612,10 @@ def jit(
             return cache_entry
 
     def populate_cache_info(cache_info, *args, **kwargs):
+        # NOTE: Don't capture cd in the closure, otherwise it will create a cycle
+        cd = weakref_cd()
+        assert cd is not None, "cd has been cleared."
+
         # default dtype (for factory functions)
         cache_info["default_dtype"] = pytorch.get_default_dtype()
 
@@ -659,6 +670,10 @@ def jit(
     @langctxs.langctx(cd.langctx)
     @_with_cache_info_ctx
     def get_computation_and_inputs(*args, **kwargs):
+        # NOTE: Don't capture cd in the closure, otherwise it will create a cycle
+        cd = weakref_cd()
+        assert cd is not None, "cd has been cleared."
+
         # set up a record of things in the current environment that impact caching / prologues
         # this could be replaced by the respective querying in the prologues
         cache_info = _get_cache_info()
@@ -1058,7 +1073,6 @@ def _grad_transform(original_trace):
     current_inputs = grad_fwd_trace.args
     for bsym in original_trace.bound_symbols:
         grad_defined = bsym.sym.grad_defined
-        grad_ignored = bsym.sym.grad_ignored
         grad_fwd, grad_bwd = bsym.sym.grad_fwd, bsym.sym.grad_bwd
 
         if not grad_defined:
@@ -1109,7 +1123,7 @@ def grad(fn):
         original_result, original_trace = cfn(*args, **kwargs)
         original_trace = last_traces(cfn)
 
-        gradir = _grad_transform(original_trace)
+        _grad_transform(original_trace)
 
         return original_result, original_trace
 

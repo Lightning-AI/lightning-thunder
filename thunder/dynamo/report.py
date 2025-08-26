@@ -371,7 +371,7 @@ class FXGraphReport:
 
         folder = Path(folder)
         folder.mkdir(exist_ok=True, parents=True)
-        if inputs == None:
+        if inputs is None:
             inputs = self.example_input_meta
         has_cuda_args = any(hasattr(arg, "device") and arg.device.type == "cuda" for arg in inputs)
         has_requires_grad_args = any(hasattr(arg, "requires_grad") and arg.requires_grad for arg in inputs)
@@ -379,7 +379,7 @@ class FXGraphReport:
         readable = _readable(self.graph, "DynamoModule", print_output=False)
         # The packages that are likely to be used by the code generated from the Torch GraphModule
         torch_import_str = "\n".join([v.import_str for v in torch.fx.graph._custom_builtins.values()])
-        import_str = "" if import_str == None else "\n".join(import_str)
+        import_str = "" if import_str is None else "\n".join(import_str)
         input_str = textwrap.indent(self._get_input_str(folder, inputs, serialize_inputs), "    ")
         call_bench_str = f"benchmark_for_compute_type(compute_type, benchmark, compiled_model, inputs, {{}}, has_cuda={True if has_cuda_args else False})"
         compute_type_decorator = (
@@ -502,7 +502,7 @@ class FXGraphReport:
         """
         folder = Path(folder)
         folder.mkdir(exist_ok=True, parents=True)
-        if inputs == None:
+        if inputs is None:
             inputs = self.example_input_meta
         code_str = self._get_repro_code(folder, compile_fn, None, serialize_inputs, inputs)
         comment_str = self._get_comment_str(extra_comment_str)
@@ -602,7 +602,7 @@ class FXGraphReport:
         """
         folder = Path(folder)
         folder.mkdir(exist_ok=True, parents=True)
-        if inputs == None:
+        if inputs is None:
             inputs = self.example_input_meta
         forward_only = not any(hasattr(arg, "requires_grad") and arg.requires_grad for arg in inputs)
         code_str = self._get_repro_code(folder, compile_fn, time_fn, serialize_inputs, inputs)
@@ -923,7 +923,7 @@ measurement = {timing_str}
 print(measurement)
 {comment_str}
 """
-        if file_name == None:
+        if file_name is None:
             file_name = f"{self.name}_benchmark_nvfuser.py"
         with open(folder / file_name, "w") as f:
             print(code_str, file=f)
@@ -936,7 +936,7 @@ print(measurement)
         comment_str = f'"""\n{self.nvfusion_bsym}\n"""'
         repro_code_str = f"{repro_code_str}\n{comment_str}"
 
-        if file_name == None:
+        if file_name is None:
             file_name = f"{self.name}_repro_nvfuser.py"
         with open(folder / file_name, "w") as f:
             print(repro_code_str, file=f)
@@ -966,7 +966,7 @@ print(measurement)
         code_str = f"""{code_str}
 out = torch_compiled_callable(*inputs)
 """
-        if file_name == None:
+        if file_name is None:
             file_name = f"{self.name}_repro_inductor.py"
         with open(folder / file_name, "w") as f:
             f.write(code_str)
@@ -982,7 +982,7 @@ out = torch_compiled_callable(*inputs)
 measurement = {time_fn.to_source("torch_compiled_callable", "inputs")}
 print(measurement)
 """
-        if file_name == None:
+        if file_name is None:
             file_name = f"{self.name}_benchmark_inductor.py"
         with open(folder / file_name, "w") as f:
             f.write(code_str)

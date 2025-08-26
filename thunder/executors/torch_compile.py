@@ -227,6 +227,7 @@ supported_ops = {
     # parallel residual paths are used in the transformer block
     prims.div.id,
     prims.erf.id,
+    prims.shallow_copy.id,
 }
 torch_compile_cat_ex._implmap = {
     op: ImplInfo(checker=cuda_device_checker) for op in pytorch_ex.implmap if op in supported_ops

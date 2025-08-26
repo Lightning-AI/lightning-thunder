@@ -177,14 +177,14 @@ def test_redundant_no_op(executor, device: str, dtype: dtypes.dtype):
     # Verifies a single fusion of two operations
     assert len(fusions) == 1
     fusion = fusions[0]
-    assert len(fusion.subsymbols) == 1
+    assert len(fusion.subsymbols) == 3
 
     # Verifies that the trace outputs are updated properly
     d, e, f, g = extrace.output
     assert d.name == "d"
     assert e.name == "d"
-    assert f.name == "a"
-    assert g.name == "a"
+    assert f.name == "f"
+    assert g.name == "b"
 
 
 @instantiate(dtypes=NOTHING, devicetypes=(devices.DeviceType.CUDA,), executors=(nvFuserExecutor,))
@@ -436,7 +436,7 @@ def test_nvfuser_toposort_dependent2(executor, device: str, dtype: dtypes.dtype)
 
     cfoo = thunder.jit(foo, fusion_type="dataflow")
 
-    result = cfoo(a, b)
+    cfoo(a, b)
     traces = thunder.last_traces(cfoo)
 
     fusions = examine.get_fusions(traces[-1])
@@ -859,7 +859,7 @@ def test_enable_disable_options(executor, device: str, thunder_dtype: dtypes.dty
     # If this support is added, the test will need to be updated since it will no longer
     # verify the functionality of the above flags.
     with pytest.raises(RuntimeError, match="Can not find a scheduler to schedule fusion segment"):
-        out = compiled_func(*inps)
+        compiled_func(*inps)
 
 
 @instantiate(
@@ -965,5 +965,78 @@ def test_slice_dynamic_extent(executor, device: str, dtype: dtypes.dtype):
     # There are two nvfuser fusion groups separated by the matmul operation.
     assert len(fusion_bsyms) == 1
 
-    outside_fusion_syms = ["unpack_trivial", "python_return"]
-    assert {el.sym.name for el in fw_trace.bound_symbols if not el.sym.is_fusion} == set(outside_fusion_syms)
+    outside_fusion_sym_set = {"unpack_trivial", "python_return"}
+    assert {el.sym.name for el in fw_trace.bound_symbols if not el.sym.is_fusion} == outside_fusion_sym_set
+
+
+@instantiate(
+    executors=(nvFuserExecutor,),
+    dtypes=NOTHING,
+)
+def test_moe_infer_scatter(executor, device: str, dtype: dtypes.dtype):
+    def foo(inputs: list):
+        bmm_out: torch.Tensor  # [seq*top_k, hidden]
+        idxs: torch.Tensor  # [seq*top_k]
+        topk_weight: torch.Tensor  # [seq , top_k]]
+        bmm_out, idxs, topk_weight = inputs
+        out = bmm_out.index_put([idxs], bmm_out)  # [seq*top_k, hidden]
+        # TODO: enable following operation when nvfuser codegen can handle generic scatter
+        # out = out.reshape(*topk_weight.shape, -1)  # [seq, top_k, hidden]
+        # out = out * topk_weight.unsqueeze(-1)  # [seq, top_k, hidden]
+        # out = out.sum(dim=1)  # [seq, hidden]
+        return out
+
+    seq_length = 1024
+    topk_hidden = (2, 128)
+    hidden_states = torch.randn((seq_length * topk_hidden[0], topk_hidden[1]), device="cuda", requires_grad=True)
+    topk_weight = torch.randn((seq_length, topk_hidden[0]), device="cuda")
+    # use logits.argsort() to generate unique indices
+    logits = torch.randn(seq_length * topk_hidden[0], device="cuda")
+    idxs = logits.argsort()
+
+    # NOTE nv_enable_scatter to allow scatter operation to go through nvfuser
+    jfoo = thunder.jit(foo, nv_enable_scatter=True)
+
+    inputs = [hidden_states, idxs, topk_weight]
+
+    actual = jfoo(inputs)
+    expected = foo(inputs)
+    torch.testing.assert_close(actual, expected)
+
+    fw_trace = thunder.last_traces(jfoo)[-1]
+    fusion_bsyms = tuple(filter(lambda a: a.sym.is_fusion, fw_trace.bound_symbols))
+
+    # assert that everything is merged as a single nvfuser operation
+    assert len(fusion_bsyms) == 1
+    outside_fusion_sym_set = {"unpack_trivial", "python_return"}
+    assert {el.sym.name for el in fw_trace.bound_symbols if not el.sym.is_fusion} == outside_fusion_sym_set
+
+
+@instantiate(
+    executors=(nvFuserExecutor,),
+    dtypes=NOTHING,
+)
+def test_scatter(executor, device: str, dtype: dtypes.dtype):
+    bsz = 4
+    hidden = 8
+    scatter_size = 3
+    x = torch.randn([bsz, hidden], device=device, dtype=dtype)
+
+    for dim in (0, 1):
+        _, ind = torch.topk(x, k=scatter_size, dim=dim)
+        src = torch.randn(ind.shape, device=device, dtype=dtype)
+        inputs = [x, dim, ind, src]
+
+        # NOTE nv_enable_scatter to allow scatter operation to go through nvfuser
+        jit_scatter = thunder.jit(torch.scatter, nv_enable_scatter=True)
+        actual = jit_scatter(*inputs)
+        expected = torch.scatter(*inputs)
+        torch.testing.assert_close(actual, expected)
+
+        fw_trace = thunder.last_traces(jit_scatter)[-1]
+        fusion_bsyms = tuple(filter(lambda a: a.sym.is_fusion, fw_trace.bound_symbols))
+
+        # assert that everything is merged as a single nvfuser operation
+        assert len(fusion_bsyms) == 1
+        outside_fusion_syms = ["unpack_trivial", "python_return"]
+        assert {el.sym.name for el in fw_trace.bound_symbols if not el.sym.is_fusion} == set(outside_fusion_syms)

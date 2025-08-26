@@ -113,5 +113,5 @@ def test_nanogpt_block():
     # We are checking the estimated memory against a fixed value for consistency.
     assert max_mem_fw[0] == 381754368
     assert sum(max_mem_fw[1].values()) == 375462912
-    assert max_mem_bw[0] == 641097728
-    assert sum(max_mem_bw[1].values()) == 440474624
+    assert max_mem_bw[0] == 741761024
+    assert sum(max_mem_bw[1].values()) == 541137920

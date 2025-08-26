@@ -149,23 +149,19 @@ select = [
     "F",  # see: https://pypi.org/project/pyflakes
 #    "D",  # see: https://pypi.org/project/pydocstyle
 #    "N",  # see: https://pypi.org/project/pep8-naming
+    "RUF100",  # see: https://docs.astral.sh/ruff/rules/unused-noqa/
 ]
 ignore = [
     "E731",  # Do not assign a lambda expression, use a def
     "E501",  # todo: Line too long (235 > 120 characters)
     # TODO(crcrpar): Resolves the following ignores as these are added while enabling ruff check in pre-commit
-    "F841",  # https://docs.astral.sh/ruff/rules/unused-variable/
     "F821",  # https://docs.astral.sh/ruff/rules/undefined-name/
     "E402",  # https://docs.astral.sh/ruff/rules/module-import-not-at-top-of-file/
     "F401",  # https://docs.astral.sh/ruff/rules/unused-import/
     "F405",  # https://docs.astral.sh/ruff/rules/undefined-local-with-import-star-usage/
     "E712",  # https://docs.astral.sh/ruff/rules/true-false-comparison/
-    "E711",  # https://docs.astral.sh/ruff/rules/none-comparison/
     "E721",  # https://docs.astral.sh/ruff/rules/type-comparison/
     "E722",  # https://docs.astral.sh/ruff/rules/bare-except/
-    "F403",  # https://docs.astral.sh/ruff/rules/undefined-local-with-import-star/
-    "F601",  # https://docs.astral.sh/ruff/rules/multi-value-repeated-key-literal/
-    "F822",  # https://docs.astral.sh/ruff/rules/undefined-export/
     "E741",  # https://docs.astral.sh/ruff/rules/ambiguous-variable-name/
 ]
 
@@ -232,4 +228,4 @@ module = [
     "thunder.tests.test_reductions",
     "thunder.tests.test_script",
 ]
-ignore_errors = "True"
+ignore_errors = true

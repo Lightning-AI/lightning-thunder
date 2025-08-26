@@ -349,7 +349,7 @@ def test_te_trace_metadata_propagation():
             MyNoopTransform(),
         ],
     )
-    out = cfunc(x, w)
+    cfunc(x, w)
 
     fwd_traces = thunder.last_traces(cfunc)
 
@@ -399,7 +399,7 @@ def test_te_trace_correctness(fp8_recipe: recipe.Recipe):
     )
 
     with te.fp8_autocast(fp8_recipe=fp8_recipe):
-        out = cfunc(x, w)
+        cfunc(x, w)
 
     fwd_trace = thunder.last_traces(cfunc)[-1]
     fwd_trace_pyctx = fwd_trace.python_ctx()
@@ -518,6 +518,11 @@ def test_te_activation_checkpointing_correctness(fp8_recipe: recipe.Recipe, comp
     device = "cuda"
     iterations = 6
 
+    from transformer_engine.pytorch.fp8 import FP8GlobalStateManager
+
+    # Before starting, reset the state manager.
+    FP8GlobalStateManager.reset()
+
     checkpoint_fn = partial(torch.utils.checkpoint.checkpoint, use_reentrant=False)
 
     input_shape = (768, 4096)
@@ -555,8 +560,6 @@ def test_te_activation_checkpointing_correctness(fp8_recipe: recipe.Recipe, comp
 
     # TE does not expose the scales for MXFP8
     if fp8_recipe.delayed():
-        from transformer_engine.pytorch.fp8 import FP8GlobalStateManager
-
         te_scales = []
         te_amax_hist = []
         with te.fp8_autocast(enabled=True, fp8_recipe=fp8_recipe):
@@ -642,6 +645,3 @@ def test_te_activation_checkpointing_correctness(fp8_recipe: recipe.Recipe, comp
         # check that amax history is the same as TE
         for te_amax, th_amax in zip(te_amax_hist, th_amax_hist):
             assert_close(te_amax[:, :-1], th_amax)
-
-        # Reset state manager before next run.
-        FP8GlobalStateManager.reset()

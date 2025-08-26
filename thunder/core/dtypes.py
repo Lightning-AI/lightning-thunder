@@ -187,6 +187,8 @@ float8_e4m3fn = floating("float", "f", bytes=1, is_weak=False, variant="e4m3fn")
 float8_e4m3fn_ = floating("float", "f", bytes=1, is_weak=True, variant="e4m3fn")
 float8_e4m3fnuz = floating("float", "f", bytes=1, is_weak=False, variant="e4m3fnuz")
 float8_e4m3fnuz_ = floating("float", "f", bytes=1, is_weak=True, variant="e4m3fnuz")
+float8_e8m0fnu = floating("float", "f", bytes=1, is_weak=False, variant="e8m0fnu")
+float8_e8m0fnu_ = floating("float", "f", bytes=1, is_weak=True, variant="e8m0fnu")
 float16 = floating("float", "f", bytes=2, is_weak=False)
 float16_ = floating("float", "f", bytes=2, is_weak=True)
 float32 = floating("float", "f", bytes=4, is_weak=False)
@@ -235,6 +237,8 @@ all_dtypes = {
     float8_e4m3fn_,
     float8_e4m3fnuz,
     float8_e4m3fnuz_,
+    float8_e8m0fnu,
+    float8_e8m0fnu_,
     float16,
     float16_,
     float32,
@@ -311,7 +315,7 @@ def _numberclass_to_numbertype(cls):
 
 
 def to_dtype(x: Any, /, *, true_dtype: bool = False) -> None | dtype:
-    """Exctracts a dtype from an object or class."""
+    """Extracts a dtype from an object or class."""
 
     if x is None or isinstance(x, dtype):
         return x
@@ -419,6 +423,7 @@ _strong_dtype_to_weak_dtype_map = {
     float8_e5m2fnuz: float8_e5m2fnuz_,
     float8_e4m3fn: float8_e4m3fn_,
     float8_e4m3fnuz: float8_e4m3fnuz_,
+    float8_e8m0fnu: float8_e8m0fnu_,
     float16: float16_,
     float32: float32_,
     float64: float64_,
@@ -574,6 +579,8 @@ _thunder_to_torch_dtype_map = {
     float8_e4m3fn_: torch.float8_e4m3fn,
     float8_e4m3fnuz: torch.float8_e4m3fnuz,
     float8_e4m3fnuz_: torch.float8_e4m3fnuz,
+    float8_e8m0fnu: torch.float8_e8m0fnu,
+    float8_e8m0fnu_: torch.float8_e8m0fnu,
     float16_: torch.float16,
     float16: torch.float16,
     float32_: torch.float32,

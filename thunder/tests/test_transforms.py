@@ -351,7 +351,7 @@ def test_lora_transform_linear():
     rank = 16
     alpha = 32
 
-    seed = torch.manual_seed(0)
+    torch.manual_seed(0)
 
     class Model(torch.nn.Module):
         def __init__(self) -> None:
@@ -413,7 +413,6 @@ def test_lora_transform_linear():
     assert flat_arg_names == arg_names
 
 
-@pytest.mark.xfail(strict=True)
 def test_constant_folding():
     # Helper to verify we see the expected constant tensors
     # in exec_trace.
@@ -647,8 +646,6 @@ def test_buffer_dtype_casting():
                 model._overrides_buffers[n] = qb
 
         def transform_traces_pre_prologue(self, prologue_trace, computation_trace, epilogue_trace, **kwargs):
-            tm = self.thunder_module
-
             checks = thunder.transforms.utils.get_checks(prologue_trace)
 
             prologue_proxy_map = {
@@ -800,14 +797,14 @@ def test_dce_duplicate_number_proxies():
 
     def fn(x):
         shape_0 = x.shape
-        shape_1 = x.clone().shape  # duplicate shape query
+        x.clone().shape  # duplicate shape query
         return sum(shape_0)
 
     # symbolic values is necessary to have the shape query in trace
     jfn = thunder.jit(fn, cache="symbolic values")
 
     a = torch.randn(2, 3, 4, 5)
-    out = jfn(a)
+    jfn(a)
 
     def _count_shape_query(trace):
         count = 0
