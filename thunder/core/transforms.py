@@ -17,6 +17,8 @@ import numpy as np
 import torch
 
 import thunder.clang as clang
+import thunder.core.dtypes as dtypes
+import thunder.core.prims as prims
 import thunder.core.utils as utils
 import thunder.torch as ltorch
 from thunder.clang import (
@@ -27,7 +29,6 @@ from thunder.clang import (
     squeeze,
     unsqueeze,
 )
-from thunder.core import dtypes, prims
 from thunder.core.compile_data import get_compile_data
 from thunder.core.devices import Device
 from thunder.core.langctxs import Languages, langctx
