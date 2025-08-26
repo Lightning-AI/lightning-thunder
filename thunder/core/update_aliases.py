@@ -1,10 +1,11 @@
-from functools import reduce, partial
+from functools import partial, reduce
 
 import thunder.core.prims as prims
-from thunder.core.proxies import TensorProxy, variableify, unvariableify
+from thunder.core.proxies import TensorProxy, unvariableify, variableify
 from thunder.core.pytree import tree_flatten
 from thunder.core.symbol import BoundSymbol, BoundSymbolTag, has_tags
-from thunder.core.trace import from_trace, tracectx, TraceCtx as Trace, TraceProvenance, VariableInterface
+from thunder.core.trace import TraceCtx as Trace
+from thunder.core.trace import TraceProvenance, VariableInterface, from_trace, tracectx
 from thunder.torch import setitem_
 
 

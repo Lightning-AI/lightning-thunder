@@ -1,25 +1,36 @@
 from __future__ import annotations
-from enum import auto, Enum
-from itertools import chain
-from functools import lru_cache, partial, wraps
-import math
-from numbers import Number
-from typing import Any, TYPE_CHECKING
-from collections.abc import Callable
-from collections.abc import Sequence
-import copy
-import inspect
-import time
-import dataclasses
 
+import copy
+import dataclasses
+import inspect
+import math
+import time
+from collections.abc import Callable, Sequence
+from enum import Enum, auto
+from functools import lru_cache, partial, wraps
+from itertools import chain
+from numbers import Number
+from typing import TYPE_CHECKING, Any
+
+# from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode
+import numpy as np
+import torch
+
+import thunder.clang as clang
 import thunder.core.utils as utils
-from thunder.core import dtypes, prims
-from thunder.core.devices import Device
-from thunder.core.trace_interpreter import (
-    interpret_trace as eval_trace,
-    interpret_trace_to_trace,
-    trace_interpreter_skip_list,
+import thunder.torch as ltorch
+from thunder.clang import (
+    convolution,
+    full_like,
+    reciprocal,
+    slice_in_dim,
+    squeeze,
+    unsqueeze,
 )
+from thunder.core import dtypes, prims
+from thunder.core.compile_data import get_compile_data
+from thunder.core.devices import Device
+from thunder.core.langctxs import Languages, langctx
 from thunder.core.proxies import (
     FloatProxy,
     FutureTensorProxy,
@@ -29,52 +40,41 @@ from thunder.core.proxies import (
     TensorProxy,
     variableify,
 )
-from thunder.core.compile_data import get_compile_data
-from thunder.core.langctxs import langctx, Languages
-from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten, tree_flatten_with_dataclass
+from thunder.core.pytree import tree_flatten, tree_flatten_with_dataclass, tree_map, tree_unflatten
 from thunder.core.symbol import BoundSymbol, BoundSymbolInterface, Symbol
 from thunder.core.trace import TraceCtx as Trace
-from thunder.core.trace import VariableInterface as Variable
 from thunder.core.trace import (
-    set_tracectx,
-    reset_tracectx,
-    from_trace,
     TraceProvenance,
     TraceTag,
+    from_trace,
+    reset_tracectx,
+    set_tracectx,
+)
+from thunder.core.trace import VariableInterface as Variable
+from thunder.core.trace_interpreter import (
+    interpret_trace as eval_trace,
+)
+from thunder.core.trace_interpreter import (
+    interpret_trace_to_trace,
+    trace_interpreter_skip_list,
+)
+from thunder.core.transform_common import (
+    Transform,
+    VJPDual,
+    dce,
+    wrap_return_value_together_with_arguments,
 )
 from thunder.core.utils import (
+    ProxyDict,
     check,
+    const_as,
     flatten_func,
     safe_map,
     safe_map_flat,
-    const_as,
     sequencify,
-    ProxyDict,
-)
-import thunder.clang as clang
-from thunder.clang import (
-    full_like,
-    unsqueeze,
-    squeeze,
-    slice_in_dim,
-    reciprocal,
-    convolution,
-)
-from thunder.core.transform_common import (
-    dce,
-    Transform,
-    wrap_return_value_together_with_arguments,
-    VJPDual,
 )
 from thunder.core.vjp_utils import make_aug_forward_and_backward
 from thunder.extend import Executor
-import thunder.torch as ltorch
-
-import torch
-
-# from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode
-import numpy as np
-
 
 TraceTag.register_tag("AUGMENTED_FORWARD")
 ProxyTag.register_tag("RECOMPUTE_IN_BACKWARD")
@@ -632,7 +632,8 @@ def register_grad(sym_or_id: Symbol | Any, gradfn: Callable) -> None:
 
 
 # Grad functions for prims
-from thunder.core.prims import PrimIDs as pids, get_grad, put_grad
+from thunder.core.prims import PrimIDs as pids
+from thunder.core.prims import get_grad, put_grad
 
 
 # A generalization of prims.put_grad to pytrees
@@ -1466,7 +1467,7 @@ register_grad(pids.COPY_WITH_SETITEM, _copy_with_setitem_grad)
 def _log_sigmoid_grad(
     a: TensorProxy,
 ) -> TensorProxy:
-    from thunder.torch import where, exp, logsigmoid
+    from thunder.torch import exp, logsigmoid, where
 
     fwd = logsigmoid(a)
     g = get_grad(fwd)
@@ -2495,11 +2496,12 @@ def index_put_aug_fwd(
 
 
 if torch.distributed.is_available():
-    from torch.distributed import ReduceOp
     from torch._C._distributed_c10d import _resolve_process_group
+    from torch.distributed import ReduceOp
 
     if TYPE_CHECKING:
         from torch.distributed import ProcessGroup
+
         from thunder.distributed.prims import DistributedReduceOps
 
     @register_augmented_forward("torch.ops._c10d_functional.all_reduce")

@@ -1,14 +1,14 @@
-from functools import partial
 import builtins
+from functools import partial
 
 import torch
 from torch.testing import assert_close, make_tensor
 
 import thunder
 import thunder.clang as tlang
-import thunder.torch as ttorch
 import thunder.core.devices as devices
-from thunder.tests.framework import instantiate, NOTHING
+import thunder.torch as ttorch
+from thunder.tests.framework import NOTHING, instantiate
 
 
 # TODO Enable the remaining elementwise unary operations (following the pattern of abs)

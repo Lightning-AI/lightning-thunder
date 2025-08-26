@@ -1,18 +1,18 @@
 from unittest.mock import patch
 
 import pytest
-import thunder
-import transformers
 import torch
-
-from transformers.models.qwen2 import Qwen2Config, Qwen2ForCausalLM
-from transformers.models.llama import LlamaConfig, LlamaForCausalLM
-from thunder.extend import deregister_executor
+import transformers
 from torch.testing import assert_close
-from thunder.recipes import HFTransformers
+from transformers.models.llama import LlamaConfig, LlamaForCausalLM
+from transformers.models.qwen2 import Qwen2Config, Qwen2ForCausalLM
+
+import thunder
 from thunder.executors import nvfuser_available
 from thunder.executors.cudnnex import cudnn_available
-from thunder.tests.framework import version_between, IS_WINDOWS
+from thunder.extend import deregister_executor
+from thunder.recipes import HFTransformers
+from thunder.tests.framework import IS_WINDOWS, version_between
 
 
 @pytest.mark.skipif(not cudnn_available(), reason="cuDNN is not available")
@@ -264,8 +264,9 @@ def test_plugins_hybrid_ddpfsdp(monkeypatch):
     monkeypatch.setenv("LOCAL_RANK", "0")
     if not torch.distributed.is_initialized():
         torch.distributed.init_process_group(backend="gloo", rank=0, world_size=1, init_method="tcp://127.0.0.1:1234")
-    from thunder.plugins import FSDP
     from torch.distributed.device_mesh import init_device_mesh
+
+    from thunder.plugins import FSDP
 
     mesh = init_device_mesh("cpu", (1,), mesh_dim_names=("fsdp",))  # single-dim mesh
 

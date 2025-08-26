@@ -1,38 +1,36 @@
 from __future__ import annotations
 
+import builtins
 import copy
-from enum import auto, Enum
+import math
+import operator
+from collections.abc import Callable, Sequence
+from enum import Enum, auto
+from functools import partial, reduce
 from numbers import Number
 from typing import Any
-from collections.abc import Callable
-from collections.abc import Sequence
-
-from functools import reduce, partial
-import operator
-import builtins
-import math
 
 import torch
 
-from thunder.core.compile_data import using_symbolic_values, get_cache_option, CACHE_OPTIONS
-from thunder.core.interpreter import is_jitting, ProvenanceRecord, PseudoInst
+import thunder.core.baseutils as baseutils
+import thunder.core.devices as devices
+import thunder.core.dtypes as dtypes
+from thunder.core.baseutils import (
+    NumberProxyInterface,
+    ProxyInterface,
+    TagBase,
+    TensorProxyInterface,
+    TorchAutogradFunctionCtxProxyInterface,
+)
+from thunder.core.compile_data import CACHE_OPTIONS, get_cache_option, using_symbolic_values
+from thunder.core.interpreter import ProvenanceRecord, PseudoInst, is_jitting
+from thunder.core.langctxs import get_langctx, resolve_method
 from thunder.core.trace import (
+    TraceCtx,
     VariableInterface,
     get_tracectx,
     is_tracing,
-    TraceCtx,
 )
-from thunder.core.baseutils import (
-    ProxyInterface,
-    NumberProxyInterface,
-    TensorProxyInterface,
-    TorchAutogradFunctionCtxProxyInterface,
-    TagBase,
-)
-import thunder.core.baseutils as baseutils
-from thunder.core.langctxs import resolve_method, get_langctx
-import thunder.core.devices as devices
-import thunder.core.dtypes as dtypes
 
 ShapeLike = Sequence[int]
 

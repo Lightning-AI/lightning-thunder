@@ -5,8 +5,9 @@ from torch.testing import assert_close
 fused_layer_norm_cuda = pytest.importorskip("fused_layer_norm_cuda")
 
 from torch.distributed import is_available
-from thunder.executors.apexex import apex_ex
+
 import thunder
+from thunder.executors.apexex import apex_ex
 
 
 # See https://github.com/NVIDIA/apex/issues/1853

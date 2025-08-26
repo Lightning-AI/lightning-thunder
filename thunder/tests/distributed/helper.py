@@ -1,10 +1,10 @@
 from __future__ import annotations
-from functools import partial
-from functools import wraps
-from typing import ClassVar, TYPE_CHECKING
+
 import math
 import os
 import sys
+from functools import partial, wraps
+from typing import TYPE_CHECKING, ClassVar
 
 import torch
 import torch.nn as nn
@@ -24,8 +24,7 @@ except ImportError:
 
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
 
 __all__ = [
@@ -242,6 +241,7 @@ if torch.distributed.is_available():
         def __call__(self, test_stub):
             import multiprocessing as mp
             import tempfile
+
             import pytest
 
             if not torch.distributed.is_available():
@@ -330,6 +330,7 @@ if torch.distributed.is_available():
     ):
         from collections import defaultdict
         from contextlib import nullcontext
+
         from thunder.distributed import get_skip_data_parallel_grad_sync
 
         device = torch.device("cuda", test_case.rank)

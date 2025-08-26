@@ -11,9 +11,10 @@ transformer_engine_module = pytest.importorskip(
     "transformer_engine", reason="transformer_engine was not found, skipping the tests."
 )
 
-from thunder.executors.transformer_engine_v2ex import transformer_engine_v2_ex, TransformerEngineTransformV2
-from transformer_engine.common import recipe
 import transformer_engine.pytorch as te
+from transformer_engine.common import recipe
+
+from thunder.executors.transformer_engine_v2ex import TransformerEngineTransformV2, transformer_engine_v2_ex
 
 # FP8 is supported on compute arch 8.9 onwards.
 # MXFP8 is supported on compute arch 10.0 onwards.

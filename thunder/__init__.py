@@ -1,44 +1,53 @@
-from collections import defaultdict, namedtuple
-from collections.abc import Callable, Sequence
-from contextvars import ContextVar
-from functools import wraps
-from typing import Any
 import dis
 import os
 import time
 import warnings
 import weakref
+from collections import defaultdict, namedtuple
+from collections.abc import Callable, Sequence
+from contextvars import ContextVar
+from functools import wraps
+from typing import Any
+
+# NOTE This import is intentionally pytorch so that it thunder.torch doesn't import this
+import torch as pytorch
+
+import thunder.core.devices as devices
+import thunder.core.dtypes as dtypes
+import thunder.core.langctxs as langctxs
 
 # import this before anything else to avoid circular imports
 import thunder.core.prims as prims
+import thunder.executors.nvfuserex
+
+# Imports executors (to populate default executors and make them accessible)
+import thunder.executors.pythonex
+import thunder.executors.torchex
+import thunder.extend as extend
+import thunder.transforms as transforms
 
 # imports unused in this file, but referenced as thunder.* elsewhere
-from thunder.common import trace
-import thunder.core.devices as devices
-from thunder.core.proxies import Proxy
-
 from thunder.common import (
     CompileData,
     CompileStats,
+    trace,
     transform_for_execution,
     transform_to_torch_types,
 )
 from thunder.core.baseutils import run_once
 from thunder.core.compile_data import compile_data_and_stats
-import thunder.core.dtypes as dtypes
 from thunder.core.interpreter import InterpreterLogItem, print_interpreter_log
 from thunder.core.jit_ext import thunder_general_jit
 from thunder.core.langctxs import LanguageContext
-import thunder.core.langctxs as langctxs
 from thunder.core.module import ThunderModule
 from thunder.core.options import (
     CACHE_OPTIONS,
-    DebugOptions,
     SHARP_EDGES_OPTIONS,
+    DebugOptions,
 )
-from thunder.core.proxies import TensorProxy
+from thunder.core.proxies import Proxy, TensorProxy
 from thunder.core.pytree import tree_flatten
-from thunder.core.recipe import Recipe, Plugin
+from thunder.core.recipe import Plugin, Recipe
 from thunder.core.symbol import has_tags
 from thunder.core.trace import (
     TraceCtx,
@@ -57,17 +66,7 @@ from thunder.core.transform_common import (
 )
 from thunder.core.update_aliases import insert_alias_updates
 from thunder.executors.torch_autograd import connect_to_autograd
-import thunder.extend as extend
 from thunder.extend import Executor, add_default_executor
-import thunder.transforms as transforms
-
-# NOTE This import is intentionally pytorch so that it thunder.torch doesn't import this
-import torch as pytorch
-
-# Imports executors (to populate default executors and make them accessible)
-import thunder.executors.pythonex
-import thunder.executors.torchex
-import thunder.executors.nvfuserex
 
 pythonex = extend.get_executor("python")
 assert pythonex is not None
@@ -137,7 +136,6 @@ __all__ = [
 
 
 from thunder.__about__ import *  # import all
-
 
 # TODO maybe move these aliases to the core language?
 #
@@ -253,8 +251,8 @@ CacheEntry = namedtuple(
 def compile(
     fn: Callable, recipe: Recipe | str = "auto", plugins: Plugin | list[Plugin] | str | list[str] | None = None
 ):
-    import thunder.recipes
     import thunder.plugins
+    import thunder.recipes
 
     if plugins is None:
         plugins = []
@@ -533,8 +531,8 @@ def jit(
 
                 computation_trc = grad_transform_on_trace(computation_trc)
 
-            from thunder.executors.passes import _transform_for_operator_executor_execution
             from thunder.distributed.utils import maybe_sort_waits
+            from thunder.executors.passes import _transform_for_operator_executor_execution
 
             tmp_comp_trc = _transform_for_operator_executor_execution(computation_trc, cd.executors_list)
             is_transformed, tmp_comp_trc = maybe_sort_waits(tmp_comp_trc)

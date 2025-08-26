@@ -1,18 +1,18 @@
 from __future__ import annotations
-from collections.abc import Callable, Sequence
-from enum import Enum, auto
-from typing import TYPE_CHECKING
+
+import copy
 import dataclasses
 import inspect
 import itertools
-import copy
+from collections import defaultdict, namedtuple
+from collections.abc import Callable, Sequence
+from enum import Enum, auto
 from types import NoneType
-from collections import defaultdict
-from collections import namedtuple
+from typing import TYPE_CHECKING
 
 import torch
-from torch.nn.modules.module import _addindent
 from torch._subclasses.fake_tensor import FakeTensor
+from torch.nn.modules.module import _addindent
 from torch.utils.weak import TensorWeakRef
 
 if torch.distributed.is_available():
@@ -20,17 +20,18 @@ if torch.distributed.is_available():
 else:
     DTensor = NoneType
 
-from thunder.torch.default_torch_ops import torch_auto_registered_ops
-from thunder.torch import _torch_to_thunder_function_map
-from thunder.torch.langctx import torchctx
-from thunder.core.utils import check
 from thunder.core.pytree import tree_flatten
+from thunder.core.utils import check
+from thunder.torch import _torch_to_thunder_function_map
+from thunder.torch.default_torch_ops import torch_auto_registered_ops
+from thunder.torch.langctx import torchctx
 
 if TYPE_CHECKING:
-    from numbers import Number
-    from thunder.core.symbol import Symbol
-    from typing import Any
     from collections.abc import Sequence
+    from numbers import Number
+    from typing import Any
+
+    from thunder.core.symbol import Symbol
 
 auto_register_ops = set(itertools.chain(*torch_auto_registered_ops.values()))
 
@@ -193,8 +194,8 @@ def get_proxy_inputs_from_node(node: torch.fx.Node) -> tuple[tuple, dict]:
         node (torch.fx.Node): The FX graph node to create proxy inputs for.
     """
     import thunder
-    from thunder.core.trace import TraceCtx
     from thunder.core.proxies import proxy
+    from thunder.core.trace import TraceCtx
 
     # We need to be under trace context to generate proxies.
     with thunder.core.trace.tracectx(TraceCtx()):
@@ -263,9 +264,9 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
             The second element is a `SplitReason` object if an error occurred, or `None` if the execution was successful.
     """
     import thunder
-    from thunder.core.trace import TraceCtx
-    from thunder.core.compile_data import compile_data_and_stats
     from thunder.common import CompileData, CompileStats
+    from thunder.core.compile_data import compile_data_and_stats
+    from thunder.core.trace import TraceCtx
     from thunder.core.transforms import value_and_grad
 
     # This is required for verifying `_enter_autocast`
@@ -816,7 +817,7 @@ def get_env() -> tuple[str, str]:
     Additionally, include the installed versions of Thunder and NvFuser (if available via pip).
     """
 
-    from torch.utils.collect_env import run, get_pip_packages
+    from torch.utils.collect_env import get_pip_packages, run
 
     torch_env = "CUDA devices:\n"
     for i in range(torch.cuda.device_count()):
@@ -1005,13 +1006,13 @@ def default_optimizer(gm: torch.fx.GraphModule, stats: ProfileStats) -> Callable
     Returns:
         The optimized GraphModule
     """
-    from thunder.dynamo.report import FXGraphReport
     from thunder.dynamo.benchmark_utils import (
-        TorchInductorSpecification,
-        TorchEagerSpecification,
         ThunderCompilerOnGraphModuleSpecification,
+        TorchEagerSpecification,
+        TorchInductorSpecification,
         WallTime,
     )
+    from thunder.dynamo.report import FXGraphReport
 
     if has_symbolic_input(stats.gm):
         raise NotImplementedError("Optimizing graph module with symbolic inputs is not supported yet.")

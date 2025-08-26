@@ -7,6 +7,7 @@ from __future__ import annotations
 from enum import Enum, auto
 
 import torch
+
 import thunder.core.baseutils as baseutils
 
 

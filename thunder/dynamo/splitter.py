@@ -1,24 +1,25 @@
 from __future__ import annotations
-from typing import TYPE_CHECKING
+
 import copy
 from functools import partial
+from typing import TYPE_CHECKING
 
 import torch
 from torch.fx.passes.split_module import split_module
 
 from thunder.dynamo.utils import (
-    SubgraphInfo,
     CompiledFunction,
     CompilerType,
     SplitReason,
     SplitReasonType,
-    is_node_supported_by_thunder,
-    get_nodes_in_unsupported_ctx_regions,
-    update_node_and_submodule,
-    recompile_graph,
-    checkpoint_converter,
+    SubgraphInfo,
     _get_example_inputs_from_placeholder,
     _ThunderSplitGraphModule,
+    checkpoint_converter,
+    get_nodes_in_unsupported_ctx_regions,
+    is_node_supported_by_thunder,
+    recompile_graph,
+    update_node_and_submodule,
 )
 
 if TYPE_CHECKING:

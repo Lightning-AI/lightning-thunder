@@ -1,23 +1,22 @@
 from __future__ import annotations
+
+import copy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from thunder.core import devices
-from thunder.core import prims
-from thunder.core import utils
-from thunder.core.proxies import DistParallelType, TensorProxy, variableify
-from thunder.core.trace import from_trace
-from thunder.core.trace import tracectx
-from thunder.core.trace import TraceProvenance
-from thunder.core.transform_common import Transform
-from thunder.core.module import ThunderModule
 import torch
-from torch.utils.weak import WeakTensorKeyDictionary
 import torch.distributed as tdist
-import copy
+from torch.utils.weak import WeakTensorKeyDictionary
+
+from thunder.core import devices, prims, utils
+from thunder.core.module import ThunderModule
+from thunder.core.proxies import DistParallelType, TensorProxy, variableify
+from thunder.core.trace import TraceProvenance, from_trace, tracectx
+from thunder.core.transform_common import Transform
 
 if TYPE_CHECKING:
     from torch.distributed import ProcessGroup
+
     from thunder.core.trace import TraceCtx
 
 

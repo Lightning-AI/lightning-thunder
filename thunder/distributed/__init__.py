@@ -1,14 +1,13 @@
 from __future__ import annotations
-import os
 
-from itertools import chain
+import os
+from collections.abc import Generator
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
-from enum import auto, Enum
-from typing import TYPE_CHECKING, Any
-from collections.abc import Generator
+from enum import Enum, auto
 from functools import partial
-
+from itertools import chain
+from typing import TYPE_CHECKING, Any
 
 import torch
 import torch.distributed as tdist
@@ -16,11 +15,11 @@ from torch.utils.weak import WeakTensorKeyDictionary
 
 import thunder.core.utils as utils
 from thunder.core.proxies import DistParallelType
-from thunder.distributed.tensor_parallel import column_parallel
-from thunder.distributed.tensor_parallel import row_parallel
+from thunder.distributed.tensor_parallel import column_parallel, row_parallel
 
 if TYPE_CHECKING:
     from torch.distributed import ProcessGroup
+
     from thunder.core.module import ThunderModule
 
 
@@ -144,6 +143,7 @@ def _sync_grads(module: torch.nn.Module) -> None:
         cm.wait()
     elif getattr(module, "use_fsdp", False):
         from typing import cast
+
         from thunder.core.module import ThunderModule
 
         module = cast(ThunderModule, module)
@@ -308,8 +308,8 @@ def ddp(
 
     if not isinstance(model, ThunderModule):
         raise TypeError(f"Thunder DDP only works on ThunderModule, got {type(model)}")
-    from thunder.distributed.transforms.ddp_v2 import DDPTransform
     from thunder.core.transforms import add_transform
+    from thunder.distributed.transforms.ddp_v2 import DDPTransform
 
     process_group = copy_default_process_group()
     utils.check(process_group is not None, lambda: "The default process group is None")

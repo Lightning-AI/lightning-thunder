@@ -4,7 +4,7 @@ import sys
 import time
 from datetime import datetime
 
-from lightning_sdk import Studio, Job, Machine, Status
+from lightning_sdk import Job, Machine, Status, Studio
 
 
 def main(gh_run_id: str = ""):

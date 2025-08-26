@@ -6,7 +6,7 @@ from torch.testing import assert_close
 import thunder
 import thunder.torch as ltorch
 from thunder.core import devices, dtypes
-from thunder.tests.framework import TorchExecutor, nvFuserExecutor, instantiate, NOTHING
+from thunder.tests.framework import NOTHING, TorchExecutor, instantiate, nvFuserExecutor
 
 
 @instantiate(
@@ -30,8 +30,9 @@ def test_uniform_philox(executor, device: str, dtype: dtypes.dtype):
 
 @instantiate(dtypes=NOTHING, devicetypes=(devices.DeviceType.CUDA,), executors=(nvFuserExecutor,))
 def test_rng_state_prims(executor, device: str, _):
-    import thunder.core.prims as prims
     import torch
+
+    import thunder.core.prims as prims
 
     def func(device):
         s0, o0 = prims.get_and_update_rng_state(None, None, device=device)
@@ -58,8 +59,9 @@ def test_rng_state_prims(executor, device: str, _):
     executors=(nvFuserExecutor,),
 )
 def test_uniform_philox_with_rng_state_prims(executor, device: str, dtype: dtypes.dtype):
-    import thunder.core.prims as prims
     import torch
+
+    import thunder.core.prims as prims
 
     def func1(shape, dtype, device):
         seed0, offset0 = prims.get_and_update_rng_state(None, None, device=device)
@@ -179,7 +181,7 @@ def test_uniform_philox_vs_uniform(executor, device: str, dtype: dtypes.dtype):
         # get the results of uniform
         results = []
         cuda_generator.manual_seed(20)
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
 
         # mock the replace_uniform transform to return the input trace
         replace_uniform_mock = MagicMock(side_effect=lambda trc: trc)
@@ -286,7 +288,7 @@ def test_uniform_philox_vs_uniform_module(executor, device: str, dtype: dtypes.d
             # get the results of uniform
             results = []
             cuda_generator.manual_seed(20)
-            from unittest.mock import patch, MagicMock
+            from unittest.mock import MagicMock, patch
 
             # mock the replace_uniform transform to return the input trace
             replace_uniform_mock = MagicMock(side_effect=lambda trc: trc)

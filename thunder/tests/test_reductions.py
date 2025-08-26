@@ -5,7 +5,6 @@ import thunder
 import thunder.torch as ttorch
 from thunder.tests.framework import instantiate
 
-
 # TODO: convert these tests to OpInfo generated tests
 
 

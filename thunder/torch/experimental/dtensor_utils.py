@@ -1,15 +1,13 @@
 import torch
+from torch._subclasses.fake_tensor import FakeTensorMode
 
-from thunder.core.proxies import TensorProxy, NumberProxy
 from thunder.core.devices import to_torch_device
 from thunder.core.dtypes import to_torch_dtype
-from thunder.core.pytree import tree_map
-from thunder.core.trace import TraceCtx
 from thunder.core.prims import PrimIDs
+from thunder.core.proxies import NumberProxy, TensorProxy
+from thunder.core.pytree import tree_map
 from thunder.core.symbol import Symbol
-from thunder.core.trace import from_trace
-
-from torch._subclasses.fake_tensor import FakeTensorMode
+from thunder.core.trace import TraceCtx, from_trace
 
 if torch.distributed.is_available():
     from torch.distributed.tensor import DTensor

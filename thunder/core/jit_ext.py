@@ -1,16 +1,16 @@
 from __future__ import annotations
-import math
-from typing import Any
+
 import collections
-from collections.abc import Callable, Sequence
-import dataclasses
-from functools import wraps
 import contextvars
-from contextlib import contextmanager
+import dataclasses
 import dis
+import math
 import sys
 import time
 import warnings
+from collections.abc import Callable, Sequence
+from contextlib import contextmanager
+from functools import wraps
 from types import (
     BuiltinFunctionType,
     BuiltinMethodType,
@@ -24,29 +24,19 @@ from types import (
     UnionType,
     WrapperDescriptorType,
 )
+from typing import Any
 
 import torch
 import torch.utils.checkpoint
 
 import thunder
-from thunder.core.compile_data import get_cache_option, get_compile_data
 import thunder.clang as clang
 import thunder.core.baseutils as baseutils
 import thunder.core.codeutils as codeutils
-from thunder.core.proxies import (
-    AnyProxy,
-    NumberProxy,
-    Proxy,
-    ProxyInterface,
-    ProxyTag,
-    TensorProxy,
-    Variable,
-    is_proxy_name_available,
-    proxy,
-    unvariableify,
-    variableify,
-)
-from thunder.core.trace import tracectx, from_trace
+import thunder.core.prims as prims
+from thunder.clang import _clang_fn_set
+from thunder.core.codeutils import SigInfo
+from thunder.core.compile_data import get_cache_option, get_compile_data
 from thunder.core.interpreter import (
     INTERPRETER_CALLBACKS,
     INTERPRETER_SIGNALS,
@@ -66,14 +56,24 @@ from thunder.core.interpreter import (
     wrap,
     wrap_const,
 )
-from thunder.core.codeutils import SigInfo
-import thunder.core.prims as prims
 from thunder.core.options import CACHE_OPTIONS, SHARP_EDGES_OPTIONS, DebugOptions
+from thunder.core.proxies import (
+    AnyProxy,
+    NumberProxy,
+    Proxy,
+    ProxyInterface,
+    ProxyTag,
+    TensorProxy,
+    Variable,
+    is_proxy_name_available,
+    proxy,
+    unvariableify,
+    variableify,
+)
+from thunder.core.pytree import tree_iter, tree_map
 from thunder.core.symbol import Symbol
-from thunder.core.trace import TraceCtx, TraceResults
+from thunder.core.trace import TraceCtx, TraceResults, from_trace, tracectx
 from thunder.torch import _torch_to_thunder_function_map
-from thunder.clang import _clang_fn_set
-from thunder.core.pytree import tree_map, tree_iter
 from thunder.torch.experimental.dtensor_proxy import is_dtensor_proxy
 from thunder.torch.experimental.dtensor_torch_and_prims import (
     check_dtensor_spec_repr,
@@ -879,9 +879,8 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
 
     @wraps(core_of_forward)
     def grad_transform(*args, **kwargs):
-        from thunder.core.transforms import get_grad
-        from thunder.core.transforms import put_grads
         from thunder.core.trace_interpreter import interpret_trace
+        from thunder.core.transforms import get_grad, put_grads
 
         check(not kwargs, lambda: f"{kwargs=} should be empty")
         primal, residuals = interpret_trace(aliased_trace_of_augmented_fwd, *args, **kwargs)

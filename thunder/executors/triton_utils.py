@@ -1,5 +1,5 @@
-from looseversion import LooseVersion
 from lightning_utilities.core.imports import package_available
+from looseversion import LooseVersion
 
 
 def triton_version() -> None | str:

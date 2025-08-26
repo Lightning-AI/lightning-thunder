@@ -1,21 +1,22 @@
 from __future__ import annotations
+
+import math
+import operator
+import warnings
 from collections import namedtuple
 from collections.abc import Callable, Sequence
 from functools import partial, reduce
 from numbers import Number
 from types import EllipsisType, NoneType
 from typing import Any, Union
-import math
-import operator
-import warnings
 
-from thunder.clang.langctx import register_method
-from thunder.core import utils
-from thunder.core.baseutils import run_once
-from thunder.core.langctxs import langctx, Languages
 import thunder.core.devices as devices
 import thunder.core.dtypes as dtypes
 import thunder.core.prims as prims
+from thunder.clang.langctx import register_method
+from thunder.core import utils
+from thunder.core.baseutils import run_once
+from thunder.core.langctxs import Languages, langctx
 from thunder.core.proxies import (
     AnyProxy,
     IntegerProxy,

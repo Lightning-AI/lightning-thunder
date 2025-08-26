@@ -1,6 +1,7 @@
 import collections
 
 from torch.utils.benchmark import Timer
+
 from thunder.core.prims import PrimIDs
 from thunder.core.symbol import BoundSymbol
 from thunder.executors.torch_compile import make_compiled as make_torch_compile_callable

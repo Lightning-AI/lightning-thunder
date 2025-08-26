@@ -1,37 +1,32 @@
 """Transform for `fsdp(jit(model))` to convert a model to use fsdp."""
 
 from __future__ import annotations
-from dataclasses import dataclass
-from dataclasses import field
-from itertools import chain
+
 import os
+from dataclasses import dataclass, field
+from itertools import chain
 from typing import TYPE_CHECKING
 
 import torch
 import torch.distributed as tdist
 
-from thunder.core import devices
-from thunder.core import prims
-from thunder.core import utils
-from thunder.core.proxies import DistParallelType
-from thunder.core.proxies import TensorProxy
-from thunder.core.proxies import variableify, unvariableify
-from thunder.core.trace import from_trace
-from thunder.core.trace import tracectx
-from thunder.core.trace import TraceProvenance
-from thunder.core.transforms import VISIT_TYPE
-from thunder.core.transforms import visitor_transform
+from thunder.core import devices, prims, utils
+from thunder.core.proxies import DistParallelType, TensorProxy, unvariableify, variableify
+from thunder.core.trace import TraceProvenance, from_trace, tracectx
 from thunder.core.transform_common import Transform
+from thunder.core.transforms import VISIT_TYPE, visitor_transform
 from thunder.distributed import (
-    copy_default_process_group,
-    FSDPType,
     FSDPBucketingStrategy,
+    FSDPType,
     _shard_tensor,
+    copy_default_process_group,
 )
 
 if TYPE_CHECKING:
     from typing import Any
+
     from torch.distributed import ProcessGroup
+
     from thunder.core.module import ThunderModule
     from thunder.core.symbol import BoundSymbol
     from thunder.core.trace import VariableInterface

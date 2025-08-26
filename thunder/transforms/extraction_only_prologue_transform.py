@@ -1,6 +1,6 @@
 import thunder
-from thunder.core.trace import from_trace
 from thunder.core.proxies import ProxyTag
+from thunder.core.trace import from_trace
 
 
 class ExtractionOnlyPrologueTransform(thunder.Transform):

@@ -1,8 +1,8 @@
 import pytest
 import pytest_benchmark
-from thunder.dynamo.compiler_graph_benchmark import GRAPH_BY_GRAPH_BENCHMARK_PARAMS_KEYS
-
 import torch
+
+from thunder.dynamo.compiler_graph_benchmark import GRAPH_BY_GRAPH_BENCHMARK_PARAMS_KEYS
 
 try:
     import nvfuser

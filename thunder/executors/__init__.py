@@ -1,10 +1,8 @@
-from typing import Optional, Any, List, Tuple
 from collections.abc import Sequence
+from typing import Any, List, Optional, Tuple
 
 import thunder.executors.passes as passes
-
 import thunder.extend as extend
-
 
 # NOTE The executors submodule depends on the extend submodule
 

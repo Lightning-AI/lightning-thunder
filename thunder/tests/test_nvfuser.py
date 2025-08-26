@@ -1,27 +1,25 @@
 import pytest
-
 import torch
+from looseversion import LooseVersion
 
 import thunder
-import thunder.examine as examine
-from thunder.executors.nvfuserex import nvfuser_version, nvfuserex
-import thunder.torch as ltorch
-import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
+import thunder.core.dtypes as dtypes
 import thunder.core.prims as prims
-
+import thunder.examine as examine
+import thunder.torch as ltorch
+from thunder.executors.nvfuserex import nvfuser_version, nvfuserex
 from thunder.tests.framework import (
-    instantiate,
     NOTHING,
+    instantiate,
     nvFuserExecutor,
 )
 from thunder.tests.make_tensor import make_tensor
 from thunder.tests.opinfos import (
+    embedding_opinfo,
     linear_opinfo,
     matmul_opinfo,
-    embedding_opinfo,
 )
-from looseversion import LooseVersion
 
 
 @instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
@@ -248,7 +246,7 @@ def test_cse_subsymbol_redundant_args(executor, device, _):
 
 @instantiate(dtypes=NOTHING, devicetypes=(devices.DeviceType.CUDA,), executors=(nvFuserExecutor,))
 def test_cse_rematerialization(executor, device, _):
-    from thunder.tests.llama2_model import Transformer, ModelArgs
+    from thunder.tests.llama2_model import ModelArgs, Transformer
 
     batch_size = 2
     max_seq_len = 32

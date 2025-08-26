@@ -1,25 +1,26 @@
 from __future__ import annotations
+
+import time
 from collections import deque
 from dataclasses import dataclass
 from itertools import chain
 from typing import TYPE_CHECKING
-import time
 
-from thunder.core.proxies import Proxy, variableify, CollectionProxy
+import thunder.core.prims as prims
+import thunder.core.utils as cutils
+from thunder.core.proxies import CollectionProxy, Proxy, variableify
 from thunder.core.pytree import tree_flatten
-from thunder.core.trace import from_trace, TraceProvenance
+from thunder.core.symbol import BoundSymbolTag, has_tags
+from thunder.core.trace import TraceProvenance, from_trace
 from thunder.core.trace_interpreter import TraceSubstitutionProcessor
 from thunder.core.transform_common import dce
 from thunder.core.utils import ProxyDict
 from thunder.executors.pythonex import clear_mutable_collection
-from thunder.extend import Executor, get_always_executors, OperatorExecutor, FusionExecutor
-import thunder.core.prims as prims
-from thunder.core.symbol import BoundSymbolTag, has_tags
-import thunder.core.utils as cutils
+from thunder.extend import Executor, FusionExecutor, OperatorExecutor, get_always_executors
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
+
     from thunder.core.symbol import BoundSymbol
     from thunder.core.trace import TraceCtx
 

@@ -1,8 +1,8 @@
 from collections.abc import Callable
 
-from thunder.core.langctxs import LanguageContext, register_langctx, Languages, resolve_language
+from thunder.core.langctxs import LanguageContext, Languages, register_langctx, resolve_language
+from thunder.core.proxies import NumberProxy, TensorProxy
 from thunder.core.pytree import tree_flatten
-from thunder.core.proxies import TensorProxy, NumberProxy
 
 #
 # Creates and registers the torch language context

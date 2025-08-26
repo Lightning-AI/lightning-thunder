@@ -1,27 +1,23 @@
+from collections.abc import Callable, Sequence
 from numbers import Number
 from typing import Any
-from collections.abc import Callable, Sequence
 
 import torch
 
 import thunder
-from thunder.core.trace import from_trace
-from thunder.core.proxies import variableify, Variable, TensorProxy, NumberProxy
-from thunder.core.symbol import BoundSymbol
-from thunder.core.dtypes import to_dtype
-from thunder.core.devices import to_device
-from thunder.torch import _torch_to_thunder_function_map
-from thunder.core.utils import get_symbols_to_last_used_variables
-from thunder.core.trace import TraceCtx, tracectx
+from thunder.core import prims, utils
 from thunder.core.codeutils import SigInfo
-from thunder.core import utils
-from thunder.core.proxies import ProxyInterface
-from thunder.core import prims
-from thunder.executors.passes import transform_for_execution
-from thunder.executors.torchex import ex as pytorch_ex
-from thunder.executors.pythonex import ex as pythonex_ex
+from thunder.core.devices import to_device
+from thunder.core.dtypes import to_dtype
+from thunder.core.proxies import NumberProxy, ProxyInterface, TensorProxy, Variable, variableify
 from thunder.core.pytree import tree_flatten
-
+from thunder.core.symbol import BoundSymbol
+from thunder.core.trace import TraceCtx, from_trace, tracectx
+from thunder.core.utils import get_symbols_to_last_used_variables
+from thunder.executors.passes import transform_for_execution
+from thunder.executors.pythonex import ex as pythonex_ex
+from thunder.executors.torchex import ex as pytorch_ex
+from thunder.torch import _torch_to_thunder_function_map
 
 __all__ = [
     "ConstantFolding",

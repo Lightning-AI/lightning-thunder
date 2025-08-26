@@ -1,3 +1,5 @@
+from collections import namedtuple
+
 import pytest
 import torch
 
@@ -6,7 +8,6 @@ import thunder.core
 from thunder.executors.sdpaex import sdpa_ex
 from thunder.tests.framework import requiresCUDA, run_snippet
 from thunder.tests.opinfos import get_opinfo
-from collections import namedtuple
 
 CudaVersion = namedtuple("CudaVersion", "major minor")
 

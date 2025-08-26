@@ -1,71 +1,70 @@
 from __future__ import annotations
 
+import copy
 import json
+import shutil
 import subprocess
 import sys
+import textwrap
 from functools import partial
+from itertools import chain
 from pathlib import Path
 from typing import TYPE_CHECKING
-import textwrap
-import copy
-from itertools import chain
-from looseversion import LooseVersion
-import shutil
 
 import torch
-from thunder.core.pytree import tree_flatten
-from thunder.core.utils import sequencify, create_python_callable_from_bsym
-from thunder.dynamo.compiler import thunderfx, ThunderCompiler
-from thunder.dynamo.utils import (
-    _get_example_inputs_from_placeholder,
-    _readable,
-    arg_like,
-    get_env,
-    get_split_reasons_string,
-    CompilerType,
-    recompile_graph,
-    has_higher_order_operator,
-    input_to_example_input_meta,
-    example_input_meta_to_input,
-    format_python_file,
-)
+from looseversion import LooseVersion
 
-from thunder.dynamo.repro_script_template import (
-    pytest_benchmark_multi_exe_code_template,
-    bsym_torch_compile_repro_template,
-    main_code,
-    comment_str_template,
-    FXGRAPH_CLASS_NAME,
-    INPUTS_NAME,
-    CALLABLE_NAME,
-    COMPILED_CALLABLE_NAME,
-)
-from thunder import last_traces, last_backward_traces, compile_stats
+from thunder import compile_stats, last_backward_traces, last_traces
 from thunder.benchmarks.utils import backward_only
+from thunder.core.pytree import tree_flatten
+from thunder.core.utils import create_python_callable_from_bsym, sequencify
 from thunder.dynamo.benchmark_utils import (
-    TorchCompileSpecification,
+    KernelTime,
     ThunderCompileSpecification,
+    TorchCompileSpecification,
     TorchEagerSpecification,
     TorchInductorSpecification,
     WallTime,
-    KernelTime,
     WallTimeWithMemoryUsage,
     check_metrics,
     check_nvfusion_timing,
 )
-
+from thunder.dynamo.compiler import ThunderCompiler, thunderfx
+from thunder.dynamo.repro_script_template import (
+    CALLABLE_NAME,
+    COMPILED_CALLABLE_NAME,
+    FXGRAPH_CLASS_NAME,
+    INPUTS_NAME,
+    bsym_torch_compile_repro_template,
+    comment_str_template,
+    main_code,
+    pytest_benchmark_multi_exe_code_template,
+)
+from thunder.dynamo.utils import (
+    CompilerType,
+    _get_example_inputs_from_placeholder,
+    _readable,
+    arg_like,
+    example_input_meta_to_input,
+    format_python_file,
+    get_env,
+    get_split_reasons_string,
+    has_higher_order_operator,
+    input_to_example_input_meta,
+    recompile_graph,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
     from os import PathLike
-    from collections.abc import Sequence
     from typing import TextIO
 
     from torch._dynamo.output_graph import GraphCompileReason
-    from thunder.dynamo.utils import ExampleInputMetaData
-    from thunder.core.trace import TraceCtx
+
     from thunder.core.symbol import BoundSymbol
+    from thunder.core.trace import TraceCtx
     from thunder.dynamo.benchmark_utils import CompileSpecificationInterface, TimerInterface
+    from thunder.dynamo.utils import ExampleInputMetaData
 
 
 def run_forward_backward(fn, *args, benchmark=False, **kwargs):
@@ -1090,9 +1089,9 @@ def analyze_thunder_splits(
                         nvfusion_report.write_inductor_repro(split_folder / "nvfusion")
 
     """
-    from thunder.dynamo.utils import remove_empty_autocast, get_thunder_module_names
-    from thunder.dynamo.splitter import _splitter
     from thunder import jit
+    from thunder.dynamo.splitter import _splitter
+    from thunder.dynamo.utils import get_thunder_module_names, remove_empty_autocast
 
     # Splits the FX graph module using Thunder splitter
     gm = remove_empty_autocast(report.graph)

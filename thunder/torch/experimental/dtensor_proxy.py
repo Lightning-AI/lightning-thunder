@@ -1,9 +1,9 @@
-from thunder.core.proxies import TensorProxy, AnyProxy, _infer_tensor_properties
-from thunder.core.proxies import proxy
+import torch
+
 import thunder.core.devices as devices
 import thunder.core.dtypes as dtypes
 import thunder.core.utils as utils
-import torch
+from thunder.core.proxies import AnyProxy, TensorProxy, _infer_tensor_properties, proxy
 from thunder.torch.experimental.dtensor_utils import run_only_if_distributed_is_available
 
 if torch.distributed.is_available():

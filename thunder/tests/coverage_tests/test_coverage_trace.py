@@ -1,9 +1,10 @@
-import torch
-import traceback
-import thunder
 import os
-import pytest
+import traceback
 
+import pytest
+import torch
+
+import thunder
 
 if os.getenv("ALLOW_COVERAGE_TRACE") != "1":
     pytest.skip("Skipping test_coverage_trace.py in regular CI", allow_module_level=True)
@@ -11,14 +12,14 @@ if os.getenv("ALLOW_COVERAGE_TRACE") != "1":
 
 from transformers import (
     AutoConfig,
-    AutoTokenizer,
     AutoModel,
     AutoModelForCausalLM,
-    AutoModelForSeq2SeqLM,
     AutoModelForImageClassification,
+    AutoModelForSeq2SeqLM,
+    AutoTokenizer,
 )
-from thunder.tests.test_core import run_prologue
 
+from thunder.tests.test_core import run_prologue
 
 MODEL_LIST = [
     "gpt2",

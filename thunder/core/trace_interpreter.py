@@ -2,15 +2,14 @@ from functools import partial
 from typing import Any
 
 from thunder.core import prims
-from thunder.core.pytree import tree_map
-from thunder.core.trace import VariableInterface, from_trace, tracectx
 from thunder.core.baseutils import ProxyInterface, TensorProxyInterface
-from thunder.core.utils import safe_map_flat, sequencify
-from thunder.core.proxies import variableify, ProxyTag
-from thunder.core.transform_common import VJPDual
-from thunder.core.symbol import has_tags
 from thunder.core.compile_data import get_compile_option
-
+from thunder.core.proxies import ProxyTag, variableify
+from thunder.core.pytree import tree_map
+from thunder.core.symbol import has_tags
+from thunder.core.trace import VariableInterface, from_trace, tracectx
+from thunder.core.transform_common import VJPDual
+from thunder.core.utils import safe_map_flat, sequencify
 
 # TODO: Currently we use trace.args and trace.kwargs to get the arguments
 # Maybe we should use these instead

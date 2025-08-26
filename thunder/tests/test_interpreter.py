@@ -1,29 +1,27 @@
-from collections.abc import Iterable, Sequence
-from contextlib import redirect_stdout
-from functools import partial, wraps
-
+import dis
 import io
 import sys
-import dis
 import weakref
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Sequence
+from contextlib import redirect_stdout
+from functools import partial, wraps
 
 import pytest
 import torch
 from torch.testing import assert_close
-from thunder.tests.framework import IS_WINDOWS
 
 import thunder
 from thunder.core.interpreter import (
-    is_jitting_with_raise,
-    is_jitting,
-    make_opaque,
-    interpret,
     InterpreterError,
-    print_interpreter_log,
-    last_interpreter_log,
+    interpret,
+    is_jitting,
+    is_jitting_with_raise,
     last_interpreted_instructions,
+    last_interpreter_log,
+    make_opaque,
+    print_interpreter_log,
 )
+from thunder.tests.framework import IS_WINDOWS
 
 #
 # Test suite for core Python interpreter functionality
@@ -1517,8 +1515,9 @@ def test_import(jit):
     assert jit(foo)() is foo()
 
     # reload is implemented using exec of the module
-    from . import litgpt_model
     import importlib
+
+    from . import litgpt_model
 
     importlib.reload(litgpt_model)
     assert hasattr(litgpt_model, "GPT")
@@ -2897,9 +2896,9 @@ def test_name_opcodes_and_print_expr(jit):
     reason="Python 3.12 code.InteractiveInterpreter().runsource does not use the displayhook as before",
 )
 def test_displayhook(jit):
-    from contextlib import redirect_stdout
-    import io
     import code
+    import io
+    from contextlib import redirect_stdout
 
     # TODO: Implement the lookaside for exec(). Under the hood, `code.InteractiveInterpreter().runsource('5;6;7')``
     # just compiles the string and calls exec(), plus a little bit of error handling.
@@ -3354,7 +3353,7 @@ def test_exception_in_list_init(jit):
 
 
 def test_nanogpt_mlp(jit):
-    from thunder.benchmarks import NanoGPTMLPBenchmark, NanoGPTConfig, _nanogpt_configs
+    from thunder.benchmarks import NanoGPTConfig, NanoGPTMLPBenchmark, _nanogpt_configs
 
     config: NanoGPTConfig = NanoGPTConfig(dropout=0)
     config.update(**_nanogpt_configs["gpt2"])
@@ -3370,7 +3369,7 @@ def test_nanogpt_mlp(jit):
 
 
 def test_nanogpt_csa(jit):
-    from thunder.benchmarks import NanoGPTCSABenchmark, NanoGPTConfig, _nanogpt_configs
+    from thunder.benchmarks import NanoGPTConfig, NanoGPTCSABenchmark, _nanogpt_configs
 
     config: NanoGPTConfig = NanoGPTConfig(dropout=0)
     config.update(**_nanogpt_configs["gpt2"])

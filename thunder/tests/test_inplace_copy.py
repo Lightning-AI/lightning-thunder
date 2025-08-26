@@ -7,7 +7,7 @@ from torch.testing import assert_close, make_tensor
 import thunder
 import thunder.core.dtypes as datatypes
 import thunder.torch as ttorch
-from thunder.tests.framework import instantiate, nvFuserExecutor, TorchExecutor
+from thunder.tests.framework import TorchExecutor, instantiate, nvFuserExecutor
 
 
 @instantiate(dtypes=datatypes.all_dtypes - datatypes.float_8bit_dtypes)

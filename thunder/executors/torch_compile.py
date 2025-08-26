@@ -6,21 +6,20 @@ import torch
 from lightning_utilities import compare_version
 
 from thunder.core import prims, utils
-from thunder.core.proxies import Proxy, TensorProxy, unvariableify, Variable
+from thunder.core.compile_data import get_compile_option
+from thunder.core.proxies import Proxy, TensorProxy, Variable, unvariableify
+from thunder.core.pytree import tree_flatten
 from thunder.core.rematerialization import rematerialize
 from thunder.core.symbol import BoundSymbol, Symbol
-from thunder.core.trace import from_trace, tracectx, TraceCtx, TraceProvenance
+from thunder.core.trace import TraceCtx, TraceProvenance, from_trace, tracectx
 from thunder.core.transform_common import dce
-from thunder.core.pytree import tree_flatten
 from thunder.executors.passes import (
-    update_fusion_call_ctx,
     transform_for_execution,
+    update_fusion_call_ctx,
 )
-from thunder.executors.utils import Region
-from thunder.extend import FusionExecutor, register_executor, ImplInfo
-from thunder.core.compile_data import get_compile_option
 from thunder.executors.torchex import ex as pytorch_ex
-
+from thunder.executors.utils import Region
+from thunder.extend import FusionExecutor, ImplInfo, register_executor
 
 _TORCH_GREATER_EQUAL_2_3 = compare_version("torch", operator.ge, "2.3.0", use_base_version=True)
 
@@ -32,8 +31,8 @@ def make_compiled(
     *,
     mode: str | None = None,
 ) -> Callable:
-    from thunder.executors.torchex import no_autocast
     from thunder.core.codeutils import SigInfo
+    from thunder.executors.torchex import no_autocast
 
     # Here we construct a trace that will be used to compile the function
     # TODO: maybe we should have a utility that does this properly
@@ -139,7 +138,7 @@ class TorchCompileExecutor(FusionExecutor):
         fusedtrace: TraceCtx = from_trace(trace)
 
         producers, consumers = utils.producers_and_consumers(trace)
-        from thunder.executors.data_dependent_partition import fuse_bound_symbols, Node
+        from thunder.executors.data_dependent_partition import Node, fuse_bound_symbols
 
         def _should_fuse(a: Node, b: Node):
             def _can_fuse_node(n: Node):

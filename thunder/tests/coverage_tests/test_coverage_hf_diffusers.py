@@ -1,7 +1,7 @@
-import torch
 import os
-import pytest
 
+import pytest
+import torch
 
 if os.getenv("ALLOW_COVERAGE_TRACE") != "1":
     pytest.skip("Skipping test_coverage_hf_diffusers.py in regular CI", allow_module_level=True)
@@ -23,8 +23,9 @@ from thunder.tests.framework import requiresCUDA
 @requiresCUDA
 @pytest.mark.parametrize("model_id", hf_diffusers_unet2d_condition_model_ids)
 def test_hf_diffusers(model_id):
-    from thunder.dynamo import thunderfx
     from diffusers import UNet2DConditionModel
+
+    from thunder.dynamo import thunderfx
 
     unet_config = UNet2DConditionModel.load_config(model_id, subfolder="unet", torch_dtype=torch.bfloat16)
     unet = UNet2DConditionModel(unet_config)

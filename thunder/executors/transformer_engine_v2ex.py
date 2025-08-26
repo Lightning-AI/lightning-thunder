@@ -1,12 +1,11 @@
 import warnings
-
 from collections.abc import Callable
 
 from lightning_utilities.core.imports import package_available
 
 from thunder import Transform
-from thunder.extend import StatefulExecutor
 from thunder.core.trace import TraceCtx
+from thunder.extend import StatefulExecutor
 
 __all__ = ["transformer_engine_v2_ex", "TransformerEngineTransformV2", "_te_activation_checkpointing_transform"]
 

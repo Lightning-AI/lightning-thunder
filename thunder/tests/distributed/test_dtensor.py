@@ -1,6 +1,6 @@
 import unittest
-from itertools import product
 from collections.abc import Sequence
+from itertools import product
 
 import pytest
 import torch
@@ -8,22 +8,18 @@ import torch
 if not torch.distributed.is_available():
     pytest.skip(allow_module_level=True)
 
-from thunder.dynamo import thunderfx
-import thunder
-
-from thunder.tests.distributed.helper import DistributedParallelTestCase
 from torch.distributed._tensor import DeviceMesh, distribute_tensor
-from torch.distributed.tensor.placement_types import Placement, Shard, Replicate
+from torch.distributed.tensor.placement_types import Placement, Replicate, Shard
+from torch.testing._internal import common_utils
 from torch.testing._internal.distributed._tensor.common_dtensor import DTensorConverter
 
-from torch.testing._internal import common_utils
-
-from thunder.tests.distributed.helper import executors_map
-from thunder.tests.opinfos import OpInfo, get_opinfo
-from thunder.tests.utils import is_output_differentiable, filter_differentiable_outputs
+import thunder
 import thunder.core.dtypes as dtypes
 from thunder.core.pytree import tree_flatten
-
+from thunder.dynamo import thunderfx
+from thunder.tests.distributed.helper import DistributedParallelTestCase, executors_map
+from thunder.tests.opinfos import OpInfo, get_opinfo
+from thunder.tests.utils import filter_differentiable_outputs, is_output_differentiable
 
 # NOTE: We run all these similar functions seperately
 #       as we want to avoid nvfuser issue (https://github.com/NVIDIA/Fuser/issues/4507)

@@ -17,44 +17,42 @@ import thunder.executors
 import thunder.torch as ltorch
 from thunder.core import devices
 from thunder.distributed import ddp
-from thunder.tests.framework import instantiate, TorchExecutor
-
+from thunder.executors.transformer_engine_v2ex import TransformerEngineTransformV2, transformer_engine_v2_ex
 from thunder.executors.transformer_engineex import (
-    transformer_engine_ex,
     TE_AVAILABLE,
     te_sync_fp8_meta_bwd,
+    transformer_engine_ex,
 )
-
-from thunder.executors.transformer_engine_v2ex import transformer_engine_v2_ex, TransformerEngineTransformV2
-
+from thunder.tests.framework import TorchExecutor, instantiate
 
 is_fp8_supported: bool = False
 # This will be correctly updated below when TE Engine is installed
 # and if the current environment doesn't support FP8.
 fp8_support_reason: str = ""
 if TE_AVAILABLE:
-    from transformer_engine.pytorch import fp8_autocast
+    from transformer_engine.common.recipe import MXFP8BlockScaling
     from transformer_engine.pytorch import Linear as TELinear
+    from transformer_engine.pytorch import fp8_autocast
     from transformer_engine.pytorch.fp8 import (
-        check_fp8_support,
         FP8GlobalStateManager,
+        check_fp8_support,
         get_default_fp8_recipe,
     )
-    from transformer_engine.common.recipe import MXFP8BlockScaling
 
     is_fp8_supported, fp8_support_reason = check_fp8_support()
 
-from thunder.tests.distributed.helper import (
-    ToyModel,
-    DistributedParallelTestCase,
-    executors_map,
-    SmallModel,
-    create_per_process_dataloader,
-    run_test_no_sync_grad_accumulation,
-    distributed_wrapper,
-    init_per_process_distributed,
-)
 from torch.testing._internal import common_utils
+
+from thunder.tests.distributed.helper import (
+    DistributedParallelTestCase,
+    SmallModel,
+    ToyModel,
+    create_per_process_dataloader,
+    distributed_wrapper,
+    executors_map,
+    init_per_process_distributed,
+    run_test_no_sync_grad_accumulation,
+)
 
 
 @unittest.skipUnless(
@@ -111,10 +109,10 @@ class DDPTest(DistributedParallelTestCase):
     def test_ddp_grad_bucketing(self, executor, bucket_size_in_mb: int):
         from thunder.distributed import ddp
         from thunder.executors.torchex import (
+            all_reduce_prim_impl,
             pack_prim_impl,
             unpack_prim_impl,
             update_bucket_view_prim_impl,
-            all_reduce_prim_impl,
         )
 
         device = torch.device("cuda", self.rank)
@@ -511,7 +509,7 @@ def _test_ddp_transformer_engine_llama_sanity(input_data):
     # due to reordering of forward and backward operators.
     # (This test will fail without `_rearrange_transformer_engine_linear` in `torch_autograd.py`)
     # For more details, see docstring for `_rearrange_transformer_engine_linear` in transformer_engine_ex.py.
-    from thunder.tests.llama2_model import Transformer, ModelArgs
+    from thunder.tests.llama2_model import ModelArgs, Transformer
 
     init_method, world_size, rank, executor, device, dtype, _unused_kwargs = input_data
     devicetype = devices.device_from_string(device).devicetype
@@ -683,8 +681,8 @@ def _test_ddp_transformer_engine_v2_llama_sanity(input_data):
     # due to reordering of forward and backward operators.
     # (This test will fail without `_rearrange_transformer_engine_linear` in `torch_autograd.py`)
     # For more details, see docstring for `_rearrange_transformer_engine_linear` in transformer_engine_ex.py.
-    from thunder.tests.llama2_model import Transformer, ModelArgs
     from thunder.core.proxies import variableify
+    from thunder.tests.llama2_model import ModelArgs, Transformer
 
     init_method, world_size, rank, executor, device, dtype, _unused_kwargs = input_data
     devicetype = devices.device_from_string(device).devicetype

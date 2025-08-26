@@ -1,20 +1,19 @@
 import time
 
+import thunder.torch as ltorch
 from thunder.core import prims, utils
-
-from thunder.core.pytree import tree_map, tree_iter, tree_flatten_with_dataclass
-from thunder.core.proxies import TensorProxy, ProxyTag, Proxy, CollectionProxy, variableify
+from thunder.core.proxies import CollectionProxy, Proxy, ProxyTag, TensorProxy, variableify
+from thunder.core.pytree import tree_flatten_with_dataclass, tree_iter, tree_map
 from thunder.core.symbol import BoundSymbol, BoundSymbolTag
-from thunder.core.trace import TraceProvenance, tracectx, TraceCtx, from_trace, TraceTag
+from thunder.core.trace import TraceCtx, TraceProvenance, TraceTag, from_trace, tracectx
 from thunder.core.trace_interpreter import TraceSubstitutionProcessor
 from thunder.core.transforms import (
-    dce,
-    is_constant_for_vjp,
     _get_gradfn_and_executor,
     augmented_forward_impls,
     backward_impls,
+    dce,
+    is_constant_for_vjp,
 )
-import thunder.torch as ltorch
 
 
 def _should_recompute_bsym_in_backward(bsym):

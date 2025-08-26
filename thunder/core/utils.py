@@ -1,24 +1,25 @@
 from __future__ import annotations
-from collections import defaultdict, deque, UserDict
-from collections.abc import Callable, Hashable, Iterable, Iterator, Sequence, Mapping
+
+import itertools
+import os
+from collections import UserDict, defaultdict, deque
+from collections.abc import Callable, Hashable, Iterable, Iterator, Mapping, Sequence
 from enum import Enum
 from functools import reduce
 from numbers import Number
 from types import MappingProxyType
-from typing import overload, Generic, TypeVar, TYPE_CHECKING
-import itertools
-import os
+from typing import TYPE_CHECKING, Generic, TypeVar, overload
 
-from typing_extensions import Self
 import torch
+from typing_extensions import Self
 
 import thunder.core.dtypes as dtypes
-from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
-from thunder.core.proxies import Proxy, NumberProxy, TensorProxy, variableify, CONSTRAINT, Variable
+import thunder.core.prims as prims
 from thunder.core.baseutils import *
 from thunder.core.codeutils import *
+from thunder.core.proxies import CONSTRAINT, NumberProxy, Proxy, TensorProxy, Variable, variableify
+from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
 from thunder.core.trace import TraceCtx, tracectx
-import thunder.core.prims as prims
 
 if TYPE_CHECKING:
     from typing import Any

@@ -1,48 +1,47 @@
 import dis
-from typing import Any
+from collections import defaultdict, deque
 from collections.abc import Callable, Generator, Hashable, Sequence
-from collections import deque, defaultdict
 from io import StringIO
+from typing import Any
 from weakref import WeakValueDictionary
 
+import numpy as np
+import torch as torch
+
+import thunder
+import thunder.core.langctxs as langctxs
+import thunder.core.prims as prims
+import thunder.distributed as dist
+import thunder.executors as executors
+from thunder.core.codeutils import get_siginfo
+from thunder.core.dtypes import to_dtype
+from thunder.core.langctxs import LanguageContext, Languages, reset_langctx, resolve_language, set_langctx
 from thunder.core.options import (
     CACHE_OPTIONS,
-    resolve_cache_option,
     SHARP_EDGES_OPTIONS,
-    resolve_sharp_edges_option,
     DebugOptions,
+    resolve_cache_option,
+    resolve_sharp_edges_option,
 )
-from thunder.core.utils import is_collection, AutocastStack
+from thunder.core.proxies import (
+    CollectionProxy,
+    DistParallelType,
+    FutureTensorProxy,
+    Proxy,
+    TensorProxy,
+    is_proxyable,
+    proxy,
+)
 from thunder.core.pytree import tree_map
-import thunder.core.langctxs as langctxs
-from thunder.core.langctxs import set_langctx, reset_langctx, LanguageContext, resolve_language, Languages
-from thunder.core.codeutils import get_siginfo
 from thunder.core.trace import (
     TraceCtx,
     get_tracectx,
-    set_tracectx,
     reset_tracectx,
+    set_tracectx,
 )
 from thunder.core.transform_common import dce
-from thunder.core.proxies import (
-    is_proxyable,
-    proxy,
-    Proxy,
-    CollectionProxy,
-    TensorProxy,
-    DistParallelType,
-    FutureTensorProxy,
-)
-import thunder.core.prims as prims
-import thunder.distributed as dist
-from thunder.extend import Executor, get_default_executors, get_always_executors, add_executor_lists
-import thunder.executors as executors
-from thunder.core.dtypes import to_dtype
-
-import torch as torch
-import numpy as np
-import thunder
-
+from thunder.core.utils import AutocastStack, is_collection
+from thunder.extend import Executor, add_executor_lists, get_always_executors, get_default_executors
 
 __all__ = [
     "CompileStats",

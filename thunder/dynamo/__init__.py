@@ -6,7 +6,6 @@ from thunder.dynamo.compiler import (
     thunderfx,
 )
 
-
 __all__ = [
     "ThunderCompiler",
     "ThunderFXCompiledObject",

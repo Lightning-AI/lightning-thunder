@@ -1,6 +1,7 @@
 from __future__ import annotations
-from collections.abc import Callable
+
 import copy
+from collections.abc import Callable
 from itertools import chain
 from typing import TYPE_CHECKING
 

@@ -1,9 +1,12 @@
-from thunder.core.trace import TraceCtx as Trace, from_trace, TraceProvenance
+import time
+
+import torch
+
+import thunder
+from thunder.core.trace import TraceCtx as Trace
+from thunder.core.trace import TraceProvenance, from_trace
 from thunder.dev_utils.utils import NON_COMPUTATION_PRIMS
 from thunder.extend import OperatorExecutor
-import time
-import torch
-import thunder
 
 
 class Timer:

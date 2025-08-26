@@ -1,8 +1,9 @@
 from __future__ import annotations
-from contextlib import contextmanager
-import itertools
-from typing import TYPE_CHECKING
+
 import collections
+import itertools
+from contextlib import contextmanager
+from typing import TYPE_CHECKING
 
 import torch as pytorch
 from torch.utils.weak import WeakTensorKeyDictionary
@@ -13,6 +14,7 @@ from thunder.core.compile_data import get_compile_data
 if TYPE_CHECKING:
     from collections.abc import Mapping
     from typing import Any
+
     from thunder.core.transform_common import Transform
 
 
@@ -369,9 +371,9 @@ class ThunderModule(pytorch.nn.Module):
 
         """
         from thunder.distributed import (
-            set_skip_data_parallel_grad_sync,
-            reset_skip_data_parallel_grad_sync,
             _sync_grads,
+            reset_skip_data_parallel_grad_sync,
+            set_skip_data_parallel_grad_sync,
         )
 
         token = set_skip_data_parallel_grad_sync(True)

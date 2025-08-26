@@ -1,23 +1,25 @@
 from __future__ import annotations
-from functools import partial
-from inspect import Parameter
-from typing import TYPE_CHECKING, NamedTuple
+
 import dataclasses
 import dis
 import functools
 import inspect
 import linecache
 import sys
+from functools import partial
+from inspect import Parameter
+from typing import TYPE_CHECKING, NamedTuple
 
 import thunder.core.baseutils as baseutils
-from thunder.core.baseutils import ProxyInterface, check
-import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
+import thunder.core.dtypes as dtypes
+from thunder.core.baseutils import ProxyInterface, check
 from thunder.core.pytree import tree_flatten, tree_unflatten
 
 if TYPE_CHECKING:
-    from typing import Any
     from collections.abc import Callable, Sequence
+    from typing import Any
+
     from thunder.core.trace import TraceCtx
 
 

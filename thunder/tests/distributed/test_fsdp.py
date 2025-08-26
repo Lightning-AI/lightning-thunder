@@ -19,47 +19,44 @@ import thunder
 import thunder.executors
 import thunder.torch as ltorch
 from thunder.core import devices
-from thunder.distributed import FSDPBucketingStrategy, FSDPType
-from thunder.distributed import fsdp
-from thunder.tests.framework import instantiate, TorchExecutor
-
+from thunder.distributed import FSDPBucketingStrategy, FSDPType, fsdp
+from thunder.executors.transformer_engine_v2ex import TransformerEngineTransformV2, transformer_engine_v2_ex
 from thunder.executors.transformer_engineex import (
-    transformer_engine_ex,
     TE_AVAILABLE,
+    transformer_engine_ex,
 )
-
-from thunder.executors.transformer_engine_v2ex import transformer_engine_v2_ex, TransformerEngineTransformV2
-
+from thunder.tests.framework import TorchExecutor, instantiate
 
 is_fp8_supported: bool = False
 # This will be correctly updated below when TE Engine is installed
 # and if the current environment doesn't support FP8.
 fp8_support_reason: str = ""
 if TE_AVAILABLE:
-    from transformer_engine.pytorch import fp8_autocast
+    import transformer_engine
+    from transformer_engine.common.recipe import MXFP8BlockScaling
     from transformer_engine.pytorch import Linear as TELinear
+    from transformer_engine.pytorch import fp8_autocast
     from transformer_engine.pytorch.fp8 import (
-        check_fp8_support,
         FP8GlobalStateManager,
+        check_fp8_support,
         get_default_fp8_recipe,
     )
-    from transformer_engine.common.recipe import MXFP8BlockScaling
-    import transformer_engine
 
     is_fp8_supported, fp8_support_reason = check_fp8_support()
 
-from thunder.tests.distributed.helper import (
-    ToyModel,
-    DistributedParallelTestCase,
-    new_gelu,
-    executors_map,
-    distributed_wrapper,
-    create_per_process_dataloader,
-    SmallModel,
-    run_test_no_sync_grad_accumulation,
-    init_per_process_distributed,
-)
 from torch.testing._internal import common_utils
+
+from thunder.tests.distributed.helper import (
+    DistributedParallelTestCase,
+    SmallModel,
+    ToyModel,
+    create_per_process_dataloader,
+    distributed_wrapper,
+    executors_map,
+    init_per_process_distributed,
+    new_gelu,
+    run_test_no_sync_grad_accumulation,
+)
 
 
 @unittest.skipUnless(
@@ -197,8 +194,8 @@ class FSDPTest(DistributedParallelTestCase):
                 self.assertEqual(tuple(p.grad for p in cm.parameters() if p.grad is not None), gradients)
 
                 # Make sure that at least one of "pack" takes multiple tensors.
-                from thunder.executors.torchex import pack_for_fsdp_prim_impl
                 from thunder.distributed.prims import PrimIDs as DistPrimIDs
+                from thunder.executors.torchex import pack_for_fsdp_prim_impl
 
                 for ex_trace in (thunder.last_traces(cm)[-1], thunder.last_backward_traces(cm)[-1]):
                     pack_bsyms = list(
@@ -239,8 +236,7 @@ class FSDPTest(DistributedParallelTestCase):
     ):
         from thunder.core.prims import PrimIDs
         from thunder.core.transforms import unwrap_one_level_of_subsymbols
-        from thunder.executors.torchex import pad_prim_impl
-        from thunder.executors.torchex import slice_prim_impl
+        from thunder.executors.torchex import pad_prim_impl, slice_prim_impl
 
         class M(nn.Module):
             def __init__(self):
@@ -541,7 +537,7 @@ class FSDPTest(DistributedParallelTestCase):
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
     def test_fsdpv2_with_1layer_llama_meta_init(self):
-        from thunder.tests.litgpt_model import Config, GPT
+        from thunder.tests.litgpt_model import GPT, Config
 
         device = torch.device("cuda", self.rank)
         config = Config("Llama-2-7b-hf")
@@ -573,7 +569,7 @@ class FSDPTest(DistributedParallelTestCase):
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
     def test_fsdpv2_no_grad(self):
-        from thunder.tests.litgpt_model import Config, GPT
+        from thunder.tests.litgpt_model import GPT, Config
 
         device = torch.device("cuda", self.rank)
         config = Config("Llama-2-7b-hf")
@@ -618,11 +614,12 @@ class FSDPDDPHybridTest(DistributedParallelTestCase):
     @pytest.mark.skipif(torch.cuda.device_count() < 4, reason="Requires 4 devices")
     def test_fsdp_ddp_hybrid(self):
         import torch
-        import thunder
         import torch.distributed
         from torch.testing import assert_close
-        from thunder.distributed.transforms.fsdp_v2 import FSDPTransform
+
+        import thunder
         from thunder.distributed.transforms.ddp_v2 import DDPTransform
+        from thunder.distributed.transforms.fsdp_v2 import FSDPTransform
 
         torch.manual_seed(1337)
 
@@ -655,10 +652,11 @@ class FSDPDDPHybridTest(DistributedParallelTestCase):
     @pytest.mark.skipif(torch.cuda.device_count() < 4, reason="Requires 4 devices")
     @pytest.mark.xfail(RuntimeError, reason="requires fix ...")  # todo
     def test_fsdp_ddp_plugin(self):
-        import thunder
         import torch.distributed
-        from thunder.plugins import FSDP
         from torch.testing import assert_close
+
+        import thunder
+        from thunder.plugins import FSDP
 
         torch.manual_seed(1337)
 
@@ -918,7 +916,7 @@ def _test_fsdp_transformer_engine(input_data):
 
 def _test_fsdp_transformer_engine_bucketing(input_data):
     # Test Description: Test is to that TE works with bucketing.
-    from thunder.tests.llama2_model import Transformer, ModelArgs
+    from thunder.tests.llama2_model import ModelArgs, Transformer
 
     init_method, world_size, rank, executor, device, _unused_dtype, kwargs = input_data
     thunder_fsdp_strategy, bucketing = kwargs["thunder_fsdp_strategy_and_bucketing"]
@@ -1171,7 +1169,7 @@ def _test_fsdp_transformer_engine_v2(input_data):
 
 def _test_fsdp_transformer_engine_v2_bucketing(input_data):
     # Test Description: Test is to that TEv2 works with bucketing.
-    from thunder.tests.llama2_model import Transformer, ModelArgs
+    from thunder.tests.llama2_model import ModelArgs, Transformer
 
     init_method, world_size, rank, executor, device, _unused_dtype, kwargs = input_data
     thunder_fsdp_strategy, bucketing = kwargs["thunder_fsdp_strategy_and_bucketing"]

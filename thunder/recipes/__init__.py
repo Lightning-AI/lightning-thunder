@@ -3,7 +3,6 @@ from typing import Any, Type
 from thunder.recipes.base import BaseRecipe
 from thunder.recipes.hf_transformers import HFTransformers
 
-
 names_to_recipes: dict[str : type[Any]] = {
     "default": BaseRecipe,
     "hf-transformers": HFTransformers,

@@ -1,20 +1,19 @@
+import time
+from collections import defaultdict
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from functools import partial
 from itertools import chain, takewhile
-from collections.abc import Callable
-from collections.abc import Sequence
-from collections import defaultdict
-import time
 
 import networkx as nx
 
 from thunder.core import prims, utils
 from thunder.core.baseutils import BoundSymbolInterface, ProxyInterface
-from thunder.core.proxies import TensorProxy, variableify, NumberProxy, Proxy
+from thunder.core.proxies import NumberProxy, Proxy, TensorProxy, variableify
 from thunder.core.symbol import has_tags
-from thunder.core.trace import from_trace, TraceCtx, TraceProvenance
-from thunder.core.transforms import bsym_list_to_dag, toposort_bsym_dag, TOPOSORT_ORDER
+from thunder.core.trace import TraceCtx, TraceProvenance, from_trace
 from thunder.core.transform_common import order_proxies
+from thunder.core.transforms import TOPOSORT_ORDER, bsym_list_to_dag, toposort_bsym_dag
 
 
 def find_external_producer_outputs(
@@ -475,8 +474,8 @@ def replace_uniform(trace: TraceCtx) -> TraceCtx:
         return trace
 
     start_time_ns = time.perf_counter_ns()
-    from thunder.core.trace import VariableInterface
     from thunder.core.devices import Device
+    from thunder.core.trace import VariableInterface
     from thunder.core.transforms import VISIT_TYPE, visitor_transform
 
     swapmap: dict[VariableInterface, Proxy] = {}

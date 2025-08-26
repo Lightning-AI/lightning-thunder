@@ -1,16 +1,17 @@
 from collections.abc import Callable
 from functools import partial
+
 import pytest
 import torch.testing
 
 import thunder
-from thunder.examine import get_fusions
 import thunder.core.dtypes as dtypes
 from thunder.core.symbol import Symbol
-from thunder.tests.opinfos import opinfos, OpInfo, make_number, SampleInput
+from thunder.examine import get_fusions
+from thunder.tests.framework import NOTHING, TorchCompileExecutor, TorchExecutor, instantiate, nvFuserExecutor, ops
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
-from thunder.tests.framework import instantiate, ops, NOTHING, TorchExecutor, TorchCompileExecutor, nvFuserExecutor
-from thunder.torch import _torch_to_thunder_function_map, _inplace_to_out_of_place
+from thunder.tests.opinfos import OpInfo, SampleInput, make_number, opinfos
+from thunder.torch import _inplace_to_out_of_place, _torch_to_thunder_function_map
 
 
 # `SampleInput`s of ops with `inplace` argument do not seem to come with `inplace` arg, so give it to them.

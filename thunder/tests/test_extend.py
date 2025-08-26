@@ -1,23 +1,23 @@
+import re
 from numbers import Number
 
 import numpy as np
-import torch
 import pytest
-import re
+import torch
+from lightning_utilities.core.imports import package_available
 from torch.testing import assert_close
 
 import thunder
 import thunder.core.devices as devices
 from thunder.core.proxies import TensorProxy
-from thunder.core.transforms import grad, get_grad, put_grads
+from thunder.core.transforms import get_grad, grad, put_grads
 from thunder.extend import (
     OperatorExecutor,
-    register_executor,
     deregister_executor,
     get_all_executors,
+    register_executor,
     single_op_executor,
 )
-from lightning_utilities.core.imports import package_available
 
 
 def test_extend_core():
@@ -280,8 +280,9 @@ def test_validate_executors():
 
 
 def test_transient_operator_executor():
-    from thunder.extend import TemporaryExecutor
     from functools import partial
+
+    from thunder.extend import TemporaryExecutor
 
     executor = TemporaryExecutor()
     op = executor.register_operator(

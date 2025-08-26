@@ -1,7 +1,8 @@
+import pytest
+import torch
+
 import thunder
 from thunder.dev_utils.check_trace import check_trace
-import torch
-import pytest
 
 
 def test_missing_symbol():

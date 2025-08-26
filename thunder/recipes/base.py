@@ -1,8 +1,10 @@
-import torch
-from thunder import Recipe, DebugOptions, Transform, Executor
-from thunder.transforms.prune_prologue_checks import PrunePrologueChecks
-from thunder.extend import get_executor
 from typing import Any
+
+import torch
+
+from thunder import DebugOptions, Executor, Recipe, Transform
+from thunder.extend import get_executor
+from thunder.transforms.prune_prologue_checks import PrunePrologueChecks
 
 
 def get_nvfuser_package_hint() -> str:

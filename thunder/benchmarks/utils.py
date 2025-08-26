@@ -1,7 +1,9 @@
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
 import torch
+
 import thunder
 from thunder.tests.make_tensor import make_tensor
 

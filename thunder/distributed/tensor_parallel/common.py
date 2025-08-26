@@ -1,31 +1,27 @@
 from __future__ import annotations
-from abc import ABC
-from abc import abstractmethod
-from enum import Enum
-from enum import auto
-from dataclasses import dataclass
-from dataclasses import field
+
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from enum import Enum, auto
 from typing import TYPE_CHECKING
 
 import torch
 
 from thunder.core.module import ThunderModule
-from thunder.core.proxies import DistParallelType
-from thunder.core.proxies import TensorProxy
-from thunder.core.proxies import variableify
-from thunder.core.transform_common import Transform
+from thunder.core.proxies import DistParallelType, TensorProxy, variableify
 from thunder.core.trace_interpreter import rerun_trace
+from thunder.core.transform_common import Transform
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from typing import Any
+
     from torch.distributed import ProcessGroup
+
     from thunder.core.module import ThunderModule
     from thunder.core.proxies import ProxyInterface
     from thunder.core.symbol import BoundSymbol
-    from thunder.core.trace import TraceCtx
-    from thunder.core.trace import TraceProvenance
-    from thunder.core.trace import VariableInterface
+    from thunder.core.trace import TraceCtx, TraceProvenance, VariableInterface
     from thunder.core.transforms import VISIT_TYPE
 
 
@@ -115,8 +111,8 @@ class ComputationTraceTransformVisitorForTensorParallel:
 
     def __call__(self, bsym: BoundSymbol) -> VISIT_TYPE:
         from thunder.core.prims import PrimIDs
-        from thunder.core.transforms import VISIT_TYPE
         from thunder.core.proxies import variableify
+        from thunder.core.transforms import VISIT_TYPE
 
         if bsym.sym.id in {
             PrimIDs.UNPACK_TRIVIAL,
@@ -202,8 +198,7 @@ class TransformForTensorParallel(Transform):
         epilogue_trace: TraceCtx,
         **kwargs,
     ) -> tuple[TraceCtx, TraceCtx, TraceCtx]:
-        from thunder.core import prims
-        from thunder.core import utils
+        from thunder.core import prims, utils
         from thunder.core.transforms import visitor_transform
 
         modules_and_thunder_modules = [
@@ -273,6 +268,7 @@ class TransformForTensorParallel(Transform):
 
     def transform_module(self, model: ThunderModule) -> None:
         import torch.nn as nn
+
         from thunder.core import utils
         from thunder.distributed import _shard_tensor
 

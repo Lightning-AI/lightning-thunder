@@ -1,25 +1,21 @@
-from functools import partial
-from contextlib import nullcontext
-import weakref
-
 import operator
 import sys
+import weakref
+from contextlib import nullcontext
+from functools import partial
 
 import pytest
 import torch
+from lightning_utilities import compare_version
 from torch.testing import assert_close
 
-from lightning_utilities import compare_version
-
 import thunder
-
-from thunder.tests.framework import requiresCUDA, IS_WINDOWS
-from thunder.core.options import CACHE_OPTIONS
 import thunder.core.prims as prims
-from thunder import pytorch_executor, nvfuser_executor
-from thunder.executors.sdpaex import sdpa_ex
+from thunder import nvfuser_executor, pytorch_executor
+from thunder.core.options import CACHE_OPTIONS
 from thunder.core.transforms import Transform
-
+from thunder.executors.sdpaex import sdpa_ex
+from thunder.tests.framework import IS_WINDOWS, requiresCUDA
 
 thunder_jit = partial(thunder.jit, debug_options=thunder.DebugOptions(check_traces=2))
 
@@ -669,8 +665,9 @@ def test_nanogpt():
     ("cpu", "cuda", "meta"),
 )
 def test_litgpt_variants(name, device):
-    from thunder.tests.litgpt_model import Config
     from litgpt.model import GPT
+
+    from thunder.tests.litgpt_model import Config
 
     if device == "cuda" and not torch.cuda.is_available():
         pytest.skip("CUDA not available")
@@ -725,9 +722,10 @@ def test_litgpt_variants(name, device):
     ("cpu", "cuda"),
 )
 def test_litgpt_variants_kvcache(name, device):
-    from thunder.tests.litgpt_model import Config
-    from litgpt.model import GPT
     import torch._dynamo  # this monkeypatches torch.manual_seed
+    from litgpt.model import GPT
+
+    from thunder.tests.litgpt_model import Config
 
     if device == "cuda" and not torch.cuda.is_available():
         pytest.skip("CUDA not available")
@@ -777,8 +775,9 @@ def test_litgpt_variants_kvcache(name, device):
     ("cpu", "cuda"),
 )
 def test_tom_overrides_proxy(device):
-    from thunder.tests.litgpt_model import Config
     from litgpt.model import GPT
+
+    from thunder.tests.litgpt_model import Config
 
     if device == "cuda" and not torch.cuda.is_available():
         pytest.skip("CUDA not available")

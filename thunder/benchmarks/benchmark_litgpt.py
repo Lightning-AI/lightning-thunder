@@ -1,32 +1,31 @@
 from __future__ import annotations
-from datetime import timedelta
+
+import functools
 import os
 import time
 import warnings
 from contextlib import nullcontext
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import TYPE_CHECKING
-from looseversion import LooseVersion
 
 import torch
-import functools
-from torch.utils.data import DataLoader, IterableDataset
 import torch.distributed as torch_dist
-from torch.distributed.device_mesh import init_device_mesh
-
+from lightning.fabric.utilities import Throughput
+from lightning.fabric.utilities.throughput import measure_flops
+from lightning_utilities.core.imports import package_available
+from looseversion import LooseVersion
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
+    CheckpointWrapper,
     apply_activation_checkpointing,
     checkpoint_wrapper,
-    CheckpointWrapper,
 )
+from torch.distributed.device_mesh import init_device_mesh
+from torch.utils.data import DataLoader, IterableDataset
 
 import thunder
 from thunder.dynamo import ThunderCompiler
-
-from thunder.tests.litgpt_model import Config, GPT, Block
-from lightning.fabric.utilities.throughput import measure_flops
-from lightning.fabric.utilities import Throughput
-from lightning_utilities.core.imports import package_available
+from thunder.tests.litgpt_model import GPT, Block, Config
 
 transformer_engine_available = package_available("transformer_engine")
 torchao_available = package_available("torchao")
@@ -42,12 +41,12 @@ except ImportError:
     sdpa_available = False
 
 if torchao_available:
-    from torchao.float8.config import CastConfig, Float8LinearConfig, ScalingType
     from torchao.float8 import precompute_float8_dynamic_scale_for_fsdp
+    from torchao.float8.config import CastConfig, Float8LinearConfig, ScalingType
     from torchao.float8.float8_linear_utils import (
         convert_to_float8_training,
-        sync_float8_amax_and_scale_history,
         get_float8_layers,
+        sync_float8_amax_and_scale_history,
     )
 
 if TYPE_CHECKING:
@@ -435,8 +434,8 @@ class Benchmark_litGPT:
                 with torch.no_grad():
                     self.inv_freq.copy_(inv_freq)
 
-            from transformers.models.qwen2.modeling_qwen2 import Qwen2RotaryEmbedding
             from transformers.models.llama.modeling_llama import LlamaRotaryEmbedding
+            from transformers.models.qwen2.modeling_qwen2 import Qwen2RotaryEmbedding
 
             Qwen2RotaryEmbedding.reset_parameters = RotaryEmbedding_reset_parameters
             LlamaRotaryEmbedding.reset_parameters = RotaryEmbedding_reset_parameters
@@ -445,8 +444,8 @@ class Benchmark_litGPT:
                 with torch.no_grad():
                     self.weight.fill_(1)
 
-            from transformers.models.qwen2.modeling_qwen2 import Qwen2RMSNorm
             from transformers.models.llama.modeling_llama import LlamaRMSNorm
+            from transformers.models.qwen2.modeling_qwen2 import Qwen2RMSNorm
 
             Qwen2RMSNorm.reset_parameters = RMSNorm_reset_parameters
             LlamaRMSNorm.reset_parameters = RMSNorm_reset_parameters
@@ -486,7 +485,7 @@ class Benchmark_litGPT:
                     bucket_size_in_mb=self.ddp_bucket_size,
                 )
             elif self.distributed_mode == "fsdp":
-                from thunder.distributed import fsdp, FSDPType, FSDPBucketingStrategy
+                from thunder.distributed import FSDPBucketingStrategy, FSDPType, fsdp
 
                 sharding_strategy = {"zero2": FSDPType.ZERO2, "zero3": FSDPType.ZERO3}[self.shard_mode]
                 self.bucketing_mode = self.bucketing_mode or "none"
@@ -516,7 +515,8 @@ class Benchmark_litGPT:
             elif self.distributed_mode == "fsdp2":
                 # reference: https://github.com/pytorch/torchtitan/blob/6e7a183/docs/fsdp.md
                 from functools import partial
-                from torch.distributed._composable.fsdp import fully_shard, MixedPrecisionPolicy
+
+                from torch.distributed._composable.fsdp import MixedPrecisionPolicy, fully_shard
 
                 if self.bucketing_mode is not None:
                     warnings.warn(f"fsdp2 ignores {self.bucketing_mode=}")
@@ -553,8 +553,9 @@ class Benchmark_litGPT:
                 model.apply(model._init_weights)
 
             elif self.distributed_mode == "fsdp":
-                from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, ShardingStrategy
-                from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy, size_based_auto_wrap_policy
+                from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+                from torch.distributed.fsdp import ShardingStrategy
+                from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy, transformer_auto_wrap_policy
 
                 mesh = None
                 if self.sharding_size is not None:
@@ -627,8 +628,8 @@ class Benchmark_litGPT:
 
             if "transformerengine_v2" in self.compile:
                 from thunder.executors.transformer_engine_v2ex import (
-                    transformer_engine_v2_ex,
                     TransformerEngineTransformV2,
+                    transformer_engine_v2_ex,
                 )
 
                 executors.insert(0, transformer_engine_v2_ex)

@@ -3,40 +3,38 @@ from typing import TYPE_CHECKING
 
 import torch.distributed as torch_dist
 
-from thunder.core.prims import linear as linear_prim
-from thunder.core.prims import get_grad, put_grad
-from thunder.core.proxies import AnyProxy, TensorProxy
-from thunder.extend import StatefulExecutor, register_executor
-from thunder.executors.transformer_engineex import _linear_checker
+import thunder.core.utils as utils
 import thunder.torch as ltorch
 from thunder import Transform
 from thunder.core import prims
-from thunder.core.proxies import Proxy, Variable, unvariableify, variableify
-from thunder.core.trace import from_trace, TraceProvenance, TraceTag, TraceCtx
-from thunder.core.transforms import (
-    _update_forward_with_new_saved_for_backward,
-    _update_backward_with_new_saved_for_backward,
-)
+from thunder.core.prims import get_grad, put_grad
+from thunder.core.prims import linear as linear_prim
+from thunder.core.proxies import AnyProxy, Proxy, TensorProxy, Variable, unvariableify, variableify
+from thunder.core.trace import TraceCtx, TraceProvenance, TraceTag, from_trace
 from thunder.core.transform_common import cse_single_bsym
+from thunder.core.transforms import (
+    _update_backward_with_new_saved_for_backward,
+    _update_forward_with_new_saved_for_backward,
+)
 from thunder.executors.passes import del_last_used
-import thunder.core.utils as utils
+from thunder.executors.transformer_engineex import _linear_checker
+from thunder.extend import StatefulExecutor, register_executor
 
 if TYPE_CHECKING:
-    from thunder.core.trace import VariableInterface
-    from thunder.core.symbol import BoundSymbolRHS, BoundSymbol
     from thunder.core.proxies import TensorProxy
+    from thunder.core.symbol import BoundSymbol, BoundSymbolRHS
+    from thunder.core.trace import VariableInterface
 
 import transformer_engine.pytorch as te
-from transformer_engine.pytorch.tensor import Quantizer
-from transformer_engine.pytorch.ops import BasicLinear
 from transformer_engine.pytorch.fp8 import (
-    _amax_and_scale_update,
-    get_fp8_max,
+    FP8GlobalStateManager,
     Recipe,
     RecipeState,
-    FP8GlobalStateManager,
+    _amax_and_scale_update,
+    get_fp8_max,
 )
-
+from transformer_engine.pytorch.ops import BasicLinear
+from transformer_engine.pytorch.tensor import Quantizer
 
 transformer_engine_v2_ex = StatefulExecutor("transformer_engine_v2")
 register_executor(transformer_engine_v2_ex)

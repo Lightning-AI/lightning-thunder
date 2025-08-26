@@ -1,7 +1,7 @@
+import warnings
 from contextlib import contextmanager
 from enum import Enum, auto
 from typing import Any
-import warnings
 
 import torch
 
@@ -131,7 +131,7 @@ class Recipe:
         for plugin in post_plugins:
             lookasides.extend(plugin.setup_lookasides() or [])
 
-        from thunder.core import jit_ext, interpreter
+        from thunder.core import interpreter, jit_ext
 
         if lookasides is not None:
             self._lookaside_executor = TemporaryExecutor()

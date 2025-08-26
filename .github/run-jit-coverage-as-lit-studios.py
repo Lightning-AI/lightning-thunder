@@ -1,10 +1,10 @@
+import glob
+import json
+import os
 import sys
 from datetime import datetime
-import glob
-import os
-import json
 
-from lightning_sdk import Studio, Machine
+from lightning_sdk import Machine, Studio
 from tqdm import tqdm
 
 

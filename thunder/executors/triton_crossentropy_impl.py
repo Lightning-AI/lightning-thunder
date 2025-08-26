@@ -3,8 +3,8 @@ from enum import Enum
 
 import torch
 
-from thunder.extend import OperatorExecutor, register_executor
 from thunder.executors import triton_utils
+from thunder.extend import OperatorExecutor, register_executor
 
 # Requires triton 2.1 or greater
 min_triton_version = "2.1"

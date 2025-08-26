@@ -1,9 +1,10 @@
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
 import thunder
 from thunder.core.trace import from_trace
-from thunder.core.transforms import bsym_list_to_dag, Node, toposort_bsym_dag, TOPOSORT_ORDER
+from thunder.core.transforms import TOPOSORT_ORDER, Node, bsym_list_to_dag, toposort_bsym_dag
 from thunder.core.utils import check
 from thunder.distributed.prims import PrimIDs
 
@@ -71,11 +72,11 @@ def sort_communication_ops(execution_trace):
         TraceCtx: The sorted execution trace.
     """
     from thunder.executors.torchex import (
-        wait_prim_impl,
-        reduce_scatter_prim_impl,
-        all_reduce_prim_impl,
         all_gather_prim_impl,
+        all_reduce_prim_impl,
+        reduce_scatter_prim_impl,
         unpack_for_fsdp_prim_impl,
+        wait_prim_impl,
     )
 
     if not has_wait_prims(execution_trace):
@@ -131,10 +132,10 @@ def sort_waits(execution_trace):
     """
     from thunder.core import prims
     from thunder.executors.torchex import (
-        wait_prim_impl,
-        reduce_scatter_prim_impl,
-        all_reduce_prim_impl,
         all_gather_prim_impl,
+        all_reduce_prim_impl,
+        reduce_scatter_prim_impl,
+        wait_prim_impl,
     )
 
     if not has_wait_prims(execution_trace):
@@ -184,6 +185,7 @@ def maybe_sort_waits(trace: TraceCtx) -> tuple[bool, TraceCtx]:
     is available and at least :func:`thunder.distributed.prims.wait` is in ``trace``.
     """
     from torch.distributed import is_available
+
     from thunder.core.trace import TraceProvenance
 
     if is_available() and has_wait_prims(trace):

@@ -1,13 +1,12 @@
-import pytest
 from functools import partial, wraps
 
+import pytest
 import torch
 
 import thunder
 import thunder.examine
 from thunder import torch as ttorch
-
-from thunder.core import utils, devices
+from thunder.core import devices, prims, utils
 from thunder.core.rematerialization import (
     apply_rematerialization_for_consumer,
     apply_rematerialization_for_producer,
@@ -16,11 +15,10 @@ from thunder.core.rematerialization import (
     find_filtered_producer_consumer_pairs,
     find_nvfuser_producer_consumer_pairs,
 )
-from thunder.core import prims
-from thunder.core.transforms import value_and_grad
 from thunder.core.trace import TraceCtx
+from thunder.core.transforms import value_and_grad
 from thunder.examine import get_fusions
-from thunder.tests.framework import instantiate, NOTHING, nvFuserExecutor, TorchExecutor, requiresCUDA
+from thunder.tests.framework import NOTHING, TorchExecutor, instantiate, nvFuserExecutor, requiresCUDA
 from thunder.tests.make_tensor import make_tensor
 
 
@@ -409,7 +407,7 @@ def test_find_cut(executor, device, _):
 )
 def test_find_cut_dropout(executor, device, _):
     t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import MagicMock, patch
 
     # mock the replace_uniform transform to return the input trace
     replace_uniform_mock = MagicMock(side_effect=lambda trc: trc)

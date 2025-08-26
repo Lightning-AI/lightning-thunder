@@ -1,10 +1,10 @@
+import warnings
 from distutils.version import LooseVersion
 from functools import partial
-import warnings
 
 import thunder
-from thunder.recipes import BaseRecipe
 from thunder import Recipe
+from thunder.recipes import BaseRecipe
 
 
 class InplaceIndexCopyTransform(thunder.Transform):

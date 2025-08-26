@@ -3,6 +3,7 @@ from collections.abc import Sequence
 import torch
 
 import thunder.core.utils as utils
+
 from .utils import is_cudagraph_capturing
 
 

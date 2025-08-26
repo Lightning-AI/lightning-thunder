@@ -1,10 +1,10 @@
+import pytest
 import torch
 from torch.testing import assert_close
-import pytest
 
 import thunder
-from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform, nvtx_push, nvtx_pop
-from thunder.tests.framework import requiresCUDA, BITSANDBYTES_AVAILABLE
+from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform, nvtx_pop, nvtx_push
+from thunder.tests.framework import BITSANDBYTES_AVAILABLE, requiresCUDA
 
 
 class MiniModel(torch.nn.Module):
@@ -73,10 +73,10 @@ def test_nvtx_transform():
 
 @requiresCUDA
 def test_materialization():
-    from thunder.transforms import MaterializationTransform
-    from thunder.tests.litgpt_model import Config
-
     from litgpt.model import GPT
+
+    from thunder.tests.litgpt_model import Config
+    from thunder.transforms import MaterializationTransform
 
     config = Config.from_name("llama2-like")
     with torch.device("cuda"):
@@ -116,10 +116,11 @@ def test_materialization():
 @pytest.mark.skipif(not BITSANDBYTES_AVAILABLE, reason="`bitsandbytes` is not available")
 @requiresCUDA
 def test_quantization_on_meta():
+    from litgpt.model import GPT
+
+    from thunder.tests.litgpt_model import Config
     from thunder.transforms import MaterializationTransform
     from thunder.transforms.quantization import BitsAndBytesLinearQuant4bit, get_bitsandbytes_executor
-    from thunder.tests.litgpt_model import Config
-    from litgpt.model import GPT
 
     bitsandbytes_executor = get_bitsandbytes_executor()
 
@@ -201,8 +202,8 @@ def test_nvfuser_cse():
         )
         inp = torch.randn(1, 512)
 
-    from thunder.transforms.quantization import BitsAndBytesLinearQuant4bit, get_bitsandbytes_executor
     from thunder.executors.nvfuserex import nvfuserex
+    from thunder.transforms.quantization import BitsAndBytesLinearQuant4bit, get_bitsandbytes_executor
 
     bitsandbytes_executor = get_bitsandbytes_executor()
 
@@ -522,12 +523,14 @@ def test_cudagraph_empty_inputs():
 
 @requiresCUDA
 def test_cudagraph_fw_bw():
-    import torch
-    import thunder
-    import litgpt
-    from thunder.tests.litgpt_model import Config
-    from torch.testing import make_tensor
     from functools import partial
+
+    import litgpt
+    import torch
+    from torch.testing import make_tensor
+
+    import thunder
+    from thunder.tests.litgpt_model import Config
     from thunder.transforms.cudagraph import CUDAGraphTransform
 
     device = torch.device("cuda")
@@ -566,8 +569,9 @@ def test_cudagraph_fw_bw():
 
 
 def test_disable_params_and_buffer_check():
-    from thunder.tests.litgpt_model import Config
     from litgpt.model import GPT
+
+    from thunder.tests.litgpt_model import Config
     from thunder.transforms.extraction_only_prologue_transform import ExtractionOnlyPrologueTransform
 
     model = GPT(Config.from_name("llama1-like", n_layer=1))
@@ -626,8 +630,9 @@ def test_disable_params_check_thunderfx():
 
 
 def test_buffer_dtype_casting():
-    import torch.nn as nn
     import itertools
+
+    import torch.nn as nn
 
     class CastBuffers(thunder.core.transform_common.Transform):
         def __init__(self):

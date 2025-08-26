@@ -1,15 +1,15 @@
 from __future__ import annotations
-from enum import auto, Enum
+
+from abc import ABC, abstractmethod
+from enum import Enum, auto
 from numbers import Number
 from typing import TYPE_CHECKING
-from abc import ABC, abstractmethod
 
 import torch.distributed
 
 import thunder.core.utils as utils
 from thunder.core.prims import make_prim
-
-from thunder.core.proxies import DistParallelType, FutureTensorProxy, pytype, TensorProxy
+from thunder.core.proxies import DistParallelType, FutureTensorProxy, TensorProxy, pytype
 from thunder.core.transforms import register_augmented_forward, register_backward
 from thunder.distributed import get_skip_data_parallel_grad_sync
 
@@ -445,6 +445,7 @@ class FwdGatherBwdSplitAlongLastDim(_TensorParallelOutputPostProcessFwdBwdInterf
     def backward(grad: TensorProxy, group: torch.distributed.ProcessGroup) -> TensorProxy:
         """Split along last dim"""
         from torch.distributed import distributed_c10d as c10d
+
         import thunder.torch as ltorch
 
         local_grad = ltorch.chunk(grad, c10d.get_world_size(group), dim=grad.ndim - 1)[c10d.get_rank(group)]
@@ -516,6 +517,7 @@ def synchronize_tensor_parallel_input_forward_rule(
             return t, (group, layer_type)
         case TensorParallelLayerType.ROW_PARALLEL_LINEAR:
             from torch.distributed import distributed_c10d as c10d
+
             from thunder import clang
 
             chunk_size = t.shape[t.ndim - 1] // group.size()

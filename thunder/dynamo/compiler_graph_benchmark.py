@@ -1,13 +1,14 @@
 from __future__ import annotations
-from pytest_benchmark.fixture import BenchmarkFixture
+
 from typing import TYPE_CHECKING
-from looseversion import LooseVersion
 
 import torch
+from looseversion import LooseVersion
+from pytest_benchmark.fixture import BenchmarkFixture
+
+from thunder.core.utils import check
 from thunder.dynamo import ThunderCompiler
 from thunder.dynamo.utils import _get_example_inputs_from_placeholder
-from thunder.core.utils import check
-
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -89,7 +90,7 @@ class ThunderCompilerGraphBenchmarking(ThunderCompiler):
         self.post_graph = debug_options.get("post_graph", False)
 
     def run_bench(self, gm: torch.fx.GraphModule, name: str, *sample_args):
-        from thunder.benchmarks import record_peak_allocated_memory, MAX_ALLOCATED_MEMORY_KEYWORD
+        from thunder.benchmarks import MAX_ALLOCATED_MEMORY_KEYWORD, record_peak_allocated_memory
 
         for ex_name, ex in self.executors.items():
             if ex is None:

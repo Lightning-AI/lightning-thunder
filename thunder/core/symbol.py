@@ -3,27 +3,24 @@ from __future__ import annotations
 import functools
 import inspect
 import sys
-from contextvars import ContextVar
+from collections.abc import Callable, Hashable, Iterable, Sequence
 from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from itertools import chain
 from types import ModuleType
-
-from dataclasses import dataclass, field
-from typing import Any, TYPE_CHECKING
-from collections.abc import Callable, Hashable, Iterable
-from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any
 
 import thunder.core.baseutils as baseutils
-from thunder.core.baseutils import BoundSymbolInterface, TagBase
 import thunder.core.codeutils as codeutils
-from thunder.core.codeutils import Printable, Positions
-from thunder.core.compile_data import get_compile_data
 import thunder.core.prims as prims
-from thunder.core.proxies import Proxy, TensorProxy, variableify, CollectionProxy, ProxyTag
-from thunder.core.pytree import tree_flatten, tree_flatten_with_dataclass, tree_unflatten, tree_map
-from thunder.core.trace import get_tracectx, VariableInterface
+from thunder.core.baseutils import BoundSymbolInterface, TagBase
+from thunder.core.codeutils import Positions, Printable
+from thunder.core.compile_data import get_compile_data
+from thunder.core.proxies import CollectionProxy, Proxy, ProxyTag, TensorProxy, variableify
+from thunder.core.pytree import tree_flatten, tree_flatten_with_dataclass, tree_map, tree_unflatten
+from thunder.core.trace import VariableInterface, get_tracectx
 from thunder.core.utils import FrozenDict, make_hashable
-
 
 #
 # Support for querying "traceable" functions

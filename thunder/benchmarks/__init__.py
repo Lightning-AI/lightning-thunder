@@ -4,13 +4,12 @@ import tempfile
 import textwrap
 import time
 from collections import UserDict
-from collections.abc import Callable
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import partial
 from numbers import Number
 from typing import Any
-from contextlib import contextmanager
 
 import torch
 import torch.multiprocessing as mp
@@ -18,21 +17,21 @@ import torch.nn as nn
 from lightning_utilities.core.imports import package_available
 
 import thunder
-import thunder.dynamo
 import thunder.core.devices as Devices
 import thunder.core.dtypes as dtypes
+import thunder.dynamo
 import thunder.executors as executors
 import thunder.torch as ltorch
-from thunder.core.transforms import grad, clear_grads, populate_grads
-from thunder.executors.apexex import apex_ex, apex_entropy_available
+from thunder.core.transforms import clear_grads, grad, populate_grads
+from thunder.executors.apexex import apex_entropy_available, apex_ex
 from thunder.executors.cudnn_layernormex import cudnn_layernorm_ex
-from thunder.executors.cudnnex import cudnn_ex, cudnn_available
-from thunder.executors.transformer_engineex import transformer_engine_ex, TE_AVAILABLE
+from thunder.executors.cudnnex import cudnn_available, cudnn_ex
 from thunder.executors.sdpaex import sdpa_ex
 from thunder.executors.torch_compile import torch_compile_cat_ex, torch_compile_ex
-from thunder.transforms.cudagraph import CUDAGraphTransform
-from thunder.tests import nanogpt_model, hf_bart_self_attn
+from thunder.executors.transformer_engineex import TE_AVAILABLE, transformer_engine_ex
+from thunder.tests import hf_bart_self_attn, nanogpt_model
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
+from thunder.transforms.cudagraph import CUDAGraphTransform
 
 MAX_ALLOCATED_MEMORY_KEYWORD = "max_allocated_memory_MB"
 
@@ -865,8 +864,7 @@ class get_default_thunder_ddp_dynamic_strides_executor:
 
 @dataclass(frozen=True)
 class get_default_thunder_fsdp_dynamic_strides_executor:
-    from thunder.distributed import FSDPBucketingStrategy
-    from thunder.distributed import FSDPType
+    from thunder.distributed import FSDPBucketingStrategy, FSDPType
 
     bucketing_strategy: FSDPBucketingStrategy
     sharding_strategy: FSDPType
@@ -2940,8 +2938,8 @@ class GPTBlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         dtype: thunder.dtypes.dtype | torch.dtype | str = thunder.bfloat16,
         requires_grad: bool = True,
     ) -> None:
-        from litgpt.model import build_rope_cache
         from litgpt.config import Config as LitGPTConfig
+        from litgpt.model import build_rope_cache
 
         super().__init__()
 
@@ -3321,8 +3319,8 @@ class LinearLoRABenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
                 self.lora_cls = partial(get_peft_model, peft_config=peft_config, autocast_adapter_dtype=False)
 
             case "NeMo":
-                from nemo.collections.llm.peft import LoRA
                 from nemo.collections.llm.fn import FNMixin
+                from nemo.collections.llm.peft import LoRA
 
                 base_cls += [FNMixin]
 

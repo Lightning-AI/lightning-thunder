@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -7,38 +8,34 @@ from typing import TYPE_CHECKING
 
 from torch.distributed import ProcessGroup
 
-from thunder.core import prims
-from thunder.core import utils
+from thunder.core import prims, utils
 from thunder.core.prims import PrimIDs
-from thunder.core.proxies import variableify
-from thunder.core.proxies import Proxy
-from thunder.core.proxies import TensorProxy
-from thunder.core.proxies import FutureTensorProxy
-from thunder.core.pytree import tree_flatten
-from thunder.core.pytree import tree_unflatten
+from thunder.core.proxies import FutureTensorProxy, Proxy, TensorProxy, variableify
+from thunder.core.pytree import tree_flatten, tree_unflatten
 from thunder.core.symbol import BoundSymbol
-from thunder.core.trace import VariableInterface
-from thunder.core.trace import from_trace
-from thunder.core.trace import TraceCtx
-from thunder.core.transforms import VISIT_TYPE
-from thunder.core.transforms import visitor_transform
-from thunder.distributed import FSDPBucketingStrategy
-from thunder.distributed import FSDPType
-from thunder.distributed import get_extract_bucket_name_from_tensor_proxy
-from thunder.distributed import get_skip_data_parallel_grad_sync
-from thunder.distributed.bucketing import FSDPBackwardBucket
-from thunder.distributed.bucketing import FSDPForwardBucket
+from thunder.core.trace import TraceCtx, VariableInterface, from_trace
+from thunder.core.transforms import VISIT_TYPE, visitor_transform
+from thunder.distributed import (
+    FSDPBucketingStrategy,
+    FSDPType,
+    get_extract_bucket_name_from_tensor_proxy,
+    get_skip_data_parallel_grad_sync,
+)
 from thunder.distributed import prims as dist_prims
-from thunder.executors.torchex import all_gather_prim_impl
-from thunder.executors.torchex import pack_prim_impl
-from thunder.executors.torchex import pack_for_fsdp_prim_impl
-from thunder.executors.torchex import reduce_scatter_prim_impl
-from thunder.executors.torchex import unpack_prim_impl
-from thunder.executors.torchex import unpack_for_fsdp_prim_impl
-from thunder.executors.torchex import wait_prim_impl
+from thunder.distributed.bucketing import FSDPBackwardBucket, FSDPForwardBucket
+from thunder.executors.torchex import (
+    all_gather_prim_impl,
+    pack_for_fsdp_prim_impl,
+    pack_prim_impl,
+    reduce_scatter_prim_impl,
+    unpack_for_fsdp_prim_impl,
+    unpack_prim_impl,
+    wait_prim_impl,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
     from thunder import CompileData
     from thunder.distributed.bucketing import Bucket
 

@@ -1,54 +1,49 @@
 import importlib
-import warnings
 import os
-from collections.abc import Callable
-from enum import auto, Enum
-from collections.abc import Sequence
+import warnings
+from collections.abc import Callable, Sequence
 from contextlib import nullcontext
+from enum import Enum, auto
 
 import pytest
 import torch
-
 from lightning_utilities.core.imports import package_available
-
 from litgpt.config import configs
 
 import thunder
-
 from thunder.benchmarks import (
-    OptimBenchmark,
     BatchNormBenchmark,
     Benchmark,
-    LitGPTBenchmark,
-    LitGPTCausalSelfAttentionBenchmark,
-    LitGPTSDPABenchmark,
-    LitGPTSwigluBenchmark,
-    LitGPTMLPBenchmark,
-    NanoGPTBenchmark,
-    NanoGPTCrossEntropyBenchmark,
-    LitGPTGeluBenchmark,
-    NanoGPTLayerNormBenchmark,
-    ResNet50Benchmark,
-    TorchbenchBenchmark,
+    DeepSeekSGLangMoEBenchmark,
     HFBenchmark,
     LinearLoRABenchmark,
-    DeepSeekSGLangMoEBenchmark,
+    LitGPTBenchmark,
+    LitGPTCausalSelfAttentionBenchmark,
+    LitGPTGeluBenchmark,
+    LitGPTMLPBenchmark,
+    LitGPTSDPABenchmark,
+    LitGPTSwigluBenchmark,
+    NanoGPTBenchmark,
+    NanoGPTCrossEntropyBenchmark,
+    NanoGPTLayerNormBenchmark,
+    OptimBenchmark,
+    ResNet50Benchmark,
+    TorchbenchBenchmark,
+    record_peak_allocated_memory,
     thunder_apex_executor,
     thunder_apex_nvfuser_executor,
     thunder_cudnn_executor,
     thunder_cudnn_nvfuser_executor,
     thunder_executor,
-    thunderfx_executor,
     thunder_sdpa_torch_compile_nvfuser_executor,
+    thunder_transformerengine_executor,
+    thunderfx_executor,
     torch_compile_executor,
     torch_executor,
-    thunder_transformerengine_executor,
-    record_peak_allocated_memory,
 )
-from thunder.core.interpreter import interpret
-
-from thunder.tests.litgpt_model import Config as LitGPTConfig
 from thunder.benchmarks.utils import backward_only
+from thunder.core.interpreter import interpret
+from thunder.tests.litgpt_model import Config as LitGPTConfig
 
 LIGER_FUSED_SWIGLU_AVAILABLE: bool = package_available("liger_kernel.ops.swiglu")
 APEX_FUSED_ROPE_AVAILABLE: bool = package_available("fused_rotary_positional_embedding")

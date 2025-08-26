@@ -2,10 +2,7 @@
 #   This feature is available in Python 3.7 and later.
 #   This import (like all __future__ imports) must be at the beginning of the file.
 from __future__ import annotations
-from collections.abc import Sequence
-from enum import Enum
-from types import MappingProxyType, CodeType, EllipsisType, FunctionType, MethodType
-from typing import TYPE_CHECKING
+
 import collections.abc
 import dis
 import functools
@@ -13,9 +10,13 @@ import inspect
 import os
 import re
 import sys
+from collections.abc import Sequence
+from enum import Enum
+from types import CodeType, EllipsisType, FunctionType, MappingProxyType, MethodType
+from typing import TYPE_CHECKING
 
-import torch
 import numpy as np
+import torch
 
 if TYPE_CHECKING:
     from collections.abc import Callable
