@@ -315,7 +315,7 @@ def _numberclass_to_numbertype(cls):
 
 
 def to_dtype(x: Any, /, *, true_dtype: bool = False) -> None | dtype:
-    """Exctracts a dtype from an object or class."""
+    """Extracts a dtype from an object or class."""
 
     if x is None or isinstance(x, dtype):
         return x
