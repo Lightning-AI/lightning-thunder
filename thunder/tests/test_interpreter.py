@@ -363,7 +363,7 @@ def test_build_const_key_map(jit):
 
     # test order for collisions
     def fn2(a, b):
-        return {"a": a, "a": b}. # noqa: F601
+        return {"a": a, "a": b}  # noqa: F601
 
     assert any(i.opname == "BUILD_CONST_KEY_MAP" for i in dis.get_instructions(fn1))
     assert any(i.opname == "BUILD_CONST_KEY_MAP" for i in dis.get_instructions(fn2))
