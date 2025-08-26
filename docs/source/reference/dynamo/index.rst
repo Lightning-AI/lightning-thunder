@@ -8,3 +8,4 @@ thunder.dynamo
 
     ThunderCompiler
     thunderfx
+    ThunderFXCompiledObject
