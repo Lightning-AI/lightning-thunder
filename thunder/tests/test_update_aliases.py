@@ -1,8 +1,11 @@
 from collections.abc import Callable
+from contextlib import nullcontext
 from functools import partial
 import pytest
 import torch.testing
 
+
+import torch
 import thunder
 from thunder.examine import get_fusions
 import thunder.core.dtypes as dtypes
@@ -81,8 +84,6 @@ for op in opinfos:
 
 @pytest.fixture
 def turn_off_tf32_and_set_seed(monkeypatch):
-    import torch
-
     monkeypatch.setenv("NVIDIA_TF32_OVERRIDE", "0")
     torch.manual_seed(42)
 
@@ -94,10 +95,6 @@ def turn_off_tf32_and_set_seed(monkeypatch):
 )
 @requiresCUDA
 def test_parse_resnet18(executor, device, dtype, turn_off_tf32_and_set_seed, train: bool):
-    from contextlib import nullcontext
-
-    import thunder
-
     torchvision = pytest.importorskip("torchvision")
 
     tdtype = thunder.torch.to_torch_dtype(dtype)
