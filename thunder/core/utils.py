@@ -1028,7 +1028,7 @@ def producers(trace_or_bsyms: TraceCtx | list[BoundSymbolInterface], *, _map_to_
 
         for out in bsym.flat_proxy_outs:
             # if a producer has already been traversed, skip
-            if producers.get(out, None) != None:
+            if producers.get(out, None) is not None:
                 continue
 
             vout = variableify(out)
