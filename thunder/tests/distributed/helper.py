@@ -36,7 +36,6 @@ __all__ = [
     "run_test_no_sync_grad_accumulation",
     "SmallModel",
     "ToyModel",
-    "DataParallelTestCase",
 ]
 
 
