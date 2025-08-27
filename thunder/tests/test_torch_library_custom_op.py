@@ -61,7 +61,8 @@ torch.library.register_autograd(
 )
 
 
-if has_triton_op := (torch.cuda.is_available() and package_available("triton")):
+has_triton_op = (torch.cuda.is_available() and package_available("triton"))
+if has_triton_op:
     import triton
     import triton.language as tl
 
