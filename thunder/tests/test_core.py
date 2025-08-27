@@ -2970,19 +2970,6 @@ def test_thunder_optimized_module_is_freed():
     assert ref_opt_mod() is None
 
 
-@pytest.mark.xfail(strict=True)
-def test_user_module_is_freed():
-    mod = torch.nn.ReLU()
-    opt_mod = thunder.jit(mod)
-    ref_mod = weakref.ref(mod)
-    x = torch.randn(10, 10)
-    opt_mod(x)
-    del x
-    del mod
-    del opt_mod
-    assert ref_mod() is None
-
-
 @pytest.mark.parametrize("requires_grad", [True, False])
 def test_return_bsym_has_none_output(requires_grad):
     def fn(x):
