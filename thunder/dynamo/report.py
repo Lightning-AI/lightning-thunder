@@ -10,11 +10,12 @@ import textwrap
 import copy
 from itertools import chain
 from looseversion import LooseVersion
+import shutil
 
 import torch
 from thunder.core.pytree import tree_flatten
 from thunder.core.utils import sequencify, create_python_callable_from_bsym
-from thunder.dynamo.compiler import thunderfx
+from thunder.dynamo.compiler import thunderfx, ThunderCompiler
 from thunder.dynamo.utils import (
     _get_example_inputs_from_placeholder,
     _readable,
@@ -370,7 +371,7 @@ class FXGraphReport:
 
         folder = Path(folder)
         folder.mkdir(exist_ok=True, parents=True)
-        if inputs == None:
+        if inputs is None:
             inputs = self.example_input_meta
         has_cuda_args = any(hasattr(arg, "device") and arg.device.type == "cuda" for arg in inputs)
         has_requires_grad_args = any(hasattr(arg, "requires_grad") and arg.requires_grad for arg in inputs)
@@ -378,7 +379,7 @@ class FXGraphReport:
         readable = _readable(self.graph, "DynamoModule", print_output=False)
         # The packages that are likely to be used by the code generated from the Torch GraphModule
         torch_import_str = "\n".join([v.import_str for v in torch.fx.graph._custom_builtins.values()])
-        import_str = "" if import_str == None else "\n".join(import_str)
+        import_str = "" if import_str is None else "\n".join(import_str)
         input_str = textwrap.indent(self._get_input_str(folder, inputs, serialize_inputs), "    ")
         call_bench_str = f"benchmark_for_compute_type(compute_type, benchmark, compiled_model, inputs, {{}}, has_cuda={True if has_cuda_args else False})"
         compute_type_decorator = (
@@ -501,7 +502,7 @@ class FXGraphReport:
         """
         folder = Path(folder)
         folder.mkdir(exist_ok=True, parents=True)
-        if inputs == None:
+        if inputs is None:
             inputs = self.example_input_meta
         code_str = self._get_repro_code(folder, compile_fn, None, serialize_inputs, inputs)
         comment_str = self._get_comment_str(extra_comment_str)
@@ -601,7 +602,7 @@ class FXGraphReport:
         """
         folder = Path(folder)
         folder.mkdir(exist_ok=True, parents=True)
-        if inputs == None:
+        if inputs is None:
             inputs = self.example_input_meta
         forward_only = not any(hasattr(arg, "requires_grad") and arg.requires_grad for arg in inputs)
         code_str = self._get_repro_code(folder, compile_fn, time_fn, serialize_inputs, inputs)
@@ -922,7 +923,7 @@ measurement = {timing_str}
 print(measurement)
 {comment_str}
 """
-        if file_name == None:
+        if file_name is None:
             file_name = f"{self.name}_benchmark_nvfuser.py"
         with open(folder / file_name, "w") as f:
             print(code_str, file=f)
@@ -935,7 +936,7 @@ print(measurement)
         comment_str = f'"""\n{self.nvfusion_bsym}\n"""'
         repro_code_str = f"{repro_code_str}\n{comment_str}"
 
-        if file_name == None:
+        if file_name is None:
             file_name = f"{self.name}_repro_nvfuser.py"
         with open(folder / file_name, "w") as f:
             print(repro_code_str, file=f)
@@ -965,7 +966,7 @@ print(measurement)
         code_str = f"""{code_str}
 out = torch_compiled_callable(*inputs)
 """
-        if file_name == None:
+        if file_name is None:
             file_name = f"{self.name}_repro_inductor.py"
         with open(folder / file_name, "w") as f:
             f.write(code_str)
@@ -981,7 +982,7 @@ out = torch_compiled_callable(*inputs)
 measurement = {time_fn.to_source("torch_compiled_callable", "inputs")}
 print(measurement)
 """
-        if file_name == None:
+        if file_name is None:
             file_name = f"{self.name}_benchmark_inductor.py"
         with open(folder / file_name, "w") as f:
             f.write(code_str)
@@ -1098,6 +1099,12 @@ def analyze_thunder_splits(
     # Dynamo uses lazy generation of the underlying Python code, so we need to
     # force recompilation of the GraphModule before passing it to Thunder.
     recompile_graph(gm)
+
+    # Get the default options from thunderfx if not specified.
+    for k, v in ThunderCompiler().thunder_options.items():
+        if k not in thunder_options:
+            thunder_options[k] = v
+
     thunder_jit = partial(jit, **thunder_options, nv_save_fake_inputs=True)
     _, subgraph_info = _splitter(gm, thunder_jit, torch.compile, _unused_sample_args=None)
 
@@ -1387,3 +1394,111 @@ def save_failing_repros(
             report.write_repro(
                 repros_folder, compile_fn, extra_comment_str=comment, check_consistency=check_consistency
             )
+
+
+def create_folder(folder_path: str | PathLike, force_overwrite: bool = False):
+    folder_path = Path(folder_path)
+
+    if folder_path.exists():
+        if not folder_path.is_dir():
+            raise RuntimeError(f"{folder_path} exists and is not a directory.")
+
+        if force_overwrite:
+            shutil.rmtree(folder_path)
+        else:
+            raise RuntimeError(f"Folder {folder_path} already exists. Use force_overwrite=True to overwrite.")
+
+    folder_path.mkdir(parents=True, exist_ok=False)
+
+
+def save_thunderfx_repros(
+    fn: Callable,
+    folder_path: str | PathLike,
+    *,
+    use_benchmark: bool = False,
+    check_runnability: bool = False,
+    save_fusion: bool = False,
+    save_trace: bool = False,
+    stream: TextIO = sys.stdout,
+    force_overwrite: bool = False,
+    **compile_kwargs,
+):
+    """
+    Saves reproduction scripts for ThunderFX subgraphs.
+
+    This function:
+    1. Creates a folder structure to organize the repros
+    .
+    └── graph0
+        ├── fusion_reports
+        │   ├── graph0_thunder_0_nvFusion0_forward_repro_nvfuser.py
+        │   ├── graph0_thunder_0_nvFusion1_forward_repro_nvfuser.py
+        │   ├── graph0_thunder_0_nvFusion2_backward_repro_nvfuser.py
+        ├── graph0_thunder_0_bwd_trace.py
+        ├── graph0_thunder_0_fwd_trace.py
+        └── graph0_thunder_0.py
+
+    2. For each Thunder FX graph and its subgraphs:
+        - Checks runnability if requested
+        - Saves benchmark or repro scripts
+        - Saves trace information if requested
+        - Saves nvFusion repros if requested
+
+    Args:
+        fn: The callable to analyze
+        folder_path: Path to save repros to
+        use_benchmark: If True, saves benchmark scripts instead of repros
+        check_runnability: If True, checks if graphs can run with Thunder
+        save_fusion: If True, saves nvFusion repros
+        save_trace: If True, saves trace information
+        stream: Stream to write output log informationto
+        force_overwrite: If True, overwrites existing folder at folder_path
+        **compile_kwargs: Keyword arguments for Thunder and torch.compile
+
+    Returns:
+        A wrapped function that saves repros when called with inputs
+    """
+    from thunder.dynamo.utils import get_torch_compile_kwargs
+
+    folder_path = Path(folder_path)
+    create_folder(folder_path, force_overwrite)
+    torch_compile_kwargs = get_torch_compile_kwargs(**compile_kwargs)
+    thunder_jit_kwargs = {k: v for k, v in compile_kwargs.items() if k not in torch_compile_kwargs}
+    thunderjit = ThunderCompileSpecification(**thunder_jit_kwargs)
+
+    def inner_fn(*args, **kwargs):
+        thunder_fxgraph_reports = get_thunder_fxgraph_reports(fn, stream=stream, **compile_kwargs)(*args, **kwargs)
+        for thunder_fxgraph_report in thunder_fxgraph_reports:
+            graph_folder = folder_path / thunder_fxgraph_report.graph_name
+            graph_folder.mkdir(exist_ok=True, parents=True)
+            for split_report in thunder_fxgraph_report.subgraph_reports:
+                if check_runnability or save_trace or save_fusion:
+                    try:
+                        split_report.create_fusion_reports()
+                    except Exception as e:
+                        stream.write(f"Failed to run the {split_report.graph_name} using Thunder with exception: {e}\n")
+                        split_report.write_repro(
+                            graph_folder, thunderjit, file_name=f"failed_{split_report.graph_name}.py"
+                        )
+                        continue
+                    else:
+                        stream.write(f"Successfully ran the {split_report.graph_name} using Thunder\n")
+                if use_benchmark:
+                    split_report.write_benchmark(graph_folder, thunderjit, WallTime)
+                else:
+                    split_report.write_repro(graph_folder, thunderjit)
+                if save_trace:
+                    with open(graph_folder / f"{split_report.graph_name}_fwd_trace.py", "w") as f:
+                        f.write(str(split_report.fwd_trc))
+                    with open(graph_folder / f"{split_report.graph_name}_bwd_trace.py", "w") as f:
+                        f.write(str(split_report.bwd_trc))
+                if save_fusion:
+                    fusion_folder = graph_folder / "fusion_reports"
+                    fusion_folder.mkdir(exist_ok=True, parents=True)
+                    for fusion_report in split_report.fusion_reports:
+                        if use_benchmark:
+                            fusion_report.write_nvfuser_benchmark(fusion_folder, WallTime)
+                        else:
+                            fusion_report.write_nvfuser_repro(fusion_folder)
+
+    return inner_fn

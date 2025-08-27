@@ -144,6 +144,8 @@ def test_get_all_executors_includes_all_native_executors():
         expected.update({"cudnn_layernorm"})
     if package_available("transformer_engine"):
         expected.update({"transformer_engine_v2"})
+
+    actual.discard("inplace_index_copy_ex")  # might be left over from recipes
     assert actual == expected
 
 
@@ -175,8 +177,8 @@ def test_register_implementation_custom_op():
     a = torch.randn(2, 2)
     b = torch.randn(2, 2)
 
-    res = cfn(a, b)
-    res2 = cfn2(a, b)
+    cfn(a, b)
+    cfn2(a, b)
 
     assert "myadd1" in str(thunder.last_traces(cfn)[-1])
     assert "myadd1" in str(thunder.last_traces(cfn2)[-1])
@@ -193,14 +195,14 @@ def test_register_implementation_custom_op():
     addex.register_implementation(myadd1, execution_transform=myadd_trafo, grad_transform=myadd_grad_trafo)
 
     cfn = thunder.jit(fn, executors=[addex])
-    res = cfn(a, b)
+    cfn(a, b)
 
     s = str(thunder.last_traces(cfn)[-1])
     assert "myadd2" in s and "myadd1" not in s
 
     a.requires_grad_()
 
-    res = cfn(a, b)
+    cfn(a, b)
 
     s = str(thunder.last_traces(cfn)[-1])
     assert "myadd2" in s and "myadd1" not in s
@@ -209,7 +211,7 @@ def test_register_implementation_custom_op():
 
     # without the executor, we just (should and do) jit through official_add
     cfn = thunder.jit(fn)
-    res = cfn(a, b)
+    cfn(a, b)
 
     s = str(thunder.last_traces(cfn)[-1])
     assert "myadd2" not in s and "myadd1" not in s

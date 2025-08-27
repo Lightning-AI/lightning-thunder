@@ -902,7 +902,7 @@ def get_python_tb(tb: list | TracebackType | None) -> list:
         return tb
 
     res = []
-    while tb != None:
+    while tb is not None:
         res.append(PythonFrameWrapper(tb.tb_frame))
         tb = tb.tb_next
     return res
@@ -979,7 +979,6 @@ class ProvenanceRecord:
             nonlocal counter
             inputs = [recurse_str(i) for i in self.inputs]
             inputs_str = ", ".join(inputs)
-            i = counter
             counter += 1
             l = f"  i{counter} = {self.inst}({inputs_str})"
             if self.output_idx != 0 or self.output_key is not None:
@@ -1631,7 +1630,6 @@ def _object_getattribute_lookaside(obj: Any, name: str):
         assert cls_var is not null
         if lookup_descriptor_field("__set__") is not null or lookup_descriptor_field("__delete__") is not null:
             assert callable(descr_get)
-            compilectx = get_interpretercompilectx()
 
             # if it is opaque, don't _interpret_call here, to avoid a wrap/unwrap dance
             if is_opaque(descr_get):
@@ -1693,9 +1691,11 @@ def check_self(obj, potential_method):
 
 
 def plausibly_wrapper_of(wrapper, value):
+    # note: there are cases where "is" will always fail (e.g. BuiltinMethods,
+    #       tensor.shape are recreated every time)
     if wrapper.value is value or wrapper.original_value is value:
         return True
-    if callable(value) or True:
+    if callable(value):
         if wrapper.value == value or wrapper.original_value == value:
             return True
     return False
@@ -1707,9 +1707,8 @@ def wrap_attribute(plain_result, obj, name):
         return plain_result
 
     known_wrapper = obj.attribute_wrappers.get(name.value)
-    # note: there are cases where "is" will always fail (e.g. BuiltinMethods
-    #       are recreated every time)
     if known_wrapper is not None:
+        # this is known to be overly strict
         assert plausibly_wrapper_of(known_wrapper, plain_result), (
             f"attribute {name.value} of {type(obj.value).__name__} object out of sync: {known_wrapper.value} vs. {plain_result}"
         )
@@ -1735,7 +1734,6 @@ def wrap_attribute(plain_result, obj, name):
 def _setattr_lookaside(obj: Any, name: str, value: Any):
     uobj = unwrap(obj)
     uname = unwrap(name)
-    uvalue = unwrap(value)
     typ = type(uobj)
 
     compilectx: InterpreterCompileCtx = get_interpretercompilectx()
@@ -1759,10 +1757,15 @@ def _setattr_lookaside(obj: Any, name: str, value: Any):
 
 def _getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
     """Emulate slot_tp_getattr_hook()."""
-    result = _object_getattribute_lookaside(obj, name)
 
     ctx: InterpreterRuntimeCtx = get_interpreterruntimectx()
     compilectx: InterpreterCompileCtx = get_interpretercompilectx()
+    if compilectx._with_provenance_tracking:
+        uname = unwrap(name)
+        if uname in obj.attribute_wrappers:
+            return obj.attribute_wrappers[uname]
+
+    result = _object_getattribute_lookaside(obj, name)
 
     assert not isinstance(result, WrappedValue)
     if result is not INTERPRETER_SIGNALS.EXCEPTION_RAISED or not isinstance(ctx.curexc, AttributeError):
@@ -2244,6 +2247,13 @@ class SequenceWrapperMethods(WrappedValue):
         self.track_items()
         return _interpret_call(SequenceIter, self, wrap_const(True))
 
+    @classmethod
+    def __class_getitem__(cls, index):
+        try:
+            return wrap_const(unwrap(cls).__class_getitem__(unwrap(index)))
+        except Exception as e:
+            return do_raise(e)
+
 
 class MutSequenceWrapperMethods(SequenceWrapperMethods):
     def __new__(cls, iterable=()):
@@ -2347,7 +2357,7 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
 
     def __iadd__(self, iterable, /):
         self.track_items()
-        res = _interpret_call(list.extend, self, iterable)
+        _interpret_call(list.extend, self, iterable)
         return self
 
     def __imul__(self, n, /):
@@ -2580,11 +2590,6 @@ class MutMappingWrapperMethods(WrappedValue):
         self.track_items()
         assert self.item_wrappers is not None
 
-        if last is Py_NULL():
-            last_d = {}
-        else:
-            last_d = {"last": last.value}
-
         try:
             uk, uv = self.value.popitem(last=last)
         except Exception as e:
@@ -2744,6 +2749,13 @@ class MutMappingWrapperMethods(WrappedValue):
             return new
 
         return _interpret_call(impl, self, other)
+
+    @classmethod
+    def __class_getitem__(cls, index):
+        try:
+            return wrap_const(unwrap(cls).__class_getitem__(unwrap(index)))
+        except Exception as e:
+            return do_raise(e)
 
 
 def _collections_namedtuple_lookaside(
@@ -2945,7 +2957,14 @@ def _register_provenance_tracking_lookasides(typ, wrapper):
             if meth in _default_provenance_tracking_lookaside_map:
                 pass
             elif hasattr(wrapper, meth_name):
-                _default_provenance_tracking_lookaside_map[meth] = getattr(wrapper, meth_name)
+                wrapper_meth = getattr(wrapper, meth_name)
+                if (
+                    isinstance(meth, BuiltinMethodType)
+                    and hasattr(meth, "__self__")
+                    and isinstance(wrapper_meth, MethodType)
+                ):  # classmethod
+                    wrapper_meth = functools.partial(wrapper_meth.__func__, meth.__self__)
+                _default_provenance_tracking_lookaside_map[meth] = wrapper_meth
             elif is_opaque(meth):
 
                 def get_unimplemented_fn(meth_name):
@@ -3248,8 +3267,6 @@ def _async_gen_wrap_handler(inst: dis.Instruction, /, stack: InterpreterStack, *
 def _before_async_with_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, **kwargs
 ) -> None | INTERPRETER_SIGNALS:
-    runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
-
     mgr = stack.pop()
 
     # python does a "special lookup"
@@ -3279,8 +3296,6 @@ def _before_async_with_handler(
 # https://docs.python.org/3.11/library/dis.html#opcode-BEFORE_WITH
 @register_opcode_handler("BEFORE_WITH", min_ver=(3, 11))
 def _before_with_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
-    runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
-
     mgr = stack.pop()
 
     # python does a "special lookup"
@@ -3621,10 +3636,16 @@ def _binary_subscr_handler(inst: dis.Instruction, /, stack: InterpreterStack, **
     tos = stack.pop_wrapped()
     tos1 = stack.pop_wrapped()
 
-    def impl(tos1, tos):
-        return tos1.__getitem__(tos)
+    def class_getitem_impl(cls, index):
+        return cls.__class_getitem__(index)
 
-    res = _interpret_call(impl, tos1, tos)
+    def getitem_impl(obj, index):
+        return obj.__getitem__(index)
+
+    if isinstance(unwrap(tos1), type):
+        res = _interpret_call(class_getitem_impl, tos1, tos)
+    else:
+        res = _interpret_call(getitem_impl, tos1, tos)
 
     if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return res
@@ -4259,10 +4280,10 @@ def _end_async_for_handler_3_10(
 
         assert len(stack) >= try_block.level + 3
         del stack[try_block.level + 3 :]
-        exc_type = frame.interpreter_stack.pop()  # we ignore that and assume == type(exc_value)
+        frame.interpreter_stack.pop()  # we ignore that and assume == type(exc_value)
         exc_value = frame.interpreter_stack.pop()
         exc_traceback = frame.interpreter_stack.pop()
-        if exc_value != None:
+        if exc_value is not None:
             exc_value.__traceback__ = exc_traceback
         assert runtimectx.exception_stack
         # CPython sets exc_info->exc_type/value/traceback
@@ -5264,8 +5285,6 @@ def _make_function_handler_313(
     fn_co: CodeType = unwrap(stack.pop_wrapped())
     name = fn_co.co_name
 
-    ctx: InterpreterCompileCtx = get_interpretercompilectx()
-
     if fn_co.co_freevars:
         # will be overridden by SET_FUNCTION_ATTRIBUTE call but we cannot
         # create the FunctionType below without
@@ -5519,9 +5538,9 @@ def _pop_except_handler_3_10(
     assert try_block.typ == PyTryBlock.EXCEPT_HANDLER_TYPE
     assert try_block.level + 3 <= len(stack) <= try_block.level + 4
     assert exception_stack
-    exc_type = stack.pop()
+    stack.pop()
     exc_value = stack.pop()
-    exc_traceback = stack.pop()
+    stack.pop()
     # we assume that type and traceback are set on exc_value already (check?)
     # CPython sets exc_info->exc_type/value/traceback, see RuntimeCtx inititalization of exception_stack for more info
     exception_stack[-1] = exc_value
@@ -5768,7 +5787,7 @@ def do_raise(exc: Any = Py_NULL(), cause: Any = Py_NULL()) -> Literal[INTERPRETE
         # Re-raise
         assert runtimectx.exception_stack
         value = runtimectx.exception_stack[0]
-        if value == None:
+        if value is None:
             return do_raise(RuntimeError("No active exception to reraise"))
         assert isinstance(value, BaseException)
         # check for cause being PY_NULL? Python does not do this, but it would seem to be a bug
@@ -5894,7 +5913,7 @@ def _reraise_handler_3_10(
     if inst.arg != 0:
         frame.lasti = try_stack[-1].handler
 
-    exc = stack.pop()
+    stack.pop()
     val = stack.pop()
     tb = stack.pop()
     assert isinstance(val, BaseException)
@@ -7159,10 +7178,9 @@ def _setup_frame_and_run_python_function(
 
     if compilectx._with_provenance_tracking:
         frame_globals = wrap_attribute(wrapped_fn.value.__globals__, wrapped_fn, wrap_const("__globals__"))
-        frame_builtins = wrap(builtins_dict, provenance=ProvenanceRecord(inst=PseudoInst.BUILTINS, inputs=[]))
+        wrap(builtins_dict, provenance=ProvenanceRecord(inst=PseudoInst.BUILTINS, inputs=[]))
     else:
         frame_globals = fn.__globals__
-        frame_builtins = builtins_dict
 
     # Creates the current ready to run stack frame for the current function
     frame = InterpreterFrame(
@@ -7286,10 +7304,10 @@ def _run_frame(
                             assert len(frame.interpreter_stack) >= try_block.level + 3
                             with frame.interpreter_stack.set_cur_instruction(PseudoInst.EXCEPTION_HANDLER):
                                 del frame.interpreter_stack[try_block.level + 3 :]
-                                exc_type = frame.interpreter_stack.pop()  # we ignore that and assume == type(exc_value)
+                                frame.interpreter_stack.pop()  # we ignore that and assume == type(exc_value)
                                 exc_value = frame.interpreter_stack.pop()
                                 exc_traceback = frame.interpreter_stack.pop()
-                            if exc_value != None:
+                            if exc_value is not None:
                                 exc_value.__traceback__ = exc_traceback
                             assert runtimectx.exception_stack
                             # CPython sets exc_info->exc_type/value/traceback
@@ -7481,6 +7499,8 @@ def interpret(
     if hasattr(fn, "__thunder_interpreter_orig_fn"):
         fn = fn.__thunder_interpreter_orig_fn
 
+    interpreter_log: list[InterpreterLogItem] = []
+
     @functools.wraps(fn)
     def fn_(*args, **kwargs) -> Any:
         runtimectx: InterpreterRuntimeCtx = InterpreterRuntimeCtx(debug_log=debug_log, record_history=record_history)
@@ -7537,8 +7557,7 @@ def interpret(
                     del e
                     raise
 
-            # NOTE: Wrapped functions are valid to assign new attributes to.
-            fn_._last_interpreter_log = runtimectx.interp_log  # type: ignore
+            interpreter_log.extend(runtimectx.interp_log)
 
             if interpretation_result is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
                 e = runtimectx.curexc
@@ -7554,6 +7573,7 @@ def interpret(
             return interpretation_result
 
     fn_.__thunder_interpreter_orig_fn = fn  # type: ignore
+    fn_._last_interpreter_log = interpreter_log  # type:ignore
     return fn_
 
 

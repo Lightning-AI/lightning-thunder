@@ -167,6 +167,16 @@ def _splitter(
         node_name = node.name
         if is_thunder_supported_partition(node):
             graph_module = getattr(split_gm, node.name)
+
+            is_differentiable_outputs = []
+            for n in graph_module.graph.nodes:
+                if n.op == "output":
+                    for n in n.all_input_nodes:
+                        if "example_value" not in n.meta or n.meta["example_value"].grad_fn is None:
+                            is_differentiable_outputs.append(False)
+                        else:
+                            is_differentiable_outputs.append(True)
+
             # Record the input tensor metadata of the current module based on the faketensor 'example_value' of the placeholder node
             placeholders = list(n for n in graph_module.graph.nodes if n.op == "placeholder")
             example_input_metadata = map(
@@ -175,7 +185,8 @@ def _splitter(
             example_input_metadatas.append(list(example_input_metadata))
             # Replace PyTorch operators within the checkpointed function with the corresponding Thunder operators
             checkpoint_converter(split_gm, graph_module)
-            jit_fn = thunder_jit(graph_module)
+
+            jit_fn = thunder_jit(graph_module, is_differentiable_outputs=is_differentiable_outputs)
             # Update the node name from "submod_*" to "thunder_*" for more user-friendly names
             update_node_and_submodule(split_gm, node, node.name.replace("submod", "thunder"), jit_fn)
             thunder_compiled_fns.append(jit_fn)

@@ -197,11 +197,9 @@ class TorchProfileTimer:
         from torch.autograd import DeviceType
 
         elapsed_cuda_time = 0
-        has_cuda_event = False
         for event in prof_averages:
             if event.device_type != DeviceType.CUDA:
                 continue
-            has_cuda_event = True
             # Re: torch profiler API changes in https://github.com/pytorch/pytorch/pull/123247
             elapsed_cuda_time = (
                 elapsed_cuda_time + event.self_device_time_total

@@ -484,9 +484,6 @@ def _basic_indexing(a: TensorLike, /, key) -> TensorLike:
     strides = []
 
     # Resolves ellipses and unsqueezes
-    unsqueeze_dims_pre_ellipsis = []
-    unsqueeze_dims_post_ellipsis = []
-    specified_slices = 0
 
     assert isinstance(key, list)
 
@@ -613,9 +610,6 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
         if all(isinstance(i, int) for i in x):
             x = tensor_from_sequence(x, dtype=dtypes.int64, device=device)
         return x
-
-    basic_keys = []  # (key index, key)
-    advanced_keys = []  # (key index, key)
 
     input_shape = prims.shape(a)
 
@@ -2022,23 +2016,3 @@ def sort(
     dim = utils.canonicalize_dim(a.ndim, dim)
 
     return prims.sort(a, dim, descending, stable)
-
-
-@clangop()
-def argsort(a: TensorProxy, /, dim: None | int = None, descending: bool = False, stable: bool = False) -> TensorProxy:
-    """Returns the indices that would sort a tensor along a given dimension.
-
-    Args:
-        a: Input tensor
-        dim: Dimension along which to sort. If None, uses last dimension
-        descending: Sort in descending order if True
-        stable: Maintain relative order of equal elements if True
-
-    Returns:
-        TensorProxy containing indices that would sort the input tensor
-    """
-    if dim is None:
-        dim = a.ndim - 1 if a.ndim > 0 else 0
-    dim = utils.canonicalize_dim(a.ndim, dim)
-
-    return prims.argsort(a, dim, descending, stable)

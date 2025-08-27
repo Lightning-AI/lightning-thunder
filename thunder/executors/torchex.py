@@ -6,6 +6,7 @@ from numbers import Number
 from typing import TYPE_CHECKING
 from collections.abc import Callable
 from collections.abc import Hashable, Sequence
+from looseversion import LooseVersion
 from types import ModuleType
 
 import torch
@@ -129,6 +130,7 @@ _register_implementation(
     execution_transform=_convert_element_type_transform,
 )
 _register_implementation(ltorch.to, checker=_always_executable, execution_transform=_to_transform)
+
 
 #
 # Disable torch.autocast operations
@@ -597,9 +599,8 @@ def _slice_prim_impl(
 ) -> torch.Tensor:
     _strides = strides if strides is not None else [1] * len(start_indices)
 
-    slices: list = []
-    for start, stop, step in zip(start_indices, end_indices, _strides):
-        slices.append(slice(start, stop, step))
+    # tuple expected from https://github.com/pytorch/pytorch/pull/160794 onwards
+    slices = tuple(slice(start, stop, step) for start, stop, step in zip(start_indices, end_indices, _strides))
 
     return operator.getitem(a, slices)
 
@@ -1357,9 +1358,6 @@ def _argsort_transform(a: TensorProxy, /, dim: int | None = None, descending: bo
     return argsort(a, dim=dim, descending=descending, stable=stable)
 
 
-# Register the implementation
-_register_implementation(prims.argsort, checker=_always_executable, execution_transform=_argsort_transform)
-
 _register_implementation(ltorch.argsort, checker=_always_executable, execution_transform=_argsort_transform)
 
 #
@@ -1527,6 +1525,8 @@ _register_implementation(ltorch.local_response_norm, local_response_norm, checke
 
 bmm = _register_torch_operation("bmm")
 baddbmm = _register_torch_operation("baddbmm")
+if LooseVersion(torch.__version__) >= "2.8":
+    _grouped_mm = _register_torch_operation("_grouped_mm")
 convolution = _register_torch_operation("convolution")
 conv1d = _register_torch_operation("conv1d", module=torch.nn.functional)
 conv2d = _register_torch_operation("conv2d", module=torch.nn.functional)
@@ -1807,7 +1807,8 @@ def _pad_prim_impl(
         return torch.nn.functional.pad(a, pad_config, value=padding_value)
 
     result = torch.full(intermediate_shape, padding_value, device=a.device, dtype=a.dtype)
-    result[intermediate_slices] = a
+    # tuple expected from https://github.com/pytorch/pytorch/pull/160794 onwards
+    result[tuple(intermediate_slices)] = a
     result = torch.nn.functional.pad(result, pad_config, value=padding_value)
     return result
 
@@ -1817,8 +1818,16 @@ _register_implementation(prims.embedding, embedding, checker=_always_executable)
 _register_implementation(prims.embedding_backward, embedding_backward, checker=_always_executable)
 _register_implementation(prims.linear, linear, checker=_always_executable)
 
+
+def _grouped_mm_checker(a: TensorProxy, b: TensorProxy, offsets: TensorProxy) -> bool:
+    return a.dtype == dtypes.bfloat16 and b.dtype == dtypes.bfloat16 and offsets.dtype == dtypes.int32
+
+
 _register_implementation(ltorch.baddbmm, baddbmm, checker=_always_executable)
 _register_implementation(ltorch.bmm, bmm, checker=_always_executable)
+if LooseVersion(torch.__version__) >= "2.8":
+    _register_implementation(prims._grouped_mm, _grouped_mm, checker=_grouped_mm_checker)
+    _register_implementation(ltorch._grouped_mm, _grouped_mm, checker=_grouped_mm_checker)
 _register_implementation(ltorch.convolution, checker=_always_executable, execution_transform=_convolution_transform)
 _register_implementation(ltorch.conv1d, conv1d, checker=_always_executable)
 _register_implementation(ltorch.conv2d, conv2d, checker=_always_executable)
@@ -2365,6 +2374,14 @@ def _shape_impl(t):
 
 shape = ex.register_operator("shape", meta=prims.shape_meta, fn=_shape_impl)
 _register_implementation(prims.shape, shape, checker=_always_executable)
+
+
+def _bitcast_impl(src, dtype):
+    return src.view(dtypes.to_torch_dtype(dtype))
+
+
+bitcast = ex.register_operator("bitcast", meta=prims.bitcast, fn=_bitcast_impl)
+_register_implementation(prims.bitcast, bitcast, checker=_always_executable)
 
 
 shallow_copy = ex.register_operator("shallow_copy", meta=prims.shallow_copy, fn=lambda x: x)

@@ -280,7 +280,7 @@ def test_hf_bert():
 
 
 @requiresCUDA
-@pytest.mark.skipif(not BITSANDBYTES_AVAILABLE, reason="`bitsandbytes` is not available")
+@pytest.mark.skip(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2128")
 def test_quantization():
     from thunder.tests import litgpt_model
     from lightning.fabric.plugins import BitsandbytesPrecision
@@ -630,7 +630,7 @@ def test_checkpointing_thunderfx():
     forward_backward_peak(jm, inp)
 
     mem_thunder = forward_backward_peak(jm, inp)
-    mem_eager = forward_backward_peak(m, inp)
+    forward_backward_peak(m, inp)
 
     assert mem_thunder < 105  # this ~35% is more than eager, in isolation 100 vs. 74
 

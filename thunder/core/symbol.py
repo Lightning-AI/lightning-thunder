@@ -14,18 +14,16 @@ from collections.abc import Callable, Hashable, Iterable
 from collections.abc import Sequence
 
 import thunder.core.baseutils as baseutils
+from thunder.core.baseutils import BoundSymbolInterface, TagBase
 import thunder.core.codeutils as codeutils
 from thunder.core.codeutils import Printable, Positions
-from thunder.core.baseutils import BoundSymbolInterface, TagBase
-from thunder.core.utils import FrozenDict, make_hashable
-from thunder.core.pytree import tree_flatten_with_dataclass, tree_unflatten, tree_map
-from thunder.core.proxies import Proxy, TensorProxy, variableify, CollectionProxy, ProxyTag
 from thunder.core.compile_data import get_compile_data
+import thunder.core.prims as prims
+from thunder.core.proxies import Proxy, TensorProxy, variableify, CollectionProxy, ProxyTag
+from thunder.core.pytree import tree_flatten, tree_flatten_with_dataclass, tree_unflatten, tree_map
+from thunder.core.trace import get_tracectx, VariableInterface
+from thunder.core.utils import FrozenDict, make_hashable
 
-from thunder.core.trace import (
-    get_tracectx,
-    VariableInterface,
-)
 
 #
 # Support for querying "traceable" functions
@@ -314,6 +312,17 @@ class Symbol:
         else:
             trace.push_scope(subsymbols)
             result = self.meta(*args, **kwargs)
+
+            # To avoid passing an arg directly to output, we make a shallow_copy
+            flat_results, spec = tree_flatten(result)
+            flat_args, _ = tree_flatten((args, kwargs))
+            for i, result_ in enumerate(flat_results):
+                for arg in flat_args:
+                    if arg is result_ and isinstance(arg, Proxy):
+                        flat_results[i] = prims.shallow_copy(arg)
+
+            result = tree_unflatten(flat_results, spec)
+
             trace.pop_scope()
 
         cd = get_compile_data()
@@ -716,7 +725,7 @@ class BoundSymbol(BoundSymbolInterface):
         return "\n".join(self.python(indent=0, print_depth=-1))
 
 
-def gather_tags(bsym: BoundSymbol) -> set[OpTags | BoundSymbolTags]:
+def gather_tags(bsym: BoundSymbol) -> set[OpTags | BoundSymbolTag]:
     tags = set(bsym.sym.tags) if bsym.sym.tags is not None else set()
     tags |= bsym.tags
 
@@ -726,7 +735,7 @@ def gather_tags(bsym: BoundSymbol) -> set[OpTags | BoundSymbolTags]:
     return tags
 
 
-def has_tags(bsym: BoundSymbol, tags: set[OpTags | BoundSymbolTags]) -> bool:
+def has_tags(bsym: BoundSymbol, tags: set[OpTags | BoundSymbolTag]) -> bool:
     """:obj:`True` if `bsym` and its subsymbols has any of ``tags``."""
     return not tags.isdisjoint(gather_tags(bsym))
 
