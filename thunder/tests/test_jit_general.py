@@ -1708,3 +1708,25 @@ def test_jit_compile_data_cycle_leak():
     assert torch.cuda.memory_allocated() == memory_at_start
     for ref in refs:
         assert ref() is None
+
+
+@requiresCUDA
+def test_jit_nn_module_cycle_leak():
+    def _allocate_and_call_model_in_function():
+        model = torch.nn.Linear(256, 256, device="cuda")
+
+        tfn = thunder.jit(model)
+        tfn(torch.randn(256, device="cuda"))
+        return weakref.ref(model)
+
+    # Warm-up run.
+    # If this test is run independently, then on the first run,
+    # PyTorch will allocate some memory for cuBlas, etc. So, we can't expect
+    # the memory to be the same before and after the first run.
+    ref = _allocate_and_call_model_in_function()
+    assert ref() is None
+
+    memory_start = torch.cuda.memory_allocated()
+    ref = _allocate_and_call_model_in_function()
+    assert ref() is None
+    assert torch.cuda.memory_allocated() == memory_start
