@@ -1,9 +1,10 @@
 from collections import defaultdict, namedtuple
 from collections.abc import Callable, Sequence
 from contextvars import ContextVar
-from functools import wraps
+from functools import partial, wraps
 from typing import Any
 import dis
+import inspect
 import os
 import time
 import warnings
@@ -56,6 +57,7 @@ from thunder.core.transform_common import (
     wrap_return_value_together_with_arguments,
 )
 from thunder.core.update_aliases import insert_alias_updates
+from thunder.dynamo._trace_structured import _log_to_torch_trace
 from thunder.executors.torch_autograd import connect_to_autograd
 import thunder.extend as extend
 from thunder.extend import Executor, add_default_executor
@@ -436,6 +438,19 @@ def jit(
             last_interpreter_log = jit_results.interpreter_log
             cs.last_interpreter_log = last_interpreter_log
             cs.last_interpreted_instructions = (i for i in last_interpreter_log if isinstance(i, dis.Instruction))
+
+            for name_in_artifact, trace_to_store in (
+                ("computation", computation_trc),
+                ("prologue", prologue_trc),
+                ("epilogue", epilogue_trc),
+            ):
+                if trace_to_store is None:
+                    continue
+                _log_to_torch_trace(
+                    f"thunder_module_initial_{name_in_artifact}_trc",
+                    trace_to_store,
+                    compile_id=compile_options.get("torch_compile_compile_id", None),
+                )
             return prologue_trc, computation_trc, epilogue_trc
 
     def apply_transforms_and_build_cache_entry(cd, cs, cache_info, prologue_trc, computation_trc, epilogue_trc):
@@ -532,7 +547,17 @@ def jit(
             if requires_grad:
                 from thunder.transforms.autodiff import grad_transform_on_trace
 
+                _log_to_torch_trace(
+                    "thunder_module_computation_trc_before_grad_transform",
+                    computation_trc,
+                    compile_id=compile_options.get("torch_compile_compile_id", None),
+                )
                 computation_trc = grad_transform_on_trace(computation_trc)
+                _log_to_torch_trace(
+                    "thunder_module_computation_trc_after_grad_transform",
+                    computation_trc,
+                    compile_id=compile_options.get("torch_compile_compile_id", None),
+                )
 
             from thunder.executors.passes import _transform_for_operator_executor_execution
             from thunder.distributed.utils import maybe_sort_waits
@@ -597,6 +622,22 @@ def jit(
 
             computation_trc = transform_to_torch_types(computation_trc)
             comp = computation_trc.python_callable()
+
+            for name_in_artifact, trace_to_store in (
+                ("computation", computation_trc),
+                ("prologue", prologue_trc),
+                ("epilogue", epilogue_trc),
+                ("backward", backward_trc),
+            ):
+                if trace_to_store is None:
+                    continue
+
+                _idx_of_graph_module = compile_options.get("graph_module_idx", 0)
+                _log_to_torch_trace(
+                    f"thunder_module_execution_{name_in_artifact}_trc_of_module_{_idx_of_graph_module}",
+                    trace_to_store,
+                    compile_id=compile_options.get("torch_compile_compile_id", None),
+                )
 
             # TODO RC1 Update the cache
             cache_entry = CacheEntry(
