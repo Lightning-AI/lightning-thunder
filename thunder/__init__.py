@@ -865,6 +865,9 @@ def jit(
         cache_entry, inps, pro_to_epi = get_computation_and_inputs(*args, **kwargs)
 
         result = cache_entry.computation_fn(*inps)
+        # We must do this before connecting to autograd so that
+        # grad_fn attribute will be set on the outputs accordingly
+        pytorch.set_grad_enabled(cd.is_grad_enabled)
         result = maybe_connect_to_autograd(cache_entry, result)
         result = call_epilogue(cache_entry, result, pro_to_epi)
 
