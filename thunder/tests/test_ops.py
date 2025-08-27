@@ -136,7 +136,7 @@ def test_core_vs_torch_consistency(op, device: str, dtype: dtypes.dtype, executo
         path = os.path.relpath(__file__)
         repro_cmd = (
             f"command to reproduce the error: THUNDER_OPTEST_SAMPLE_INDEX={i} "
-            f'pytest {path} -k "test_core_vs_torch_consistency and {device} and {dtype} and {op.name}"'
+            f"pytest {path}::test_core_vs_torch_consistency_{op.name}_{executor.name}_{device}_{dtype}"
         )
 
         try:
