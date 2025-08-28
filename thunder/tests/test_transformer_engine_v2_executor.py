@@ -40,7 +40,7 @@ def test_te_linear_forward_backward(fp8_recipe: recipe.Recipe):
         pytest.skip(msg_mxfp8)
 
     if is_sm120_orsm121 and fp8_recipe is None:
-        pytest.skip("On SM120/121, default recipe is Float8Blocking scaling which is not supported")
+        pytest.skip("On SM120/121, default recipe is Float8BlockScaling which is not supported")
 
     # Test Description:
     # Verify that `torch.nn.functional.linear` is replaced with `te_linear_*`
