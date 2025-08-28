@@ -11,7 +11,7 @@ from thunder.core.devices import to_torch_device
 from thunder.core.dtypes import to_torch_dtype
 from thunder.core.transforms import get_grad, put_grad
 from thunder.core.proxies import TensorProxy
-from thunder.executors.cudnnex import cudnn_available, torch_to_cudnn_dtype
+from thunder.executors.cudnnex import cudnn_available, torch_to_cudnn_dtype, _get_cudnn_handle
 from thunder.extend import OperatorExecutor
 
 if TYPE_CHECKING:
@@ -52,7 +52,11 @@ def make_cacheable_cudnn_graph_inputs(func):
 @make_cacheable_cudnn_graph_inputs
 @lru_cache(maxsize=1024)
 def _make_cudnn_layer_norm_graph(a_4d, weight_4d, bias_4d, *, is_inference: bool):
-    graph = cudnn.pygraph(intermediate_data_type=cudnn.data_type.FLOAT, compute_data_type=cudnn.data_type.FLOAT)
+    graph = cudnn.pygraph(
+        intermediate_data_type=cudnn.data_type.FLOAT,
+        compute_data_type=cudnn.data_type.FLOAT,
+        handle=_get_cudnn_handle(a_4d.device_index),
+    )
 
     input = graph.tensor(name="input", dim=a_4d.size, stride=a_4d.stride, data_type=torch_to_cudnn_dtype(a_4d.dtype))
     scale = graph.tensor(
@@ -138,7 +142,10 @@ def layer_norm_impl(
 
     cudnn_to_torch_tensor = {input: a, scale: weight, B: bias, epsilon: epsilon_cpu, Y: Y_actual}
 
-    graph.execute(cudnn_to_torch_tensor, workspace)
+    # Even though the handle is created on a.device, cudnn still requires to set current device to a.device.
+    # This is most probably a bug and is being actively looked into.
+    with torch.cuda.device(a.device):
+        graph.execute(cudnn_to_torch_tensor, workspace, handle=_get_cudnn_handle(a.device.index))
 
     return Y_actual
 
@@ -212,7 +219,10 @@ def layer_norm_aug_fwd_impl(
         inv_var: inv_var_actual,
     }
 
-    graph.execute(cudnn_to_torch_tensor, workspace)
+    # Even though the handle is created on a.device, cudnn still requires to set current device to a.device.
+    # This is most probably a bug and is being actively looked into.
+    with torch.cuda.device(a.device):
+        graph.execute(cudnn_to_torch_tensor, workspace, handle=_get_cudnn_handle(a.device.index))
 
     return Y_actual, mean_actual, inv_var_actual
 
@@ -237,6 +247,7 @@ def _make_cudnn_layer_norm_bwd_graph(
     bwd_graph = cudnn.pygraph(
         intermediate_data_type=cudnn.data_type.FLOAT,
         compute_data_type=cudnn.data_type.FLOAT,
+        handle=_get_cudnn_handle(a_4d.device_index),
     )
 
     DY = bwd_graph.tensor(
@@ -326,7 +337,10 @@ def layer_norm_bwd_impl(
         Dbias: grad_bias,
     }
 
-    bwd_graph.execute(tensor_map, workspace)
+    # Even though the handle is created on a.device, cudnn still requires to set current device to a.device.
+    # This is most probably a bug and is being actively looked into.
+    with torch.cuda.device(a.device):
+        bwd_graph.execute(tensor_map, workspace, handle=_get_cudnn_handle(a.device.index))
 
     if no_weight_grad:
         grad_weight = None
