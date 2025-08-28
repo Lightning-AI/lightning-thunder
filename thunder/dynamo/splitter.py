@@ -144,17 +144,20 @@ def _splitter(
     gm.recompile()
 
     # `split_module` iterates over nodes and determines the partition to place them based on the callback.
-    original_split_gm: torch.fx.GraphModule = split_module(
+    split_gm: torch.fx.GraphModule = split_module(
         gm, root_m=None, split_callback=callback, keep_original_order=True, keep_original_node_name=True
     )
 
     # Workaround for the Torch bug https://github.com/pytorch/pytorch/pull/139275
-    for submodule in original_split_gm.children():
+    for submodule in split_gm.children():
         if not submodule.graph.find_nodes(op="output"):
             submodule.graph.output(())
-    if not original_split_gm.graph.find_nodes(op="output"):
-        original_split_gm.graph.output(())
-    split_gm = copy.deepcopy(original_split_gm)
+    if not split_gm.graph.find_nodes(op="output"):
+        split_gm.graph.output(())
+
+    # If split_gm contains Parameters or Tensors then deepcopy would also create their copies.
+    # TODO: Eliminate deepcopy
+    original_split_gm = copy.deepcopy(split_gm)
 
     def is_thunder_supported_partition(node: torch.fx.Node) -> bool:
         return node.name.startswith("submod") and int(node.name.replace("submod_", "")) in supported_partitions

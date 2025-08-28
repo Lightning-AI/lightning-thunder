@@ -508,7 +508,7 @@ def check_metrics(
             report.write_benchmark(
                 failed_folder, compile_fn, timer_fn, file_name=f"failed_{filename}", extra_comment_str=msg
             )
-            return None
+            return None, None, None
 
     _, *measure1 = try_and_log_benchmark(compile_fn1, filename1)
     _, *measure2 = try_and_log_benchmark(compile_fn2, filename2)
@@ -522,7 +522,7 @@ def check_metrics(
     for m1, m2, name in zip(measure1, measure2, ("forward", "backward")):
         check(
             (m1 is None) == (m2 is None),
-            f"{name} measurement for the two compilation methods should either both be None or both not None, but got {m1} and {m2}",
+            lambda: f"{name} measurement for the two compilation methods should either both be None or both not None, but got {m1} and {m2}",
         )
         if m1 is None:
             continue
