@@ -225,9 +225,7 @@ class TransformForTensorParallel(Transform):
                 param_thunder_module, param_name = bsym.args
                 assert param_thunder_module is thunder_module_proxy
 
-                if (
-                    proxy_like_param_name := f"""t_{param_name.replace(".", "_")}"""
-                ) in self.chunked_param_name_to_layer_type:
+                if (f"""t_{param_name.replace(".", "_")}""") in self.chunked_param_name_to_layer_type:
                     orig_shape = list(pro_out_p._shape)
                     new_shape = self._calc_new_shape(orig_shape)
                     pro_out_p._shape = new_shape
