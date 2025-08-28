@@ -139,7 +139,6 @@ class DTensorTest(DistributedParallelTestCase):
     @common_utils.parametrize("executor", tuple(executors_map.keys()))
     def test_dtensor_convert_element_type(self, executor):
         from thunder.torch.experimental.dtensor_torch_and_prims import dtensor_convert_element_type_prim
-        from thunder.core.dtypes import bfloat16
 
         num_devices = self.world_size
         mesh = DeviceMesh("cuda", list(range(num_devices)))
@@ -149,7 +148,7 @@ class DTensorTest(DistributedParallelTestCase):
         in_dtensor = distribute_tensor(torch.randn(dim_size, dim_size, requires_grad=True), mesh, [Shard(0)])
 
         def fn(x):
-            return dtensor_convert_element_type_prim(x, bfloat16)
+            return dtensor_convert_element_type_prim(x, dtypes.bfloat16)
 
         tmodel = thunder.jit(fn, executors=executors_map[executor].executors_list())
         actual = tmodel(in_dtensor)
