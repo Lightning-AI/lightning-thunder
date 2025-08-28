@@ -634,7 +634,7 @@ def test_checkpointing_thunderfx():
     forward_backward_peak(jm, inp)
 
     mem_thunder = forward_backward_peak(jm, inp)
-    mem_eager = forward_backward_peak(m, inp)
+    forward_backward_peak(m, inp)
 
     assert mem_thunder < 105  # this ~35% is more than eager, in isolation 100 vs. 74
 

@@ -305,6 +305,7 @@ class OpTags(Enum):
     DONT_RECOMPUTE_IN_BACKWARD = auto()
     # Don't automatically tag operation to be recomputed in backward
     DONT_AUTO_RECOMPUTE_IN_BACKWARD = auto()
+    TORCH_COMPILE_COMPLIANT_CUSTOM_OP = auto()
 
 
 # TODO RC1 Document this function and describe the parts of a primitive

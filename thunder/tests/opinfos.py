@@ -24,7 +24,7 @@ import thunder.core.prims as prims
 from thunder.core.pytree import tree_map
 from thunder.core.symbol import Symbol
 import thunder.executors as executors
-from thunder.tests.framework import _all_devicetypes, JAX_AVAILABLE, custom_comparator, IS_WINDOWS
+from thunder.tests.framework import _all_devicetypes, custom_comparator, IS_WINDOWS
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
 import thunder.tests.bf16
 import thunder.torch as ltorch
@@ -114,26 +114,6 @@ _torch_to_numpy_dtype_map = {
     torch.complex128: np.complex128,
 }
 
-_torch_to_jax_dtype_map = None
-if JAX_AVAILABLE:
-    import jax
-    import jax.numpy as jnp
-
-    _torch_to_jax_dtype_map = {
-        torch.bool: jnp.bool_,
-        torch.uint8: jnp.uint8,
-        torch.int8: jnp.int8,
-        torch.int16: jnp.int16,
-        torch.int32: jnp.int32,
-        torch.int64: jnp.int64,
-        torch.bfloat16: jnp.bfloat16,
-        torch.float16: jnp.float16,
-        torch.float32: jnp.float32,
-        torch.float64: jnp.float64,
-        torch.complex64: jnp.complex64,
-        torch.complex128: jnp.complex128,
-    }
-
 
 class TorchTensorComp:
     """
@@ -220,21 +200,6 @@ class SampleInput:
 
         args, kwargs = tree_map(_remove_singularities, self.args), tree_map(_remove_singularities, self.kwargs)
         return SampleInput(*args, **kwargs)
-
-    # NOTE This conversion is always to a jax cpu array, we could consider
-    #   converting to a jax gpu array, although we would probably have to update
-    #   how we're installing jax in ci
-    def jax(self):
-        def to_jax(t):
-            if isinstance(t, torch.Tensor):
-                return jnp.array(t.cpu().numpy())
-            if isinstance(t, torch.dtype):
-                return _torch_to_jax_dtype_map[t]
-
-            return t
-
-        args, kwargs = tree_map(to_jax, self.args), tree_map(to_jax, self.kwargs)
-        return SampleInput(*args, **kwargs).set_comparator(self.comp)
 
     def numpy(self):
         def to_numpy(t):
@@ -340,7 +305,6 @@ class OpInfo:
         operator_variant=None,
         torch_reference=None,
         numpy_reference=None,
-        jax_reference=None,
         test_directives=(),
         domain=(None, None),
         singularity_fn=None,
@@ -377,7 +341,6 @@ class OpInfo:
         self.operator_variant = operator_variant
         self.torch_reference = torch_reference
         self.numpy_reference = numpy_reference
-        self.jax_reference = jax_reference
         self.test_directives = test_directives
         self.domain = Domain(*domain)
         self.singularity_fn = singularity_fn
@@ -414,7 +377,6 @@ class OpInfo:
     # NOTE Today all benchmarks are generated with PyTorch, so Thunder objects,
     #   like dtypes, need to be translated into PyTorch objects
     def benchmarks(self, device: devices.Device, dtype: datatypes.dtype, *, requires_grad: bool = False, **kwargs):
-        torch_dtype = to_torch_dtype(dtype)
         return self.benchmark_generator(self, device, dtype, requires_grad, **kwargs)
 
     def devicetypes(self):
@@ -693,6 +655,12 @@ abs_opinfo = ElementwiseUnaryOpInfo(
             pytest.mark.skip,
             "test_core_vs_torch_consistency",
             dtypes=(datatypes.complex32,),
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+        DecorateInfo(
+            pytest.mark.skip(reason="PyTorch doesn't support abs for bool on cpu"),
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.bool8,),
             devicetypes=(devices.DeviceType.CPU,),
         ),
         # Ref - https://github.com/Lightning-AI/lightning-thunder/issues/2363
@@ -2734,7 +2702,6 @@ remainder_prim_opinfo = OpInfo(
     dtypes=(datatypes.all_dtypes - datatypes.low_precision_dtypes),
     sample_input_generator=partial(elementwise_binary_prims_generator, exclude_zero=True),
     torch_reference=torch.remainder,
-    jax_reference=jax.numpy.remainder if JAX_AVAILABLE else None,
     test_directives=(
         # torch doesn't support bool or complex remainder.
         # torch_reference is inaccurate since it computes in the lower precision dtype.
@@ -2745,12 +2712,6 @@ remainder_prim_opinfo = OpInfo(
         ),
         # Torch executor doesn't support bool or complex remainder
         DecorateInfo(pytest.mark.xfail, dtypes=(datatypes.bool8, datatypes.complexfloating), executors=("torch",)),
-        # JAX doesn't support complex remainder
-        DecorateInfo(
-            pytest.mark.skip,
-            "test_core_vs_jax_consistency",
-            dtypes=(datatypes.complexfloating,),
-        ),
     ),
 )
 elementwise_binary_ops.append(remainder_prim_opinfo)
@@ -3357,7 +3318,6 @@ data_movement_ops = []
 #     prims.convert_element_type,
 #     sample_input_generator=convert_element_type_sample_generator,
 #     torch_reference=torch.Tensor.to,
-#     jax_reference=jax.lax.convert_element_type if JAX_AVAILABLE else None,
 #     test_directives=(
 #         # These usually pass but tols are still too tight to perform these tests
 #         DecorateInfo(
@@ -3682,7 +3642,6 @@ broadcast_in_dim_opinfo = OpInfo(
     prims.broadcast_in_dim,
     sample_input_generator=broadcast_in_dim_sample_generator,
     error_input_generator=broadcast_in_dim_error_generator,
-    jax_reference=jax.lax.broadcast_in_dim if JAX_AVAILABLE else None,
     test_directives=(
         # AttributeError("module 'thunder.torch' has no attribute 'gt'"
         DecorateInfo(
@@ -4351,7 +4310,6 @@ getitem_opinfo = OpInfo(
     supports_grad=True,
     sample_input_generator=getitem_sample_generator,
     torch_reference=operator.getitem,
-    jax_reference=operator.getitem,
     numpy_reference=operator.getitem,
     test_directives=(
         DecorateInfo(
@@ -4361,9 +4319,6 @@ getitem_opinfo = OpInfo(
         ),
         DecorateInfo(pytest.mark.xfail, "test_vjp_correctness", active_if=IS_WINDOWS),
         DecorateInfo(pytest.mark.xfail, "test_phantom_grad_vs_torch_consistency", active_if=IS_WINDOWS),
-        # TypeError: Using a non-tuple sequence for multidimensional indexing is not allowed; use `arr[array(seq)]`
-        # instead of `arr[seq]`. See https://github.com/google/jax/issues/4564 for more information.
-        DecorateInfo(pytest.mark.xfail, "test_core_vs_jax_consistency"),
         # TODO: https://github.com/Lightning-AI/lightning-thunder/issues/841
         # check_slice_value(p0, slice(1, 3, 1)) in prologue trace fails
         DecorateInfo(
@@ -4427,16 +4382,9 @@ def pad_sample_generator(op, device, dtype, requires_grad, **kwargs):
         yield SampleInput(make(shape), make_number(dtype=dtype), padding_config)
 
 
-# NOTE: jax is very strict about tensor dtype vs number type, necessitating this helper
-def _jax_pad(a, padding_value, padding_config):
-    padding_value = jax.lax.convert_element_type(padding_value, a.dtype)
-    return jax.lax.pad(a, padding_value, padding_config)
-
-
 pad_opinfo = OpInfo(
     prims.pad,
     sample_input_generator=pad_sample_generator,
-    jax_reference=_jax_pad if JAX_AVAILABLE else None,
     test_directives=(
         # PyTorch's pad doesn't support complex padding values
         DecorateInfo(
@@ -4751,7 +4699,6 @@ slice_in_dim = OpInfo(
     clang.slice_in_dim,
     supports_grad=True,
     sample_input_generator=slice_in_dim_sample_generator,
-    jax_reference=jax.lax.slice_in_dim if JAX_AVAILABLE else None,
     test_directives=(
         # TODO: nvfuser executor didn't support pad correctly, but now it should.
         # Test and re-enable.
@@ -4786,7 +4733,6 @@ slice_prim_opinfo = OpInfo(
     name="slice_prim",
     supports_grad=True,
     sample_input_generator=slice_prim_sample_generator,
-    jax_reference=jax.lax.slice if JAX_AVAILABLE else None,
     test_directives=(
         # TODO: nvfuser executor didn't support pad correctly, but now it should.
         # Test and re-enable.
@@ -4989,7 +4935,6 @@ squeeze_opinfo = OpInfo(
     clang.squeeze,
     supports_grad=True,
     sample_input_generator=squeeze_sample_generator,
-    jax_reference=jax.lax.squeeze if JAX_AVAILABLE else None,
 )
 shape_ops.append(squeeze_opinfo)
 
@@ -5335,7 +5280,6 @@ def torch_index_select_wrapper(a, b, dim):
     return torch.index_select(a, dim, b)
 
 
-# TODO: mapping jax.lax.gather for testing
 take_opinfo = OpInfo(
     clang.take,
     supports_grad=True,
@@ -5521,7 +5465,6 @@ def gather_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make_index = partial(make_tensor, device=device, dtype=torch.long, requires_grad=False)
 
     for shape_a, dim, shape_b in take_along_axis_cases:
-        canonicalized_dim = dim if dim >= 0 else dim + len(shape_a)
         a = make(shape_a)
         b = make_index(shape_b, low=0, high=shape_a[dim])
         yield SampleInput(a, index=b, dim=dim)
@@ -5640,8 +5583,6 @@ shape_ops.append(scatter_add_opinfo)
 
 
 def scatter_sample_generator(op, device, dtype, requires_grad, **kwargs):
-    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
-
     if not requires_grad:
         # If not requires_grad, we allow repeated indices
         for sample in scatter_add_sample_generator(op, device, dtype, requires_grad, **kwargs):
@@ -5728,7 +5669,6 @@ unsqueeze_opinfo = OpInfo(
     clang.unsqueeze,
     supports_grad=True,
     sample_input_generator=unsqueeze_sample_generator,
-    jax_reference=jax.lax.expand_dims if JAX_AVAILABLE else None,
     test_directives=(
         DecorateInfo(
             pytest.mark.skip,
@@ -9227,12 +9167,12 @@ def grad_scaled_dot_product_attention_sample_generator(op, device, dtype, requir
     # Test Case: kv_seq_len > head_dim
     q, k, v = make(1, n_head, 12, 8), make(1, n_head, 14, 8), make(1, n_head, 14, 8)
     bool_attn_mask = make((1, n_head, 12, 14), dtype=torch.bool, low=1, high=1, requires_grad=False).tril()
-    yield SampleInput(q, k, v, bool_attn_mask, dropout_p := 0.0, is_causal := False, scale=0.5)
+    yield SampleInput(q, k, v, bool_attn_mask, 0.0, False, scale=0.5)
 
     # Test Case: kv_seq_len < head_dim
     q, k, v = make(1, n_head, 12, 16), make(1, n_head, 14, 16), make(1, n_head, 14, 16)
     bool_attn_mask = make((1, n_head, 12, 14), dtype=torch.bool, low=1, high=1, requires_grad=False).tril()
-    yield SampleInput(q, k, v, bool_attn_mask, dropout_p := 0.0, is_causal := False, scale=0.5)
+    yield SampleInput(q, k, v, bool_attn_mask, 0.0, False, scale=0.5)
 
     for L in query_seq_length:
         is_flash_attention = L <= flash_attn_threshold
@@ -9253,7 +9193,7 @@ def grad_scaled_dot_product_attention_sample_generator(op, device, dtype, requir
 
         # 4-dim (multiheaded) causal cases
         q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
-        yield SampleInput(q, k, v, attn_mask := None, dropout_p := 0.0, is_causal := False)
+        yield SampleInput(q, k, v, None, 0.0, False)
 
         # Test padding case when head size is not a multiple of 8
         if is_flash_attention:
@@ -9263,33 +9203,33 @@ def grad_scaled_dot_product_attention_sample_generator(op, device, dtype, requir
             # Skip these test cases if the flash attention kernel is not selected.
             # If the flash attention kernel is unavailable, _fused_sdp_choice uses the math reference.
             # When the dtype is not fp64, there is inconsistent results with torch autograd.
-            backend = torch._fused_sdp_choice(q, k, v, attn_mask := None, dropout_p := 0.0, is_causal := False)
+            backend = torch._fused_sdp_choice(q, k, v, None, 0.0, False)
             if SpdaBackend(backend) == SpdaBackend.FLASH_ATTENTION:
                 # fixed scale
-                yield SampleInput(q, k, v, attn_mask := None, dropout_p := 0.0, is_causal := False, scale=0.5)
+                yield SampleInput(q, k, v, None, 0.0, is_causal=False, scale=0.5)
 
                 # default scale
-                yield SampleInput(q, k, v, attn_mask := None, dropout_p := 0.0, is_causal := False)
+                yield SampleInput(q, k, v, None, 0.0, is_causal=False)
 
         # Non-contiguous input tensor case
         nq = make(N, n_head, L, E).permute(0, 1, 3, 2)
         nk = make(N, n_head, L, E).permute(0, 1, 3, 2)
         nv = make(N, n_head, L, E).permute(0, 1, 3, 2)
-        yield SampleInput(nq, nk, nv, attn_mask := None, dropout_p := 0.0, is_causal := False)
+        yield SampleInput(nq, nk, nv, None, 0.0, is_causal=False)
 
         # Test the scale factor which was added in torch 2.1
         if LooseVersion(torch.__version__) >= LooseVersion("2.1.0"):
             q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
-            yield SampleInput(q, k, v, attn_mask := None, dropout_p := 0.0, is_causal := False, scale=0.125)
+            yield SampleInput(q, k, v, None, 0.0, False, scale=0.125)
 
         # NOTE Flash attention sdpa does not support attn_mask argument; These cases always use memory efficient sdpa.
         q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
         bool_attn_mask = make((N, n_head, L, S), dtype=torch.bool, low=1, high=1, requires_grad=False).tril()
-        yield SampleInput(q, k, v, attn_mask := bool_attn_mask, is_causal=False)
+        yield SampleInput(q, k, v, bool_attn_mask, is_causal=False)
 
         q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
         additive_attn_mask = make((N, n_head, L, S), dtype=q.dtype).tril()
-        yield SampleInput(q, k, v, attn_mask := additive_attn_mask, is_causal=False)
+        yield SampleInput(q, k, v, additive_attn_mask, is_causal=False)
 
 
 # NOTE When calculating the gradient in the backwards pass, the torch executor calls fused sdpa functions.
@@ -9434,7 +9374,7 @@ def cross_entropy_error_generator(op, device, dtype=torch.float32, **kwargs):
     )
 
     # input tensor has 0 dimensions
-    scalar_input = make(scalar_shape := ())
+    scalar_input = make(())
     yield (
         SampleInput(scalar_input, valid_target),
         RuntimeError,
@@ -9601,8 +9541,8 @@ def nll_loss_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # Test empty input and target tensor short-circuit
     for reduction_str, ignore_index in itertools.product(reduction_options, ignore_index_options):
         yield SampleInput(
-            empty_input_tensor := torch.tensor([], device=device, dtype=dtype),
-            empty_target_tensor := torch.tensor([], device=device, dtype=torch.long),
+            torch.tensor([], device=device, dtype=dtype),
+            torch.tensor([], device=device, dtype=torch.long),
             ignore_index=ignore_index,
             reduction=reduction_str,
         )
@@ -9633,7 +9573,7 @@ def nll_loss_error_generator(op, device, dtype=torch.float32, **kwargs):
     )
 
     # input tensor has 0 dimensions
-    scalar_input = make(scalar_shape := ())
+    scalar_input = make(())
     yield (
         SampleInput(scalar_input, valid_target),
         RuntimeError,
@@ -9728,7 +9668,6 @@ def mse_loss_sample_generator(op, device, dtype, requires_grad, **kwards):
     for shape, reduction_str in itertools.product(shapes, reduction_options):
         input_shape, target_shape = shape
 
-        C = input_shape[1] if len(input_shape) >= 2 else input_shape[0]
         yield SampleInput(
             make(input_shape, low=0.0, high=1.0, dtype=dtype, requires_grad=True),
             make(target_shape, low=0.0, high=1.0, dtype=dtype, requires_grad=True),

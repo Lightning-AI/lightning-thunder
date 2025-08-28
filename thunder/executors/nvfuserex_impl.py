@@ -1764,6 +1764,16 @@ def clone(a: TensorProxy, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
 
 register_supported(PrimIDs.CLONE, clone, _elementwise_unary_check)
 
+
+def shallow_copy(a: TensorProxy, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+    nva = getnv(a, fd, lc_to_nv_map)
+
+    return nva
+
+
+register_supported(PrimIDs.SHALLOW_COPY, shallow_copy, _elementwise_unary_check)
+
+
 # update_aliases is disabled.  nvfuser does not support it.
 # TODO: Enable this once nvfuser supports it.
 # def update_aliases(aliases: tuple[TensorProxy], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
@@ -2511,12 +2521,12 @@ def _scaled_dot_product_flash_attention_forward_meta(
     device = query.device if UPDATED_SDPA else "cpu"
 
     return (
-        output := TensorProxy(like=query, shape=(batch_size, num_heads, query_seq_len, E)),
-        log_sumexp := TensorProxy(
+        TensorProxy(like=query, shape=(batch_size, num_heads, query_seq_len, E)),
+        TensorProxy(
             shape=(batch_size, num_heads, query_seq_len), dtype=dtypes.float32, device=query.device, requires_grad=False
         ),
-        philox_seed := TensorProxy(shape=philox_shape, dtype=dtype, device=device, requires_grad=False),
-        philox_offset := TensorProxy(shape=(), dtype=dtype, device=device, requires_grad=False),
+        TensorProxy(shape=philox_shape, dtype=dtype, device=device, requires_grad=False),
+        TensorProxy(shape=(), dtype=dtype, device=device, requires_grad=False),
     )
 
 

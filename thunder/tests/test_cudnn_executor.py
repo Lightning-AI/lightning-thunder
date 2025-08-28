@@ -12,7 +12,7 @@ from thunder.core.transforms import vjp
 from thunder.core.utils import flatten_func
 from thunder.tests.framework import ops, requiresCUDA, run_snippet, TorchExecutor
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
-from thunder.tests.opinfos import get_opinfo, OpInfo
+from thunder.tests.opinfos import get_opinfo, OpInfo, SampleInput
 from thunder.tests.test_grad import _make_differentiable_wrapper
 
 cudnn = pytest.importorskip("cudnn")
@@ -153,7 +153,7 @@ def test_cudnn_sdpa_NumberProxy_dropout():
         return torch.nn.functional.scaled_dot_product_attention(q, k, v, dropout_p=dropout_p)
 
     cf = thunder.jit(func, cache="symbolic values", executors=[cudnn_ex])
-    out = cf(q, k, v, dropout_p=0.5)
+    cf(q, k, v, dropout_p=0.5)
     last_trace = thunder.last_traces(cf)[-1]
     assert any(bsym.sym.name == "cudnn_sdpa_fwd" for bsym in last_trace.bound_symbols)
 
@@ -278,6 +278,64 @@ def test_vjp_correctness_cudnn_sdpa(dtype, may_cat_grad_qkv):
         # compare gradients of query, key, value, and attn_mask
         for eg, ag in zip(expected_grad, actual_grad):
             torch.testing.assert_close(eg, ag, atol=2e-1, rtol=2e-2)
+
+
+@requiresCUDA
+@pytest.mark.parametrize("dtype", (torch.float16, torch.bfloat16), ids=("float16", "bfloat16"))
+def test_vjp_correctness_cudnn_layer_norm(dtype):
+    from thunder.common import CompileData
+    from thunder.core.compile_data import compile_data_and_stats
+    from thunder.executors.cudnn_layernormex import layer_norm_aug_fwd, layer_norm_bwd
+    from thunder.tests.opinfos import layer_norm_opinfo
+
+    # Skip if cuDNN is not available or doesn't support the dtype
+    if cudnn_layernorm_ex is None:
+        pytest.skip("cuDNN LayerNorm executor not available")
+
+    test_cases = [
+        SampleInput(
+            make_tensor((512, 1024), device="cuda", dtype=dtype, requires_grad=True),
+            (1024,),
+            make_tensor((1024,), device="cuda", dtype=dtype, requires_grad=True),
+            make_tensor((1024,), device="cuda", dtype=dtype, requires_grad=True),
+            1e-5,
+        ),
+    ]
+
+    for sample in test_cases:
+        # Enforce tensor arguments are contiguous for torch reference
+        contiguous_args = list(map(lambda a: a.contiguous() if isinstance(a, torch.Tensor) else a, sample.args))
+        grad_inputs = [contiguous_args[0], contiguous_args[2], contiguous_args[3]]
+
+        expect_out = layer_norm_opinfo.torch_reference(*contiguous_args, **sample.kwargs)
+        v = make_tensor_like(expect_out)
+        expected_grad = torch.autograd.grad(expect_out, grad_inputs, v)
+
+        flat_op, flat_args, spec = flatten_func(layer_norm_opinfo.op, sample.args, sample.kwargs)
+        filtered_op, filtered_args = _make_differentiable_wrapper(flat_op, flat_args)
+
+        cd = CompileData(
+            fn=vjp(filtered_op),
+            executors_list=[cudnn_layernorm_ex],
+            disable_preprocessing=True,
+        )
+        with compile_data_and_stats(cd, None):
+            initial_trace = thunder.trace()(vjp(filtered_op), filtered_args, (v,))
+
+        initial_trace.python_ctx = lambda: {
+            "cudnn_layernorm_aug_fwd": layer_norm_aug_fwd,
+            "cudnn_layernorm_bwd": layer_norm_bwd,
+        }
+        cfoo = thunder.jit(
+            initial_trace.python_callable(),
+            disable_torch_autograd=True,
+            executors=[cudnn_layernorm_ex],
+        )
+
+        actual_out, actual_grad = cfoo(filtered_args, (v,))
+        torch.testing.assert_close(actual_out, expect_out, atol=1e-2, rtol=1e-2)
+        for eg, ag in zip(expected_grad, actual_grad):
+            torch.testing.assert_close(eg, ag, atol=1e-2, rtol=1e-2)
 
 
 def test_compute_row_major_strides():
