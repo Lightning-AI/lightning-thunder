@@ -2582,12 +2582,15 @@ def test_set_grad_enabled(executor, device, dtype):
             torch.set_grad_enabled(global_grad_enabled)
             jfn = executor.make_callable(fn)
             y = jfn(x, n_flips, next_enable, starts_with_op, ends_with_op)
+            is_grad_enabled = torch.is_grad_enabled()
 
             torch.set_grad_enabled(global_grad_enabled)
             y_ref = fn(x_ref, n_flips, next_enable, starts_with_op, ends_with_op)
+            is_grad_enabled_ref = torch.is_grad_enabled()
 
             torch.testing.assert_close(y, y_ref)
             assert (y.grad_fn is None) == (y_ref.grad_fn is None)
+            assert is_grad_enabled == is_grad_enabled_ref
             if y.grad_fn is not None:
                 with torch.enable_grad():
                     y.sum().backward()
