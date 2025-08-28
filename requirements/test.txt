@@ -20,10 +20,8 @@ jsonargparse # thunder/benchmarks/benchmark_litgpt.py
 bitsandbytes==0.46.1; 'arm' not in platform_machine and 'aarch' not in platform_machine
 bitsandbytes>=0.42,<0.43; 'arm' in platform_machine or 'aarch' in platform_machine
 transformers==4.52.4 # for test_networks.py
-
-# Installs JAX on Linux and MacOS
-jaxlib; sys_platform == 'linux' or sys_platform == 'darwin'  # required for jax, see https://github.com/google/jax#installation
-jax; sys_platform == 'linux' or sys_platform == 'darwin'  # for test_ops.py
+diffusers==0.34.0 # for test_networks.py
+accelerate # for test_networks.py
 
 asvdb @ git+https://github.com/rapidsai/asvdb.git
 asv >=0.6.4

@@ -153,11 +153,11 @@ class BitsAndBytesLinearQuant4bit(Transform):
         new_bsyms = []
         new_compute_inputs = []
         for n, qs in self.quant_states.items():
-            param = tm.get_parameter(n)
+            tm.get_parameter(n)
             n_absmax = f"{n}.absmax"
             n_code = f"{n}.code"
-            param_absmax = tm.get_parameter(n_absmax)
-            param_code = tm.get_parameter(n_code)
+            tm.get_parameter(n_absmax)
+            tm.get_parameter(n_code)
             check, get_param = checks[n]
             quantized_proxies[get_param.output.name] = n
             # check has args: tensor, shape, device, dtype, requires_grad

@@ -422,7 +422,7 @@ def test_context():
         if bsym.sym.name == "sub":
             bn = bind_names(bsym)
             a = match_ctx["a"]
-            b = match_ctx["b"]
+            match_ctx["b"]
             add_out = match_ctx["first_add_result"]
             if bn.a is add_out and bn.b is a:
                 return True, {}

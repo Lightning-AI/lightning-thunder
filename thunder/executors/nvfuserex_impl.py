@@ -976,6 +976,25 @@ def convert_element_type(
 register_supported(PrimIDs.CONVERT_ELEMENT_TYPE, convert_element_type, _convert_element_type_check)
 register_supported(dtensor_convert_element_type_prim, convert_element_type, _convert_element_type_check)
 
+
+def _bitcast_check(src: TensorProxy, dtype: dtypes.dtype) -> bool:
+    return (
+        nvfuser_version() > LooseVersion("0.29.0")
+        and _convert_element_type_check(src, dtype)
+        and src.dtype.bytes == dtype.bytes
+    )
+
+
+# TODO: Expose bitcast in nvfuser to Python.
+# def bitcast(src: TensorProxy, dtype: dtypes.dtype, *, fd: FusionDefinition, lc_to_nv_map: dict):
+#     nva = getnv(src, fd, lc_to_nv_map)
+#     nvdtype = lcdtype_to_nvdtype(dtype)
+#
+#     return fd.ops.bitcast(nva, nvdtype)
+#
+#
+# register_supported(PrimIDs.BITCAST, bitcast, _bitcast_check)
+
 #
 # Tensor creation operations
 #
@@ -1752,6 +1771,16 @@ def clone(a: TensorProxy, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
 
 register_supported(PrimIDs.CLONE, clone, _elementwise_unary_check)
 
+
+def shallow_copy(a: TensorProxy, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+    nva = getnv(a, fd, lc_to_nv_map)
+
+    return nva
+
+
+register_supported(PrimIDs.SHALLOW_COPY, shallow_copy, _elementwise_unary_check)
+
+
 # update_aliases is disabled.  nvfuser does not support it.
 # TODO: Enable this once nvfuser supports it.
 # def update_aliases(aliases: tuple[TensorProxy], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
@@ -2499,12 +2528,12 @@ def _scaled_dot_product_flash_attention_forward_meta(
     device = query.device if UPDATED_SDPA else "cpu"
 
     return (
-        output := TensorProxy(like=query, shape=(batch_size, num_heads, query_seq_len, E)),
-        log_sumexp := TensorProxy(
+        TensorProxy(like=query, shape=(batch_size, num_heads, query_seq_len, E)),
+        TensorProxy(
             shape=(batch_size, num_heads, query_seq_len), dtype=dtypes.float32, device=query.device, requires_grad=False
         ),
-        philox_seed := TensorProxy(shape=philox_shape, dtype=dtype, device=device, requires_grad=False),
-        philox_offset := TensorProxy(shape=(), dtype=dtype, device=device, requires_grad=False),
+        TensorProxy(shape=philox_shape, dtype=dtype, device=device, requires_grad=False),
+        TensorProxy(shape=(), dtype=dtype, device=device, requires_grad=False),
     )
 
 
@@ -2763,12 +2792,61 @@ register_supported(PrimIDs.EMBEDDING, embedding, _embedding_check)
 register_supported(ltorch.embedding, embedding, _embedding_check)
 
 
-def _scatter_check(a: TensorProxy, /, index: TensorProxy, src: TensorProxy | Number, dim: int) -> bool:
+def _index_put_check(a: TensorProxy, /, indices: Sequence[TensorProxy], values: TensorProxy, accumulate: bool) -> bool:
     # temporary flag to allow scatter-like operations to be consumed by nvfuserex
     enable_scatter: None | bool = get_compile_option("nv_enable_scatter", "Enable nvFuser scatter-like operations.")
     if not enable_scatter:
         return False
 
+    # TODO: limited support inside nvfuser. remove this when codegen support is generalized.
+    # see nvfuser issue: https://github.com/NVIDIA/Fuser/issues/4857 tracking indexing operation support.
+    if len(indices) != 1 or indices[0].ndim != 1:
+        return False
+
+    if accumulate:
+        return False
+
+    return True
+
+
+def index_put(
+    a: TensorProxy,
+    /,
+    indices: Sequence[TensorProxy],
+    values: TensorProxy,
+    accumulate: bool,
+    *,
+    fd: FusionDefinition,
+    lc_to_nv_map: dict,
+) -> any:
+    utils.check(
+        not accumulate, lambda: "Unsupported accumulate in index_put by nvfuserex", exception_type=AssertionError
+    )
+    nva = getnv(a, fd, lc_to_nv_map)
+    nvi = getnv(indices[0], fd, lc_to_nv_map)
+    # construct the shape of broadcast indices tensor as
+    # [-1, *a.shape[1:]]
+    shapes = nva.shape()
+    flag = [-1]
+    for i in range(1, nva.ndim):
+        flag += [shapes[i]]
+    # broadcast index tensor nvi to abide to scatter semantics
+    nvi_b = fd.ops.broadcast_in_dim(nvi, flag, [0])
+
+    nvs = getnv(values, fd, lc_to_nv_map)
+
+    # index_put is translated to scatter in nvfuser
+    return fd.ops.scatter(nva, nvi_b, nvs, 0)
+
+
+register_supported(PrimIDs.INDEX_PUT, index_put, _index_put_check)
+
+
+def _scatter_check(a: TensorProxy, /, index: TensorProxy, src: TensorProxy | Number, dim: int) -> bool:
+    # temporary flag to allow scatter-like operations to be consumed by nvfuserex
+    enable_scatter: None | bool = get_compile_option("nv_enable_scatter", "Enable nvFuser scatter-like operations.")
+    if not enable_scatter:
+        return False
     return True
 
 
@@ -2787,7 +2865,7 @@ def scatter(
     nvs = getnv(src, fd, lc_to_nv_map)
 
     # index_put is translated to scatter in nvfuser
-    return fd.ops.scatter(nva, nvi, nvs, 0)
+    return fd.ops.scatter(nva, nvi, nvs, dim)
 
 
 register_supported(PrimIDs.SCATTER, scatter, _scatter_check)

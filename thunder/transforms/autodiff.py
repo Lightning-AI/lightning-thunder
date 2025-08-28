@@ -180,7 +180,9 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
             # 1. constant for gradients (no grad required)
             #    executing synchronize here terrible hack to cope with non-grad-needing sharded tensors
             #    as required by LoRA. We should have a symbol tag "always compute grad" instead.
-            if is_constant_for_vjp(bsym) and not bsym.sym.name == "synchronize":
+            if (is_constant_for_vjp(bsym) and not bsym.sym.name == "synchronize") or (
+                bsym.sym.tags and (prims.OpTags.TORCH_COMPILE_COMPLIANT_CUSTOM_OP in bsym.sym.tags)
+            ):
                 self.add_processed_bsyms([bsym.from_bsym()])
                 self.set_result(bsym.output)
                 return
@@ -461,18 +463,13 @@ def _group_get_grad_bsyms(trace):
 
 
 def split_into_forward_and_backward(joint_trace: TraceCtx):
-    """split a joint trace for forward and backward into separate ones, including recomputation (aka activation checkpointing)"""
+    """split a joint trace for forward and backward into separate ones"""
 
     # the joint trace will have the forward computation at the beginning and then the backward computation
     # from how it is constructed.
     # we split the trace:
     # - forward symbols go into forward_part_bsyms
     # - all symbols not in the forward go into backward_part_bsyms
-    # - for recomputation (aka activation checkpointing), we want to insert symbols going into the forward also into the
-    #   backward, but we want to do so "just in time". To this end, we gather the symbols in a dict and later
-    #   insert it when their respective outputs are needed. This is in backward_part_bsyms_recomputed
-    #   The just in time recomputation is a heuristic to save memory mimicking checkpointing: e.g. for a checkpointed
-    #   block, the forward would be recomputed just before computing the gradient.
     # the splitting is done in the reverse order of the bound symbols, and works out which bits are needed for the forward
     # from there.
     forward_part_bsyms = []
