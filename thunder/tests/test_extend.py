@@ -126,6 +126,7 @@ def test_get_all_executors_includes_all_native_executors():
     # apex and transformer_engine register the executor even if the external library they rely on is not available.
     expected = {
         "apex",
+        "custom_op",
         "fa3",
         "torch",
         "sdpa",
