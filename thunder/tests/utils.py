@@ -1,4 +1,6 @@
 import torch
+import pytest
+import functools
 
 
 def is_output_differentiable(x):
@@ -36,3 +38,20 @@ def filter_differentiable_outputs(outputs):
         outputs = [outputs]
 
     return list(filter(is_output_differentiable, outputs))
+
+
+def is_sm120_orsm121():
+    return torch.cuda.get_device_capability() in ((12, 1), (12, 0))
+
+
+def skip_on_sm120_and_sm121(fn):
+    # NOTE: On SM120/121, TE defaults to using Float8BlockScaling
+    #       which is currently unsupported in thunder.
+    @functools.wraps(fn)
+    def wrapped_fn(*args, **kwargs):
+        if is_sm120_orsm121():
+            pytest.skip("Skipped on SM120/121")
+        else:
+            fn(*args, **kwargs)
+
+    return wrapped_fn
