@@ -1382,8 +1382,8 @@ def test_reports_repro(tmp_path, file_indices):
 
 
 @requiresCUDA
-@given(file_indices=st.lists(st.integers(min_value=0, max_value=4), min_size=1, max_size=1, unique=True))
-@settings(max_examples=2, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+# @given(file_indices=st.lists(st.integers(min_value=0, max_value=4), min_size=1, max_size=1, unique=True))
+# @settings(max_examples=2, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
 def test_reports_benchmark(tmp_path, file_indices):
     x = torch.ones(2, 2, device="cuda", requires_grad=True)
 
@@ -1408,7 +1408,7 @@ def test_reports_benchmark(tmp_path, file_indices):
     thunder_split_report.write_benchmark(
         tmp_path,
         torchcompile,
-        WallTimeWithMemoryUsage(min_run_time=0.01, max_run_time=4.0, threshold=0.08),
+        WallTimeWithMemoryUsage(min_run_time=0.001, max_run_time=1.0, threshold=0.08),
         file_name=f"{split_name}_torchcompile.py",
     )
     thunder_split_report.write_benchmark(tmp_path, torcheager, WallTime, file_name=f"{split_name}_eager.py")
@@ -1418,15 +1418,15 @@ def test_reports_benchmark(tmp_path, file_indices):
     nvf = thunder_split_report.fusion_reports[0]
     nvf.write_nvfuser_benchmark(tmp_path, WallTime)
     nvf.write_inductor_benchmark(tmp_path, WallTime)
-    nvf.run_benchmark(BoundSymbolNvfuserSpecification(), WallTime(min_run_time=0.01, max_run_time=4.0, threshold=0.08))
+    nvf.run_benchmark(BoundSymbolNvfuserSpecification(), WallTime(min_run_time=0.001, max_run_time=1.0, threshold=0.08))
     nvf.run_benchmark(BoundSymbolTorchCompileSpecification(), WallTime)
 
     cmd = [sys.executable]
     py_files = list(tmp_path.rglob("*.py"))
     assert len(py_files) == 5
 
-    selected_files = [py_files[i] for i in file_indices]
-    for file in selected_files:
+    # selected_files = [py_files[i] for i in file_indices]
+    for file in py_files:
         run_script(file, cmd)
 
 
