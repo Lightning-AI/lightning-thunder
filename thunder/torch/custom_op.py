@@ -308,7 +308,7 @@ def define_backward_for(
 
 
 def _register_custom_op(custom_op: CustomOpDef) -> Symbol:
-    """Register :func:`~torch.library.custom_op`'ed function to Thunder.
+    """Register :func:`~torch.library.custom_op`'ed or :func:`~torch.library.triton_op`'ed function to Thunder.
 
     :func:`torch.library.custom_op` operators always have schema as per https://docs.google.com/document/d/1_W62p8WJOQQUzPsJYa7s701JXt0qf2OfLub2sbkHOaU/edit?tab=t.0#heading=h.aotf6sastysc saying
     "Use torch.library.custom_op to decorate a function to turn it into a custom operator.
@@ -316,6 +316,7 @@ def _register_custom_op(custom_op: CustomOpDef) -> Symbol:
     An example schema is ``my_lib::foo(Tensor a, Tensor b, float? c=None, str d="") -> Tensor``.
 
     This function does three things:
+
     1. Register ``custom_op`` as a new :class:`~thunder.core.symbol.Symbol` whose ``fn`` is ``custom_op._opoverload`` and ``meta`` is based on ``custom_op._abstract_fn``
     2. When ``_setup_context_fn`` and ``_backward_fn`` are defined, register augmented forward and backward through :func:`thunder.core.transforms.register_augmented_forward` and :func:`thunder.core.transforms.register_backward`.
 
@@ -324,7 +325,13 @@ def _register_custom_op(custom_op: CustomOpDef) -> Symbol:
 
     Returns:
         :class:`~thunder.core.symbol.Symbol`: A symbol representing the input ``custom_op``.
+
+    .. note::
+        This feature is experimental and subject to change.
     """
+    from thunder.extend import add_executor_lists
+    from thunder.extend import get_default_executors
+    from thunder.extend import set_default_executors
     from thunder.executors.torchex import _always_executable
     from thunder.executors.custom_op_ex import custom_op_ex
     from thunder.torch import register_function
@@ -394,5 +401,11 @@ def _register_custom_op(custom_op: CustomOpDef) -> Symbol:
         backward_meta, backward_impl = define_backward_for(custom_op, num_saved_tensors, tensor_indices)
         backward_op = custom_op_ex.register_operator(bwd_fn_name, meta=backward_meta, fn=backward_impl)
         register_backward(symbol.id)(backward_op)
+
+    # NOTE: `thunder.extend.add_default_executor` basically does `lst.insert(ex, 0)`.
+    if custom_op_ex not in get_default_executors():
+        default_executors = get_default_executors()
+        new_default_executors = add_executor_lists(default_executors, [custom_op_ex])
+        set_default_executors(new_default_executors)
 
     return symbol
