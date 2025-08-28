@@ -5,6 +5,7 @@ from functools import partial, reduce
 import dataclasses
 import re
 import weakref
+import itertools
 
 import pytest
 import torch
@@ -2557,6 +2558,44 @@ def test_grad_ctx():
     jfoo(x).sum().backward()
     torch.testing.assert_close(x.grad, x_ref.grad)
     assert thunder.cache_misses(jfoo) == 2
+
+
+@instantiate(dtypes=NOTHING)
+def test_set_grad_enabled(executor, device, dtype):
+    def fn(x, n_flips, next_enable, starts_with_op, ends_with_op):
+        for i in range(n_flips):
+            if starts_with_op or i > 0:
+                x = x.sin()
+            torch.set_grad_enabled(next_enable)
+            next_enable = not next_enable
+        if ends_with_op:
+            x = x.sin()
+        return x
+
+    for global_grad_enabled in [False, True]:
+        for n_flips, next_enable, starts_with_op, ends_with_op in itertools.product(
+            range(4), [False, True], [False, True], [False, True]
+        ):
+            x = torch.randn(10, requires_grad=True, device=device)
+            x_ref = x.detach().clone().requires_grad_(True)
+
+            torch.set_grad_enabled(global_grad_enabled)
+            jfn = executor.make_callable(fn)
+            y = jfn(x, n_flips, next_enable, starts_with_op, ends_with_op)
+            is_grad_enabled = torch.is_grad_enabled()
+
+            torch.set_grad_enabled(global_grad_enabled)
+            y_ref = fn(x_ref, n_flips, next_enable, starts_with_op, ends_with_op)
+            is_grad_enabled_ref = torch.is_grad_enabled()
+
+            torch.testing.assert_close(y, y_ref)
+            assert is_grad_enabled == is_grad_enabled_ref
+            assert (y.grad_fn is None) == (y_ref.grad_fn is None)
+            if y.grad_fn is not None:
+                with torch.enable_grad():
+                    y.sum().backward()
+                    y_ref.sum().backward()
+                    torch.testing.assert_close(x.grad, x_ref.grad)
 
 
 def test_serialize_trace():
