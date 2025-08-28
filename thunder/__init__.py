@@ -868,6 +868,9 @@ def jit(
         result = maybe_connect_to_autograd(cache_entry, result)
         result = call_epilogue(cache_entry, result, pro_to_epi)
 
+        # Reflect the state of is_grad_enabled, as its changes were tracked only inside Thunder
+        pytorch.set_grad_enabled(cd.is_grad_enabled)
+
         cs.last_computation = cache_entry.computation_fn
         return result
 
