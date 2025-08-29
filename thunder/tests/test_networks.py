@@ -265,9 +265,10 @@ def test_hf_bert():
     def dummy(*args):
         pass
 
-    # transformers accesses the old attrib and causes the future warning
+    # transformers accesses old attributes and causes the future warnings
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=FutureWarning, message=".*torch._dynamo.*.is_compiling.*")
+        warnings.filterwarnings("ignore", category=FutureWarning, message=".*encoder_attention_mask.*")
         m = transformers.BertForSequenceClassification(transformers.BertConfig())
         del m.bert.encoder.layer[2:]
         m.eval()
