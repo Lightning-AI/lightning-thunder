@@ -1382,9 +1382,9 @@ def test_reports_repro(tmp_path, file_indices):
 
 
 @requiresCUDA
-@given(file_indices=st.lists(st.integers(min_value=0, max_value=4), min_size=1, max_size=1, unique=True))
-@settings(max_examples=2, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
-def test_reports_benchmark(tmp_path, file_indices):
+# @given(file_indices=st.lists(st.integers(min_value=0, max_value=4), min_size=1, max_size=1, unique=True))
+# @settings(max_examples=2, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+def test_reports_benchmark(tmp_path):
     x = torch.ones(2, 2, device="cuda", requires_grad=True)
 
     def foo(x):
@@ -1426,9 +1426,9 @@ def test_reports_benchmark(tmp_path, file_indices):
     py_files = list(tmp_path.rglob("*.py"))
     assert len(py_files) == 5
 
-    selected_files = [py_files[i] for i in file_indices]
-    # for file in py_files:
-    for file in selected_files:
+    # selected_files = [py_files[i] for i in file_indices]
+    for file in py_files:
+        # for file in selected_files:
         run_script(file, cmd)
 
 
