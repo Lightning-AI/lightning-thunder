@@ -1,14 +1,10 @@
-"""
-Thunder Inference Benchmark following SemiAnalysis Methodology
+"""Thunder Inference Benchmark following SemiAnalysis Methodology
 
 This benchmark implements the methodology from the SemiAnalysis article:
 "AMD vs NVIDIA Inference Benchmark: Who Wins? - Performance & Cost Per Million Tokens"
 https://semianalysis.com/2025/05/23/amd-vs-nvidia-inference-benchmark-who-wins-performance-cost-per-million-tokens
 
 Models:
-- Llama 3.1 8B - Lower memory footprint for local experimentation
-- Llama 3.1 70B
-- Llama 3.1 405B
 - DeepSeekV3 670B
 - Llama 4 Scout 17B
 - Llama 4 Maverick
@@ -22,7 +18,6 @@ Key metrics:
 """
 
 from __future__ import annotations
-
 import argparse
 import json
 import os
@@ -30,191 +25,35 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from time import perf_counter
-from typing import Any, Dict, List, Tuple
-
-import numpy as np
-
-import torch
-import torch.distributed
+from typing import TYPE_CHECKING
 
 from torch.distributed.device_mesh import init_device_mesh
+from torch.distributed.distributed_c10d import destroy_process_group
 from torch.distributed.tensor.parallel import parallelize_module, RowwiseParallel, ColwiseParallel
-from torch.distributed.tensor import DTensor
-
-# Import model configurations
 from transformers import AutoConfig, AutoModelForCausalLM
 from transformers.cache_utils import HybridChunkedCache
-from transformers.models.llama4.modeling_llama4 import Llama4TextMoe, Llama4TextExperts
-
-from lightning_utilities.core.imports import package_available
-
-
-Llama4TextMoe_forward_original = Llama4TextMoe.forward
-Llama4TextExperts_forward_original = Llama4TextExperts.forward
-
-
-def topk1(values, topk, dim):
-    assert topk == 1, "Only topk=1 is supported"
-    return torch.max(values, dim=dim, keepdim=True)
-
-
-def static_bincount(x, length):
-    return torch.index_add(torch.zeros(length, device=x.device, dtype=x.dtype), 0, x, torch.ones_like(x))
-
-
-def inverse_permutation(x):
-    return torch.scatter(torch.zeros_like(x), 0, x, torch.arange(x.numel(), device=x.device))
-
-
-def compute_offsets_and_permutations(router_indices, num_experts):
-    flat_router_indices = router_indices.flatten()
-    expert_permutation = torch.argsort(flat_router_indices)
-    group_size_per_expert = static_bincount(flat_router_indices, num_experts)
-    zero = torch.zeros(1, device=group_size_per_expert.device, dtype=group_size_per_expert.dtype)
-    # torch.compile requires int32 for offsets
-    # https://github.com/pytorch/pytorch/blob/ed6ae20cf0e31d49d54177251293267205e24021/torch/_meta_registrations.py#L7657
-    expert_offsets = torch.cat([zero, group_size_per_expert.cumsum(0)]).to(torch.int32)
-    inv_expert_permutation = inverse_permutation(expert_permutation)
-    return expert_offsets, expert_permutation, inv_expert_permutation
-
-
-# Grouped MM in PyTorch is supported only for compute capability == 9.0, 10.0
-def grouped_mm(a, b, offsets):
-    try:
-        return torch._grouped_mm(a, b, offsets)
-    except RuntimeError:
-        # try:
-        #     return (torch.nested.nested_tensor_from_jagged(a, offsets) @ b).values()
-        # # RuntimeError: numel needs to be smaller than int32_t max; otherwise, please use packed_accessor64
-        # except RuntimeError:
-        c_list = []
-        offsets_cpu = offsets.cpu()
-        for i in range(offsets_cpu.size(0) - 1):
-            a_i = a[offsets_cpu[i] : offsets_cpu[i + 1]]
-            b_i = b[i]
-            c_i = a_i @ b_i
-            c_list.append(c_i)
-        return torch.cat(c_list, dim=0)
-
-
-# Ref:
-# https://github.com/vllm-project/vllm/blob/3ee56e26be4cfddc17f7d2e5f38f15ab74ede1c2/vllm/model_executor/models/llama4.py#L48
-def custom_routing_function(
-    hidden_states: torch.Tensor,
-    gating_output: torch.Tensor,
-    topk: int,
-    renormalize: bool,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    assert renormalize is False, "Renormalization is not supported"
-    router_scores, router_indices = topk1(gating_output, topk, dim=-1)
-    router_scores = torch.sigmoid(router_scores.to(torch.float32)).to(hidden_states.dtype)
-    return (router_scores, router_indices.to(torch.int32))
-
-
-def experts(
-    hidden_states_2d: torch.Tensor,
-    w1: torch.Tensor,
-    w2: torch.Tensor,
-    topk_weights: torch.Tensor,
-    topk_ids: torch.Tensor,
-    num_experts: int,
-) -> torch.Tensor:
-    hidden_states_2d = hidden_states_2d * topk_weights.reshape(-1, 1)
-    expert_offsets, expert_permutation, inv_expert_permutation = compute_offsets_and_permutations(topk_ids, num_experts)
-    sorted_per_expert_hidden_states = hidden_states_2d[expert_permutation]
-    gate_up = grouped_mm(sorted_per_expert_hidden_states, w1, expert_offsets)
-    gate, up = gate_up.chunk(2, dim=-1)
-    next_states = grouped_mm(up * torch.nn.functional.silu(gate), w2, expert_offsets)
-    return next_states[inv_expert_permutation]
-
-
-def Llama4TextMoe_forward(self: Llama4TextMoe, hidden_states: torch.Tensor) -> tuple[torch.Tensor, None]:
-    shared_out = self.shared_expert(hidden_states)
-    router_logits = self.router(hidden_states)
-
-    router_logits_2d = router_logits.view(-1, router_logits.size(-1))
-    hidden_states_2d = hidden_states.view(-1, self.hidden_dim)
-
-    topk_weights, topk_ids = custom_routing_function(hidden_states_2d, router_logits_2d, self.top_k, renormalize=False)
-    w1 = self.experts.gate_up_proj
-    w2 = self.experts.down_proj
-    routed_out = experts(
-        hidden_states_2d,
-        w1,
-        w2,
-        topk_weights,
-        topk_ids,
-        num_experts=self.num_experts,
-    )
-    routed_out = routed_out.view(hidden_states.shape)
-    out = routed_out + shared_out
-    return out, None
-
-
-Llama4TextMoe.forward = Llama4TextMoe_forward
-
-
-# When `vllm` and its fused_experts is available, use fused_experts as llama4 moe forward.
-# Note that due to the expected shape difference between transformers and vllm,
-# `fused_experts` requires `Tensor.contiguous`.
-# NOTE(mkozuki) test env I used:
-#     - dlcluster node: gb-nvl-081-compute04 (GB200)
-#     - container: `gitlab-master.nvidia.com:5005/dl/dgx/vllm:25.06-py3-devel-arm64`
-TEXT_MOE_REPLACED = False
-if package_available("vllm"):
-    try:
-        from vllm.model_executor.layers.fused_moe.fused_moe import fused_experts
-    except ImportError:
-        pass
-    else:
-        # ref:
-        #   - https://github.com/vllm-project/vllm/blob/65397e40f58ff5657d9e8bbd860ed9d3fdf734a0/tests/kernels/moe/test_moe.py#L125
-        #   - https://gitlab-master.nvidia.com/dl/vllm/vllm/-/blob/556acedfbda60ba40bca19bd333e6dbff0f90680/tests/kernels/moe/test_moe.py#L50
-        def Llama4TextMoe_forward(self: Llama4TextMoe, hidden_states: torch.Tensor) -> tuple[torch.Tensor, None]:
-            router_logits = self.router(hidden_states)
-
-            router_logits_2d = router_logits.view(-1, router_logits.size(-1))
-            hidden_states_2d = hidden_states.view(-1, self.hidden_dim)
-
-            topk_weights, topk_ids = custom_routing_function(
-                hidden_states_2d, router_logits_2d, self.top_k, renormalize=False
-            )
-            w1 = self.experts.gate_up_proj
-            w2 = self.experts.down_proj
-            return (
-                fused_experts(
-                    hidden_states_2d,
-                    w1,
-                    w2,
-                    topk_weights,
-                    topk_ids,
-                    inplace=True,
-                    apply_router_weight_on_input=True,  # https://github.com/vllm-project/vllm/blob/3ee56e26be4cfddc17f7d2e5f38f15ab74ede1c2/vllm/model_executor/models/llama4.py#L80
-                ),
-                None,
-            )
-
-        Llama4TextMoe.forward = Llama4TextMoe_forward
-        TEXT_MOE_REPLACED = True
-
+import numpy as np
+import torch
 
 import thunder
+
+if TYPE_CHECKING:
+    from typing import Any
+
 
 RANK = int(os.environ.get("RANK", 0))
 LOCAL_RANK = int(os.environ.get("LOCAL_RANK", 0))
 WORLD_SIZE = int(os.environ.get("WORLD_SIZE", 1))
 MASTER_ADDR = os.environ.get("MASTER_ADDR", "localhost")
 MASTER_PORT = os.environ.get("MASTER_PORT", "29500")
-os.environ["RANK"] = str(RANK)
-os.environ["LOCAL_RANK"] = str(LOCAL_RANK)
-os.environ["WORLD_SIZE"] = str(WORLD_SIZE)
-os.environ["MASTER_ADDR"] = MASTER_ADDR
-os.environ["MASTER_PORT"] = MASTER_PORT
 os.environ["TORCH_NCCL_ASYNC_ERROR_HANDLING"] = "1"
 
-mesh = init_device_mesh("cuda", (WORLD_SIZE,), mesh_dim_names=("tp",))
-device = torch.device("cuda", LOCAL_RANK)
-torch.cuda.set_device(device)
+if WORLD_SIZE > 1:
+    mesh = init_device_mesh("cuda", (WORLD_SIZE,), mesh_dim_names=("tp",))
+    device = torch.device("cuda", LOCAL_RANK)
+    torch.cuda.set_device(device)
+
+LLAMA4_MAVERICK_MODEL_ID: str = "meta-llama/Llama-4-Maverick-17B-128E"
 
 
 @contextmanager
@@ -272,17 +111,17 @@ class InferenceBenchmarkConfig:
     num_iterations: int = 10
     warmup_iterations: int = 2
     device: str = "cuda"
-    mode: str = "thunder"  # "thunder", "eager", "inductor"
-    measure_ttft: bool = True
-    measure_tbot: bool = True
+    mode: str = "thunder"
     scenario: str | None = None  # Standard scenario name if using predefined configurations
     dtensor_single_gpu: bool = False
     load_nvfp4: bool = False  # Enable NVFP4 quantization
+    measure_ttft: bool = field(True, init=False)
+    measure_tbot: bool = field(True, init=False)
 
     # Cost calculation parameters (per GPU hour) # optional
-    h100_cost_per_hour: float = 1.58
-    h200_cost_per_hour: float = 1.63
-    b200_cost_per_hour: float = 2.23
+    h100_cost_per_hour: float = field(1.58, init=False)
+    h200_cost_per_hour: float = field(1.63, init=False)
+    b200_cost_per_hour: float = field(2.23, init=False)
 
     # Memory bandwidth and compute specs
     # TODO check correctness of numbers (generated by AI)
@@ -291,7 +130,8 @@ class InferenceBenchmarkConfig:
             "H100": {"memory_bandwidth_gb": 3350, "fp16_tflops": 1979, "fp8_tflops": 3958},
             "H200": {"memory_bandwidth_gb": 4800, "fp16_tflops": 1979, "fp8_tflops": 3958},
             "B200": {"memory_bandwidth_gb": 8000, "fp16_tflops": 2529, "fp8_tflops": 5058},
-        }
+        },
+        init=False,
     )
 
 
@@ -319,33 +159,6 @@ class InferenceMetrics:
     ttft_times: list[float] = field(default_factory=list)
     prefill_times: list[float] = field(default_factory=list)
     decode_times: list[float] = field(default_factory=list)
-
-
-def ceil_div(a, b):
-    return (a + b - 1) // b
-
-
-def down_size(size):
-    assert size[-1] % 2 == 0, f"{size} last dim not divisible by two"
-    return (*size[:-1], size[-1] // 2)
-
-
-def pack_uint4(uint8_data) -> torch.Tensor:
-    shape = uint8_data.shape
-    assert shape[-1] % 2 == 0
-    uint8_data = uint8_data.contiguous().view(-1)
-    return (uint8_data[1::2] << 4 | uint8_data[::2]).view(down_size(shape))
-
-
-def _bfloat16_to_float4_e2m1fn_x2(x):
-    from torch.testing._internal.common_quantized import _f32_to_floatx_unpacked
-
-    FP4_EBITS, FP4_MBITS = 2, 1
-    assert x.dtype == torch.bfloat16
-    x = _f32_to_floatx_unpacked(x.to(torch.float32), FP4_EBITS, FP4_MBITS)
-    x = pack_uint4(x)
-    x = x.view(torch.float4_e2m1fn_x2)
-    return x
 
 
 class SemiAnalysisInferenceBenchmark:
@@ -422,74 +235,11 @@ class SemiAnalysisInferenceBenchmark:
 
         self.hf_config = config
 
-        # Apply FP4 quantization to weights if requested
-        if self.config.load_nvfp4:
-            with torch.device("meta"):
-                model = AutoModelForCausalLM.from_config(config, torch_dtype=torch.bfloat16)
-            self._quantize_to_nvfp4_and_materialize(model)
-        else:
-            # Create model on device
-            with torch.device(self.device):
-                model = AutoModelForCausalLM.from_config(config, torch_dtype=torch.bfloat16)
-
-        # NOTE(mkozuki): Transpose `Llama4TextExperts.gate_up_proj` for the better compatibility with vLLM's `fused_moe`.
-        # In huggingface/transformers, w1 (= gate_up_proj) has the shape of (e, k, 2n) and w2 (= down_proj) has the shape of (e, n, k).
-        # vLLM however requires w1 to have the shape of (e, 2n, k), and w2, (e, n, k).
-        # Shapes I get from the command of `python thunder/benchmarks/benchmark_inference.py --model-name meta-llama/Llama-4-Maverick-17B-128E --mode thunder --input-length 32 --output-length 32 --batch-size 1 --num-iterations 20 --num-layers 4` are as follows:
-        # The shapes are w/o transpose on gate_up_proj.
-        # router_logits_2d.shape = torch.Size([32, 128]), hidden_states_2d.shape = torch.Size([32, 5120]), w1.shape = torch.Size([128, 5120, 16384]), w2.shape = torch.Size([128, 8192, 5120])
-        if TEXT_MOE_REPLACED:
-            with torch.inference_mode():
-                for module in filter(lambda module: isinstance(module, Llama4TextExperts), model.modules()):
-                    module.gate_up_proj = torch.nn.Parameter(module.gate_up_proj.transpose(1, 2).contiguous())
+        # TODO: Apply NVFP4 quantization to weights if requested
+        with torch.device(self.device):
+            model = AutoModelForCausalLM.from_config(config, torch_dtype=torch.bfloat16)
 
         return model
-
-    def _quantize_to_nvfp4_and_materialize(self, model: torch.nn.Module, device: torch.device | str = "cuda"):
-        modules_to_quantize = {
-            "k_proj",
-            "q_proj",
-            "v_proj",
-            "o_proj",
-            "qkv_proj",
-            "gate_proj",
-            "up_proj",
-            "down_proj",
-            "lm_head",
-            "router",
-        }
-
-        def materialize(module: torch.nn.Module):
-            module.to_empty(device=device, recurse=False)
-            if len(tuple(module.parameters())) > 1:
-                if not hasattr(module, "reset_parameters"):
-                    raise TypeError(
-                        f"Materialization requires that the `{type(module).__name__}.reset_parameters` method is implemented."
-                        " This method is used to initialize any children parameters or buffers in this module."
-                    )
-                module.reset_parameters()
-
-        def quantize_to_nvfp4(model: torch.nn.Module):
-            for module_name, module in model.named_modules():
-                if isinstance(module, torch.nn.Linear) and any(name in module_name for name in modules_to_quantize):
-                    # Initialize weight to FP4
-                    with torch.no_grad():
-                        materialize(module)
-                        # Convert to FP4 format
-                        weight_fp4 = _bfloat16_to_float4_e2m1fn_x2(module.weight)
-
-                        del module.weight
-                        # Create a new parameter with FP4 data
-                        # Note: PyTorch Linear layers expect float weights, so this is experimental
-                        module.weight = torch.nn.Parameter(weight_fp4, requires_grad=False)
-
-                        # remove bf16 from cache
-                        torch.cuda.empty_cache()
-
-                elif len(list(module.children())) < 1:
-                    materialize(module)
-
-        quantize_to_nvfp4(model)
 
     def generate_batch(self) -> tuple[torch.Tensor, HybridChunkedCache]:
         """Generate a batch of input tokens"""
@@ -779,7 +529,7 @@ class SemiAnalysisInferenceBenchmark:
 
 
 def run_semianalysis_benchmark(
-    model_name: str = "llama3.1-8b",
+    model_name: str = LLAMA4_MAVERICK_MODEL_ID,
     batch_size: int = 1,
     input_length: int = 1024,  # default 1k -> 1k
     output_length: int = 1024,  # default 1k -> 1k
@@ -812,9 +562,9 @@ def run_semianalysis_benchmark(
         batch_size=batch_size,
         input_length=input_length,
         output_length=output_length,
+        num_layers=num_layers,
         num_iterations=num_iterations,
         mode=mode,
-        num_layers=num_layers,
         scenario=scenario,
         dtensor_single_gpu=dtensor_single_gpu,
         load_nvfp4=load_nvfp4,
@@ -853,7 +603,7 @@ class CustomFormatter(argparse.RawDescriptionHelpFormatter, argparse.ArgumentDef
     pass
 
 
-def main():
+def parse_args() -> argparse.Namespace:
     """Command line interface for the benchmark"""
     parser = argparse.ArgumentParser(
         description="Thunder Inference Benchmark following SemiAnalysis Methodology",
@@ -867,9 +617,8 @@ Standard Benchmark Scenarios:
 Use --list-scenarios for detailed scenario descriptions.
 
 Examples:
-  python inference_bmk.py --scenario chat --model-name llama3.1-8b
-  python inference_bmk.py --input-length 2048 --output-length 512 --model-name llama3.1-8b --mode eager
-  python inference_bmk.py --scenario chat --model-name llama3.1-8b --load-nvfp4
+  python inference_bmk.py --input-length 2048 --output-length 512 --model-name meta-llama/Llama-4-Maverick-17B-128E --mode eager
+  python inference_bmk.py --scenario chat --model-name meta-llama/Llama-4-Maverick-17B-128E --load-nvfp4
         """,
     )
 
@@ -877,7 +626,7 @@ Examples:
     parser.add_argument(
         "--model-name",
         type=str,
-        default="llama3.1-8b",  # Small model so it's easier to iterate locally.
+        default=LLAMA4_MAVERICK_MODEL_ID,  # Small model so it's easier to iterate locally.
         help="Model to benchmark",
     )
 
@@ -894,20 +643,32 @@ Examples:
     # Benchmark configuration (for custom experimentation when not using scenarios)
     parser.add_argument("--batch-size", type=int, default=1, help="Batch size for inference")
     parser.add_argument(
-        "--input-length", type=int, default=2048, help="Input sequence length (ignored if --scenario is used)"
+        "--input-length",
+        type=int,
+        default=2048,
+        help="Input sequence length (ignored if --scenario is used)",
     )
     parser.add_argument(
-        "--output-length", type=int, default=128, help="Output sequence length (ignored if --scenario is used)"
+        "--output-length",
+        type=int,
+        default=128,
+        help="Output sequence length (ignored if --scenario is used)",
     )
     parser.add_argument("--num-iterations", type=int, default=100, help="Number of benchmark iterations")
     parser.add_argument("--warmup-iterations", type=int, default=10, help="Number of warmup iterations")
-    parser.add_argument("--num-layers", type=int, help="Number of layers of the moddel")
+    parser.add_argument(
+        "--num-layers",
+        default=2,
+        type=int,
+        help="Number of layers of the moddel. Llama4 Maverick has 48 hidden layers, which could be too memory hungry",
+    )
 
     # Execution configuration
     parser.add_argument(
         "--mode",
         type=str,
         default="eager",
+        choices=("thunder", "eager", "inductor"),
         help="Compilation mode: thunder, eager (default), or inductor",
     )
 
@@ -922,16 +683,25 @@ Examples:
     parser.add_argument("--save-results", action="store_true", help="Save results to JSON file")
     parser.add_argument("--output-dir", type=str, default="./results", help="Directory to save results")
     parser.add_argument(
-        "--list-scenarios", action="store_true", help="List available standard benchmark scenarios and exit"
+        "--list-scenarios",
+        action="store_true",
+        help="List available standard benchmark scenarios and exit",
     )
 
     args = parser.parse_args()
+
+    if args.load_nvfp4:
+        raise NotImplementedError("Currently NVFP4 is not supported")
 
     # Handle list scenarios
     if args.list_scenarios:
         list_scenarios()
         return None
+    return args
 
+
+def main():
+    args = parse_args()
     # Create output directory if needed
     if args.save_results:
         os.makedirs(args.output_dir, exist_ok=True)
@@ -960,7 +730,6 @@ if __name__ == "__main__":
     except Exception:
         raise
     finally:
-        from torch.distributed.distributed_c10d import destroy_process_group
-
-        for process_group in mesh.get_all_groups():
-            destroy_process_group(process_group)
+        if WORLD_SIZE > 1:
+            for process_group in mesh.get_all_groups():
+                destroy_process_group(process_group)
