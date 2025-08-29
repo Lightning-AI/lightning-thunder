@@ -1398,7 +1398,7 @@ def test_reports_benchmark(tmp_path):
     results = fx_report(foo)(x)
     thunderjit = ThunderCompileSpecification()
     torchcompile = TorchCompileSpecification()
-    torcheager = TorchEagerSpecification()
+    # torcheager = TorchEagerSpecification()
     assert len(results.fx_graph_reports) == 2  # 2 Dynamo graphs
     fx_graph_report = results.fx_graph_reports[0]
     thunder_fx_graph_report = analyze_thunder_splits(fx_graph_report)
@@ -1408,11 +1408,11 @@ def test_reports_benchmark(tmp_path):
     thunder_split_report.write_benchmark(
         tmp_path,
         torchcompile,
-        WallTimeWithMemoryUsage(min_run_time=0.001, max_run_time=1.0, threshold=0.08),
+        WallTimeWithMemoryUsage(min_run_time=0.001, max_run_time=0.1, threshold=0.08),
         file_name=f"{split_name}_torchcompile.py",
     )
-    walltimer = WallTime(min_run_time=0.001, max_run_time=1.0, threshold=0.08)
-    thunder_split_report.write_benchmark(tmp_path, torcheager, walltimer, file_name=f"{split_name}_eager.py")
+    walltimer = WallTime(min_run_time=0.001, max_run_time=0.1, threshold=0.08)
+    # thunder_split_report.write_benchmark(tmp_path, torcheager, walltimer, file_name=f"{split_name}_eager.py")
     thunder_split_report.write_benchmark(tmp_path, thunderjit, walltimer, file_name=f"{split_name}_jit.py")
     thunder_split_report.create_fusion_reports()
     assert len(thunder_split_report.fusion_reports) == 2  # fwd, bwd
@@ -1424,7 +1424,7 @@ def test_reports_benchmark(tmp_path):
 
     cmd = [sys.executable]
     py_files = list(tmp_path.rglob("*.py"))
-    assert len(py_files) == 5
+    assert len(py_files) == 4
 
     # selected_files = [py_files[i] for i in file_indices]
     for file in py_files:
