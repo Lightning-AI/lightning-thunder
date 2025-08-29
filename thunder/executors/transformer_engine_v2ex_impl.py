@@ -281,7 +281,7 @@ def _linear_checker(
         return shape[0] % MXFP8_BLOCK_SCALING_SIZE == 0 and shape[1] % MXFP8_BLOCK_SCALING_SIZE == 0
 
     # Inputs must be on CUDA and
-    # input sizes must satisfy -> dim0 is divisible by 8 and dim1 is divisible by 16.
+    # input sizes must satisfy size constraints based on the recipe.
     return all(map(is_cuda, inputs)) and check_valid_fp8_shapes(_view_input_as_2d(a)) and check_valid_fp8_shapes(w)
 
 
