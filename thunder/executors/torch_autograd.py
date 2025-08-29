@@ -142,6 +142,7 @@ class ThunderOutputFunction(torch.autograd.Function):
         return torch.randn(1, device="meta"), None, *([None] * ctx.num_args)
 
 
+@torch.enable_grad()
 def connect_to_autograd(
     *,
     backward_fn,
@@ -168,18 +169,17 @@ def connect_to_autograd(
             disable_split_autograd, lambda: "is_differentiable_outputs is not supported when split_autograd is enabled"
         )
 
-    with torch.enable_grad():
-        dummy_res = ThunderFunction.apply(
-            return_none_instead_of_grads,
-            backward_fn,
-            side_channel,
-            saved_tensors,
-            saved_other,
-            is_differentiable_outputs,
-            flat_output,
-            *flat_args,
-        )
-        if side_channel is not None:
-            # we need to pass the inputs to avoid "leave has moved inside the graph"
-            # if the function returns an argument as is
-            ThunderOutputFunction.apply(dummy_res, side_channel, *flat_args)
+    dummy_res = ThunderFunction.apply(
+        return_none_instead_of_grads,
+        backward_fn,
+        side_channel,
+        saved_tensors,
+        saved_other,
+        is_differentiable_outputs,
+        flat_output,
+        *flat_args,
+    )
+    if side_channel is not None:
+        # we need to pass the inputs to avoid "leave has moved inside the graph"
+        # if the function returns an argument as is
+        ThunderOutputFunction.apply(dummy_res, side_channel, *flat_args)
