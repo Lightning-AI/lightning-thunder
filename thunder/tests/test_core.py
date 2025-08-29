@@ -2570,7 +2570,9 @@ def test_grad_ctx():
         pytest.mark.parametrize("ends_with_op", [False, True]),
     ),
 )
-def test_set_grad_enabled(executor, device, dtype, global_grad_enabled, n_flips, next_enable, starts_with_op, ends_with_op):
+def test_set_grad_enabled(
+    executor, device, dtype, global_grad_enabled, n_flips, next_enable, starts_with_op, ends_with_op
+):
     def fn(x):
         next_enable_local = next_enable
         for i in range(n_flips):
