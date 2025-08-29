@@ -1382,8 +1382,6 @@ def test_reports_repro(tmp_path, file_indices):
 
 
 @requiresCUDA
-# @given(file_indices=st.lists(st.integers(min_value=0, max_value=4), min_size=1, max_size=1, unique=True))
-# @settings(max_examples=2, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
 def test_reports_benchmark(tmp_path):
     x = torch.ones(2, 2, device="cuda", requires_grad=True)
 
@@ -1398,7 +1396,6 @@ def test_reports_benchmark(tmp_path):
     results = fx_report(foo)(x)
     thunderjit = ThunderCompileSpecification()
     torchcompile = TorchCompileSpecification()
-    # torcheager = TorchEagerSpecification()
     assert len(results.fx_graph_reports) == 2  # 2 Dynamo graphs
     fx_graph_report = results.fx_graph_reports[0]
     thunder_fx_graph_report = analyze_thunder_splits(fx_graph_report)
@@ -1412,7 +1409,6 @@ def test_reports_benchmark(tmp_path):
         file_name=f"{split_name}_torchcompile.py",
     )
     walltimer = WallTime(min_run_time=0.001, max_run_time=0.1, threshold=0.08)
-    # thunder_split_report.write_benchmark(tmp_path, torcheager, walltimer, file_name=f"{split_name}_eager.py")
     thunder_split_report.write_benchmark(tmp_path, thunderjit, walltimer, file_name=f"{split_name}_jit.py")
     thunder_split_report.create_fusion_reports()
     assert len(thunder_split_report.fusion_reports) == 2  # fwd, bwd
@@ -1426,9 +1422,7 @@ def test_reports_benchmark(tmp_path):
     py_files = list(tmp_path.rglob("*.py"))
     assert len(py_files) == 4
 
-    # selected_files = [py_files[i] for i in file_indices]
     for file in py_files:
-        # for file in selected_files:
         run_script(file, cmd)
 
 
