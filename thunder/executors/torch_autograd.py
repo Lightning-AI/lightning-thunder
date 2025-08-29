@@ -142,6 +142,7 @@ class ThunderOutputFunction(torch.autograd.Function):
         return torch.randn(1, device="meta"), None, *([None] * ctx.num_args)
 
 
+@torch.enable_grad()
 def connect_to_autograd(
     *,
     backward_fn,
