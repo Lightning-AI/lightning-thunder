@@ -7,10 +7,10 @@ from thunder.core.prims import linear as linear_prim
 from thunder.core.prims import get_grad, put_grad
 from thunder.core.proxies import AnyProxy, TensorProxy
 from thunder.extend import StatefulExecutor, register_executor
-from thunder.executors.transformer_engineex import _linear_checker
 import thunder.torch as ltorch
 from thunder import Transform
 from thunder.core import prims
+import thunder.core.devices as devices
 from thunder.core.proxies import Proxy, Variable, unvariableify, variableify
 from thunder.core.trace import from_trace, TraceProvenance, TraceTag, TraceCtx
 from thunder.core.transforms import (
@@ -27,8 +27,7 @@ if TYPE_CHECKING:
     from thunder.core.proxies import TensorProxy
 
 import transformer_engine.pytorch as te
-from transformer_engine.pytorch.tensor import Quantizer
-from transformer_engine.pytorch.ops import BasicLinear
+from transformer_engine.pytorch.constants import MXFP8_BLOCK_SCALING_SIZE
 from transformer_engine.pytorch.fp8 import (
     _amax_and_scale_update,
     get_fp8_max,
@@ -36,6 +35,9 @@ from transformer_engine.pytorch.fp8 import (
     RecipeState,
     FP8GlobalStateManager,
 )
+from transformer_engine.pytorch.ops import BasicLinear
+from transformer_engine.pytorch.tensor import Quantizer
+from transformer_engine.pytorch.utils import check_dim_for_fp8_exec
 
 
 transformer_engine_v2_ex = StatefulExecutor("transformer_engine_v2")
@@ -248,6 +250,39 @@ def _te_linear_grad_transform(a, w, bias):
         put_grad(bias, grad_bias)
 
     return primal
+
+
+def _linear_checker(
+    a: TensorProxy,
+    w: TensorProxy,
+    bias: None | TensorProxy,
+) -> bool:
+    def is_cuda(t):
+        return t.device.devicetype == devices.DeviceType.CUDA
+
+    inputs = (a, w)
+    if bias is not None:
+        inputs = inputs + (bias,)
+
+    # Helper function as input shape can be (*, Hin)
+    def _view_input_as_2d(x):
+        shape = x.shape
+        return x.view((-1, shape[-1]))
+
+    fp8_recipe = FP8GlobalStateManager.get_fp8_recipe()
+
+    def check_valid_fp8_shapes(a):
+        # DelayedScaling and MXFP8BlockScaling have different shape requirements.
+        if fp8_recipe.delayed():
+            return check_dim_for_fp8_exec(a)
+
+        assert fp8_recipe.mxfp8()
+        shape = a.shape
+        return shape[0] % MXFP8_BLOCK_SCALING_SIZE == 0 and shape[1] % MXFP8_BLOCK_SCALING_SIZE == 0
+
+    # Inputs must be on CUDA and
+    # input sizes must satisfy -> dim0 is divisible by 8 and dim1 is divisible by 16.
+    return all(map(is_cuda, inputs)) and check_valid_fp8_shapes(_view_input_as_2d(a)) and check_valid_fp8_shapes(w)
 
 
 transformer_engine_v2_ex.register_implementation(
