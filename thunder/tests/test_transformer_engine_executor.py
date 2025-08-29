@@ -4,6 +4,9 @@ from torch.testing import assert_close
 
 import thunder
 from thunder.tests.framework import requiresCUDA
+
+# NOTE: On SM120/121, TE defaults to using Float8BlockScaling
+#       which is currently unsupported in thunder, we skip the tests for these SM architectures.
 from thunder.tests.utils import skip_on_sm120_and_sm121, is_sm120_orsm121
 
 pytest.importorskip("transformer_engine", reason="transformer_engine was not found, skipping the tests.")

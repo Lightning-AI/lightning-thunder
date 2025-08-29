@@ -45,8 +45,6 @@ def is_sm120_orsm121():
 
 
 def skip_on_sm120_and_sm121(fn):
-    # NOTE: On SM120/121, TE defaults to using Float8BlockScaling
-    #       which is currently unsupported in thunder.
     @functools.wraps(fn)
     def wrapped_fn(*args, **kwargs):
         if is_sm120_orsm121():
