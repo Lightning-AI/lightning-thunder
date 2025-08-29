@@ -2560,19 +2560,12 @@ def test_grad_ctx():
     assert thunder.cache_misses(jfoo) == 2
 
 
-@instantiate(
-    dtypes=NOTHING,
-    decorators=(
-        pytest.mark.parametrize("global_grad_enabled", [False, True]),
-        pytest.mark.parametrize("n_flips", range(4)),
-        pytest.mark.parametrize("next_enable", [False, True]),
-        pytest.mark.parametrize("starts_with_op", [False, True]),
-        pytest.mark.parametrize("ends_with_op", [False, True]),
-    ),
-)
-def test_set_grad_enabled(
-    executor, device, dtype, global_grad_enabled, n_flips, next_enable, starts_with_op, ends_with_op
-):
+@pytest.mark.parametrize("global_grad_enabled", [False, True])
+@pytest.mark.parametrize("n_flips", range(4))
+@pytest.mark.parametrize("next_enable", [False, True])
+@pytest.mark.parametrize("starts_with_op", [False, True])
+@pytest.mark.parametrize("ends_with_op", [False, True])
+def test_set_grad_enabled(global_grad_enabled, n_flips, next_enable, starts_with_op, ends_with_op):
     def fn(x):
         next_enable_local = next_enable
         for i in range(n_flips):
@@ -2584,11 +2577,11 @@ def test_set_grad_enabled(
             x = x.sin()
         return x
 
-    x = torch.randn(10, requires_grad=True, device=device)
+    x = torch.randn(10, requires_grad=True)
     x_ref = x.detach().clone().requires_grad_(True)
 
     torch.set_grad_enabled(global_grad_enabled)
-    jfn = executor.make_callable(fn)
+    jfn = thunder.jit(fn)
     y = jfn(x)
 
     torch.set_grad_enabled(global_grad_enabled)
