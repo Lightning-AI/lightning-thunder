@@ -1,5 +1,4 @@
 import torch
-import traceback
 import thunder
 import os
 import pytest
@@ -11,7 +10,6 @@ if os.getenv("ALLOW_COVERAGE_TRACE") != "1":
 
 from transformers import (
     AutoConfig,
-    AutoTokenizer,
     AutoModel,
     AutoModelForCausalLM,
     AutoModelForSeq2SeqLM,

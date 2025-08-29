@@ -5,7 +5,6 @@ from thunder.core.proxies import TensorProxy, variableify, unvariableify
 from thunder.core.pytree import tree_flatten
 from thunder.core.symbol import BoundSymbol, BoundSymbolTag, has_tags
 from thunder.core.trace import from_trace, tracectx, TraceCtx as Trace, TraceProvenance, VariableInterface
-from thunder.torch import setitem_
 
 
 def _update_swap_map(swap_map, old_alias, new_alias):

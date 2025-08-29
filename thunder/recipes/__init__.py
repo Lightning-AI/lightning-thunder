@@ -1,4 +1,4 @@
-from typing import Any, Type
+from typing import Any
 
 from thunder.recipes.base import BaseRecipe
 from thunder.recipes.hf_transformers import HFTransformers
