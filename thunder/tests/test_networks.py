@@ -719,7 +719,7 @@ def test_hf_kvcache():
     assert_close(j_static_cache.value_cache, ref_static_cache.value_cache, rtol=1e-1, atol=1e-1)
 
 
-@dataclass
+@dataclass(frozen=True)
 class Config:
     name: str
     hidden_size: int
