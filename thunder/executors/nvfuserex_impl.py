@@ -2864,6 +2864,12 @@ def scatter(
     nvi = getnv(index, fd, lc_to_nv_map)
     nvs = getnv(src, fd, lc_to_nv_map)
 
+    # NOTE: scalar source value is not supported until 0.2.31. Wrapping scalar to full as a WAR.
+    if nvfuser_version() < LooseVersion("0.2.31"):
+        if isinstance(nvs, nvfuser._C.Scalar):
+            # NOTE: for a few commits on 0.2.30, this WAR still hits an assert. But since this is opt-in, we expect the user to back out from that, instead of blindly rejecting scatter for earlier version.
+            nvs = fd.ops.full(nvi.shape(), nvs, dtype=lcdtype_to_nvdtype(a.dtype))
+
     # index_put is translated to scatter in nvfuser
     return fd.ops.scatter(nva, nvi, nvs, dim)
 
