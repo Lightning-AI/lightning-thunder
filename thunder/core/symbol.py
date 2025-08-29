@@ -327,11 +327,14 @@ class Symbol:
 
         cd = get_compile_data()
         if cd is not None and not cd.is_grad_enabled:
+            flat_args, _ = tree_flatten((args, kwargs))
+            flat_arg_names = {arg.name for arg in flat_args if isinstance(arg, TensorProxy)}
+
             # If grad is disabled using `torch.no_grad` or `torch._C._set_grad_enabled(False)`,
             # tag the results with `DETACHED_AUTOGRAD_GRAPH` which makes this Symbol a constant for
             # vjp transform (applied later).
             def tag_tensorproxy_output_as_detached(proxy):
-                if isinstance(proxy, TensorProxy):
+                if isinstance(proxy, TensorProxy) and proxy.name not in flat_arg_names:
                     proxy.tags.add(ProxyTag.DETACHED_AUTOGRAD_GRAPH)
 
                 return proxy
