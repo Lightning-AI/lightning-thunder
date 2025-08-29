@@ -51,10 +51,12 @@ from thunder.core.transforms import register_grad, register_augmented_forward, r
 from thunder.core.prims import get_grad, put_grad
 import thunder
 from thunder.torch.default_torch_ops import _auto_registered_operators_returning_views
+from thunder.torch.custom_op import _register_custom_op
 
 
 __all__ = [
     "is_available",
+    "_register_custom_op",
 ]
 
 # NOTE torch is a requirement
@@ -5660,7 +5662,7 @@ def interpolate(
     utils.check(a.ndim >= 3, lambda: f"Expected {a.ndim=} >= 3")
     utils.check(a.numel() > 0, lambda: f"Expected {a.numel=} to be greater than 0")
     utils.check(
-        align_corners == None,
+        align_corners is None,
         lambda: "Thunder does not yet support 'align_corners'.",
         exception_type=NotImplementedError,
     )

@@ -136,7 +136,7 @@ __all__ = [
 ]
 
 
-from thunder.__about__ import *  # import all
+from thunder.__about__ import *  # noqa: F403
 
 
 # TODO maybe move these aliases to the core language?
@@ -382,6 +382,7 @@ def jit(
     weakref_cd = weakref.ref(cd)
 
     cs = CompileStats()
+    weakref_cs = weakref.ref(cs)
 
     def _alias_tensor_of_args_kwargs_dict(*args, **kwargs) -> dict[int, list[int]]:
         flat_args, _ = tree_flatten((args, kwargs))
@@ -670,9 +671,11 @@ def jit(
     @langctxs.langctx(cd.langctx)
     @_with_cache_info_ctx
     def get_computation_and_inputs(*args, **kwargs):
-        # NOTE: Don't capture cd in the closure, otherwise it will create a cycle
+        # NOTE: Don't capture cd or cs in the closure, otherwise it will create a cycle
         cd = weakref_cd()
         assert cd is not None, "cd has been cleared."
+        cs = weakref_cs()
+        assert cs is not None, "cs has been cleared."
 
         # set up a record of things in the current environment that impact caching / prologues
         # this could be replaced by the respective querying in the prologues
@@ -763,6 +766,9 @@ def jit(
 
     def host_execution_timer(fn):
         def wrapped(*args, **kwargs):
+            # NOTE: Don't capture cd or cs in the closure, otherwise it will create a cycle
+            cs = weakref_cs()
+            assert cs is not None, "cs has been cleared."
             cs.last_trace_host_execution_start = time.perf_counter_ns()
             try:
                 return fn(*args, **kwargs)
@@ -773,6 +779,9 @@ def jit(
 
     def prologue_execution_timer(fn):
         def wrapped(*args, **kwargs):
+            # NOTE: Don't capture cd or cs in the closure, otherwise it will create a cycle
+            cs = weakref_cs()
+            assert cs is not None, "cs has been cleared."
             cs.last_prologue_execution_start = time.perf_counter_ns()
             try:
                 return fn(*args, **kwargs)
@@ -801,6 +810,9 @@ def jit(
 
     def update_call_statistics(fn):
         def wrapped(*args, **kwargs):
+            # NOTE: Don't capture cd or cs in the closure, otherwise it will create a cycle
+            cs = weakref_cs()
+            assert cs is not None, "cs has been cleared."
             cs.calls += 1
             cs.last_trace_host_start = time.perf_counter_ns()
             try:
@@ -843,6 +855,9 @@ def jit(
     @wraps(fn)
     @update_call_statistics
     def fn_(*args, **kwargs) -> Any:
+        # NOTE: Don't capture cd or cs in the closure, otherwise it will create a cycle
+        cs = weakref_cs()
+        assert cs is not None, "cs has been cleared."
         if is_tracing():
             _recursive_jit_call_warning()
             return fn(*args, **kwargs)

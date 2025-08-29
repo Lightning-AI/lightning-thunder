@@ -474,7 +474,6 @@ def test_where_nonzero_overload(executor, device: str, dtype: dtypes.dtype):
     dtypes=(dtypes.float32,),
     executors=(DynamoThunderExecutor,),
     decorators=(
-        pytest.mark.skip(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1821"),
         pytest.mark.parametrize(
             "optim",
             (
@@ -1076,7 +1075,7 @@ def test_get_example_input_tensor_metadata():
 
     t0 = torch.randn((5, 10), device="meta")
     meta_t0 = _get_example_input_tensor_metadata(t0)
-    assert meta_t0.min_val == None and meta_t0.max_val == None and meta_t0.device.type == "meta"
+    assert meta_t0.min_val is None and meta_t0.max_val is None and meta_t0.device.type == "meta"
     t0_str = arg_like_tensor(meta_t0)
     assert (
         t0_str

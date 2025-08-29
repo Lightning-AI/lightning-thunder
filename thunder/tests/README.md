@@ -15,21 +15,3 @@ pytest test_ops.py -k cos -v
 ```
 
 This will run tests for Thunder’s different executors, supported dtypes, and supported devicetypes.
-
-The OpInfo tests can also be run from Python, and this can be extremely useful for debugging.
-To do that, find the generated test name you’d like to run (often by invoking the tests from the command line and observing their names) and call it. Here’s a sample program:
-
-```py
-import traceback
-import thunder.tests.test_ops as to
-
-e, exc_info, snippet, opinfo, devicetype, dtype, args, kwargs = to.test_core_vs_torch_consistency_cos_nvFuser_CUDA_float32()
-
-traceback.print_exception(*exc_info)
-```
-
-If the test fails, it will return information about the failure, including error information and the arguments that caused the failure.
-In the above sample the traceback information is printed. If the test succeeds then it will return nothing.
-
-It can be a little tricky to remember all the components a test returns, but you can
-always catch and print the return value to better understand what's available.
