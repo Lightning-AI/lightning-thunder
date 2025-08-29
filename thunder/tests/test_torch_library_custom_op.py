@@ -240,3 +240,47 @@ def test_custom_impl_for_torch_library_custom_op(_, device: str, dtype: dtypes.d
         if bsym.sym.name == f"{_symbol.name}_backward" and bsym.sym.executor is custom_op_ex:
             bsym_custom_ex_bsym_found = True
     assert bsym_custom_ex_bsym_found
+
+
+@instantiate(
+    executors=(TorchExecutor,),
+    devicetypes=(devices.DeviceType.CUDA,),
+    dtypes=(dtypes.float32,),
+)
+def test_nvfuser_impl_for_torch_library_custom_op(_, device: str, dtype: dtypes.dtype):
+    from thunder.executors.nvfuserex_impl import mul as nvfuser_mul, register_supported, _elementwise_binary_check
+
+    _symbol = _register_custom_op(mul)
+    register_supported(_symbol, nvfuser_mul, _elementwise_binary_check)
+
+    SHAPE = (8, 2)
+    torch_device, torch_dtype = devices.to_torch_device(device), dtypes.to_torch_dtype(dtype)
+    module = MyModule().to(device=torch_device, dtype=torch_dtype)
+    jitted = thunder.jit(module)
+    ref = MyModule().to(device=torch_device, dtype=torch_dtype)
+    ref.load_state_dict(module.state_dict())
+
+    x = torch.testing.make_tensor(SHAPE, device=torch_device, dtype=torch_dtype)
+    y = torch.testing.make_tensor(SHAPE, device=torch_device, dtype=torch_dtype)
+    x_ref = x.clone().detach()
+    y_ref = y.clone().detach()
+
+    ref_out = ref(x_ref, y_ref)
+    out = jitted(x, y)
+    torch.testing.assert_close(ref_out, out)
+    out.mean().backward()
+
+    bsym: BoundSymbol
+    fwd_extrace = thunder.last_traces(jitted)[-1]
+    custom_ex_bsym_found: bool = False
+    for bsym in fwd_extrace.bound_symbols:
+        if bsym.sym.name == _symbol.name and bsym.sym.executor is custom_op_ex:
+            custom_ex_bsym_found = True
+    assert not custom_ex_bsym_found
+
+    bwd_extrace = thunder.last_backward_traces(jitted)[-1]
+    bsym_custom_ex_bsym_found: bool = False
+    for bsym in bwd_extrace.bound_symbols:
+        if bsym.sym.name == f"{_symbol.name}_backward" and bsym.sym.executor is custom_op_ex:
+            bsym_custom_ex_bsym_found = True
+    assert bsym_custom_ex_bsym_found
