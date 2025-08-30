@@ -638,8 +638,8 @@ Standard Benchmark Scenarios:
 Use --list-scenarios for detailed scenario descriptions.
 
 Examples:
-  python inference_bmk.py --input-length 2048 --output-length 512 --model-name meta-llama/Llama-4-Maverick-17B-128E --mode eager
-  python inference_bmk.py --scenario chat --model-name meta-llama/Llama-4-Maverick-17B-128E --load-nvfp4
+  python benchmark_inference.py --input-length 2048 --output-length 512 --model-name meta-llama/Llama-4-Maverick-17B-128E --mode eager
+  python benchmark_inference.py --scenario chat --model-name meta-llama/Llama-4-Maverick-17B-128E --load-nvfp4
         """,
     )
 
