@@ -171,7 +171,6 @@ class SemiAnalysisInferenceBenchmark:
         self.device = torch.device(config.device)
         self.metrics = InferenceMetrics()
 
-        # Load model
         self.model = self._load_model()
 
         tp_plan = {
@@ -194,7 +193,6 @@ class SemiAnalysisInferenceBenchmark:
             for p in self.model.parameters():
                 p.requires_grad_(False)
 
-        # Compile model
         self.model = self._compile_model(self.model)
 
     def _compile_model(self, model):
@@ -221,14 +219,10 @@ class SemiAnalysisInferenceBenchmark:
     def _load_model(self) -> torch.nn.Module:
         """Load the model based on configuration"""
         model_id = self.config.model_name
-
-        # Load model configuration (without quantization first)
         config = AutoConfig.from_pretrained(model_id)
 
         if hasattr(config, "text_config"):
             config = config.text_config
-
-        # Set the number of layers
         if self.config.num_layers:
             config.num_hidden_layers = self.config.num_layers
 
@@ -245,7 +239,6 @@ class SemiAnalysisInferenceBenchmark:
         batch_size = self.config.batch_size
         input_length = self.config.input_length
 
-        # Determine vocabulary size based on model
         if hasattr(self.model, "vocab_size"):
             vocab_size = self.model.vocab_size
         elif hasattr(self.model, "config") and hasattr(self.model.config, "vocab_size"):
@@ -254,7 +247,6 @@ class SemiAnalysisInferenceBenchmark:
             # Default vocabulary size for older models
             vocab_size = 32000
 
-        # Random input tokens
         input_ids = torch.randint(0, vocab_size, (batch_size, input_length), device=self.device)
         past_key_values = HybridChunkedCache(
             self.hf_config, input_ids.shape[0], input_ids.shape[1] + self.config.output_length
@@ -385,7 +377,6 @@ class SemiAnalysisInferenceBenchmark:
         print(f"Device: {self.device}")
         print(f"Mode: {self.config.mode}")
 
-        # Warmup iterations
         print(f"\nWarming up with {self.config.warmup_iterations} iterations...")
         input_ids, past_key_values = self.generate_batch()
 
@@ -393,7 +384,6 @@ class SemiAnalysisInferenceBenchmark:
             past_key_values.reset()
             _ = self.measure_inference_step(input_ids, past_key_values, max_new_tokens=1)
 
-        # Benchmark iterations
         print(f"\nRunning {self.config.num_iterations} benchmark iterations...")
         all_metrics = []
 
@@ -408,13 +398,10 @@ class SemiAnalysisInferenceBenchmark:
             self.metrics.prefill_times.append(iter_metrics["prefill_time"])
             self.metrics.decode_times.append(iter_metrics["total_decode_time"])
 
-        # Calculate aggregate metrics
         self._calculate_aggregate_metrics(all_metrics)
 
-        # Calculate cost per million tokens
         self._calculate_cost_metrics()
 
-        # Memory metrics
         if torch.cuda.is_available():
             self.metrics.memory_used_gb = torch.cuda.memory_allocated() / 1e9
             self.metrics.peak_memory_gb = torch.cuda.max_memory_allocated() / 1e9
@@ -503,7 +490,6 @@ class SemiAnalysisInferenceBenchmark:
         print("\nCost Analysis:")
         print(f"  Cost per Million Tokens: ${self.metrics.cost_per_million_tokens:.4f}")
 
-        # Variance analysis
         if self.metrics.iteration_times:
             print("\nVariance Analysis:")
             print(f"  Throughput Std Dev: {np.std([t for t in self.metrics.iteration_times]):.2f} ms")
@@ -557,7 +543,6 @@ def run_semianalysis_benchmark(
 ):
     """Main function to run the benchmark"""
 
-    # Apply scenario configuration if specified
     if scenario is not None:
         if scenario not in BENCHMARK_SCENARIOS:
             raise ValueError(f"Unknown scenario '{scenario}'. Available scenarios: {list(BENCHMARK_SCENARIOS.keys())}")
@@ -637,7 +622,6 @@ Examples:
         """,
     )
 
-    # Model configuration
     parser.add_argument(
         "--model-name",
         type=str,
@@ -645,7 +629,6 @@ Examples:
         help="Model to benchmark",
     )
 
-    # Scenario configuration (standardized scenarios vs custom)
     parser.add_argument(
         "--scenario",
         type=str,
@@ -700,7 +683,6 @@ Examples:
     )
     parser.add_argument("--load-nvfp4", action="store_true", help="Enable NVFP4 quantization for linear layers")
 
-    # Output configuration
     parser.add_argument("--save-results", action="store_true", help="Save results to JSON file")
     parser.add_argument("--output-dir", type=str, default="./results", help="Directory to save results")
     parser.add_argument(
@@ -714,7 +696,6 @@ Examples:
     if args.load_nvfp4:
         raise NotImplementedError("Currently NVFP4 is not supported")
 
-    # Handle list scenarios
     if args.list_scenarios:
         list_scenarios()
         return None
@@ -723,11 +704,9 @@ Examples:
 
 def main():
     args = parse_args()
-    # Create output directory if needed
     if args.save_results:
         os.makedirs(args.output_dir, exist_ok=True)
 
-    # Run benchmark
     run_semianalysis_benchmark(
         model_name=args.model_name,
         batch_size=args.batch_size,
