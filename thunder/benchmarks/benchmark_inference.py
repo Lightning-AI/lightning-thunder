@@ -365,8 +365,24 @@ class SemiAnalysisInferenceBenchmark:
             "total_decode_time": total_decode_time,
         }
 
+    def _run_thunderfx_benchmark_report(self):
+        print(f"Running thunderfx benchmark report for {self.config.model_name} to {self.config.fx_report_folder}")
+        print(f"Batch size: {self.config.batch_size}")
+        print(f"Input length: {self.config.input_length}")
+        print(f"Output length: {self.config.output_length}")
+        print(f"Device: {self.device}")
+        input_ids, past_key_values = self.generate_batch()
+        thunderfx_benchmark_report(
+            self.model,
+            folder_path=self.config.fx_report_folder,
+            compare_fusion=True,
+        )(input_ids, past_key_values)
+
     def run_benchmark(self) -> InferenceMetrics:
         """Run the full benchmark and collect metrics"""
+        if self.config.fx_report_folder is not None:
+            self._run_thunderfx_benchmark_report()
+            return
         print(f"Running inference benchmark for {self.config.model_name}")
 
         print(f"Batch size: {self.config.batch_size}")
@@ -543,6 +559,7 @@ def run_semianalysis_benchmark(
     scenario: str | None = None,
     dtensor_single_gpu: bool = False,
     load_nvfp4: bool = False,
+    fx_report_folder: str | None = None,
 ):
     """Main function to run the benchmark"""
 
@@ -571,6 +588,7 @@ def run_semianalysis_benchmark(
         scenario=scenario,
         dtensor_single_gpu=dtensor_single_gpu,
         load_nvfp4=load_nvfp4,
+        fx_report_folder=fx_report_folder,
     )
 
     benchmark = SemiAnalysisInferenceBenchmark(config)
@@ -673,6 +691,12 @@ Examples:
         default="eager",
         choices=("thunder", "eager", "inductor", "thunderjit"),
         help="Compilation mode: thunder, eager (default), or inductor. thunder runs thunderfx.",
+    )
+    parser.add_argument(
+        "--fx-report-folder",
+        default=None,
+        type=str,
+        help="Specify the folder for thunderfx_benchmark_report.",
     )
 
     parser.add_argument(
