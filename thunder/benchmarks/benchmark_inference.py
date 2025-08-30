@@ -19,22 +19,21 @@ Key metrics:
 
 from __future__ import annotations
 import argparse
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 import json
 import os
 import time
-from contextlib import contextmanager
-from dataclasses import dataclass, field
-from time import perf_counter
 from typing import TYPE_CHECKING
 
+import numpy as np
+import torch
 from torch.distributed.device_mesh import init_device_mesh
 from torch.distributed.distributed_c10d import destroy_process_group
 from torch.distributed.tensor.parallel import parallelize_module, RowwiseParallel, ColwiseParallel
+from tqdm import tqdm
 from transformers import AutoConfig, AutoModelForCausalLM
 from transformers.cache_utils import HybridChunkedCache
-import numpy as np
-import torch
-from tqdm import tqdm
 
 import thunder
 from thunder.dynamo.report import thunderfx_benchmark_report
@@ -61,10 +60,10 @@ LLAMA4_MAVERICK_MODEL_ID: str = "meta-llama/Llama-4-Maverick-17B-128E"
 @contextmanager
 def timer():
     torch.cuda.synchronize()
-    t1 = t2 = perf_counter()
+    t1 = t2 = time.perf_counter()
     yield lambda: (t2 - t1) * 1000  # Convert to ms
     torch.cuda.synchronize()
-    t2 = perf_counter()
+    t2 = time.perf_counter()
 
 
 # Standard benchmark scenarios following the three-scenario methodology
