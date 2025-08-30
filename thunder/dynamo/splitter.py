@@ -175,7 +175,7 @@ def _splitter(
             for n in graph_module.graph.nodes:
                 if n.op == "output":
                     for n in n.all_input_nodes:
-                        if "example_value" not in n.meta or n.meta["example_value"].grad_fn is None:
+                        if "example_value" not in n.meta or getattr(n.meta["example_value"], "grad_fn") is None:
                             is_differentiable_outputs.append(False)
                         else:
                             is_differentiable_outputs.append(True)
