@@ -36,6 +36,7 @@ from transformers import AutoConfig, AutoModelForCausalLM
 from transformers.cache_utils import HybridChunkedCache
 
 import thunder
+from thunder.dynamo.compiler import thunderfx
 from thunder.dynamo.report import thunderfx_benchmark_report
 
 if TYPE_CHECKING:
@@ -117,6 +118,7 @@ class InferenceBenchmarkConfig:
     dtensor_single_gpu: bool = False
     load_nvfp4: bool = False  # Enable NVFP4 quantization
     fx_report_folder: str | None = None
+    enable_nv_linear: bool = False
     measure_ttft: bool = field(default=True, init=False)
     measure_tbot: bool = field(default=True, init=False)
 
@@ -195,6 +197,14 @@ class SemiAnalysisInferenceBenchmark:
 
         self.model = self._compile_model(self.model)
 
+    @property
+    def _thunder_jit_options(self) -> dict[str, Any]:
+        # `nv_enable_linear=True` might fail with distributed run
+        # ref: https://github.com/NVIDIA/Fuser/issues/4507
+        if self.config.enable_nv_linear:
+            return {"nv_enable_linear": True, "nv_enable_matmul": True}
+        return {}
+
     def _compile_model(self, model):
         if self.config.fx_report_folder is not None:
             return model
@@ -204,15 +214,9 @@ class SemiAnalysisInferenceBenchmark:
             case "inductor":
                 return torch.compile(model, mode="reduce-overhead")
             case "thunder":
-                from thunder.dynamo import thunderfx
-
-                # Set `nv_enable_linear` to True
-                # once workaround is added for https://github.com/NVIDIA/Fuser/issues/4507
-                return thunderfx(model, nv_enable_linear=False)
+                return thunderfx(model, **self._thunder_jit_options)
             case "thunderjit":
-                # Set `nv_enable_linear` to True
-                # once workaround is added for https://github.com/NVIDIA/Fuser/issues/4507
-                return thunder.jit(model, nv_enable_linear=False)
+                return thunder.jit(model, **self._thunder_jit_options)
             case _:
                 raise ValueError(f"Unknown mode: {self.config.mode}")
 
@@ -682,6 +686,11 @@ Examples:
         help="Use DTensor for single GPU",
     )
     parser.add_argument("--load-nvfp4", action="store_true", help="Enable NVFP4 quantization for linear layers")
+    parser.add_argument(
+        "--enable-nv-linear",
+        action="store_true",
+        help="let nvfuser take care of linear and matmul, note that this might fail with distributed run. See: https://github.com/NVIDIA/Fuser/issues/4507",
+    )
 
     parser.add_argument("--save-results", action="store_true", help="Save results to JSON file")
     parser.add_argument("--output-dir", type=str, default="./results", help="Directory to save results")
