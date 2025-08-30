@@ -182,12 +182,9 @@ class SemiAnalysisInferenceBenchmark:
             "*.layers.*.feed_forward.gate_proj": ColwiseParallel(use_local_output=False),
             "*.layers.*.feed_forward.up_proj": ColwiseParallel(use_local_output=False),
             "*.layers.*.feed_forward.down_proj": RowwiseParallel(use_local_output=True),
-            # FIXME: Getting AttributeError: 'AsyncCollectiveTensor' object has no attribute 'placements'
-            # [rank0]: File "torch/distributed/tensor/parallel/style.py", line 276, in _prepare_output_fn
-            # [rank0]:     if outputs.placements != output_layouts:
-            # "*.layers.*.feed_forward.shared_expert.gate_proj": ColwiseParallel(use_local_output=False),
-            # "*.layers.*.feed_forward.shared_expert.up_proj": ColwiseParallel(use_local_output=False),
-            # "*.layers.*.feed_forward.shared_expert.down_proj": RowwiseParallel(use_local_output=True),
+            "*.layers.*.feed_forward.shared_expert.gate_proj": ColwiseParallel(use_local_output=False),
+            "*.layers.*.feed_forward.shared_expert.up_proj": ColwiseParallel(use_local_output=False),
+            "*.layers.*.feed_forward.shared_expert.down_proj": RowwiseParallel(use_local_output=True),
         }
 
         if self.config.dtensor_single_gpu or WORLD_SIZE > 1:
