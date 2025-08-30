@@ -192,8 +192,6 @@ class SemiAnalysisInferenceBenchmark:
 
         if self.config.dtensor_single_gpu or WORLD_SIZE > 1:
             self.model = parallelize_module(self.model, mesh, tp_plan)
-            # assert isinstance(self.model.model.layers[0].self_attn.o_proj.weight, DTensor)
-            # assert isinstance(self.model.model.layers[0].feed_forward.down_proj.weight, DTensor)
 
             # Required as that doesn't understand inference mode
             for p in self.model.parameters():
