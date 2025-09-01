@@ -629,11 +629,6 @@ Examples:
 
     parser.add_argument("--save-results", action="store_true", help="Save results to JSON file")
     parser.add_argument("--output-dir", type=str, default="./results", help="Directory to save results")
-    parser.add_argument(
-        "--list-scenarios",
-        action="store_true",
-        help="List available standard benchmark scenarios and exit",
-    )
 
     args = parser.parse_args()
 
