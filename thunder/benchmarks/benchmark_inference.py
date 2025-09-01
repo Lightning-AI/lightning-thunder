@@ -59,29 +59,6 @@ def timer():
     torch.cuda.synchronize()
     t2 = time.perf_counter()
 
-
-# Standard benchmark scenarios following the three-scenario methodology
-BENCHMARK_SCENARIOS = {
-    "summarization": {
-        "name": "Summarization (Prefill-Heavy)",
-        "input_length": 4000,
-        "output_length": 1000,
-        "description": "4,000 input → 1,000 output tokens (80% prefill, 20% decode)",
-    },
-    "chat": {
-        "name": "Chat (Balanced)",
-        "input_length": 1000,
-        "output_length": 1000,
-        "description": "1,000 input → 1,000 output tokens (50% prefill, 50% decode)",
-    },
-    "reasoning": {
-        "name": "Reasoning (Decode-Heavy)",
-        "input_length": 1000,
-        "output_length": 4000,
-        "description": "1,000 input → 4,000 output tokens (20% prefill, 80% decode)",
-    },
-}
-
 WARMUP_ITERATIONS = 2
 
 
@@ -95,7 +72,6 @@ class InferenceBenchmarkConfig:
     output_length: int
     num_layers: int | None
     num_iterations: int
-    scenario: str | None  # Standard scenario name if using predefined configurations
     dtensor_single_gpu: bool
     load_nvfp4: bool  # Enable NVFP4 quantization
     fx_report_folder: str | None
@@ -404,9 +380,6 @@ class InferenceBenchmark:
         """Print benchmark results in a formatted way"""
         print("\n" + "=" * 60)
         print(f"BENCHMARK RESULTS - {self.config.model_name} {self.config.mode}")
-        if self.config.scenario:
-            scenario_config = BENCHMARK_SCENARIOS[self.config.scenario]
-            print(f"SCENARIO: {scenario_config['name']}")
         print("=" * 60)
 
         print("\nThroughput Metrics:")
@@ -472,24 +445,12 @@ def run_benchmark(
     num_layers: int | None,
     mode: str,
     save_results: bool,
-    scenario: str | None,
     dtensor_single_gpu: bool,
     load_nvfp4: bool,
     fx_report_folder: str | None,
     enable_nv_linear: bool,
 ):
     """Main function to run the benchmark"""
-
-    if scenario is not None:
-        if scenario not in BENCHMARK_SCENARIOS:
-            raise ValueError(f"Unknown scenario '{scenario}'. Available scenarios: {list(BENCHMARK_SCENARIOS.keys())}")
-
-        scenario_config = BENCHMARK_SCENARIOS[scenario]
-        input_length = scenario_config["input_length"]
-        output_length = scenario_config["output_length"]
-
-        print(f"\nUsing standardized scenario: {scenario_config['name']}")
-        print(f"Configuration: {scenario_config['description']}")
 
     config = InferenceBenchmarkConfig(
         model_name=model_name,
@@ -499,7 +460,6 @@ def run_benchmark(
         num_layers=num_layers,
         num_iterations=num_iterations,
         mode=mode,
-        scenario=scenario,
         dtensor_single_gpu=dtensor_single_gpu,
         load_nvfp4=load_nvfp4,
         fx_report_folder=fx_report_folder,
@@ -513,8 +473,7 @@ def run_benchmark(
 
     if save_results:
         timestamp = time.strftime("%Y%m%d_%H%M%S")
-        scenario_suffix = f"_{scenario}" if scenario else ""
-        filename = f"thunder_inference_{model_name}_{scenario_suffix}_{timestamp}.json"
+        filename = f"thunder_inference_{model_name}_{timestamp}.json"
         benchmark.save_results(filename)
 
     return metrics
@@ -537,7 +496,6 @@ Standard Benchmark Scenarios:
 
 Examples:
   python benchmark_inference.py --input-length 2048 --output-length 512 --model-name meta-llama/Llama-4-Maverick-17B-128E --mode eager
-  python benchmark_inference.py --scenario chat --model-name meta-llama/Llama-4-Maverick-17B-128E --load-nvfp4
         """,
     )
 
@@ -547,29 +505,18 @@ Examples:
         default=LLAMA4_MAVERICK_MODEL_ID,
         help="Model to benchmark",
     )
-
-    parser.add_argument(
-        "--scenario",
-        type=str,
-        choices=list(BENCHMARK_SCENARIOS.keys()),
-        help="Use standardized benchmark scenario. Available: "
-        + ", ".join([f"{k} ({v['description'].replace('%', '%%')})" for k, v in BENCHMARK_SCENARIOS.items()])
-        + ". If specified, overrides --input-length and --output-length.",
-    )
-
-    # Benchmark configuration (for custom experimentation when not using scenarios)
     parser.add_argument("--batch-size", type=int, default=1, help="Batch size for inference")
     parser.add_argument(
         "--input-length",
         type=int,
         default=2048,
-        help="Input sequence length (ignored if --scenario is used)",
+        help="Input sequence length",
     )
     parser.add_argument(
         "--output-length",
         type=int,
         default=128,
-        help="Output sequence length (ignored if --scenario is used)",
+        help="Output sequence length",
     )
     parser.add_argument("--num-iterations", type=int, default=100, help="Number of benchmark iterations")
     parser.add_argument("--warmup-iterations", type=int, default=10, help="Number of warmup iterations")
@@ -632,7 +579,6 @@ def main():
         num_layers=args.num_layers,
         mode=args.mode,
         save_results=args.save_results,
-        scenario=args.scenario,
         dtensor_single_gpu=args.dtensor_single_gpu,
         load_nvfp4=args.load_nvfp4,
         fx_report_folder=args.fx_report_folder,
