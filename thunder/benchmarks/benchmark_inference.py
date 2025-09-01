@@ -59,6 +59,7 @@ def timer():
     torch.cuda.synchronize()
     t2 = time.perf_counter()
 
+
 WARMUP_ITERATIONS = 2
 
 
