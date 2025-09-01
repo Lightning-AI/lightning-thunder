@@ -142,7 +142,7 @@ def construct_tuple(tup: tuple, /) -> tuple:
 
 # TODO Review revising enforce_safe_casting to be more like NumPy's
 @clangop()
-def maybe_convert_to_dtype(a, dtype, *, enforce_safe_casting=False):
+def maybe_convert_to_dtype(a, dtype, *, enforce_safe_casting=False, conversion_prim=prims.convert_element_type):
     """If a has the same dtype as the given dtype, returns a unmodified.
 
     Otherwise returns a converted to the given dtype.
@@ -171,7 +171,7 @@ def maybe_convert_to_dtype(a, dtype, *, enforce_safe_casting=False):
                 lambda: f"Can't safe case from a={a} with dtype {utils.to_dtype(a)} to {dtype}!",
             )
 
-        return prims.convert_element_type(a, dtype)
+        return conversion_prim(a, dtype)
 
     return a
 
@@ -1221,12 +1221,13 @@ def _elementwise_unary_wrapper(
     *,
     prim,
     type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT,
+    conversion_prim=prims.convert_element_type,
 ):
     computation_dtype, result_dtype = utils.elementwise_type_promotion(a, type_promotion_kind=type_promotion_kind)
 
-    a = maybe_convert_to_dtype(a, computation_dtype)
+    a = maybe_convert_to_dtype(a, computation_dtype, conversion_prim=conversion_prim)
     result = prim(a)
-    result = maybe_convert_to_dtype(result, result_dtype)
+    result = maybe_convert_to_dtype(result, result_dtype, conversion_prim=conversion_prim)
 
     return result
 

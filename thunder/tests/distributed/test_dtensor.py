@@ -36,7 +36,7 @@ functions_to_test = {
 
 
 # DTensor supported ops
-dtensor_supported_ops = ("reshape",)
+dtensor_supported_ops = ("reshape", "exp")
 
 dtensor_supported_opinfos = [get_opinfo(op) for op in dtensor_supported_ops]
 
@@ -195,7 +195,7 @@ class DTensorTest(DistributedParallelTestCase):
         num_devices = self.world_size
         mesh = DeviceMesh("cuda", list(range(num_devices)))
 
-        thunder_op = thunder.jit(op.op, executors=executors_map[executor].executors_list())
+        thunder_op = thunder.jit(op.torch_reference, executors=executors_map[executor].executors_list())
 
         tested_sample_count = 0
         for sample in op.sample_inputs("cpu", dtypes.float32, requires_grad=True):
@@ -236,10 +236,14 @@ class DTensorTest(DistributedParallelTestCase):
                             "test_dtensor_opinfo: Expected a single torch tensor or a sequence of torch tensors"
                         )
                         if is_output_differentiable(x):
-                            grads.append(torch.ones_like(x))
+                            grads.append(x.new_ones(x.shape, dtype=x.dtype, device=x.device))
                 else:
                     if is_output_differentiable(torch_result):
-                        grads = [torch.ones_like(torch_result)]
+                        grads = [
+                            torch_result.new_ones(
+                                torch_result.shape, dtype=torch_result.dtype, device=torch_result.device
+                            )
+                        ]
 
                 torch_tensors_requiring_grad = tuple(
                     f for f in torch_flats if isinstance(f, torch.Tensor) and f.requires_grad
@@ -248,6 +252,7 @@ class DTensorTest(DistributedParallelTestCase):
 
                 thunder_result = filter_differentiable_outputs(thunder_result)
                 thunder_grad_result = torch.autograd.grad(thunder_result, torch_tensors_requiring_grad, grads)
+                print(thunder_grad_result, torch_grad_result)
                 torch.testing.assert_close(thunder_grad_result, torch_grad_result)
 
                 # Increment tested sample count

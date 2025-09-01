@@ -35,6 +35,7 @@ class DTensorPrimIDs(Enum):
     RESHAPE_PRIM = auto()
     CONVERT_ELEMENT_TYPE_PRIM = auto()
     BROADCAST_IN_DIM_PRIM = auto()
+    EXP_PRIM = auto()
 
 
 dtensor_torchsymbol = partial(torchsymbol, allow_tensor_subclass_proxy=True)
@@ -241,6 +242,45 @@ dtensor_broadcast_in_dim_prim_impl = pytorchex.register_operator(
 pytorchex.register_implementation(dtensor_broadcast_in_dim_prim, dtensor_broadcast_in_dim_prim_impl)
 
 
+def dtensor_exp_meta(a):
+    output = run_with_fake_tensor(torch.exp, a)
+    local_tensor_proxy = TensorProxy(like=a.local_tensor)
+    spec = output._spec
+    spec_proxy = AnyProxy(spec, history=a.history)
+    return create_dtensor_proxy_from_proxies(local_tensor_proxy, spec_proxy, False)
+
+
+dtensor_exp_prim = make_prim(DTensorPrimIDs.EXP_PRIM, "dtensor_exp_prim", meta=dtensor_exp_meta)
+
+dtensor_exp_prim_impl = pytorchex.register_operator("dtensor_exp_prim", like=dtensor_exp_prim, fn=torch.exp)
+
+pytorchex.register_implementation(dtensor_exp_prim, dtensor_exp_prim_impl)
+
+
+def _dtensor_exp_prim_grad(a: TensorLike) -> TensorLike:
+    fwd = dtensor_exp_prim(a)
+
+    g = get_grad(fwd)
+    a_grad = g * fwd
+    put_grad(a, a_grad)
+
+    return fwd
+
+
+register_grad(dtensor_exp_prim, _dtensor_exp_prim_grad)
+
+
+@dtensor_torchsymbol(torch.exp, id="dtensor.torch.exp")
+def dtensor_exp(a: TensorLike) -> TensorLike:
+    return clang._elementwise_unary_wrapper(
+        a,
+        prim=dtensor_exp_prim,
+        type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT,
+        conversion_prim=dtensor_convert_element_type_prim,
+    )
+
+
 def register_dtensor_torch_and_prims():
     register_function_for_dtensor(torch.mul, ltorch.mul, dtensor_mul, is_method=True)
     register_function_for_dtensor(torch.reshape, ltorch.reshape, dtensor_reshape, is_method=True)
+    register_function_for_dtensor(torch.exp, ltorch.exp, dtensor_exp, is_method=True)
