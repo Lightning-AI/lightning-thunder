@@ -67,7 +67,6 @@ BENCHMARK_SCENARIOS = {
         "output_length": 1000,
         "description": "4,000 input → 1,000 output tokens (80% prefill, 20% decode)",
         "workload_balance": "80% prefill, 20% decode computational cost",
-        "hardware_focus": "Compute optimization provides maximum impact",
     },
     "chat": {
         "name": "Chat (Balanced)",
@@ -75,7 +74,6 @@ BENCHMARK_SCENARIOS = {
         "output_length": 1000,
         "description": "1,000 input → 1,000 output tokens (50% prefill, 50% decode)",
         "workload_balance": "50% prefill, 50% decode computational cost",
-        "hardware_focus": "Mixed optimization requirements",
     },
     "reasoning": {
         "name": "Reasoning (Decode-Heavy)",
@@ -83,7 +81,6 @@ BENCHMARK_SCENARIOS = {
         "output_length": 4000,
         "description": "1,000 input → 4,000 output tokens (20% prefill, 80% decode)",
         "workload_balance": "20% prefill, 80% decode computational cost",
-        "hardware_focus": "Memory bandwidth optimization dominates",
     },
 }
 
@@ -518,7 +515,6 @@ def run_benchmark(
         print(f"\nUsing standardized scenario: {scenario_config['name']}")
         print(f"Configuration: {scenario_config['description']}")
         print(f"Workload balance: {scenario_config['workload_balance']}")
-        print(f"Hardware focus: {scenario_config['hardware_focus']}")
 
     config = InferenceBenchmarkConfig(
         model_name=model_name,
@@ -557,7 +553,6 @@ def list_scenarios():
         print(f"  Name: {config['name']}")
         print(f"  Configuration: {config['description']}")
         print(f"  Workload Balance: {config['workload_balance']}")
-        print(f"  Hardware Focus: {config['hardware_focus']}")
     print("\n" + "=" * 50)
     print("Use --scenario <scenario_name> to select a standard scenario")
     print("Or use --input-length and --output-length for custom configurations")
