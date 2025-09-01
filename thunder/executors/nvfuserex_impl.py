@@ -969,7 +969,7 @@ def convert_element_type(
 
 
 register_supported(PrimIDs.CONVERT_ELEMENT_TYPE, convert_element_type, _convert_element_type_check)
-register_supported(DTensorPrimIDs.CONVERT_ELEMENT_TYPE_PRIM, convert_element_type, _convert_element_type_check)
+register_supported(DTensorPrimIDs.CONVERT_ELEMENT_TYPE, convert_element_type, _convert_element_type_check)
 
 
 def _bitcast_check(src: TensorProxy, dtype: dtypes.dtype) -> bool:
@@ -1191,7 +1191,7 @@ def broadcast_in_dim(
 
 
 register_supported(PrimIDs.BROADCAST_IN_DIM, broadcast_in_dim, _broadcast_in_dim_check)
-register_supported(DTensorPrimIDs.BROADCAST_IN_DIM_PRIM, broadcast_in_dim, _broadcast_in_dim_check)
+register_supported(DTensorPrimIDs.BROADCAST_IN_DIM, broadcast_in_dim, _broadcast_in_dim_check)
 
 
 def _cat_check(tensors: list[TensorProxy], dim: int) -> bool:
@@ -1282,7 +1282,7 @@ def reshape(a: TensorProxy, shape: list[int, NumberProxy, ...], *, fd: FusionDef
 
 
 register_supported(PrimIDs.RESHAPE, reshape, _reshape_check)
-register_supported(DTensorPrimIDs.RESHAPE_PRIM, reshape, _reshape_check)
+register_supported(DTensorPrimIDs.RESHAPE, reshape, _reshape_check)
 
 
 # NOTE nvFuser's slice operation only supports all strides == 1
@@ -1933,7 +1933,7 @@ def mul(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinitio
 
 
 register_supported(PrimIDs.MUL, mul, _elementwise_binary_check)
-register_dtensor_supported(DTensorPrimIDs.MUL_PRIM, mul, _elementwise_binary_check)
+register_dtensor_supported(DTensorPrimIDs.MUL, mul, _elementwise_binary_check)
 
 
 def ne(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
