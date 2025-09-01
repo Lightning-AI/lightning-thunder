@@ -87,11 +87,6 @@ class InferenceBenchmarkConfig:
     """Configuration for inference benchmarking"""
 
     model_name: str
-    # Expected GPU memory requirements (FP16):
-    # - 8B: ~16GB (suitable for local experimentation on consumer GPUs)
-    # - 70B: ~140GB (requires multi-GPU setup or high-end datacenter GPUs)
-    # - 405B: ~810GB (requires large multi-GPU clusters)
-    # - 670B: ~1340GB (requires very large multi-GPU clusters)
     batch_size: int = 1
     input_length: int = 1024
     output_length: int = 1024
