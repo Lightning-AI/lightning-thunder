@@ -42,10 +42,11 @@ MASTER_ADDR = os.environ.get("MASTER_ADDR", "localhost")
 MASTER_PORT = os.environ.get("MASTER_PORT", "29500")
 os.environ["TORCH_NCCL_ASYNC_ERROR_HANDLING"] = "1"
 
+DEVICE = torch.device("cuda", LOCAL_RANK)
+torch.cuda.set_device(DEVICE)
+
 if WORLD_SIZE > 1:
     mesh = init_device_mesh("cuda", (WORLD_SIZE,), mesh_dim_names=("tp",))
-    device = torch.device("cuda", LOCAL_RANK)
-    torch.cuda.set_device(device)
 
 LLAMA4_MAVERICK_MODEL_ID: str = "meta-llama/Llama-4-Maverick-17B-128E"
 
@@ -101,7 +102,6 @@ class InferenceBenchmarkConfig:
     enable_nv_linear: bool = False
     measure_ttft: bool = field(default=True, init=False)
     measure_tbot: bool = field(default=True, init=False)
-    device: str = "cuda"
     mode: str = "thunder"
 
     # Memory bandwidth and compute specs
@@ -146,7 +146,6 @@ class InferenceBenchmark:
 
     def __init__(self, config: InferenceBenchmarkConfig):
         self.config = config
-        self.device = torch.device(config.device)
         self.metrics = InferenceMetrics()
 
         self.model = self._load_model()
@@ -209,7 +208,7 @@ class InferenceBenchmark:
         self.hf_config = config
 
         # TODO: Apply NVFP4 quantization to weights if requested
-        with torch.device(self.device):
+        with DEVICE:
             model = AutoModelForCausalLM.from_config(config, torch_dtype=torch.bfloat16)
 
         return model
@@ -227,7 +226,7 @@ class InferenceBenchmark:
             # Default vocabulary size for older models
             vocab_size = 32000
 
-        input_ids = torch.randint(0, vocab_size, (batch_size, input_length), device=self.device)
+        input_ids = torch.randint(0, vocab_size, (batch_size, input_length), device=DEVICE)
         past_key_values = HybridChunkedCache(
             self.hf_config, input_ids.shape[0], input_ids.shape[1] + self.config.output_length
         )
@@ -235,7 +234,7 @@ class InferenceBenchmark:
             # key_states.shape[1] is used to retrieve the number of key value heads, all other dimensions can be 1 and ignored
             # https://github.com/huggingface/transformers/blob/9300728665aaeb0ebf4db99f9d9fbce916b4a183/src/transformers/cache_utils.py#L1822
             past_key_values.initialise_cache_layer(
-                layer_idx, torch.empty(1, self.hf_config.num_key_value_heads // WORLD_SIZE, 1, 1, device=self.device)
+                layer_idx, torch.empty(1, self.hf_config.num_key_value_heads // WORLD_SIZE, 1, 1, device=DEVICE)
             )
 
         return input_ids, past_key_values
@@ -336,7 +335,6 @@ class InferenceBenchmark:
         print(f"Batch size: {self.config.batch_size}")
         print(f"Input length: {self.config.input_length}")
         print(f"Output length: {self.config.output_length}")
-        print(f"Device: {self.device}")
         input_ids, past_key_values = self.generate_batch()
         thunderfx_benchmark_report(
             self.model,
@@ -354,7 +352,6 @@ class InferenceBenchmark:
         print(f"Batch size: {self.config.batch_size}")
         print(f"Input length: {self.config.input_length}")
         print(f"Output length: {self.config.output_length}")
-        print(f"Device: {self.device}")
         print(f"Mode: {self.config.mode}")
 
         print(f"\nWarming up with {WARMUP_ITERATIONS} iterations...")
