@@ -283,10 +283,9 @@ class InferenceBenchmark:
         self, input_ids: torch.Tensor, past_key_values: HybridChunkedCache, max_new_tokens: int
     ) -> dict[str, float]:
         """Measure a single inference step with detailed timing using separate prefill/decode"""
-        with timer() as total_timer:
-            # Generate tokens with separate prefill/decode tracking
-            generation_result = self.generate(input_ids, max_new_tokens, past_key_values)
-        total_time = total_timer()
+        # Generate tokens with separate prefill/decode tracking
+        generation_result = self.generate(input_ids, max_new_tokens, past_key_values)
+        total_time = generation_result["prefill_time_ms"] + generation_result["decode_time_ms"]
 
         # Extract metrics
         ttft = generation_result["prefill_time_ms"]  # Time to first token is the prefill time
