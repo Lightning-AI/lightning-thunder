@@ -210,8 +210,7 @@ class InferenceBenchmark:
         elif hasattr(self.model, "config") and hasattr(self.model.config, "vocab_size"):
             vocab_size = self.model.config.vocab_size
         else:
-            # Default vocabulary size for older models
-            vocab_size = 32000
+            raise ValueError("Vocab size not found")
 
         input_ids = torch.randint(0, vocab_size, (batch_size, input_length), device=DEVICE)
         past_key_values = HybridChunkedCache(
