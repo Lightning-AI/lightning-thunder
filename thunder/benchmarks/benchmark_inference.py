@@ -15,10 +15,10 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 import json
 import os
+import statistics
 import time
 from typing import TYPE_CHECKING
 
-import numpy as np
 import torch
 from torch.distributed.device_mesh import init_device_mesh
 from torch.distributed.distributed_c10d import destroy_process_group
@@ -371,34 +371,34 @@ class InferenceBenchmark:
         """Calculate aggregate metrics from individual iterations"""
         # Average throughput
         throughputs = [m["throughput"] for m in all_metrics]
-        self.metrics.throughput_tokens_per_sec = np.mean(throughputs)
+        self.metrics.throughput_tokens_per_sec = statistics.mean(throughputs)
 
         # Average latency
         total_times = [m["total_time"] for m in all_metrics]
         total_tokens = self.config.output_length * self.config.batch_size
-        self.metrics.latency_ms_per_token = np.mean(total_times) / total_tokens
+        self.metrics.latency_ms_per_token = statistics.mean(total_times) / total_tokens
 
         # TTFT
         ttfts = [m["ttft"] for m in all_metrics]
-        self.metrics.time_to_first_token_ms = np.mean(ttfts)
+        self.metrics.time_to_first_token_ms = statistics.mean(ttfts)
 
         # TBOT
-        self.metrics.time_between_output_tokens_ms = np.mean([m["avg_tbot"] for m in all_metrics])
+        self.metrics.time_between_output_tokens_ms = statistics.mean([m["avg_tbot"] for m in all_metrics])
 
         # Total time
-        self.metrics.total_time_ms = np.mean(total_times)
+        self.metrics.total_time_ms = statistics.mean(total_times)
 
         # Prefill metrics
         prefill_throughputs = [m["prefill_throughput"] for m in all_metrics]
-        self.metrics.prefill_throughput_tokens_per_sec = np.mean(prefill_throughputs)
+        self.metrics.prefill_throughput_tokens_per_sec = statistics.mean(prefill_throughputs)
         prefill_times = [m["prefill_time"] for m in all_metrics]
-        self.metrics.prefill_time_ms = np.mean(prefill_times)
+        self.metrics.prefill_time_ms = statistics.mean(prefill_times)
 
         # Decode metrics
         decode_throughputs = [m["decode_throughput"] for m in all_metrics]
-        self.metrics.decode_throughput_tokens_per_sec = np.mean(decode_throughputs)
+        self.metrics.decode_throughput_tokens_per_sec = statistics.mean(decode_throughputs)
         decode_times = [m["total_decode_time"] for m in all_metrics]
-        self.metrics.decode_time_ms = np.mean(decode_times)
+        self.metrics.decode_time_ms = statistics.mean(decode_times)
 
     def print_results(self):
         """Print benchmark results in a formatted way"""
@@ -426,10 +426,10 @@ class InferenceBenchmark:
         print(f"  Current Memory: {self.metrics.memory_used_gb:.2f} GB")
         print(f"  Peak Memory: {self.metrics.peak_memory_gb:.2f} GB")
 
-        if self.metrics.iteration_times:
+        if len(self.metrics.iteration_times) > 1:
             print("\nVariance Analysis:")
-            print(f"  Throughput Std Dev: {np.std([t for t in self.metrics.iteration_times]):.2f} ms")
-            print(f"  TTFT Std Dev: {np.std(self.metrics.ttft_times):.2f} ms")
+            print(f"  Throughput Std Dev: {statistics.stdev(self.metrics.iteration_times):.2f} ms")
+            print(f"  TTFT Std Dev: {statistics.stdev(self.metrics.ttft_times):.2f} ms")
 
     def save_results(self, filename: str):
         """Save results to JSON file"""
