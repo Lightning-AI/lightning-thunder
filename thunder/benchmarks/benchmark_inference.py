@@ -99,7 +99,7 @@ class InferenceBenchmarkConfig:
     dtensor_single_gpu: bool
     load_nvfp4: bool  # Enable NVFP4 quantization
     fx_report_folder: str | None
-    enable_nv_linear: bool = False
+    enable_nv_linear: bool
     mode: str = "thunder"
 
     # Memory bandwidth and compute specs
@@ -490,6 +490,7 @@ def run_benchmark(
     dtensor_single_gpu: bool,
     load_nvfp4: bool,
     fx_report_folder: str | None,
+    enable_nv_linear: bool,
 ):
     """Main function to run the benchmark"""
 
@@ -516,6 +517,7 @@ def run_benchmark(
         dtensor_single_gpu=dtensor_single_gpu,
         load_nvfp4=load_nvfp4,
         fx_report_folder=fx_report_folder,
+        enable_nv_linear=enable_nv_linear,
     )
 
     benchmark = InferenceBenchmark(config)
@@ -648,6 +650,7 @@ def main():
         dtensor_single_gpu=args.dtensor_single_gpu,
         load_nvfp4=args.load_nvfp4,
         fx_report_folder=args.fx_report_folder,
+        enable_nv_linear=args.enable_nv_linear,
     )
 
 
