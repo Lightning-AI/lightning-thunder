@@ -66,21 +66,18 @@ BENCHMARK_SCENARIOS = {
         "input_length": 4000,
         "output_length": 1000,
         "description": "4,000 input → 1,000 output tokens (80% prefill, 20% decode)",
-        "workload_balance": "80% prefill, 20% decode computational cost",
     },
     "chat": {
         "name": "Chat (Balanced)",
         "input_length": 1000,
         "output_length": 1000,
         "description": "1,000 input → 1,000 output tokens (50% prefill, 50% decode)",
-        "workload_balance": "50% prefill, 50% decode computational cost",
     },
     "reasoning": {
         "name": "Reasoning (Decode-Heavy)",
         "input_length": 1000,
         "output_length": 4000,
         "description": "1,000 input → 4,000 output tokens (20% prefill, 80% decode)",
-        "workload_balance": "20% prefill, 80% decode computational cost",
     },
 }
 
@@ -514,7 +511,6 @@ def run_benchmark(
 
         print(f"\nUsing standardized scenario: {scenario_config['name']}")
         print(f"Configuration: {scenario_config['description']}")
-        print(f"Workload balance: {scenario_config['workload_balance']}")
 
     config = InferenceBenchmarkConfig(
         model_name=model_name,
@@ -552,7 +548,6 @@ def list_scenarios():
         print(f"\n{key.upper()}:")
         print(f"  Name: {config['name']}")
         print(f"  Configuration: {config['description']}")
-        print(f"  Workload Balance: {config['workload_balance']}")
     print("\n" + "=" * 50)
     print("Use --scenario <scenario_name> to select a standard scenario")
     print("Or use --input-length and --output-length for custom configurations")
