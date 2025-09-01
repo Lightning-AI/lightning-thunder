@@ -83,6 +83,7 @@ BENCHMARK_SCENARIOS = {
 
 WARMUP_ITERATIONS = 2
 
+
 @dataclass
 class InferenceBenchmarkConfig:
     """Configuration for inference benchmarking"""
