@@ -564,7 +564,7 @@ Examples:
     parser.add_argument(
         "--model-name",
         type=str,
-        default=LLAMA4_MAVERICK_MODEL_ID,  # Small model so it's easier to iterate locally.
+        default=LLAMA4_MAVERICK_MODEL_ID,
         help="Model to benchmark",
     )
 
