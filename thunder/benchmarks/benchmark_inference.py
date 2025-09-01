@@ -481,18 +481,19 @@ class InferenceBenchmark:
 
 
 def run_benchmark(
-    model_name: str = LLAMA4_MAVERICK_MODEL_ID,
-    batch_size: int = 1,
-    input_length: int = 1024,  # default 1k -> 1k
-    output_length: int = 1024,  # default 1k -> 1k
-    num_iterations: int = 100,
-    num_layers: int | None = None,
-    mode: str = "thunder",
-    save_results: bool = True,
-    scenario: str | None = None,
-    dtensor_single_gpu: bool = False,
-    load_nvfp4: bool = False,
-    fx_report_folder: str | None = None,
+    *,
+    model_name: str,
+    batch_size: int,
+    input_length: int,
+    output_length: int,
+    num_iterations: int,
+    num_layers: int | None,
+    mode: str,
+    save_results: bool,
+    scenario: str | None,
+    dtensor_single_gpu: bool,
+    load_nvfp4: bool,
+    fx_report_folder: str | None,
 ):
     """Main function to run the benchmark"""
 
