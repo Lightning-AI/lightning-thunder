@@ -1,8 +1,4 @@
-"""Thunder Inference Benchmark following SemiAnalysis Methodology
-
-This benchmark implements the methodology from the SemiAnalysis article:
-"AMD vs NVIDIA Inference Benchmark: Who Wins? - Performance & Cost Per Million Tokens"
-https://semianalysis.com/2025/05/23/amd-vs-nvidia-inference-benchmark-who-wins-performance-cost-per-million-tokens
+"""Inference benchmark focusing on throughput and latency metrics of prefill and decode phases.
 
 Models:
 - DeepSeekV3 670B
@@ -97,7 +93,7 @@ BENCHMARK_SCENARIOS = {
 
 @dataclass
 class InferenceBenchmarkConfig:
-    """Configuration for inference benchmarking following SemiAnalysis methodology"""
+    """Configuration for inference benchmarking"""
 
     model_name: str
     # Expected GPU memory requirements (FP16):
@@ -158,8 +154,8 @@ class InferenceMetrics:
     decode_times: list[float] = field(default_factory=list)
 
 
-class SemiAnalysisInferenceBenchmark:
-    """Main benchmark class following SemiAnalysis methodology"""
+class InferenceBenchmark:
+    """Main benchmark class"""
 
     def __init__(self, config: InferenceBenchmarkConfig):
         self.config = config
@@ -498,7 +494,7 @@ class SemiAnalysisInferenceBenchmark:
         print(f"\nResults saved to {filename}")
 
 
-def run_semianalysis_benchmark(
+def run_benchmark(
     model_name: str = LLAMA4_MAVERICK_MODEL_ID,
     batch_size: int = 1,
     input_length: int = 1024,  # default 1k -> 1k
@@ -541,7 +537,7 @@ def run_semianalysis_benchmark(
         fx_report_folder=fx_report_folder,
     )
 
-    benchmark = SemiAnalysisInferenceBenchmark(config)
+    benchmark = InferenceBenchmark(config)
 
     metrics = benchmark.run_benchmark()
     benchmark.print_results()
@@ -549,7 +545,7 @@ def run_semianalysis_benchmark(
     if save_results:
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         scenario_suffix = f"_{scenario}" if scenario else ""
-        filename = f"thunder_semianalysis_{model_name}_{scenario_suffix}_{timestamp}.json"
+        filename = f"thunder_inference_{model_name}_{scenario_suffix}_{timestamp}.json"
         benchmark.save_results(filename)
 
     return metrics
@@ -577,7 +573,7 @@ class CustomFormatter(argparse.RawDescriptionHelpFormatter, argparse.ArgumentDef
 def parse_args() -> argparse.Namespace:
     """Command line interface for the benchmark"""
     parser = argparse.ArgumentParser(
-        description="Thunder Inference Benchmark following SemiAnalysis Methodology",
+        description="Thunder Inference Benchmark",
         formatter_class=CustomFormatter,
         epilog="""
 Standard Benchmark Scenarios:
@@ -683,7 +679,7 @@ def main():
     if args.save_results:
         os.makedirs(args.output_dir, exist_ok=True)
 
-    run_semianalysis_benchmark(
+    run_benchmark(
         model_name=args.model_name,
         batch_size=args.batch_size,
         input_length=args.input_length,
