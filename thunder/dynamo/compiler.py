@@ -134,7 +134,7 @@ class ThunderCompiler:
     def __call__(self, gm: torch.fx.GraphModule, sample_args: list[torch.SymInt, torch.Tensor]):
         from thunder import jit
 
-        gm = remove_empty_autocast(gm)
+        remove_empty_autocast(gm)
 
         # Dynamo uses lazy generation of the underlying Python code, so we need to
         # force recompilation of the GraphModule before passing it to Thunder.
@@ -243,8 +243,73 @@ class ThunderCompiler:
                 )
 
 
-def thunderfx(fn: Callable, /, **kwargs) -> Callable:
-    """Compiles a callable (function or model) by using Thunder as the backend of :func:`torch.compile`
+# We return this object instead of just the raw `compiled` Callable so that
+# we have a place to hang the `last_*traces` properties.
+class ThunderFXCompiledObject:
+    """A wrapper around the result of :func:`~thunder.dynamo.thunderfx` compilation.
+
+    This object wraps the function compiled with :func:`torch.compile` using Thunder as a backend
+    (see :class:`~thunder.dynamo.ThunderCompiler`).
+    It provides access to Thunder traces generated during execution, while maintaining the
+    callable interface of the original compiled function.
+
+    Note: This is the return type of ``thunderfx``, not :func:`thunder.jit`.
+    """
+
+    def __init__(self, backend: ThunderCompiler, func: Callable):
+        self._backend = backend
+        self._func = func
+
+    def __call__(self, *args, **kwargs):
+        return self._func(*args, **kwargs)
+
+    @property
+    def last_traces(self) -> list[Trace]:
+        """
+        Get the Thunder traces for all the forward subgraphs of a ThunderFX
+        callable.
+
+        .. note:: The object must have been invoked before calling this
+                  function.
+        """
+        import thunder
+
+        rv: list[Trace] = []
+        if not self._backend.subgraph_infos:
+            warnings.warn("Must invoke the function before using last_traces")
+        for sinfo in self._backend.subgraph_infos:
+            for th_fqn in sinfo.thunder_compiled_fns:
+                trcs = thunder.last_traces(th_fqn)
+                if trcs != []:
+                    rv.append(trcs[-1])
+                del trcs
+        return rv
+
+    @property
+    def last_backward_traces(self) -> list[Trace]:
+        """
+        Get the Thunder traces for all the backward subgraphs of a
+        ThunderFX callable.
+
+        .. note:: The object must have been invoked before calling this
+                  function.
+        """
+        import thunder
+
+        rv: list[Trace] = []
+        if not self._backend.subgraph_infos:
+            warnings.warn("last_backward_traces used before function invoked")
+        for sinfo in self._backend.subgraph_infos:
+            for th_fqn in sinfo.thunder_compiled_fns:
+                trcs_bw = thunder.last_backward_traces(th_fqn)
+                if trcs_bw != []:
+                    rv.append(trcs_bw[-1])
+        return rv
+
+
+def thunderfx(fn: Callable, /, **kwargs) -> ThunderFXCompiledObject:
+    """Compiles a callable (function or model) by using Thunder as the backend of :func:`torch.compile`.
+
     Args:
         fn: A :class:`~torch.nn.Module` or a function to compile.
     Keyword Args:
@@ -252,7 +317,6 @@ def thunderfx(fn: Callable, /, **kwargs) -> Callable:
     Returns:
         The compiled callable
     """
-    import thunder
 
     from thunder.dynamo.utils import get_torch_compile_kwargs
 
@@ -262,56 +326,7 @@ def thunderfx(fn: Callable, /, **kwargs) -> Callable:
     backend = ThunderCompiler(**thunder_jit_kwargs)
     compiled = torch.compile(fn, backend=backend, **torch_compile_kwargs)
 
-    # We return this object instead of just the raw `compiled` Callable so that
-    # we have a place to hang the `last_*traces` properties.
-    class CompiledObject:
-        def __init__(self, be, func: Callable):
-            self._backend = be
-            self._func = func
-
-        def __call__(self, *args, **kwargs):
-            return self._func(*args, **kwargs)
-
-        @property
-        def last_traces(self) -> list[Trace]:
-            """
-            Get the Thunder traces for all the forward subgraphs of a ThunderFX
-            callable.
-
-            .. note:: The object must have been invoked before calling this
-                      function.
-            """
-            rv: list[Trace] = []
-            if not self._backend.subgraph_infos:
-                warnings.warn("Must invoke the function before using last_traces")
-            for sinfo in self._backend.subgraph_infos:
-                for th_fqn in sinfo.thunder_compiled_fns:
-                    trcs = thunder.last_traces(th_fqn)
-                    if trcs != []:
-                        rv.append(trcs[-1])
-                    del trcs
-            return rv
-
-        @property
-        def last_backward_traces(self) -> list[Trace]:
-            """
-            Get the Thunder traces for all the backward subgraphs of a
-            ThunderFX callable.
-
-            .. note:: The object must have been invoked before calling this
-                      function.
-            """
-            rv: list[Trace] = []
-            if not self._backend.subgraph_infos:
-                warnings.warn("last_backward_traces used before function invoked")
-            for sinfo in self._backend.subgraph_infos:
-                for th_fqn in sinfo.thunder_compiled_fns:
-                    trcs_bw = thunder.last_backward_traces(th_fqn)
-                    if trcs_bw != []:
-                        rv.append(trcs_bw[-1])
-            return rv
-
-    c = CompiledObject(backend, compiled)
+    c = ThunderFXCompiledObject(backend, compiled)
     return c
 
 

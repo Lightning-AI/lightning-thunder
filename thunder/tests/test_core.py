@@ -190,7 +190,7 @@ def test_crazy_collections_in_and_out(executor, device, dtype):
         g = e + f
         h = f + ka + kb
         # NOTE The following line is intentionally not returned
-        i = ka + ka  # noqa
+        # i = ka + ka
         j = kc[0] + kc[1]
 
         d["j"] = j
@@ -436,8 +436,7 @@ def test_varargs_and_kwargs(executor, device, dtype):
 @instantiate(dtypes=(thunder.float32,))
 def test_no_return(executor, device, dtype):
     def foo(a, b):
-        c = a + b  # noqa
-        pass
+        a + b
 
     traced_foo = executor.make_callable(foo)
     tdtype = ltorch.to_torch_dtype(dtype)
@@ -1104,7 +1103,6 @@ def test_bsym_toposort(executor: TestExecutor, device: str, dtype: dtypes.dtype)
     assert sub_preferring_sub_bsym.sym.id == "torch.sub"
 
     # Tests collection and reshape with -1 input
-    # NOTE Additions before and after the reshape are to prevent nvFuser from "bookending" the operation
     def bar(a, shape):
         b = a + 3
         c = a + 2.0
@@ -1113,7 +1111,7 @@ def test_bsym_toposort(executor: TestExecutor, device: str, dtype: dtypes.dtype)
     a = make((4, 3, 2, 3))
 
     cbar = executor.make_callable(bar)
-    expected = cbar(a, (12, -1))
+    cbar(a, (12, -1))
     traces = thunder.last_traces(cbar)
     trc = traces[0]
 
@@ -2112,28 +2110,6 @@ def test_torch_scaled_dot_product_attention_non_decomposed(executor, device, _):
     assert "scaled_dot_product_attention" in tuple(bsym.sym.id for bsym in traces[-1].bound_symbols)
 
 
-@instantiate(dtypes=NOTHING)
-def test_no_passthrough_symbol(executor, device, _):
-    # A test case for the situation reported in
-    # "backward trace contains symbols not present in forward that cause
-    # NotImplementedError"
-    # When an operation simply passes through its input, we should not
-    # add it to the trace.
-
-    def func(x):
-        return x.type_as(x)
-
-    x = make_tensor((2, 2), device=device, dtype=torch.float32)
-    compiled = executor.make_callable(func)
-    out = compiled(x)
-    assert out is x
-    initial_trace_with_dce = thunder.last_traces(compiled)[3]
-    assert "Constructed by Dead Code Elimination" in str(initial_trace_with_dce)
-    assert len(initial_trace_with_dce.bound_symbols) == 2
-    assert initial_trace_with_dce.bound_symbols[0].sym.id == prims.PrimIDs.UNPACK_TRIVIAL
-    assert initial_trace_with_dce.bound_symbols[1].sym.id == prims.PrimIDs.RETURN
-
-
 @instantiate(
     dtypes=NOTHING,
     # https://github.com/Lightning-AI/lightning-thunder/issues/946
@@ -2158,7 +2134,6 @@ def test_cse(executor, device, _):
 
     x, y = (make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2))
     initial_trace = thunder.trace()(func, x, y, device)
-    print(initial_trace)
     compiled_func = thunder.jit(
         initial_trace.python_callable(),
         executors=executor.executors_list(),
@@ -2401,7 +2376,6 @@ def test_bound_symbol_source_location_context(executor, device: str, dtype: dtyp
     trace = thunder.last_traces(jfn)[0]
 
     assert len(trace.bound_symbols) == 3
-    sin_symbol = trace.bound_symbols[1]
     assert str(trace).count("return clang.sin(x)") == 1
     assert str(trace).count(f"# {__file__}:{lineno}") == 1
 
@@ -2864,6 +2838,14 @@ def test_arange_default_dtype():
     assert jfn() == torch.int64
 
 
+def test_randint_default_dtype():
+    def fn():
+        return torch.randint(0, 5, (2, 3))
+
+    jfn = thunder.jit(fn)
+    assert jfn().dtype == fn().dtype == torch.int64
+
+
 def test_cat_mixed_dtypes():
     # We add a special test here instead of a sample in OpInfo.
     # When we add a mixed input sample in OpInfo, it will also be picked up for the test which
@@ -2986,19 +2968,6 @@ def test_thunder_optimized_module_is_freed():
     del mod
     del opt_mod
     assert ref_opt_mod() is None
-
-
-@pytest.mark.xfail(strict=True)
-def test_user_module_is_freed():
-    mod = torch.nn.ReLU()
-    opt_mod = thunder.jit(mod)
-    ref_mod = weakref.ref(mod)
-    x = torch.randn(10, 10)
-    opt_mod(x)
-    del x
-    del mod
-    del opt_mod
-    assert ref_mod() is None
 
 
 @pytest.mark.parametrize("requires_grad", [True, False])
@@ -3152,9 +3121,9 @@ def test_proxy_same_name():
     from thunder.core.devices import cpu
 
     with detached_trace():
-        t = TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32)
+        TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32)
         with pytest.raises(RuntimeError, match="already used"):
-            t2 = TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32)
+            TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32)
 
 
 def test_save_trace():
@@ -3219,6 +3188,7 @@ def test_apply_autograd_memory(thunderfx_disable_split_autograd):
             saved_other=(),
             return_none_instead_of_grads=True,
             disable_split_autograd=thunderfx_disable_split_autograd,
+            is_differentiable_outputs=None,
         )
         return [weakref.ref(x), weakref.ref(o)]
 

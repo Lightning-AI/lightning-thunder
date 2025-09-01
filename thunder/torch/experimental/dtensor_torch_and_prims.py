@@ -8,10 +8,12 @@ from thunder import clang
 from thunder.torch.experimental.dtensor_utils import run_with_fake_tensor
 from thunder.torch.experimental.dtensor_proxy import DTensorProxy, create_dtensor_proxy_from_proxies
 from thunder.torch.langctx import register_method
+import thunder.core.dtypes as dtypes
 
 from thunder.core.proxies import TensorProxy, AnyProxy
 from thunder.core.transforms import (
     register_grad,
+    put_grad,
     put_grads,
     get_grad,
 )
@@ -134,5 +136,98 @@ def dtensor_mul(a: TensorLike, b: TensorLike) -> TensorLike:
     return dtensor_mul_prim(a, b)
 
 
+def dtensor_reshape_meta(a, shape):
+    output = run_with_fake_tensor(torch.reshape, a, shape)
+    local_tensor_proxy = TensorProxy(
+        like=a.local_tensor, shape=output._local_tensor.shape, dtype=dtypes.to_dtype(output._local_tensor.dtype)
+    )
+    spec = output._spec
+    spec_proxy = AnyProxy(spec, history=a.history)
+    return create_dtensor_proxy_from_proxies(local_tensor_proxy, spec_proxy, False)
+
+
+dtensor_reshape_prim = make_prim("dtensor_reshape_prim", "dtensor_reshape_prim", meta=dtensor_reshape_meta)
+
+dtensor_reshape_prim_impl = pytorchex.register_operator(
+    "dtensor_reshape_prim", like=dtensor_reshape_prim, fn=torch.reshape
+)
+
+pytorchex.register_implementation(dtensor_reshape_prim, dtensor_reshape_prim_impl)
+
+
+def _dtensor_reshape_prim_grad(a: TensorLike, shape: tuple[int, ...]) -> TensorLike:
+    fwd = dtensor_reshape_prim(a, shape)
+
+    g = get_grad(fwd)
+    a_grad = dtensor_reshape_prim(g, a.shape)
+    put_grads((a,), (a_grad,))
+
+    return fwd
+
+
+register_grad(dtensor_reshape_prim, _dtensor_reshape_prim_grad)
+
+
+@dtensor_torchsymbol(torch.reshape, id="dtensor.torch.reshape")
+def dtensor_reshape(a: TensorLike, shape: tuple[int, ...]) -> TensorLike:
+    return dtensor_reshape_prim(a, shape)
+
+
+def dtensor_convert_element_type_meta(a, dtype):
+    tdtype = ltorch.to_torch_dtype(dtype)
+    output = run_with_fake_tensor(lambda x, dt: x.to(dt), a, tdtype)
+    local_tensor_proxy = TensorProxy(like=a.local_tensor, shape=output._local_tensor.shape, dtype=dtype)
+    spec = output._spec
+    spec_proxy = AnyProxy(spec, history=a.history)
+    return create_dtensor_proxy_from_proxies(local_tensor_proxy, spec_proxy, False)
+
+
+dtensor_convert_element_type_prim = make_prim(
+    "dtensor_convert_element_type_prim", "dtensor_convert_element_type_prim", meta=dtensor_convert_element_type_meta
+)
+
+dtensor_convert_element_type_prim_impl = pytorchex.register_operator(
+    "dtensor_convert_element_type_prim",
+    like=dtensor_convert_element_type_prim,
+    fn=lambda x, dt: x.to(ltorch.to_torch_dtype(dt)),
+)
+
+pytorchex.register_implementation(dtensor_convert_element_type_prim, dtensor_convert_element_type_prim_impl)
+
+
+def _dtensor_convert_element_type_prim_grad(a: TensorLike, dtype) -> TensorLike:
+    fwd = dtensor_convert_element_type_prim(a, dtype)
+
+    g = get_grad(fwd)
+    g_converted = dtensor_convert_element_type_prim(g, a.dtype)
+    put_grad(a, g_converted)
+
+    return fwd
+
+
+register_grad(dtensor_convert_element_type_prim, _dtensor_convert_element_type_prim_grad)
+
+
+def dtensor_broadcast_in_dim_meta(a, shape, broadcast_dimensions):
+    output = run_with_fake_tensor(lambda x, s, bd: x.broadcast_to(s), a, shape, broadcast_dimensions)
+    local_tensor_proxy = TensorProxy(like=a.local_tensor, shape=output._local_tensor.shape)
+    spec = output._spec
+    spec_proxy = AnyProxy(spec, history=a.history)
+    return create_dtensor_proxy_from_proxies(local_tensor_proxy, spec_proxy, a.requires_grad)
+
+
+# TODO: Add gradient for `dtensor_broadcast_in_dim_prim` which requires `sum`.
+dtensor_broadcast_in_dim_prim = make_prim(
+    "dtensor_broadcast_in_dim_prim", "dtensor_broadcast_in_dim_prim", meta=dtensor_broadcast_in_dim_meta
+)
+
+dtensor_broadcast_in_dim_prim_impl = pytorchex.register_operator(
+    "dtensor_broadcast_in_dim_prim", like=dtensor_broadcast_in_dim_prim, fn=lambda x, s, bd: x.broadcast_to(s)
+)
+
+pytorchex.register_implementation(dtensor_broadcast_in_dim_prim, dtensor_broadcast_in_dim_prim_impl)
+
+
 def register_dtensor_torch_and_prims():
     register_function_for_dtensor(torch.mul, ltorch.mul, dtensor_mul, is_method=True)
+    register_function_for_dtensor(torch.reshape, ltorch.reshape, dtensor_reshape, is_method=True)

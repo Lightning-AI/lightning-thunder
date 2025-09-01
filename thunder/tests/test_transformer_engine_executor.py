@@ -5,9 +5,14 @@ from torch.testing import assert_close
 import thunder
 from thunder.tests.framework import requiresCUDA
 
-te = pytest.importorskip("transformer_engine", reason="transformer_engine was not found, skipping the tests.")
+# NOTE: On SM120/121, TE defaults to using Float8BlockScaling
+#       which is currently unsupported in thunder, we skip the tests for these SM architectures.
+from thunder.tests.utils import skip_on_sm120_and_sm121, is_sm120_orsm121
+
+pytest.importorskip("transformer_engine", reason="transformer_engine was not found, skipping the tests.")
 from thunder.executors.transformer_engineex import transformer_engine_ex
 from transformer_engine.common import recipe
+import transformer_engine.pytorch as te
 
 # FP8 is supported on compute arch 8.9 onwards.
 # MXFP8 is supported on compute arch 10.0 onwards.
@@ -30,6 +35,9 @@ recipe_ids = ("default", "delayed_scaling", "mxfp8_e4m3")
 def test_te_linear_forward_backward(fp8_recipe: recipe.Recipe):
     if fp8_recipe and not (fp8_recipe.delayed() or is_mxfp8_supported):
         pytest.skip(msg_mxfp8)
+
+    if is_sm120_orsm121 and fp8_recipe is None:
+        pytest.skip("On SM120/121, default recipe is Float8BlockScaling which is not supported")
 
     # Test Description:
     # Verify that `torch.nn.functional.linear` is replaced with `te_linear_*`
@@ -88,6 +96,9 @@ def test_te_linear_forward_backward_multiple_iteration(fp8_recipe):
     if fp8_recipe and not (fp8_recipe.delayed() or is_mxfp8_supported):
         pytest.skip(msg_mxfp8)
 
+    if is_sm120_orsm121 and fp8_recipe is None:
+        pytest.skip("On SM120/121, default recipe is Float8BlockScaling which is not supported")
+
     # Test Description:
     # In this test, we verify whether a model using TransformerEngine Linear
     # and transformer_engine executor converge to same state.
@@ -98,7 +109,7 @@ def test_te_linear_forward_backward_multiple_iteration(fp8_recipe):
     # Running more iterations leads to `nan` for both eager and thunder
     # with BlockScaling.
     # Potentially because we are training on dummy data and task
-    iterations = 3
+    iterations = 6
 
     # TE inputs
     input_shape = (768, 4096)
@@ -114,7 +125,7 @@ def test_te_linear_forward_backward_multiple_iteration(fp8_recipe):
     # Parameters for thunder to optimize
     w1, w2, b1, b2 = clone_params(te_linear1.weight, te_linear2.weight, te_linear1.bias, te_linear2.bias)
 
-    target_value = torch.ones(768, 2048, dtype=dtype, device=device)
+    target_value = torch.randint(42, (768,), dtype=torch.int64, device=device)
 
     inputs = tuple(torch.rand(*input_shape, device=device, dtype=dtype) for _ in range(iterations))
 
@@ -123,7 +134,7 @@ def test_te_linear_forward_backward_multiple_iteration(fp8_recipe):
         for iter_n in range(iterations):
             x = inputs[iter_n]
             result = model(x)
-            loss = torch.nn.functional.mse_loss(result, target_value)
+            loss = torch.nn.functional.cross_entropy(result, target_value)
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
@@ -160,6 +171,7 @@ def test_te_linear_forward_backward_multiple_iteration(fp8_recipe):
 
 
 @requiresCUDA
+@skip_on_sm120_and_sm121
 def test_te_linear_invalid_inputs():
     def assert_not_transformed(x, w):
         def fn(x, w):
@@ -184,6 +196,7 @@ def test_te_linear_invalid_inputs():
 
 
 @requiresCUDA
+@skip_on_sm120_and_sm121
 def test_te_with_autocast():
     from thunder.transforms.autocast import autocast
 
@@ -207,10 +220,14 @@ def test_te_with_autocast():
 
 
 # NOTE: strict=False as it passes on Blackwell.
+# NOTE: Type of the error is different in different versions.
 @pytest.mark.xfail(
-    strict=False, raises=(ValueError), reason="See https://github.com/Lightning-AI/lightning-thunder/issues/2221"
+    strict=False,
+    raises=(ValueError, TypeError),
+    reason="See https://github.com/Lightning-AI/lightning-thunder/issues/2221",
 )
 @requiresCUDA
+@skip_on_sm120_and_sm121
 def test_te_with_retain_graph():
     def foo(x, w):
         return thunder.torch.linear(x, w)
@@ -232,6 +249,7 @@ def test_te_with_retain_graph():
 
 
 @requiresCUDA
+@skip_on_sm120_and_sm121
 def test_te_trace_metadata_propagation():
     # This test is to verify that we correctly propagate metadata `_include_te_fp8_autocast` on
     # trace using `from_trace`. `_include_te_fp8_autocast` is used to enable wrapping forward trace with `fp8_autocast`.
@@ -255,7 +273,7 @@ def test_te_trace_metadata_propagation():
             MyNoopTransform(),
         ],
     )
-    out = cfunc(x, w)
+    cfunc(x, w)
 
     fwd_traces = thunder.last_traces(cfunc)
 
@@ -263,6 +281,7 @@ def test_te_trace_metadata_propagation():
     assert any(bsym.sym.name.startswith("te_linear") for bsym in fwd_traces[-1].bound_symbols)
 
 
+@skip_on_sm120_and_sm121
 def test_te_grad_computation_with_intermediate():
     # Test for issue - https://github.com/Lightning-AI/lightning-thunder/issues/1966
     def fn(x, w):

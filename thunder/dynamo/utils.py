@@ -462,6 +462,18 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
         did_run, opt_split_reason = try_execute_thunder_symbol(method, node)
         return did_run, opt_split_reason
 
+    # checks einops operators
+    if hasattr(target, "__module__") and target.__module__ == "einops.einops":
+        from thunder.executors.torchex import has_einops
+
+        if has_einops:
+            import einops
+
+            # According to https://github.com/Lightning-AI/lightning-thunder/blob/4f92190d/thunder/tests/test_einops.py
+            einops_ops = (einops.reduce, einops.rearrange, einops.repeat, einops.einsum)
+            if target in einops_ops:
+                return True, None
+
     # We found no automatic fallback registration and no mapping to thunder symbol.
     split_reason = SplitReason(
         SplitReasonType.MISSING_OP_SUPPORT,
@@ -518,7 +530,12 @@ def _get_storage_shape(t: torch.Tensor):
 
 def _get_min_and_val(t: torch.Tensor) -> tuple[Number | None, Number | None]:
     # We assume that for TensorSubclass, `aminmax` is not supported which is true for FakeTensor and DTensor.
-    if (isinstance(t, torch.Tensor) and type(t) is not torch.Tensor) or t.device.type == "meta" or t.numel() == 0:
+    if (
+        (isinstance(t, torch.Tensor) and type(t) is not torch.Tensor)
+        or t.device.type == "meta"
+        or t.numel() == 0
+        or t.dtype.is_complex
+    ):
         return None, None
     if t.dtype in (torch.float8_e4m3fn, torch.float8_e4m3fnuz, torch.float8_e5m2, torch.float8_e5m2fnuz):
         t = t.to(torch.float32)
@@ -680,13 +697,10 @@ def remove_empty_autocast(graph_module: torch.fx.GraphModule) -> torch.fx.GraphM
         graph_module: Graph module to which this pass is applied.
 
     """
-
-    empty_autocast_removed_graph_module = copy.deepcopy(graph_module)
-
     # Dummy init node.
     prev_node = torch.fx.node.Node(graph_module.graph, "start_node", "call_function", lambda: None, None, None)
     nodes_to_erase = []
-    for node in empty_autocast_removed_graph_module.graph.nodes:
+    for node in graph_module.graph.nodes:
         # As _enter_autocast and _exit_autocast functions map the regions created by context manager,
         # previous `_enter_autocast` will always correspond with current `_exit_autocast`.
         if (
@@ -704,9 +718,9 @@ def remove_empty_autocast(graph_module: torch.fx.GraphModule) -> torch.fx.GraphM
 
     # Erase the marked nodes.
     for node in nodes_to_erase:
-        empty_autocast_removed_graph_module.graph.erase_node(node)
+        graph_module.graph.erase_node(node)
 
-    return empty_autocast_removed_graph_module
+    return graph_module
 
 
 def arg_like_tensor(arg: torch.Tensor | ExampleInputMetaData):

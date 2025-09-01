@@ -1,5 +1,6 @@
 from collections.abc import Sequence
 from functools import partial
+import gc
 from typing import Any
 
 # NOTE: Dependency on fdm and NumPy is temporary.
@@ -29,6 +30,7 @@ from thunder.tests.framework import (
 )
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
 from thunder.tests.opinfos import get_opinfo, opinfos, tensor_creation_ops
+from thunder.tests.utils import is_output_differentiable, filter_differentiable_outputs
 
 # TODO: Move this to thunder.tests.opinfos
 op_skip = {
@@ -43,6 +45,7 @@ op_skip = {
     "index_put",
     "batch_norm",
     "instance_norm",
+    "torch_type",
     "type_as",
 }
 
@@ -406,7 +409,11 @@ def test_vjp_correctness(op, device, dtype, executor, comp):
         # sample.thunder() line below attempts to approximate those conversions
         # for non-differentiable arguments like dtypes so that the test will
         # execute properly.
-        sample = sample.thunder()  # converts torch.dtype to thunder.dtype
+        # NOTE: While `convert_element_type` is skipeed as of https://github.com/Lightning-AI/lightning-thunder/pull/2213
+        # as in https://github.com/Lightning-AI/lightning-thunder/blob/dbf6bad3/thunder/tests/opinfos.py#L3324-L3346,
+        # `torch.Tensor.view(dtype)` seems to require `torch.dtype` to be kept as is, opposite to `convert_element_type`.
+        if op.name != "view":
+            sample = sample.thunder()  # converts torch.dtype to thunder.dtype
         sample = sample.remove_singularities(op, eps)
 
         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
@@ -808,11 +815,11 @@ def test_multiple_output_vjp(executor, device, _):
 
     # Let's check that we get the correct error if we don't pass the right number of cotangents
     with pytest.raises(RuntimeError, match="Expected cotangents to be a sequence of length 2"):
-        initial_trace = thunder.trace()(vjp(func), (x,), (v,))
+        thunder.trace()(vjp(func), (x,), (v,))
 
     # The "vjp" function defined above is incorrect, let's check that we get the correct error
     with pytest.raises(RuntimeError, match="Backward for sincos returned 2 values, but expected at most 1"):
-        initial_trace = thunder.trace()(vjp(func), (x,), (v, v))
+        thunder.trace()(vjp(func), (x,), (v, v))
 
     # Let's define a correct sincos_backward function
     @register_backward("sincos")
@@ -1044,7 +1051,7 @@ def test_torch_autograd_crazy_collections_in_and_out(executor, device, dtype):
         g = e + f
         h = f + ka + kb
         # NOTE The following computation is intentionally unused
-        i = ka + ka  # noqa
+        # i = ka + ka
         j = kc[0] + kc[1]
 
         d["j"] = j
@@ -1162,42 +1169,6 @@ def test_torch_autograd_function_with_kwargs_static_caching(executor, device, _)
 @instantiate(
     dtypes=NOTHING,
 )
-def test_forward_and_backward_from_trace(executor, device, _):
-    from thunder import trace
-    from thunder.clang import cos, sin
-    import thunder.torch as ltorch
-    from thunder.core.transforms import forward_and_backward_from_trace, value_and_grad
-    from thunder.core.transform_common import wrap_return_value_together_with_arguments
-
-    def func(a, b, *, c):
-        d = a + b + c
-        e = d * a + d * b + d * c
-        return sin(e) + cos(e), e, ltorch.sin(e) + ltorch.cos(e)
-
-    a = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
-    b = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
-    c = make_tensor((3,), device=device, dtype=torch.float64, requires_grad=True)
-    initial_trace = trace(inline_trace=False)(func, a, b, c=c)
-    wrapped_trace = wrap_return_value_together_with_arguments(initial_trace)
-    fw_trace, bw_trace = forward_and_backward_from_trace(wrapped_trace)
-    fw = executor.make_callable(fw_trace)
-    bw = executor.make_callable(bw_trace)
-    fw_out, saved_for_backward = fw(a, b, c=c)
-
-    initial_trace = trace()(value_and_grad(func), a, b, c=c)
-    expected_vjp_func = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)
-
-    expected_fw_out, expected_grads = expected_vjp_func(a, b, c=c)
-    torch.testing.assert_close(fw_out["output"], expected_fw_out)
-
-    output_grads = tree_map(lambda x: torch.ones_like(x), fw_out["output"])
-    bw_out = bw(saved_for_backward, output_grads)
-    torch.testing.assert_close(bw_out, expected_grads)
-
-
-@instantiate(
-    dtypes=NOTHING,
-)
 def test_update_forward_with_new_saved_for_backward_numberproxy(executor, device, _):
     def foo(t, ab):
         return t * ab * 0.5
@@ -1292,47 +1263,12 @@ def test_backward_none_propagation(executor, device, _):
 #
 # Phantom grad tests
 #
-# TODO Jax consistency testing (slice and slice_in_dim don't have torch references)
 # TODO Double-backward testing
 # TODO Add more module tests
 
 
 def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp):
     args, kwargs = sample.args, sample.kwargs
-
-    def is_output_differentiable(x):
-        # grad_fn is set only if one of the input `requires_grad=True`
-        # and the op is differentiable.
-        # Example:
-        # >>> x = torch.ones(3, requires_grad=True)
-        # >>> y = torch.ones(3, requires_grad=False)
-        # >>> (x + x).grad_fn  # <AddBackward0 object at 0x7f0502edcf40>
-        # >>> (y + y).grad_fn  # None
-        # >>> (y + x).grad_fn  # <AddBackward0 object at 0x7f0502e21060>
-        # >>> (x < 1).grad_fn  # None (non-differentiable op)
-        # Op with differentiable and non-differentiable outputs.
-        # >>> torch.topk(x, k=2)
-        # torch.return_types.topk(
-        # values=tensor([1., 1.], grad_fn=<TopkBackward0>),
-        # indices=tensor([0, 1]))
-        # >>> torch.topk(torch.ones(3, requires_grad=False), k=2)
-        # torch.return_types.topk(
-        # values=tensor([1., 1.]),
-        # indices=tensor([0, 1]))
-        return x.grad_fn is not None or is_returning_self(x)
-
-    def is_returning_self(x):
-        if x.is_leaf and x.requires_grad:
-            return True
-        return False
-
-    def filter_differentiable_outputs(outputs):
-        if isinstance(outputs, torch.Tensor):
-            # Otherwise `filter` below will
-            # iterate over the Tensor data.
-            outputs = [outputs]
-
-        return list(filter(is_output_differentiable, outputs))
 
     # Computes PyTorch (competition) result
     torch_flats, spec = tree_flatten((args, kwargs))
@@ -1569,6 +1505,9 @@ def test_populate_grads_nanogpt(executor, device, dtype):
 
     logits, loss = model(x, targets)
     torch.autograd.backward((logits, loss), (torch.ones_like(logits), torch.ones_like(loss)))
+    del logits, loss
+    gc.collect()
+    torch.cuda.empty_cache()
     torch_grads = extract_grads(model)
 
     clear_grads(model)
@@ -1604,7 +1543,7 @@ def test_too_few_results_from_backward():
 
     myex = thunder.extend.OperatorExecutor("myex", version="0.1")
     thunder.extend.register_executor(myex)
-    myadd_op = myex.register_operator("myadd", like=myadd_meta, fn=lambda a, b: a + b)
+    myex.register_operator("myadd", like=myadd_meta, fn=lambda a, b: a + b)
 
     @register_augmented_forward("myadd")
     def myadd_augmented_fw(a, b):
@@ -1625,7 +1564,7 @@ def test_too_few_results_from_backward():
     b = torch.tensor(1.0, requires_grad=True)
 
     with pytest.raises(RuntimeError, match=r"Backward for myadd returned 1 value\(s\), but expected 2"):
-        fw_out = cfunc(a, b)
+        cfunc(a, b)
 
     thunder.extend.deregister_executor(myex)
 

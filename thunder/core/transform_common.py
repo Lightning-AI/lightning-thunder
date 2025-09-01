@@ -76,9 +76,9 @@ def _inplace_copy_sanity_check(extrace: Trace):
         [t2] = nvFusion0(x, y)
             # result = prims.mul(x, y)
             # a = prims.copy_(result, x)
-            # t2 = prims.add(a, y) or t2 = prims.add(x, y)
+            # t2 = prims.add(x, y)
 
-    Do not use the `copy_to` variable `x` or `a` after it has been updated, use the `copy_from` variable `result` instead to reflect the dependency:
+    Do not use the `copy_to` variable `x` after it has been updated, use the `copy_from` variable `result` instead to reflect the dependency:
 
     .. code-block:: python
 
@@ -96,7 +96,6 @@ def _inplace_copy_sanity_check(extrace: Trace):
         inplace_copy_idx = ((idx, sym) for idx, sym in enumerate(bsym.subsymbols) if sym.sym.id == prims.PrimIDs.COPY_)
         for idx, subbsym in inplace_copy_idx:
             copy_to_arg = subbsym.flat_args[1]
-            copy_to_out = subbsym.output
 
             def check(inp, log_str):
                 if inp is not None and inp in consumer_dict:
@@ -108,7 +107,6 @@ def _inplace_copy_sanity_check(extrace: Trace):
                         )
 
             check(copy_to_arg, "'copy_to' argument")
-            check(copy_to_out, "output")
 
 
 def remove_duplicate_number_proxies(bsyms: Sequence[BoundSymbol]) -> list[BoundSymbol]:
@@ -164,28 +162,13 @@ def dce(trace: Trace, needed_proxies: None | set[Variable] = None) -> Trace:
         else:
             needed = False
 
-        # NOTE This block is run even if we know we're preserving the operation, because it
-        #   may mark some of the operation's outputs as unused
-        some_unused = False
         for out in bsym.flat_proxy_outs:
             if variableify(out) in needed_proxies and producer_map[out] == bsym:
                 needed = True
-            else:
-                some_unused = True
+                break
 
         if needed:
             nbsym: BoundSymbol = bsym
-
-            # Replaces unused Proxy outputs with None
-            if some_unused:
-
-                def _helper(x):
-                    if isinstance(x, Proxy) and (variableify(x) not in needed_proxies or producer_map[x] != bsym):
-                        return None
-                    return x
-
-                nbsym_output = tree_map(_helper, bsym.output)
-                nbsym = bsym.from_bsym(output=nbsym_output)
 
             # Eliminates no-op subsymbols
             # NOTE In general editing subsymbols doesn't do anything, but no-op subsymbols are a pain

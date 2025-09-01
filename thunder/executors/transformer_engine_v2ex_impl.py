@@ -1,16 +1,18 @@
 import time
 from typing import TYPE_CHECKING
 
+import torch.distributed as torch_dist
+
 from thunder.core.prims import linear as linear_prim
 from thunder.core.prims import get_grad, put_grad
 from thunder.core.proxies import AnyProxy, TensorProxy
 from thunder.extend import StatefulExecutor, register_executor
-from thunder.executors.transformer_engineex import _linear_checker
 import thunder.torch as ltorch
 from thunder import Transform
 from thunder.core import prims
+import thunder.core.devices as devices
 from thunder.core.proxies import Proxy, Variable, unvariableify, variableify
-from thunder.core.trace import from_trace, TraceProvenance, TraceTag
+from thunder.core.trace import from_trace, TraceProvenance, TraceTag, TraceCtx
 from thunder.core.transforms import (
     _update_forward_with_new_saved_for_backward,
     _update_backward_with_new_saved_for_backward,
@@ -25,8 +27,7 @@ if TYPE_CHECKING:
     from thunder.core.proxies import TensorProxy
 
 import transformer_engine.pytorch as te
-from transformer_engine.pytorch.tensor import Quantizer
-from transformer_engine.pytorch.ops import BasicLinear
+from transformer_engine.pytorch.constants import MXFP8_BLOCK_SCALING_SIZE
 from transformer_engine.pytorch.fp8 import (
     _amax_and_scale_update,
     get_fp8_max,
@@ -34,6 +35,9 @@ from transformer_engine.pytorch.fp8 import (
     RecipeState,
     FP8GlobalStateManager,
 )
+from transformer_engine.pytorch.ops import BasicLinear
+from transformer_engine.pytorch.tensor import Quantizer
+from transformer_engine.pytorch.utils import check_dim_for_fp8_exec
 
 
 transformer_engine_v2_ex = StatefulExecutor("transformer_engine_v2")
@@ -140,6 +144,7 @@ def _linear_fwd_impl(a, w, bias, input_quantizer: Quantizer, weight_quantizer: Q
         input=a,
         weight=w,
         bias=bias,
+        dtype=w.dtype,  # WAR for TE library issue https://github.com/NVIDIA/TransformerEngine/issues/2011
         with_quantized_compute=True,
         input_quantizer=input_quantizer,
         weight_quantizer=weight_quantizer,
@@ -207,10 +212,10 @@ def _te_linear_grad_transform(a, w, bias):
 
     primal, quantized_a, quantized_w = _te_linear_fwd(a, w, bias, input_quantizer, weight_quantizer)
 
-    (primal,) = _te_fp8_amax_and_scale_update(
+    (primal, quantized_a, quantized_w) = _te_fp8_amax_and_scale_update(
         recipe,
         states=(forward_recipe_state,),
-        tokens=(primal,),
+        tokens=(primal, quantized_a, quantized_w),
     )
 
     grad_out = get_grad(primal)
@@ -247,6 +252,39 @@ def _te_linear_grad_transform(a, w, bias):
     return primal
 
 
+def _linear_checker(
+    a: TensorProxy,
+    w: TensorProxy,
+    bias: None | TensorProxy,
+) -> bool:
+    def is_cuda(t):
+        return t.device.devicetype == devices.DeviceType.CUDA
+
+    inputs = (a, w)
+    if bias is not None:
+        inputs = inputs + (bias,)
+
+    # Helper function as input shape can be (*, Hin)
+    def _view_input_as_2d(x):
+        shape = x.shape
+        return x.view((-1, shape[-1]))
+
+    fp8_recipe = FP8GlobalStateManager.get_fp8_recipe()
+
+    def check_valid_fp8_shapes(a):
+        # DelayedScaling and MXFP8BlockScaling have different shape requirements.
+        if fp8_recipe.delayed():
+            return check_dim_for_fp8_exec(a)
+
+        assert fp8_recipe.mxfp8()
+        shape = a.shape
+        return shape[0] % MXFP8_BLOCK_SCALING_SIZE == 0 and shape[1] % MXFP8_BLOCK_SCALING_SIZE == 0
+
+    # Inputs must be on CUDA and
+    # input sizes must satisfy size constraints based on the recipe.
+    return all(map(is_cuda, inputs)) and check_valid_fp8_shapes(_view_input_as_2d(a)) and check_valid_fp8_shapes(w)
+
+
 transformer_engine_v2_ex.register_implementation(
     linear_prim,
     checker=_linear_checker,
@@ -262,8 +300,20 @@ def _te_fp8_amax_and_scale_update_meta(recipe: AnyProxy, *, states: tuple[AnyPro
 
 # TODO can gather and scatter be made explicit here for ddp
 def _te_fp8_amax_and_scale_update_impl(recipe: Recipe, states: tuple[RecipeState], tokens: tuple[TensorProxy]):
-    if recipe.delayed():
-        for state in states:
+    for state in states:
+        if getattr(recipe, "reduce_amax", False) and torch_dist.is_available() and torch_dist.is_initialized():
+            from torch.distributed import distributed_c10d
+
+            pg = distributed_c10d._get_default_group()
+            if torch_dist.get_world_size(group=pg) > 1:
+                torch_dist.all_reduce(
+                    state.amax_history,
+                    op=torch_dist.ReduceOp.MAX,
+                    group=pg,
+                    async_op=False,
+                )
+
+        if recipe.delayed():
             _amax_and_scale_update(
                 state.amax_history, state.scale, get_fp8_max(recipe, state.mode == "forward"), recipe
             )
@@ -292,6 +342,13 @@ class TransformerEngineTransformV2(Transform):
         self.swap_map: dict[VariableInterface, TensorProxy] = {}
         self.rhs_to_bsym_map: dict[BoundSymbolRHS, BoundSymbol] = {}
         self.redundant_map: dict[Variable, Proxy] = {}
+        self.new_saved_for_backward = None
+
+    def reset(self):
+        self.fp8_recipe = None
+        self.swap_map = {}
+        self.rhs_to_bsym_map = {}
+        self.redundant_map = {}
         self.new_saved_for_backward = None
 
     def transform_trace_post_optimization(self, computation_trace, **kwargs):
@@ -339,6 +396,7 @@ class TransformerEngineTransformV2(Transform):
 
         # Couldn't find any TE recipe in the trace
         if not self.fp8_recipe:
+            self.reset()
             return computation_trace
 
         new_trace.bound_symbols = new_bsyms
@@ -346,11 +404,7 @@ class TransformerEngineTransformV2(Transform):
         if self.new_saved_for_backward:
             _update_backward_with_new_saved_for_backward(new_trace, self.new_saved_for_backward)
             # Reset transform after going through forward and backward
-            self.fp8_recipe = None
-            self.swap_map = {}
-            self.rhs_to_bsym_map = {}
-            self.redundant_map = {}
-            self.new_saved_for_backward = None
+            self.reset()
 
         # If the trace has been generated by Thunder autograd then we also need to remove extra recipies from the return statement
         if TraceTag.AUGMENTED_FORWARD in computation_trace.tags:
@@ -358,7 +412,11 @@ class TransformerEngineTransformV2(Transform):
             assert return_bsym.sym.id == prims.PrimIDs.RETURN
             _, (saved_for_backward, env) = return_bsym.args
             unique_env = list(dict.fromkeys(Variable(x) for x in env))
-            self.new_saved_for_backward = (*saved_for_backward, *(unvariableify(x) for x in unique_env))
+            self.new_saved_for_backward = (
+                *saved_for_backward,
+                *(unvariableify(x) for x in unique_env),
+                self.fp8_recipe.output,
+            )
 
             _update_forward_with_new_saved_for_backward(new_trace, self.new_saved_for_backward)
 
@@ -373,3 +431,62 @@ class TransformerEngineTransformV2(Transform):
         )
 
         return sync_trace
+
+
+def _te_activation_checkpointing_transform(joint_trace: TraceCtx) -> TraceCtx:
+    """
+    Optimizes FP8 state management in activation checkpointing by removing
+    redundant amax/scale updates, keeping only the final update for each state.
+
+    Args:
+        joint_trace: Joint trace after recomputation has been inserted.
+    """
+
+    swapmap: dict[Variable, Proxy] = {}
+    state_swapmap: dict[str, Proxy] = {}
+    new_bsyms = []
+
+    # Find the first call for every FP8 state and reuse it throughout the trace.
+    # Since get_te_fp8_state symbol names are unique, we use them to identify duplicates.
+    for bsym in joint_trace.bound_symbols:
+        if "get_te_fp8_state" in bsym.sym.name:
+            out_proxy = state_swapmap.get(bsym.sym.name, None)
+            if out_proxy is None:
+                # First occurrence - save it for reuse
+                state_swapmap[bsym.sym.name] = bsym.output
+            else:
+                swapmap[variableify(bsym.output)] = out_proxy
+                # Remove excessive duplicate calls to avoid redundant state creation
+                continue
+
+        new_bsyms.append(bsym.from_bsym_swap_proxies(swapmap))
+
+    new_trace = from_trace(joint_trace)
+    seen_updated_states = set()
+    reversed_bsyms = []
+
+    # Optimize amax/scale updates by keeping only the final update for each state.
+    # We iterate in reverse order so the "first" occurrence we keep is actually the last one,
+    # which ensures we maintain the most recent scaling information.
+    for bsym in reversed(new_bsyms):
+        if bsym.sym.name == "te_fp8_amax_and_scale_update":
+            # TODO: This takes into account multiple states and does remove the update call only
+            # in the case that all the states have been updated already. When update grouping will be added this needs to be revised.
+            if all(variableify(state) in seen_updated_states for state in bsym.kwargs["states"]):
+                # All states have already been updated - redirect outputs to original tokens
+                tokens_to_swap = bsym.kwargs["tokens"]
+                for t, o in zip(tokens_to_swap, bsym.output):
+                    if o is not None:
+                        swapmap[variableify(o)] = t
+                continue
+            else:
+                # Mark these states as having been updated
+                for state in bsym.kwargs["states"]:
+                    seen_updated_states.add(variableify(state))
+
+        reversed_bsyms.append(bsym)
+
+    # Reverse the trace back to original order and apply proxy updates from removed amax calls
+    new_trace.bound_symbols = [bsym.from_bsym_swap_proxies(swapmap) for bsym in reversed(reversed_bsyms)]
+
+    return new_trace
