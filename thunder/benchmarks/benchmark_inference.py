@@ -100,8 +100,6 @@ class InferenceBenchmarkConfig:
     load_nvfp4: bool  # Enable NVFP4 quantization
     fx_report_folder: str | None
     enable_nv_linear: bool = False
-    measure_ttft: bool = field(default=True, init=False)
-    measure_tbot: bool = field(default=True, init=False)
     mode: str = "thunder"
 
     # Memory bandwidth and compute specs
