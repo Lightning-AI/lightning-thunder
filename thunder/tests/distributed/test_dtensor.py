@@ -252,7 +252,6 @@ class DTensorTest(DistributedParallelTestCase):
 
                 thunder_result = filter_differentiable_outputs(thunder_result)
                 thunder_grad_result = torch.autograd.grad(thunder_result, torch_tensors_requiring_grad, grads)
-                print(thunder_grad_result, torch_grad_result)
                 torch.testing.assert_close(thunder_grad_result, torch_grad_result)
 
                 # Increment tested sample count
