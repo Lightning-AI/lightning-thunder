@@ -540,19 +540,6 @@ def run_benchmark(
     return metrics
 
 
-def list_scenarios():
-    """Print available benchmark scenarios"""
-    print("\nAvailable Standard Benchmark Scenarios:")
-    print("=" * 50)
-    for key, config in BENCHMARK_SCENARIOS.items():
-        print(f"\n{key.upper()}:")
-        print(f"  Name: {config['name']}")
-        print(f"  Configuration: {config['description']}")
-    print("\n" + "=" * 50)
-    print("Use --scenario <scenario_name> to select a standard scenario")
-    print("Or use --input-length and --output-length for custom configurations")
-
-
 class CustomFormatter(argparse.RawDescriptionHelpFormatter, argparse.ArgumentDefaultsHelpFormatter):
     pass
 
@@ -567,8 +554,6 @@ Standard Benchmark Scenarios:
   summarization  - Prefill-Heavy: 4,000 input → 1,000 output tokens
   chat          - Balanced: 1,000 input → 1,000 output tokens
   reasoning     - Decode-Heavy: 1,000 input → 4,000 output tokens
-
-Use --list-scenarios for detailed scenario descriptions.
 
 Examples:
   python benchmark_inference.py --input-length 2048 --output-length 512 --model-name meta-llama/Llama-4-Maverick-17B-128E --mode eager
@@ -655,9 +640,6 @@ Examples:
     if args.load_nvfp4:
         raise NotImplementedError("Currently NVFP4 is not supported")
 
-    if args.list_scenarios:
-        list_scenarios()
-        return None
     return args
 
 
