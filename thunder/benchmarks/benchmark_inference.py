@@ -1,9 +1,6 @@
 """Inference benchmark focusing on throughput and latency metrics of prefill and decode phases.
 
-Models:
-- DeepSeekV3 670B
-- Llama 4 Scout 17B
-- Llama 4 Maverick
+AutoModelForCausalLM from Hugging Face transformers is used for model implementation.
 
 Key metrics:
 - Throughput (tokens/second)
