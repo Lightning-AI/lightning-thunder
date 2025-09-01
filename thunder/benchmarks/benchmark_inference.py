@@ -219,8 +219,9 @@ class InferenceBenchmark:
         for layer_idx in range(self.hf_config.num_hidden_layers):
             # key_states.shape[1] is used to retrieve the number of key value heads, all other dimensions can be 1 and ignored
             # https://github.com/huggingface/transformers/blob/9300728665aaeb0ebf4db99f9d9fbce916b4a183/src/transformers/cache_utils.py#L1822
+            dummy_key_states = torch.empty(1, self.hf_config.num_key_value_heads // WORLD_SIZE, 1, 1, device=DEVICE)
             past_key_values.initialise_cache_layer(
-                layer_idx, torch.empty(1, self.hf_config.num_key_value_heads // WORLD_SIZE, 1, 1, device=DEVICE)
+                layer_idx, dummy_key_states
             )
 
         return input_ids, past_key_values
