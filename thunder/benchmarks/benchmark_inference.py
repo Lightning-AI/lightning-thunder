@@ -101,7 +101,6 @@ class InferenceBenchmarkConfig:
     enable_nv_linear: bool = False
     measure_ttft: bool = field(default=True, init=False)
     measure_tbot: bool = field(default=True, init=False)
-    warmup_iterations: int = 2
     device: str = "cuda"
     mode: str = "thunder"
 
@@ -358,10 +357,10 @@ class InferenceBenchmark:
         print(f"Device: {self.device}")
         print(f"Mode: {self.config.mode}")
 
-        print(f"\nWarming up with {self.config.warmup_iterations} iterations...")
+        print(f"\nWarming up with {WARMUP_ITERATIONS} iterations...")
         input_ids, past_key_values = self.generate_batch()
 
-        for _ in tqdm(range(self.config.warmup_iterations)):
+        for _ in tqdm(range(WARMUP_ITERATIONS)):
             past_key_values.reset()
             _ = self.measure_inference_step(input_ids, past_key_values, max_new_tokens=1)
 
