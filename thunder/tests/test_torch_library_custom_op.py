@@ -230,9 +230,9 @@ def test_custom_impl_for_torch_library_custom_op(_, device: str, dtype: dtypes.d
     fwd_extrace = thunder.last_traces(jitted)[-1]
     custom_ex_bsym_found: bool = False
     for bsym in fwd_extrace.bound_symbols:
-        if bsym.sym.name == _symbol.name and bsym.sym.executor is custom_op_ex:
+        if (bsym.sym.name != _symbol.name and _symbol.name in bsym.sym.name) and bsym.sym.executor is custom_op_ex:
             custom_ex_bsym_found = True
-    assert not custom_ex_bsym_found
+    assert custom_ex_bsym_found
 
     bwd_extrace = thunder.last_backward_traces(jitted)[-1]
     bsym_custom_ex_bsym_found: bool = False
