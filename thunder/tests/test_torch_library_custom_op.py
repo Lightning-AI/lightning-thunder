@@ -1,5 +1,4 @@
 from typing import TYPE_CHECKING
-import importlib
 
 from lightning_utilities.core.imports import package_available
 import numpy as np
@@ -14,7 +13,7 @@ from thunder.core import devices
 from thunder.torch.custom_op import _register_custom_op
 from thunder.executors.custom_op_ex import custom_op_ex
 from thunder.executors.custom_op_ex import _override_custom_op_forward
-from thunder.tests.framework import TorchExecutor
+from thunder.tests.framework import TorchExecutor, nvFuserExecutor
 from thunder.tests.framework import instantiate
 
 if TYPE_CHECKING:
@@ -243,15 +242,27 @@ def test_custom_impl_for_torch_library_custom_op(_, device: str, dtype: dtypes.d
 
 
 @instantiate(
-    executors=(TorchExecutor,),
+    executors=(nvFuserExecutor,),
     devicetypes=(devices.DeviceType.CUDA,),
     dtypes=(dtypes.float32,),
 )
 def test_nvfuser_impl_for_torch_library_custom_op(_, device: str, dtype: dtypes.dtype):
-    from thunder.executors.nvfuserex_impl import mul as nvfuser_mul, register_supported, _elementwise_binary_check
+    from nvfuser_direct import FusionDefinition
+    from thunder.core.dtypes import to_dtype
+    from thunder.executors.nvfuserex_impl import lcdtype_to_nvdtype
+
+    def nvfuser_direct_mul(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        with FusionDefinition() as fd:
+            t0 = fd.from_pytorch(x)
+            t1 = fd.from_pytorch(y)
+            mul = fd.ops.mul(t0, t1)
+            cast_mul = fd.ops.cast(mul, lcdtype_to_nvdtype(to_dtype(x.dtype)))
+            fd.add_output(cast_mul)
+
+        return fd.execute([x, y])[0]
 
     _symbol = _register_custom_op(mul)
-    register_supported(_symbol, nvfuser_mul, _elementwise_binary_check)
+    _override_custom_op_forward(_symbol, nvfuser_direct_mul)
 
     SHAPE = (8, 2)
     torch_device, torch_dtype = devices.to_torch_device(device), dtypes.to_torch_dtype(dtype)
@@ -274,9 +285,9 @@ def test_nvfuser_impl_for_torch_library_custom_op(_, device: str, dtype: dtypes.
     fwd_extrace = thunder.last_traces(jitted)[-1]
     custom_ex_bsym_found: bool = False
     for bsym in fwd_extrace.bound_symbols:
-        if bsym.sym.name == _symbol.name and bsym.sym.executor is custom_op_ex:
+        if (bsym.sym.name != _symbol.name and _symbol.name in bsym.sym.name) and bsym.sym.executor is custom_op_ex:
             custom_ex_bsym_found = True
-    assert not custom_ex_bsym_found
+    assert custom_ex_bsym_found
 
     bwd_extrace = thunder.last_backward_traces(jitted)[-1]
     bsym_custom_ex_bsym_found: bool = False
