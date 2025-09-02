@@ -856,6 +856,8 @@ def jit(
     @update_call_statistics
     def fn_(*args, **kwargs) -> Any:
         # NOTE: Don't capture cd or cs in the closure, otherwise it will create a cycle
+        cd = weakref_cd()
+        assert cd is not None, "cd has been cleared."
         cs = weakref_cs()
         assert cs is not None, "cs has been cleared."
         if is_tracing():
