@@ -46,7 +46,12 @@ from thunder.core.devices import Device, DeviceType, cpu
 from thunder.core.transform_common import dce, cse_single_bsym, replace_redundant_inputs
 from thunder.core.profile import annotate_for_profile
 from thunder.core.compile_data import get_compile_option
-from thunder.torch.experimental.dtensor_torch_and_prims import dtensor_mul_prim, dtensor_reshape_prim
+from thunder.torch.experimental.dtensor_torch_and_prims import (
+    dtensor_mul_prim,
+    dtensor_convert_element_type_prim,
+    dtensor_broadcast_in_dim_prim,
+    dtensor_reshape_prim,
+)
 from thunder.torch.experimental.dtensor_proxy import DTensorProxy
 
 from thunder.core.transforms import (
@@ -969,6 +974,7 @@ def convert_element_type(
 
 
 register_supported(PrimIDs.CONVERT_ELEMENT_TYPE, convert_element_type, _convert_element_type_check)
+register_supported(dtensor_convert_element_type_prim, convert_element_type, _convert_element_type_check)
 
 
 def _bitcast_check(src: TensorProxy, dtype: dtypes.dtype) -> bool:
@@ -1190,6 +1196,7 @@ def broadcast_in_dim(
 
 
 register_supported(PrimIDs.BROADCAST_IN_DIM, broadcast_in_dim, _broadcast_in_dim_check)
+register_supported(dtensor_broadcast_in_dim_prim, broadcast_in_dim, _broadcast_in_dim_check)
 
 
 def _cat_check(tensors: list[TensorProxy], dim: int) -> bool:
@@ -2856,6 +2863,12 @@ def scatter(
     nva = getnv(a, fd, lc_to_nv_map)
     nvi = getnv(index, fd, lc_to_nv_map)
     nvs = getnv(src, fd, lc_to_nv_map)
+
+    # NOTE: scalar source value is not supported until 0.2.31. Wrapping scalar to full as a WAR.
+    if nvfuser_version() < LooseVersion("0.2.31"):
+        if isinstance(nvs, nvfuser._C.Scalar):
+            # NOTE: for a few commits on 0.2.30, this WAR still hits an assert. But since this is opt-in, we expect the user to back out from that, instead of blindly rejecting scatter for earlier version.
+            nvs = fd.ops.full(nvi.shape(), nvs, dtype=lcdtype_to_nvdtype(a.dtype))
 
     # index_put is translated to scatter in nvfuser
     return fd.ops.scatter(nva, nvi, nvs, dim)
