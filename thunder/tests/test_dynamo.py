@@ -1697,3 +1697,23 @@ def test_thunderfx_node_with_no_example_value():
     actual = thunderfx(test_fn)(x)
     expected = test_fn(x)
     torch.testing.assert_close(actual, expected)
+
+
+# This test addresses the bug reported in https://github.com/Lightning-AI/lightning-thunder/issues/2398
+def test_no_grad_region_split():
+    def fn(x):
+        # Thunder supports enclosing torch.set_grad_enabled(False/True)
+        with torch.no_grad():
+            # but does not support Tensor.sinc, causing graph splits
+            sinc = x.sinc()
+        return x + 1 + sinc
+
+    x = torch.randn(10, requires_grad=True)
+    x_ref = x.detach().clone().requires_grad_(True)
+
+    y = thunderfx(fn)(x)
+    y_ref = fn(x_ref)
+    torch.testing.assert_close(y, y_ref)
+    y.sum().backward()
+    y_ref.sum().backward()
+    torch.testing.assert_close(x.grad, x_ref.grad)
