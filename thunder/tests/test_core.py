@@ -36,6 +36,8 @@ import thunder.core.prims as prims
 from thunder.core.trace import TraceCtx, set_tracectx, reset_tracectx, tracectx
 from thunder.core.symbol import BoundSymbol
 
+from looseversion import LooseVersion
+
 
 #
 # Tests related to the test framework itself
@@ -3233,6 +3235,18 @@ def test_apply_autograd_memory(thunderfx_disable_split_autograd):
         return [weakref.ref(x), weakref.ref(o)]
 
     assert not any(wr() for wr in foo())
+
+
+@pytest.mark.skipif(LooseVersion(torch.__version__) < LooseVersion("2.9.0"), reason="Requires torch 2.9.0 or later")
+def test_float4_e2m1fn_x2():
+    x = torch.ones(2, 2, dtype=torch.uint8).view(torch.float4_e2m1fn_x2)
+
+    @thunder.jit
+    def f(x):
+        return x
+
+    y = f(x)
+    assert y.dtype == torch.float4_e2m1fn_x2
 
 
 def test_thunder_jit_parts():
