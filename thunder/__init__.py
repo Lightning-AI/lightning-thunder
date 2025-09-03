@@ -254,10 +254,6 @@ CacheEntry = namedtuple(
 _logger = get_logger(__name__)
 
 
-def _log_trace(name: str, trc: TraceCtx) -> None:
-    _logger.info("%s\n%s\n", name, trc)
-
-
 def compile(
     fn: Callable, recipe: Recipe | str = "auto", plugins: Plugin | list[Plugin] | str | list[str] | None = None
 ):
