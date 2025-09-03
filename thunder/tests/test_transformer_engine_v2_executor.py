@@ -7,6 +7,10 @@ from torch.testing import assert_close
 import thunder
 from thunder.tests.framework import requiresCUDA
 
+# NOTE: On SM120/121, TE defaults to using Float8BlockScaling
+#       which is currently unsupported in thunder, we skip the tests for these SM architectures.
+from thunder.tests.utils import skip_on_sm120_and_sm121, is_sm120_orsm121
+
 transformer_engine_module = pytest.importorskip(
     "transformer_engine", reason="transformer_engine was not found, skipping the tests."
 )
@@ -33,9 +37,13 @@ recipe_ids = ("default", "delayed_scaling", "mxfp8_e4m3")
 
 @requiresCUDA
 @pytest.mark.parametrize("fp8_recipe", recipes, ids=recipe_ids)
+@skip_on_sm120_and_sm121
 def test_te_linear_forward_backward(fp8_recipe: recipe.Recipe):
     if fp8_recipe and not (fp8_recipe.delayed() or is_mxfp8_supported):
         pytest.skip(msg_mxfp8)
+
+    if is_sm120_orsm121 and fp8_recipe is None:
+        pytest.skip("On SM120/121, default recipe is Float8BlockScaling which is not supported")
 
     # Test Description:
     # Verify that `torch.nn.functional.linear` is replaced with `te_linear_*`
@@ -96,6 +104,7 @@ def test_te_linear_forward_backward(fp8_recipe: recipe.Recipe):
 
 @requiresCUDA
 @pytest.mark.parametrize("fp8_recipe", recipes, ids=recipe_ids)
+@skip_on_sm120_and_sm121
 def test_te_linear_forward_backward_multiple_iteration(fp8_recipe: recipe.Recipe):
     if not fp8_recipe:
         pytest.skip(
@@ -277,6 +286,7 @@ def test_te_linear_invalid_inputs():
 
 
 @requiresCUDA
+@skip_on_sm120_and_sm121
 def test_te_with_autocast():
     from thunder.transforms.autocast import autocast
 
@@ -303,6 +313,7 @@ def test_te_with_autocast():
 # NOTE: strict=False as it passes on Blackwell.
 @pytest.mark.xfail(strict=False, raises=(RuntimeError, TypeError), reason="Retain graph is not supported by TE")
 @requiresCUDA
+@skip_on_sm120_and_sm121
 def test_te_with_retain_graph():
     def foo(x, w):
         return thunder.torch.linear(x, w)
@@ -325,6 +336,7 @@ def test_te_with_retain_graph():
 
 
 @requiresCUDA
+@skip_on_sm120_and_sm121
 def test_te_trace_metadata_propagation():
     # This test is to verify that we correctly propagate metadata `_include_te_fp8_autocast` on
     # trace using `from_trace`. `_include_te_fp8_autocast` is used to enable wrapping forward trace with `fp8_autocast`.
@@ -357,6 +369,7 @@ def test_te_trace_metadata_propagation():
     assert any(bsym.sym.name.startswith("te_functional_linear") for bsym in fwd_traces[-1].bound_symbols)
 
 
+@skip_on_sm120_and_sm121
 def test_te_grad_computation_with_intermediate():
     # Test for issue - https://github.com/Lightning-AI/lightning-thunder/issues/1966
     def fn(x, w):
@@ -381,6 +394,7 @@ def test_te_grad_computation_with_intermediate():
 
 @requiresCUDA
 @pytest.mark.parametrize("fp8_recipe", recipes, ids=recipe_ids)
+@skip_on_sm120_and_sm121
 def test_te_trace_correctness(fp8_recipe: recipe.Recipe):
     if fp8_recipe and not (fp8_recipe.delayed() or is_mxfp8_supported):
         pytest.skip(msg_mxfp8)
@@ -451,6 +465,7 @@ def test_te_trace_correctness(fp8_recipe: recipe.Recipe):
 @requiresCUDA
 @pytest.mark.parametrize("fp8_recipe", recipes, ids=recipe_ids)
 @pytest.mark.parametrize("compile_path", ["jit", "ThunderFX"])
+@skip_on_sm120_and_sm121
 def test_te_activation_checkpointing_trace(fp8_recipe: recipe.Recipe, compile_path: str):
     if fp8_recipe and not (fp8_recipe.delayed() or is_mxfp8_supported):
         pytest.skip(msg_mxfp8)
@@ -505,6 +520,7 @@ def test_te_activation_checkpointing_trace(fp8_recipe: recipe.Recipe, compile_pa
 @pytest.mark.parametrize("fp8_recipe", recipes, ids=recipe_ids)
 @pytest.mark.parametrize("compile_path", ["jit", "ThunderFX"])
 @pytest.mark.filterwarnings("ignore::FutureWarning")  # Coming from TE v2.3
+@skip_on_sm120_and_sm121
 def test_te_activation_checkpointing_correctness(fp8_recipe: recipe.Recipe, compile_path: str):
     if not fp8_recipe:
         pytest.skip(
