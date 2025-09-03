@@ -182,6 +182,16 @@ def test_torch_library_triton_op(_, device: str, dtype: dtypes.dtype):
     _run_test(MyModuleTritonOp, mul_triton, devices.to_torch_device(device), dtypes.to_torch_dtype(dtype))
 
 
+class MyModule2(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.linear = nn.Linear(2, 2, bias=False)
+
+    def forward(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        out = torch.ops.my_custom_op.mul(self.linear(x), y)
+        return torch.relu(out)
+
+
 @instantiate(
     executors=(TorchExecutor,),
     devicetypes=(devices.DeviceType.CUDA,),
@@ -190,15 +200,6 @@ def test_torch_library_triton_op(_, device: str, dtype: dtypes.dtype):
 def test_custom_impl_for_torch_library_custom_op(_, device: str, dtype: dtypes.dtype):
     SHAPE = (8, 2)
     _symbol = _register_custom_op(mul)
-
-    class MyModule(nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.linear = nn.Linear(2, 2, bias=False)
-
-        def forward(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-            out = torch.ops.my_custom_op.mul(self.linear(x), y)
-            return torch.relu(out)
 
     if has_triton_op:
         _cupy_mul = mul_triton
@@ -210,9 +211,9 @@ def test_custom_impl_for_torch_library_custom_op(_, device: str, dtype: dtypes.d
     _override_custom_op_forward(_symbol, _cupy_mul)
 
     torch_device, torch_dtype = devices.to_torch_device(device), dtypes.to_torch_dtype(dtype)
-    module = MyModule().to(device=torch_device, dtype=torch_dtype)
+    module = MyModule2().to(device=torch_device, dtype=torch_dtype)
     jitted = thunder.jit(module)
-    ref = MyModule().to(device=torch_device, dtype=torch_dtype)
+    ref = MyModule2().to(device=torch_device, dtype=torch_dtype)
     ref.load_state_dict(module.state_dict())
 
     x = torch.testing.make_tensor(SHAPE, device=torch_device, dtype=torch_dtype)
@@ -266,9 +267,9 @@ def test_nvfuser_impl_for_torch_library_custom_op(_, device: str, dtype: dtypes.
 
     SHAPE = (8, 2)
     torch_device, torch_dtype = devices.to_torch_device(device), dtypes.to_torch_dtype(dtype)
-    module = MyModule().to(device=torch_device, dtype=torch_dtype)
+    module = MyModule2().to(device=torch_device, dtype=torch_dtype)
     jitted = thunder.jit(module)
-    ref = MyModule().to(device=torch_device, dtype=torch_dtype)
+    ref = MyModule2().to(device=torch_device, dtype=torch_dtype)
     ref.load_state_dict(module.state_dict())
 
     x = torch.testing.make_tensor(SHAPE, device=torch_device, dtype=torch_dtype)
