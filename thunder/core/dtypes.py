@@ -198,6 +198,8 @@ float8_e4m3fn = floating("float", "f", bytes=1, is_weak=False, variant="e4m3fn")
 float8_e4m3fn_ = floating("float", "f", bytes=1, is_weak=True, variant="e4m3fn")
 float8_e4m3fnuz = floating("float", "f", bytes=1, is_weak=False, variant="e4m3fnuz")
 float8_e4m3fnuz_ = floating("float", "f", bytes=1, is_weak=True, variant="e4m3fnuz")
+float8_e8m0fnu = floating("float", "f", bytes=1, is_weak=False, variant="e8m0fnu")
+float8_e8m0fnu_ = floating("float", "f", bytes=1, is_weak=True, variant="e8m0fnu")
 float16 = floating("float", "f", bytes=2, is_weak=False)
 float16_ = floating("float", "f", bytes=2, is_weak=True)
 float32 = floating("float", "f", bytes=4, is_weak=False)
@@ -222,6 +224,7 @@ complex128_ = complexfloating("complex", "c", bytes=16, is_weak=True)
 
 
 _abstract_classes.update((dtype, exact, inexact))
+
 
 all_numbertypes = {bool, int, float, complex}
 
@@ -285,7 +288,7 @@ def _numberclass_to_numbertype(cls):
 
 
 def to_dtype(x: Any, /, *, true_dtype: bool = False) -> None | dtype:
-    """Exctracts a dtype from an object or class."""
+    """Extracts a dtype from an object or class."""
 
     if x is None or isinstance(x, dtype):
         return x

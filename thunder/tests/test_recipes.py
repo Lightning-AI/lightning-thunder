@@ -157,7 +157,7 @@ def test_recipe_mlp():
 
     thunder_model = thunder.compile(model)
     x = torch.randn(64, 2048)
-    y = thunder_model(x)
+    thunder_model(x)
 
     print(thunder_model)
 

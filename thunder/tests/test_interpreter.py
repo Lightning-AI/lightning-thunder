@@ -363,7 +363,7 @@ def test_build_const_key_map(jit):
 
     # test order for collisions
     def fn2(a, b):
-        return {"a": a, "a": b}
+        return {"a": a, "a": b}  # noqa: F601
 
     assert any(i.opname == "BUILD_CONST_KEY_MAP" for i in dis.get_instructions(fn1))
     assert any(i.opname == "BUILD_CONST_KEY_MAP" for i in dis.get_instructions(fn2))
@@ -390,7 +390,7 @@ def test_build_map_dict_merge(jit):
     thunder_result = jfoo(*args, **kwargs)
     python_result = foo(*args, **kwargs)
 
-    with pytest.raises(KeyError, match="got multiple values for keyword argument") as excinfo:
+    with pytest.raises(KeyError, match="got multiple values for keyword argument"):
         d = {"a": 3, "b": 4}
         mergefail = lambda **kwargs: addall(**kwargs, **d)
         jfail = jit(mergefail)
@@ -493,9 +493,9 @@ def test_delete_deref(jit):
     args = (4, 3)
 
     with pytest.raises(NameError, match="'value'"):
-        python_result = foo(*args)
+        foo(*args)
     with pytest.raises(NameError, match="'value'"):
-        thunder_result = jfoo(*args)
+        jfoo(*args)
 
 
 def test_locals_globals(jit):
@@ -544,7 +544,7 @@ def test_exception_traceback(jit):
     args = (4,)
 
     with pytest.raises(ValueError) as excinfo:
-        thunder_result = jfoo(*args)
+        jfoo(*args)
 
     tb_string = "".join(str(tbe) for tbe in excinfo.traceback)
     assert "in foo\n" in tb_string
@@ -850,7 +850,7 @@ def test_uncaught_exception_no_leak():
 
 def test_walrus_operator(jit):
     def foo(a, b):
-        c = (a := b)
+        c = (_a := b)
         return c
 
     if "DUP_TOP" in dis.opmap.keys():
@@ -1674,11 +1674,11 @@ def test_match_fallthrough(jit):
         match dct:
             case 1:
                 assert False
-            case [a, b]:
+            case [a, b]:  # noqa: F841
                 assert False
             case "str":
                 assert False
-            case {"y": y, "z": z}:
+            case {"y": y, "z": z}:  # noqa: F841
                 assert False
             case _:
                 return True
@@ -1732,13 +1732,10 @@ def test_unhashable_lookaside(jit):
 def test_zip_lookaside(jit):
     import re
 
-    jitting = False
-
     def foo(*a, strict=False):
         return list(zip(*a, strict=strict))
 
     jfoo = jit(foo)
-    jitting = False
 
     res1 = foo([1, 2, 3], [4, 5, 6])
     res2 = foo([1, 2, 3], [4, 5, 6], [7, 8, 9])
@@ -1747,9 +1744,8 @@ def test_zip_lookaside(jit):
     # , match="zip() argument 2 is longer than argument 1"
 
     with pytest.raises(ValueError, match=re.escape("zip() argument 2 is longer than argument 1")):
-        res5 = foo([1, 2], [4, 5, 6], strict=True)
+        foo([1, 2], [4, 5, 6], strict=True)
 
-    jitting = True
     jres1 = jfoo([1, 2, 3], [4, 5, 6])
     jres2 = jfoo([1, 2, 3], [4, 5, 6], [7, 8, 9])
     jres3 = jfoo([1, 2], [4, 5, 6])
@@ -1757,7 +1753,7 @@ def test_zip_lookaside(jit):
 
     # , match=" zip() argument 2 is longer than argument 1"
     with pytest.raises(ValueError, match=re.escape("zip() argument 2 is longer than argument 1")):
-        jres5 = jfoo([1, 2], [4, 5, 6], strict=True)
+        jfoo([1, 2], [4, 5, 6], strict=True)
 
     assert res1 == jres1
     assert res2 == jres2
@@ -2153,12 +2149,12 @@ def test_iter_lookaside_types_jitting(jit):
         return iter(lambda: sentinel, sentinel)
 
     jitting = False
-    sres = type(seqiter())
-    cres = type(calliter())
+    type(seqiter())
+    type(calliter())
 
     jitting = True
-    jsres = type(jit(seqiter)())
-    jcres = type(jit(calliter)())
+    type(jit(seqiter)())
+    type(jit(calliter)())
 
     # assert sres is jsres
     # assert cres is jcres
@@ -2312,7 +2308,7 @@ def test_use_of_deleted_raises_correctly(jit):
         b = a
         del b
         assert a == 5
-        c = b + a
+        b + a
         return a
 
     jfoo = jit(foo)
@@ -2326,7 +2322,7 @@ def test_delete_fast(jit):
         b = a
         del b
         assert a == 5
-        c = b + a
+        b + a
         return a
 
     jfoo = jit(foo)
@@ -3122,7 +3118,7 @@ def test_super(jit):
 
     def bar():
         b = B()
-        c = C()
+        C()
         super(b, C)
 
     with pytest.raises(TypeError) as exc_expected:

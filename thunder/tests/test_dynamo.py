@@ -397,7 +397,7 @@ def test_cat_no_split(executor, device: str, dtype: dtypes.dtype, cat_kwarg):
             return x + 2
 
     cfunc = thunderfx(func)
-    out = cfunc(x)
+    cfunc(x)
 
     backend = cfunc._backend
     # We record the GraphModules that was compiled by ThunderCompiler
@@ -422,7 +422,7 @@ def test_method_only_registrations(executor, device: str, dtype: dtypes.dtype):
 
     x = torch.randn(3, 3, device=device, dtype=dtype)
     cfunc = thunderfx(func)
-    o = cfunc(x)
+    cfunc(x)
 
     backend = cfunc._backend
     # We record the GraphModules that was compiled by ThunderCompiler
@@ -474,7 +474,6 @@ def test_where_nonzero_overload(executor, device: str, dtype: dtypes.dtype):
     dtypes=(dtypes.float32,),
     executors=(DynamoThunderExecutor,),
     decorators=(
-        pytest.mark.skip(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1821"),
         pytest.mark.parametrize(
             "optim",
             (
@@ -737,7 +736,7 @@ def test_ThunderCompilerGraphBenchmarking_checkpoint(benchmark):
     # Using torch.compile here fails with "TypeError: cannot pickle '_io.TextIOWrapper' object" in
     # https://github.com/Lightning-AI/pytorch-lightning/blob/828fd998961f6a60f92c35254bb94d6e049ad069/src/lightning/fabric/wrappers.py#L421
     jf = torch._dynamo.optimize(backend=backend)(model)
-    out = jf(x)
+    jf(x)
 
 
 @requiresCUDA
@@ -806,7 +805,7 @@ def test_checkpoint_converter_submodule():
     x = torch.randn(5, 10, device="cuda", requires_grad=True)
     model = SimpleModel().cuda()
     jf = thunderfx(model)
-    out = jf(x)
+    jf(x)
     backend = jf._backend
 
     subgraph_info = backend.subgraph_infos[0]
@@ -881,7 +880,7 @@ def test_dynamo_reproducer_2graph(executor, device: str, dtype: dtypes.dtype, us
     # Test non-contiguous input tensor
     x = make_tensor((4, 4), low=3, high=10, dtype=torch.int64, device=device, noncontiguous=True)
 
-    out = cfunc(x)
+    cfunc(x)
     cfunc._backend.save_reproducer_to_folder(tmp_path, use_pytest_benchmark=use_pytest_benchmark)
 
     suffix = "_benchmark" if use_pytest_benchmark else "_repro"
@@ -921,7 +920,7 @@ def test_dynamo_reproducer_submodules(use_pytest_benchmark, tmp_path):
     x = torch.randn(1, ToyModel.N_IN, device="cuda", requires_grad=True)
     model = SimpleModel().cuda()
     jf = thunderfx(model)
-    out = jf(x)
+    jf(x)
     jf._backend.save_reproducer_to_folder(tmp_path, use_pytest_benchmark=use_pytest_benchmark)
 
     suffix = "_benchmark" if use_pytest_benchmark else "_repro"
@@ -941,7 +940,7 @@ def test_deepcopy_graph_module():
             super().__init__()
 
         def forward(self, x):
-            y = x + 1
+            x + 1
 
     m = MyModule()
     gm = torch.fx.symbolic_trace(m)
@@ -957,7 +956,7 @@ def test_deepcopy_graph_module():
     import copy
 
     # No assertion error
-    copy_gm = copy.deepcopy(original_split_gm)
+    copy.deepcopy(original_split_gm)
 
 
 @instantiate(
@@ -986,7 +985,7 @@ def test_dynamo_reproducer_split(
         return y + 1
 
     cfunc = thunderfx(func)
-    actual = cfunc(x)
+    cfunc(x)
     cfunc._backend.save_reproducer_to_folder(tmp_path, use_pytest_benchmark)
 
     suffix = "_benchmark" if use_pytest_benchmark else "_repro"
@@ -1076,7 +1075,7 @@ def test_get_example_input_tensor_metadata():
 
     t0 = torch.randn((5, 10), device="meta")
     meta_t0 = _get_example_input_tensor_metadata(t0)
-    assert meta_t0.min_val == None and meta_t0.max_val == None and meta_t0.device.type == "meta"
+    assert meta_t0.min_val is None and meta_t0.max_val is None and meta_t0.device.type == "meta"
     t0_str = arg_like_tensor(meta_t0)
     assert (
         t0_str
@@ -1215,7 +1214,7 @@ def test_leak_on_unsupported_thunder_operator():
     # exception object in split_reason.
 
     def unsupported_op_fn(w1) -> torch.Tensor:
-        topk_ids = torch.tensor([[0, 1]])
+        torch.tensor([[0, 1]])
         # This operation is not supported by thunder and get's passed to inductor.
         return torch.sinc(w1) + 1
 

@@ -40,8 +40,6 @@ class NOTHING:
     pass
 
 
-JAX_AVAILABLE = package_available("jax")
-
 # Require Triton version 2.1 or greater, since our current Triton executor won't run
 #   properly due to an error in 2.0
 TRITON_AVAILABLE: bool = triton_utils.is_triton_version_at_least("2.1")
@@ -171,7 +169,6 @@ class TestExecutor:
 
     @make_callable.register
     def make_callable_from_trace(self, trace: TraceCtx, **kwargs):
-        executors = thunder.executors
         # transform_for_execution doesn't work without a set trace
         # So we use detached_trace to get the tracectx and then use it
         with detached_trace():
@@ -576,16 +573,6 @@ def run_snippet(snippet, opinfo, devicetype, dtype, *args, **kwargs):
         return ex, exc_info, snippet, opinfo, devicetype, dtype, args, kwargs
 
     return None
-
-
-def requiresJAX(fn):
-    @wraps(fn)
-    def _fn(*args, **kwargs):
-        if not JAX_AVAILABLE:
-            pytest.skip("Requires JAX")
-        return fn(*args, **kwargs)
-
-    return _fn
 
 
 def requiresTriton(fn):

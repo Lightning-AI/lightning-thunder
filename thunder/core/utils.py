@@ -15,8 +15,8 @@ import torch
 import thunder.core.dtypes as dtypes
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
 from thunder.core.proxies import Proxy, NumberProxy, TensorProxy, variableify, CONSTRAINT, Variable
-from thunder.core.baseutils import *
-from thunder.core.codeutils import *
+from thunder.core.baseutils import *  # noqa: F403
+from thunder.core.codeutils import *  # noqa: F403
 from thunder.core.trace import TraceCtx, tracectx
 import thunder.core.prims as prims
 
@@ -1028,7 +1028,7 @@ def producers(trace_or_bsyms: TraceCtx | list[BoundSymbolInterface], *, _map_to_
 
         for out in bsym.flat_proxy_outs:
             # if a producer has already been traversed, skip
-            if producers.get(out, None) != None:
+            if producers.get(out, None) is not None:
                 continue
 
             vout = variableify(out)

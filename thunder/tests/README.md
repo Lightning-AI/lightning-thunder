@@ -2,7 +2,7 @@ Testing is important!
 
 Most Thunder operators are tested by automatically generated tests that use data from the operator's "OpInfo", defined
 in `opinfos.py`. These tests typically compare Thunder's operator behavior with another framework, using the
-"sample inputs" defined by its OpInfo. Each OpInfo should define a sample input generator and at least one “reference” implementation in PyTorch or JAX (and in the future, NumPy).
+"sample inputs" defined by its OpInfo. Each OpInfo should define a sample input generator and “reference” implementation in PyTorch (and in the future, NumPy).
 
 When an operator is very similar across the three language levels (user, core, and primitive), like cos, only one variation is typically tested (the core language variant is preferred).
 However, there are also cases where testing a torch language operation or primitive operation directly makes sense.
@@ -15,21 +15,3 @@ pytest test_ops.py -k cos -v
 ```
 
 This will run tests for Thunder’s different executors, supported dtypes, and supported devicetypes.
-
-The OpInfo tests can also be run from Python, and this can be extremely useful for debugging.
-To do that, find the generated test name you’d like to run (often by invoking the tests from the command line and observing their names) and call it. Here’s a sample program:
-
-```py
-import traceback
-import thunder.tests.test_ops as to
-
-e, exc_info, snippet, opinfo, devicetype, dtype, args, kwargs = to.test_core_vs_torch_consistency_cos_nvFuser_CUDA_float32()
-
-traceback.print_exception(*exc_info)
-```
-
-If the test fails, it will return information about the failure, including error information and the arguments that caused the failure.
-In the above sample the traceback information is printed. If the test succeeds then it will return nothing.
-
-It can be a little tricky to remember all the components a test returns, but you can
-always catch and print the return value to better understand what's available.

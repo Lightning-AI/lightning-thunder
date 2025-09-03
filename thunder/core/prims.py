@@ -279,6 +279,7 @@ class PrimIDs(Enum):
     # Memory access methods
     ITEM = auto()
     COPY_ = auto()
+    BITCAST = auto()
     #
     SINK = auto()
 
@@ -304,6 +305,7 @@ class OpTags(Enum):
     DONT_RECOMPUTE_IN_BACKWARD = auto()
     # Don't automatically tag operation to be recomputed in backward
     DONT_AUTO_RECOMPUTE_IN_BACKWARD = auto()
+    TORCH_COMPILE_COMPLIANT_CUSTOM_OP = auto()
 
 
 # TODO RC1 Document this function and describe the parts of a primitive
@@ -4332,6 +4334,27 @@ def copy__meta(
 
 
 copy_ = make_prim(PrimIDs.COPY_, "copy_", meta=copy__meta, tags=(OpTags.DONT_DCE,))
+
+
+def bitcast_meta(
+    src: TensorProxy,
+    dtype: dtypes.dtype,
+) -> TensorProxy:
+    shape = list(src.shape)
+    src_itemsize = src.dtype.bytes
+    dst_itemsize = dtype.bytes
+    if src_itemsize != dst_itemsize:
+        factor = dst_itemsize / src_itemsize
+        if factor > 1:
+            utils.check(
+                shape[-1] > factor and shape[-1] % factor == 0,
+                lambda: f"{src.shape[-1]=} is not divisible by {factor=}. Viewing {src.dtype=} as {dtype=}",
+            )
+        shape[-1] = int(shape[-1] / factor)
+    return TensorProxy(shape=tuple(shape), device=src.device, dtype=dtype)
+
+
+bitcast = make_prim(PrimIDs.BITCAST, "bitcast", meta=bitcast_meta)
 
 
 def sink_meta(*args, **kwargs):
