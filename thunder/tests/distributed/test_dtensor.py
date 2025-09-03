@@ -12,7 +12,7 @@ import thunder
 
 from thunder.tests.distributed.helper import DistributedParallelTestCase
 from torch.distributed._tensor import DeviceMesh, distribute_tensor
-from torch.distributed.tensor.placement_types import Placement, Shard, Replicate
+from torch.distributed.tensor.placement_types import Shard
 from torch.testing._internal.distributed._tensor.common_dtensor import DTensorConverter
 
 from torch.testing._internal import common_utils

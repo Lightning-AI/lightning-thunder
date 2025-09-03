@@ -63,7 +63,7 @@ def _bitsandbytes_available():
     if not package_available("bitsandbytes"):
         return False
     try:
-        import bitsandbytes  # noqa: F401
+        import bitsandbytes
 
         if torch.cuda.is_available():
             import bitsandbytes.diagnostics.main

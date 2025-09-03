@@ -1,6 +1,6 @@
 from numbers import Number
 from typing import Any
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 
 import torch
 
