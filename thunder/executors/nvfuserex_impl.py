@@ -2710,6 +2710,12 @@ def _scaled_dot_product_flash_attention_check(
     *,
     scale: None | float = None,
 ) -> bool:
+    enable_sdpa: None | bool = get_compile_option("nv_enable_sdpa", "Enable nvFuser flash attention SDPA.")
+
+    if not enable_sdpa:
+        logger.warn("nvFuser sdpa is not enabled: nv_enable_sdpa=%s", enable_sdpa)
+        return False
+
     # fd.ops.sdpfa_fwd and fd.ops.sdpfa_bwd are adding in versions 0.2.9 and 0.2.10 respectively.
     if nvfuser_version() < LooseVersion("0.2.10"):
         logger.warn("nvFuser needs to be >= 0.2.10 but %s", nvfuser_version())
@@ -2722,12 +2728,6 @@ def _scaled_dot_product_flash_attention_check(
             torch.__version__,
             nvfuser_version(),
         )
-        return False
-
-    enable_sdpa: None | bool = get_compile_option("nv_enable_sdpa", "Enable nvFuser flash attention SDPA.")
-
-    if not enable_sdpa:
-        logger.warn("nvFuser sdpa is not enabled: nv_enable_sdpa=%s", enable_sdpa)
         return False
 
     # Flash attn does not support attn_mask currently.
