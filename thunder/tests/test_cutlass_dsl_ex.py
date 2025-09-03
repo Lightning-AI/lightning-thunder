@@ -9,7 +9,6 @@ import torch.nn.functional as F
 
 import thunder
 from thunder.executors.cutlass_dsl_ex import cutlass_dsl_ex, is_device_quack_compat
-from thunder.tests.framework import requiresCUDA
 
 if TYPE_CHECKING:
     from typing import Any
@@ -18,7 +17,7 @@ if TYPE_CHECKING:
 
 _quack_available = find_spec("quack") is not None
 quack_available = pytest.mark.skipif(
-    not is_device_quack_compat() or not _quack_available,
+    not torch.cuda.is_available() or not _quack_available or not is_device_quack_compat(),
     reason="quack requires SM9.0/10.0",
 )
 _DTYPES = (torch.float16, torch.bfloat16, torch.float32)
@@ -44,7 +43,6 @@ def jit_with_cutlass_dsl_ex(fn: Callable[[Any], Any]) -> Callable[[Any], Any]:
     return thunder.jit(fn, executors=[cutlass_dsl_ex], disable_torch_autograd=True)
 
 
-@requiresCUDA
 @quack_available
 @pytest.mark.parametrize("dtype", _DTYPES, ids=_DTYPE_IDS)
 def test_quack_cross_entropy(dtype: torch.dtype):
@@ -61,7 +59,6 @@ def test_quack_cross_entropy(dtype: torch.dtype):
     torch.testing.assert_close(expected, actual)
 
 
-@requiresCUDA
 @quack_available
 @pytest.mark.parametrize("shape", _SHAPES, ids=_SHAPE_IDS)
 @pytest.mark.parametrize("dtype", _DTYPES, ids=_DTYPE_IDS)
@@ -76,7 +73,6 @@ def test_quack_softmax(dtype: torch.dtype, shape: tuple[int, ...]):
     torch.testing.assert_close(expected, actual)
 
 
-@requiresCUDA
 @quack_available
 @pytest.mark.parametrize("shape", _SHAPES, ids=_SHAPE_IDS)
 @pytest.mark.parametrize("dtype", _DTYPES, ids=_DTYPE_IDS)
@@ -92,7 +88,6 @@ def test_quack_layernorm(dtype: torch.dtype, shape: tuple[int, ...]):
     torch.testing.assert_close(expected, actual)
 
 
-@requiresCUDA
 @quack_available
 @pytest.mark.parametrize("shape", _SHAPES, ids=_SHAPE_IDS)
 @pytest.mark.parametrize("dtype", _DTYPES, ids=_DTYPE_IDS)
