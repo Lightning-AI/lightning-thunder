@@ -679,7 +679,7 @@ def main():
     benchmark.print_results()
     if args.save_results:
         timestamp = time.strftime("%Y%m%d_%H%M%S")
-        filename = f"thunder_inference_{model_name}_{timestamp}.json"
+        filename = f"thunder_inference_{args.model_name}_{timestamp}.json"
         benchmark.save_results(filename)
 
 
