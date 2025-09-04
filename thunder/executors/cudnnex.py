@@ -4,7 +4,14 @@ from lightning_utilities.core.imports import package_available
 from looseversion import LooseVersion
 from thunder.extend import OperatorExecutor
 
-__all__ = ["cudnn_version", "required_cudnn_version", "cudnn_available", "cudnn_ex", "torch_to_cudnn_dtype"]
+__all__ = [
+    "cudnn_version",
+    "required_cudnn_version",
+    "cudnn_available",
+    "cudnn_ex",
+    "torch_to_cudnn_dtype",
+    "_get_cudnn_handle",
+]
 
 
 #
@@ -52,6 +59,35 @@ def cudnn_available() -> bool:
 cudnn_ex: None | OperatorExecutor = None
 torch_to_cudnn_dtype: None | Callable = None
 cudnn = None
+# Mapping from device to cudnn handles - shared across all cuDNN executors
+_device_to_cudnn_handle = {}
+
+
+def _get_cudnn_handle(query_device):
+    """
+    This function creates a new handle for the device that cudnn should
+    run its kernels on. As the suggested approach by cudnn is to make a few handles
+    as possible, this function caches these per-device handles.
+    """
+
+    if not cudnn_available():
+        return None
+    else:
+        import torch
+        import cudnn
+
+        handle = _device_to_cudnn_handle.get(query_device, None)
+        if handle is None:
+            with torch.cuda.device(query_device):
+                handle = cudnn.create_handle()
+                _device_to_cudnn_handle[query_device] = handle
+
+        # Make sure the user stream is set on the handle
+        # Fetch the current user stream and pass the data pointer to set_stream API
+        cudnn.set_stream(handle=handle, stream=torch.cuda.current_stream(device=query_device).cuda_stream)
+
+        return handle
+
 
 if cudnn_available():
     import thunder.executors.cudnn_sdpa as sdpa_impl
