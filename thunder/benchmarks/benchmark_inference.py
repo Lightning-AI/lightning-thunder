@@ -70,6 +70,7 @@ class InferenceBenchmarkConfig:
     output_length: int
     num_layers: int | None
     num_iterations: int
+    warmup_iterations: int
     dtensor_single_gpu: bool
     load_nvfp4: bool  # Enable NVFP4 quantization
     fx_report_folder: str | None
@@ -564,20 +565,28 @@ def main():
     if args.save_results:
         os.makedirs(args.output_dir, exist_ok=True)
 
-    run_benchmark(
+    config = InferenceBenchmarkConfig(
         model_name=args.model_name,
         batch_size=args.batch_size,
         input_length=args.input_length,
         output_length=args.output_length,
-        num_iterations=args.num_iterations,
         num_layers=args.num_layers,
+        num_iterations=args.num_iterations,
+        warmup_iterations=args.warmup_iterations,
         mode=args.mode,
-        save_results=args.save_results,
         dtensor_single_gpu=args.dtensor_single_gpu,
         load_nvfp4=args.load_nvfp4,
         fx_report_folder=args.fx_report_folder,
         enable_nv_linear=args.enable_nv_linear,
+        disable_moe_replacement=args.disable_moe_replacement,
     )
+    benchmark = InferenceBenchmark(config)
+    benchmark.run_benchmark()
+    benchmark.print_results()
+    if args.save_results:
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        filename = f"thunder_inference_{model_name}_{timestamp}.json"
+        benchmark.save_results(filename)
 
 
 if __name__ == "__main__":
