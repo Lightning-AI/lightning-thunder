@@ -95,7 +95,7 @@ class Executor:
     def can_execute(self, bsym: BoundSymbol) -> bool:
         sym = bsym.sym
         impl: None | ImplInfo = self.implmap.get(sym.id, None)
-        _log_extra = {"executor_name": self.name}
+        _log_extra = {"executor_name": self.name, "symbol_id": sym.id}
 
         logger.debug("%s with args=(%s) and kwargs=(%s)", sym.id, bsym.args, bsym.kwargs, extra=_log_extra)
 
