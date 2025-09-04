@@ -60,9 +60,6 @@ def timer():
     t2 = time.perf_counter()
 
 
-WARMUP_ITERATIONS = 2
-
-
 @dataclass
 class InferenceBenchmarkConfig:
     """Configuration for inference benchmarking"""
@@ -311,10 +308,10 @@ class InferenceBenchmark:
         print(f"Output length: {self.config.output_length}")
         print(f"Mode: {self.config.mode}")
 
-        print(f"\nWarming up with {WARMUP_ITERATIONS} iterations...")
+        print(f"\nWarming up with {self.config.warmup_iterations} iterations...")
         input_ids, past_key_values = self.generate_batch()
 
-        for _ in tqdm(range(WARMUP_ITERATIONS)):
+        for _ in tqdm(range(self.config.warmup_iterations)):
             past_key_values.reset()
             _ = self.measure_inference_step(input_ids, past_key_values, max_new_tokens=1)
 
