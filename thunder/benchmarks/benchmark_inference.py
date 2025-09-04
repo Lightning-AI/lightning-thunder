@@ -134,6 +134,9 @@ class InferenceBenchmark:
             for p in self.model.parameters():
                 p.requires_grad_(False)
 
+        # `thunderfx` seems to hide the access to vocab_size somewhere so
+        # store it here before any compiler is applied.
+        self.vocab_size = self.model.vocab_size
         self.model = self._compile_model(self.model)
 
     @property
@@ -182,14 +185,7 @@ class InferenceBenchmark:
         batch_size = self.config.batch_size
         input_length = self.config.input_length
 
-        if hasattr(self.model, "vocab_size"):
-            vocab_size = self.model.vocab_size
-        elif hasattr(self.model, "config") and hasattr(self.model.config, "vocab_size"):
-            vocab_size = self.model.config.vocab_size
-        else:
-            raise ValueError("Vocab size not found")
-
-        input_ids = torch.randint(0, vocab_size, (batch_size, input_length), device=DEVICE)
+        input_ids = torch.randint(0, self.vocab_size, (batch_size, input_length), device=DEVICE)
         past_key_values = HybridChunkedCache(
             self.hf_config, input_ids.shape[0], input_ids.shape[1] + self.config.output_length
         )
