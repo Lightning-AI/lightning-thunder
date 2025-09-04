@@ -35,6 +35,8 @@ The ``THUNDER_LOGS`` environment variable supports the following values:
   * ``+<executor name>``: Set logging level to DEBUG for the specified executor
   * ``-<executor name>``: Set logging level to WARNING for the specified executor
 
+Messages from `thunder.extend.Executor.can_execute` would be silenced if bsym is in question is a primitive of unpacking, input validation, internal utility, and ones related to transforms (like grad).
+
 Multiple values can be specified by separating them with commas.
 
 Examples
