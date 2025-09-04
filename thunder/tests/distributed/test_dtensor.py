@@ -35,9 +35,14 @@ functions_to_test = {
 }
 
 
+# NOTE: OpInfo may use `clang` or `ltorch` ops to be jitted with thunder.jit.
+#       However, for the current DTensor implementation, we add a dispatch in the `torch` operation lookaside
+#       to choose between DTensor supported symbol (from `dtensor_torch_and_prims.py`) or the usual `ltorch` symbol.
+#       This is why we need to make sure that the OpInfo uses PyTorch native op as `op` which is passed to thunder.jit.
 class DTensorOpInfo:
     def __init__(self, *, name, op, torch_reference, supports_grad, sample_inputs):
         self.name = name
+        assert "torch" in op.__module__, "OpInfo must use PyTorch native op as `op` which is passed to thunder.jit"
         self.op = op
         self.torch_reference = torch_reference
         # NOTE: Not all DTensor ops support grad initially, use this to disable grad tests for them
