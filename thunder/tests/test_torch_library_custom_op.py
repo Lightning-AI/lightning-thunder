@@ -12,7 +12,8 @@ from thunder.core import dtypes
 from thunder.core import devices
 from thunder.torch.custom_op import _register_custom_op
 from thunder.executors.custom_op_ex import custom_op_ex
-from thunder.tests.framework import TorchExecutor
+from thunder.executors.custom_op_ex import _override_custom_op_forward
+from thunder.tests.framework import TorchExecutor, nvFuserExecutor
 from thunder.tests.framework import instantiate
 
 if TYPE_CHECKING:
@@ -116,7 +117,7 @@ def _run_test(module_cls, custom_op: CustomOpDef, device: torch.device, dtype: t
     _symbol = _register_custom_op(custom_op)
 
     module = module_cls().to(device=device, dtype=dtype)
-    jitted = thunder.jit(module, executors=[custom_op_ex])
+    jitted = thunder.jit(module)
     ref = module_cls().to(device=device, dtype=dtype)
     ref.load_state_dict(module.state_dict())
 
@@ -139,23 +140,24 @@ def _run_test(module_cls, custom_op: CustomOpDef, device: torch.device, dtype: t
     assert custom_ex_bsym_found
 
 
+class MyModule(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.linear = nn.Linear(2, 2, bias=False)
+
+    def forward(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        h = torch.ops.my_custom_op.mul(x, y)
+        activation = torch.relu(h)
+        out = self.linear(activation)
+        return out
+
+
 @instantiate(
     executors=(TorchExecutor,),
     devicetypes=(devices.DeviceType.CPU, devices.DeviceType.CUDA),
     dtypes=(dtypes.float32,),
 )
 def test_torch_library_custom_op(_, device: str, dtype: dtypes.dtype):
-    class MyModule(nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.linear = nn.Linear(2, 2, bias=False)
-
-        def forward(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-            h = torch.ops.my_custom_op.mul(x, y)
-            activation = torch.relu(h)
-            out = self.linear(activation)
-            return out
-
     _run_test(MyModule, mul, devices.to_torch_device(device), dtypes.to_torch_dtype(dtype))
 
 
@@ -166,7 +168,7 @@ def test_torch_library_custom_op(_, device: str, dtype: dtypes.dtype):
     dtypes=(dtypes.float32,),
 )
 def test_torch_library_triton_op(_, device: str, dtype: dtypes.dtype):
-    class MyModule(nn.Module):
+    class MyModuleTritonOp(nn.Module):
         def __init__(self):
             super().__init__()
             self.linear = nn.Linear(2, 2, bias=False)
@@ -177,4 +179,120 @@ def test_torch_library_triton_op(_, device: str, dtype: dtypes.dtype):
             out = self.linear(activation)
             return out
 
-    _run_test(MyModule, mul_triton, devices.to_torch_device(device), dtypes.to_torch_dtype(dtype))
+    _run_test(MyModuleTritonOp, mul_triton, devices.to_torch_device(device), dtypes.to_torch_dtype(dtype))
+
+
+class MyModule2(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.linear = nn.Linear(2, 2, bias=False)
+
+    def forward(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        out = torch.ops.my_custom_op.mul(self.linear(x), y)
+        return torch.relu(out)
+
+
+@instantiate(
+    executors=(TorchExecutor,),
+    devicetypes=(devices.DeviceType.CUDA,),
+    dtypes=(dtypes.float32,),
+)
+def test_custom_impl_for_torch_library_custom_op(_, device: str, dtype: dtypes.dtype):
+    SHAPE = (8, 2)
+    _symbol = _register_custom_op(mul)
+
+    if has_triton_op:
+        _cupy_mul = mul_triton
+    else:
+
+        def _cupy_mul(x, y):
+            return x + y
+
+    _override_custom_op_forward(_symbol, _cupy_mul)
+
+    torch_device, torch_dtype = devices.to_torch_device(device), dtypes.to_torch_dtype(dtype)
+    module = MyModule2().to(device=torch_device, dtype=torch_dtype)
+    jitted = thunder.jit(module)
+    ref = MyModule2().to(device=torch_device, dtype=torch_dtype)
+    ref.load_state_dict(module.state_dict())
+
+    x = torch.testing.make_tensor(SHAPE, device=torch_device, dtype=torch_dtype)
+    y = torch.testing.make_tensor(SHAPE, device=torch_device, dtype=torch_dtype)
+    x_ref = x.clone().detach()
+    y_ref = y.clone().detach()
+
+    ref_out = ref(x_ref, y_ref)
+    out = jitted(x, y)
+    torch.testing.assert_close(ref_out, out)
+    out.mean().backward()
+
+    bsym: BoundSymbol
+    fwd_extrace = thunder.last_traces(jitted)[-1]
+    custom_ex_bsym_found: bool = False
+    for bsym in fwd_extrace.bound_symbols:
+        if (bsym.sym.name != _symbol.name and _symbol.name in bsym.sym.name) and bsym.sym.executor is custom_op_ex:
+            custom_ex_bsym_found = True
+    assert custom_ex_bsym_found
+
+    bwd_extrace = thunder.last_backward_traces(jitted)[-1]
+    bsym_custom_ex_bsym_found: bool = False
+    for bsym in bwd_extrace.bound_symbols:
+        if bsym.sym.name == f"{_symbol.name}_backward" and bsym.sym.executor is custom_op_ex:
+            bsym_custom_ex_bsym_found = True
+    assert bsym_custom_ex_bsym_found
+
+
+@instantiate(
+    executors=(nvFuserExecutor,),
+    devicetypes=(devices.DeviceType.CUDA,),
+    dtypes=(dtypes.float32,),
+)
+def test_nvfuser_impl_for_torch_library_custom_op(_, device: str, dtype: dtypes.dtype):
+    from nvfuser_direct import FusionDefinition
+    from thunder.core.dtypes import to_dtype
+    from thunder.executors.nvfuserex_impl import lcdtype_to_nvdtype
+
+    def nvfuser_direct_mul(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        with FusionDefinition() as fd:
+            t0 = fd.from_pytorch(x)
+            t1 = fd.from_pytorch(y)
+            mul = fd.ops.mul(t0, t1)
+            cast_mul = fd.ops.cast(mul, lcdtype_to_nvdtype(to_dtype(x.dtype)))
+            fd.add_output(cast_mul)
+
+        return fd.execute([x, y])[0]
+
+    _symbol = _register_custom_op(mul)
+    _override_custom_op_forward(_symbol, nvfuser_direct_mul)
+
+    SHAPE = (8, 2)
+    torch_device, torch_dtype = devices.to_torch_device(device), dtypes.to_torch_dtype(dtype)
+    module = MyModule2().to(device=torch_device, dtype=torch_dtype)
+    jitted = thunder.jit(module)
+    ref = MyModule2().to(device=torch_device, dtype=torch_dtype)
+    ref.load_state_dict(module.state_dict())
+
+    x = torch.testing.make_tensor(SHAPE, device=torch_device, dtype=torch_dtype)
+    y = torch.testing.make_tensor(SHAPE, device=torch_device, dtype=torch_dtype)
+    x_ref = x.clone().detach()
+    y_ref = y.clone().detach()
+
+    ref_out = ref(x_ref, y_ref)
+    out = jitted(x, y)
+    torch.testing.assert_close(ref_out, out)
+    out.mean().backward()
+
+    bsym: BoundSymbol
+    fwd_extrace = thunder.last_traces(jitted)[-1]
+    custom_ex_bsym_found: bool = False
+    for bsym in fwd_extrace.bound_symbols:
+        if (bsym.sym.name != _symbol.name and _symbol.name in bsym.sym.name) and bsym.sym.executor is custom_op_ex:
+            custom_ex_bsym_found = True
+    assert custom_ex_bsym_found
+
+    bwd_extrace = thunder.last_backward_traces(jitted)[-1]
+    bsym_custom_ex_bsym_found: bool = False
+    for bsym in bwd_extrace.bound_symbols:
+        if bsym.sym.name == f"{_symbol.name}_backward" and bsym.sym.executor is custom_op_ex:
+            bsym_custom_ex_bsym_found = True
+    assert bsym_custom_ex_bsym_found
