@@ -228,7 +228,7 @@ class DTensorTest(DistributedParallelTestCase):
         num_devices = self.world_size
         mesh = DeviceMesh("cuda", list(range(num_devices)))
 
-        thunder_op = thunder.jit(op.op, executors=executors_map[executor].executors_list())
+        thunder_op = thunder.jit(op.op, executors=executors_map[executor].executors_list(), nv_enable_linear=True)
         torch_op = op.torch_reference
 
         tested_sample_count = 0
@@ -253,6 +253,9 @@ class DTensorTest(DistributedParallelTestCase):
 
                 thunder_result = thunder_op(*dtensor_args, **dtensor_kwargs)
                 torch.testing.assert_close(thunder_result, torch_result)
+
+                trace = thunder.last_traces(thunder_op)[0]
+                assert any("dtensor" in bsym.sym.name for bsym in trace.bound_symbols)
 
                 if op.supports_grad:
                     torch_flats, _ = tree_flatten((dtensor_args, dtensor_kwargs))
