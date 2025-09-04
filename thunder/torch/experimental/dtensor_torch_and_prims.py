@@ -6,6 +6,7 @@ from thunder.torch import torchsymbol, TensorLike, register_function
 import thunder.torch as ltorch
 from thunder.core.pytree import tree_flatten
 from thunder import clang
+from thunder.clang.utils import create_maybe_convert_to_dtype_with_prim, _elementwise_unary_wrapper
 from thunder.torch.experimental.dtensor_utils import run_with_fake_tensor
 from thunder.torch.experimental.dtensor_proxy import DTensorProxy, create_dtensor_proxy_from_proxies
 from thunder.torch.langctx import register_method
@@ -242,6 +243,10 @@ dtensor_broadcast_in_dim_prim_impl = pytorchex.register_operator(
 pytorchex.register_implementation(dtensor_broadcast_in_dim_prim, dtensor_broadcast_in_dim_prim_impl)
 
 
+maybe_convert_to_dtype = create_maybe_convert_to_dtype_with_prim(dtensor_convert_element_type_prim)
+_elementwise_unary_wrapper = partial(_elementwise_unary_wrapper, dtype_conversion_fn=maybe_convert_to_dtype)
+
+
 def dtensor_exp_meta(a):
     output = run_with_fake_tensor(torch.exp, a)
     local_tensor_proxy = TensorProxy(like=a.local_tensor)
@@ -272,11 +277,10 @@ register_grad(dtensor_exp_prim, _dtensor_exp_prim_grad)
 
 @dtensor_torchsymbol(torch.exp, id="dtensor.torch.exp")
 def dtensor_exp(a: TensorLike) -> TensorLike:
-    return clang._elementwise_unary_wrapper(
+    return _elementwise_unary_wrapper(
         a,
         prim=dtensor_exp_prim,
         type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT,
-        conversion_prim=dtensor_convert_element_type_prim,
     )
 
 
