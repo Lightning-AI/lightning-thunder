@@ -55,7 +55,8 @@ LLAMA4_MAVERICK_MODEL_ID: str = "meta-llama/Llama-4-Maverick-17B-128E"
 
 
 # Slightly modified version of `thunder.tests.test_networks.Llama4MoE`
-# to have the same singature as transformers' Llama4TextMoe.
+# to have the same singature as transformers' Llama4TextMoe -- in this file
+# return values include `router_logits`.
 # Ref: https://github.com/huggingface/transformers/blob/ff8b88a9/src/transformers/models/llama4/modeling_llama4.py#L147-L165
 class Llama4MoE(nn.Module):
     def __init__(self, config):
@@ -116,7 +117,7 @@ class Llama4MoE(nn.Module):
         token_ids_sorted_by_expert_inverse_id = torch.argsort(token_ids_sorted_by_expert_id)
         outs_sorted_by_token_id = outs_sorted_by_expert_id[token_ids_sorted_by_expert_inverse_id]
 
-        return outs_sorted_by_token_id
+        return outs_sorted_by_token_id, router_logits
 
     def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         outs_sorted_by_token_id, router_logits = self.run_routed_experts(hidden_states)
