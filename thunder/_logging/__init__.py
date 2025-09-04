@@ -13,13 +13,6 @@ __all__ = [
 
 _THUNDER_LOGGER_SETUP: bool = False
 _THUNDER_LOGS: str = "THUNDER_LOGS"
-_STR_TO_LOGGING_LEVEL: dict[str, int] = {
-    "DEBUG": logging.DEBUG,
-    "INFO": logging.INFO,
-    "WARNING": logging.WARNING,
-    "ERROR": logging.ERROR,
-    "CRITICAL": logging.CRITICAL,
-}
 
 
 @functools.cache
@@ -30,44 +23,35 @@ def _get_thunder_logs_value() -> tuple[str] | None:
     return None
 
 
-@functools.cache
-def available_executor_names() -> set[str]:
-    from thunder.extend import get_all_executors
-
-    return {e.name for e in get_all_executors()}
+def _get_log_level(thunder_log_value: str) -> int:
+    if thunder_log_value.startswith("+"):
+        return logging.DEBUG
+    elif thunder_log_value.startswith("-"):
+        return logging.WARNING
+    else:
+        return logging.INFO
 
 
 def _setup_logging():
     thunder_log_configs: str | None = _get_thunder_logs_value()
 
     if thunder_log_configs is not None and (len(thunder_log_configs) == 1 and thunder_log_configs[0].lower() == "help"):
-        levels = "".join(
-            [f"\t{key.lower()}: set logging level to {value}\n" for key, value in _STR_TO_LOGGING_LEVEL.items()]
-        )
-        msg = (
-            "THUNDER_LOGS help\n"
-            "Supported values of THUNDER_LOGS are:\n"
-            "\texecutors: Allow all executors to log\n"
-            "\t<executor name>: Allow specified executor to log\n"
-            f"{levels}"
-            'By giving `+` to each executor name or "executors", logging level is set to logging.DEBUG, otherwise logging.WARNING'
-            "Note that multiple executor names can be specified\n"
-            'Example command: `THUNDER_LOGS="+nvfuser,sdpa" python example.py` would show logging.DEBUG and higher messages of nvfuser and logging.WARNING and higher of sdpa executor'
-        )
-        warnings.warn(msg)
+        warnings.warn(_HELP_MSG)
         sys.exit(0)
 
     is_logging_active: bool = False
     if thunder_log_configs is not None:
-        for maybe_log_level in thunder_log_configs:
-            if (logging_level := _STR_TO_LOGGING_LEVEL.get(maybe_log_level.upper())) is not None:
-                logging.basicConfig(level=logging_level)
-                is_logging_active = True
+        global _TRACE_LOG_LEVEL, _LOG_NAME_TO_LEVEL
+        for logger_name in thunder_log_configs:
+            if logger_name.lower() in ("debug", "info", "warning", "error", "critical"):
+                msg = f"Logging level {logger_name} is not supported and is ignored. \n{_HELP_MSG}"
+                warnings.warn(msg)
+                continue
+            log_level = _get_log_level(logger_name)
+            if logger_name.endswith("traces"):
+                _TRACE_LOG_LEVEL = log_level
             else:
-                if maybe_log_level.startswith("+"):
-                    logging.basicConfig(level=logging.DEBUG)
-                else:
-                    logging.basicConfig(level=logging.WARNING)
+                _LOG_NAME_TO_LEVEL[logger_name] = log_level
     if not is_logging_active:
         logging.basicConfig(level=logging.CRITICAL + 100)
 
