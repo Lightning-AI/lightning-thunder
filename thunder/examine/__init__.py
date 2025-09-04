@@ -1,4 +1,3 @@
-from typing import Any
 from collections.abc import Callable
 import collections
 import traceback

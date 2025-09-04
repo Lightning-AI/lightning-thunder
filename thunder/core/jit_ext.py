@@ -12,7 +12,6 @@ import sys
 import time
 import warnings
 from types import (
-    BuiltinFunctionType,
     BuiltinMethodType,
     CellType,
     FunctionType,
