@@ -5,6 +5,7 @@ from functools import partial
 
 import torch
 from torch.fx.passes.split_module import split_module
+from torch._logging._internal import trace_structured_artifact
 
 from thunder.dynamo.utils import (
     SubgraphInfo,
@@ -20,8 +21,10 @@ from thunder.dynamo.utils import (
     _get_example_inputs_from_placeholder,
     _ThunderSplitGraphModule,
 )
+from thunder.dynamo._trace_structured import _log_to_torch_trace
 
 if TYPE_CHECKING:
+    from typing import Any
     from collections.abc import Callable
 
 
@@ -30,6 +33,8 @@ def _splitter(
     thunder_jit: Callable,
     torch_inductor: Callable,
     _unused_sample_args: list[torch.SymInt, torch.Tensor],
+    *,
+    thunder_options: dict[str, Any] = {},
 ) -> tuple[torch.fx.GraphModule, SubgraphInfo]:
     """
     This method will split graph into multiple graph modules based on thunder supported operations.
@@ -118,10 +123,33 @@ def _splitter(
                 info=f"node with name: {node.name} and target: {node.target} is not supported probably because it is in unsupported context.",
             )
             split_reasons.append(split_reason)
+
+            trace_structured_artifact(
+                name="thunder_unsupported_ctx_regions",
+                encoding="json",
+                payload_fn=lambda n=node, r=split_reason: {
+                    "node_name": n.name,
+                    "node_target": str(n.target),
+                    "reason_type": r.reason_type.name,
+                    "reason_info": r.info,
+                },
+            )
         else:
             is_thunder_supported, split_reason = is_node_supported_by_thunder(node)
             if split_reason is not None:
                 split_reasons.append(split_reason)
+
+                trace_structured_artifact(
+                    name="thunder_unsupported_node",
+                    encoding="json",
+                    payload_fn=lambda n=node, r=split_reason: {
+                        "node_name": n.name,
+                        "node_target": str(n.target),
+                        "reason_type": r.reason_type.name,
+                        "reason_info": r.info,
+                        "exception": r.exception,
+                    },
+                )
 
         if prev_value == is_thunder_supported:  # We are in the same region.
             return partition_cnt
@@ -144,7 +172,7 @@ def _splitter(
     gm.recompile()
 
     # `split_module` iterates over nodes and determines the partition to place them based on the callback.
-    split_gm: torch.fx.GraphModule = split_module(
+    original_split_gm: torch.fx.GraphModule = split_module(
         gm, root_m=None, split_callback=callback, keep_original_order=True, keep_original_node_name=True
     )
 
@@ -166,7 +194,7 @@ def _splitter(
     thunder_compiled_fns = []
     example_input_metadatas = []
     submodule_to_compiled_fns = {}
-    for node in split_gm.graph.nodes:
+    for node_idx, node in enumerate(split_gm.graph.nodes):
         node_name = node.name
         if is_thunder_supported_partition(node):
             graph_module = getattr(split_gm, node.name)
@@ -186,10 +214,27 @@ def _splitter(
                 partial(_get_example_inputs_from_placeholder, only_metadata=True), placeholders
             )
             example_input_metadatas.append(list(example_input_metadata))
+
+            _log_to_torch_trace("thunder_module_original", graph_module)
+
             # Replace PyTorch operators within the checkpointed function with the corresponding Thunder operators
             checkpoint_converter(split_gm, graph_module)
 
-            jit_fn = thunder_jit(graph_module, is_differentiable_outputs=is_differentiable_outputs)
+            _log_to_torch_trace("thunder_module_post_checkpoint_converter_applied", graph_module)
+
+            if not thunder_options:
+                jit_fn = thunder_jit(graph_module, is_differentiable_outputs=is_differentiable_outputs)
+            else:
+                from thunder import jit
+
+                jit_fn = jit(
+                    graph_module,
+                    **{
+                        "is_differentiable_outputs": is_differentiable_outputs,
+                        "graph_module_idx": node_idx,
+                        **thunder_options,
+                    },
+                )
             # Update the node name from "submod_*" to "thunder_*" for more user-friendly names
             update_node_and_submodule(split_gm, node, node.name.replace("submod", "thunder"), jit_fn)
             thunder_compiled_fns.append(jit_fn)
@@ -198,6 +243,8 @@ def _splitter(
             )
         elif node.name.startswith("submod"):  # For inductor
             graph_module = getattr(split_gm, node.name)
+            _log_to_torch_trace("inductor_module_original", graph_module)
+
             jit_fn = torch_inductor(graph_module)
             # Update the node name from "submod_*" to "inductor_*" for more user-friendly names
             update_node_and_submodule(split_gm, node, node.name.replace("submod", "inductor"), jit_fn)
