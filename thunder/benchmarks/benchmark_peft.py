@@ -1,4 +1,3 @@
-import sys
 import argparse
 import os
 import random
@@ -14,7 +13,7 @@ from torch.nn.attention import SDPBackend, sdpa_kernel
 
 from tqdm import tqdm
 
-from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokenizer, WordpieceTokenizer
+from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokenizer
 from peft import LoraConfig, get_peft_model
 from datasets import Dataset
 

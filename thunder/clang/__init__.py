@@ -1,5 +1,4 @@
 from __future__ import annotations
-from collections import namedtuple
 from collections.abc import Callable, Sequence
 from functools import partial, reduce
 from numbers import Number
