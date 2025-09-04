@@ -9,51 +9,56 @@ Thunder provides configurable logging through the ``THUNDER_LOGS`` environment v
 Configuring Logging
 ===================
 
-You can control Thunder's logging behavior by setting the ``THUNDER_LOGS`` environment variable. This is particularly useful for debugging and understanding what's happening inside Thunder's executors.
+You can control Thunder's logging behavior by setting the ``THUNDER_LOGS`` environment variable.
 
 Basic Usage
 -----------
 
 To enable logging, set the ``THUNDER_LOGS`` environment variable before running your Python script::
 
-  THUNDER_LOGS="info" python my_script.py
+  THUNDER_LOGS="+nvfuser" python my_script.py
 
 Supported Values
 ----------------
 
 The ``THUNDER_LOGS`` environment variable supports the following values:
 
-* Standard logging levels:
-  * ``debug``: Set logging level to DEBUG
-  * ``info``: Set logging level to INFO
-  * ``warning``: Set logging level to WARNING
-  * ``error``: Set logging level to ERROR
-  * ``critical``: Set logging level to CRITICAL
+* Special options:
+  * ``traces``: Enable logging of Thunder traces from :func:`thunder.jit`
 
 * Executor-specific logging:
   * ``executors``: Allow all executors to log
   * ``<executor name>``: Allow a specific executor to log (e.g., ``nvfuser``, ``sdpa``)
 
-* Prefix with ``+`` to set DEBUG level for an executor:
+* Executor logging levels can be controlled with prefixes:
+  * ``<executor name>`` (no prefix): Set logging level to INFO for the specified executor
   * ``+<executor name>``: Set logging level to DEBUG for the specified executor
-  * Without ``+``, the logging level defaults to WARNING
+  * ``-<executor name>``: Set logging level to WARNING for the specified executor
 
 Multiple values can be specified by separating them with commas.
 
 Examples
 --------
 
-Enable DEBUG level logging for the nvFuser executor and WARNING level for the SDPA executor::
+**Component-specific logging:**
 
-  THUNDER_LOGS="+nvfuser,sdpa" python my_script.py
+Enable different logging levels for various executors::
 
-Set the global logging level to INFO::
+  THUNDER_LOGS="+nvfuser,-torch_compile,sdpa" python my_script.py
 
-  THUNDER_LOGS="info" python my_script.py
+This will set DEBUG level for nvFuser, WARNING level for torch_compile, and INFO level for SDPA.
+
+**Help:**
 
 Get help about available logging options::
 
   THUNDER_LOGS="help" python my_script.py
+
+**Show traces:**
+
+Enable logging of Thunder traces::
+
+  THUNDER_LOGS="traces" python my_script.py
 
 Internal Implementation
 =======================
