@@ -83,10 +83,54 @@ class Llama4MoE(nn.Module):
             config.device,
         )
 
-    # TODO: A convert from Llama4TextMoe -> Llama4MoE would be needed.
     @staticmethod
     def from_transformers_llama4textmoe(moe: Llama4TextMoe) -> Llama4MoE:
-        pass
+        """[CAUTION] A converter written by Gemini 2.5."""
+        # This is defined in `thunder.tests.test_networks`
+        from thunder.tests.test_networks import Config
+
+        # 1. Create a config for the Llama4MoE model from the transformers config
+        config = Config(
+            hidden_size=moe.config.hidden_size,
+            intermediate_size=moe.config.intermediate_size,
+            num_routed_experts=moe.config.num_local_experts,
+            num_shared_experts=1,  # Based on HF implementation having one shared_expert
+            dtype=moe.router.weight.dtype,
+            device=moe.router.weight.device,
+        )
+
+        # 2. Create an instance of our Llama4MoE
+        new_moe = Llama4MoE(config)
+
+        # 3. Copy the router weights (called 'gate' in our implementation)
+        new_moe.gate.weight.data.copy_(moe.router.weight.data)
+
+        # 4. Copy the shared expert weights
+        new_moe.shared_experts.gate_proj.weight.data.copy_(moe.shared_expert.gate_proj.weight.data)
+        new_moe.shared_experts.up_proj.weight.data.copy_(moe.shared_expert.up_proj.weight.data)
+        new_moe.shared_experts.down_proj.weight.data.copy_(moe.shared_expert.down_proj.weight.data)
+
+        # 5. For the routed experts, we need to handle the combined gate_up_proj
+        # and permute the weight dimensions to match GroupedLinear
+        # HF format: (groups, in_features, out_features)
+        # Our format: (groups, out_features, in_features)
+
+        # Permute from (num_experts, hidden_size, 2 * intermediate_size) to
+        # (num_experts, 2 * intermediate_size, hidden_size)
+        gate_up_proj_permuted = moe.experts.gate_up_proj.permute(0, 2, 1)
+
+        # Split into gate and up projections
+        gate_proj_w, up_proj_w = gate_up_proj_permuted.chunk(2, dim=1)
+
+        new_moe.routed_experts.gate_proj.weight.data.copy_(gate_proj_w)
+        new_moe.routed_experts.up_proj.weight.data.copy_(up_proj_w)
+
+        # Permute down_proj from (num_experts, intermediate_size, hidden_size) to
+        # (num_experts, hidden_size, intermediate_size)
+        down_proj_permuted = moe.experts.down_proj.permute(0, 2, 1)
+        new_moe.routed_experts.down_proj.weight.data.copy_(down_proj_permuted)
+
+        return new_moe
 
     def run_routed_experts(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         batch_size, seq_len, _ = hidden_states.size()
@@ -124,16 +168,14 @@ class Llama4MoE(nn.Module):
         return self.shared_experts(hidden_states) + outs_sorted_by_token_id, router_logits
 
 
-# TODO: Figure out how to correctly create Llama4MoE from Llama4TextMoe.
 def _replace_llama4_moe(model: nn.Module) -> None:
     """Replace Llama4TextMoe with Llama4MoE to use grouped gemm."""
     # The logic is based on https://github.com/pytorch/ao/blob/b34c1037/torchao/quantization/quant_api.py#L230
-    # named_children_list = list(model.named_children())
-    # for name, child in named_children_list:
-    #     if isinstance(child, Llama4TextMoe):
-    #         new_child = Llama4MoE.from_llama4textmoe(child)
-    #         setattr(model, name, new_child)
-    pass
+    named_children_list = list(model.named_children())
+    for name, child in named_children_list:
+        if isinstance(child, Llama4TextMoe):
+            new_child = Llama4MoE.from_llama4textmoe(child)
+            setattr(model, name, new_child)
 
 
 @contextmanager
