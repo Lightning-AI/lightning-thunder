@@ -20,16 +20,19 @@ import time
 from typing import TYPE_CHECKING
 
 import torch
+import torch.nn as nn
 from torch.distributed.device_mesh import init_device_mesh
 from torch.distributed.distributed_c10d import destroy_process_group
 from torch.distributed.tensor.parallel import parallelize_module, RowwiseParallel, ColwiseParallel
 from tqdm import tqdm
 from transformers import AutoConfig, AutoModelForCausalLM
 from transformers.cache_utils import HybridChunkedCache
+from transformers.models.llama4.modeling_llama4 import Llama4TextMoe
 
 import thunder
 from thunder.dynamo.compiler import thunderfx
 from thunder.dynamo.report import thunderfx_benchmark_report
+from thunder.tests.test_networks import GroupedSwiGLU, SwiGLU
 
 if TYPE_CHECKING:
     from typing import Any
@@ -49,6 +52,87 @@ if WORLD_SIZE > 1:
     mesh = init_device_mesh("cuda", (WORLD_SIZE,), mesh_dim_names=("tp",))
 
 LLAMA4_MAVERICK_MODEL_ID: str = "meta-llama/Llama-4-Maverick-17B-128E"
+
+
+# Slightly modified version of `thunder.tests.test_networks.Llama4MoE`
+# to have the same singature as transformers' Llama4TextMoe.
+# Ref: https://github.com/huggingface/transformers/blob/ff8b88a9/src/transformers/models/llama4/modeling_llama4.py#L147-L165
+class Llama4MoE(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        self.gate = nn.Linear(
+            config.hidden_size,
+            config.num_routed_experts,
+            bias=False,
+            dtype=config.dtype,
+            device=config.device,
+        )
+        self.shared_experts = SwiGLU(
+            config.hidden_size,
+            config.intermediate_size * config.num_shared_experts,
+            config.dtype,
+            config.device,
+        )
+        self.routed_experts = GroupedSwiGLU(
+            config.num_routed_experts,
+            config.hidden_size,
+            config.intermediate_size,
+            config.dtype,
+            config.device,
+        )
+
+    # TODO: A convert from Llama4TextMoe -> Llama4MoE would be needed.
+    @staticmethod
+    def from_transformers_llama4textmoe(moe: Llama4TextMoe) -> Llama4MoE:
+        pass
+
+    def run_routed_experts(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        batch_size, seq_len, _ = hidden_states.size()
+        hidden_states = hidden_states.view(-1, hidden_states.size(-1))  # [s, h]
+
+        router_logits = self.gate(hidden_states)  # [s, n]
+        topk_weight, topk_ids = router_logits.topk(1)  # [s, 1]
+        router_scores = topk_weight.sigmoid()  # [s, 1]
+        hidden_states = hidden_states * router_scores  # [s, h]
+
+        counts = torch.zeros(
+            topk_ids.size(0),
+            self.config.num_routed_experts,
+            device=topk_ids.device,
+            dtype=torch.int32,
+        )  # [s, n]
+        counts = counts.scatter(1, topk_ids, 1)  # [s, n]
+        tokens_per_expert = counts.sum(0)  # [n]
+
+        token_ids_sorted_by_expert_id = topk_ids.view(-1).argsort()  # [s]
+        tokens_sorted_by_expert_id = hidden_states[token_ids_sorted_by_expert_id]  # [s, h]
+
+        # Without `torch.int32`, we see `RuntimeError: Offsets tensor must be integer (int32) tensor, but got torch.int64.`
+        # from PyTorch when calling _grouped_mm.
+        offsets = torch.cumsum(tokens_per_expert, 0, dtype=torch.int32)  # [n]
+        outs_sorted_by_expert_id = self.routed_experts(tokens_sorted_by_expert_id, offsets)  # [s, h]
+
+        token_ids_sorted_by_expert_inverse_id = torch.argsort(token_ids_sorted_by_expert_id)
+        outs_sorted_by_token_id = outs_sorted_by_expert_id[token_ids_sorted_by_expert_inverse_id]
+
+        return outs_sorted_by_token_id
+
+    def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        outs_sorted_by_token_id, router_logits = self.run_routed_experts(hidden_states)
+        return self.shared_experts(hidden_states) + outs_sorted_by_token_id, router_logits
+
+
+# TODO: Figure out how to correctly create Llama4MoE from Llama4TextMoe.
+def _replace_llama4_moe(model: nn.Module) -> None:
+    """Replace Llama4TextMoe with Llama4MoE to use grouped gemm."""
+    # The logic is based on https://github.com/pytorch/ao/blob/b34c1037/torchao/quantization/quant_api.py#L230
+    # named_children_list = list(model.named_children())
+    # for name, child in named_children_list:
+    #     if isinstance(child, Llama4TextMoe):
+    #         new_child = Llama4MoE.from_llama4textmoe(child)
+    #         setattr(model, name, new_child)
+    pass
 
 
 @contextmanager
@@ -76,6 +160,7 @@ class InferenceBenchmarkConfig:
     fx_report_folder: str | None
     enable_nv_linear: bool
     mode: str
+    disable_moe_replacement: bool
 
 
 @dataclass
@@ -110,7 +195,7 @@ class InferenceBenchmark:
         self.config = config
         self.metrics = InferenceMetrics()
 
-        self.model = self._load_model()
+        model = self._load_model()
 
         tp_plan = {
             "*.layers.*.self_attn.q_proj": ColwiseParallel(use_local_output=True),
@@ -126,16 +211,19 @@ class InferenceBenchmark:
         }
 
         if self.config.dtensor_single_gpu or WORLD_SIZE > 1:
-            self.model = parallelize_module(self.model, mesh, tp_plan)
+            model = parallelize_module(model, mesh, tp_plan)
 
             # Required as that doesn't understand inference mode
-            for p in self.model.parameters():
+            for p in model.parameters():
                 p.requires_grad_(False)
 
         # `thunderfx` seems to hide the access to vocab_size somewhere so
         # store it here before any compiler is applied.
-        self.vocab_size = self.model.vocab_size
-        self.model = self._compile_model(self.model)
+        self.vocab_size = model.vocab_size
+
+        if not self.config.disable_moe_replacement:
+            _replace_llama4_moe(model)
+        self.model = self._compile_model(model)
 
     @property
     def _thunder_jit_options(self) -> dict[str, Any]:
@@ -520,6 +608,11 @@ Examples:
         default=2,
         type=int,
         help="Number of layers of the moddel. Llama4 Maverick has 48 hidden layers, which could be too memory hungry",
+    )
+    parser.add_argument(
+        "--disable-moe-replacement",
+        action="store_true",
+        help="Disallow replacement of Llama4TextMoe with our custom Llama4MoE which uses grouped gemm.",
     )
 
     # Execution configuration
