@@ -35,6 +35,8 @@ import thunder.core.prims as prims
 from thunder.core.trace import TraceCtx, set_tracectx, reset_tracectx, tracectx
 from thunder.core.symbol import BoundSymbol
 
+from looseversion import LooseVersion
+
 
 #
 # Tests related to the test framework itself
@@ -2559,6 +2561,45 @@ def test_grad_ctx():
     assert thunder.cache_misses(jfoo) == 2
 
 
+@pytest.mark.parametrize("global_grad_enabled", [False, True])
+@pytest.mark.parametrize("n_flips", range(4))
+@pytest.mark.parametrize("next_enable", [False, True])
+@pytest.mark.parametrize("starts_with_op", [False, True])
+@pytest.mark.parametrize("ends_with_op", [False, True])
+def test_set_grad_enabled(global_grad_enabled, n_flips, next_enable, starts_with_op, ends_with_op, request):
+    initial_grad_enabled = torch.is_grad_enabled()
+    request.addfinalizer(lambda: torch.set_grad_enabled(initial_grad_enabled))
+
+    def fn(x):
+        next_enable_local = next_enable
+        for i in range(n_flips):
+            if starts_with_op or i > 0:
+                x = x.sin()
+            torch.set_grad_enabled(next_enable_local)
+            next_enable_local = not next_enable_local
+        if ends_with_op:
+            x = x.sin()
+        return x
+
+    x = torch.randn(10, requires_grad=True)
+    x_ref = x.detach().clone().requires_grad_(True)
+
+    torch.set_grad_enabled(global_grad_enabled)
+    jfn = thunder.jit(fn)
+    y = jfn(x)
+
+    torch.set_grad_enabled(global_grad_enabled)
+    y_ref = fn(x_ref)
+
+    torch.testing.assert_close(y, y_ref)
+    assert (y.grad_fn is None) == (y_ref.grad_fn is None)
+    if y.grad_fn is not None:
+        with torch.enable_grad():
+            y.sum().backward()
+            y_ref.sum().backward()
+            torch.testing.assert_close(x.grad, x_ref.grad)
+
+
 def test_serialize_trace():
     import dill as pickle
 
@@ -3193,6 +3234,18 @@ def test_apply_autograd_memory(thunderfx_disable_split_autograd):
         return [weakref.ref(x), weakref.ref(o)]
 
     assert not any(wr() for wr in foo())
+
+
+@pytest.mark.skipif(LooseVersion(torch.__version__) < LooseVersion("2.9.0"), reason="Requires torch 2.9.0 or later")
+def test_float4_e2m1fn_x2():
+    x = torch.ones(2, 2, dtype=torch.uint8).view(torch.float4_e2m1fn_x2)
+
+    @thunder.jit
+    def f(x):
+        return x
+
+    y = f(x)
+    assert y.dtype == torch.float4_e2m1fn_x2
 
 
 def test_thunder_jit_parts():
