@@ -1271,12 +1271,7 @@ def _pad_check(a: TensorProxy, padding_value: Number, padding_config: tuple[int,
     for lo, hi, dilation in padding_config:
         if dilation > 0:
             logger.warn(
-                "padding_config=%s's (lo=%d, hi=%d, dilation=%d) is not supported due to dilation=%d",
-                padding_config,
-                lo,
-                hi,
-                dilation,
-                dilation,
+                "padding_config=(lo=%d, hi=%d, dilation=%d) is not support due to the dilation", lo, hi, dilation
             )
             return False
 
@@ -1345,7 +1340,7 @@ def _slice_check(
     if strides is not None:
         for stride in strides:
             if stride != 1:
-                logger.warn("stride of %s include unsupported value of %d", strides, stride)
+                logger.warn("stride %d of %s is expected to be 1", stride, strides)
                 return False
 
     return True
@@ -2150,7 +2145,7 @@ def _reduction_check(a: TensorProxy, dims: Sequence[int]) -> bool:
     ):
         return True
     else:
-        logger.warn("%s is not supported and/or %s is not supported due to {NumberProxy}", a, dims)
+        logger.warn("%s is not supported and/or dims of %s is not supported", a, f"{dims}")
         return False
 
 
@@ -2718,13 +2713,13 @@ def _scaled_dot_product_flash_attention_check(
 
     # fd.ops.sdpfa_fwd and fd.ops.sdpfa_bwd are adding in versions 0.2.9 and 0.2.10 respectively.
     if nvfuser_version() < LooseVersion("0.2.10"):
-        logger.warn("nvFuser needs to be >= 0.2.10 but %s", nvfuser_version())
+        logger.warn("nvFuser needs to be >= 0.2.10 but version=%s", nvfuser_version())
         return False
 
     # SDPA requires nvfuser version 0.2.27 or higher for torch 2.7.0 or higher.
     if LooseVersion(torch.__version__) >= LooseVersion("2.7.0") and nvfuser_version() < LooseVersion("0.2.27"):
         logger.warn(
-            "PyTorch and nvFuser need to be >= 2.7.0 and 0.2.27 respectively but %s and %s",
+            "For PyTorch versions >= 2.7.0, nvFuser version must be >= 0.2.27, but PyTorch version=%s, nvFuser version=%s",
             torch.__version__,
             nvfuser_version(),
         )
@@ -2748,7 +2743,7 @@ def _scaled_dot_product_flash_attention_check(
     backend = _fused_sdp_choice(query, key, value, None, dropout_p, is_causal, scale)
     if backend == SpdaBackend.FLASH_ATTENTION:
         return True
-    logger.warn("sdpa only supports SpdaBackend.FLASH_ATTENTION but %s", backend)
+    logger.warn("sdpa only supports SpdaBackend.FLASH_ATTENTION but backend=%s", backend)
     return False
 
 
@@ -2990,24 +2985,26 @@ def _cross_entropy_check(
     # input must be cast to float32
     # since we use fmax which only supports float32
     if dtypes.to_torch_dtype(a.dtype) != torch.float32:
-        logger.warn("Input dtype needs to be float32 but %s", a.dtype)
+        logger.warn("Input dtype needs to be float32 but dtype=%s", a.dtype)
         return False
 
     # We only optimize for the following cases
     if reduction != "mean":
-        logger.warn('reduction of "mean" is only supported but %s', reduction)
+        logger.warn('reduction=%s is expected to be "meain"', reduction)
         return False
 
     if ignore_index >= 0:
-        logger.warn("ignore_index of %d is not supported", ignore_index)
+        logger.warn("ignore_index=%d expected to be 0", ignore_index)
         return False
 
     if any(x is not None for x in (weight, size_average, reduce)):
-        logger.warn("weight=%s, size_average=%s, and/or reduce=%s should be None", weight, size_average, reduce)
+        logger.warn(
+            "at least one of weight=%s, size_average=%s, and/or reduce=%s should be None", weight, size_average, reduce
+        )
         return False
 
     if label_smoothing != 0.0:
-        logger.warn("cross entropy with label_smoothing=%f is not supported", label_smoothing)
+        logger.warn("cross entropy with label_smoothing=%f is expected to be 0", label_smoothing)
         return False
 
     return True
