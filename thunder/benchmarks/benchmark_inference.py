@@ -561,50 +561,6 @@ class InferenceBenchmark:
         print(f"\nResults saved to {filename}")
 
 
-def run_benchmark(
-    *,
-    model_name: str,
-    batch_size: int,
-    input_length: int,
-    output_length: int,
-    num_iterations: int,
-    num_layers: int | None,
-    mode: str,
-    save_results: bool,
-    dtensor_single_gpu: bool,
-    load_nvfp4: bool,
-    fx_report_folder: str | None,
-    enable_nv_linear: bool,
-):
-    """Main function to run the benchmark"""
-
-    config = InferenceBenchmarkConfig(
-        model_name=model_name,
-        batch_size=batch_size,
-        input_length=input_length,
-        output_length=output_length,
-        num_layers=num_layers,
-        num_iterations=num_iterations,
-        mode=mode,
-        dtensor_single_gpu=dtensor_single_gpu,
-        load_nvfp4=load_nvfp4,
-        fx_report_folder=fx_report_folder,
-        enable_nv_linear=enable_nv_linear,
-    )
-
-    benchmark = InferenceBenchmark(config)
-
-    metrics = benchmark.run_benchmark()
-    benchmark.print_results()
-
-    if save_results:
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        filename = f"thunder_inference_{model_name}_{timestamp}.json"
-        benchmark.save_results(filename)
-
-    return metrics
-
-
 class CustomFormatter(argparse.RawDescriptionHelpFormatter, argparse.ArgumentDefaultsHelpFormatter):
     pass
 
