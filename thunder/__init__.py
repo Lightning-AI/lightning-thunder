@@ -875,6 +875,8 @@ def jit(
     @update_call_statistics
     def fn_(*args, **kwargs) -> Any:
         # NOTE: Don't capture cd or cs in the closure, otherwise it will create a cycle
+        cd = weakref_cd()
+        assert cd is not None, "cd has been cleared."
         cs = weakref_cs()
         assert cs is not None, "cs has been cleared."
         if is_tracing():
@@ -886,6 +888,9 @@ def jit(
         result = cache_entry.computation_fn(*inps)
         result = maybe_connect_to_autograd(cache_entry, result)
         result = call_epilogue(cache_entry, result, pro_to_epi)
+
+        # Reflect the state of is_grad_enabled, as its changes were tracked only inside Thunder
+        pytorch.set_grad_enabled(cd.is_grad_enabled)
 
         cs.last_computation = cache_entry.computation_fn
         return result
