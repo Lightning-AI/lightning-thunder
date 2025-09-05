@@ -108,10 +108,10 @@ def quantize_linear_weight_to_nvfp4(
     weight: torch.Tensor | nn.Parameter,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
     """Quantize weight to nvfp4, returning (packed) e2m1 weight, e4m3 scale factor, fp32 global scale."""
-    # global_scale = weight.abs().amax()
-    # ...
-    # return weight, weight, global_scale
-    raise NotImplementedError()
+    global_scale = ((FLOAT8_E4M3_MAX * FLOAT4_E2M1_MAX) / weight.float().abs().amax()).to(torch.float32)
+    fp4_weight, weight_scaling_factor = pytorch_nvfp4_quantize(weight, global_scale)
+    weight_scale_interleaved = linear_to_swizzled_128_4(weight_scaling_factor)
+    return fp4_weight, weight_scale_interleaved, global_scale
 
 
 # Ref: https://github.com/NVIDIA/Fuser/blob/d70540f9/tests/python/utils/narrow_precision.py#L151-L152
@@ -145,6 +145,7 @@ class NVFP4InferenceLinear(nn.Module):
         self.register_buffer("bias", bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # return mm_a16_nvfp4weight(x, self.fp4_weight, self.weight_scaling_factor, self.weight_global_scale, self.bias)
         raise NotImplementedError()
 
     @classmethod
