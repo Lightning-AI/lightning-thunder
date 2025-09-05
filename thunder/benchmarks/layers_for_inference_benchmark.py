@@ -1,3 +1,16 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the BSD 3-Clause license found in the
+# LICENSE file in the root directory of this source tree.
+#
+# NOTE: `down_size`, and `pack_uint4` are copied from PyTorch's test code.
+#
+# SPDX-FileCopyrightText: Copyright (c) 2024-present NVIDIA CORPORATION & AFFILIATES.
+# All rights reserved.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# NOTE: `pytorch_nvfp4_quantize` and `linear_to_swizzled_128_4` are copied from NVIDIA's Fuser's test code.
 from __future__ import annotations
 from typing import TYPE_CHECKING
 import math
@@ -5,13 +18,93 @@ import math
 from looseversion import LooseVersion
 import torch
 import torch.nn as nn
+from torch.testing._internal.common_quantized import _f32_to_floatx_unpacked
 
 if TYPE_CHECKING:
     from transformers.models.llama4.modeling_llama4 import Llama4TextMoe
 
 
+# Ref: https://github.com/pytorch/pytorch/blob/bffc7dd1/test/test_matmul_cuda.py#L972-L974
+def down_size(size):
+    assert size[-1] % 2 == 0, f"{size} last dim not divisible by two"
+    return (*size[:-1], size[-1] // 2)
+
+
+# Ref: https://github.com/pytorch/pytorch/blob/bffc7dd1/test/test_matmul_cuda.py#L977-L982
+def pack_uint4(uint8_data) -> torch.Tensor:
+    # converting to uint8 for operations
+    shape = uint8_data.shape
+    assert shape[-1] % 2 == 0
+    uint8_data = uint8_data.contiguous().view(-1)
+    return (uint8_data[1::2] << 4 | uint8_data[::2]).view(down_size(shape))
+
+
+# Ref: Based on `_bfloat16_to_float4_e2m1fn_x2` of https://github.com/pytorch/pytorch/blob/bffc7dd1/test/test_matmul_cuda.py#L985-L990
+def to_fp4(a: torch.Tensor) -> torch.Tensor:
+    x = _f32_to_floatx_unpacked(x.float(), ebits=2, mbits=1)
+    x = pack_uint4(x)
+    x = x.view(torch.float4_e2m1fn_x2)
+    return x
+
+
+# Ref: https://github.com/NVIDIA/Fuser/blob/d70540f9/tests/python/utils/narrow_precision.py#L8-L10
+FLOAT4_E2M1_MAX = 6.0
+FLOAT8_E4M3_EPS = torch.finfo(torch.float8_e4m3fn).tiny
+FLOAT8_E4M3_MAX = torch.finfo(torch.float8_e4m3fn).max
+
+
+# Ref: https://github.com/NVIDIA/Fuser/blob/d70540f9/tests/python/utils/narrow_precision.py#L125-L148
+def pytorch_nvfp4_quantize(a, a_global_scale):
+    BLOCK_SIZE = 16
+    assert a.size(-1) % BLOCK_SIZE == 0, (
+        "The inner-most dim must be divisible by block_size; Padding is not implemented."
+    )
+    assert a.is_contiguous(), "Only contiguous tensors are supported."
+
+    original_shape = a.shape
+    a_fp32 = a.float().reshape(original_shape[0], -1, BLOCK_SIZE)
+
+    # Find absolute maximum along blockwise dimension
+    max_abs = torch.amax(torch.abs(a_fp32), dim=-1)
+    block_scale_fp32 = (max_abs / FLOAT4_E2M1_MAX).float()
+
+    scaled_block_scale_fp32 = block_scale_fp32 * a_global_scale
+    scaled_block_scale_fp8 = torch.clamp(
+        scaled_block_scale_fp32,
+        min=FLOAT8_E4M3_EPS,
+        max=FLOAT8_E4M3_MAX,
+    ).to(torch.float8_e4m3fn)
+    scaled_block_scale_fp8_fp32 = scaled_block_scale_fp8.to(torch.float)
+    total_scale = scaled_block_scale_fp8_fp32 / a_global_scale
+    a_scaled = a_fp32 / total_scale.unsqueeze(-1)
+    a_scaled = torch.clamp(a_scaled, -FLOAT4_E2M1_MAX, FLOAT4_E2M1_MAX)
+    a_scaled = a_scaled.view(original_shape)
+    return to_fp4(a_scaled), scaled_block_scale_fp8
+
+
+# Ref: https://github.com/NVIDIA/Fuser/blob/d70540f9/tests/python/utils/narrow_precision.py#L63-L82
+# apply swizzled on block scaling factor:
+# 1. apply padding to [mn_t * 128 , k_t * 4]
+# 2. apply swizzle
+def linear_to_swizzled_128_4(a_sf_linear: torch.Tensor):
+    mn, sf_k = a_sf_linear.shape
+    m_tiles = (mn + 128 - 1) // 128
+    mn_padded = m_tiles * 128
+    k_tiles = (sf_k + 4 - 1) // 4
+    k_padded = k_tiles * 4
+    if mn_padded != mn or k_padded != sf_k:
+        a_sf_padded = torch.empty(mn_padded, k_padded, dtype=a_sf_linear.dtype, device=a_sf_linear.device)
+        a_sf_padded[0:mn, 0:sf_k] = a_sf_linear
+    else:
+        a_sf_padded = a_sf_linear
+    # details about layout requirement on block-wise scaling factor
+    # https://docs.nvidia.com/cutlass/media/docs/cpp/blackwell_functionality.html#scale-factor-layouts
+    tmp = torch.reshape(a_sf_padded, (m_tiles, 4, 32, k_tiles, 4))
+    return tmp.transpose(1, 3).reshape(mn_padded, k_padded)[:mn, :sf_k]
+
+
 @torch.inference_mode()
-def quantize_weight_to_nvfp4(
+def quantize_linear_weight_to_nvfp4(
     weight: torch.Tensor | nn.Parameter,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
     """Quantize weight to nvfp4, returning (packed) e2m1 weight, e4m3 scale factor, fp32 global scale."""
@@ -19,6 +112,76 @@ def quantize_weight_to_nvfp4(
     # ...
     # return weight, weight, global_scale
     raise NotImplementedError()
+
+
+# Ref: https://github.com/NVIDIA/Fuser/blob/d70540f9/tests/python/utils/narrow_precision.py#L151-L152
+def round_up(x: int, y: int) -> int:
+    return (x + y - 1) // y * y
+
+
+@torch.inference_mode()
+def quantize_grouped_linear_weight_to_nvfp4(
+    weight: torch.Tensor | nn.Parameter,
+    m: int,
+    tokens_per_expert_neg_one: list[int],
+) -> tuple[
+    torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor
+]:
+    """Quantize grouped linear's weight to nvfp4
+
+    Args:
+        weight: Parameter of `GroupedLinear` of [g, n, k]
+        m: hidden_states.size(0)
+        tokens_per_expert_neg_one:
+
+    Returns:
+        fp4_weight: [g, n, k // 2]
+        scale_factors: [g, n, k // 16]
+        global_scales: [g]
+        ab_strides: [g]
+        c_strides: [g]
+        offsets: [g]
+        blockscale_offsets: [g]
+        problem_sizes: [g, 3]
+    """
+    assert weight.ndim == 3, "Weight must be a 3D tensor"
+
+    device: torch.device = weight.device
+    g, n, k = weight.size()
+    tokens_per_expert = list(tokens_per_expert_neg_one)
+    tokens_per_expert.append(m - sum(tokens_per_expert))
+    accumulated_tokens = 0
+    rounded_accumulated_tokens = 0
+
+    with device:
+        ab_strides = torch.full((g,), k, dtype=torch.int32)
+        c_strides = torch.full((g,), n, dtype=torch.int32)
+
+        offsets = torch.empty((g,), dtype=torch.int32)
+        blockscale_offsets = torch.empty((g,), dtype=torch.int32)
+        problem_sizes = torch.empty((g, 3), dtype=torch.int32)
+
+        fp4_weight = torch.empty((g, n, k // 2), dtype=torch.float4_e2m1fn_x2)
+        global_scales = torch.empty((g,), dtype=torch.float32)
+        scale_factors = torch.empty((g, n, k // 16), dtype=torch.float8_e4m3fn)
+
+    for i in range(g):
+        cur_weight = weight[i]
+        global_scales[i] = cur_weight.abs().amax()
+        offsets[i] = accumulated_tokens
+        blockscale_offsets[i] = rounded_accumulated_tokens
+        accumulated_tokens += tokens_per_expert[i]
+        rounded_accumulated_tokens += round_up(tokens_per_expert[i], 128)
+
+        problem_sizes[i][0] = tokens_per_expert[i]
+        problem_sizes[i][1] = n
+        problem_sizes[i][2] = k
+
+        cur_fp4_weight, cur_scale_factors = pytorch_nvfp4_quantize(cur_weight, global_scales[i])
+        fp4_weight[i] = cur_fp4_weight
+        scale_factors[i] = linear_to_swizzled_128_4(cur_scale_factors)
+
+    return fp4_weight, scale_factors, global_scales, ab_strides, c_strides, offsets, blockscale_offsets, problem_sizes
 
 
 class NVFP4InferenceLinear(nn.Module):
@@ -54,7 +217,7 @@ class NVFP4InferenceLinear(nn.Module):
         weight = linear.weight
         bias = linear.bias
         out_features, in_features = weight.size()
-        fp4_weight, weight_scaling_factor, weight_global_scale = quantize_weight_to_nvfp4(weight)
+        fp4_weight, weight_scaling_factor, weight_global_scale = quantize_linear_weight_to_nvfp4(weight)
         return NVFP4InferenceLinear(
             in_features,
             out_features,
@@ -123,11 +286,21 @@ class NVFP4InferenceGroupedLinear(nn.Module):
         weight_scaling_factor: torch.Tensor,
         weight_global_scale: torch.Tensor,
         bias: torch.Tensor | None,
+        ab_strides: torch.Tensor,
+        c_strides: torch.Tensor,
+        offsets: torch.Tensor,
+        blockscale_offsets: torch.Tensor,
+        problem_sizes: torch.Tensor,
     ) -> None:
         self.register_buffer("fp4_weight", fp4_weight)
         self.register_buffer("weight_scaling_factor", weight_scaling_factor)
         self.register_buffer("weight_global_scale", weight_global_scale)
         self.register_buffer("bias", bias)
+        self.register_buffer("ab_strides", ab_strides)
+        self.register_buffer("c_strides", c_strides)
+        self.register_buffer("offsets", offsets)
+        self.register_buffer("blockscale_offsets", blockscale_offsets)
+        self.register_buffer("problem_sizes", problem_sizes)
 
     def forward(self, hidden_states: torch.Tensor, offsets: torch.Tensor) -> torch.Tensor:
         raise NotADirectoryError()
@@ -136,8 +309,27 @@ class NVFP4InferenceGroupedLinear(nn.Module):
     def from_grouped_linear(grouped_linear: GroupedLinear) -> NVFP4InferenceGroupedLinear:
         weight = grouped_linear.weight
         bias = grouped_linear.bias
-        fp4_weight, weight_scaling_factor, weight_global_scale = quantize_weight_to_nvfp4(weight)
-        return NVFP4InferenceGroupedLinear(fp4_weight, weight_scaling_factor, weight_global_scale, bias=bias)
+        (
+            fp4_weight,
+            weight_scaling_factor,
+            weight_global_scale,
+            ab_strides,
+            c_strides,
+            offsets,
+            blockscale_offsets,
+            problem_sizes,
+        ) = quantize_grouped_linear_weight_to_nvfp4(weight)
+        return NVFP4InferenceGroupedLinear(
+            fp4_weight,
+            weight_scaling_factor,
+            weight_global_scale,
+            bias=bias,
+            ab_strides=ab_strides,
+            c_strides=c_strides,
+            offsets=offsets,
+            blockscale_offsets=blockscale_offsets,
+            problem_sizes=problem_sizes,
+        )
 
 
 class GroupedSwiGLU(nn.Module):
