@@ -5,14 +5,12 @@ from typing import TYPE_CHECKING
 import dataclasses
 import inspect
 import itertools
-import copy
 from types import NoneType
 from collections import defaultdict
 from collections import namedtuple
 
 import torch
 from torch.nn.modules.module import _addindent
-from torch._subclasses.fake_tensor import FakeTensor
 from torch.utils.weak import TensorWeakRef
 
 if torch.distributed.is_available():
