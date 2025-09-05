@@ -40,7 +40,7 @@ from thunder.benchmarks.layers_for_inference_benchmark import (
     nvfuser_f16a_nvfp4weight_scaled_grouped_mm,
     nvfuser_f16a_nvfp4weight_scaled_mm,
 )
-from thunder.torch.custom_op import register_custom_op
+from thunder.torch.custom_op import _register_custom_op
 
 if TYPE_CHECKING:
     from typing import Any
@@ -566,8 +566,8 @@ def main():
     # Note that the linked code is in a draft pull request of https://github.com/Lightning-AI/lightning-thunder/pull/2481
     # so we might want to do it more clumsily by copying the code in the pull request for now.
     if args.enable_nvfp4:
-        sym_of_nvfp4_scaled_mm = register_custom_op(nvfuser_f16a_nvfp4weight_scaled_mm)  # noqa: F841
-        sym_of_nvfp4_scaled_grouped_mm = register_custom_op(nvfuser_f16a_nvfp4weight_scaled_grouped_mm)  # noqa: F841
+        sym_of_nvfp4_scaled_mm = _register_custom_op(nvfuser_f16a_nvfp4weight_scaled_mm)  # noqa: F841
+        sym_of_nvfp4_scaled_grouped_mm = _register_custom_op(nvfuser_f16a_nvfp4weight_scaled_grouped_mm)  # noqa: F841
 
     config = InferenceBenchmarkConfig(
         model_name=args.model_name,
