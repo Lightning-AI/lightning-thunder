@@ -24,6 +24,16 @@ if TYPE_CHECKING:
     from transformers.models.llama4.modeling_llama4 import Llama4TextMoe
 
 
+__all__ = [
+    "GroupedLinear",
+    "Llama4MoE",
+    "NVFP4InferenceGroupedLinear",
+    "NVFP4InferenceLinear",
+    "nvfuser_f16a_nvfp4weight_scaled_grouped_mm",
+    "nvfuser_f16a_nvfp4weight_scaled_mm",
+]
+
+
 # Ref: https://github.com/pytorch/pytorch/blob/bffc7dd1/test/test_matmul_cuda.py#L972-L974
 def down_size(size):
     assert size[-1] % 2 == 0, f"{size} last dim not divisible by two"
@@ -187,8 +197,8 @@ def dequantize_to_dtype(tensor_fp4, tensor_sf, global_scale, dtype, device, bloc
     return out
 
 
-@torch.library.custom_op("nvf_cutlass::nvfp4_scaled_mm", mutates_args=())
-def nvfuser_nvfp4_scaled_mm(
+@torch.library.custom_op("nvf_cutlass::f16a_nvfp4weight_scaled_mm", mutates_args=())
+def nvfuser_f16a_nvfp4weight_scaled_mm(
     activation: torch.Tensor,
     fp4_weight: torch.Tensor,
     weight_scaling_factor: torch.Tensor,
@@ -201,7 +211,7 @@ def nvfuser_nvfp4_scaled_mm(
     return activation @ hp_weight + bias
 
 
-@torch.library.register_fake("nvf_cutlass::nvfp4_scaled_mm")
+@torch.library.register_fake("nvf_cutlass::f16a_nvfp4weight_scaled_mm")
 def _(
     activation: torch.Tensor,
     fp4_weight: torch.Tensor,
@@ -212,8 +222,8 @@ def _(
     return torch.empty((activation.size(0), fp4_weight.size(0)), device=activation.device, dtype=activation.dtype)
 
 
-@torch.library.custom_op("nvf_cutlass::nvfp4_scaled_grouped_mm", mutates_args=())
-def nvfuser_nvfp4_scaled_grouped_mm(
+@torch.library.custom_op("nvf_cutlass::f16a_nvfp4weight_scaled_grouped_mm", mutates_args=())
+def nvfuser_f16a_nvfp4weight_scaled_grouped_mm(
     activation: torch.Tensor,
     fp4_weight: torch.Tensor,
     weight_scaling_factor: torch.Tensor,
@@ -236,7 +246,7 @@ def nvfuser_nvfp4_scaled_grouped_mm(
     return grouped_mm(activation, hp_weight, offsets)
 
 
-@torch.library.register_fake("nvf_cutlass::nvfp4_scaled_grouped_mm")
+@torch.library.register_fake("nvf_cutlass::f16a_nvfp4weight_scaled_grouped_mm")
 def _(
     activation: torch.Tensor,
     fp4_weight: torch.Tensor,
@@ -277,7 +287,7 @@ class NVFP4InferenceLinear(nn.Module):
         self.register_buffer("bias", bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return torch.ops.nvf_cutlass.nvfp4_scaled_mm(
+        return torch.ops.nvf_cutlass.f16a_nvfp4weight_scaled_mm(
             x, self.fp4_weight, self.weight_scaling_factor, self.weight_global_scale, self.bias
         )
 
@@ -407,7 +417,7 @@ class NVFP4InferenceGroupedLinear(nn.Module):
     # TODO
     def forward(self, hidden_states: torch.Tensor, offsets: torch.Tensor) -> torch.Tensor:
         # blockscale_offsets, problem_sizes = compute_blockscale_offsets_and_problem_sizes(offsets, self.ab_strides, self.c_strides)
-        # return torch.ops.nvf_cutlass.nvfp4_scaled_grouped_mm(hidden_states, self.fp4_weight, self.weight_scaling_factor, self.weight_global_scale, self.ab_strides, self.c_strides, offsets, blockscale_offsets, problem_sizes)
+        # return torch.ops.nvf_cutlass.f16a_nvfp4weight_scaled_grouped_mm(hidden_states, self.fp4_weight, self.weight_scaling_factor, self.weight_global_scale, self.ab_strides, self.c_strides, offsets, blockscale_offsets, problem_sizes)
         raise NotImplementedError()
 
     @staticmethod
