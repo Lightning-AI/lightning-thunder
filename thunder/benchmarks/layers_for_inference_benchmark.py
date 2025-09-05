@@ -414,11 +414,18 @@ class NVFP4InferenceGroupedLinear(nn.Module):
         self.register_buffer("ab_strides", ab_strides)
         self.register_buffer("c_strides", c_strides)
 
-    # TODO
     def forward(self, hidden_states: torch.Tensor, offsets: torch.Tensor) -> torch.Tensor:
-        # blockscale_offsets, problem_sizes = compute_blockscale_offsets_and_problem_sizes(offsets, self.ab_strides, self.c_strides)
-        # return torch.ops.nvf_cutlass.f16a_nvfp4weight_scaled_grouped_mm(hidden_states, self.fp4_weight, self.weight_scaling_factor, self.weight_global_scale, self.ab_strides, self.c_strides, offsets, blockscale_offsets, problem_sizes)
-        raise NotImplementedError()
+        tokens_per_group = offsets[1:] - offsets[:-1]
+        problem_sizes = torch.stack(
+            [
+                tokens_per_group, 
+                torch.full_like(tokens_per_group, hidden_states.size(0)), 
+                torch.full_like(tokens_per_group, self.fp4_weight.size(2) * 2)
+            ], 
+            dim=1,
+        )
+        blockscale_offsets = offsets
+        return torch.ops.nvf_cutlass.f16a_nvfp4weight_scaled_grouped_mm(hidden_states, self.fp4_weight, self.weight_scaling_factor, self.weight_global_scale, self.ab_strides, self.c_strides, offsets, blockscale_offsets, problem_sizes)
 
     @staticmethod
     def from_grouped_linear(grouped_linear: GroupedLinear) -> NVFP4InferenceGroupedLinear:
