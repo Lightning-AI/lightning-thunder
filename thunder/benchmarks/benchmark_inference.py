@@ -32,7 +32,7 @@ from transformers.models.llama4.modeling_llama4 import Llama4TextMoe
 import thunder
 from thunder.dynamo.compiler import thunderfx
 from thunder.dynamo.report import thunderfx_benchmark_report
-from thunder.tests.test_networks import GroupedSwiGLU, SwiGLU
+from .layers_for_inference_benchmark import Llama4MoE
 
 if TYPE_CHECKING:
     from typing import Any
@@ -52,120 +52,6 @@ if WORLD_SIZE > 1:
     mesh = init_device_mesh("cuda", (WORLD_SIZE,), mesh_dim_names=("tp",))
 
 LLAMA4_MAVERICK_MODEL_ID: str = "meta-llama/Llama-4-Maverick-17B-128E"
-
-
-# Slightly modified version of `thunder.tests.test_networks.Llama4MoE`
-# to have the same singature as transformers' Llama4TextMoe -- in this file
-# return values include `router_logits`.
-# Ref: https://github.com/huggingface/transformers/blob/ff8b88a9/src/transformers/models/llama4/modeling_llama4.py#L147-L165
-class Llama4MoE(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.config = config
-        self.gate = nn.Linear(
-            config.hidden_size,
-            config.num_routed_experts,
-            bias=False,
-            dtype=config.dtype,
-            device=config.device,
-        )
-        self.shared_experts = SwiGLU(
-            config.hidden_size,
-            config.intermediate_size * config.num_shared_experts,
-            config.dtype,
-            config.device,
-        )
-        self.routed_experts = GroupedSwiGLU(
-            config.num_routed_experts,
-            config.hidden_size,
-            config.intermediate_size,
-            config.dtype,
-            config.device,
-        )
-
-    @staticmethod
-    def from_transformers_llama4textmoe(moe: Llama4TextMoe) -> Llama4MoE:
-        """[CAUTION] A converter written by Gemini 2.5."""
-        # This is defined in `thunder.tests.test_networks`
-        from thunder.tests.test_networks import Config
-
-        # 1. Create a config for the Llama4MoE model from the transformers config
-        config = Config(
-            hidden_size=moe.config.hidden_size,
-            intermediate_size=moe.config.intermediate_size,
-            num_routed_experts=moe.config.num_local_experts,
-            num_shared_experts=1,  # Based on HF implementation having one shared_expert
-            dtype=moe.router.weight.dtype,
-            device=moe.router.weight.device,
-        )
-
-        # 2. Create an instance of our Llama4MoE
-        new_moe = Llama4MoE(config)
-
-        # 3. Copy the router weights (called 'gate' in our implementation)
-        new_moe.gate.weight.data.copy_(moe.router.weight.data)
-
-        # 4. Copy the shared expert weights
-        new_moe.shared_experts.gate_proj.weight.data.copy_(moe.shared_expert.gate_proj.weight.data)
-        new_moe.shared_experts.up_proj.weight.data.copy_(moe.shared_expert.up_proj.weight.data)
-        new_moe.shared_experts.down_proj.weight.data.copy_(moe.shared_expert.down_proj.weight.data)
-
-        # 5. For the routed experts, we need to handle the combined gate_up_proj
-        # and permute the weight dimensions to match GroupedLinear
-        # HF format: (groups, in_features, out_features)
-        # Our format: (groups, out_features, in_features)
-
-        # Permute from (num_experts, hidden_size, 2 * intermediate_size) to
-        # (num_experts, 2 * intermediate_size, hidden_size)
-        gate_up_proj_permuted = moe.experts.gate_up_proj.permute(0, 2, 1)
-
-        # Split into gate and up projections
-        gate_proj_w, up_proj_w = gate_up_proj_permuted.chunk(2, dim=1)
-
-        new_moe.routed_experts.gate_proj.weight.data.copy_(gate_proj_w)
-        new_moe.routed_experts.up_proj.weight.data.copy_(up_proj_w)
-
-        # Permute down_proj from (num_experts, intermediate_size, hidden_size) to
-        # (num_experts, hidden_size, intermediate_size)
-        down_proj_permuted = moe.experts.down_proj.permute(0, 2, 1)
-        new_moe.routed_experts.down_proj.weight.data.copy_(down_proj_permuted)
-
-        return new_moe
-
-    def run_routed_experts(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        batch_size, seq_len, _ = hidden_states.size()
-        hidden_states = hidden_states.view(-1, hidden_states.size(-1))  # [s, h]
-
-        router_logits = self.gate(hidden_states)  # [s, n]
-        topk_weight, topk_ids = router_logits.topk(1)  # [s, 1]
-        router_scores = topk_weight.sigmoid()  # [s, 1]
-        hidden_states = hidden_states * router_scores  # [s, h]
-
-        counts = torch.zeros(
-            topk_ids.size(0),
-            self.config.num_routed_experts,
-            device=topk_ids.device,
-            dtype=torch.int32,
-        )  # [s, n]
-        counts = counts.scatter(1, topk_ids, 1)  # [s, n]
-        tokens_per_expert = counts.sum(0)  # [n]
-
-        token_ids_sorted_by_expert_id = topk_ids.view(-1).argsort()  # [s]
-        tokens_sorted_by_expert_id = hidden_states[token_ids_sorted_by_expert_id]  # [s, h]
-
-        # Without `torch.int32`, we see `RuntimeError: Offsets tensor must be integer (int32) tensor, but got torch.int64.`
-        # from PyTorch when calling _grouped_mm.
-        offsets = torch.cumsum(tokens_per_expert, 0, dtype=torch.int32)  # [n]
-        outs_sorted_by_expert_id = self.routed_experts(tokens_sorted_by_expert_id, offsets)  # [s, h]
-
-        token_ids_sorted_by_expert_inverse_id = torch.argsort(token_ids_sorted_by_expert_id)
-        outs_sorted_by_token_id = outs_sorted_by_expert_id[token_ids_sorted_by_expert_inverse_id]
-
-        return outs_sorted_by_token_id, router_logits
-
-    def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        outs_sorted_by_token_id, router_logits = self.run_routed_experts(hidden_states)
-        return self.shared_experts(hidden_states) + outs_sorted_by_token_id, router_logits
 
 
 def _replace_llama4_moe(model: nn.Module) -> None:
