@@ -32,7 +32,12 @@ from transformers.models.llama4.modeling_llama4 import Llama4TextMoe
 import thunder
 from thunder.dynamo.compiler import thunderfx
 from thunder.dynamo.report import thunderfx_benchmark_report
-from thunder.benchmarks.layers_for_inference_benchmark import Llama4MoE
+from thunder.benchmarks.layers_for_inference_benchmark import (
+    Llama4MoE,
+    NVFP4InferenceLinear,
+    NVFP4InferenceGroupedLinear,
+    GroupedLinear,
+)
 
 if TYPE_CHECKING:
     from typing import Any
@@ -66,7 +71,14 @@ def _replace_llama4_moe(model: nn.Module) -> None:
 
 def _quantize_llama4(model: nn.Module) -> None:
     """Replace linear and moe with nvfp4 inference version."""
-    raise NotADirectoryError()
+    named_children_list = list(model.named_children())
+    for name, child in named_children_list:
+        if isinstance(child, nn.Linear):
+            quantized_linear = NVFP4InferenceLinear.from_linear(child)
+            setattr(model, name, quantized_linear)
+        elif isinstance(child, GroupedLinear):
+            quantized_grouped_linear = NVFP4InferenceGroupedLinear.from_grouped_linear(child)
+            setattr(model, name, quantized_grouped_linear)
 
 
 @contextmanager
@@ -538,10 +550,6 @@ Examples:
     parser.add_argument("--output-dir", type=str, default="./results", help="Directory to save results")
 
     args = parser.parse_args()
-
-    if args.enable_nvfp4:
-        raise NotImplementedError("Currently NVFP4 is not supported")
-
     return args
 
 

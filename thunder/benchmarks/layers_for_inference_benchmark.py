@@ -40,7 +40,7 @@ def pack_uint4(uint8_data) -> torch.Tensor:
 
 
 # Ref: Based on `_bfloat16_to_float4_e2m1fn_x2` of https://github.com/pytorch/pytorch/blob/bffc7dd1/test/test_matmul_cuda.py#L985-L990
-def to_fp4(a: torch.Tensor) -> torch.Tensor:
+def to_fp4(x: torch.Tensor) -> torch.Tensor:
     x = _f32_to_floatx_unpacked(x.float(), ebits=2, mbits=1)
     x = pack_uint4(x)
     x = x.view(torch.float4_e2m1fn_x2)
@@ -280,7 +280,7 @@ class NVFP4InferenceLinear(nn.Module):
         # return mm_a16_nvfp4weight(x, self.fp4_weight, self.weight_scaling_factor, self.weight_global_scale, self.bias)
         raise NotImplementedError()
 
-    @classmethod
+    @staticmethod
     def from_linear(linear: nn.Linear) -> NVFP4InferenceLinear:
         weight = linear.weight
         bias = linear.bias
@@ -409,7 +409,7 @@ class NVFP4InferenceGroupedLinear(nn.Module):
         # return grouped_mm_a16_nvfp4weight(hidden_states, self.fp4_weight, self.weight_scaling_factor, self.weight_global_scale, self.bias, self.ab_strides, self.c_strides, blockscale_offsets, problem_sizes)
         raise NotImplementedError()
 
-    @classmethod
+    @staticmethod
     def from_grouped_linear(grouped_linear: GroupedLinear) -> NVFP4InferenceGroupedLinear:
         weight = grouped_linear.weight
         (
