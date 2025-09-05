@@ -64,6 +64,11 @@ def _replace_llama4_moe(model: nn.Module) -> None:
             setattr(model, name, new_child)
 
 
+def _quantize_llama4(model: nn.Module) -> None:
+    """Replace linear and moe with nvfp4 inference version."""
+    raise NotADirectoryError()
+
+
 @contextmanager
 def timer():
     torch.cuda.synchronize()
@@ -152,6 +157,8 @@ class InferenceBenchmark:
 
         if not self.config.disable_moe_replacement:
             _replace_llama4_moe(model)
+        if self.config.load_nvfp4:
+            _quantize_llama4(model)
         self.model = self._compile_model(model)
 
     @property
