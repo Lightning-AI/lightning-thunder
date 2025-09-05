@@ -570,8 +570,9 @@ def main():
     benchmark.print_results()
     if args.save_results:
         timestamp = time.strftime("%Y%m%d_%H%M%S")
-        filename = f"thunder_inference_{args.model_name}_{timestamp}.json"
-        benchmark.save_results(filename)
+        filename = f"thunder_inference_{args.model_name.replace('/', '_')}_{timestamp}.json"
+        path = os.path.join(args.output_dir, filename)
+        benchmark.save_results(path)
 
 
 if __name__ == "__main__":
