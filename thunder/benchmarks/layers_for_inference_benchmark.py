@@ -188,7 +188,7 @@ def dequantize_to_dtype(tensor_fp4, tensor_sf, global_scale, dtype, device, bloc
 
 
 @torch.library.custom_op("nvf_cutlass::nvfp4_scaled_mm", mutates_args=())
-def nvfp4_scaled_mm(
+def nvfuser_nvfp4_scaled_mm(
     activation: torch.Tensor,
     fp4_weight: torch.Tensor,
     weight_scaling_factor: torch.Tensor,
@@ -213,7 +213,7 @@ def _(
 
 
 @torch.library.custom_op("nvf_cutlass::nvfp4_scaled_grouped_mm", mutates_args=())
-def nvfp4_scaled_grouped_mm(
+def nvfuser_nvfp4_scaled_grouped_mm(
     activation: torch.Tensor,
     fp4_weight: torch.Tensor,
     weight_scaling_factor: torch.Tensor,
@@ -277,7 +277,9 @@ class NVFP4InferenceLinear(nn.Module):
         self.register_buffer("bias", bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return nvfp4_scaled_mm(x, self.fp4_weight, self.weight_scaling_factor, self.weight_global_scale, self.bias)
+        return torch.ops.nvf_cutlass.nvfp4_scaled_mm(
+            x, self.fp4_weight, self.weight_scaling_factor, self.weight_global_scale, self.bias
+        )
 
     @staticmethod
     def from_linear(linear: nn.Linear) -> NVFP4InferenceLinear:
@@ -405,7 +407,7 @@ class NVFP4InferenceGroupedLinear(nn.Module):
     # TODO
     def forward(self, hidden_states: torch.Tensor, offsets: torch.Tensor) -> torch.Tensor:
         # blockscale_offsets, problem_sizes = compute_blockscale_offsets_and_problem_sizes(offsets, self.ab_strides, self.c_strides)
-        # return grouped_mm_a16_nvfp4weight(hidden_states, self.fp4_weight, self.weight_scaling_factor, self.weight_global_scale, self.bias, self.ab_strides, self.c_strides, blockscale_offsets, problem_sizes)
+        # return torch.ops.nvf_cutlass.nvfp4_scaled_grouped_mm(hidden_states, self.fp4_weight, self.weight_scaling_factor, self.weight_global_scale, self.ab_strides, self.c_strides, offsets, blockscale_offsets, problem_sizes)
         raise NotImplementedError()
 
     @staticmethod
