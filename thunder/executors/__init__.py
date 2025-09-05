@@ -1,6 +1,3 @@
-from typing import Optional, Any, List, Tuple
-from collections.abc import Sequence
-
 import thunder.executors.passes as passes
 
 import thunder.extend as extend

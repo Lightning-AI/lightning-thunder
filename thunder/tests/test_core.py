@@ -5,7 +5,6 @@ from functools import partial, reduce
 import dataclasses
 import re
 import weakref
-import itertools
 
 import pytest
 import torch

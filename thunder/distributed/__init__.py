@@ -15,7 +15,6 @@ import torch.distributed as tdist
 from torch.utils.weak import WeakTensorKeyDictionary
 
 import thunder.core.utils as utils
-from thunder.core.proxies import DistParallelType
 from thunder.distributed.tensor_parallel import column_parallel
 from thunder.distributed.tensor_parallel import row_parallel
 

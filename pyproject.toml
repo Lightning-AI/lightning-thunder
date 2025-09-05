@@ -157,7 +157,6 @@ ignore = [
     # TODO(crcrpar): Resolves the following ignores as these are added while enabling ruff check in pre-commit
     "F821",  # https://docs.astral.sh/ruff/rules/undefined-name/
     "E402",  # https://docs.astral.sh/ruff/rules/module-import-not-at-top-of-file/
-    "F401",  # https://docs.astral.sh/ruff/rules/unused-import/
     "F405",  # https://docs.astral.sh/ruff/rules/undefined-local-with-import-star-usage/
     "E712",  # https://docs.astral.sh/ruff/rules/true-false-comparison/
     "E721",  # https://docs.astral.sh/ruff/rules/type-comparison/
