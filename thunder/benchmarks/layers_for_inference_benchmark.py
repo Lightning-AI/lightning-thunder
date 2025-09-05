@@ -119,71 +119,6 @@ def round_up(x: int, y: int) -> int:
     return (x + y - 1) // y * y
 
 
-@torch.inference_mode()
-def quantize_grouped_linear_weight_to_nvfp4(
-    weight: torch.Tensor | nn.Parameter,
-    m: int,
-    tokens_per_expert_neg_one: list[int],
-) -> tuple[
-    torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor
-]:
-    """Quantize grouped linear's weight to nvfp4
-
-    Args:
-        weight: Parameter of `GroupedLinear` of [g, n, k]
-        m: hidden_states.size(0)
-        tokens_per_expert_neg_one:
-
-    Returns:
-        fp4_weight: [g, n, k // 2]
-        scale_factors: [g, n, k // 16]
-        global_scales: [g]
-        ab_strides: [g]
-        c_strides: [g]
-        offsets: [g]
-        blockscale_offsets: [g]
-        problem_sizes: [g, 3]
-    """
-    assert weight.ndim == 3, "Weight must be a 3D tensor"
-
-    device: torch.device = weight.device
-    g, n, k = weight.size()
-    tokens_per_expert = list(tokens_per_expert_neg_one)
-    tokens_per_expert.append(m - sum(tokens_per_expert))
-    accumulated_tokens = 0
-    rounded_accumulated_tokens = 0
-
-    with device:
-        ab_strides = torch.full((g,), k, dtype=torch.int32)
-        c_strides = torch.full((g,), n, dtype=torch.int32)
-
-        offsets = torch.empty((g,), dtype=torch.int32)
-        blockscale_offsets = torch.empty((g,), dtype=torch.int32)
-        problem_sizes = torch.empty((g, 3), dtype=torch.int32)
-
-        fp4_weight = torch.empty((g, n, k // 2), dtype=torch.float4_e2m1fn_x2)
-        global_scales = torch.empty((g,), dtype=torch.float32)
-        scale_factors = torch.empty((g, n, k // 16), dtype=torch.float8_e4m3fn)
-
-    for i in range(g):
-        cur_weight = weight[i]
-        global_scales[i] = cur_weight.abs().amax()
-        offsets[i] = accumulated_tokens
-        blockscale_offsets[i] = rounded_accumulated_tokens
-        accumulated_tokens += tokens_per_expert[i]
-        rounded_accumulated_tokens += round_up(tokens_per_expert[i], 128)
-
-        problem_sizes[i][0] = tokens_per_expert[i]
-        problem_sizes[i][1] = n
-        problem_sizes[i][2] = k
-
-        cur_fp4_weight, cur_scale_factors = pytorch_nvfp4_quantize(cur_weight, global_scales[i])
-        fp4_weight[i] = cur_fp4_weight
-        scale_factors[i] = linear_to_swizzled_128_4(cur_scale_factors)
-
-    return fp4_weight, scale_factors, global_scales, ab_strides, c_strides, offsets, blockscale_offsets, problem_sizes
-
-
 class NVFP4InferenceLinear(nn.Module):
     """NVFP4 Linear layer for Inference.
 
@@ -279,6 +214,47 @@ class GroupedLinear(nn.Module):
         return grouped_mm(hidden_states, self.weight, offsets)
 
 
+@torch.inference_mode()
+def quantize_grouped_linear_weight_to_nvfp4(
+    weight: torch.Tensor | nn.Parameter,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Quantize grouped linear's weight to nvfp4
+
+    Args:
+        weight: Parameter of `GroupedLinear` of [g, n, k]
+        m: hidden_states.size(0)
+        tokens_per_expert_neg_one:
+
+    Returns:
+        fp4_weight: [g, n, k // 2]
+        scale_factors: [g, n, k // 16]
+        global_scales: [g]
+        ab_strides: [g]
+        c_strides: [g]
+    """
+    assert weight.ndim == 3, "Weight must be a 3D tensor"
+
+    device: torch.device = weight.device
+    g, n, k = weight.size()
+
+    with device:
+        ab_strides = torch.full((g,), k, dtype=torch.int32)
+        c_strides = torch.full((g,), n, dtype=torch.int32)
+
+        fp4_weight = torch.empty((g, n, k // 2), dtype=torch.float4_e2m1fn_x2)
+        global_scales = torch.empty((g,), dtype=torch.float32)
+        scale_factors = torch.empty((g, n, k // 16), dtype=torch.float8_e4m3fn)
+
+    for i in range(g):
+        cur_weight = weight[i]
+        global_scales[i] = cur_weight.abs().amax()
+        cur_fp4_weight, cur_scale_factors = pytorch_nvfp4_quantize(cur_weight, global_scales[i])
+        fp4_weight[i] = cur_fp4_weight
+        scale_factors[i] = linear_to_swizzled_128_4(cur_scale_factors)
+
+    return fp4_weight, scale_factors, global_scales, ab_strides, c_strides
+
+
 class NVFP4InferenceGroupedLinear(nn.Module):
     def __init__(
         self,
@@ -288,9 +264,6 @@ class NVFP4InferenceGroupedLinear(nn.Module):
         bias: torch.Tensor | None,
         ab_strides: torch.Tensor,
         c_strides: torch.Tensor,
-        offsets: torch.Tensor,
-        blockscale_offsets: torch.Tensor,
-        problem_sizes: torch.Tensor,
     ) -> None:
         self.register_buffer("fp4_weight", fp4_weight)
         self.register_buffer("weight_scaling_factor", weight_scaling_factor)
@@ -298,12 +271,12 @@ class NVFP4InferenceGroupedLinear(nn.Module):
         self.register_buffer("bias", bias)
         self.register_buffer("ab_strides", ab_strides)
         self.register_buffer("c_strides", c_strides)
-        self.register_buffer("offsets", offsets)
-        self.register_buffer("blockscale_offsets", blockscale_offsets)
-        self.register_buffer("problem_sizes", problem_sizes)
 
+    # TODO
     def forward(self, hidden_states: torch.Tensor, offsets: torch.Tensor) -> torch.Tensor:
-        raise NotADirectoryError()
+        # blockscale_offsets, problem_sizes = compute_blockscale_offsets_and_problem_sizes(offsets, self.ab_strides, self.c_strides)
+        # return grouped_mm_a16_nvfp4weight(hidden_states, self.fp4_weight, self.weight_scaling_factor, self.weight_global_scale, self.bias, self.ab_strides, self.c_strides, blockscale_offsets, problem_sizes)
+        raise NotImplementedError()
 
     @classmethod
     def from_grouped_linear(grouped_linear: GroupedLinear) -> NVFP4InferenceGroupedLinear:
@@ -315,9 +288,6 @@ class NVFP4InferenceGroupedLinear(nn.Module):
             weight_global_scale,
             ab_strides,
             c_strides,
-            offsets,
-            blockscale_offsets,
-            problem_sizes,
         ) = quantize_grouped_linear_weight_to_nvfp4(weight)
         return NVFP4InferenceGroupedLinear(
             fp4_weight,
@@ -326,9 +296,6 @@ class NVFP4InferenceGroupedLinear(nn.Module):
             bias=bias,
             ab_strides=ab_strides,
             c_strides=c_strides,
-            offsets=offsets,
-            blockscale_offsets=blockscale_offsets,
-            problem_sizes=problem_sizes,
         )
 
 
