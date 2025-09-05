@@ -32,7 +32,7 @@ from transformers.models.llama4.modeling_llama4 import Llama4TextMoe
 import thunder
 from thunder.dynamo.compiler import thunderfx
 from thunder.dynamo.report import thunderfx_benchmark_report
-from .layers_for_inference_benchmark import Llama4MoE
+from thunder.benchmarks.layers_for_inference_benchmark import Llama4MoE
 
 if TYPE_CHECKING:
     from typing import Any

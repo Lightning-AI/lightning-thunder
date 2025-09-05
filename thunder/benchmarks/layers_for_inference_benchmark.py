@@ -1,12 +1,13 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
+import math
 
 from looseversion import LooseVersion
 import torch
 import torch.nn as nn
 
 if TYPE_CHECKING:
-    pass
+    from transformers.models.llama4.modeling_llama4 import Llama4TextMoe
 
 
 @torch.inference_mode()
@@ -46,7 +47,7 @@ class NVFP4InferenceLinear(nn.Module):
         self.register_buffer("bias", bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        pass
+        raise NotImplementedError()
 
     @classmethod
     def from_linear(linear: nn.Linear) -> NVFP4InferenceLinear:
@@ -113,6 +114,30 @@ class GroupedLinear(nn.Module):
 
     def forward(self, hidden_states: torch.Tensor, offsets: torch.Tensor) -> torch.Tensor:
         return grouped_mm(hidden_states, self.weight, offsets)
+
+
+class NVFP4InferenceGroupedLinear(nn.Module):
+    def __init__(
+        self,
+        fp4_weight: torch.Tensor,
+        weight_scaling_factor: torch.Tensor,
+        weight_global_scale: torch.Tensor,
+        bias: torch.Tensor | None,
+    ) -> None:
+        self.register_buffer("fp4_weight", fp4_weight)
+        self.register_buffer("weight_scaling_factor", weight_scaling_factor)
+        self.register_buffer("weight_global_scale", weight_global_scale)
+        self.register_buffer("bias", bias)
+
+    def forward(self, hidden_states: torch.Tensor, offsets: torch.Tensor) -> torch.Tensor:
+        raise NotADirectoryError()
+
+    @classmethod
+    def from_grouped_linear(grouped_linear: GroupedLinear) -> NVFP4InferenceGroupedLinear:
+        weight = grouped_linear.weight
+        bias = grouped_linear.bias
+        fp4_weight, weight_scaling_factor, weight_global_scale = quantize_weight_to_nvfp4(weight)
+        return NVFP4InferenceGroupedLinear(fp4_weight, weight_scaling_factor, weight_global_scale, bias=bias)
 
 
 class GroupedSwiGLU(nn.Module):
