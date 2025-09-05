@@ -90,7 +90,7 @@ class InferenceBenchmarkConfig:
     num_iterations: int
     warmup_iterations: int
     dtensor_single_gpu: bool
-    load_nvfp4: bool  # Enable NVFP4 quantization
+    enable_nvfp4: bool  # Enable NVFP4 quantization
     fx_report_folder: str | None
     enable_nv_linear: bool
     mode: str
@@ -157,7 +157,7 @@ class InferenceBenchmark:
 
         if not self.config.disable_moe_replacement:
             _replace_llama4_moe(model)
-        if self.config.load_nvfp4:
+        if self.config.enable_nvfp4:
             _quantize_llama4(model)
         self.model = self._compile_model(model)
 
@@ -527,7 +527,7 @@ Examples:
         action="store_true",
         help="Use DTensor for single GPU",
     )
-    parser.add_argument("--load-nvfp4", action="store_true", help="Enable NVFP4 quantization for linear layers")
+    parser.add_argument("--enable-nvfp4", action="store_true", help="Enable NVFP4 quantization for linear layers")
     parser.add_argument(
         "--enable-nv-linear",
         action="store_true",
@@ -539,7 +539,7 @@ Examples:
 
     args = parser.parse_args()
 
-    if args.load_nvfp4:
+    if args.enable_nvfp4:
         raise NotImplementedError("Currently NVFP4 is not supported")
 
     return args
@@ -560,7 +560,7 @@ def main():
         warmup_iterations=args.warmup_iterations,
         mode=args.mode,
         dtensor_single_gpu=args.dtensor_single_gpu,
-        load_nvfp4=args.load_nvfp4,
+        enable_nvfp4=args.enable_nvfp4,
         fx_report_folder=args.fx_report_folder,
         enable_nv_linear=args.enable_nv_linear,
         disable_moe_replacement=args.disable_moe_replacement,
