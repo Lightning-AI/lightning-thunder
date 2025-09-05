@@ -33,11 +33,14 @@ import thunder
 from thunder.dynamo.compiler import thunderfx
 from thunder.dynamo.report import thunderfx_benchmark_report
 from thunder.benchmarks.layers_for_inference_benchmark import (
-    Llama4MoE,
-    NVFP4InferenceLinear,
-    NVFP4InferenceGroupedLinear,
     GroupedLinear,
+    Llama4MoE,
+    NVFP4InferenceGroupedLinear,
+    NVFP4InferenceLinear,
+    nvfuser_f16a_nvfp4weight_scaled_grouped_mm,
+    nvfuser_f16a_nvfp4weight_scaled_mm,
 )
+from thunder.torch.custom_op import register_custom_op
 
 if TYPE_CHECKING:
     from typing import Any
@@ -557,6 +560,14 @@ def main():
     args = parse_args()
     if args.save_results:
         os.makedirs(args.output_dir, exist_ok=True)
+
+    # TODO: Override the forward with nvfuser_direct based implementation like
+    # https://github.com/Lightning-AI/lightning-thunder/blob/8b72715d/thunder/tests/test_torch_library_custom_op.py#L250-L266 does.
+    # Note that the linked code is in a draft pull request of https://github.com/Lightning-AI/lightning-thunder/pull/2481
+    # so we might want to do it more clumsily by copying the code in the pull request for now.
+    if args.enable_nvfp4:
+        sym_of_nvfp4_scaled_mm = register_custom_op(nvfuser_f16a_nvfp4weight_scaled_mm)  # noqa: F841
+        sym_of_nvfp4_scaled_grouped_mm = register_custom_op(nvfuser_f16a_nvfp4weight_scaled_grouped_mm)  # noqa: F841
 
     config = InferenceBenchmarkConfig(
         model_name=args.model_name,
