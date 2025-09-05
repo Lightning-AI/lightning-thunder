@@ -68,7 +68,7 @@ from thunder.executors.nvfuserex import nvfuser_version
 
 
 DTENSOR_SUPPORTED_VERSION = LooseVersion("0.2.28")
-DIRECT_BINDINGS_SUPPORTED_VERSION = LooseVersion("0.2.30")
+DIRECT_BINDINGS_SUPPORTED_VERSION = LooseVersion("0.2.32")
 if nvfuser_version() >= DIRECT_BINDINGS_SUPPORTED_VERSION:
     import nvfuser_direct as nvfuser
     from nvfuser_direct import DataType, FusionDefinition
@@ -355,8 +355,6 @@ def create_fd(
             nvout = lc_to_nv_map[out]
             fd.add_output(nvout)
 
-    MAX_LENGTH = 9999
-
     if any(isinstance(t, DTensorProxy) for t in sorted_unique_inputs):
         # multi-GPU path
         utils.check(
@@ -384,15 +382,7 @@ def create_fd(
             definition(fd)
             multidevice_schedule(fd, sorted_unique_inputs)
     else:
-        if nvfuser_version() >= DIRECT_BINDINGS_SUPPORTED_VERSION:
-            # NOTE FusionDefinition does not have fusion cache, so the max_length argument is not used.
-            fd = FusionDefinition()
-        else:
-            # NOTE nvFuser's default max length is 1024 operations at the time of this writing
-            #   This arbitrarily increases it to 9999
-            # TODO Review splitting very large fusions or removing the max length restriction completely
-            #   See "Very large nvFuser fusions hit max_length"
-            fd = FusionDefinition(max_length=MAX_LENGTH)
+        fd = FusionDefinition()
         # Device may be set in one of the "factory" methods like full, iota, or uniform
         # NOTE: This should be called before defining because a factory method may look-up at `_selected_device` while being defined.
         fd._selected_device = None
