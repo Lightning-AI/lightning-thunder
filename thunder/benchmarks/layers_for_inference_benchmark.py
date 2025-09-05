@@ -277,8 +277,7 @@ class NVFP4InferenceLinear(nn.Module):
         self.register_buffer("bias", bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # return mm_a16_nvfp4weight(x, self.fp4_weight, self.weight_scaling_factor, self.weight_global_scale, self.bias)
-        raise NotImplementedError()
+        return nvfp4_scaled_mm(x, self.fp4_weight, self.weight_scaling_factor, self.weight_global_scale, self.bias)
 
     @staticmethod
     def from_linear(linear: nn.Linear) -> NVFP4InferenceLinear:
