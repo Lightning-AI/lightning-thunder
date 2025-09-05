@@ -119,6 +119,61 @@ def round_up(x: int, y: int) -> int:
     return (x + y - 1) // y * y
 
 
+@torch.library.custom_op("nvf_cutlass::nvfp4_scaled_mm", mutates_args=())
+def nvfp4_scaled_mm(
+    activation: torch.Tensor,
+    fp4_weight: torch.Tensor,
+    weight_scaling_factor: torch.Tensor,
+    weight_global_scale: torch.Tensor,
+    bias: torch.Tensor | None,
+) -> torch.Tensor:
+    # N.B. This would not work but it's fine as it's going to be overriden by Thunder.
+    hp_weight = fp4_weight * weight_scaling_factor * weight_global_scale
+    return activation @ hp_weight + bias
+
+
+@torch.library.register_fake("nvf_cutlass::nvfp4_scaled_mm")
+def _(
+    activation: torch.Tensor,
+    fp4_weight: torch.Tensor,
+    weight_scaling_factor: torch.Tensor,
+    weight_global_scale: torch.Tensor,
+    bias: torch.Tensor | None,
+) -> torch.Tensor:
+    return torch.empty((activation.size(0), fp4_weight.size(0)), device=activation.device, dtype=activation.dtype)
+
+
+@torch.library.custom_op("nvf_cutlass::nvfp4_scaled_grouped_mm", mutates_args=())
+def nvfp4_scaled_grouped_mm(
+    activation: torch.Tensor,
+    fp4_weight: torch.Tensor,
+    weight_scaling_factor: torch.Tensor,
+    weight_global_scale: torch.Tensor,
+    ab_strides: torch.Tensor,
+    c_strides: torch.Tensor,
+    offsets: torch.Tensor,
+    blockscale_offsets: torch.Tensor,
+    problem_sizes: torch.Tensor,
+) -> torch.Tensor:
+    hp_weight = fp4_weight * weight_scaling_factor * weight_global_scale
+    return grouped_mm(activation, hp_weight, offsets)
+
+
+@torch.library.register_fake("nvf_cutlass::nvfp4_scaled_grouped_mm")
+def _(
+    activation: torch.Tensor,
+    fp4_weight: torch.Tensor,
+    weight_scaling_factor: torch.Tensor,
+    weight_global_scale: torch.Tensor,
+    ab_strides: torch.Tensor,
+    c_strides: torch.Tensor,
+    offsets: torch.Tensor,
+    blockscale_offsets: torch.Tensor,
+    problem_sizes: torch.Tensor,
+) -> torch.Tensor:
+    return torch.empty((activation.size(0), fp4_weight.size(2)), device=activation.device, dtype=activation.dtype)
+
+
 class NVFP4InferenceLinear(nn.Module):
     """NVFP4 Linear layer for Inference.
 
