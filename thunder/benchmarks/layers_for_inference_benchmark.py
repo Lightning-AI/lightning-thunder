@@ -262,14 +262,12 @@ class NVFP4InferenceGroupedLinear(nn.Module):
         fp4_weight: torch.Tensor,
         weight_scaling_factor: torch.Tensor,
         weight_global_scale: torch.Tensor,
-        bias: torch.Tensor | None,
         ab_strides: torch.Tensor,
         c_strides: torch.Tensor,
     ) -> None:
         self.register_buffer("fp4_weight", fp4_weight)
         self.register_buffer("weight_scaling_factor", weight_scaling_factor)
         self.register_buffer("weight_global_scale", weight_global_scale)
-        self.register_buffer("bias", bias)
         self.register_buffer("ab_strides", ab_strides)
         self.register_buffer("c_strides", c_strides)
 
@@ -282,7 +280,6 @@ class NVFP4InferenceGroupedLinear(nn.Module):
     @classmethod
     def from_grouped_linear(grouped_linear: GroupedLinear) -> NVFP4InferenceGroupedLinear:
         weight = grouped_linear.weight
-        bias = grouped_linear.bias
         (
             fp4_weight,
             weight_scaling_factor,
@@ -294,7 +291,6 @@ class NVFP4InferenceGroupedLinear(nn.Module):
             fp4_weight,
             weight_scaling_factor,
             weight_global_scale,
-            bias=bias,
             ab_strides=ab_strides,
             c_strides=c_strides,
         )
