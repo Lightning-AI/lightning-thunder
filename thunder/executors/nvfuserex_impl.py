@@ -67,13 +67,14 @@ from thunder.extend import FUEL_LEVEL, FusionExecutor, register_executor
 from thunder.executors.nvfuserex import nvfuser_version
 
 
+# NOTE This impl file is here because nvFuser may not be available, so it's imported conditionally
+#   by nvfuserex.py when nvFuser is available.
+
 DIRECT_BINDINGS_SUPPORTED_VERSION = LooseVersion("0.2.32")
 if nvfuser_version() >= DIRECT_BINDINGS_SUPPORTED_VERSION:
     import nvfuser_direct as nvfuser
     from nvfuser_direct import DataType, FusionDefinition
 else:
-    # NOTE This impl file is here because nvFuser may not be available, so it's imported conditionally
-    #   by nvfuserex.py when nvFuser is available.
     import nvfuser
     from nvfuser import DataType, FusionDefinition
 
