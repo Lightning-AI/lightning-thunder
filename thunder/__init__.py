@@ -68,6 +68,7 @@ import torch as pytorch
 import thunder.executors.pythonex
 import thunder.executors.torchex
 import thunder.executors.nvfuserex
+from thunder._logging import get_logger
 
 pythonex = extend.get_executor("python")
 assert pythonex is not None
@@ -267,6 +268,9 @@ CacheEntry = namedtuple(
         "return_none_instead_of_grads",
     ],
 )
+
+
+_logger = get_logger(__name__)
 
 
 def compile(
@@ -519,6 +523,9 @@ def jit(
                         new_computation_trc,
                         new_epilogue_trc,
                     )
+                    _logger.info("%s prologue\n%s\n", transform.__class__.__name__, prologue_trc)
+                    _logger.info("%s computation\n%s\n", transform.__class__.__name__, computation_trc)
+                    _logger.info("%s epilogue\n%s\n", transform.__class__.__name__, epilogue_trc)
                     prologue_traces.append(prologue_trc)
                     computation_traces.append(computation_trc)
                     if epilogue_trc is not None:
@@ -530,10 +537,12 @@ def jit(
                 use_del_last_used=False,
             )
             prologue_trc = prologue_traces[-1]
+            _logger.info("Prologue transformed for execution\n%s\n", prologue_trc)
             pro = prologue_trc.python_callable(include_decorators=False)
             pro = prologue_execution_timer(pro)
 
             epilogue_trc = transform_to_torch_types(epilogue_trc)
+            _logger.info("Epilogue transformed for execution\n%s\n", epilogue_trc)
             epilogue = epilogue_trc.python_callable()
 
             cs.last_prologue_transformation_stop = time.perf_counter_ns()
@@ -541,6 +550,7 @@ def jit(
 
             computation_trc = dce(computation_trc)
             computation_traces.append(computation_trc)
+            _logger.info("Computation transformed for execution\n%s\n", computation_trc)
 
             if not cd.disable_torch_autograd_support:
                 tensor_cls = (pytorch.Tensor, TensorProxy)
@@ -552,6 +562,7 @@ def jit(
                 from thunder.transforms.autodiff import grad_transform_on_trace
 
                 computation_trc = grad_transform_on_trace(computation_trc)
+                _logger.info("Computation after grad transform\n%s\n", computation_trc)
 
             from thunder.executors.passes import _transform_for_operator_executor_execution
             from thunder.distributed.utils import maybe_sort_waits
@@ -568,6 +579,7 @@ def jit(
                 use_del_last_used=False,
             )
             computation_trc = extraces[-1]
+            _logger.info("Computation transformed for execution\n%s\n", computation_trc)
 
             backward_trc = None
             if requires_grad:
@@ -579,6 +591,8 @@ def jit(
                     computation_trc = _te_activation_checkpointing_transform(computation_trc)
 
                 computation_trc, backward_trc = split_into_forward_and_backward(computation_trc)
+                _logger.info("Forward trace\n%s\n", computation_trc)
+                _logger.info("Backward trace\n%s\n", backward_trc)
 
             computation_trc = thunder.executors.passes.del_last_used(computation_trc)
             computation_traces.append(computation_trc)
@@ -598,6 +612,7 @@ def jit(
                 if new_computation_trc is not computation_trc:
                     computation_trc = new_computation_trc
                     computation_traces.append(computation_trc)
+                    _logger.info("%s forward\n%s\n", transform.__class__.__name__, computation_trc)
                 if backward_trc is not None:
                     new_backward_trc = transform.transform_trace_post_optimization(
                         backward_trc, executors_list=cd.executors_list
@@ -605,6 +620,7 @@ def jit(
                     if new_backward_trc is not backward_trc:
                         backward_trc = new_backward_trc
                         backward_traces.append(backward_trc)
+                        _logger.info("%s backward\n%s\n", transform.__class__.__name__, backward_trc)
 
             if backward_trc is not None:
                 backward_fn = backward_trc.python_callable()
@@ -615,6 +631,7 @@ def jit(
                 computation_traces.append(computation_trc)
 
             computation_trc = transform_to_torch_types(computation_trc)
+            _logger.info("`transform_to_torch_types(computation_trc)`\n%s\n", computation_trc)
             comp = computation_trc.python_callable()
 
             # TODO RC1 Update the cache
@@ -771,6 +788,9 @@ def jit(
         cs.last_compile_reasons = defaultdict(list)
 
         prologue_trc, computation_trc, epilogue_trc = acquire_initial_trace(fn, args, kwargs, cd, cs, ad_hoc_executor)
+        _logger.info("%s\n%s\n", "prologue", prologue_trc)
+        _logger.info("%s\n%s\n", "computation", computation_trc)
+        _logger.info("%s\n%s\n", "epilogue", epilogue_trc)
         cache_entry = apply_transforms_and_build_cache_entry(
             cd, cs, cache_info, prologue_trc, computation_trc, epilogue_trc
         )
