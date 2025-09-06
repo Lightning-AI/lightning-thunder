@@ -71,10 +71,14 @@ from thunder.executors.nvfuserex import nvfuser_version
 #   by nvfuserex.py when nvFuser is available.
 
 DIRECT_BINDINGS_SUPPORTED_VERSION = LooseVersion("0.2.32")
+DTENSOR_SUPPORTED_VERSION = LooseVersion("0.2.28")
 if nvfuser_version() >= DIRECT_BINDINGS_SUPPORTED_VERSION:
     import nvfuser_direct as nvfuser
-    from nvfuser_direct import DataType, FusionDefinition
+    from nvfuser_direct import DataType, FusionDefinition, multidevice, ParallelType, execute_with_dtensors
 else:
+    if nvfuser_version() >= DTENSOR_SUPPORTED_VERSION:
+        from nvfuser_direct import FusionDefinition as DirectFusionDefinition
+        from nvfuser_direct import multidevice, ParallelType, execute_with_dtensors
     import nvfuser
     from nvfuser import DataType, FusionDefinition
 
@@ -244,7 +248,7 @@ def get_translator(bsym: BoundSymbol) -> Callable:
 
 
 def register_dtensor_supported(prim_id: int, fn: Callable, checker_fn: Callable) -> None:
-    if nvfuser_version() < DIRECT_BINDINGS_SUPPORTED_VERSION:
+    if nvfuser_version() < DTENSOR_SUPPORTED_VERSION:
         # Only register dtensor ops if supported version is available.
         return
 
@@ -259,9 +263,9 @@ def multidevice_schedule(fd: FusionDefinition, in_dtensors: list[Proxy]) -> None
 
         # nvfuser's DeviceMesh supports torch.Tensor since 0.2.30
         if nvfuser_version() >= LooseVersion("0.2.30"):
-            mesh = nvfd.multidevice.DeviceMesh(in_dtensor.device_mesh.mesh)
+            mesh = multidevice.DeviceMesh(in_dtensor.device_mesh.mesh)
         else:
-            mesh = nvfd.multidevice.DeviceMesh(in_dtensor.device_mesh.mesh.tolist())
+            mesh = multidevice.DeviceMesh(in_dtensor.device_mesh.mesh.tolist())
 
         in_tv.set_device_mesh(mesh)
 
@@ -274,7 +278,7 @@ def multidevice_schedule(fd: FusionDefinition, in_dtensors: list[Proxy]) -> None
         if placement.is_shard():
             dim = cast(Shard, placement).dim
             in_tv.split(dim, mesh.size, inner_split=False)
-            in_tv.axis(dim).parallelize(nvfuser.ParallelType.mesh_x)
+            in_tv.axis(dim).parallelize(ParallelType.mesh_x)
             in_tv.set_allocation_domain(in_tv.get_loop_domain(), new_contiguity=True)
 
 
@@ -374,7 +378,7 @@ def create_fd(
             lambda: "nvfuser: Expected runtime and tracing metadata to be the same for DTensor.",
         )
 
-        fd = FusionDefinition()
+        fd = FusionDefinition() if nvfuser_version() >= DIRECT_BINDINGS_SUPPORTED_VERSION else DirectFusionDefinition()
         # Device may be set in one of the "factory" methods like full, iota, or uniform
         # NOTE: This should be called before defining because a factory method may look-up at `_selected_device` while being defined.
         fd._selected_device = None
@@ -534,7 +538,7 @@ class FusionDefinitionWrapper:
 
         if dist.is_available() and any(isinstance(t, torch.distributed.tensor.DTensor) for t in args):
             with annotate_for_profile(self.name):
-                output = nvfuser.execute_with_dtensors(fd, args)
+                output = execute_with_dtensors(fd, args)
                 return output
         else:
             with annotate_for_profile(self.name):
