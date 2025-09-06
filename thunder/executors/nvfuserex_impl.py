@@ -67,7 +67,6 @@ from thunder.extend import FUEL_LEVEL, FusionExecutor, register_executor
 from thunder.executors.nvfuserex import nvfuser_version
 
 
-DTENSOR_SUPPORTED_VERSION = LooseVersion("0.2.28")
 DIRECT_BINDINGS_SUPPORTED_VERSION = LooseVersion("0.2.32")
 if nvfuser_version() >= DIRECT_BINDINGS_SUPPORTED_VERSION:
     import nvfuser_direct as nvfuser
@@ -244,7 +243,7 @@ def get_translator(bsym: BoundSymbol) -> Callable:
 
 
 def register_dtensor_supported(prim_id: int, fn: Callable, checker_fn: Callable) -> None:
-    if nvfuser_version() < DTENSOR_SUPPORTED_VERSION:
+    if nvfuser_version() < DIRECT_BINDINGS_SUPPORTED_VERSION:
         # Only register dtensor ops if supported version is available.
         return
 
