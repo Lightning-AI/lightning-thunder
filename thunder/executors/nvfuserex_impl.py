@@ -255,7 +255,12 @@ def multidevice_schedule(fd: FusionDefinition, in_dtensors: list[Proxy]) -> None
         assert isinstance(in_dtensor, DTensorProxy)
         # Set the device mesh.
         assert in_dtensor.device_mesh.ndim == 1, "nvFuser's Python API only supports 1D meshes."
-        mesh = nvfd.multidevice.DeviceMesh(in_dtensor.device_mesh.mesh.tolist())
+
+        # nvfuser's DeviceMesh supports torch.Tensor since 0.2.30
+        if nvfuser_version() >= LooseVersion("0.2.30"):
+            mesh = nvfd.multidevice.DeviceMesh(in_dtensor.device_mesh.mesh)
+        else:
+            mesh = nvfd.multidevice.DeviceMesh(in_dtensor.device_mesh.mesh.tolist())
 
         in_tv.set_device_mesh(mesh)
 
