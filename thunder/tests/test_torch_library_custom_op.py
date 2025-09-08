@@ -303,8 +303,17 @@ def test_nvfuser_impl_for_torch_library_custom_op(_, device: str, dtype: dtypes.
     executors=(nvFuserExecutor,),
     devicetypes=(devices.DeviceType.CUDA,),
     dtypes=(dtypes.float32,),
+    decorators=(
+        pytest.mark.parametrize(
+            "disable_torch_autograd",
+            (
+                True,
+                False,
+            ),
+        ),
+    ),
 )
-def test_nvfuser_translator_registration(_, device: str, dtype: dtypes.dtype):
+def test_nvfuser_translator_registration(_, device: str, dtype: dtypes.dtype, disable_torch_autograd: bool):
     from nvfuser_direct import FusionDefinition
     from thunder.core.dtypes import to_dtype
     from thunder.executors.nvfuserex_impl import lcdtype_to_nvdtype, getnv
@@ -326,7 +335,7 @@ def test_nvfuser_translator_registration(_, device: str, dtype: dtypes.dtype):
     SHAPE = (8, 2)
     torch_device, torch_dtype = devices.to_torch_device(device), dtypes.to_torch_dtype(dtype)
     module = MyModule2().to(device=torch_device, dtype=torch_dtype)
-    jitted = thunder.jit(module)
+    jitted = thunder.jit(module, disable_torch_autograd=disable_torch_autograd)
     ref = MyModule2().to(device=torch_device, dtype=torch_dtype)
     ref.load_state_dict(module.state_dict())
 
