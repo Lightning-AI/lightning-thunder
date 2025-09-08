@@ -11,6 +11,7 @@ import thunder
 from thunder.core import dtypes
 from thunder.core import devices
 from thunder.torch.custom_op import _register_custom_op
+from thunder.torch.custom_op import _register_nvfuser_translator
 from thunder.executors.custom_op_ex import custom_op_ex
 from thunder.executors.custom_op_ex import _override_custom_op_forward
 from thunder.tests.framework import TorchExecutor, nvFuserExecutor
@@ -296,3 +297,61 @@ def test_nvfuser_impl_for_torch_library_custom_op(_, device: str, dtype: dtypes.
         if bsym.sym.name == f"{_symbol.name}_backward" and bsym.sym.executor is custom_op_ex:
             bsym_custom_ex_bsym_found = True
     assert bsym_custom_ex_bsym_found
+
+
+@instantiate(
+    executors=(nvFuserExecutor,),
+    devicetypes=(devices.DeviceType.CUDA,),
+    dtypes=(dtypes.float32,),
+)
+def test_nvfuser_translator_registration(_, device: str, dtype: dtypes.dtype):
+    from nvfuser_direct import FusionDefinition
+    from thunder.core.dtypes import to_dtype
+    from thunder.executors.nvfuserex_impl import lcdtype_to_nvdtype, getnv
+
+    def mul_translator(a, b, *, fd, lc_to_nv_map):
+        print(f"TRANSLATOR DEBUG: Custom mul_translator called with a={a}, b={b}")
+        print(f"TRANSLATOR DEBUG: lc_to_nv_map keys: {list(lc_to_nv_map.keys())}")
+        nva = getnv(a, fd, lc_to_nv_map)
+        nvb = getnv(b, fd, lc_to_nv_map)
+        result = fd.ops.mul(nva, nvb)
+        print(f"TRANSLATOR DEBUG: Custom mul_translator returning: {result}")
+        return result
+
+    _symbol = _register_custom_op(mul)
+    print(f"DEBUG: Custom op symbol: {_symbol}, id: {_symbol.id}, executor: {_symbol.executor}")
+    _register_nvfuser_translator(_symbol, mul_translator)
+    print(f"DEBUG: After nvfuser registration, symbol executor: {_symbol.executor}")
+
+    SHAPE = (8, 2)
+    torch_device, torch_dtype = devices.to_torch_device(device), dtypes.to_torch_dtype(dtype)
+    module = MyModule2().to(device=torch_device, dtype=torch_dtype)
+    jitted = thunder.jit(module)
+    ref = MyModule2().to(device=torch_device, dtype=torch_dtype)
+    ref.load_state_dict(module.state_dict())
+
+    x = torch.testing.make_tensor(SHAPE, device=torch_device, dtype=torch_dtype)
+    y = torch.testing.make_tensor(SHAPE, device=torch_device, dtype=torch_dtype)
+    x_ref = x.clone().detach()
+    y_ref = y.clone().detach()
+
+    ref_out = ref(x_ref, y_ref)
+    out = jitted(x, y)
+    torch.testing.assert_close(ref_out, out)
+    out.mean().backward()
+
+    bsym: BoundSymbol
+    fwd_extrace = thunder.last_traces(jitted)[-1]
+    custom_ex_bsym_found: bool = False
+    for bsym in fwd_extrace.bound_symbols:
+        if (bsym.sym.name != _symbol.name and _symbol.name in bsym.sym.name) and bsym.sym.executor is custom_op_ex:
+            custom_ex_bsym_found = True
+    assert custom_ex_bsym_found
+
+    bwd_extrace = thunder.last_backward_traces(jitted)[-1]
+    bsym_custom_ex_bsym_found: bool = False
+    for bsym in bwd_extrace.bound_symbols:
+        if bsym.sym.name == f"{_symbol.name}_backward" and bsym.sym.executor is custom_op_ex:
+            bsym_custom_ex_bsym_found = True
+    assert bsym_custom_ex_bsym_found
+    print(fwd_extrace)
