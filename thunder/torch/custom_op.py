@@ -409,3 +409,25 @@ def _register_custom_op(custom_op: CustomOpDef) -> Symbol:
         set_default_executors(new_default_executors)
 
     return symbol
+
+
+def _register_nvfuser_translator(
+    symbol: Symbol,
+    translator_for_nvfuser: Callable[[Any], Any],
+    checker: Callable[[Any], bool] | None = None,
+) -> None:
+    """Register a translator for nvfuser executor for ``symbol``.
+
+    Args:
+        symbol: This should be the symbol from :func:`thunder.torch.custom_op._register_custom_op`.
+        translator_for_nvfuser: A function that takes :class:`~thunder.core.proxies.Proxy` objects
+            and Python built-in types as args and kwargs of ``fd``, :class:`nvfuser.FusionDefinition` and
+            ``lc_to_nv_map``, a dictionary of :class:`~thunder.core.proxies.TensorProxy` to actual values.
+        checker: A function that takes arguments of ``symbol`` and returns :obj:`True` if the nvfuser
+            definition supports those arguments. By default, A function that always returs :obj:`True` is used.
+    """
+    from thunder.executors.nvfuserex_impl import register_supported
+    from thunder.executors.torchex import _always_executable
+
+    register_supported(symbol, translator_for_nvfuser, checker or _always_executable)
+    register_supported(symbol.id, translator_for_nvfuser, checker or _always_executable)
