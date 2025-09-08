@@ -304,33 +304,27 @@ def test_nvfuser_impl_for_torch_library_custom_op(_, device: str, dtype: dtypes.
     devicetypes=(devices.DeviceType.CUDA,),
     dtypes=(dtypes.float32,),
     decorators=(
+        # NOTE: `disable_torch_autograd=True` is more prioritized, at the moment.
         pytest.mark.parametrize(
             "disable_torch_autograd",
-            (
-                True,
-                False,
-            ),
+            (True, False),
+            ids=("inference", "training"),
         ),
     ),
 )
 def test_nvfuser_translator_registration(_, device: str, dtype: dtypes.dtype, disable_torch_autograd: bool):
-    from nvfuser_direct import FusionDefinition
     from thunder.core.dtypes import to_dtype
     from thunder.executors.nvfuserex_impl import lcdtype_to_nvdtype, getnv
 
     def mul_translator(a, b, *, fd, lc_to_nv_map):
-        print(f"TRANSLATOR DEBUG: Custom mul_translator called with a={a}, b={b}")
-        print(f"TRANSLATOR DEBUG: lc_to_nv_map keys: {list(lc_to_nv_map.keys())}")
         nva = getnv(a, fd, lc_to_nv_map)
         nvb = getnv(b, fd, lc_to_nv_map)
         result = fd.ops.mul(nva, nvb)
-        print(f"TRANSLATOR DEBUG: Custom mul_translator returning: {result}")
-        return result
+        out = fd.ops.cast(result, lcdtype_to_nvdtype(to_dtype(a.dtype)))
+        return out
 
     _symbol = _register_custom_op(mul)
-    print(f"DEBUG: Custom op symbol: {_symbol}, id: {_symbol.id}, executor: {_symbol.executor}")
     _register_nvfuser_translator(_symbol, mul_translator)
-    print(f"DEBUG: After nvfuser registration, symbol executor: {_symbol.executor}")
 
     SHAPE = (8, 2)
     torch_device, torch_dtype = devices.to_torch_device(device), dtypes.to_torch_dtype(dtype)
