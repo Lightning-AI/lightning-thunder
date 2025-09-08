@@ -35,6 +35,7 @@ class DTensorPrimIDs(Enum):
     RESHAPE = auto()
     CONVERT_ELEMENT_TYPE = auto()
     BROADCAST_IN_DIM = auto()
+    _GROUPED_MM = auto()
 
 
 dtensor_torchsymbol = partial(torchsymbol, allow_tensor_subclass_proxy=True)
@@ -239,6 +240,32 @@ dtensor_broadcast_in_dim_prim_impl = pytorchex.register_operator(
 )
 
 pytorchex.register_implementation(dtensor_broadcast_in_dim_prim, dtensor_broadcast_in_dim_prim_impl)
+
+
+def dtensor_grouped_mm_meta(a, b, offsets):
+    output = run_with_fake_tensor(torch._grouped_mm, a, b, offsets)
+    local_tensor_proxy = TensorProxy(
+        like=a.local_tensor, dtype=dtypes.to_dtype(output._local_tensor.dtype), shape=output._local_tensor.shape
+    )
+    spec = output._spec
+    spec_proxy = AnyProxy(spec, history=a.history)
+    return create_dtensor_proxy_from_proxies(local_tensor_proxy, spec_proxy, False)
+
+
+dtensor_grouped_mm_prim = make_prim(DTensorPrimIDs._GROUPED_MM, "dtensor_grouped_mm_prim", meta=dtensor_grouped_mm_meta)
+
+dtensor_grouped_mm_prim_impl = pytorchex.register_operator(
+    "dtensor_grouped_mm_prim", like=dtensor_grouped_mm_prim, fn=torch._grouped_mm
+)
+
+pytorchex.register_implementation(dtensor_grouped_mm_prim, dtensor_grouped_mm_prim_impl)
+
+
+@dtensor_torchsymbol(torch._grouped_mm, id="dtensor.torch._grouped_mm")
+def dtensor_grouped_mm(a: TensorLike, b: TensorLike, offsets: TensorLike, *, bias=None, dtype=None) -> TensorLike:
+    assert bias is None, "bias is not supported"
+    assert dtype is None, "dtype is not supported"
+    return dtensor_grouped_mm_prim(a, b, offsets)
 
 
 def register_dtensor_torch_and_prims():

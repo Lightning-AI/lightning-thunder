@@ -12,7 +12,7 @@ import thunder
 
 from thunder.tests.distributed.helper import DistributedParallelTestCase
 from torch.distributed._tensor import DeviceMesh, distribute_tensor
-from torch.distributed.tensor.placement_types import Shard
+from torch.distributed.tensor.placement_types import Shard, Replicate
 from torch.testing._internal.distributed._tensor.common_dtensor import DTensorConverter
 
 from torch.testing._internal import common_utils
@@ -182,6 +182,42 @@ class DTensorTest(DistributedParallelTestCase):
         expected = in_dtensor.broadcast_to((dim_size, dim_size))
 
         torch.testing.assert_close(actual, expected)
+
+    @common_utils.parametrize("executor", tuple(executors_map.keys()))
+    @common_utils.parametrize(
+        "input_shardings",
+        [
+            (
+                [
+                    Shard(
+                        -1,
+                    )
+                ],
+                [
+                    Shard(1),
+                ],
+                [Replicate()],
+            ),
+        ],
+    )
+    def test_dtensor_grouped_mm(self, executor, input_shardings):
+        num_devices = self.world_size
+        mesh = DeviceMesh("cuda", list(range(num_devices)))
+
+        M = 16
+        N = 64
+        K = 32
+        G = 2
+
+        inp_shard, w_shard, offsets_shard = input_shardings
+        in_dtensor = distribute_tensor(torch.randn(M, K, requires_grad=False, dtype=torch.bfloat16), mesh, inp_shard)
+        w_dtensor = distribute_tensor(torch.randn(G, K, N, requires_grad=False, dtype=torch.bfloat16), mesh, w_shard)
+        offsets_dtensor = distribute_tensor(torch.tensor([0, 16], dtype=torch.int32), mesh, offsets_shard)
+
+        tfn = thunder.jit(torch._grouped_mm, executors=executors_map[executor].executors_list())
+
+        tfn(in_dtensor, w_dtensor, offsets_dtensor)
+        print(thunder.last_traces(tfn)[-1])
 
     @common_utils.parametrize(
         "op, executor",
