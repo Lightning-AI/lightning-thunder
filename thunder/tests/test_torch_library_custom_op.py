@@ -22,12 +22,12 @@ if TYPE_CHECKING:
 
 
 @torch.library.custom_op("my_custom_op::mul", mutates_args=())
-def mul(a: torch.Tensor, b: torch.Tensor, c: float | None = None, d: str = "") -> torch.Tensor:
+def mul(a: torch.Tensor, b: torch.Tensor, c: float | None = None) -> torch.Tensor:
     return a * b
 
 
 @torch.library.register_kernel("my_custom_op::mul", "cpu")
-def _(a: torch.Tensor, b: torch.Tensor, c: float | None = None, d: str = "") -> torch.Tensor:
+def _(a: torch.Tensor, b: torch.Tensor, c: float | None = None) -> torch.Tensor:
     return torch.from_numpy(
         np.multiply(
             a.numpy(force=True),
@@ -37,12 +37,12 @@ def _(a: torch.Tensor, b: torch.Tensor, c: float | None = None, d: str = "") -> 
 
 
 @torch.library.register_kernel("my_custom_op::mul", "cuda")
-def _(a: torch.Tensor, b: torch.Tensor, c: float | None = None, d: str = "") -> torch.Tensor:
+def _(a: torch.Tensor, b: torch.Tensor, c: float | None = None) -> torch.Tensor:
     return a * b
 
 
 @torch.library.register_fake("my_custom_op::mul")
-def _(a: torch.Tensor, b: torch.Tensor, c: float | None = None, d: str = "") -> torch.Tensor:
+def _(a: torch.Tensor, b: torch.Tensor, c: float | None = None) -> torch.Tensor:
     return torch.empty_like(a)
 
 
@@ -51,9 +51,9 @@ def setup_context_for_my_custom_op_mul(ctx, inputs, output) -> None:
     ctx.save_for_backward(a, b)
 
 
-def backward_of_my_custom_op_mul(ctx, grad) -> tuple[torch.Tensor, torch.Tensor, None, None]:
+def backward_of_my_custom_op_mul(ctx, grad) -> tuple[torch.Tensor, torch.Tensor, None]:
     a, b = ctx.saved_tensors
-    return torch.ops.my_custom_op.mul(grad, b), torch.ops.my_custom_op.mul(grad, a), None, None
+    return torch.ops.my_custom_op.mul(grad, b), torch.ops.my_custom_op.mul(grad, a), None
 
 
 torch.library.register_autograd(
@@ -316,7 +316,7 @@ def test_nvfuser_translator_registration(_, device: str, dtype: dtypes.dtype, di
     from thunder.core.dtypes import to_dtype
     from thunder.executors.nvfuserex_impl import lcdtype_to_nvdtype, getnv
 
-    def mul_translator(a, b, *, fd, lc_to_nv_map):
+    def mul_translator(a, b, c=None, *, fd, lc_to_nv_map):
         nva = getnv(a, fd, lc_to_nv_map)
         nvb = getnv(b, fd, lc_to_nv_map)
         result = fd.ops.mul(nva, nvb)
