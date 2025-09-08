@@ -1,4 +1,5 @@
 import math
+import os
 from functools import partial
 import warnings
 from dataclasses import dataclass
@@ -516,7 +517,16 @@ LLAMA_3_2_1B_CFG = {
 # eager - 698067456
 @requiresCUDA
 @requiresDeviceMemory(required_memory_bytes=int(0.7 * 1024 * 1024 * 1024))
-@pytest.mark.parametrize("attn_implementation", [None, "eager"])
+@pytest.mark.parametrize(
+    "attn_implementation",
+    [
+        None,
+        pytest.param(
+            "eager",
+            marks=pytest.mark.skipif(bool(os.getenv("SKIP_WITH_GPT_CI")), reason="Skipping this test on litGPT CI"),
+        ),
+    ],
+)
 def test_hf_phi3_vision(attn_implementation):
     # This test takes around 697805312 bytes (~0.7GB) of memory.
     # Shapes for data generated with help of the following script
@@ -647,6 +657,7 @@ def test_checkpointing_thunderfx():
 
 
 @requiresCUDA
+@pytest.mark.skipif(os.getenv("SKIP_WITH_GPT_CI"), reason="Skipping this test on litGPT CI")
 def test_hf_kvcache():
     from transformers.models.llama import LlamaForCausalLM, LlamaConfig
     from transformers.models.llama.modeling_llama import logger as llama_logger
