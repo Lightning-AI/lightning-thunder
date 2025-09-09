@@ -1004,6 +1004,22 @@ def test_dynamo_reproducer_split(
 
 @requiresCUDA
 def test_thunderfx():
+    from thunder import last_prologue_traces
+    from thunder.executors.pythonex import check_tensor_shape_and_metadata
+
+    def _get_last_prologue_traces(thunderfx_output):
+        last_prologue_trcs = []
+        for sinfo in thunderfx_output._backend.subgraph_infos:
+            for th_fqn in sinfo.thunder_compiled_fns:
+                trcs = last_prologue_traces(th_fqn)
+                if trcs != []:
+                    last_prologue_trcs.append(trcs[-1])
+                del trcs
+        return last_prologue_trcs
+
+    def _has_tensor_shape_and_metadata_check(prologue_trc):
+        return any(bsym.sym is check_tensor_shape_and_metadata for bsym in prologue_trc.bound_symbols)
+
     def foo(x):
         return torch.sin(x) + torch.cos(x)
 
@@ -1013,6 +1029,9 @@ def test_thunderfx():
     thunder_compiled_fns = cfoo._backend.subgraph_infos[0].thunder_compiled_fns
     assert len(thunder_compiled_fns) == 1
     assert last_traces(thunder_compiled_fns[0])
+    assert not any(
+        _has_tensor_shape_and_metadata_check(prologue_trc) for prologue_trc in _get_last_prologue_traces(cfoo)
+    )
 
     from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform
 
@@ -1022,6 +1041,7 @@ def test_thunderfx():
     assert len(thunder_compiled_fns) == 1
     trc = last_traces(thunder_compiled_fns[-1])[-1]
     assert any(bsym.sym.id == "nvtx_range_push" for bsym in trc.bound_symbols)
+    assert any(_has_tensor_shape_and_metadata_check(prologue_trc) for prologue_trc in _get_last_prologue_traces(cfoo))
 
     def fn(x, w):
         return x @ w
@@ -1033,6 +1053,9 @@ def test_thunderfx():
     cfn(x, w)
     trc = cfn.last_traces[-1]
     assert any(bsym.sym.name == "nvFusion0" for bsym in trc.bound_symbols)
+    assert not any(
+        _has_tensor_shape_and_metadata_check(prologue_trc) for prologue_trc in _get_last_prologue_traces(cfn)
+    )
 
 
 def test_thunderfx_last_traces():
@@ -1697,3 +1720,46 @@ def test_thunderfx_node_with_no_example_value():
     actual = thunderfx(test_fn)(x)
     expected = test_fn(x)
     torch.testing.assert_close(actual, expected)
+
+
+# This test addresses the bug reported in https://github.com/Lightning-AI/lightning-thunder/issues/2398
+def test_no_grad_region_split():
+    def fn(x):
+        # Thunder supports enclosing torch.set_grad_enabled(False/True)
+        with torch.no_grad():
+            # but does not support Tensor.sinc, causing graph splits
+            sinc = x.sinc()
+        return x + 1 + sinc
+
+    x = torch.randn(10, requires_grad=True)
+    x_ref = x.detach().clone().requires_grad_(True)
+
+    y = thunderfx(fn)(x)
+    y_ref = fn(x_ref)
+    torch.testing.assert_close(y, y_ref)
+    y.sum().backward()
+    y_ref.sum().backward()
+    torch.testing.assert_close(x.grad, x_ref.grad)
+
+
+# Ref: https://github.com/Lightning-AI/lightning-thunder/issues/2420
+def test_splitter_with_symint_node():
+    class GraphModule(torch.nn.Module):
+        def forward(self, L_self_cumulative_length_1_: "Sym(s27)"):
+            l_self_cumulative_length_1_ = L_self_cumulative_length_1_
+
+            add: "Sym(s27 + 1)" = l_self_cumulative_length_1_ + 1
+            l_self_cumulative_length_1_ = None
+            return (add,)
+
+    module = GraphModule()
+    ref_inputs = (100,)
+    reference = module(*ref_inputs)
+
+    jitted = thunderfx(GraphModule(), dynamic=True)
+    inputs = (100,)
+    actual = jitted(*inputs)
+    assert reference == actual
+
+    for subgraph in jitted._backend.subgraph_infos:
+        assert not subgraph.split_reasons

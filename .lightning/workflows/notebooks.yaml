@@ -9,7 +9,7 @@ machine: "L4"
 parametrize:
   matrix:
     image:
-      - "pytorchlightning/lightning-thunder:ubuntu24.04-cuda12.6.3-cudnn-fe1.10.0-py3.10-pt_2.7.1-dev"
+      - "pytorchlightning/lightning-thunder:ubuntu24.04-cuda12.6.3-cudnn-fe1.10.0-py3.10-pt_2.8.0-dev"
       - "pytorchlightning/lightning-thunder:ubuntu24.04-cuda12.6.3-cudnn-fe1.10.0-py3.10-pt_main-dev"
   exclude: []
   include: []

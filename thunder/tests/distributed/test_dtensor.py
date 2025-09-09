@@ -8,12 +8,11 @@ import torch
 if not torch.distributed.is_available():
     pytest.skip(allow_module_level=True)
 
-from thunder.dynamo import thunderfx
 import thunder
 
 from thunder.tests.distributed.helper import DistributedParallelTestCase
 from torch.distributed._tensor import DeviceMesh, distribute_tensor
-from torch.distributed.tensor.placement_types import Placement, Shard, Replicate
+from torch.distributed.tensor.placement_types import Shard
 from torch.testing._internal.distributed._tensor.common_dtensor import DTensorConverter
 
 from torch.testing._internal import common_utils
@@ -135,6 +134,54 @@ class DTensorTest(DistributedParallelTestCase):
 
         with pytest.raises(RuntimeError, match="has changed for cotangent between tracing and runtime"):
             torch.autograd.grad(actual, (in_dtensor, w_dtensor), g_o)
+
+    @common_utils.parametrize("executor", tuple(executors_map.keys()))
+    def test_dtensor_convert_element_type(self, executor):
+        from thunder.torch.experimental.dtensor_torch_and_prims import dtensor_convert_element_type_prim
+
+        num_devices = self.world_size
+        mesh = DeviceMesh("cuda", list(range(num_devices)))
+
+        dim_size = 16
+
+        in_dtensor = distribute_tensor(torch.randn(dim_size, dim_size, requires_grad=True), mesh, [Shard(0)])
+
+        def fn(x):
+            return dtensor_convert_element_type_prim(x, dtypes.bfloat16)
+
+        tmodel = thunder.jit(fn, executors=executors_map[executor].executors_list())
+        actual = tmodel(in_dtensor)
+        expected = in_dtensor.to(torch.bfloat16)
+
+        torch.testing.assert_close(actual, expected)
+
+        g_o = distribute_tensor(torch.ones(dim_size, dim_size), mesh, [Shard(0)])
+        expected_g = torch.autograd.grad(
+            expected,
+            (in_dtensor,),
+            g_o,
+        )
+        actual_g = torch.autograd.grad(actual, (in_dtensor,), g_o)
+
+        torch.testing.assert_close(actual_g, expected_g)
+
+    @common_utils.parametrize("executor", tuple(executors_map.keys()))
+    def test_dtensor_broadcast_in_dim(self, executor):
+        from thunder.torch.experimental.dtensor_torch_and_prims import dtensor_broadcast_in_dim_prim
+
+        num_devices = self.world_size
+        mesh = DeviceMesh("cuda", list(range(num_devices)))
+        dim_size = 16
+        in_dtensor = distribute_tensor(torch.randn(dim_size, dim_size, requires_grad=False), mesh, [Shard(0)])
+
+        def fn(x):
+            return dtensor_broadcast_in_dim_prim(x, (dim_size, dim_size), (0, 1))
+
+        tmodel = thunder.jit(fn, executors=executors_map[executor].executors_list())
+        actual = tmodel(in_dtensor)
+        expected = in_dtensor.broadcast_to((dim_size, dim_size))
+
+        torch.testing.assert_close(actual, expected)
 
     @common_utils.parametrize(
         "op, executor",
