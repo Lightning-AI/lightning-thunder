@@ -588,7 +588,6 @@ def test_disable_params_and_buffer_check():
 
 @pytest.mark.parametrize("dynamic", (False, True))
 def test_disable_params_check_thunderfx(dynamic: bool):
-    from thunder.transforms.extraction_only_prologue_transform import ExtractionOnlyPrologueTransform
     from thunder.dynamo import thunderfx
 
     class Model(torch.nn.Module):
