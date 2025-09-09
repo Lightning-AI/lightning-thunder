@@ -574,8 +574,8 @@ def jit(
             if requires_grad:
                 from thunder.transforms.autodiff import split_into_forward_and_backward
 
-                if "transformer_engine_v2" in {ex.name for ex in cd.executors_list}:
-                    from thunder.executors.transformer_engine_v2ex import _te_activation_checkpointing_transform
+                if "transformer_engine" in {ex.name for ex in cd.executors_list}:
+                    from thunder.executors.transformer_engineex import _te_activation_checkpointing_transform
 
                     computation_trc = _te_activation_checkpointing_transform(computation_trc)
 
