@@ -382,6 +382,11 @@ def _register_custom_op(custom_op: CustomOpDef) -> Symbol:
         tags = (OpTags.TORCH_COMPILE_COMPLIANT_CUSTOM_OP,)
     else:
         tags = ()
+    # NOTE: [Why `is_prim=True`?]
+    # It might sound nuanced, but prim ops are always there.
+    # non-prim ops need to be decomposable to be there.
+    # otherwise, i.e., they don't have subsymbols, they're treated as no-op.
+    # Rel: https://github.com/Lightning-AI/lightning-thunder/issues/2361.
     symbol = Symbol(
         name=fn_name,
         meta=meta_fn,
