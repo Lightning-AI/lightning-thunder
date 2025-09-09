@@ -78,7 +78,26 @@ _PROJECT_ROOT = os.path.dirname(_PACKAGE_ROOT)
 
 # TODO RC1 Review exposed names
 __all__ = [
+    # module aliases
+    "clang",
+    "dtypes",
+    "devices",
     "transforms",
+    # function aliases
+    "get_compile_data",
+    "trace",
+    # class aliases
+    "Proxy",
+    "TensorProxy",
+    "NumberProxy",
+    "StringProxy",
+    "IntegerProxy",
+    "FloatProxy",
+    "ComplexProxy",
+    "TupleProxy",
+    "ListProxy",
+    "DictProxy",
+    "AnyProxy",
     # dtype aliases
     "bool8",
     "uint8",
@@ -533,6 +552,7 @@ def jit(
                 from thunder.transforms.autodiff import grad_transform_on_trace
 
                 computation_trc = grad_transform_on_trace(computation_trc)
+                computation_traces.append(computation_trc)
 
             from thunder.executors.passes import _transform_for_operator_executor_execution
             from thunder.distributed.utils import maybe_sort_waits
@@ -856,6 +876,8 @@ def jit(
     @update_call_statistics
     def fn_(*args, **kwargs) -> Any:
         # NOTE: Don't capture cd or cs in the closure, otherwise it will create a cycle
+        cd = weakref_cd()
+        assert cd is not None, "cd has been cleared."
         cs = weakref_cs()
         assert cs is not None, "cs has been cleared."
         if is_tracing():
@@ -867,6 +889,9 @@ def jit(
         result = cache_entry.computation_fn(*inps)
         result = maybe_connect_to_autograd(cache_entry, result)
         result = call_epilogue(cache_entry, result, pro_to_epi)
+
+        # Reflect the state of is_grad_enabled, as its changes were tracked only inside Thunder
+        pytorch.set_grad_enabled(cd.is_grad_enabled)
 
         cs.last_computation = cache_entry.computation_fn
         return result
