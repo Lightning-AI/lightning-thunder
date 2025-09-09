@@ -506,7 +506,6 @@ def _register_nvfuser_translator(
 
                 jitted = thunder.jit(model)
                 out = jitted(x, y)
-
                 fwd_extrace = thunder.last_traces(jitted)[-1]
                 print(fwd_extrace)
                 # def computation(x, y, t_linear_weight):
@@ -523,6 +522,52 @@ def _register_nvfuser_translator(
                 #     # t21 = prims.gt(t17, 0.0)  # t21: "cuda:0 b8[8, 2]"
                 #     # t22 = prims.where(t21, t17, 0.0)  # t22: "cuda:0 bf16[8, 2]"
                 #   return {'output': (t22,), 'flat_args': [x, y, t_linear_weight], 'flat_output': (t22,)}, ((t21, t28, y, x), ())
+
+                out.mean().backward()
+                # The backward uses the original implementation.
+                print(thunder.last_backward_traces(jitted)[-1])
+                # def backward_fn(saved_for_backward, cotangents):
+                #   # saved_for_backward: "Collection"
+                #   # cotangents: "Collection"
+                #   C0, C1, = saved_for_backward
+                #   # C0: "Collection"
+                #   # C1: "Collection"
+                #   clear_mutable_collection(saved_for_backward)
+                #   clear_mutable_collection(C1)
+                #   del C1, saved_for_backward
+                #   t23, = cotangents
+                #   # t23: "cuda:0 bf16[8, 2]"
+                #   clear_mutable_collection(cotangents)
+                #   del cotangents
+                #   t21, t28, y, x, = C0
+                #   # t21: "cuda:0 b8[8, 2]"
+                #   # t28: "cuda:0 bf16[8, 2]"
+                #   # y: "cuda:0 bf16[8, 2]"
+                #   # x: "cuda:0 bf16[8, 2]"
+                #   clear_mutable_collection(C0)
+                #   del C0
+                #   [t24] = nvFusion1(t21, t23)
+                #     # t24 = prims.where(t21, t23, 0.0)  # t24: "cuda:0 bf16[8, 2]"
+                #   del t21, t23
+                #   [t19, t20] = my_custom_op_mul_backward(t28, y, t24)
+                #   del t20, t28, y, t24
+                #   t30 = torch.reshape(t19, (-1, 2))  # t30: "cuda:0 bf16[8, 2]"
+                #     # t30 = ltorch.reshape(t19, (-1, 2))  # t30: "cuda:0 bf16[8, 2]"
+                #       # t30 = prims.reshape(t19, (8, 2))  # t30: "cuda:0 bf16[8, 2]"
+                #   del t19
+                #   t31 = torch.permute(t30, (1, 0))  # t31: "cuda:0 bf16[2, 8]"
+                #     # t31 = ltorch.permute(t30, (1, 0))  # t31: "cuda:0 bf16[2, 8]"
+                #       # t31 = prims.transpose(t30, (1, 0))  # t31: "cuda:0 bf16[2, 8]"
+                #   del t30
+                #   t32 = torch.reshape(x, (-1, 2))  # t32: "cuda:0 bf16[8, 2]"
+                #     # t32 = ltorch.reshape(x, (-1, 2))  # t32: "cuda:0 bf16[8, 2]"
+                #       # t32 = prims.reshape(x, (8, 2))  # t32: "cuda:0 bf16[8, 2]"
+                #   del x
+                #   t29 = torch.matmul(t31, t32)  # t29: "cuda:0 bf16[2, 2]"
+                #     # t29 = ltorch.matmul(t31, t32)  # t29: "cuda:0 bf16[2, 2]"
+                #       # t29 = prims.matmul(t31, t32)  # t29: "cuda:0 bf16[2, 2]"
+                #   del t31, t32
+                #   return (None, None, t29)
     """
     from thunder.executors.nvfuserex_impl import register_supported
     from thunder.executors.torchex import _always_executable
