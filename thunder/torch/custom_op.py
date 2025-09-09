@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "_register_custom_op",
+    "_register_nvfuser_translator",
 ]
 
 
