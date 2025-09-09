@@ -36,10 +36,6 @@ _BACKWARD_FN: str = "_backward_fn"
 _SETUP_CONTEXT_FN: str = "_setup_context_fn"
 
 
-def _is_custom_op_symbol(symbol: Symbol) -> bool:
-    return "torch::ops::" in str(symbol.id)
-
-
 @dataclass(frozen=True)
 class SavedIndices:
     """Information about what indices need to be saved for backward pass"""
