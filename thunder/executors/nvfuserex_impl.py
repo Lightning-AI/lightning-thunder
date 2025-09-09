@@ -3247,12 +3247,10 @@ def cumsum_transform(
         out_dtype = lcdtype_to_nvdtype(dtypes.to_dtype(dtype))
 
     nv_a = getnv(a, fd, lc_to_nv_map)
+    out = fd.ops.cast(nv_a, out_dtype)
     if a.ndim >= 1:
-        out = fd.ops.cumsum(nv_a, dim)
-    else:
-        out = nv_a
-    out_cast = fd.ops.cast(out, out_dtype)
-    return out_cast
+        out = fd.ops.cumsum(out, dim)
+    return out
 
 
 register_supported(ltorch.cumsum, cumsum_transform, _cumsum_check)
