@@ -494,7 +494,9 @@ def _register_nvfuser_translator(
             SHAPE = (8, 2)
 
             if __name__ == "__main__":
+                # Register the custom_op of `mul` with :func:`thunder.torch._register_custom_op`
                 _symbol = _register_custom_op(mul)
+                # Register custom nvfuser definition for the already registered custom_op of mul
                 _register_nvfuser_translator(_symbol, mul_translator)
 
                 model = MyModule().to(device=DEVICE, dtype=DTYPE)
