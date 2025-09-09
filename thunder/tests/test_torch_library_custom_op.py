@@ -304,7 +304,6 @@ def test_nvfuser_impl_for_torch_library_custom_op(_, device: str, dtype: dtypes.
     devicetypes=(devices.DeviceType.CUDA,),
     dtypes=(dtypes.float32,),
     decorators=(
-        # NOTE: `disable_torch_autograd=True` is more prioritized, at the moment.
         pytest.mark.parametrize(
             "disable_torch_autograd",
             (True, False),
@@ -341,20 +340,24 @@ def test_nvfuser_translator_registration(_, device: str, dtype: dtypes.dtype, di
     ref_out = ref(x_ref, y_ref)
     out = jitted(x, y)
     torch.testing.assert_close(ref_out, out)
-    out.mean().backward()
 
+    # one nvfuser fusion definition is expected to include custom_op
     bsym: BoundSymbol
     fwd_extrace = thunder.last_traces(jitted)[-1]
-    custom_ex_bsym_found: bool = False
-    for bsym in fwd_extrace.bound_symbols:
-        if (bsym.sym.name != _symbol.name and _symbol.name in bsym.sym.name) and bsym.sym.executor is custom_op_ex:
-            custom_ex_bsym_found = True
-    assert custom_ex_bsym_found
+    nvfuser_def_for_custom_op_found: bool = False
+    for bsym in filter(
+        lambda bsym: bsym.sym.is_fusion and bsym.sym.executor.name == "nvfuser", fwd_extrace.bound_symbols
+    ):
+        if any(sub_bsym.sym.id == _symbol.id for sub_bsym in bsym.subsymbols):
+            nvfuser_def_for_custom_op_found = True
+    assert nvfuser_def_for_custom_op_found
 
-    bwd_extrace = thunder.last_backward_traces(jitted)[-1]
-    bsym_custom_ex_bsym_found: bool = False
-    for bsym in bwd_extrace.bound_symbols:
-        if bsym.sym.name == f"{_symbol.name}_backward" and bsym.sym.executor is custom_op_ex:
-            bsym_custom_ex_bsym_found = True
-    assert bsym_custom_ex_bsym_found
-    print(fwd_extrace)
+    if not disable_torch_autograd:
+        out.mean().backward()
+
+        bwd_extrace = thunder.last_backward_traces(jitted)[-1]
+        bsym_custom_ex_bsym_found: bool = False
+        for bsym in bwd_extrace.bound_symbols:
+            if bsym.sym.name == f"{_symbol.name}_backward" and bsym.sym.executor is custom_op_ex:
+                bsym_custom_ex_bsym_found = True
+        assert bsym_custom_ex_bsym_found
