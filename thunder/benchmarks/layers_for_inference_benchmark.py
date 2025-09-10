@@ -424,7 +424,7 @@ class NVFP4InferenceGroupedLinear(nn.Module):
             ],
             dim=1,
         )
-        blockscale_offsets = offsets
+        blockscale_offsets = torch.cumsum(torch.ceil(tokens_per_group, 128) * 128)
         return torch.ops.nvf_cutlass.f16a_nvfp4weight_scaled_grouped_mm(
             hidden_states,
             self.fp4_weight,
