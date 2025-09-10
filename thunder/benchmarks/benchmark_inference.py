@@ -10,14 +10,16 @@ Key metrics:
 """
 
 from __future__ import annotations
-import argparse
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+import argparse
 import json
 import os
 import statistics
+import sys
 import time
-from typing import TYPE_CHECKING
+import warnings
 
 import torch
 import torch.nn as nn
@@ -585,6 +587,12 @@ def main():
         disable_moe_replacement=args.disable_moe_replacement,
     )
     benchmark = InferenceBenchmark(config)
+
+    if args.enable_nvfp4:
+        msg = "NVFP4 kernels are not yet available. `--enable-nvfp4` runs only quantization but not benchmark"
+        warnings.warn(msg)
+        sys.exit(0)
+
     benchmark.run_benchmark()
     benchmark.print_results()
     if args.save_results:
