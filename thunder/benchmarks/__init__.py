@@ -767,7 +767,13 @@ thunder_transformerengine_executor: None | Callable = None
 if transformer_engine_ex is not None:
 
     def thunder_transformerengine_executor(fn: Callable):
-        return thunder.jit(fn, executors=(transformer_engine_ex,) + thunder.get_default_executors(), transforms=[TransformerEngineTransform(), ])
+        return thunder.jit(
+            fn,
+            executors=(transformer_engine_ex,) + thunder.get_default_executors(),
+            transforms=[
+                TransformerEngineTransform(),
+            ],
+        )
 
 
 def thunder_sdpa_executor(fn: Callable) -> Callable:
