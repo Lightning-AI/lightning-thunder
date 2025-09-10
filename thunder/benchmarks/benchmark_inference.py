@@ -213,7 +213,6 @@ class InferenceBenchmark:
 
         self.hf_config = config
 
-        # TODO: Apply NVFP4 quantization to weights if requested
         with DEVICE:
             model = AutoModelForCausalLM.from_config(config, torch_dtype=torch.bfloat16)
 
