@@ -197,6 +197,9 @@ def dequantize_to_dtype(tensor_fp4, tensor_sf, global_scale, dtype, device, bloc
     return out
 
 
+# TODO: Update this accordingly to the progress of nvfp4 kernel implementation.
+# An alternative is to use `_register_nvfuser_translator` of https://github.com/Lightning-AI/lightning-thunder/pull/2481
+# instead of updating this function itself.
 @torch.library.custom_op("nvf_cutlass::f16a_nvfp4weight_scaled_mm", mutates_args=())
 def nvfuser_f16a_nvfp4weight_scaled_mm(
     activation: torch.Tensor,
@@ -222,6 +225,9 @@ def _(
     return torch.empty((activation.size(0), fp4_weight.size(0)), device=activation.device, dtype=activation.dtype)
 
 
+# TODO: Update this accordingly to the progress of nvfp4 kernel implementation.
+# An alternative is to use `_register_nvfuser_translator` of https://github.com/Lightning-AI/lightning-thunder/pull/2481
+# instead of updating this function itself.
 @torch.library.custom_op("nvf_cutlass::f16a_nvfp4weight_scaled_grouped_mm", mutates_args=())
 def nvfuser_f16a_nvfp4weight_scaled_grouped_mm(
     activation: torch.Tensor,
@@ -414,6 +420,7 @@ class NVFP4InferenceGroupedLinear(nn.Module):
         self.register_buffer("ab_strides", ab_strides)
         self.register_buffer("c_strides", c_strides)
 
+    # TODO: Update this accordingly to the progress of nvfp4 kernel implementation.
     def forward(self, hidden_states: torch.Tensor, offsets: torch.Tensor) -> torch.Tensor:
         tokens_per_group = offsets[1:] - offsets[:-1]
         problem_sizes = torch.stack(
