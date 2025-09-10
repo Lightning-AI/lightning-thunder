@@ -29,7 +29,6 @@ from thunder.transforms.extraction_only_prologue_transform import ExtractionOnly
 if TYPE_CHECKING:
     from typing import Any
     from thunder.dynamo.utils import SubgraphInfo
-    from thunder.core.transform_common import Transform
     from thunder.core.trace import TraceCtx as Trace
     from os import PathLike
     from collections.abc import Callable
