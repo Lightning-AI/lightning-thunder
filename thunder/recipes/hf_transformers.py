@@ -38,7 +38,7 @@ class InplaceIndexCopyTransform(thunder.Transform):
         return pro, comp_new, epi
 
 
-@Recipe.register("transformers")
+@Recipe.register("hf-transformers")
 class HFTransformers(BaseRecipe):
     """
     Recipe tuned for Hugging Face ``transformers`` models.
@@ -77,7 +77,7 @@ class HFTransformers(BaseRecipe):
 
         version = LooseVersion(transformers.__version__)
         min_version = LooseVersion("4.46.0")
-        max_version = LooseVersion("5.0.0")
+        max_version = LooseVersion("4.55.4")
 
         if version < min_version or version > max_version:
             warnings.warn(
@@ -178,5 +178,8 @@ class HFTransformers(BaseRecipe):
 
         if getattr(thunder_model, "_sample", None):
             thunder_model._sample = partial(thunder_model._sample.__func__, thunder_model)
+
+        if getattr(thunder_model, "_valid_auto_compile_criteria", None):
+            thunder_model._valid_auto_compile_criteria = lambda *args, **kwargs: False
 
         return thunder_model
