@@ -35,6 +35,7 @@ class DTensorPrimIDs(Enum):
     RESHAPE = auto()
     CONVERT_ELEMENT_TYPE = auto()
     BROADCAST_IN_DIM = auto()
+    LINEAR = auto()
 
 
 dtensor_torchsymbol = partial(torchsymbol, allow_tensor_subclass_proxy=True)
@@ -241,6 +242,33 @@ dtensor_broadcast_in_dim_prim_impl = pytorchex.register_operator(
 pytorchex.register_implementation(dtensor_broadcast_in_dim_prim, dtensor_broadcast_in_dim_prim_impl)
 
 
+def dtensor_linear_meta(a, w, bias):
+    output = run_with_fake_tensor(torch.nn.functional.linear, a, w, bias)
+    local_tensor_proxy = TensorProxy(like=a.local_tensor)
+    local_tensor_proxy = TensorProxy(
+        like=a.local_tensor, shape=output._local_tensor.shape, dtype=dtypes.to_dtype(output._local_tensor.dtype)
+    )
+    spec = output._spec
+    spec_proxy = AnyProxy(spec, history=a.history)
+    return create_dtensor_proxy_from_proxies(local_tensor_proxy, spec_proxy, False)
+
+
+# TODO: Add grad rule once the prims used for linear grad-rule are available.
+dtensor_linear_prim = make_prim(DTensorPrimIDs.LINEAR, "dtensor_linear_prim", meta=dtensor_linear_meta)
+
+dtensor_linear_prim_impl = pytorchex.register_operator(
+    "dtensor_linear_prim", like=dtensor_linear_prim, fn=torch.nn.functional.linear
+)
+
+pytorchex.register_implementation(dtensor_linear_prim, dtensor_linear_prim_impl)
+
+
+@dtensor_torchsymbol(torch.nn.functional.linear, id="dtensor.torch.nn.functional.linear")
+def dtensor_linear(a: TensorLike, w: TensorLike, bias: None | TensorLike = None) -> TensorLike:
+    return dtensor_linear_prim(a, w, bias)
+
+
 def register_dtensor_torch_and_prims():
     register_function_for_dtensor(torch.mul, ltorch.mul, dtensor_mul, is_method=True)
     register_function_for_dtensor(torch.reshape, ltorch.reshape, dtensor_reshape, is_method=True)
+    register_function_for_dtensor(torch.nn.functional.linear, ltorch.linear, dtensor_linear, is_method=False)

@@ -2434,6 +2434,7 @@ def linear(
 
 
 register_supported(PrimIDs.LINEAR, linear, _linear_check)
+register_supported(DTensorPrimIDs.LINEAR, linear, _linear_check)
 
 
 def _matmul_check(
