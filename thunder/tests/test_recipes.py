@@ -210,13 +210,13 @@ def test_plugins_composition(monkeypatch):
     with patch("thunder.jit") as mock_jit:
         _ = thunder.compile(model, plugins="fp8")
         call_args = mock_jit.call_args
-        assert "transformer_engine" in [el.name for el in call_args.kwargs["executors"]]
+        assert "transformer_engine_v1" in [el.name for el in call_args.kwargs["executors"]]
         for ex in thunder.get_default_executors():
             assert ex.name in [el.name for el in call_args.kwargs["executors"]]
 
         _ = thunder.compile(model, plugins=["fp8"])
         call_args = mock_jit.call_args
-        assert "transformer_engine" in [el.name for el in call_args.kwargs["executors"]]
+        assert "transformer_engine_v1" in [el.name for el in call_args.kwargs["executors"]]
         for ex in thunder.get_default_executors():
             assert ex.name in [el.name for el in call_args.kwargs["executors"]]
 
@@ -224,7 +224,7 @@ def test_plugins_composition(monkeypatch):
 
         _ = thunder.compile(model, plugins=[FP8()])
         call_args = mock_jit.call_args
-        assert "transformer_engine" in [el.name for el in call_args.kwargs["executors"]]
+        assert "transformer_engine_v1" in [el.name for el in call_args.kwargs["executors"]]
         for ex in thunder.get_default_executors():
             assert ex.name in [el.name for el in call_args.kwargs["executors"]]
 
@@ -252,7 +252,7 @@ def test_plugins_composition(monkeypatch):
         transforms = call_args.kwargs["transforms"]
         for expected in expected_transforms:
             assert any(isinstance(el, expected) for el in transforms)
-        assert "transformer_engine" in [el.name for el in call_args.kwargs["executors"]]
+        assert "transformer_engine_v1" in [el.name for el in call_args.kwargs["executors"]]
 
 
 @pytest.mark.skipif(not cudnn_available(), reason="cuDNN is not available")
