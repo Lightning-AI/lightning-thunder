@@ -295,6 +295,7 @@ class QuantizedLinearTransform(thunder.Transform):
             else:
                 new_computation_trace.bound_symbols.append(bsym.from_bsym())
 
+        print(new_computation_trace)
         return prologue_trace, new_computation_trace, epilogue_trace
 
 
@@ -312,13 +313,13 @@ compiled_linear = thunder.jit(linear, transforms=[tfms], executors=[nvfp4_execut
 # @torch.no_grad()
 # @no_autocast
 # def computation(input, t_0_weight, t_0_weight_per_tensor_scale, t_0_weight_block_scales):
-#   # input: "cuda:0 f32[128, 64]"
+#   # input: "cuda:0 bf16[128, 64]"
 #   # t_0_weight: "cuda:0 ui8[256, 32]"
 #   # t_0_weight_per_tensor_scale: "cuda:0 f32[]"
-#   # t_0_weight_block_scales: "cuda:0 f8_e4m3fn[256, 4]"
+#   # t_0_weight_block_scales: "cuda:0 f8_e4m3fn[1024]"
 
 #   # /usr/local/lib/python3.12/dist-packages/torch/nn/modules/linear.py:134:             return F.linear(input, self.weight, self.bias)
-#   t3 = nvfp4_linear(input, t_0_weight, t_0_weight_per_tensor_scale, t_0_weight_block_scales, torch.float32, None)  # t3: "cuda:0 f32[128, 256]"
+#   t3 = nvfp4_linear(input, t_0_weight, t_0_weight_per_tensor_scale, t_0_weight_block_scales, torch.bfloat16, None)  # t3: "cuda:0 bf16[128, 256]"
 #   return {'output': (t3,), 'flat_args': [input, t_0_weight]}
 
 
