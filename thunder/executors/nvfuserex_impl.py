@@ -70,7 +70,7 @@ from thunder.executors.nvfuserex import nvfuser_version
 # NOTE This impl file is here because nvFuser may not be available, so it's imported conditionally
 #   by nvfuserex.py when nvFuser is available.
 
-DIRECT_BINDINGS_SUPPORTED_VERSION = LooseVersion("0.2.32")
+DIRECT_BINDINGS_SUPPORTED_VERSION = LooseVersion("0.2.34")
 DTENSOR_SUPPORTED_VERSION = LooseVersion("0.2.28")
 if nvfuser_version() >= DIRECT_BINDINGS_SUPPORTED_VERSION:
     import nvfuser_direct as nvfuser
