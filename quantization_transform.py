@@ -295,7 +295,6 @@ class QuantizedLinearTransform(thunder.Transform):
             else:
                 new_computation_trace.bound_symbols.append(bsym.from_bsym())
 
-        print(new_computation_trace)
         return prologue_trace, new_computation_trace, epilogue_trace
 
 
