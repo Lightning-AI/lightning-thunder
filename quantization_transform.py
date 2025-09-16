@@ -2,10 +2,13 @@ import thunder
 from thunder.core import prims
 from thunder.transforms.utils import get_checks, trace_with_replaced_proxy_metadata, add_trace_output
 import torch
+
 import torchao.prototype.mx_formats.nvfp4_tensor as nvfp4_tensor
+import torchao  # Version 0.13
 
 nvfp4_executor = thunder.extend.OperatorExecutor("nvfp4_executor", version=0.1)
 
+BLOCK_SIZE = 16
 FLOAT4_E2M1_MAX = 6.0
 FLOAT8_E4M3_EPS = torch.finfo(torch.float8_e4m3fn).tiny
 FLOAT8_E4M3_MAX = torch.finfo(torch.float8_e4m3fn).max
@@ -19,11 +22,15 @@ def quantize_fn(t: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tens
     with torch.no_grad():
         per_tensor_scale = compute_per_tensor_scale(t)
         qs, qw = nvfp4_tensor.nvfp4_quantize(t, per_tensor_scale=per_tensor_scale)
+
+        # Swizzle the scales
+        M, K = t.shape[0], t.shape[1]
+        scale_shape = (M, K // BLOCK_SIZE)
+        qs = nvfp4_tensor.to_blocked(
+            qs.view(scale_shape)
+        ).flatten()
+
     return qw, qs, per_tensor_scale
-
-
-BLOCK_SIZE = 16
-
 
 # https://github.com/pytorch/ao/blob/4dffb40280ea7b0e1732c580d08df58d0134c543/torchao/prototype/mx_formats/nvfp4_tensor.py#L567-L568
 def _nvfp4_linear(
@@ -44,21 +51,11 @@ def _nvfp4_linear(
     # assert b._block_size == 16, f"NVFP4 requires block_size=16, got {b._block_size}"
     assert bias is None
 
-    M, K = quantized_a.shape[0], quantized_a.shape[1]
-    N = quantized_b.shape[1]
+    # M, K = quantized_a.shape[0], quantized_a.shape[1]
+    # N = quantized_b.shape[1]
 
-    # Swizzle Dizzle
-    if True or a._is_swizzled_scales:
-        a_scale_blocked = a_block_scales  # Already swizzled
-    else:
-        a_scale = a_block_scales.view(M, K // BLOCK_SIZE)
-        a_scale_blocked = nvfp4_tensor.to_blocked(a_scale)
-
-    if True or b._is_swizzled_scales:
-        b_scale_blocked = b_block_scales  # Already swizzled
-    else:
-        b_scale = b_block_scales.view(N, K // BLOCK_SIZE)
-        b_scale_blocked = nvfp4_tensor.to_blocked(b_scale)
+    a_scale_blocked = a_block_scales  # Already swizzled    
+    b_scale_blocked = b_block_scales  # Already swizzled
 
     # Merge double quant scales into 1 scale for Scale_In^D
     scale_result = a_per_tensor_scale * b_per_tensor_scale
@@ -325,6 +322,8 @@ compiled_linear = thunder.jit(linear, transforms=[tfms], executors=[nvfp4_execut
 #   return {'output': (t3,), 'flat_args': [input, t_0_weight]}
 
 
-# Getting the following error on RTX 6000 Ada, test on B200 which should actually support the NVFP4 GEMM
+# Getting the following error on RTX 6000 Ada as nvFP4 shouldn't be supported anyways
 # RuntimeError: CUDA error: CUBLAS_STATUS_NOT_SUPPORTED when calling `cublasLtMatmulAlgoGetHeuristic( ltHandle, computeDesc.descriptor(), Adesc.descriptor(), Bdesc.descriptor(), Cdesc.descriptor(), Ddesc.descriptor(), preference.descriptor(), 1, &heuristicResult, &returnedResult)`
+
+# But it works fine on B200
 compiled_linear(torch.randn(128, 64, device="cuda"))
