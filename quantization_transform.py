@@ -300,7 +300,7 @@ class QuantizedLinearTransform(thunder.Transform):
 
 tfms = QuantizedLinearTransform()
 
-linear = torch.nn.Sequential(torch.nn.Linear(64, 256, bias=False, device="cuda"))
+linear = torch.nn.Sequential(torch.nn.Linear(64, 256, dtype=torch.bfloat16, bias=False, device="cuda"))
 compiled_linear = thunder.jit(linear, transforms=[tfms], executors=[nvfp4_executor])
 
 # TODO: Insert quantize_fn for input in trace.
@@ -326,4 +326,4 @@ compiled_linear = thunder.jit(linear, transforms=[tfms], executors=[nvfp4_execut
 # RuntimeError: CUDA error: CUBLAS_STATUS_NOT_SUPPORTED when calling `cublasLtMatmulAlgoGetHeuristic( ltHandle, computeDesc.descriptor(), Adesc.descriptor(), Bdesc.descriptor(), Cdesc.descriptor(), Ddesc.descriptor(), preference.descriptor(), 1, &heuristicResult, &returnedResult)`
 
 # But it works fine on B200
-compiled_linear(torch.randn(128, 64, device="cuda"))
+compiled_linear(torch.randn(128, 64, device="cuda", dtype=torch.bfloat16))
