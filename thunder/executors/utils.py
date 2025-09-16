@@ -97,7 +97,7 @@ class Region:
 
 
 # Helper to use torch.autograd.Function as an implementation for a symbol.
-# See `transformer_engineex.py` for example.
+# See `transformer_engine_v1ex.py` for example.
 class Context:
     def __init__(self):
         self.saved_tensors = ()

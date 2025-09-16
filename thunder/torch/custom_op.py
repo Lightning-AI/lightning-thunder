@@ -357,7 +357,7 @@ def _register_custom_op(custom_op: CustomOpDef) -> Symbol:
         name=fn_name,
         meta=meta_fn,
         id=op_id,
-        is_prim=False,
+        is_prim=True,
         tags=tags,
     )
     # Register both `torch.ops.my_lib.foo` and `torch.ops.my_lib.foo.default`.

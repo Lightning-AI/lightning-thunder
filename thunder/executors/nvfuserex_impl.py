@@ -255,7 +255,12 @@ def multidevice_schedule(fd: FusionDefinition, in_dtensors: list[Proxy]) -> None
         assert isinstance(in_dtensor, DTensorProxy)
         # Set the device mesh.
         assert in_dtensor.device_mesh.ndim == 1, "nvFuser's Python API only supports 1D meshes."
-        mesh = nvfd.multidevice.DeviceMesh(in_dtensor.device_mesh.mesh.tolist())
+
+        # nvfuser's DeviceMesh supports torch.Tensor since 0.2.30
+        if nvfuser_version() >= LooseVersion("0.2.30"):
+            mesh = nvfd.multidevice.DeviceMesh(in_dtensor.device_mesh.mesh)
+        else:
+            mesh = nvfd.multidevice.DeviceMesh(in_dtensor.device_mesh.mesh.tolist())
 
         in_tv.set_device_mesh(mesh)
 
@@ -2429,6 +2434,7 @@ def linear(
 
 
 register_supported(PrimIDs.LINEAR, linear, _linear_check)
+register_supported(DTensorPrimIDs.LINEAR, linear, _linear_check)
 
 
 def _matmul_check(
@@ -3222,16 +3228,12 @@ register_supported(prims._grouped_mm, _grouped_mm_transform, _grouped_mm_check)
 
 
 def _cumsum_check(a: TensorProxy, dim: int, /, dtype: dtypes.dtype | None = None) -> bool:
-    if a.ndim != 1:
+    if nvfuser_version() < LooseVersion("0.2.33") and a.ndim != 1:
         return False
 
     return is_supported_tensor(a)
 
 
-# Emulate cumsum using matmul: cumsum(a) = a @ triu(ones)
-#
-# This is suboptimal. Revisit this after nvFuser has a scan-based cumsum
-# implementation.
 def cumsum_transform(
     a: TensorProxy,
     dim: int,
@@ -3243,26 +3245,31 @@ def cumsum_transform(
     fd: FusionDefinition,
     lc_to_nv_map: dict,
 ) -> TensorProxy:
-    if dtypes.is_integer_dtype(a.dtype):
-        # torch.matmul can't do integers on GPU so we convert `a` to
-        # float.
-        compute_dtype = DataType.Float
-    else:
-        compute_dtype = lcdtype_to_nvdtype(a.dtype)
-
     if dtype is None:
         out_dtype = lcdtype_to_nvdtype(a.dtype if a.dtype not in dtypes.integer_dtypes else dtypes.int64)
     else:
         out_dtype = lcdtype_to_nvdtype(dtypes.to_dtype(dtype))
 
     nv_a = getnv(a, fd, lc_to_nv_map)
-    nv_a = fd.ops.cast(nv_a, compute_dtype)
 
-    mask = fd.ops.full((a.numel, a.numel), fd.define_scalar(1), compute_dtype)
-    mask = fd.ops.triu(mask)
+    if nvfuser_version() < LooseVersion("0.2.33"):
+        if dtypes.is_integer_dtype(a.dtype):
+            # torch.matmul can't do integers on GPU so we convert `a` to
+            # float.
+            compute_dtype = DataType.Float
+        else:
+            compute_dtype = lcdtype_to_nvdtype(a.dtype)
+        nv_a = fd.ops.cast(nv_a, compute_dtype)
 
-    out = fd.ops.matmul(nv_a, mask)
-    out = fd.ops.cast(out, out_dtype)
+        mask = fd.ops.full((a.numel, a.numel), fd.define_scalar(1), compute_dtype)
+        mask = fd.ops.triu(mask)
+
+        out = fd.ops.matmul(nv_a, mask)
+        out = fd.ops.cast(out, out_dtype)
+    else:
+        out = fd.ops.cast(nv_a, out_dtype)
+        if a.ndim >= 1:
+            out = fd.ops.cumsum(out, dim)
     return out
 
 
