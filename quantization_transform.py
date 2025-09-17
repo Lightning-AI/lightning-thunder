@@ -11,6 +11,7 @@ from thunder.transforms.utils import get_checks, trace_with_replaced_proxy_metad
 
 if TYPE_CHECKING:
     from thunder.core.proxies import TensorProxy
+    from thunder.core.symbols import BoundSymbol
 
 
 nvfp4_executor = thunder.extend.OperatorExecutor("nvfp4_executor", version=0.1)
@@ -151,7 +152,13 @@ def nvfp4_quantize_impl(a: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, to
     return quantize_fn(a)
 
 
-nvfp4_quantize = nvfp4_executor.register_operator("nvfp4_quantize", meta=nvfp4_quantize_meta, fn=nvfp4_quantize_impl)
+def nvfp4_quantize_bind_postprocess(bsym: BoundSymbol) -> None:
+    bsym.header = "Output tuple has (quantized, block scale, global scale)"
+
+
+nvfp4_quantize = nvfp4_executor.register_operator(
+    "nvfp4_quantize", meta=nvfp4_quantize_meta, fn=nvfp4_quantize_impl, bind_postprocess=nvfp4_quantize_bind_postprocess
+)
 
 
 class QuantizedLinearTransform(thunder.Transform):
@@ -367,6 +374,7 @@ compiled_linear = thunder.jit(linear, transforms=[tfms], executors=[nvfp4_execut
 #   # t_0_weight: "cuda:0 ui8[256, 32]"
 #   # t_0_weight_per_tensor_scale: "cuda:0 f32[]"
 #   # t_0_weight_block_scales: "cuda:0 f8_e4m3fn[1024]"
+#   #   # Output tuple has (quantized, block scale, global scale)
 #   (t0, t1, t2) = nvfp4_quantize(input)
 #
 #   # /usr/local/lib/python3.12/dist-packages/torch/nn/modules/linear.py:134:             return F.linear(input, self.weight, self.bias)
