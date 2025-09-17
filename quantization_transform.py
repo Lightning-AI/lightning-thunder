@@ -2,6 +2,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import torch
+import torch.nn as nn
 import torchao.prototype.mx_formats.nvfp4_tensor as nvfp4_tensor
 
 import thunder
@@ -10,6 +11,7 @@ from thunder.core.trace import tracectx
 from thunder.transforms.utils import get_checks, trace_with_replaced_proxy_metadata, add_trace_output
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from thunder.core.proxies import TensorProxy
     from thunder.core.symbols import BoundSymbol
 
@@ -161,8 +163,20 @@ nvfp4_quantize = nvfp4_executor.register_operator(
 )
 
 
+def _default_filter(name: str, layer: nn.Module) -> bool:
+    return isinstance(layer, nn.Linear)
+
+
 class QuantizedLinearTransform(thunder.Transform):
-    def __init__(self):
+    """Transform model into NVFP4 for inference.
+
+    Args:
+        filter_fn: Takes name and :class:`~torch.nn.Module` and returns ``True`` if the layer is to quantize.
+            Default is to quantize all linear layers in the model.
+    """
+
+    def __init__(self, filter_fn: Callable[[str, nn.Module], bool] = _default_filter):
+        self.filter_fn = filter_fn
         self.quant_states = {}
         self.quantized_submodule_names = set()
 
@@ -195,7 +209,8 @@ class QuantizedLinearTransform(thunder.Transform):
             processed_names.add(weight_name)
 
         for n, submodule in model._model.named_modules():
-            if isinstance(submodule, torch.nn.Linear):
+            # if isinstance(submodule, nn.Linear):
+            if self.filter_fn(n, submodule):
                 convert_linear_submodule(model, n)
 
     def transform_traces_pre_prologue(self, prologue_trace, computation_trace, epilogue_trace, **kwargs):
@@ -357,36 +372,47 @@ class QuantizedLinearTransform(thunder.Transform):
         return prologue_trace, new_computation_trace, epilogue_trace
 
 
-tfms = QuantizedLinearTransform()
+class Module(nn.Module):
+    def __init__(self, in_features: int = 64, out_features: int = 256, bias: bool = False):
+        super().__init__()
+        self.linear = nn.Linear(in_features, out_features, bias=bias)
 
-linear = torch.nn.Sequential(torch.nn.Linear(64, 256, dtype=torch.bfloat16, bias=False, device="cuda"), torch.nn.ReLU())
-compiled_linear = thunder.jit(linear, transforms=[tfms], executors=[nvfp4_executor], disable_atograd=True)
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        out = self.linear(x)
+        return torch.relu(out)
 
-# Transformed Computation Trace:
-# Constructed by Unwrap the actual return value
-# import torch
-# from thunder.executors.torchex import no_autocast
-#
-# @torch.no_grad()
-# @no_autocast
-# def computation(input, t_0_weight, t_0_weight_per_tensor_scale, t_0_weight_block_scales):
-#   # input: "cuda:0 bf16[128, 64]"
-#   # t_0_weight: "cuda:0 ui8[256, 32]"
-#   # t_0_weight_per_tensor_scale: "cuda:0 f32[]"
-#   # t_0_weight_block_scales: "cuda:0 f8_e4m3fn[1024]"
-#   #   # Output tuple has (quantized, block scale, global scale)
-#   (t0, t1, t2) = nvfp4_quantize(input)
-#
-#   # /usr/local/lib/python3.12/dist-packages/torch/nn/modules/linear.py:134:             return F.linear(input, self.weight, self.bias)
-#   t3 = nvfp4_linear(t0, t_0_weight, t_0_weight_per_tensor_scale, t_0_weight_block_scales, torch.bfloat16, None, t2, t1)  # t3: "cuda:0 bf16[128, 256]"
-#   del t0, t_0_weight_per_tensor_scale, t_0_weight_block_scales, t2, t1
-#   return (t3,)
-# Getting the following error on RTX 6000 Ada as nvFP4 shouldn't be supported anyways
-# RuntimeError: CUDA error: CUBLAS_STATUS_NOT_SUPPORTED when calling `cublasLtMatmulAlgoGetHeuristic( ltHandle, computeDesc.descriptor(), Adesc.descriptor(), Bdesc.descriptor(), Cdesc.descriptor(), Ddesc.descriptor(), preference.descriptor(), 1, &heuristicResult, &returnedResult)`
-# But it works fine on B200
-try:
-    compiled_linear(torch.randn(128, 64, device="cuda", dtype=torch.bfloat16))
-except Exception:
-    raise
-finally:
-    print(thunder.last_traces(compiled_linear)[-1])
+
+if __name__ == "__main__":
+    tfms = QuantizedLinearTransform()
+
+    model = Module().to(device="cuda", dtype=torch.bfloat16)
+    compiled_linear = thunder.jit(model, transforms=[tfms], executors=[nvfp4_executor], disable_atograd=True)
+
+    # Transformed Computation Trace:
+    # Constructed by Unwrap the actual return value
+    # import torch
+    # from thunder.executors.torchex import no_autocast
+    #
+    # @torch.no_grad()
+    # @no_autocast
+    # def computation(input, t_0_weight, t_0_weight_per_tensor_scale, t_0_weight_block_scales):
+    #   # input: "cuda:0 bf16[128, 64]"
+    #   # t_0_weight: "cuda:0 ui8[256, 32]"
+    #   # t_0_weight_per_tensor_scale: "cuda:0 f32[]"
+    #   # t_0_weight_block_scales: "cuda:0 f8_e4m3fn[1024]"
+    #   #   # Output tuple has (quantized, block scale, global scale)
+    #   (t0, t1, t2) = nvfp4_quantize(input)
+    #
+    #   # /usr/local/lib/python3.12/dist-packages/torch/nn/modules/linear.py:134:             return F.linear(input, self.weight, self.bias)
+    #   t3 = nvfp4_linear(t0, t_0_weight, t_0_weight_per_tensor_scale, t_0_weight_block_scales, torch.bfloat16, None, t2, t1)  # t3: "cuda:0 bf16[128, 256]"
+    #   del t0, t_0_weight_per_tensor_scale, t_0_weight_block_scales, t2, t1
+    #   return (t3,)
+    # Getting the following error on RTX 6000 Ada as nvFP4 shouldn't be supported anyways
+    # RuntimeError: CUDA error: CUBLAS_STATUS_NOT_SUPPORTED when calling `cublasLtMatmulAlgoGetHeuristic( ltHandle, computeDesc.descriptor(), Adesc.descriptor(), Bdesc.descriptor(), Cdesc.descriptor(), Ddesc.descriptor(), preference.descriptor(), 1, &heuristicResult, &returnedResult)`
+    # But it works fine on B200
+    try:
+        compiled_linear(torch.randn(128, 64, device="cuda", dtype=torch.bfloat16))
+    except Exception:
+        raise
+    finally:
+        print(thunder.last_traces(compiled_linear)[-1])
