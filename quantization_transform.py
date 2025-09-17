@@ -475,6 +475,26 @@ if __name__ == "__main__":
     # But it works fine on B200
     out = compiled_linear(x)
     if not args.skip_trace:
+        # The trace should look like what follows:
+        # Constructed by Unwrap the actual return value
+        # def computation(x, t_linear_weight, t_linear_weight_block_scales):
+        #   # x: "cuda:0 bf16[128, 64]"
+        #   # t_linear_weight: "cuda:0 ui8[256, 32]"
+        #   # t_linear_weight_block_scales: "cuda:0 f8_e4m3fn[1024]"
+
+        #   # /usr/local/lib/python3.12/dist-packages/torch/nn/modules/linear.py:134:             return F.linear(input, self.weight, self.bias)
+        #   out = nvfp4_linear(x, t_linear_weight, None, t_linear_weight_block_scales, torch.bfloat16, None, None, None)  # out: "cuda:0 bf16[128, 256]"
+        #   del t_linear_weight_block_scales
+
+        #   # /opt/pytorch/lightning-thunder/./quantization_transform.py:417:             return torch.relu(out)
+        #   t11 = torch.nn.functional.relu(out, False)  # t11: "cuda:0 bf16[128, 256]"
+        #     # t11 = ltorch.relu(out, False)  # t11: "cuda:0 bf16[128, 256]"
+        #       # t10 = ltorch.gt(out, 0)  # t10: "cuda:0 b8[128, 256]"
+        #         # t10 = prims.gt(out, 0.0)  # t10: "cuda:0 b8[128, 256]"
+        #       # t11 = ltorch.where(t10, out, 0)  # t11: "cuda:0 bf16[128, 256]"
+        #         # t11 = prims.where(t10, out, 0.0)  # t11: "cuda:0 bf16[128, 256]"
+        #   del out
+        #   return (t11,)
         print(thunder.last_traces(compiled_linear)[-1])
     if not args.skip_test:
         if args.per_tensor_scale:
