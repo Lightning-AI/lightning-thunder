@@ -196,8 +196,14 @@ class QuantizedLinearTransform(thunder.Transform):
             Default is to quantize all linear layers in the model.
     """
 
-    def __init__(self, filter_fn: Callable[[str, nn.Module], bool] = _default_filter):
+    def __init__(
+        self,
+        *,
+        filter_fn: Callable[[str, nn.Module], bool] = _default_filter,
+        separate_quantization: bool = False,
+    ):
         self.filter_fn = filter_fn
+        self.separate_quantization = separate_quantization
         self.quant_states = {}
         self.quantized_submodule_names = set()
 
@@ -364,21 +370,22 @@ class QuantizedLinearTransform(thunder.Transform):
                 assert len(bsym.args) == 3  # torch.linear(input, weight, bias)
                 activation = bsym.args[0]
                 quantized_weight = bsym.args[1]
-                with tracectx(new_computation_trace):
-                    quantized, block_scale, global_scale = nvfp4_quantize(activation)
+                if self.separate_quantization:
+                    with tracectx(new_computation_trace):
+                        quantized, block_scale, global_scale = nvfp4_quantize(activation)
                 n = quantized_proxies[bsym.args[1].name]
                 qs = self.quant_states[n]
                 # signature of the new symbol:
                 # nvfp4_linear_impl(a, quantized_b, b_per_tensor_scale, b_block_scales, out_dtype, bias: Optional[torch.Tensor] = None)
                 new_args = (
-                    quantized,
+                    quantized if self.separate_quantization else activation,
                     quantized_weight,
                     additional_proxies[f"{n}.per_tensor_scale"],
                     additional_proxies[f"{n}.block_scales"],
                     qs["out_dtype"],
                     bsym.args[2],
-                    global_scale,
-                    block_scale,
+                    global_scale if self.separate_quantization else None,
+                    block_scale if self.separate_quantization else None,
                 )
                 linear_bsym = bsym.from_bsym(
                     sym=nvfp4_linear,
@@ -408,6 +415,7 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=250916, help="Seed value")
     parser.add_argument("--skip-trace", action="store_true", help="Skip printing execution trace")
     parser.add_argument("--skip-test", action="store_true", help="Skip numeric test against torchao")
+    parser.add_argument("--separate-quant", action="store_true", help="do quantization separately")
     args = parser.parse_args()
     torch.manual_seed(args.seed)
 
@@ -418,8 +426,14 @@ if __name__ == "__main__":
         ref_model.load_state_dict(model.state_dict())
         quantize_(ref_model, NVFP4InferenceConfig(use_triton_kernel=False))
 
-    tfms = QuantizedLinearTransform()
-    compiled_linear = thunder.jit(model, transforms=[tfms], executors=[nvfp4_executor], disable_atograd=True)
+    tfms = QuantizedLinearTransform(separate_quantization=args.separate_quant)
+    compiled_linear: thunder.ThunderModule = thunder.jit(
+        model,
+        transforms=[tfms],
+        executors=[nvfp4_executor],
+        disable_atograd=True,
+        debug_options=thunder.DebugOptions(check_traces=True),
+    )
 
     x = torch.randn(128, 64, device="cuda", dtype=torch.bfloat16)
     x_ref = x.clone().detach()
@@ -449,5 +463,13 @@ if __name__ == "__main__":
     if not args.skip_trace:
         print(thunder.last_traces(compiled_linear)[-1])
     if not args.skip_test:
+        for name, param in compiled_linear.named_parameters():
+            if param.dtype == torch.float4_e2m1fn_x2:
+                ref_param: nvfp4_tensor.NVFP4Tensor = ref_model.linear.weight
+                torch.testing.assert_close(param, ref_param.qdata)
+                torch.testing.assert_close(compiled_linear.get_parameter(f"{name}.block_scales"), ref_param._scale_e4m3)
+                torch.testing.assert_close(
+                    compiled_linear.get_parameter(f"{name}.per_tensor_scale"), ref_param._per_tensor_scale
+                )
         ref = ref_model(x_ref)
         torch.testing.assert_close(out, ref)
