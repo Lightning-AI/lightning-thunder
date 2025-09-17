@@ -359,7 +359,7 @@ class QuantizedLinearTransform(thunder.Transform):
 
 tfms = QuantizedLinearTransform()
 
-linear = torch.nn.Sequential(torch.nn.Linear(64, 256, dtype=torch.bfloat16, bias=False, device="cuda"))
+linear = torch.nn.Sequential(torch.nn.Linear(64, 256, dtype=torch.bfloat16, bias=False, device="cuda"), torch.nn.ReLU())
 compiled_linear = thunder.jit(linear, transforms=[tfms], executors=[nvfp4_executor], disable_atograd=True)
 
 # Transformed Computation Trace:
