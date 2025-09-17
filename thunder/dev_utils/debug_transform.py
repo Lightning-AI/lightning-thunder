@@ -8,18 +8,6 @@ from thunder.core.symbol import Symbol, BoundSymbol
 from thunder.dev_utils.utils import NON_COMPUTATION_PRIMS
 
 
-def create_debug_boundsymbol(name: str, bsym: BoundSymbol, call_ctx: Callable, pass_result: bool = False):
-    def bind_postprocess(debug_bsym):
-        debug_bsym._call_ctx = {name: partial(call_ctx, debug_bsym, bsym)}
-
-    debug_sym = Symbol(name, lambda *_, **__: None, is_prim=True, _bind_postprocess=bind_postprocess)
-    if pass_result:
-        debug_bsym = debug_sym.bind(bsym.output, *bsym.args, output=None, **bsym.kwargs)
-    else:
-        debug_bsym = debug_sym.bind(*bsym.args, output=None, **bsym.kwargs)
-    return debug_bsym
-
-
 class DebugTransform(thunder.core.transforms.Transform):
     """
     A transform for debugging purposes.
@@ -44,6 +32,20 @@ class DebugTransform(thunder.core.transforms.Transform):
         self.pre_callback = pre_callback
         self.post_callback = post_callback
 
+    def is_applicable(self, bsym: BoundSymbol) -> bool:
+        return bsym.sym.id not in NON_COMPUTATION_PRIMS
+
+    def create_debug_boundsymbol(self, name: str, bsym: BoundSymbol, call_ctx: Callable, pass_result: bool = False):
+        def bind_postprocess(debug_bsym):
+            debug_bsym._call_ctx = {name: partial(call_ctx, debug_bsym, bsym)}
+
+        debug_sym = Symbol(name, lambda *_, **__: None, is_prim=True, _bind_postprocess=bind_postprocess)
+        if pass_result:
+            debug_bsym = debug_sym.bind(bsym.output, *bsym.args, output=None, **bsym.kwargs)
+        else:
+            debug_bsym = debug_sym.bind(*bsym.args, output=None, **bsym.kwargs)
+        return debug_bsym
+
     def transform_trace_post_optimization(self, trace: TraceCtx, **kwargs) -> TraceCtx:
         start_time_ns = time.perf_counter_ns()
         debug_trace = from_trace(trace)
@@ -53,7 +55,7 @@ class DebugTransform(thunder.core.transforms.Transform):
         for bsym in trace.bound_symbols:
             sym_name = bsym.sym.name
 
-            if bsym.sym.id in NON_COMPUTATION_PRIMS:
+            if not self.is_applicable(bsym):
                 new_bsyms.append(bsym)
                 continue
 
@@ -65,7 +67,7 @@ class DebugTransform(thunder.core.transforms.Transform):
                     pre_debug_bsym.header = out
 
                 pre_debug_name = f"debug_pre_{sym_name}{debug_counter}"
-                pre_debug_bsym = create_debug_boundsymbol(pre_debug_name, bsym, _pre_call_ctx)
+                pre_debug_bsym = self.create_debug_boundsymbol(pre_debug_name, bsym, _pre_call_ctx)
                 new_bsyms.append(pre_debug_bsym)
 
             new_bsyms.append(bsym)
@@ -78,7 +80,7 @@ class DebugTransform(thunder.core.transforms.Transform):
                     post_debug_bsym.header = out
 
                 post_debug_name = f"debug_post_{sym_name}{debug_counter}"
-                post_debug_bsym = create_debug_boundsymbol(post_debug_name, bsym, _post_call_ctx, pass_result=True)
+                post_debug_bsym = self.create_debug_boundsymbol(post_debug_name, bsym, _post_call_ctx, pass_result=True)
                 new_bsyms.append(post_debug_bsym)
 
             debug_counter += 1
