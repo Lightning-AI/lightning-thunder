@@ -38,7 +38,9 @@ def _view_input_as_2d(x):
     return x.view((-1, shape[-1]))
 
 
-def quantize_fn(t: torch.Tensor, no_per_tensor_scale: bool = False) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+def quantize_fn(
+    t: torch.Tensor, no_per_tensor_scale: bool = False
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
     with torch.no_grad():
         if no_per_tensor_scale:
             per_tensor_scale = None
@@ -64,7 +66,7 @@ def _nvfp4_linear(
     quantized_a: torch.Tensor,
     quantized_b: torch.Tensor,
     a_per_tensor_scale: torch.Tensor | None,
-    b_per_tensor_scale: torch.Tensor,
+    b_per_tensor_scale: torch.Tensor | None,
     a_block_scales: torch.Tensor,
     b_block_scales: torch.Tensor,
     out_dtype: torch.dtype,
@@ -86,10 +88,14 @@ def _nvfp4_linear(
 
     # Merge double quant scales into 1 scale for Scale_In^D
     scale_result: torch.Tensor | None
-    if a_per_tensor_scale is None:
-        scale_result = None
-    else:
+    # if a_per_tensor_scale is None:
+    #     scale_result = None
+    # else:
+    #     scale_result = a_per_tensor_scale * b_per_tensor_scale
+    if a_per_tensor_scale is not None and b_per_tensor_scale is not None:
         scale_result = a_per_tensor_scale * b_per_tensor_scale
+    else:
+        scale_result = None
 
     # THIS IS A WORKAROUND:
     # RuntimeError: CUDA error: CUBLAS_STATUS_INVALID_VALUE when calling
@@ -141,14 +147,14 @@ def nvfp4_linear_meta(
 
 
 def nvfp4_linear_impl(
-    a,
-    quantized_b,
-    b_per_tensor_scale,
-    b_block_scales,
-    out_dtype,
+    a: torch.Tensor,
+    quantized_b: torch.Tensor,
+    b_per_tensor_scale: torch.Tensor,
+    b_block_scales: torch.Tensor,
+    out_dtype: torch.dtype,
     bias: torch.Tensor | None = None,
-    a_per_tensor_scale=None,
-    a_block_scales=None,
+    a_per_tensor_scale: torch.Tensor | None = None,
+    a_block_scales: torch.Tensor | None = None,
 ):
     if a_block_scales is not None:
         quantized_a = a
@@ -203,6 +209,11 @@ class QuantizedLinearTransform(thunder.Transform):
     Args:
         filter_fn: Takes name and :class:`~torch.nn.Module` and returns ``True`` if the layer is to quantize.
             Default is to quantize all linear layers in the model.
+        separate_quantization: If ``True``, the transformed trace have a :class:`thunder.core.symbol.BoundSymbol`
+            for nvfp4 quantization and one for nvfp4 linear.
+        use_global_scale: If ``True``, linear weights are quantized with their global scale.
+            Otherwise, not (similar to TorchAO :func:`torchao.quantization.quantize_` with
+            :class:`torcha.prototype.mx_formats.inference_workflow.NVFP4Inferenceconfig`.)
     """
 
     def __init__(
@@ -210,9 +221,11 @@ class QuantizedLinearTransform(thunder.Transform):
         *,
         filter_fn: Callable[[str, nn.Module], bool] = _default_filter,
         separate_quantization: bool = False,
+        use_global_scale: bool = False,
     ):
         self.filter_fn = filter_fn
         self.separate_quantization = separate_quantization
+        self.use_global_scale = use_global_scale
         self.quant_states = {}
         self.quantized_submodule_names = set()
 
@@ -225,16 +238,20 @@ class QuantizedLinearTransform(thunder.Transform):
             weight_name = f"{name}.weight"
             w = tm.get_parameter(weight_name)
 
-            qw, qs, per_tensor_scale = quantize_fn(w)
+            qw, qs, per_tensor_scale = quantize_fn(w, not self.use_global_scale)
 
             tm._overrides_parameters[weight_name] = qw.to(w.device)
-            tm._overrides_parameters[f"{weight_name}.per_tensor_scale"] = per_tensor_scale.to(w.device)
+            if self.use_global_scale:
+                tm._overrides_parameters[f"{weight_name}.per_tensor_scale"] = per_tensor_scale.to(w.device)
+            else:
+                tm._overrides_parameters[f"{weight_name}.per_tensor_scale"] = None
             tm._overrides_parameters[f"{weight_name}.block_scales"] = qs.to(w.device)
             self.quant_states[weight_name] = {
                 "dtype": qw.dtype,
                 "per_tensor_scale": per_tensor_scale,
-                "per_tensor_scale.shape": tuple(per_tensor_scale.shape),
-                "per_tensor_scale.dtype": per_tensor_scale.dtype,
+                "per_tensor_scale.shape": tuple(per_tensor_scale.shape) if self.use_global_scale else (),
+                # "per_tensor_scale.dtype": per_tensor_scale.dtype,
+                "per_tensor_scale.dtype": torch.float32,
                 "block_scales": qs,
                 "block_scales.shape": tuple(qs.shape),
                 "block_scales.dtype": qs.dtype,
@@ -278,10 +295,11 @@ class QuantizedLinearTransform(thunder.Transform):
         for n, qs in self.quant_states.items():
             # Update prologue to return `per_tensor_scale` and `block_scales`
             tm.get_parameter(n)
-            n_per_tensor_scale = f"{n}.per_tensor_scale"
             n_block_scales = f"{n}.block_scales"
-            tm.get_parameter(n_per_tensor_scale)
             tm.get_parameter(n_block_scales)
+            if self.use_global_scale:
+                n_per_tensor_scale = f"{n}.per_tensor_scale"
+                tm.get_parameter(n_per_tensor_scale)
             check, get_param = checks[n]
             quantized_proxies[get_param.output.name] = n
             # check has args: tensor, shape, device, dtype, requires_grad
@@ -293,14 +311,15 @@ class QuantizedLinearTransform(thunder.Transform):
             if output_idx is not None:
                 with tracectx(prologue_trace):
                     # better way
-                    proxy_per_tensor_scale = thunder.TensorProxy(
-                        name=f"{get_param.output.name}_per_tensor_scale",
-                        shape=qs["per_tensor_scale.shape"],
-                        dtype=thunder.dtypes.to_dtype(qs["per_tensor_scale.dtype"]),
-                        device=thunder.devices.to_device(device),
-                        requires_grad=False,
-                        tags={thunder.core.proxies.ProxyTag.STATIC_MEMORY_LOCATION},
-                    )
+                    if self.use_global_scale:
+                        proxy_per_tensor_scale = thunder.TensorProxy(
+                            name=f"{get_param.output.name}_per_tensor_scale",
+                            shape=qs["per_tensor_scale.shape"],
+                            dtype=thunder.dtypes.to_dtype(qs["per_tensor_scale.dtype"]),
+                            device=thunder.devices.to_device(device),
+                            requires_grad=False,
+                            tags={thunder.core.proxies.ProxyTag.STATIC_MEMORY_LOCATION},
+                        )
                     proxy_block_scales = thunder.TensorProxy(
                         name=f"{get_param.output.name}_block_scales",
                         shape=qs["block_scales.shape"],
@@ -310,25 +329,27 @@ class QuantizedLinearTransform(thunder.Transform):
                         tags={thunder.core.proxies.ProxyTag.STATIC_MEMORY_LOCATION},
                     )
                     # get_param.sym = unpack_buffer/parameter as needed
-                    new_bsyms.append(
-                        get_param.sym.bind(get_param.args[0], n_per_tensor_scale, output=proxy_per_tensor_scale)
-                    )
+                    if self.use_global_scale:
+                        new_bsyms.append(
+                            get_param.sym.bind(get_param.args[0], n_per_tensor_scale, output=proxy_per_tensor_scale)
+                        )
+                        add_trace_output(prologue_trace, proxy_per_tensor_scale, subindex=0)
+                        new_compute_inputs.append(proxy_per_tensor_scale)
                     new_bsyms.append(get_param.sym.bind(get_param.args[0], n_block_scales, output=proxy_block_scales))
-                    add_trace_output(prologue_trace, proxy_per_tensor_scale, subindex=0)
                     add_trace_output(prologue_trace, proxy_block_scales, subindex=0)
-                    new_compute_inputs.append(proxy_per_tensor_scale)
                     new_compute_inputs.append(proxy_block_scales)
                     # add checks
-                    new_bsyms.append(
-                        prims.check_tensor_shape_and_metadata.bind(
-                            proxy_per_tensor_scale,
-                            qs["per_tensor_scale.shape"],
-                            device,
-                            qs["per_tensor_scale.dtype"],
-                            False,
-                            output=None,
+                    if self.use_global_scale:
+                        new_bsyms.append(
+                            prims.check_tensor_shape_and_metadata.bind(
+                                proxy_per_tensor_scale,
+                                qs["per_tensor_scale.shape"],
+                                device,
+                                qs["per_tensor_scale.dtype"],
+                                False,
+                                output=None,
+                            )
                         )
-                    )
                     new_bsyms.append(
                         prims.check_tensor_shape_and_metadata.bind(
                             proxy_block_scales,
@@ -340,7 +361,8 @@ class QuantizedLinearTransform(thunder.Transform):
                         )
                     )
                     # this is not good, because we will have several traces...
-                    additional_proxies[n_per_tensor_scale] = proxy_per_tensor_scale
+                    if self.use_global_scale:
+                        additional_proxies[n_per_tensor_scale] = proxy_per_tensor_scale
                     additional_proxies[n_block_scales] = proxy_block_scales
 
         prologue_trace.bound_symbols[-1:-1] = new_bsyms
@@ -389,7 +411,7 @@ class QuantizedLinearTransform(thunder.Transform):
                 new_args = (
                     quantized if self.separate_quantization else activation,
                     quantized_weight,
-                    additional_proxies[f"{n}.per_tensor_scale"],
+                    additional_proxies[f"{n}.per_tensor_scale"] if self.use_global_scale else None,
                     additional_proxies[f"{n}.block_scales"],
                     qs["out_dtype"],
                     bsym.args[2],
@@ -474,15 +496,16 @@ if __name__ == "__main__":
     # Getting the following error on RTX 6000 Ada as nvFP4 shouldn't be supported anyways
     # RuntimeError: CUDA error: CUBLAS_STATUS_NOT_SUPPORTED when calling `cublasLtMatmulAlgoGetHeuristic( ltHandle, computeDesc.descriptor(), Adesc.descriptor(), Bdesc.descriptor(), Cdesc.descriptor(), Ddesc.descriptor(), preference.descriptor(), 1, &heuristicResult, &returnedResult)`
     # But it works fine on B200
-    with ScaledMMLog("actual-thunder-tfms", enable=True):
+    with ScaledMMLog("actual-thunder-tfms", enable=False):
         out = compiled_linear(x)
     if not args.skip_trace:
         print(thunder.last_traces(compiled_linear)[-1])
     if not args.skip_test:
-        for name, param in compiled_linear.named_parameters():
-            if param.dtype == torch.float4_e2m1fn_x2:
-                ref_param: nvfp4_tensor.NVFP4Tensor = ref_model.linear.weight
-                torch.testing.assert_close(param, ref_param.qdata)
+        for name, ref_param in ref_model.named_parameters():
+            if isinstance(ref_param, nvfp4_tensor.NVFP4Tensor):
+                print(f"!!! Testing quantized param of {name}")
+                param = compiled_linear.get_parameter(name)
+                torch.testing.assert_close(param, ref_param._data)
                 torch.testing.assert_close(compiled_linear.get_parameter(f"{name}.block_scales"), ref_param._scale_e4m3)
                 torch.testing.assert_close(
                     compiled_linear.get_parameter(f"{name}.per_tensor_scale"), ref_param._per_tensor_scale
