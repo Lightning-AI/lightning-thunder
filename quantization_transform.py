@@ -15,7 +15,7 @@ from thunder.transforms.utils import get_checks, trace_with_replaced_proxy_metad
 if TYPE_CHECKING:
     from collections.abc import Callable
     from thunder.core.proxies import TensorProxy
-    from thunder.core.symbols import BoundSymbol
+    from thunder.core.symbol import BoundSymbol
 
 
 nvfp4_executor = thunder.extend.OperatorExecutor("nvfp4_executor", version=0.1)
