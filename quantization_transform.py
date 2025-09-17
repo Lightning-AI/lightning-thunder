@@ -87,10 +87,6 @@ def _nvfp4_linear(
 
     # Merge double quant scales into 1 scale for Scale_In^D
     scale_result: torch.Tensor | None
-    # if a_per_tensor_scale is None:
-    #     scale_result = None
-    # else:
-    #     scale_result = a_per_tensor_scale * b_per_tensor_scale
     if a_per_tensor_scale is not None and b_per_tensor_scale is not None:
         scale_result = a_per_tensor_scale * b_per_tensor_scale
     else:
