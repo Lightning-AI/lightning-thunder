@@ -445,9 +445,9 @@ if __name__ == "__main__":
         description="Demonstrate QuantizedLinearTransform that nvfp4 quantized nn.Linears in a model. By default this script does not compute per-tensor at all to reproduce TorchAO behavior. This script compares the output with TorchAO by using `quantize_(model, NVFP4InferenceConfig())`",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--seed", type=int, default=250916, help="Seed value")
-    parser.add_argument("--skip-trace", action="store_true", help="Skip printing execution trace")
-    parser.add_argument("--skip-test", action="store_true", help="Skip numeric test against torchao")
+    parser.add_argument("--seed", type=int, default=250916, help="seed value")
+    parser.add_argument("--skip-trace", action="store_true", help="skip printing execution trace")
+    parser.add_argument("--skip-test", action="store_true", help="skip numeric test against torchao")
     parser.add_argument("--separate-quant", action="store_true", help="do quantization separately")
     parser.add_argument("--per-tensor-scale", action="store_true", help="use per-tensor scale.")
     args = parser.parse_args()
