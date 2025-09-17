@@ -85,7 +85,7 @@ def _with_prologue_pruning_transform(
 
 
 class ThunderCompiler:
-    def __init__(self, **thunder_options):
+    def __init__(self, pre_inductor_transforms=None, **thunder_options):
         """
         A class that compiles a :class:`torch.fx.GraphModule` to a :class:`thunder.ThunderModule`.
         This class is meant to be used as a backend for the :func:`torch.compile`
@@ -127,6 +127,7 @@ class ThunderCompiler:
         thunder_options["thunderfx_disable_split_autograd"] = thunder_options.get(
             "thunderfx_disable_split_autograd", _DEFAULT_THUNDERFX_DISABLE_SPLIT_AUTOGRAD
         )
+        self.pre_inductor_transforms = pre_inductor_transforms if pre_inductor_transforms is not None else []
         self.thunder_options = thunder_options
         self._torch_compile = torch.compile
 
@@ -150,6 +151,7 @@ class ThunderCompiler:
             partial(jit, **thunder_options),
             self._torch_compile,
             sample_args,
+            self.pre_inductor_transforms,
         )
         self.subgraph_infos.append(subgraph_info)
         return split_module

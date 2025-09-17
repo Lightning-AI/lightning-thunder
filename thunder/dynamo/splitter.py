@@ -5,6 +5,7 @@ from functools import partial
 
 import torch
 from torch.fx.passes.split_module import split_module
+from torch._inductor.compile_fx import compile_fx
 
 from thunder.dynamo.utils import (
     SubgraphInfo,
@@ -30,6 +31,7 @@ def _splitter(
     thunder_jit: Callable,
     torch_inductor: Callable,
     _unused_sample_args: list[torch.SymInt, torch.Tensor],
+    pre_inductor_transforms: list[Callable[[torch.fx.GraphModule], None]],
 ) -> tuple[torch.fx.GraphModule, SubgraphInfo]:
     """
     This method will split graph into multiple graph modules based on thunder supported operations.
@@ -198,6 +200,10 @@ def _splitter(
             )
         elif node.name.startswith("submod"):  # For inductor
             graph_module = getattr(split_gm, node.name)
+            for transform in pre_inductor_transforms:
+                graph_module = transform(graph_module)
+            recompile_graph(graph_module)
+
             jit_fn = torch_inductor(graph_module)
             # Update the node name from "submod_*" to "inductor_*" for more user-friendly names
             update_node_and_submodule(split_gm, node, node.name.replace("submod", "inductor"), jit_fn)
