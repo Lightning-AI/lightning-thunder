@@ -1,5 +1,6 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
+import argparse
 
 import torch
 import torch.nn as nn
@@ -403,13 +404,21 @@ class Module(nn.Module):
 
 
 if __name__ == "__main__":
-    tfms = QuantizedLinearTransform()
+    parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument("--seed", type=int, default=250916, help="Seed value")
+    parser.add_argument("--skip-trace", action="store_true", help="Skip printing execution trace")
+    parser.add_argument("--skip-test", action="store_true", help="Skip numeric test against torchao")
+    args = parser.parse_args()
+    torch.manual_seed(args.seed)
 
     model = Module().to(device="cuda", dtype=torch.bfloat16)
-    ref_model = Module().to(device="cuda", dtype=torch.bfloat16)
-    ref_model.load_state_dict(model.state_dict())
-    quantize_(ref_model, NVFP4InferenceConfig())
+    ref_model: nn.Module | None = None
+    if not args.skip_test:
+        ref_model = Module().to(device="cuda", dtype=torch.bfloat16)
+        ref_model.load_state_dict(model.state_dict())
+        quantize_(ref_model, NVFP4InferenceConfig(use_triton_kernel=False))
 
+    tfms = QuantizedLinearTransform()
     compiled_linear = thunder.jit(model, transforms=[tfms], executors=[nvfp4_executor], disable_atograd=True)
 
     x = torch.randn(128, 64, device="cuda", dtype=torch.bfloat16)
@@ -436,7 +445,9 @@ if __name__ == "__main__":
     # Getting the following error on RTX 6000 Ada as nvFP4 shouldn't be supported anyways
     # RuntimeError: CUDA error: CUBLAS_STATUS_NOT_SUPPORTED when calling `cublasLtMatmulAlgoGetHeuristic( ltHandle, computeDesc.descriptor(), Adesc.descriptor(), Bdesc.descriptor(), Cdesc.descriptor(), Ddesc.descriptor(), preference.descriptor(), 1, &heuristicResult, &returnedResult)`
     # But it works fine on B200
-    out = compiled_linear(torch.randn(128, 64, device="cuda", dtype=torch.bfloat16))
-    ref = ref_model(x_ref)
-    print(thunder.last_traces(compiled_linear)[-1])
-    torch.testing.assert_close(out, ref)
+    out = compiled_linear(x)
+    if not args.skip_trace:
+        print(thunder.last_traces(compiled_linear)[-1])
+    if not args.skip_test:
+        ref = ref_model(x_ref)
+        torch.testing.assert_close(out, ref)
