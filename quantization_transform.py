@@ -4,6 +4,8 @@ import argparse
 
 import torch
 import torch.nn as nn
+from torch.overrides import TorchFunctionMode
+from torch.utils._python_dispatch import TorchDispatchMode
 import torchao.prototype.mx_formats.nvfp4_tensor as nvfp4_tensor
 from torchao.prototype.mx_formats.inference_workflow import NVFP4InferenceConfig
 from torchao.quantization import quantize_
@@ -35,9 +37,13 @@ def _view_input_as_2d(x):
     shape = x.shape
     return x.view((-1, shape[-1]))
 
-def quantize_fn(t: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+
+def quantize_fn(t: torch.Tensor, no_per_tensor_scale: bool = False) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     with torch.no_grad():
-        per_tensor_scale = compute_per_tensor_scale(t)
+        if no_per_tensor_scale:
+            per_tensor_scale = None
+        else:
+            per_tensor_scale = compute_per_tensor_scale(t)
         qs, qw = nvfp4_tensor.nvfp4_quantize(t, per_tensor_scale=per_tensor_scale)
 
         if t.ndim == 2:
@@ -55,13 +61,13 @@ def quantize_fn(t: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tens
 
 # https://github.com/pytorch/ao/blob/4dffb40280ea7b0e1732c580d08df58d0134c543/torchao/prototype/mx_formats/nvfp4_tensor.py#L567-L568
 def _nvfp4_linear(
-    quantized_a,
-    quantized_b,
-    a_per_tensor_scale,
-    b_per_tensor_scale,
-    a_block_scales,
-    b_block_scales,
-    out_dtype,
+    quantized_a: torch.Tensor,
+    quantized_b: torch.Tensor,
+    a_per_tensor_scale: torch.Tensor | None,
+    b_per_tensor_scale: torch.Tensor,
+    a_block_scales: torch.Tensor,
+    b_block_scales: torch.Tensor,
+    out_dtype: torch.dtype,
     bias: torch.Tensor | None = None,
 ) -> torch.Tensor:
     quantized_b = quantized_b.t()
@@ -79,7 +85,11 @@ def _nvfp4_linear(
     b_scale_blocked = b_block_scales  # Already swizzled
 
     # Merge double quant scales into 1 scale for Scale_In^D
-    scale_result = a_per_tensor_scale * b_per_tensor_scale
+    scale_result: torch.Tensor | None
+    if a_per_tensor_scale is None:
+        scale_result = None
+    else:
+        scale_result = a_per_tensor_scale * b_per_tensor_scale
 
     # THIS IS A WORKAROUND:
     # RuntimeError: CUDA error: CUBLAS_STATUS_INVALID_VALUE when calling
@@ -140,14 +150,14 @@ def nvfp4_linear_impl(
     a_per_tensor_scale=None,
     a_block_scales=None,
 ):
-    if a_per_tensor_scale is not None and a_block_scales is not None:
+    if a_block_scales is not None:
         quantized_a = a
     else:
-        quantized_a, a_block_scales, a_per_tensor_scale = quantize_fn(a)
+        quantized_a, a_block_scales, _ = quantize_fn(a, no_per_tensor_scale=True)
     return _nvfp4_linear(
         quantized_a,
         quantized_b,
-        a_per_tensor_scale,
+        None,
         b_per_tensor_scale,
         a_block_scales,
         b_block_scales,
@@ -159,7 +169,7 @@ def nvfp4_linear_impl(
 nvfp4_linear = nvfp4_executor.register_operator("nvfp4_linear", meta=nvfp4_linear_meta, fn=nvfp4_linear_impl)
 
 
-def nvfp4_quantize_meta(a: TensorProxy) -> tuple[TensorProxy, TensorProxy, TensorProxy]:
+def nvfp4_quantize_meta(a: TensorProxy) -> tuple[TensorProxy, TensorProxy]:
     quantized_shape = list(a.shape)
     quantized_shape[-1] //= 2
     block_scale_shape = list(a.shape)
@@ -167,16 +177,15 @@ def nvfp4_quantize_meta(a: TensorProxy) -> tuple[TensorProxy, TensorProxy, Tenso
     return (
         thunder.TensorProxy(like=a, shape=quantized_shape),
         thunder.TensorProxy(like=a, shape=block_scale_shape),
-        thunder.TensorProxy(like=a, shape=()),
     )
 
 
-def nvfp4_quantize_impl(a: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    return quantize_fn(a)
+def nvfp4_quantize_impl(a: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    return quantize_fn(a, no_per_tensor_scale=True)[:-1]
 
 
 def nvfp4_quantize_bind_postprocess(bsym: BoundSymbol) -> None:
-    bsym.header = "Output tuple has (quantized, block scale, global scale)"
+    bsym.header = "Output tuple has (quantized, block scale)"
 
 
 nvfp4_quantize = nvfp4_executor.register_operator(
@@ -372,7 +381,7 @@ class QuantizedLinearTransform(thunder.Transform):
                 quantized_weight = bsym.args[1]
                 if self.separate_quantization:
                     with tracectx(new_computation_trace):
-                        quantized, block_scale, global_scale = nvfp4_quantize(activation)
+                        quantized, block_scale = nvfp4_quantize(activation)
                 n = quantized_proxies[bsym.args[1].name]
                 qs = self.quant_states[n]
                 # signature of the new symbol:
@@ -384,7 +393,7 @@ class QuantizedLinearTransform(thunder.Transform):
                     additional_proxies[f"{n}.block_scales"],
                     qs["out_dtype"],
                     bsym.args[2],
-                    global_scale if self.separate_quantization else None,
+                    None,
                     block_scale if self.separate_quantization else None,
                 )
                 linear_bsym = bsym.from_bsym(
@@ -398,6 +407,32 @@ class QuantizedLinearTransform(thunder.Transform):
                 new_computation_trace.bound_symbols.append(bsym.from_bsym())
 
         return prologue_trace, new_computation_trace, epilogue_trace
+
+
+class ScaledMMLog(TorchFunctionMode):
+    def __init__(self, name: str, enable: bool) -> None:
+        self.name = name
+        self.enable = enable
+
+    def __torch_function__(self, func, types, args, kwargs={}):
+        if self.enable:
+            print(f"!!! {func = }")
+        if self.enable and func == torch._scaled_mm:
+            file = f"{self.name}.pt"
+            torch.save(args, file)
+            print(f"\n$$$ saving args to {file}...\n")
+        return func(*args, **kwargs)
+
+
+class ScaledMMDispatchLog(TorchDispatchMode):
+    def __init__(self, name: str, enable: bool) -> None:
+        self.name = name
+        self.enable = enable
+
+    def __torch_dispatch__(self, func, types, args=..., kwargs=None):
+        if self.enable:
+            print(f"!!! {func = }")
+        return func(*args, **(kwargs or {}))
 
 
 class Module(nn.Module):
@@ -436,30 +471,11 @@ if __name__ == "__main__":
     )
 
     x = torch.randn(128, 64, device="cuda", dtype=torch.bfloat16)
-    x_ref = x.clone().detach()
-    # Transformed Computation Trace:
-    # Constructed by Unwrap the actual return value
-    # import torch
-    # from thunder.executors.torchex import no_autocast
-    #
-    # @torch.no_grad()
-    # @no_autocast
-    # def computation(input, t_0_weight, t_0_weight_per_tensor_scale, t_0_weight_block_scales):
-    #   # input: "cuda:0 bf16[128, 64]"
-    #   # t_0_weight: "cuda:0 ui8[256, 32]"
-    #   # t_0_weight_per_tensor_scale: "cuda:0 f32[]"
-    #   # t_0_weight_block_scales: "cuda:0 f8_e4m3fn[1024]"
-    #   #   # Output tuple has (quantized, block scale, global scale)
-    #   (t0, t1, t2) = nvfp4_quantize(input)
-    #
-    #   # /usr/local/lib/python3.12/dist-packages/torch/nn/modules/linear.py:134:             return F.linear(input, self.weight, self.bias)
-    #   t3 = nvfp4_linear(t0, t_0_weight, t_0_weight_per_tensor_scale, t_0_weight_block_scales, torch.bfloat16, None, t2, t1)  # t3: "cuda:0 bf16[128, 256]"
-    #   del t0, t_0_weight_per_tensor_scale, t_0_weight_block_scales, t2, t1
-    #   return (t3,)
     # Getting the following error on RTX 6000 Ada as nvFP4 shouldn't be supported anyways
     # RuntimeError: CUDA error: CUBLAS_STATUS_NOT_SUPPORTED when calling `cublasLtMatmulAlgoGetHeuristic( ltHandle, computeDesc.descriptor(), Adesc.descriptor(), Bdesc.descriptor(), Cdesc.descriptor(), Ddesc.descriptor(), preference.descriptor(), 1, &heuristicResult, &returnedResult)`
     # But it works fine on B200
-    out = compiled_linear(x)
+    with ScaledMMLog("actual-thunder-tfms", enable=True):
+        out = compiled_linear(x)
     if not args.skip_trace:
         print(thunder.last_traces(compiled_linear)[-1])
     if not args.skip_test:
@@ -471,5 +487,8 @@ if __name__ == "__main__":
                 torch.testing.assert_close(
                     compiled_linear.get_parameter(f"{name}.per_tensor_scale"), ref_param._per_tensor_scale
                 )
-        ref = ref_model(x_ref)
+        x_ref = x.clone().detach()
+        torch.testing.assert_close(x, x_ref)
+        with ScaledMMLog("reference-torchao", enable=True), ScaledMMDispatchLog("reference=torchao", enable=False):
+            ref = ref_model(x_ref)
         torch.testing.assert_close(out, ref)
