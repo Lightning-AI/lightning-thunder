@@ -1,10 +1,17 @@
+from __future__ import annotations
+from typing import TYPE_CHECKING
+
+import torch
+import torchao.prototype.mx_formats.nvfp4_tensor as nvfp4_tensor
+
 import thunder
 from thunder.core import prims
+from thunder.core.trace import tracectx
 from thunder.transforms.utils import get_checks, trace_with_replaced_proxy_metadata, add_trace_output
-import torch
 
-import torchao.prototype.mx_formats.nvfp4_tensor as nvfp4_tensor
-import torchao  # Version 0.13
+if TYPE_CHECKING:
+    from thunder.core.proxies import TensorProxy
+
 
 nvfp4_executor = thunder.extend.OperatorExecutor("nvfp4_executor", version=0.1)
 
@@ -26,11 +33,10 @@ def quantize_fn(t: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tens
         # Swizzle the scales
         M, K = t.shape[0], t.shape[1]
         scale_shape = (M, K // BLOCK_SIZE)
-        qs = nvfp4_tensor.to_blocked(
-            qs.view(scale_shape)
-        ).flatten()
+        qs = nvfp4_tensor.to_blocked(qs.view(scale_shape)).flatten()
 
     return qw, qs, per_tensor_scale
+
 
 # https://github.com/pytorch/ao/blob/4dffb40280ea7b0e1732c580d08df58d0134c543/torchao/prototype/mx_formats/nvfp4_tensor.py#L567-L568
 def _nvfp4_linear(
@@ -54,7 +60,7 @@ def _nvfp4_linear(
     # M, K = quantized_a.shape[0], quantized_a.shape[1]
     # N = quantized_b.shape[1]
 
-    a_scale_blocked = a_block_scales  # Already swizzled    
+    a_scale_blocked = a_block_scales  # Already swizzled
     b_scale_blocked = b_block_scales  # Already swizzled
 
     # Merge double quant scales into 1 scale for Scale_In^D
@@ -87,11 +93,29 @@ def _nvfp4_linear(
     return result
 
 
-def nvfp4_linear_meta(a, quantized_b, b_per_tensor_scale, b_block_scales, out_dtype, bias: torch.Tensor | None = None, a_per_tensor_scale=None, a_block_scale=None):
+def nvfp4_linear_meta(
+    a,
+    quantized_b,
+    b_per_tensor_scale,
+    b_block_scales,
+    out_dtype,
+    bias: torch.Tensor | None = None,
+    a_per_tensor_scale=None,
+    a_block_scale=None,
+):
     return thunder.TensorProxy(like=a, shape=(*a.shape[:-1], quantized_b.shape[0]))
 
 
-def nvfp4_linear_impl(a, quantized_b, b_per_tensor_scale, b_block_scales, out_dtype, bias: torch.Tensor | None = None, a_per_tensor_scale=None, a_block_scales=None):
+def nvfp4_linear_impl(
+    a,
+    quantized_b,
+    b_per_tensor_scale,
+    b_block_scales,
+    out_dtype,
+    bias: torch.Tensor | None = None,
+    a_per_tensor_scale=None,
+    a_block_scales=None,
+):
     if a_per_tensor_scale is not None and a_block_scales is not None:
         quantized_a = a
     else:
@@ -169,7 +193,6 @@ class QuantizedLinearTransform(thunder.Transform):
 
     def transform_traces_pre_prologue(self, prologue_trace, computation_trace, epilogue_trace, **kwargs):
         tm = self.thunder_module
-        from thunder.core.trace import tracectx
 
         checks = get_checks(prologue_trace)
 
@@ -336,7 +359,7 @@ compiled_linear = thunder.jit(linear, transforms=[tfms], executors=[nvfp4_execut
 # Constructed by Unwrap the actual return value
 # import torch
 # from thunder.executors.torchex import no_autocast
-# 
+#
 # @torch.no_grad()
 # @no_autocast
 # def computation(input, t_0_weight, t_0_weight_per_tensor_scale, t_0_weight_block_scales):
@@ -345,7 +368,7 @@ compiled_linear = thunder.jit(linear, transforms=[tfms], executors=[nvfp4_execut
 #   # t_0_weight_per_tensor_scale: "cuda:0 f32[]"
 #   # t_0_weight_block_scales: "cuda:0 f8_e4m3fn[1024]"
 #   (t0, t1, t2) = nvfp4_quantize(input)
-# 
+#
 #   # /usr/local/lib/python3.12/dist-packages/torch/nn/modules/linear.py:134:             return F.linear(input, self.weight, self.bias)
 #   t3 = nvfp4_linear(t0, t_0_weight, t_0_weight_per_tensor_scale, t_0_weight_block_scales, torch.bfloat16, None, t2, t1)  # t3: "cuda:0 bf16[128, 256]"
 #   del t0, t_0_weight_per_tensor_scale, t_0_weight_block_scales, t2, t1
