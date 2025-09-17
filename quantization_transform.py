@@ -248,7 +248,7 @@ class QuantizedLinearTransform(thunder.Transform):
                 "dtype": qw.dtype,
                 "per_tensor_scale": per_tensor_scale,
                 "per_tensor_scale.shape": tuple(per_tensor_scale.shape) if self.use_global_scale else (),
-                # "per_tensor_scale.dtype": per_tensor_scale.dtype,
+                # NOTE: per_tensor_scale/global_scale are always torch.float32, so we might want to remove this.
                 "per_tensor_scale.dtype": torch.float32,
                 "block_scales": qs,
                 "block_scales.shape": tuple(qs.shape),
