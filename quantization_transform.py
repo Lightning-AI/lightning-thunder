@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 import argparse
+import warnings
 
 import torch
 import torch.nn as nn
@@ -440,11 +441,15 @@ class Module(nn.Module):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description="Demonstrate QuantizedLinearTransform that nvfp4 quantized nn.Linears in a model. By default this script does not compute per-tensor at all to reproduce TorchAO behavior. This script compares the output with TorchAO by using `quantize_(model, NVFP4InferenceConfig())`",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
     parser.add_argument("--seed", type=int, default=250916, help="Seed value")
     parser.add_argument("--skip-trace", action="store_true", help="Skip printing execution trace")
     parser.add_argument("--skip-test", action="store_true", help="Skip numeric test against torchao")
     parser.add_argument("--separate-quant", action="store_true", help="do quantization separately")
+    parser.add_argument("--per-tensor-scale", action="store_true", help="use per-tensor scale.")
     args = parser.parse_args()
     torch.manual_seed(args.seed)
 
@@ -455,7 +460,10 @@ if __name__ == "__main__":
         ref_model.load_state_dict(model.state_dict())
         quantize_(ref_model, NVFP4InferenceConfig(use_triton_kernel=False))
 
-    tfms = QuantizedLinearTransform(separate_quantization=args.separate_quant)
+    tfms = QuantizedLinearTransform(
+        separate_quantization=args.separate_quant,
+        use_per_tensor_scale=args.per_tensor_scale,
+    )
     compiled_linear: thunder.ThunderModule = thunder.jit(
         model,
         transforms=[tfms],
@@ -472,6 +480,8 @@ if __name__ == "__main__":
     if not args.skip_trace:
         print(thunder.last_traces(compiled_linear)[-1])
     if not args.skip_test:
+        if args.per_tensor_scale:
+            warnings.warn("The results would be different with high probability")
         for name, ref_param in ref_model.named_parameters():
             if isinstance(ref_param, nvfp4_tensor.NVFP4Tensor):
                 param = compiled_linear.get_parameter(name)
