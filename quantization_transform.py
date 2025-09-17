@@ -87,12 +87,15 @@ def _nvfp4_linear(
     return result
 
 
-def nvfp4_linear_meta(a, quantized_b, b_per_tensor_scale, b_block_scales, out_dtype, bias: torch.Tensor | None = None):
+def nvfp4_linear_meta(a, quantized_b, b_per_tensor_scale, b_block_scales, out_dtype, bias: torch.Tensor | None = None, a_per_tensor_scale=None, a_block_scale=None):
     return thunder.TensorProxy(like=a, shape=(*a.shape[:-1], quantized_b.shape[0]))
 
 
-def nvfp4_linear_impl(a, quantized_b, b_per_tensor_scale, b_block_scales, out_dtype, bias: torch.Tensor | None = None):
-    quantized_a, a_block_scales, a_per_tensor_scale = quantize_fn(a)
+def nvfp4_linear_impl(a, quantized_b, b_per_tensor_scale, b_block_scales, out_dtype, bias: torch.Tensor | None = None, a_per_tensor_scale=None, a_block_scales=None):
+    if a_per_tensor_scale is not None and a_block_scales is not None:
+        quantized_a = a
+    else:
+        quantized_a, a_block_scales, a_per_tensor_scale = quantize_fn(a)
     return _nvfp4_linear(
         quantized_a,
         quantized_b,
@@ -106,6 +109,25 @@ def nvfp4_linear_impl(a, quantized_b, b_per_tensor_scale, b_block_scales, out_dt
 
 
 nvfp4_linear = nvfp4_executor.register_operator("nvfp4_linear", meta=nvfp4_linear_meta, fn=nvfp4_linear_impl)
+
+
+def nvfp4_quantize_meta(a: TensorProxy) -> tuple[TensorProxy, TensorProxy, TensorProxy]:
+    quantized_shape = list(a.shape)
+    quantized_shape[-1] //= 2
+    block_scale_shape = list(a.shape)
+    block_scale_shape[-1] //= 16
+    return (
+        thunder.TensorProxy(like=a, shape=quantized_shape),
+        thunder.TensorProxy(like=a, shape=block_scale_shape),
+        thunder.TensorProxy(like=a, shape=()),
+    )
+
+
+def nvfp4_quantize_impl(a: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    return quantize_fn(a)
+
+
+nvfp4_quantize = nvfp4_executor.register_operator("nvfp4_quantize", meta=nvfp4_quantize_meta, fn=nvfp4_quantize_impl)
 
 
 class QuantizedLinearTransform(thunder.Transform):
@@ -274,16 +296,23 @@ class QuantizedLinearTransform(thunder.Transform):
         for bsym in bound_symbols[idx:]:
             if bsym.sym == thunder.torch.linear and bsym.args[1].name in quantized_proxies:
                 assert len(bsym.args) == 3  # torch.linear(input, weight, bias)
+                activation = bsym.args[0]
+                quantized_weight = bsym.args[1]
+                with tracectx(new_computation_trace):
+                    quantized, block_scale, global_scale = nvfp4_quantize(activation)
                 n = quantized_proxies[bsym.args[1].name]
                 qs = self.quant_states[n]
                 # signature of the new symbol:
                 # nvfp4_linear_impl(a, quantized_b, b_per_tensor_scale, b_block_scales, out_dtype, bias: Optional[torch.Tensor] = None)
                 new_args = (
-                    *bsym.args[:2],
+                    quantized,
+                    quantized_weight,
                     additional_proxies[f"{n}.per_tensor_scale"],
                     additional_proxies[f"{n}.block_scales"],
                     qs["out_dtype"],
                     bsym.args[2],
+                    global_scale,
+                    block_scale,
                 )
                 linear_bsym = bsym.from_bsym(
                     sym=nvfp4_linear,
@@ -303,12 +332,11 @@ tfms = QuantizedLinearTransform()
 linear = torch.nn.Sequential(torch.nn.Linear(64, 256, dtype=torch.bfloat16, bias=False, device="cuda"))
 compiled_linear = thunder.jit(linear, transforms=[tfms], executors=[nvfp4_executor], disable_atograd=True)
 
-# TODO: Insert quantize_fn for input in trace.
-
 # Transformed Computation Trace:
+# Constructed by Unwrap the actual return value
 # import torch
 # from thunder.executors.torchex import no_autocast
-
+# 
 # @torch.no_grad()
 # @no_autocast
 # def computation(input, t_0_weight, t_0_weight_per_tensor_scale, t_0_weight_block_scales):
@@ -316,15 +344,14 @@ compiled_linear = thunder.jit(linear, transforms=[tfms], executors=[nvfp4_execut
 #   # t_0_weight: "cuda:0 ui8[256, 32]"
 #   # t_0_weight_per_tensor_scale: "cuda:0 f32[]"
 #   # t_0_weight_block_scales: "cuda:0 f8_e4m3fn[1024]"
-
+#   (t0, t1, t2) = nvfp4_quantize(input)
+# 
 #   # /usr/local/lib/python3.12/dist-packages/torch/nn/modules/linear.py:134:             return F.linear(input, self.weight, self.bias)
-#   t3 = nvfp4_linear(input, t_0_weight, t_0_weight_per_tensor_scale, t_0_weight_block_scales, torch.bfloat16, None)  # t3: "cuda:0 bf16[128, 256]"
-#   return {'output': (t3,), 'flat_args': [input, t_0_weight]}
-
-
+#   t3 = nvfp4_linear(t0, t_0_weight, t_0_weight_per_tensor_scale, t_0_weight_block_scales, torch.bfloat16, None, t2, t1)  # t3: "cuda:0 bf16[128, 256]"
+#   del t0, t_0_weight_per_tensor_scale, t_0_weight_block_scales, t2, t1
+#   return (t3,)
 # Getting the following error on RTX 6000 Ada as nvFP4 shouldn't be supported anyways
 # RuntimeError: CUDA error: CUBLAS_STATUS_NOT_SUPPORTED when calling `cublasLtMatmulAlgoGetHeuristic( ltHandle, computeDesc.descriptor(), Adesc.descriptor(), Bdesc.descriptor(), Cdesc.descriptor(), Ddesc.descriptor(), preference.descriptor(), 1, &heuristicResult, &returnedResult)`
-
 # But it works fine on B200
 try:
     compiled_linear(torch.randn(128, 64, device="cuda", dtype=torch.bfloat16))
