@@ -4,8 +4,6 @@ import argparse
 
 import torch
 import torch.nn as nn
-from torch.overrides import TorchFunctionMode
-from torch.utils._python_dispatch import TorchDispatchMode
 import torchao.prototype.mx_formats.nvfp4_tensor as nvfp4_tensor
 from torchao.prototype.mx_formats.inference_workflow import NVFP4InferenceConfig
 from torchao.quantization import quantize_
@@ -431,32 +429,6 @@ class QuantizedLinearTransform(thunder.Transform):
         return prologue_trace, new_computation_trace, epilogue_trace
 
 
-class ScaledMMLog(TorchFunctionMode):
-    def __init__(self, name: str, enable: bool) -> None:
-        self.name = name
-        self.enable = enable
-
-    def __torch_function__(self, func, types, args, kwargs={}):
-        if self.enable:
-            print(f"!!! {func = }")
-        if self.enable and func == torch._scaled_mm:
-            file = f"{self.name}.pt"
-            torch.save(args, file)
-            print(f"\n$$$ saving args to {file}...\n")
-        return func(*args, **kwargs)
-
-
-class ScaledMMDispatchLog(TorchDispatchMode):
-    def __init__(self, name: str, enable: bool) -> None:
-        self.name = name
-        self.enable = enable
-
-    def __torch_dispatch__(self, func, types, args=..., kwargs=None):
-        if self.enable:
-            print(f"!!! {func = }")
-        return func(*args, **(kwargs or {}))
-
-
 class Module(nn.Module):
     def __init__(self, in_features: int = 64, out_features: int = 256, bias: bool = False):
         super().__init__()
@@ -496,14 +468,12 @@ if __name__ == "__main__":
     # Getting the following error on RTX 6000 Ada as nvFP4 shouldn't be supported anyways
     # RuntimeError: CUDA error: CUBLAS_STATUS_NOT_SUPPORTED when calling `cublasLtMatmulAlgoGetHeuristic( ltHandle, computeDesc.descriptor(), Adesc.descriptor(), Bdesc.descriptor(), Cdesc.descriptor(), Ddesc.descriptor(), preference.descriptor(), 1, &heuristicResult, &returnedResult)`
     # But it works fine on B200
-    with ScaledMMLog("actual-thunder-tfms", enable=False):
-        out = compiled_linear(x)
+    out = compiled_linear(x)
     if not args.skip_trace:
         print(thunder.last_traces(compiled_linear)[-1])
     if not args.skip_test:
         for name, ref_param in ref_model.named_parameters():
             if isinstance(ref_param, nvfp4_tensor.NVFP4Tensor):
-                print(f"!!! Testing quantized param of {name}")
                 param = compiled_linear.get_parameter(name)
                 torch.testing.assert_close(param, ref_param._data)
                 torch.testing.assert_close(compiled_linear.get_parameter(f"{name}.block_scales"), ref_param._scale_e4m3)
@@ -512,6 +482,5 @@ if __name__ == "__main__":
                 )
         x_ref = x.clone().detach()
         torch.testing.assert_close(x, x_ref)
-        with ScaledMMLog("reference-torchao", enable=True), ScaledMMDispatchLog("reference=torchao", enable=False):
-            ref = ref_model(x_ref)
+        ref = ref_model(x_ref)
         torch.testing.assert_close(out, ref)
