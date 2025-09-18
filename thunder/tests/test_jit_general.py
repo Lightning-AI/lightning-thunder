@@ -1730,3 +1730,17 @@ def test_jit_nn_module_cycle_leak():
     ref = _allocate_and_call_model_in_function()
     assert ref() is None
     assert torch.cuda.memory_allocated() == memory_start
+
+
+def test_dataclass_dict():
+    # diffusers model outputs are like this
+    from dataclasses import dataclass
+
+    @dataclass
+    class Foo(dict):
+        musthave: int
+
+    def fn():
+        return Foo(musthave=1)
+
+    assert fn() == thunder.jit(fn)()
