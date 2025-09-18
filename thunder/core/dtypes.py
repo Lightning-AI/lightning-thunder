@@ -239,7 +239,7 @@ _numbertype_to_dtype_map = {
 
 boolean_dtypes = {bool8, bool8_, bool}
 
-integer_dtypes = {d for d in all_dtypes if isinstance(d, exact)} | {bool, int}
+integer_dtypes = {d for d in all_dtypes if isinstance(d, exact)} | {bool, int} | {uint64, uint64_}
 
 nonboolean_integer_dtypes = {d for d in integer_dtypes if (not isinstance(d, bool_) and d is not bool)}
 
@@ -264,7 +264,7 @@ inexact_dtypes = float_dtypes | complex_dtypes
 
 weak_dtypes = {d for d in all_dtypes if d.is_weak} | all_numbertypes
 
-strong_dtypes = {d for d in all_dtypes if not d.is_weak}
+strong_dtypes = {d for d in all_dtypes if not d.is_weak} | {uint64}
 
 
 def is_weak_dtype(dtype):
@@ -384,9 +384,11 @@ def corresponding_complex_dtype(dtype):
 
 
 _name_to_dtype_map = {dtype.full_name: dtype for dtype in all_dtypes}
+_name_to_dtype_map.update({uint64.full_name: uint64, uint64_.full_name: uint64_})
 _strong_dtype_to_weak_dtype_map = {
     dtype: _name_to_dtype_map[f"{dtype.full_name}_"] for dtype in all_dtypes if not dtype.is_weak
 }
+_strong_dtype_to_weak_dtype_map.update({uint64: uint64_})
 
 _weak_dtype_to_strong_dtype_map = {v: k for k, v in _strong_dtype_to_weak_dtype_map.items()}
 _weak_dtype_to_strong_dtype_map.update(
@@ -395,6 +397,7 @@ _weak_dtype_to_strong_dtype_map.update(
         int: int64,
         float: float32,
         complex: complex64,
+        uint64_: uint64,
     }
 )
 
@@ -522,6 +525,12 @@ _thunder_to_torch_dtype_map.update(
         dtype: getattr(torch, dtype.full_name.rstrip("_"))
         for dtype in all_dtypes
         if hasattr(torch, dtype.full_name.rstrip("_"))
+    }
+)
+_thunder_to_torch_dtype_map.update(
+    {
+        uint64: torch.uint64,
+        uint64_: torch.uint64,
     }
 )
 
