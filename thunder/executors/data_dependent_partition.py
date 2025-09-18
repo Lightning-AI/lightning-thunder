@@ -117,9 +117,10 @@ class Graph:
                 if not isinstance(inp, Proxy):
                     continue
 
-                producer_id = producers[inp]
-                parent = bsym_id_to_node_map[producer_id]
-                node.parents.add(parent)
+                producer_id = producers.get(inp, None)
+                if producer_id is not None:
+                    parent = bsym_id_to_node_map[producer_id]
+                    node.parents.add(parent)
 
             if not node.parents:
                 self.roots.append(node)
