@@ -2513,7 +2513,8 @@ class MappingItemsWrapper(ThunderInterpreterObject):
 
 class MutMappingWrapperMethods(WrappedValue):
     def __new__(cls, /, *args, **kwds):
-        uvalue = unwrap(cls)()
+        ucls = unwrap(cls)
+        uvalue = ucls.__new__(ucls)
         # todo: for subclasses, better record the call to the constructor
         return wrap(uvalue, provenance=ProvenanceRecord(PseudoInst.NEW, inputs=[cls.provenance]))
 
