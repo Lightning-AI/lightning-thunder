@@ -1,8 +1,10 @@
 import time
 from typing import TYPE_CHECKING
+import weakref
 
 import torch.distributed as torch_dist
 
+from thunder.core.compile_data import get_compile_data
 from thunder.core.prims import linear as linear_prim
 from thunder.core.prims import get_grad, put_grad
 from thunder.core.proxies import AnyProxy, TensorProxy
@@ -20,6 +22,7 @@ from thunder.core.transforms import (
 from thunder.core.transform_common import cse_single_bsym
 from thunder.executors.passes import del_last_used
 import thunder.core.utils as utils
+from thunder.dev_utils.te_states_reporter import TEStateReporter
 
 if TYPE_CHECKING:
     from thunder.core.trace import VariableInterface
@@ -35,14 +38,39 @@ from transformer_engine.pytorch.fp8 import (
     RecipeState,
     FP8GlobalStateManager,
 )
+
 from transformer_engine.pytorch.ops import BasicLinear
 from transformer_engine.pytorch.tensor import Quantizer
 from transformer_engine.pytorch.utils import check_dim_for_fp8_exec
+from thunder.core.module import get_thunder_module
 
 
 transformer_engine_ex = StatefulExecutor("transformer_engine")
 register_executor(transformer_engine_ex)
 
+def _export_te_states(*, recipe=None, states=None, mode = None, quantizers=None, holder=None):
+    tm = None
+    if holder is not None:
+        tm_ref = getattr(holder, "_tm_ref", None)
+        if tm_ref is not None and isinstance(tm_ref, weakref.ref):
+            tm = tm_ref()
+
+    # Cannot fallback to compile data as during execution we don't have compile_data context
+    if tm is None:
+        import warnings
+        warnings.warn("No ThunderModule found for exporting TE states", UserWarning)
+        return
+
+    if not hasattr(tm, "te_reporter"):
+        tm.te_reporter = TEStateReporter()
+
+    tm.te_reporter.update_from_runtime(
+        holder=holder,
+        recipe=recipe,
+        states=states,
+        mode=mode,
+        quantizers=quantizers,
+    )
 
 def _te_fp8_recipe_meta() -> AnyProxy:
     return AnyProxy(None, prefix="r")
@@ -60,6 +88,9 @@ class TERecipe:
 
         if not self.fp8_recipe or self.fp8_recipe is not te_fp8_recipe:
             self.fp8_recipe = te_fp8_recipe
+
+        # Duplicate recipies are handled by the TEStateReporter as we don't have any early return logic here
+        _export_te_states(recipe=self.fp8_recipe, holder=self)
 
         return self.fp8_recipe
 
@@ -83,10 +114,14 @@ class TEQuantizerState:
     def __call__(self, recipe_state: RecipeState, num_quantizers: int) -> list[Quantizer]:
         if self.quantizers and self.parent_recipe_state is recipe_state:
             return self.quantizers
+
         quantizers = recipe_state.make_quantizers()
 
         self.quantizers = quantizers
         self.parent_recipe_state = recipe_state
+        
+        # Export only new quantizers
+        _export_te_states(recipe=recipe_state.recipe, quantizers=quantizers, holder=self)
 
         return quantizers
 
@@ -119,6 +154,9 @@ class TERecipeState:
 
         self.state = recipe_state
         self.parent_recipe = recipe
+
+        # Export only new states
+        _export_te_states(recipe=recipe, states=(recipe_state,), mode=mode, holder=self)
 
         return recipe_state
 
@@ -343,6 +381,11 @@ class TransformerEngineTransform(Transform):
         self.rhs_to_bsym_map: dict[BoundSymbolRHS, BoundSymbol] = {}
         self.redundant_map: dict[Variable, Proxy] = {}
         self.new_saved_for_backward = None
+        self._tm_ref = None
+
+    def transform_module(self, model) -> None:
+        # Cache a weakref to the ThunderModule for later runtime export
+        self._tm_ref = weakref.ref(model)
 
     def reset(self):
         self.fp8_recipe = None
@@ -350,6 +393,20 @@ class TransformerEngineTransform(Transform):
         self.rhs_to_bsym_map = {}
         self.redundant_map = {}
         self.new_saved_for_backward = None
+
+    def _stamp_te_refs_to_bsym(self, tr):
+        for bsym in tr.bound_symbols:
+            call_ctx = getattr(bsym, "_call_ctx", None)
+            if not call_ctx:
+                continue
+            te_prefixes = ["get_te_fp8_recipe", "get_te_fp8_state", "get_te_fp8_quantizers"]
+            if not any(bsym.sym.name.startswith(prefix) for prefix in te_prefixes):
+                continue
+            state_obj = next(iter(call_ctx.values()))
+
+            assert getattr(state_obj, "_tm_ref", None) is None
+
+            setattr(state_obj, "_tm_ref", self._tm_ref)  # stamp the ThunderModule weakref here
 
     def transform_trace_post_optimization(self, computation_trace, **kwargs):
         """
@@ -364,6 +421,14 @@ class TransformerEngineTransform(Transform):
 
         if "transformer_engine" not in map(lambda x: x.name, kwargs["executors_list"]):
             return computation_trace
+
+        # Ensure we have a ThunderModule weakref available
+        if self._tm_ref is None:
+            cd = get_compile_data()
+            if cd is not None and getattr(cd, "is_module", False):
+                tm = get_thunder_module(cd.fn)
+                if tm is not None:
+                    self._tm_ref = weakref.ref(tm)
 
         start_time_ns = time.perf_counter_ns()
 
@@ -421,6 +486,8 @@ class TransformerEngineTransform(Transform):
             _update_forward_with_new_saved_for_backward(new_trace, self.new_saved_for_backward)
 
         sync_trace = del_last_used(new_trace)
+
+        self._stamp_te_refs_to_bsym(sync_trace)
 
         end_time_ns = time.perf_counter_ns()
         elapsed_time_ns = end_time_ns - start_time_ns

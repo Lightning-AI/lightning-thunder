@@ -774,6 +774,99 @@ def _test_ddp_transformer_engine_llama_sanity(input_data):
     return None
 
 
+def _test_ddp_transformer_engine_reporter(input_data):
+    # Test Description:
+    # Verify that the TEStateReporter correctly captures and reports TransformerEngine
+    # FP8 state information during DDP training execution, including global context,
+    # recipe summaries, and forward/backward state summaries across distributed processes.
+
+    init_method, world_size, rank, _executor, device, _dtype, _unused_kwargs = input_data
+    devicetype = devices.device_from_string(device).devicetype
+    pg = init_per_process_distributed(init_method, devicetype, world_size, rank)
+
+    fp8_recipe = get_default_fp8_recipe()
+
+    torch.cuda.set_device(rank)
+    torch_device = torch.device("cuda", rank)
+
+    dtype_t = torch.bfloat16
+    if rank == 0:
+        x = torch.randn(3, 768, 4096, device=torch_device, dtype=dtype_t, requires_grad=True)
+    else:
+        x = torch.randn(2, 768, 4096, device=torch_device, dtype=dtype_t, requires_grad=True)
+
+    class Module(nn.Module):
+        def __init__(self):
+            super(Module, self).__init__()
+            self.w1 = nn.Parameter(torch.randn(4096, 4096, device=torch_device, dtype=dtype_t))
+            self.w2 = nn.Parameter(torch.randn(2048, 4096, device=torch_device, dtype=dtype_t))
+
+        def forward(self, x):
+            o = torch.nn.functional.linear(x, self.w1)
+            added = o + x
+            return torch.nn.functional.linear(added, self.w2)
+
+    model = Module()
+    jmodel = thunder.distributed.ddp(
+        thunder.jit(model, executors=[transformer_engine_ex], transforms=[TransformerEngineTransform()])
+    )
+
+    def train(model):
+        iters = 10
+        for _ in range(iters):
+            with fp8_autocast(fp8_recipe=fp8_recipe):
+                y = model(x)
+            y.backward(torch.ones_like(y))
+
+    train(jmodel)
+
+    rep = getattr(jmodel, "te_reporter", None)
+    if rep is None:
+        if rank == 0:
+            return [AssertionError("TransformerEngine reporter not found")]
+        return None
+
+    payload = {
+        "rank": rank,
+        "error": None if rep is not None else "no reporter",
+        "global": {} if rep is None else rep.global_ctx,
+        "recipes": 0 if rep is None else len(rep.recipe_summaries),
+        "forward": 0 if rep is None else len(rep.state_summaries_forward),
+        "backward": 0 if rep is None else len(rep.state_summaries_backward),
+        "quantizers": 0 if rep is None else len(rep.quantizer_summaries),
+        "has_sections": (
+            {
+                "global": "Global Context:" in rep.render_report(),
+                "forward": "Forward States (" in rep.render_report(),
+                "backward": "Backward States (" in rep.render_report(),
+            }
+            if rep is not None
+            else {"global": False, "forward": False, "backward": False}
+        ),
+    }
+
+    gathered = [None] * world_size if rank == 0 else None
+    tdist.gather_object(payload, object_gather_list=gathered, dst=0, group=pg)
+
+    tdist.barrier(pg)
+    tdist.destroy_process_group(pg)
+
+    if rank == 0:
+        exceptions = []
+        for p in gathered:
+            print(p)
+            if p["error"]:
+                exceptions.append(AssertionError(p["error"]))
+                continue
+            assert p["has_sections"]["global"]
+            assert p["recipes"] == 1
+            assert p["forward"] == 2  # 2 forward linear ops
+            assert p["backward"] == 2  # 2 backward linear ops
+            assert p["quantizers"] == 6  # 2 quantizers per forward linear op, 1 quantizers per backward linear op
+        return exceptions
+    return None
+
+
 # NOTE This is just a stub, see the NOTE for ddp_wrapper
 @instantiate(
     dtypes=(thunder.float32,),
@@ -874,6 +967,21 @@ def test_ddp_transformer_engine(executor, devices, dtype):
 )
 @distributed_wrapper("test_ddp_transformer_engine_llama_sanity", _test_ddp_transformer_engine_llama_sanity)
 def test_ddp_transformer_engine_llama_sanity(executor, devices, dtype):
+    pass
+
+
+@instantiate(
+    dtypes=(thunder.float32,),
+    num_devices=2,
+    devicetypes=(devices.DeviceType.CUDA,),
+    executors=(TorchExecutor,),
+    decorators=(
+        pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices"),
+        unittest.mock.patch.dict(os.environ, {"NVTE_TORCH_COMPILE": "0"}),
+    ),
+)
+@distributed_wrapper("test_ddp_transformer_engine_reporter", _test_ddp_transformer_engine_reporter)
+def test_ddp_transformer_engine_reporter(executor, devices, dtype):
     pass
 
 
