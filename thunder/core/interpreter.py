@@ -1156,18 +1156,18 @@ class InterpreterFrame:
     def format_with_source(self) -> str:
         # todo: multiple lines in positions, underline, indent
         assert self.positions is not None, self
-        l = []
-        l.append(f"  in {self.qualname} in file: {self.code.co_filename}, line {self.positions.lineno}:")
+        lst = []
+        lst.append(f"  in {self.qualname} in file: {self.code.co_filename}, line {self.positions.lineno}:")
         if self.code.co_filename:
             ls = linecache.getlines(self.code.co_filename)
             if ls:
                 lineno = self.positions.lineno
                 if lineno is None:
                     lineno = self.code.co_firstlineno
-                l.append("  " + ls[max(lineno - 1, 0)].rstrip())
+                lst.append("  " + ls[max(lineno - 1, 0)].rstrip())
             else:
-                l.append("  <unavailable>")
-        return os.linesep.join(l)
+                lst.append("  <unavailable>")
+        return os.linesep.join(lst)
 
     def get_localsplus_name(self, idx: int) -> str:
         if sys.version_info < (3, 11):
