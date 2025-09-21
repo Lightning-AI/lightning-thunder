@@ -2336,9 +2336,9 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
 
         if not isinstance(iterable.value, (tuple, list)):
 
-            def impl(l, iterable):
+            def impl(seq, iterable):
                 for i in iterable:
-                    l.append(i)
+                    seq.append(i)
 
             res = _interpret_call(impl, self, iterable)
             assert len(self.value) == len(self.item_wrappers)
@@ -2392,7 +2392,7 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
         if uindex < -len(uself) or uindex >= len(uself):
             return do_raise(IndexError("pop index out of range"))
 
-        res = _interpret_call(lambda l, i: l[i], self, index)
+        res = _interpret_call(lambda seq, i: seq[i], self, index)
 
         assert res is not INTERPRETER_SIGNALS.EXCEPTION_RAISED
 
