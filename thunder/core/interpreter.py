@@ -2133,15 +2133,15 @@ class SequenceWrapperMethods(WrappedValue):
     def __init__(self, iterable=(), /):
         if iterable == ():
             iterable = wrap_const(())
-        l = wrap_const([])
-        assert l.item_wrappers is not None
+        wrapped_list = wrap_const([])
+        assert wrapped_list.item_wrappers is not None
 
-        res = _interpret_call(list.extend, l, iterable)
+        res = _interpret_call(list.extend, wrapped_list, iterable)
         if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
             return res
         assert type(self.value) is self.python_typ
-        self.value[:] = l.value[:]
-        self.item_wrappers = l.item_wrappers[:]
+        self.value[:] = wrapped_list.value[:]
+        self.item_wrappers = wrapped_list.item_wrappers[:]
         return wrap_const(None)
 
     def __getitem__(self, idx, /):
@@ -2195,10 +2195,10 @@ class SequenceWrapperMethods(WrappedValue):
         self.track_items()
 
         def impl(self, n):
-            l = []
+            seq = []
             for _ in range(n):
-                l.extend(self)
-            return type(self)(l)
+                seq.extend(self)
+            return type(self)(seq)
 
         return _interpret_call(impl, self, n)
 
