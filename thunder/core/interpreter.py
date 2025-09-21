@@ -980,10 +980,10 @@ class ProvenanceRecord:
             inputs = [recurse_str(i) for i in self.inputs]
             inputs_str = ", ".join(inputs)
             counter += 1
-            l = f"  i{counter} = {self.inst}({inputs_str})"
+            out_item = f"  i{counter} = {self.inst}({inputs_str})"
             if self.output_idx != 0 or self.output_key is not None:
-                l += "# with output spec"
-            out.append(l)
+                out_item += "# with output spec"
+            out.append(out_item)
             res = f"i{counter}"
             known[self] = res
             return res
