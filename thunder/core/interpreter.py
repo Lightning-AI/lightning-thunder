@@ -2872,7 +2872,7 @@ def _tuple_new_provenance_tracking_lookaside(cls, iterable=(), /):
         item_wrappers = []
         # TODO: investigate why just taking the wrappers will break test_interpreter.py::test_module_hooks
         for i in range(len(iterable.value)):
-            item_wrappers.append(_interpret_call(lambda l, i: l[i], iterable, wrap_const(i)))
+            item_wrappers.append(_interpret_call(lambda seq, i: seq[i], iterable, wrap_const(i)))
     else:
         iterator = _interpret_call(iter, iterable)
         if iterator is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
