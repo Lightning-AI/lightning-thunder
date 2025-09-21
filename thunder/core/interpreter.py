@@ -4837,11 +4837,11 @@ def _list_extend_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kw
 
     # NOTE Doesn't pop the list that's extended
     tos = stack.pop_wrapped()
-    l: list = stack.getitem_wrapped(-i)
+    lst: list = stack.getitem_wrapped(-i)
 
     # NOTE tos does not have to be a list
-    assert wrapped_isinstance(l, list)
-    res = _interpret_call(lambda l1, l2: l1.extend(l2), l, tos)
+    assert wrapped_isinstance(lst, list)
+    res = _interpret_call(lambda l1, l2: l1.extend(l2), lst, tos)
 
     if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return res
