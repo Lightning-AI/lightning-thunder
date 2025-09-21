@@ -1156,18 +1156,18 @@ class InterpreterFrame:
     def format_with_source(self) -> str:
         # todo: multiple lines in positions, underline, indent
         assert self.positions is not None, self
-        lst = []
-        lst.append(f"  in {self.qualname} in file: {self.code.co_filename}, line {self.positions.lineno}:")
+        lines = []
+        lines.append(f"  in {self.qualname} in file: {self.code.co_filename}, line {self.positions.lineno}:")
         if self.code.co_filename:
             ls = linecache.getlines(self.code.co_filename)
             if ls:
                 lineno = self.positions.lineno
                 if lineno is None:
                     lineno = self.code.co_firstlineno
-                lst.append("  " + ls[max(lineno - 1, 0)].rstrip())
+                lines.append("  " + ls[max(lineno - 1, 0)].rstrip())
             else:
-                lst.append("  <unavailable>")
-        return os.linesep.join(lst)
+                lines.append("  <unavailable>")
+        return os.linesep.join(lines)
 
     def get_localsplus_name(self, idx: int) -> str:
         if sys.version_info < (3, 11):
@@ -1194,7 +1194,7 @@ class InterpreterFrame:
         name = self.code.co_name
         qualname = self.qualname
 
-        def get_frame(l, rel_lineno, filename, firstlineno, name, qualname):
+        def get_frame(container, rel_lineno, filename, firstlineno, name, qualname):
             def fn():
                 pass
 
@@ -1219,7 +1219,7 @@ class InterpreterFrame:
             assert tb is not None
             while tb.tb_next is not None:
                 tb = tb.tb_next
-            l.append(tb.tb_frame)
+            container.append(tb.tb_frame)
 
         # we run the getting of the frame in a separate thread because
         # we want to avoid having f_back pointing to the function
