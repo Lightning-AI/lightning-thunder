@@ -876,7 +876,7 @@ def unpack_sequence_printer(
     )
     utils.check_type(bsym.output, Sequence)
 
-    x, l = arg_printables
+    x, _ = arg_printables
     call_str = f"{codeutils.prettyprint(x)}"
 
     # Short-circuits if there's nothing to unpack:
@@ -894,7 +894,7 @@ def unpack_sequence_printer(
     return lines
 
 
-def unpack_sequence_impl(x: Sequence, l: int) -> list:
+def unpack_sequence_impl(x: Sequence) -> list:
     return list(x)
 
 
