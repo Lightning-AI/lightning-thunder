@@ -193,8 +193,8 @@ class WrappedValue:
 # Note: Use these with care!
 #       In some situations - in particular *args/**kwargs, Python creates tuples and dicts for us,
 #       these functions are intended to do the appropriate wrapping for them.
-def wrap_args_from_list(l):  # returns a new list!
-    res = [_interpret_call(lambda l, i: l[i], l, wrap_const(i)) for i in range(len(unwrap(l)))]
+def wrap_args_from_list(lst):  # returns a new list!
+    res = [_interpret_call(lambda l, i: l[i], lst, wrap_const(i)) for i in range(len(unwrap(lst)))]
     return res
 
 
