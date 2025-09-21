@@ -1034,11 +1034,11 @@ class InterpreterStack:
             return wrapped_value
         # key=None is pop
         if isinstance(key, slice):
-            l = len(self._stack)
+            length = len(self._stack)
             if key.start is not None:
                 start = key.start
             else:
-                start = -l
+                start = -length
             assert start < 0
             if key.step is not None:
                 step = key.step
