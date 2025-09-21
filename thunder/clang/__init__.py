@@ -503,10 +503,10 @@ def _basic_indexing(a: TensorLike, /, key) -> TensorLike:
 
     # Handles numbers and slices
     squeeze_dims = []
-    for idx, (l, x) in enumerate(zip(a.shape, key)):
+    for idx, (length, x) in enumerate(zip(a.shape, key)):
         if isinstance(x, slice):
             start = x.start if x.start is not None else 0
-            stop = x.stop if x.stop is not None else l
+            stop = x.stop if x.stop is not None else length
             step = x.step if x.step is not None else 1
 
             # Tests for negative step (PyTorch doesn't allow step < 1)
@@ -515,11 +515,11 @@ def _basic_indexing(a: TensorLike, /, key) -> TensorLike:
             # Canonicalizes start and stop (allowing for values like -1)
             # NOTE: canonicalization is custom because start and stop beyond the length are allowed
             if start < 0:
-                start = start + l
-            utils.check(start >= 0, lambda: f"start={x.start} is not a valid index for length {l}")
+                start = start + length
+            utils.check(start >= 0, lambda: f"start={x.start} is not a valid index for length {length}")
             if stop < 0:
-                stop = stop + l
-            utils.check(stop >= 0, lambda: f"end={x.stop} is not a valid index for length {l}")
+                stop = stop + length
+            utils.check(stop >= 0, lambda: f"end={x.stop} is not a valid index for length {length}")
 
             # Handles start > stop, which occurs with slices like 3:1:1
             # NOTE Because step is always strictly positive, it's sufficient to check start
@@ -530,19 +530,19 @@ def _basic_indexing(a: TensorLike, /, key) -> TensorLike:
 
             # Handles overflow
             # NOTE This is a little odd, but we just want the slice to be zero
-            if start >= l:
+            if start >= length:
                 start = 0
                 stop = 0
 
-            if stop >= l:
-                stop = l
+            if stop >= length:
+                stop = length
 
             start_indices.append(start)
             end_indices.append(stop)
             strides.append(step)
         elif isinstance(x, (Number, NumberProxy)):
             # NOTE Numbers must be valid indices after canonicalization, unlike start and stop
-            x = utils.canonicalize_dim(l, x)
+            x = utils.canonicalize_dim(length, x)
             start_indices.append(x)
             end_indices.append(x + 1)
             strides.append(1)
@@ -554,7 +554,7 @@ def _basic_indexing(a: TensorLike, /, key) -> TensorLike:
     # performance optimization; check if we need slicing
     if (
         all([x == 0 for x in start_indices])
-        and all([x == l for x, l in zip(end_indices, a.shape)])
+        and all([x == length for x, length in zip(end_indices, a.shape)])
         and all([x == 1 for x in strides])
         and len(squeeze_dims) == 0
     ):
@@ -854,11 +854,11 @@ def reshape(a: TensorLike, shape: Sequence[int]) -> TensorLike:
     # Checks for -1 marker value
     numel = 1
     neg_one_idx = None
-    for idx, l in enumerate(shape):
-        if l >= 0:
-            numel *= l
+    for idx, length in enumerate(shape):
+        if length >= 0:
+            numel *= length
         else:
-            utils.check(l == -1, "Found a negative dimension length {l} in shape={shape}!")
+            utils.check(length == -1, "Found a negative dimension length {length} in shape={shape}!")
             utils.check(neg_one_idx is None, "Found two -1 markers in shape={shape}!")
             neg_one_idx = idx
 
