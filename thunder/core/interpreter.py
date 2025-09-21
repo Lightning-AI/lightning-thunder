@@ -336,36 +336,36 @@ def wrap_binary_subscr(uvalue, obj, key):
     return wrap(uvalue, provenance=ProvenanceRecord(PseudoInst.BINARY_SUBSCR, inputs=[obj.provenance, key.provenance]))
 
 
-def populate_item_wrappers(l):
+def populate_item_wrappers(obj):
     ctx: InterpreterCompileCtx = get_interpretercompilectx()
     if not ctx._with_provenance_tracking:
         return
 
-    assert isinstance(l, WrappedValue)
+    assert isinstance(obj, WrappedValue)
     # to do: generalize
-    if wrapped_isinstance(l, (list, tuple)):
-        if l.item_wrappers is None:
-            l.item_wrappers = [None for _ in range(len(l.value))]
-        assert isinstance(l.item_wrappers, list)
-        assert len(l.value) == len(l.item_wrappers), f"{len(l.value)=} {len(l.item_wrappers)=}"
+    if wrapped_isinstance(obj, (list, tuple)):
+        if obj.item_wrappers is None:
+            obj.item_wrappers = [None for _ in range(len(obj.value))]
+        assert isinstance(obj.item_wrappers, list)
+        assert len(obj.value) == len(obj.item_wrappers), f"{len(obj.value)=} {len(obj.item_wrappers)=}"
 
-        for i, v in enumerate(l.value):
-            if l.item_wrappers[i] is None:
-                wv = wrap_binary_subscr(v, l, i)
-                l.item_wrappers[i] = wv
+        for i, v in enumerate(obj.value):
+            if obj.item_wrappers[i] is None:
+                wv = wrap_binary_subscr(v, obj, i)
+                obj.item_wrappers[i] = wv
         return
 
-    if wrapped_isinstance(l, dict):
-        assert isinstance(l.item_wrappers, dict)
-        for k, v in l.value.items():
-            if k not in l.item_wrappers:
+    if wrapped_isinstance(obj, dict):
+        assert isinstance(obj.item_wrappers, dict)
+        for k, v in obj.value.items():
+            if k not in obj.item_wrappers:
                 wk = wrap_const(k)
-                wv = wrap_binary_subscr(v, l, wk)
-                l.item_wrappers[k] = wv
-                l.key_wrappers[k] = wk  # or have those from an iteration of the input?
+                wv = wrap_binary_subscr(v, obj, wk)
+                obj.item_wrappers[k] = wv
+                obj.key_wrappers[k] = wk  # or have those from an iteration of the input?
         return
 
-    raise NotImplementedError(f"populate item wrappers for {type(l.value)}")
+    raise NotImplementedError(f"populate item wrappers for {type(obj.value)}")
 
 
 #
