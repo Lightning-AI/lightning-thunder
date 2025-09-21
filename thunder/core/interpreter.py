@@ -4817,14 +4817,14 @@ def _list_append_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kw
 
     # NOTE Doesn't pop the list that's extended
     tos = stack.pop_wrapped()
-    l: list = stack.getitem_wrapped(-i)
+    lst: list = stack.getitem_wrapped(-i)
 
-    assert wrapped_isinstance(l, list)
+    assert wrapped_isinstance(lst, list)
 
-    def impl(l, tos):
-        l.append(tos)
+    def impl(lst, tos):
+        lst.append(tos)
 
-    res = _interpret_call(impl, l, tos)
+    res = _interpret_call(impl, lst, tos)
     if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return res
 
