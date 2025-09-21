@@ -830,13 +830,13 @@ unpack_cache_info = make_prim(
 
 
 # TODO Restore const criteria
-def unpack_sequence_meta(x: Sequence | CollectionProxy, l: int, /) -> list:
+def unpack_sequence_meta(x: Sequence | CollectionProxy, length: int, /) -> list:
     if isinstance(x, CollectionProxy):
         x = x.collection()
 
     utils.check_type(x, Sequence)
-    utils.check_type(l, (int, IntegerProxy))
-    baseutils.check(len(x) == l, lambda x=x, l=l: f"Expected the length of {x=} to be {l=}")
+    utils.check_type(length, (int, IntegerProxy))
+    baseutils.check(len(x) == length, lambda x=x, length=length: f"Expected the length of {x=} to be {length=}")
 
     return list(_collectify(y) for y in x)
 
