@@ -19,10 +19,6 @@ N_LAYER = 1
 cfg: Config = Config.from_name(model_name)
 # cfg.n_layer = N_LAYER
 
-with torch.device(device):
-    model = GPT(cfg).to(torch.bfloat16)
-model.eval().requires_grad_(False)
-
 
 def benchmark_model(model, inp, name):
     torch.cuda.reset_peak_memory_stats()
@@ -44,50 +40,55 @@ def benchmark_model(model, inp, name):
     print()
     return measurement
 
-BS = 8
-inp = torch.randint(0, 255, (BS, 2048,), device=device)
+for BS in [1, 2, 4, 8, 16, 32]:
+    inp = torch.randint(0, 255, (BS, 2048,), device=device)
 
-eager_measurement = benchmark_model(model, inp, "Eager")
+    # Initialize in the loop as the model is updated inplace later in the loop.
+    with torch.device(device):
+        model = GPT(cfg).to(torch.bfloat16)
+    model.eval().requires_grad_(False)
 
-compiled_model = thunder.jit(model)
+    eager_measurement = benchmark_model(model, inp, "Eager")
 
-thunder_default_measurement = benchmark_model(compiled_model, inp, "Thunder default")
+    compiled_model = thunder.jit(model)
 
-trcs = thunder.last_traces(compiled_model)
-trcs[-1].save_trace("thunder_default_trc.py")
+    thunder_default_measurement = benchmark_model(compiled_model, inp, "Thunder default")
 
-cmodel = torch.compile(model)
+    trcs = thunder.last_traces(compiled_model)
+    trcs[-1].save_trace("thunder_default_trc.py")
 
-torch_compile_measurement = benchmark_model(cmodel, inp, "TorchCompile Default")
+    cmodel = torch.compile(model)
 
-def quantization_filter(name, module):
-    return isinstance(module, torch.nn.Linear) # and "mlp" in name
-    # return "mlp" in name and isinstance(module, torch.nn.Linear)
+    torch_compile_measurement = benchmark_model(cmodel, inp, "TorchCompile Default")
 
-xforms = [QuantizedLinearTransform(filter_fn=quantization_filter, separate_quantization=True)]
-executors = (nvfp4_executor,) + thunder.get_default_executors()
+    def quantization_filter(name, module):
+        return isinstance(module, torch.nn.Linear) # and "mlp" in name
+        # return "mlp" in name and isinstance(module, torch.nn.Linear)
 
-compiled_model = thunder.jit(model, transforms=xforms, executors=executors)
+    xforms = [QuantizedLinearTransform(filter_fn=quantization_filter, separate_quantization=True)]
+    executors = (nvfp4_executor,) + thunder.get_default_executors()
 
-thunder_measurement = benchmark_model(compiled_model, inp, "Thunder + nvFP4")
+    compiled_model = thunder.jit(model, transforms=xforms, executors=executors)
 
-trcs = thunder.last_traces(compiled_model)
-trcs[-1].save_trace("quantized_trc.py")
+    thunder_measurement = benchmark_model(compiled_model, inp, "Thunder + nvFP4")
 
-mm_config = NVFP4MMConfig.DYNAMIC
-config = NVFP4InferenceConfig(
-        mm_config=mm_config, use_triton_kernel=True
-)
+    trcs = thunder.last_traces(compiled_model)
+    trcs[-1].save_trace("quantized_trc.py")
 
-# This mutates the model
-quantize_(model, config=config)
+    mm_config = NVFP4MMConfig.DYNAMIC
+    config = NVFP4InferenceConfig(
+            mm_config=mm_config, use_triton_kernel=True
+    )
 
-torchao_measurement = benchmark_model(model, inp, "Torchao")
+    # This mutates the model
+    quantize_(model, config=config)
 
-cmodel = torch.compile(model)
+    torchao_measurement = benchmark_model(model, inp, "Torchao")
 
-torchao_compile_measurement = benchmark_model(cmodel, inp, "TorchCompile + AO")
+    cmodel = torch.compile(model)
 
-compare = torch.utils.benchmark.Compare([eager_measurement, thunder_default_measurement, thunder_measurement,
-                                         torch_compile_measurement, torchao_measurement, torchao_compile_measurement])
-compare.print()
+    torchao_compile_measurement = benchmark_model(cmodel, inp, "TorchCompile + AO")
+
+    compare = torch.utils.benchmark.Compare([eager_measurement, thunder_default_measurement, thunder_measurement,
+                                            torch_compile_measurement, torchao_measurement, torchao_compile_measurement])
+    compare.print()
