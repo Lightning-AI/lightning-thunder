@@ -276,9 +276,15 @@ def _linear_checker(
         if fp8_recipe.delayed():
             return check_dim_for_fp8_exec(a)
 
-        assert fp8_recipe.mxfp8()
         shape = a.shape
-        return shape[0] % MXFP8_BLOCK_SCALING_SIZE == 0 and shape[1] % MXFP8_BLOCK_SCALING_SIZE == 0
+
+        if fp8_recipe.mxfp8():
+            return shape[0] % MXFP8_BLOCK_SCALING_SIZE == 0 and shape[1] % MXFP8_BLOCK_SCALING_SIZE == 0
+
+        if hasattr(fp8_recipe, "nvfp4") and fp8_recipe.nvfp4():
+            return shape[0] % MXFP8_BLOCK_SCALING_SIZE == 0 and shape[1] % MXFP8_BLOCK_SCALING_SIZE / 2 == 0
+
+        return False
 
     # Inputs must be on CUDA and
     # input sizes must satisfy size constraints based on the recipe.
