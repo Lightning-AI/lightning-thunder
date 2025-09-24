@@ -4,7 +4,7 @@ import os
 import pytest
 import torch
 
-if not torch.distributed.is_available():
+if not torch.distributed.is_available() or not (torch.cuda.is_available() and torch.distributed.is_nccl_available()):
     pytest.skip(allow_module_level=True)
 
 import thunder
