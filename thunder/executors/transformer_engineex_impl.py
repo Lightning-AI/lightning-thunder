@@ -282,7 +282,10 @@ def _linear_checker(
             return shape[0] % MXFP8_BLOCK_SCALING_SIZE == 0 and shape[1] % MXFP8_BLOCK_SCALING_SIZE == 0
 
         if hasattr(fp8_recipe, "nvfp4") and fp8_recipe.nvfp4():
-            return shape[0] % MXFP8_BLOCK_SCALING_SIZE == 0 and shape[1] % MXFP8_BLOCK_SCALING_SIZE / 2 == 0
+            import math
+            from transformer_engine.pytorch.constants import NVFP4_BLOCK_SCALING_SIZE
+            # https://github.com/ksivaman/TransformerEngine-1/blob/1af7dd88aae5afb45e82148089038e1d1de9675d/transformer_engine/pytorch/tensor/nvfp4_tensor.py#L176-L184 
+            return len(shape) > 2 and shape[-1] % NVFP4_BLOCK_SCALING_SIZE == 0 and math.prod(shape[:-1]) % NVFP4_BLOCK_SCALING_SIZE == 0
 
         return False
 
