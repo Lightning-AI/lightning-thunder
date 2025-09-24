@@ -277,7 +277,7 @@ def _linear_checker(
     if hasattr(recipe, "NVFP4BlockScaling"):
         suported_recipes.append(recipe.NVFP4BlockScaling)
 
-    if not isinstance(fp8_recipe, suported_recipes):
+    if not isinstance(fp8_recipe, tuple(suported_recipes)):
         import warnings
 
         warnings.warn(f"{type(fp8_recipe)} is not supported by TE executor, TE wont be used.")
