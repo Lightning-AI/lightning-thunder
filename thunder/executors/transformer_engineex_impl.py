@@ -297,9 +297,9 @@ def _linear_checker(
             import math
             from transformer_engine.pytorch.constants import NVFP4_BLOCK_SCALING_SIZE
 
-            # https://github.com/ksivaman/TransformerEngine-1/blob/1af7dd88aae5afb45e82148089038e1d1de9675d/transformer_engine/pytorch/tensor/nvfp4_tensor.py#L176-L184
+            # Check inherited from TE https://github.com/ksivaman/TransformerEngine-1/blob/1af7dd88aae5afb45e82148089038e1d1de9675d/transformer_engine/pytorch/tensor/nvfp4_tensor.py#L176-L184
             return (
-                len(shape) > 2
+                len(shape) >= 2
                 and shape[-1] % NVFP4_BLOCK_SCALING_SIZE == 0
                 and math.prod(shape[:-1]) % NVFP4_BLOCK_SCALING_SIZE == 0
             )
