@@ -13,6 +13,7 @@ def get_nvfuser_package_hint() -> str:
         "2.5": "nvfuser-cu124-torch25",
         "2.6": "nvfuser-cu126-torch26",
         "2.7": "nvfuser-cu128-torch27",
+        "2.8": "nvfuser-cu128-torch28",
     }
 
     torch_key = ".".join(torch_version.split(".")[:2])

@@ -79,10 +79,38 @@ Install Thunder via pip ([more options](https://lightning.ai/docs/thunder/latest
 ```bash
 pip install lightning-thunder
 
-pip install torch==2.7.0 torchvision==0.22  # for torch==2.7
-pip install torch==2.6.0 torchvision==0.21  # for torch==2.6
+pip install -U torch torchvision
+pip install nvfuser-cu128-torch28 nvidia-cudnn-frontend  # if NVIDIA GPU is present
+```
+
+<details>
+  <summary>For older versions of <code>torch</code></summary>
+
+<code>torch==2.7</code> + CUDA 12.8
+```bash
+pip install lightning-thunder
+
+pip install torch==2.7.0 torchvision==0.22
 pip install nvfuser-cu128-torch27 nvidia-cudnn-frontend  # if NVIDIA GPU is present
 ```
+
+<code>torch==2.6</code> + CUDA 12.6
+```bash
+pip install lightning-thunder
+
+pip install torch==2.6.0 torchvision==0.21
+pip install nvfuser-cu126-torch26 nvidia-cudnn-frontend  # if NVIDIA GPU is present
+```
+
+<code>torch==2.5</code> + CUDA 12.4
+```bash
+pip install lightning-thunder
+
+pip install torch==2.5.0 torchvision==0.20
+pip install nvfuser-cu124-torch25 nvidia-cudnn-frontend  # if NVIDIA GPU is present
+```
+
+</details>
 
 <details>
   <summary>Advanced install options</summary>
