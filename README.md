@@ -77,10 +77,11 @@ For **performance experts**, Thunder is the most ergonomic framework for underst
 Install Thunder via pip ([more options](https://lightning.ai/docs/thunder/latest/fundamentals/installation.html)):
 
 ```bash
-pip install torch==2.7.0 torchvision==0.22 nvfuser-cu128-torch27  # for torch==2.7
-pip install torch==2.6.0 torchvision==0.21 nvfuser-cu124-torch26  # for torch==2.6
-
 pip install lightning-thunder
+
+pip install torch==2.7.0 torchvision==0.22  # for torch==2.7
+pip install torch==2.6.0 torchvision==0.21  # for torch==2.6
+pip install nvfuser-cu128-torch27 nvidia-cudnn-frontend  # if NVIDIA GPU is present
 ```
 
 <details>
@@ -99,12 +100,9 @@ pip install lightning-thunder
 
 ### Install additional executors
 
-These are optional, feel free to mix and match
+These are optional
 
 ```bash
-# cuDNN SDPA
-pip install nvidia-cudnn-frontend
-
 # Float8 support (this will compile from source, be patient)
 pip install "transformer_engine[pytorch]"
 ```
@@ -141,7 +139,7 @@ Optimize it with Thunder:
 import thunder
 import torch
 
-thunder_model = thunder.jit(model)
+thunder_model = thunder.compile(model)
 
 x = torch.randn(64, 2048)
 
