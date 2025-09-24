@@ -271,6 +271,18 @@ def _linear_checker(
 
     fp8_recipe = FP8GlobalStateManager.get_fp8_recipe()
 
+    import transformer_engine.common.recipe as recipe
+
+    suported_recipes = [recipe.DelayedScaling, recipe.MXFP8BlockScaling]
+    if hasattr(recipe, "NVFP4BlockScaling"):
+        suported_recipes.append(recipe.NVFP4BlockScaling)
+
+    if not isinstance(fp8_recipe, suported_recipes):
+        import warnings
+
+        warnings.warn(f"{type(fp8_recipe)} is not supported by TE executor, TE wont be used.")
+        return False
+
     def check_valid_fp8_shapes(a):
         # DelayedScaling and MXFP8BlockScaling have different shape requirements.
         if fp8_recipe.delayed():
