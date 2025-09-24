@@ -87,6 +87,7 @@ pip install nvfuser-cu128-torch28 nvidia-cudnn-frontend  # if NVIDIA GPU is pres
   <summary>For older versions of <code>torch</code></summary>
 
 <code>torch==2.7</code> + CUDA 12.8
+
 ```bash
 pip install lightning-thunder
 
@@ -95,6 +96,7 @@ pip install nvfuser-cu128-torch27 nvidia-cudnn-frontend  # if NVIDIA GPU is pres
 ```
 
 <code>torch==2.6</code> + CUDA 12.6
+
 ```bash
 pip install lightning-thunder
 
@@ -103,6 +105,7 @@ pip install nvfuser-cu126-torch26 nvidia-cudnn-frontend  # if NVIDIA GPU is pres
 ```
 
 <code>torch==2.5</code> + CUDA 12.4
+
 ```bash
 pip install lightning-thunder
 
