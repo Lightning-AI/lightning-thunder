@@ -1,5 +1,6 @@
 import time
 from typing import TYPE_CHECKING
+import warnings
 
 import torch.distributed as torch_dist
 
@@ -27,6 +28,7 @@ if TYPE_CHECKING:
     from thunder.core.proxies import TensorProxy
 
 import transformer_engine.pytorch as te
+import transformer_engine.common.recipe as te_recipe
 from transformer_engine.pytorch.constants import MXFP8_BLOCK_SCALING_SIZE
 from transformer_engine.pytorch.fp8 import (
     _amax_and_scale_update,
@@ -271,15 +273,11 @@ def _linear_checker(
 
     fp8_recipe = FP8GlobalStateManager.get_fp8_recipe()
 
-    import transformer_engine.common.recipe as recipe
+    supported_recipes = (te_recipe.DelayedScaling, te_recipe.MXFP8BlockScaling)
+    if hasattr(te_recipe, "NVFP4BlockScaling"):
+        supported_recipes = (*supported_recipes, te_recipe.NVFP4BlockScaling)
 
-    suported_recipes = [recipe.DelayedScaling, recipe.MXFP8BlockScaling]
-    if hasattr(recipe, "NVFP4BlockScaling"):
-        suported_recipes.append(recipe.NVFP4BlockScaling)
-
-    if not isinstance(fp8_recipe, tuple(suported_recipes)):
-        import warnings
-
+    if not isinstance(fp8_recipe, supported_recipes):
         warnings.warn(f"{type(fp8_recipe)} is not supported by TE executor, TE wont be used.")
         return False
 
