@@ -77,7 +77,8 @@ For **performance experts**, Thunder is the most ergonomic framework for underst
 Install Thunder via pip ([more options](https://lightning.ai/docs/thunder/latest/fundamentals/installation.html)):
 
 ```bash
-pip install torch==2.6.0 torchvision==0.21 nvfuser-cu124-torch26
+pip install torch==2.7.0 torchvision==0.22 nvfuser-cu128-torch27  # for torch==2.7
+pip install torch==2.6.0 torchvision==0.21 nvfuser-cu124-torch26  # for torch==2.6
 
 pip install lightning-thunder
 ```
@@ -140,7 +141,7 @@ Optimize it with Thunder:
 import thunder
 import torch
 
-thunder_model = thunder.compile(model)
+thunder_model = thunder.jit(model)
 
 x = torch.randn(64, 2048)
 
