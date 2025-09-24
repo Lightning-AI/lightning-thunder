@@ -118,20 +118,7 @@ pip install nvfuser-cu124-torch25 nvidia-cudnn-frontend  # if NVIDIA GPU is pres
 <details>
   <summary>Advanced install options</summary>
 
-### Blackwell support
-
-For Blackwell you'll need CUDA 12.8
-
-```bash
-pip install --pre torch torchvision --index-url https://download.pytorch.org/whl/nightly/cu128
-pip install --pre nvfuser-cu128 --extra-index-url https://pypi.nvidia.com
-
-pip install lightning-thunder
-```
-
-### Install additional executors
-
-These are optional
+### Install optional executors
 
 ```bash
 # Float8 support (this will compile from source, be patient)
