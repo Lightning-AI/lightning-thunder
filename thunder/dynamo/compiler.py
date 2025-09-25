@@ -135,10 +135,6 @@ class ThunderCompiler:
 
         remove_empty_autocast(gm)
 
-        # Dynamo uses lazy generation of the underlying Python code, so we need to
-        # force recompilation of the GraphModule before passing it to Thunder.
-        recompile_graph(gm)
-
         # The whole graph may not be supported by `thunder`, so we split it in `thunder` supported sections
         # and unsupported sections which are passed to `torch.compile(backend='inductor')`
         thunder_options = _with_prologue_pruning_transform(
