@@ -14,18 +14,16 @@ from collections.abc import Callable, Hashable, Iterable
 from collections.abc import Sequence
 
 import thunder.core.baseutils as baseutils
+from thunder.core.baseutils import BoundSymbolInterface, TagBase
 import thunder.core.codeutils as codeutils
 from thunder.core.codeutils import Printable, Positions
-from thunder.core.baseutils import BoundSymbolInterface, TagBase
-from thunder.core.utils import FrozenDict, make_hashable
-from thunder.core.pytree import tree_flatten_with_dataclass, tree_unflatten, tree_map
-from thunder.core.proxies import Proxy, TensorProxy, variableify, CollectionProxy, ProxyTag
 from thunder.core.compile_data import get_compile_data
+import thunder.core.prims as prims
+from thunder.core.proxies import Proxy, TensorProxy, variableify, CollectionProxy, ProxyTag
+from thunder.core.pytree import tree_flatten, tree_flatten_with_dataclass, tree_unflatten, tree_map
+from thunder.core.trace import get_tracectx, VariableInterface
+from thunder.core.utils import FrozenDict, make_hashable
 
-from thunder.core.trace import (
-    get_tracectx,
-    VariableInterface,
-)
 
 #
 # Support for querying "traceable" functions
@@ -314,15 +312,29 @@ class Symbol:
         else:
             trace.push_scope(subsymbols)
             result = self.meta(*args, **kwargs)
+
+            # To avoid passing an arg directly to output, we make a shallow_copy
+            flat_results, spec = tree_flatten(result)
+            flat_args, _ = tree_flatten((args, kwargs))
+            for i, result_ in enumerate(flat_results):
+                for arg in flat_args:
+                    if arg is result_ and isinstance(arg, Proxy):
+                        flat_results[i] = prims.shallow_copy(arg)
+
+            result = tree_unflatten(flat_results, spec)
+
             trace.pop_scope()
 
         cd = get_compile_data()
         if cd is not None and not cd.is_grad_enabled:
+            flat_args, _ = tree_flatten((args, kwargs))
+            flat_arg_names = {arg.name for arg in flat_args if isinstance(arg, TensorProxy)}
+
             # If grad is disabled using `torch.no_grad` or `torch._C._set_grad_enabled(False)`,
             # tag the results with `DETACHED_AUTOGRAD_GRAPH` which makes this Symbol a constant for
             # vjp transform (applied later).
             def tag_tensorproxy_output_as_detached(proxy):
-                if isinstance(proxy, TensorProxy):
+                if isinstance(proxy, TensorProxy) and proxy.name not in flat_arg_names:
                     proxy.tags.add(ProxyTag.DETACHED_AUTOGRAD_GRAPH)
 
                 return proxy
@@ -716,7 +728,7 @@ class BoundSymbol(BoundSymbolInterface):
         return "\n".join(self.python(indent=0, print_depth=-1))
 
 
-def gather_tags(bsym: BoundSymbol) -> set[OpTags | BoundSymbolTags]:
+def gather_tags(bsym: BoundSymbol) -> set[OpTags | BoundSymbolTag]:
     tags = set(bsym.sym.tags) if bsym.sym.tags is not None else set()
     tags |= bsym.tags
 
@@ -726,7 +738,7 @@ def gather_tags(bsym: BoundSymbol) -> set[OpTags | BoundSymbolTags]:
     return tags
 
 
-def has_tags(bsym: BoundSymbol, tags: set[OpTags | BoundSymbolTags]) -> bool:
+def has_tags(bsym: BoundSymbol, tags: set[OpTags | BoundSymbolTag]) -> bool:
     """:obj:`True` if `bsym` and its subsymbols has any of ``tags``."""
     return not tags.isdisjoint(gather_tags(bsym))
 

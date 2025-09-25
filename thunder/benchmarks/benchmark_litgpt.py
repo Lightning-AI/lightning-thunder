@@ -83,7 +83,7 @@ def check_fp8_compute_capability() -> None:
 
 
 def is_transformer_engine(low_precision_mode: str) -> bool:
-    return low_precision_mode in ["fp8-delayed-te", "fp8-delayed-te-wo_layernorm"]
+    return low_precision_mode in ["fp8-default-te", "fp8-default-te-wo_layernorm"]
 
 
 def check_and_update_config_for_te_if_needed(config: Config) -> None:
@@ -464,7 +464,7 @@ class Benchmark_litGPT:
         # Handle fp8 related Linear layer swapping (for torchao or TransformerEngine)
         model = self._torchao_fp8_handler.convert_model_to_fp8(model)
         if self.use_te_fp8_autocast:
-            is_wo_layernorm = self.low_precision_mode == "fp8-delayed-te-wo_layernorm"
+            is_wo_layernorm = self.low_precision_mode == "fp8-default-te-wo_layernorm"
             swap_linear_layers_for_te(model, init_device, swap_layernorm=not is_wo_layernorm)
 
         model.to(dtype=torch.bfloat16)
@@ -625,19 +625,19 @@ class Benchmark_litGPT:
 
                 executors.insert(0, torch_compile_ex)
 
-            if "transformerengine_v2" in self.compile:
-                from thunder.executors.transformer_engine_v2ex import (
-                    transformer_engine_v2_ex,
-                    TransformerEngineTransformV2,
-                )
+            if "transformerengine_v1" in self.compile:
+                from thunder.executors.transformer_engine_v1ex import transformer_engine_v1_ex
 
-                executors.insert(0, transformer_engine_v2_ex)
-                transforms.insert(0, TransformerEngineTransformV2())
+                executors.insert(0, transformer_engine_v1_ex)
 
             elif "transformerengine" in self.compile:
-                from thunder.executors.transformer_engineex import transformer_engine_ex
+                from thunder.executors.transformer_engineex import (
+                    transformer_engine_ex,
+                    TransformerEngineTransform,
+                )
 
                 executors.insert(0, transformer_engine_ex)
+                transforms.insert(0, TransformerEngineTransform())
 
             if "dynamo" in self.compile:
                 if self.distributed_mode == "fsdp2":

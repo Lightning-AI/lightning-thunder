@@ -13,6 +13,7 @@ def get_nvfuser_package_hint() -> str:
         "2.5": "nvfuser-cu124-torch25",
         "2.6": "nvfuser-cu126-torch26",
         "2.7": "nvfuser-cu128-torch27",
+        "2.8": "nvfuser-cu128-torch28",
     }
 
     torch_key = ".".join(torch_version.split(".")[:2])
@@ -73,8 +74,17 @@ class BaseRecipe(Recipe):
         plugins=None,
     ):
         super().__init__(interpreter=interpreter, plugins=plugins)
-        self.executor_names = ["cudnn", "sdpa", "torchcompile_xentropy"]
         self.fuser = fuser
+        self.executor_names = []
+
+        if torch.cuda.is_available():
+            self.executor_names = ["cudnn", "sdpa"]
+            if self.fuser == "nvfuser":
+                self.executor_names.append("torchcompile_xentropy")
+        else:
+            print("GPU not found, nvFuser not available. Setting fusing executor to torch.compile")
+            self.fuser = "torch.compile"
+
         self.setup_fuser()
         self.show_progress = show_progress
 
@@ -114,8 +124,6 @@ class BaseRecipe(Recipe):
             if "nvfuser" not in self.executor_names:
                 self.executor_names.append("nvfuser")
         elif self.fuser == "torch.compile":
-            if "torchcompile_xentropy" in self.executor_names:
-                self.executor_names.remove("torchcompile_xentropy")
             if "torchcompile" not in self.executor_names:
                 self.executor_names.append("torchcompile")
         else:

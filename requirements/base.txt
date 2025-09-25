@@ -1,10 +1,10 @@
-torch >=2.3.0
+torch >=2.7.1
 looseversion ==1.3.0
-lightning-utilities >=0.7.0
+lightning-utilities >0.7.0
 numpy
-networkx >= 3.3
+networkx >=3.3
 optree >=0.12.1
-opt_einsum >= 3.3.0
+opt_einsum >=3.3.0
 # todo: teporarl pin for `NameError: name '_C' is not defined`
 mpmath <1.4.0
 # Support for 3.12

@@ -40,8 +40,6 @@ class NOTHING:
     pass
 
 
-JAX_AVAILABLE = package_available("jax")
-
 # Require Triton version 2.1 or greater, since our current Triton executor won't run
 #   properly due to an error in 2.0
 TRITON_AVAILABLE: bool = triton_utils.is_triton_version_at_least("2.1")
@@ -66,6 +64,11 @@ def _bitsandbytes_available():
         return False
     try:
         import bitsandbytes
+
+        if torch.cuda.is_available():
+            import bitsandbytes.diagnostics.main
+
+            bitsandbytes.diagnostics.main.sanity_check()
     except (ImportError, RuntimeError):
         return False
     return True
@@ -166,7 +169,6 @@ class TestExecutor:
 
     @make_callable.register
     def make_callable_from_trace(self, trace: TraceCtx, **kwargs):
-        executors = thunder.executors
         # transform_for_execution doesn't work without a set trace
         # So we use detached_trace to get the tracectx and then use it
         with detached_trace():
@@ -395,10 +397,13 @@ class ops:
         )
         self.supported_devicetypes = set(filter_ci_devicetypes(self.supported_devicetypes))
 
+        # TODO: add support for float4_e2m1fn_x2 and float_8bit_dtypes
+        skip_dtypes = datatypes.float_8bit_dtypes | {datatypes.float4_e2m1fn_x2, datatypes.float4_e2m1fn_x2_}
+
         self.supported_dtypes = (
             datatypes.resolve_dtypes(supported_dtypes)
             if supported_dtypes is not None
-            else datatypes.all_dtypes - datatypes.float_8bit_dtypes
+            else datatypes.all_dtypes - skip_dtypes
         )
 
         if supported_dtypes == NOTHING:
@@ -568,16 +573,6 @@ def run_snippet(snippet, opinfo, devicetype, dtype, *args, **kwargs):
         return ex, exc_info, snippet, opinfo, devicetype, dtype, args, kwargs
 
     return None
-
-
-def requiresJAX(fn):
-    @wraps(fn)
-    def _fn(*args, **kwargs):
-        if not JAX_AVAILABLE:
-            pytest.skip("Requires JAX")
-        return fn(*args, **kwargs)
-
-    return _fn
 
 
 def requiresTriton(fn):

@@ -77,33 +77,50 @@ For **performance experts**, Thunder is the most ergonomic framework for underst
 Install Thunder via pip ([more options](https://lightning.ai/docs/thunder/latest/fundamentals/installation.html)):
 
 ```bash
-pip install torch==2.6.0 torchvision==0.21 nvfuser-cu124-torch26
-
 pip install lightning-thunder
+
+pip install -U torch torchvision
+pip install nvfuser-cu128-torch28 nvidia-cudnn-frontend  # if NVIDIA GPU is present
 ```
+
+<details>
+  <summary>For older versions of <code>torch</code></summary>
+
+<code>torch==2.7</code> + CUDA 12.8
+
+```bash
+pip install lightning-thunder
+
+pip install torch==2.7.0 torchvision==0.22
+pip install nvfuser-cu128-torch27 nvidia-cudnn-frontend  # if NVIDIA GPU is present
+```
+
+<code>torch==2.6</code> + CUDA 12.6
+
+```bash
+pip install lightning-thunder
+
+pip install torch==2.6.0 torchvision==0.21
+pip install nvfuser-cu126-torch26 nvidia-cudnn-frontend  # if NVIDIA GPU is present
+```
+
+<code>torch==2.5</code> + CUDA 12.4
+
+```bash
+pip install lightning-thunder
+
+pip install torch==2.5.0 torchvision==0.20
+pip install nvfuser-cu124-torch25 nvidia-cudnn-frontend  # if NVIDIA GPU is present
+```
+
+</details>
 
 <details>
   <summary>Advanced install options</summary>
 
-### Blackwell support
-
-For Blackwell you'll need CUDA 12.8
+### Install optional executors
 
 ```bash
-pip install --pre torch torchvision --index-url https://download.pytorch.org/whl/nightly/cu128
-pip install --pre nvfuser-cu128 --extra-index-url https://pypi.nvidia.com
-
-pip install lightning-thunder
-```
-
-### Install additional executors
-
-These are optional, feel free to mix and match
-
-```bash
-# cuDNN SDPA
-pip install nvidia-cudnn-frontend
-
 # Float8 support (this will compile from source, be patient)
 pip install "transformer_engine[pytorch]"
 ```
@@ -146,7 +163,7 @@ x = torch.randn(64, 2048)
 
 y = thunder_model(x)
 
-assert torch.testing.assert_close(y, model(x))
+torch.testing.assert_close(y, model(x))
 ```
 
 ## Examples

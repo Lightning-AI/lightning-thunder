@@ -1,9 +1,10 @@
 from functools import reduce, partial
 
-from thunder.core.functionalization import replace_args_with_alias_map
 import thunder.core.prims as prims
 from thunder.core.proxies import TensorProxy, variableify, unvariableify
-from thunder.core.trace import from_trace, tracectx, TraceCtx as Trace, TraceProvenance
+from thunder.core.pytree import tree_flatten
+from thunder.core.symbol import BoundSymbol, BoundSymbolTag, has_tags
+from thunder.core.trace import from_trace, tracectx, TraceCtx as Trace, TraceProvenance, VariableInterface
 
 
 def _update_swap_map(swap_map, old_alias, new_alias):
@@ -54,7 +55,65 @@ def _involves_viewed_args(bsym, viewed):
     return any(isinstance(p, TensorProxy) and variableify(p) in viewed for p in bsym.flat_proxy_args)
 
 
+def replace_args_with_alias_map(
+    computation_trace: Trace,
+    alias_tensor_indices: list[list[int]],
+) -> tuple[Trace, dict[VariableInterface, TensorProxy]]:
+    if not alias_tensor_indices:
+        return computation_trace, {}
+    bsyms: list[BoundSymbol] = []
+    flat_args, _ = tree_flatten((computation_trace.args, computation_trace.kwargs))
+    swap_map_for_aliases: dict[VariableInterface, TensorProxy] = {}
+    arg_to_optional_bsyms: dict[VariableInterface, BoundSymbol] = {}
+    for indices in alias_tensor_indices:
+        arg = flat_args[indices[0]]
+        for idx in filter(lambda idx: idx < len(flat_args), indices[1:]):
+            arg_to_replace = flat_args[idx]
+            reshaped_arg = arg
+            if arg_to_replace.shape != arg.shape:
+                with tracectx(computation_trace):
+                    reshaped_arg = prims.reshape.meta(arg, arg_to_replace.shape)
+                    arg_to_optional_bsyms[variableify(arg_to_replace)] = prims.reshape.bind(
+                        arg,
+                        arg_to_replace.shape,
+                        output=reshaped_arg,
+                    )
+            swap_map_for_aliases[variableify(arg_to_replace)] = reshaped_arg
+    appended_bsyms = {}
+    for bsym in computation_trace.bound_symbols:
+        for arg in filter(lambda p: isinstance(p, TensorProxy), bsym.flat_args):
+            reshape_bsym = arg_to_optional_bsyms.get(variableify(arg))
+            if reshape_bsym is not None:
+                if reshape_bsym not in appended_bsyms:
+                    bsyms.append(reshape_bsym)
+                    appended_bsyms[reshape_bsym] = arg
+        if replaced_args_map := {
+            x.name: swap_map_for_aliases[variableify(x)].name
+            for x in filter(lambda p: isinstance(p, TensorProxy), bsym.flat_args)
+            if variableify(x) in swap_map_for_aliases
+        }:
+            bsyms.append(bsym.from_bsym_swap_proxies(swap_map_for_aliases, skip_output=True))
+            if len(replaced_args_map) == 1:
+                bsyms[
+                    -1
+                ].header = f"[alias tensor args] `{list(replaced_args_map.keys())[0]}` is replaced by `{list(replaced_args_map.values())[0]}`"
+            else:
+                bsyms[
+                    -1
+                ].header = f"[alias tensor args] {list(replaced_args_map.keys())} are replaced by {list(replaced_args_map.values())}, respectively"
+        else:
+            bsyms.append(bsym)
+    no_implicit_alias_trace = from_trace(computation_trace)
+    no_implicit_alias_trace.bound_symbols = bsyms
+    str_map = {unvariableify(k).name: v.name for k, v in swap_map_for_aliases.items()}
+    no_implicit_alias_trace.set_provenance(TraceProvenance(f"Duplicate alias args using {str_map}"))
+    return no_implicit_alias_trace, swap_map_for_aliases
+
+
 def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[list[int]]) -> Trace:
+    if not any(_is_inplace_op(bsym) for bsym in computation_trace.bound_symbols):
+        return computation_trace
+
     swap_map = dict()
     bsyms = []
 
@@ -104,9 +163,11 @@ def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[li
             new_aliases = _get_new_aliases(views_encountered, computation_trace)
 
             update_bsym, swap_map = _get_update_bsym(views_encountered, swap_map, new_aliases)
+            new_bsym = bsym.from_bsym_swap_proxies(swap_map)
+            if has_tags(bsym, {BoundSymbolTag.BACKWARD}):
+                update_bsym.tags.add(BoundSymbolTag.BACKWARD)
             bsyms.append(update_bsym)
             encountered.update(out_tensors)
-            new_bsym = bsym.from_bsym_swap_proxies(swap_map)
             bsyms.append(new_bsym)
             if _is_inplace_op(bsym) and len(out_tensors) == 1 and len(in_tensors) == 1:
                 #  This relies on these being one element sets (ltorch.setitem_ yields no outs).
