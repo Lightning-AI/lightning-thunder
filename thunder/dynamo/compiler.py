@@ -150,6 +150,7 @@ class ThunderCompiler:
             partial(jit, **thunder_options),
             self._torch_compile,
             sample_args,
+            thunder_options,
         )
         self.subgraph_infos.append(subgraph_info)
         return split_module
