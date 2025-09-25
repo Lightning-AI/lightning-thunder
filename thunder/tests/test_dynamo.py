@@ -155,6 +155,21 @@ def test_basic_splitter(executor, device: str, dtype: dtypes.dtype, dynamic: boo
     assert any(target.startswith("thunder_") for target in targets)  # Verify that the submodules have name `thunder_*`
 
 
+@instantiate(dtypes=NOTHING)
+def test_fallback_to_inductor(executor, device, dtype):
+    x = torch.randn(3, 3, device=device, dtype=dtype)
+
+    def func(x):
+        return x.sinc().cos().sinc().sinc()
+
+    cfunc = thunderfx(func)
+    with patch("torch._inductor.compile", side_effect=torch._inductor.compile) as mock_inductor:
+        cfunc(x)
+
+    # Once for sinc() and once for sinc().sinc()
+    assert mock_inductor.call_count == 2
+
+
 @instantiate(
     dtypes=NOTHING,
     executors=[DynamoThunderExecutor],
@@ -844,6 +859,35 @@ def test_checkpoint_converter_submodule():
             assert isinstance(n.target, Symbol) or callable(n.target)
 
 
+@requiresCUDA
+@pytest.mark.parametrize("op", [torch.sin, torch.sinc])
+def test_checkpoint_memory_use(op):
+    import torch.utils.checkpoint as checkpoint
+
+    def fn(x):
+        return op(op(op(op(x))))
+
+    def checkpoint_fn(x):
+        return checkpoint.checkpoint(fn, x, use_reentrant=False)
+
+    initial_mem = torch.cuda.memory_allocated()
+
+    x = torch.randn((128, 128), device="cuda", requires_grad=True)
+    jfn = thunderfx(checkpoint_fn)
+    y = jfn(x)
+
+    peak_mem_usage = torch.cuda.max_memory_allocated() - initial_mem
+
+    y_ref = fn(x)
+    torch.testing.assert_close(y, y_ref)
+
+    assert peak_mem_usage == x.nbytes * 2
+    if op == torch.sinc:
+        # Make sure the checkpointed region falled back to PyTorch
+        sinfo = jfn._backend.subgraph_infos[-1]
+        assert any(n.name.startswith("inductor") for n in sinfo.split_graph_module.graph.nodes)
+
+
 @instantiate(
     dtypes=NOTHING,
     executors=[DynamoThunderExecutor],
@@ -935,6 +979,8 @@ def test_dynamo_reproducer_submodules(use_pytest_benchmark, tmp_path):
 
 
 def test_deepcopy_graph_module():
+    import thunder
+
     class MyModule(torch.nn.Module):
         def __init__(self):
             super().__init__()
@@ -946,9 +992,8 @@ def test_deepcopy_graph_module():
     gm = torch.fx.symbolic_trace(m)
     n = gm.graph.find_nodes(op="output")
     gm.graph.erase_node(n[0])
-    import thunder
 
-    _, subgraph_info = thunder.dynamo.splitter._splitter(gm, thunder.jit, thunder.jit, [])
+    _, subgraph_info = thunder.dynamo.splitter._splitter(gm, thunder.jit, torch._inductor.compile, [])
     original_split_gm = subgraph_info.original_split_graph_module.split_graph_module
     assert original_split_gm.graph.find_nodes(op="output")
     for subm in original_split_gm.children():
@@ -1621,7 +1666,7 @@ def test_aot_optimize():
         pfoo(x)
 
 
-def test_spliter_bwd():
+def test_splitter_bwd():
     def fn(x, idx, val):
         x = x.clone()
         x[idx] = val
@@ -1720,8 +1765,23 @@ def test_thunderfx_node_with_no_example_value():
         return z + 2
 
     x = torch.tensor([1, 2, 3, 4, 5])
-    actual = thunderfx(test_fn)(x)
+    with pytest.warns(match="Example values for arguments are not available"):
+        actual = thunderfx(test_fn)(x)
     expected = test_fn(x)
+    torch.testing.assert_close(actual, expected)
+
+
+@pytest.mark.xfail(reason="Unsupported: Dynamo can't retrace autocast enter/exit", raises=AssertionError)
+def test_thunderfx_no_example_value_and_autocast():
+    def fn(x):
+        with torch.autocast("cpu"):
+            y = x + 10
+            z = y.tolist()[0]
+            return z + 2
+
+    x = torch.tensor([1, 2, 3, 4, 5])
+    actual = thunderfx(fn)(x)
+    expected = fn(x)
     torch.testing.assert_close(actual, expected)
 
 
