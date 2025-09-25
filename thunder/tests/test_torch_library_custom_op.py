@@ -178,3 +178,73 @@ def test_torch_library_triton_op(_, device: str, dtype: dtypes.dtype):
             return out
 
     _run_test(MyModule, mul_triton, devices.to_torch_device(device), dtypes.to_torch_dtype(dtype))
+
+
+@torch.library.custom_op(
+    "my_custom_op::arglist",
+    mutates_args=(),
+)
+def arg_list(x: list[torch.Tensor]) -> torch.Tensor:
+    return x[0].clone()
+
+
+@torch.library.register_fake("my_custom_op::arglist")
+def _(x: list[torch.Tensor]) -> torch.Tensor:
+    return torch.tensor([0])
+
+
+@torch.library.custom_op(
+    "my_custom_op::returnslist",
+    mutates_args=(),
+)
+def returns_list(x: torch.Tensor) -> list[torch.Tensor]:
+    t1 = torch.tensor([1.0, 2.0, 3.0])
+    t2 = torch.tensor([[4.0, 5.0], [6.0, 7.0]])
+    t3 = torch.tensor([8.0])
+
+    return [x.clone(), t1, t2, t3]
+
+
+@torch.library.register_fake("my_custom_op::returnslist")
+def _(x: torch.Tensor) -> list[torch.Tensor]:
+    t1 = torch.tensor([1.0, 2.0, 3.0])
+    t2 = torch.tensor([[4.0, 5.0], [6.0, 7.0]])
+    t3 = torch.tensor([8.0])
+
+    return [torch.empty_like(x), t1, t2, t3]
+
+
+@instantiate(
+    executors=(TorchExecutor,),
+    devicetypes=(devices.DeviceType.CPU, devices.DeviceType.CUDA),
+    dtypes=(dtypes.float32,),
+)
+def test_torch_library_custom_op_with_list(_, device: str, dtype: dtypes.dtype):
+    SHAPE = (4, 2)
+    torch_device = devices.to_torch_device(device)
+    torch_dtype = dtypes.to_torch_dtype(dtype)
+
+    _register_custom_op(arg_list)
+
+    def use_arglist_func(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        return torch.ops.my_custom_op.arglist([x, y])
+
+    jitted_arglist = thunder.jit(use_arglist_func, executors=[custom_op_ex])
+    x = torch.testing.make_tensor(SHAPE, device=torch_device, dtype=torch_dtype, requires_grad=True)
+    y = torch.testing.make_tensor(SHAPE, device=torch_device, dtype=torch_dtype, requires_grad=True)
+    ref_out = torch.ops.my_custom_op.arglist([x, y])
+    out = jitted_arglist(x, y)
+    torch.testing.assert_close(ref_out, out)
+
+    _register_custom_op(returns_list)
+
+    def use_returnslist_func(x: torch.Tensor) -> list[torch.Tensor]:
+        return torch.ops.my_custom_op.returnslist(x)
+
+    jitted_returnslist = thunder.jit(use_returnslist_func, executors=[custom_op_ex])
+    x_single = torch.testing.make_tensor(SHAPE, device=torch_device, dtype=torch_dtype)
+    ref_list = torch.ops.my_custom_op.returnslist(x_single)
+    out_list = jitted_returnslist(x_single)
+    assert len(ref_list) == len(out_list)
+    for ref_tensor, out_tensor in zip(ref_list, out_list):
+        torch.testing.assert_close(ref_tensor, out_tensor)
