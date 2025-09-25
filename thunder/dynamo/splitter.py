@@ -16,7 +16,6 @@ from thunder.dynamo.utils import (
     get_nodes_in_unsupported_ctx_regions,
     update_node_and_submodule,
     recompile_graph,
-    checkpoint_converter,
     _get_example_inputs_from_placeholder,
     _ThunderSplitGraphModule,
 )
@@ -186,8 +185,6 @@ def _splitter(
                 partial(_get_example_inputs_from_placeholder, only_metadata=True), placeholders
             )
             example_input_metadatas.append(list(example_input_metadata))
-            # Replace PyTorch operators within the checkpointed function with the corresponding Thunder operators
-            checkpoint_converter(split_gm, graph_module)
 
             jit_fn = thunder_jit(graph_module, is_differentiable_outputs=is_differentiable_outputs)
             # Update the node name from "submod_*" to "thunder_*" for more user-friendly names

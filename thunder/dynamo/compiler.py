@@ -11,7 +11,6 @@ from torch._guards import CompileContext as TorchCompileContext
 from torch.utils import _pytree as torch_pytree
 
 from thunder.dynamo.utils import (
-    recompile_graph,
     remove_empty_autocast,
     CompilerType,
     get_split_reasons_string,
@@ -21,6 +20,7 @@ from thunder.dynamo.utils import (
     default_filter,
     default_optimizer,
     input_to_example_input_meta,
+    convert_checkpoint_tags,
 )
 from thunder.dynamo.splitter import _splitter
 from thunder.dynamo.benchmark_utils import ThunderCompileSpecification
@@ -135,9 +135,8 @@ class ThunderCompiler:
 
         remove_empty_autocast(gm)
 
-        # Dynamo uses lazy generation of the underlying Python code, so we need to
-        # force recompilation of the GraphModule before passing it to Thunder.
-        recompile_graph(gm)
+        # Convert tag_activation_checkpoint operators, which is merely a tagger for torch.compile stack, to actual checkpoint calls
+        convert_checkpoint_tags(gm)
 
         # The whole graph may not be supported by `thunder`, so we split it in `thunder` supported sections
         # and unsupported sections which are passed to `torch.compile(backend='inductor')`

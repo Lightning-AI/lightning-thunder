@@ -12,6 +12,8 @@ from collections import namedtuple
 import torch
 from torch.nn.modules.module import _addindent
 from torch.utils.weak import TensorWeakRef
+import torch.utils.checkpoint
+
 
 if torch.distributed.is_available():
     from torch.distributed.tensor import DTensor
@@ -119,9 +121,8 @@ class SubgraphInfo:
 
     Attributes:
         original_graph_module: The original graph module.
-        original_split_graph_module: The original split graph module before any transformations are applied.
-            Specifically, before the :func:`checkpoint_converter` replaces the Torch operators with Thunder symbols,
-            and before any submodules are compiled by Thunder.
+        original_split_graph_module: The original split graph module before any transformations are applied,
+            before any submodules are compiled by Thunder.
         split_graph_module: The graph module for the split subgraph. It contains the compiled thunder/inductor modules.
         thunder_compiled_fns: List of thunder optimized callables.
             This could be :obj:`None` if there the graph module was not supported by thunder.
@@ -420,7 +421,7 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
         return False, split_reason
 
     # The higher order function must be fully supported by Thunder
-    if target in (torch.ops.higher_order.tag_activation_checkpoint, torch.ops.higher_order.autograd_function_apply):
+    if target in (torch.utils.checkpoint.checkpoint, torch.ops.higher_order.autograd_function_apply):
         m = node.graph.owning_module
         for arg_node in node.args:
             if arg_node.op == "get_attr":
@@ -630,57 +631,15 @@ def _get_example_inputs_from_placeholder(
     return example_input_meta_to_input(example_value)
 
 
-def _checkpoint_function_converter(gm: torch.fx.GraphModule):
+def convert_checkpoint_tags(gm: torch.fx.GraphModule):
     """
-    Replace PyTorch operators in ``gm`` representing a checkpointed function with corresponding Thunder operators. The input ``gm`` is modified inplace.
+    Replaces tag_activation_checkpoint operators with torch.utils.checkpoint.checkpoint calls.
 
-    Args:
-        gm (torch.fx.GraphModule): The GraphModule of the checkpointed function, which is modified inplace.
+    tag_activation_checkpoint only marks nodes for recomputation within torch.compile but does not execute checkpointing itself.
     """
     for n in gm.graph.nodes:
-        # replace the torch operator in "call_function" node
-        if n.op == "call_function":
-            assert isinstance(n.target, Callable)
-            if n.target.__module__ in ("_operator", "builtins"):
-                continue
-            check(
-                n.target in _torch_to_thunder_function_map, lambda: f"Unexpected {n.target}, not registered in Thunder"
-            )
-            with gm.graph.inserting_before(n):
-                thunder_node = gm.graph.call_function(
-                    _torch_to_thunder_function_map[n.target], args=n.args, kwargs=n.kwargs
-                )
-            n.replace_all_uses_with(thunder_node)
-            gm.graph.erase_node(n)
-        else:
-            if n.op == "call_module":
-                raise RuntimeError(
-                    "Unexpected call_module detected inside a checkpoint. This should have been inlined in dynamo graphs"
-                )
-    gm.graph.lint()
-    recompile_graph(gm)
-
-
-def checkpoint_converter(gm: torch.fx.GraphModule, sub_gm: torch.fx.GraphModule):
-    """
-    Utility function to convert the GraphModule that uses activation checkpointing into a Thunder-traceable GraphModule.
-
-    Args:
-        gm: The parent GraphModule containing the submodule(sub_gm), as well as the GraphModule of the checkpointed function.
-        sub_gm: the GraphModule containing the checkpoint operator
-
-    Note:
-        The GraphModule of the checkpointed function is updated inplace
-    """
-    for n in sub_gm.graph.nodes:
-        if n.op == "call_function":
-            if n.target in (torch.ops.higher_order.tag_activation_checkpoint,):
-                checkpoint_target_node = n.args[0]
-                if checkpoint_target_node.op == "get_attr":
-                    function_module = getattr(checkpoint_target_node.graph.owning_module, checkpoint_target_node.target)
-                else:
-                    function_module = getattr(gm, n.args[0].name)
-                _checkpoint_function_converter(function_module)
+        if n.op == "call_function" and n.target is torch.ops.higher_order.tag_activation_checkpoint:
+            n.target = torch.utils.checkpoint.checkpoint
 
 
 def remove_empty_autocast(graph_module: torch.fx.GraphModule) -> torch.fx.GraphModule:
