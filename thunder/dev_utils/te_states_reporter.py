@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any
+from collections.abc import Sequence
 
 import thunder
 import torch
@@ -16,7 +17,7 @@ from transformer_engine.pytorch.fp8 import (
 )
 
 
-def summarize_recipe(recipe: Recipe) -> Dict[str, Any]:
+def summarize_recipe(recipe: Recipe) -> dict[str, Any]:
     """Create a compact, serializable summary of a TE FP8 recipe.
 
     The summary captures the recipe class name and a small set of key
@@ -31,7 +32,7 @@ def summarize_recipe(recipe: Recipe) -> Dict[str, Any]:
     Returns:
         A dictionary with fields describing the recipe.
     """
-    summary: Dict[str, Any] = {
+    summary: dict[str, Any] = {
         "type": recipe.__class__.__name__,
         "fp8_format": getattr(recipe, "fp8_format", None),
     }
@@ -94,7 +95,7 @@ def summarize_recipe(recipe: Recipe) -> Dict[str, Any]:
     return summary
 
 
-def summarize_state(state: RecipeState) -> Dict[str, Any]:
+def summarize_state(state: RecipeState) -> dict[str, Any]:
     """Summarize a runtime FP8 `RecipeState` object.
 
     Captures the state class, mode (forward/backward/None), dtype, number of
@@ -107,7 +108,7 @@ def summarize_state(state: RecipeState) -> Dict[str, Any]:
     Returns:
         A dictionary with essential metadata about the state for reporting.
     """
-    out: Dict[str, Any] = {
+    out: dict[str, Any] = {
         "cls": state.__class__.__name__,
         "mode": getattr(state, "mode", None),
         "dtype": str(getattr(state, "dtype", None)),
@@ -124,7 +125,7 @@ def summarize_state(state: RecipeState) -> Dict[str, Any]:
     return out
 
 
-def summarize_quantizer(quantizer: Any) -> Dict[str, Any]:
+def summarize_quantizer(quantizer: Any) -> dict[str, Any]:
     """Summarize an FP8 quantizer instance.
 
     Extracts commonly useful fields across different quantizer implementations
@@ -138,7 +139,7 @@ def summarize_quantizer(quantizer: Any) -> Dict[str, Any]:
     Returns:
         A dictionary describing the quantizer in a compact, readable form.
     """
-    base: Dict[str, Any] = {
+    base: dict[str, Any] = {
         "cls": quantizer.__class__.__name__,
         "rowwise_usage": getattr(quantizer, "rowwise_usage", None),
         "columnwise_usage": getattr(quantizer, "columnwise_usage", None),
@@ -162,7 +163,7 @@ def summarize_quantizer(quantizer: Any) -> Dict[str, Any]:
     return base
 
 
-def build_global_context() -> Dict[str, Any]:
+def build_global_context() -> dict[str, Any]:
     """Collect global FP8 runtime context and environment details.
 
     Queries `FP8GlobalStateManager` and related sources to produce a stable
@@ -232,23 +233,23 @@ def build_global_context() -> Dict[str, Any]:
 class TEStateReporter:
     """Accumulates TE runtime summaries and renders a report."""
 
-    global_ctx: Optional[Dict[str, Any]] = None
-    recipe_summaries: List[Dict[str, Any]] = field(default_factory=list)
-    state_summaries_forward: List[Dict[str, Any]] = field(default_factory=list)
-    state_summaries_backward: List[Dict[str, Any]] = field(default_factory=list)
-    quantizer_summaries: List[Dict[str, Any]] = field(default_factory=list)
-    shape_policy: Dict[str, Any] = field(default_factory=lambda: {"mxfp8_block": MXFP8_BLOCK_SCALING_SIZE})
-    seen_fw_states: Set[Tuple[int, int]] = field(default_factory=set)
-    seen_bw_states: Set[Tuple[int, int]] = field(default_factory=set)
-    seen_quantizers: Set[Tuple[int, int]] = field(default_factory=set)
+    global_ctx: dict[str, Any] | None = None
+    recipe_summaries: list[dict[str, Any]] = field(default_factory=list)
+    state_summaries_forward: list[dict[str, Any]] = field(default_factory=list)
+    state_summaries_backward: list[dict[str, Any]] = field(default_factory=list)
+    quantizer_summaries: list[dict[str, Any]] = field(default_factory=list)
+    shape_policy: dict[str, Any] = field(default_factory=lambda: {"mxfp8_block": MXFP8_BLOCK_SCALING_SIZE})
+    seen_fw_states: set[tuple[int, int]] = field(default_factory=set)
+    seen_bw_states: set[tuple[int, int]] = field(default_factory=set)
+    seen_quantizers: set[tuple[int, int]] = field(default_factory=set)
 
     def update_from_runtime(
         self,
         *,
         holder,
-        recipe: Optional[Recipe] = None,
+        recipe: Recipe | None = None,
         states: Sequence[RecipeState] | None = None,
-        mode: Optional[str] = None,
+        mode: str | None = None,
         quantizers: Sequence[Any] | None = None,
     ) -> None:
         """Update the reporter with data observed during runtime.
@@ -309,7 +310,7 @@ class TEStateReporter:
         Returns:
             A formatted string suitable for console logging or test output.
         """
-        lines: List[str] = []
+        lines: list[str] = []
 
         def add(line: str = "") -> None:
             lines.append(line)

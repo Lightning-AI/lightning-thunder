@@ -797,7 +797,7 @@ def _test_ddp_transformer_engine_reporter(input_data):
 
     class Module(nn.Module):
         def __init__(self):
-            super(Module, self).__init__()
+            super().__init__()
             self.w1 = nn.Parameter(torch.randn(4096, 4096, device=torch_device, dtype=dtype_t))
             self.w2 = nn.Parameter(torch.randn(2048, 4096, device=torch_device, dtype=dtype_t))
 

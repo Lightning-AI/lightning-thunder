@@ -58,7 +58,7 @@ def test_te_reporter_linear_forward_backward(fp8_recipe: recipe.Recipe):
 
     class Module(nn.Module):
         def __init__(self):
-            super(Module, self).__init__()
+            super().__init__()
             self.w1 = nn.Parameter(torch.randn(4096, 4096, device=device, dtype=dtype))
             self.w2 = nn.Parameter(torch.randn(2048, 4096, device=device, dtype=dtype))
 
@@ -147,7 +147,7 @@ def test_te_reporter_linear_forward_backward_multiple_iteration(fp8_recipe: reci
 
     class Module(nn.Module):
         def __init__(self):
-            super(Module, self).__init__()
+            super().__init__()
             self.w1 = nn.Parameter(torch.randn(4096, 4096, device=device, dtype=dtype))
             self.w2 = nn.Parameter(torch.randn(2048, 4096, device=device, dtype=dtype))
 
@@ -215,7 +215,7 @@ def test_te_reporter_linear_forward_backward_multiple_recipies_iteration():
 
     class Module(nn.Module):
         def __init__(self):
-            super(Module, self).__init__()
+            super().__init__()
             self.w1 = nn.Parameter(torch.randn(4096, 4096, device=device, dtype=dtype))
             self.w2 = nn.Parameter(torch.randn(2048, 4096, device=device, dtype=dtype))
 
@@ -267,7 +267,7 @@ def test_te_reporter_linear_forward_backward_same_recipe_not_reported_twice():
 
     class Module(nn.Module):
         def __init__(self):
-            super(Module, self).__init__()
+            super().__init__()
             self.w1 = nn.Parameter(torch.randn(4096, 4096, device=device, dtype=dtype))
             self.w2 = nn.Parameter(torch.randn(2048, 4096, device=device, dtype=dtype))
 
@@ -323,7 +323,7 @@ def test_te_reporter_with_torch_compile_and_thunder_backend(fp8_recipe: recipe.R
 
     class Module(nn.Module):
         def __init__(self):
-            super(Module, self).__init__()
+            super().__init__()
             self.attention = nn.MultiheadAttention(4096, 64, device=device, dtype=dtype, batch_first=True)
             self.norm1 = nn.LayerNorm(4096, device=device, dtype=dtype)
             self.norm2 = nn.LayerNorm(4096, device=device, dtype=dtype)

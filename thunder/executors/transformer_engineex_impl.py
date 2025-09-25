@@ -48,7 +48,8 @@ from thunder.core.module import get_thunder_module
 transformer_engine_ex = StatefulExecutor("transformer_engine")
 register_executor(transformer_engine_ex)
 
-def _export_te_states(*, recipe=None, states=None, mode = None, quantizers=None, holder=None):
+
+def _export_te_states(*, recipe=None, states=None, mode=None, quantizers=None, holder=None):
     tm = None
     if holder is not None:
         tm_ref = getattr(holder, "_tm_ref", None)
@@ -58,6 +59,7 @@ def _export_te_states(*, recipe=None, states=None, mode = None, quantizers=None,
     # Cannot fallback to compile data as during execution we don't have compile_data context
     if tm is None:
         import warnings
+
         warnings.warn("No ThunderModule found for exporting TE states", UserWarning)
         return
 
@@ -71,6 +73,7 @@ def _export_te_states(*, recipe=None, states=None, mode = None, quantizers=None,
         mode=mode,
         quantizers=quantizers,
     )
+
 
 def _te_fp8_recipe_meta() -> AnyProxy:
     return AnyProxy(None, prefix="r")
@@ -119,7 +122,7 @@ class TEQuantizerState:
 
         self.quantizers = quantizers
         self.parent_recipe_state = recipe_state
-        
+
         # Export only new quantizers
         _export_te_states(recipe=recipe_state.recipe, quantizers=quantizers, holder=self)
 
