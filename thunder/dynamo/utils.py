@@ -635,7 +635,7 @@ def convert_checkpoint_tags(gm: torch.fx.GraphModule):
     """
     Replaces tag_activation_checkpoint operators with torch.utils.checkpoint.checkpoint calls.
 
-    tag_activation_checkpoint only marks nodes for recomputation within torch.compile but does not execute checkpointing itself.
+    tag_activation_checkpoint only marks nodes for torch.compile stack but does not execute actual checkpointing in eager mode.
     """
     for n in gm.graph.nodes:
         if n.op == "call_function" and n.target is torch.ops.higher_order.tag_activation_checkpoint:

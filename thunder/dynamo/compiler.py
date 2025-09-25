@@ -135,7 +135,8 @@ class ThunderCompiler:
 
         remove_empty_autocast(gm)
 
-        # Convert tag_activation_checkpoint operators, which is merely a tagger for torch.compile stack, to actual checkpoint calls
+        # Convert tag_activation_checkpoint operators, which is meaningless in eager mode, to actual checkpoint calls
+        # This will not be needed when we have found a way to make tag_activation_checkpoint fall back to PyTorch's backend
         convert_checkpoint_tags(gm)
 
         # The whole graph may not be supported by `thunder`, so we split it in `thunder` supported sections
