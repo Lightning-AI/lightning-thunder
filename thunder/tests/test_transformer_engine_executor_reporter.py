@@ -15,6 +15,7 @@ transformer_engine_module = pytest.importorskip(
 )
 
 from thunder.executors.transformer_engineex import transformer_engine_ex, TransformerEngineTransform
+from thunder.dynamo import ThunderCompiler
 from transformer_engine.common import recipe
 import transformer_engine.pytorch as te
 
@@ -37,7 +38,7 @@ recipe_ids = ("default", "delayed_scaling", "mxfp8_e4m3")
 @requiresCUDA
 @pytest.mark.parametrize("fp8_recipe", recipes, ids=recipe_ids)
 @skip_on_sm120_and_sm121
-def test_te_linear_forward_backward(fp8_recipe: recipe.Recipe):
+def test_te_reporter_linear_forward_backward(fp8_recipe: recipe.Recipe):
     if fp8_recipe and not (fp8_recipe.delayed() or is_mxfp8_supported):
         pytest.skip(msg_mxfp8)
 
@@ -125,7 +126,7 @@ def test_te_linear_forward_backward(fp8_recipe: recipe.Recipe):
 @requiresCUDA
 @pytest.mark.parametrize("fp8_recipe", recipes, ids=recipe_ids)
 @skip_on_sm120_and_sm121
-def test_te_linear_forward_backward_multiple_iteration(fp8_recipe: recipe.Recipe):
+def test_te_reporter_linear_forward_backward_multiple_iteration(fp8_recipe: recipe.Recipe):
     if fp8_recipe and not (fp8_recipe.delayed() or is_mxfp8_supported):
         pytest.skip(msg_mxfp8)
 
@@ -191,7 +192,7 @@ def test_te_linear_forward_backward_multiple_iteration(fp8_recipe: recipe.Recipe
 
 
 @requiresCUDA
-def test_te_linear_forward_backward_multiple_recipies_iteration():
+def test_te_reporter_linear_forward_backward_multiple_recipies_iteration():
     # Test Description:
     # Alternate between two different recipes across iterations and ensure the reporter
     # records both recipe configurations exactly once each. Verify forward/backward states
@@ -225,6 +226,7 @@ def test_te_linear_forward_backward_multiple_recipies_iteration():
 
     model = Module()
     iters = 10
+
     def train_model(model):
         for iter_n in range(iters):
             te_recipe = recipes[iter_n % 2]
@@ -245,8 +247,9 @@ def test_te_linear_forward_backward_multiple_recipies_iteration():
     assert len(rep_str.state_summaries_backward) == 4
     assert len(rep_str.quantizer_summaries) == 12
 
+
 @requiresCUDA
-def test_te_linear_forward_backward_same_recipe_not_reported_twice():
+def test_te_reporter_linear_forward_backward_same_recipe_not_reported_twice():
     # Test Description:
     # Alternate between two separate DelayedScaling instances that are equivalent in configuration.
     # Ensure the reporter treats them as the same effective recipe and does not duplicate entries
@@ -278,13 +281,13 @@ def test_te_linear_forward_backward_same_recipe_not_reported_twice():
     def train_model(model):
         # Run for `iterations`.
         for iter_n in range(3):
-            y = model(x, delayed_scaling_recipe_a if iter_n%2 == 0 else delayed_scaling_recipe_b)
+            y = model(x, delayed_scaling_recipe_a if iter_n % 2 == 0 else delayed_scaling_recipe_b)
 
             y.backward(torch.ones_like(y))
 
     jmodel = thunder.jit(model, executors=[transformer_engine_ex], transforms=[TransformerEngineTransform()])
 
-    def thunder_model(x, fp8_recipe = None):
+    def thunder_model(x, fp8_recipe=None):
         with te.fp8_autocast(fp8_recipe=fp8_recipe):
             return jmodel(x)
 
@@ -295,3 +298,87 @@ def test_te_linear_forward_backward_same_recipe_not_reported_twice():
     assert len(rep_str.state_summaries_forward) == 4
     assert len(rep_str.state_summaries_backward) == 4
     assert len(rep_str.quantizer_summaries) == 12
+
+
+@requiresCUDA
+@pytest.mark.parametrize("fp8_recipe", recipes, ids=recipe_ids)
+@skip_on_sm120_and_sm121
+def test_te_reporter_with_torch_compile_and_thunder_backend(fp8_recipe: recipe.Recipe):
+    # Test Description:
+    # Use torch.compile with Thunder as backend (ThunderCompiler) to run the model
+    # under FP8 autocast. Verify that TE runtime states are exported and available
+    # from the Thunder-compiled subgraphs via `te_reporter`, and that forward/backward
+    # summaries match expectations (iteration-invariant).
+
+    if fp8_recipe and not (fp8_recipe.delayed() or is_mxfp8_supported):
+        pytest.skip(msg_mxfp8)
+
+    if is_sm120_orsm121 and fp8_recipe is None:
+        pytest.skip("On SM120/121, default recipe is Float8BlockScaling which is not supported")
+
+    dtype = torch.bfloat16
+    device = "cuda"
+
+    x = torch.randn(3, 768, 4096, device=device, dtype=dtype, requires_grad=True)
+
+    class Module(nn.Module):
+        def __init__(self):
+            super(Module, self).__init__()
+            self.attention = nn.MultiheadAttention(4096, 64, device=device, dtype=dtype, batch_first=True)
+            self.norm1 = nn.LayerNorm(4096, device=device, dtype=dtype)
+            self.norm2 = nn.LayerNorm(4096, device=device, dtype=dtype)
+            self.mlp = nn.Sequential(
+                nn.Linear(4096, 16384, device=device, dtype=dtype),
+                nn.GELU(),
+                nn.Linear(16384, 4096, device=device, dtype=dtype),
+            )
+
+        def forward(self, x):
+            attn_out, _ = self.attention(x, x, x)
+            x = self.norm1(x + attn_out)
+            mlp_out = self.mlp(x)
+            x = self.norm2(x + mlp_out)
+            return x
+
+    model = Module()
+
+    # Compile with torch.compile using Thunder as backend
+    backend = ThunderCompiler(executors=[transformer_engine_ex], transforms=[TransformerEngineTransform()])
+    compiled_model = torch.compile(model, backend=backend)
+
+    # Run one forward/backward under FP8 autocast
+    def train_model(model):
+        iters = 10
+        for _ in range(iters):
+            with te.fp8_autocast(fp8_recipe=fp8_recipe):
+                y = model(x)
+            y.backward(torch.ones_like(y))
+
+    train_model(compiled_model)
+
+    print(compiled_model.__class__)
+
+    # Collect TE reporters from Thunder-compiled subgraphs
+    reporters = []
+    for sinfo in backend.subgraph_infos:
+        if sinfo.thunder_compiled_fns:
+            for fn in sinfo.thunder_compiled_fns:
+                if hasattr(fn, "te_reporter"):
+                    reporters.append(fn.te_reporter)
+
+    # We expect at least one Thunder subgraph using TE
+    assert len(reporters) >= 1
+
+    # Aggregate counts across subgraphs
+    total_recipes = sum(len(r.recipe_summaries) for r in reporters)
+    total_fw_states = sum(len(r.state_summaries_forward) for r in reporters)
+    total_bw_states = sum(len(r.state_summaries_backward) for r in reporters)
+    total_quantizers = sum(len(r.quantizer_summaries) for r in reporters)
+
+    # Recipe presence
+    assert total_recipes >= 1
+    # Two linear call sites leading to two forward and two backward states in total
+    assert total_fw_states == 2
+    assert total_bw_states == 2
+    # Quantizers (2 per forward, 1 per backward site leading to 6 total)
+    assert total_quantizers == 6
