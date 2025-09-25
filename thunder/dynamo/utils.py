@@ -683,6 +683,14 @@ def checkpoint_converter(gm: torch.fx.GraphModule, sub_gm: torch.fx.GraphModule)
                 _checkpoint_function_converter(function_module)
 
 
+def convert_checkpoint_tags(gm: torch.fx.GraphModule):
+    import torch.utils.checkpoint
+
+    for n in gm.graph.nodes:
+        if n.op == "call_function" and n.target is torch.ops.higher_order.tag_activation_checkpoint:
+            n.target = torch.utils.checkpoint.checkpoint
+
+
 def remove_empty_autocast(graph_module: torch.fx.GraphModule) -> torch.fx.GraphModule:
     """
     Function to remove empty autocast regions from GraphModule.

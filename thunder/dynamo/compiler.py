@@ -21,6 +21,7 @@ from thunder.dynamo.utils import (
     default_filter,
     default_optimizer,
     input_to_example_input_meta,
+    convert_checkpoint_tags,
 )
 from thunder.dynamo.splitter import _splitter
 from thunder.dynamo.benchmark_utils import ThunderCompileSpecification
@@ -135,6 +136,7 @@ class ThunderCompiler:
         from thunder import jit
 
         remove_empty_autocast(gm)
+        convert_checkpoint_tags(gm)
 
         # Dynamo uses lazy generation of the underlying Python code, so we need to
         # force recompilation of the GraphModule before passing it to Thunder.
