@@ -1,5 +1,4 @@
 from typing import TYPE_CHECKING
-import importlib
 
 from lightning_utilities.core.imports import package_available
 import numpy as np
@@ -11,6 +10,7 @@ from torch._library.custom_ops import CustomOpDef
 import thunder
 from thunder.core import dtypes
 from thunder.core import devices
+from thunder.torch.custom_op import _deregister_custom_op
 from thunder.torch.custom_op import _register_custom_op
 from thunder.torch.custom_op import _register_nvfuser_translator
 from thunder.executors.custom_op_ex import custom_op_ex
@@ -23,9 +23,11 @@ if TYPE_CHECKING:
 
 
 @pytest.fixture(autouse=True)
-def reload_thunder():
+def deregister_custom_op():
     yield
-    importlib.reload(thunder)
+    _deregister_custom_op(mul)
+    if has_triton_op:
+        _deregister_custom_op(mul_triton)
 
 
 @torch.library.custom_op("my_custom_op::mul", mutates_args=())
