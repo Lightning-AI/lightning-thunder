@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 import ast
 import inspect
+import warnings
 
 from torch import TensorType, ListType
 
@@ -34,6 +35,7 @@ __all__ = [
 
 _BACKWARD_FN: str = "_backward_fn"
 _SETUP_CONTEXT_FN: str = "_setup_context_fn"
+_CUSTOM_OP_TO_TORCHFN_AND_SYMBOL: dict[CustomOpDef, tuple[tuple[OpOverload, OpOverloadPacket], Symbol]] = {}
 
 
 @dataclass(frozen=True)
@@ -336,6 +338,7 @@ def _register_custom_op(custom_op: CustomOpDef) -> Symbol:
     from thunder.executors.torchex import _always_executable
     from thunder.executors.custom_op_ex import custom_op_ex
     from thunder.torch import register_function
+    from thunder.torch import _torch_to_thunder_function_map
 
     # `custom_op` is `custom_op(name)(my_func)`,
     # `torch.ops.namespace.name` is `OpOverloadPacket.`
@@ -392,8 +395,9 @@ def _register_custom_op(custom_op: CustomOpDef) -> Symbol:
         tags=tags,
     )
     # Register both `torch.ops.my_lib.foo` and `torch.ops.my_lib.foo.default`.
-    register_function(torch_opoverload_packet, symbol)
-    register_function(torch_opoverload, symbol)
+    for torch_op in (torch_opoverload_packet, torch_opoverload):
+        baseutils.check(torch_op not in _torch_to_thunder_function_map, lambda: f"{torch_op=} already registered")
+        register_function(torch_op, symbol)
 
     op: Symbol = custom_op_ex.register_operator(fn_name, meta=meta_fn, fn=torch_opoverload)
     custom_op_ex.register_implementation(symbol, op, checker=_always_executable)
@@ -414,7 +418,34 @@ def _register_custom_op(custom_op: CustomOpDef) -> Symbol:
         new_default_executors = add_executor_lists(default_executors, [custom_op_ex])
         set_default_executors(new_default_executors)
 
+    _CUSTOM_OP_TO_TORCHFN_AND_SYMBOL[custom_op] = ((torch_opoverload, torch_opoverload_packet), symbol)
+
     return symbol
+
+
+def _deregister_custom_op(custom_op: CustomOpDef) -> None:
+    """Deregister ``custom_op`` and related things from Thunder, helper function for test."""
+    from thunder.executors.custom_op_ex import custom_op_ex
+    from thunder.executors.nvfuserex_impl import ex as nvfuser_ex
+    from thunder.executors.nvfuserex_impl import _translation_map
+    from thunder.torch import _torch_to_thunder_function_map
+
+    if custom_op not in _CUSTOM_OP_TO_TORCHFN_AND_SYMBOL:
+        msg = f"{custom_op} is not registered"
+        warnings.warn(msg)
+        return
+    (torch_op_tuple, symbol) = _CUSTOM_OP_TO_TORCHFN_AND_SYMBOL[custom_op]
+    for torch_op in torch_op_tuple:
+        if torch_op in _torch_to_thunder_function_map:
+            del _torch_to_thunder_function_map[torch_op]
+    if symbol.id in custom_op_ex._implmap:
+        del custom_op_ex._implmap[symbol.id]
+
+    if symbol.id in _translation_map:
+        del _translation_map[symbol.id]
+        del nvfuser_ex._implmap[symbol.id]
+
+    del _CUSTOM_OP_TO_TORCHFN_AND_SYMBOL[custom_op]
 
 
 def _register_nvfuser_translator(
