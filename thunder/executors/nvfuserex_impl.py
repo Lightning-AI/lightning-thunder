@@ -1541,6 +1541,7 @@ def exp(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) ->
 
 
 register_supported(PrimIDs.EXP, exp, _elementwise_unary_check)
+register_supported(DTensorPrimIDs.EXP, exp, _elementwise_unary_check)
 
 
 def exp2(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
