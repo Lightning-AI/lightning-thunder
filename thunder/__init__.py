@@ -744,7 +744,7 @@ def jit(
                 cs.last_prologue = pro
 
                 return cache_entry, inps, pro_to_epi
-
+        print("thunder cache miss")
         cs.cache_misses += 1
         cs.last_trace_cache_stop = time.perf_counter_ns()
 

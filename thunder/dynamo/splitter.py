@@ -147,7 +147,6 @@ def _splitter(
     split_gm: torch.fx.GraphModule = split_module(
         gm, root_m=None, split_callback=callback, keep_original_order=True, keep_original_node_name=True
     )
-
     # Workaround for the Torch bug https://github.com/pytorch/pytorch/pull/139275
     for submodule in split_gm.children():
         if not submodule.graph.find_nodes(op="output"):
@@ -157,7 +156,8 @@ def _splitter(
 
     # If split_gm contains Parameters or Tensors then deepcopy would also create their copies.
     # TODO: Eliminate deepcopy
-    original_split_gm = copy.deepcopy(split_gm)
+    #original_split_gm = copy.deepcopy(split_gm)
+    original_split_gm = None #copy.deepcopy(split_gm)
 
     def is_thunder_supported_partition(node: torch.fx.Node) -> bool:
         return node.name.startswith("submod") and int(node.name.replace("submod_", "")) in supported_partitions
@@ -175,7 +175,8 @@ def _splitter(
             for n in graph_module.graph.nodes:
                 if n.op == "output":
                     for n in n.all_input_nodes:
-                        if "example_value" not in n.meta or n.meta["example_value"].grad_fn is None:
+                        #if "example_value" not in n.meta or n.meta["example_value"].grad_fn is None:
+                        if "example_value" not in n.meta or not isinstance(n.meta["example_value"], torch.Tensor) or n.meta["example_value"].grad_fn is None:
                             is_differentiable_outputs.append(False)
                         else:
                             is_differentiable_outputs.append(True)
@@ -189,25 +190,32 @@ def _splitter(
             # Replace PyTorch operators within the checkpointed function with the corresponding Thunder operators
             checkpoint_converter(split_gm, graph_module)
 
+            #from thunder.executors.custom_op_ex import custom_op_ex
+            #from thunder import get_default_executors
+            #executor_list = get_default_executors()
+            #jit_fn = thunder_jit(graph_module, is_differentiable_outputs=is_differentiable_outputs,executors=[*executor_list, custom_op_ex])
             jit_fn = thunder_jit(graph_module, is_differentiable_outputs=is_differentiable_outputs)
+            #jit_fn = graph_module
+            #jit_fn = torch_inductor(graph_module)
             # Update the node name from "submod_*" to "thunder_*" for more user-friendly names
             update_node_and_submodule(split_gm, node, node.name.replace("submod", "thunder"), jit_fn)
             thunder_compiled_fns.append(jit_fn)
-            submodule_to_compiled_fns[getattr(original_split_gm, node_name)] = CompiledFunction(
-                jit_fn, CompilerType.THUNDER
-            )
+            if original_split_gm is not None:
+                submodule_to_compiled_fns[getattr(original_split_gm, node_name)] = CompiledFunction(
+                    jit_fn, CompilerType.THUNDER
+                )
         elif node.name.startswith("submod"):  # For inductor
             graph_module = getattr(split_gm, node.name)
             jit_fn = torch_inductor(graph_module)
             # Update the node name from "submod_*" to "inductor_*" for more user-friendly names
             update_node_and_submodule(split_gm, node, node.name.replace("submod", "inductor"), jit_fn)
-            submodule_to_compiled_fns[getattr(original_split_gm, node_name)] = CompiledFunction(
-                jit_fn, CompilerType.TORCH_INDUCTOR
-            )
+            if original_split_gm is not None:
+                submodule_to_compiled_fns[getattr(original_split_gm, node_name)] = CompiledFunction(
+                    jit_fn, CompilerType.TORCH_INDUCTOR
+                )
         else:
             # Everything else is a glue code to call and pass outputs between the other partitions.
             pass
-
     # We update the GraphModule in `update_node_and_submodule`, so we need to recompile.
     recompile_graph(split_gm)
 

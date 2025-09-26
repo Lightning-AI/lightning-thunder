@@ -520,6 +520,9 @@ def build_callable(fn_name: str, python_str: str, file_name: str, ctx: dict) -> 
 
     program_name = f"{file_name}_{_exec_ctr}"
 
+    #print(program_name)
+    #print(python_str)
+
     # simple cache hack
     mtime = None  # this signals that the cache should not be invalidated(!)
     lines = python_str.splitlines(keepends=True)

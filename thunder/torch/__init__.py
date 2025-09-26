@@ -6713,7 +6713,7 @@ def _get_fake_arg(inp: Any):
     elif isinstance(inp, dtypes.dtype):
         return to_torch_dtype(inp)
     else:
-        raise NotImplementedError(f"Unsupported type: {builtins.type(inp)}")
+        raise NotImplementedError(f"get fake arg: {inp}, Unsupported type: {builtins.type(inp)}")
 
 
 def _fake_type_to_thunder(inp: Any):
@@ -6740,7 +6740,7 @@ def _fake_type_to_thunder(inp: Any):
     elif isinstance(inp, (str, bool, int, float, complex)):
         return inp
     else:
-        raise NotImplementedError(f"Unsupported type: {builtins.type(inp)}")
+        raise NotImplementedError(f"fake type to thunder,Unsupported type: {builtins.type(inp)}")
 
 
 def augmented_forward_adaptor(sym_op: Callable):

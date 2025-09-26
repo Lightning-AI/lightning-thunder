@@ -338,7 +338,11 @@ def _register_custom_op(custom_op: CustomOpDef) -> Symbol:
     schema_returns: list[Argument] = schema.returns
     return_arity: int = len(schema_returns)
     tensor_return_arity: int = len(list(filter(lambda a: isinstance(a.type, TensorType), schema_returns)))
-    baseutils.check(return_arity == tensor_return_arity, lambda: f"Return values include non-Tensor values: {schema}")
+    print("schemareturns________________:", schema_returns)
+    for a in schema_returns:
+        print(a)
+        print(a.type)
+    #baseutils.check(return_arity == tensor_return_arity, lambda: f"Return values include non-Tensor values: {schema}")
 
     has_autograd_def = _has_autograd_def(custom_op)
     fn_name = custom_op._qualname.replace("::", "_")
