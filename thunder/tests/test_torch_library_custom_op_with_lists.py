@@ -19,45 +19,47 @@ if TYPE_CHECKING:
     from thunder.core.symbol import BoundSymbol
 
 
-@torch.library.custom_op("my_custom_op::mul", mutates_args=())
-def mul(a: torch.Tensor, b: torch.Tensor, c: float | None = None, d: str = "") -> torch.Tensor:
-    return a * b
+@torch.library.custom_op("my_custom_op::list_mul", mutates_args=())
+def list_mul(tensors: list[torch.Tensor], c: float | None = None, d: str = "") -> list[torch.Tensor]:
+    if len(tensors) != 2:
+        raise ValueError("The list of tensors must contain exactly two elements for this operation.")
+    return [tensors[0] * tensors[1]]
 
 
-@torch.library.register_kernel("my_custom_op::mul", "cpu")
-def _(a: torch.Tensor, b: torch.Tensor, c: float | None = None, d: str = "") -> torch.Tensor:
-    return torch.from_numpy(
+@torch.library.register_kernel("my_custom_op::list_mul", "cpu")
+def _(tensors: list[torch.Tensor], c: float | None = None, d: str = "") -> list[torch.Tensor]:
+    return [torch.from_numpy(
         np.multiply(
-            a.numpy(force=True),
-            b.numpy(force=True),
+            tensors[0].numpy(force=True),
+            tensors[1].numpy(force=True),
         )
-    )
+    )]
 
 
-@torch.library.register_kernel("my_custom_op::mul", "cuda")
-def _(a: torch.Tensor, b: torch.Tensor, c: float | None = None, d: str = "") -> torch.Tensor:
-    return a * b
+@torch.library.register_kernel("my_custom_op::list_mul", "cuda")
+def _(tensors: list[torch.Tensor], c: float | None = None, d: str = "") -> list[torch.Tensor]:
+    return [tensors[0] * tensors[1]]
 
 
-@torch.library.register_fake("my_custom_op::mul")
-def _(a: torch.Tensor, b: torch.Tensor, c: float | None = None, d: str = "") -> torch.Tensor:
-    return torch.empty_like(a)
+@torch.library.register_fake("my_custom_op::list_mul")
+def _(tensors: list[torch.Tensor], c: float | None = None, d: str = "") -> list[torch.Tensor]:
+    return [torch.empty_like(tensors[0])]
 
 
-def setup_context_for_my_custom_op_mul(ctx, inputs, output) -> None:
-    a, b, *_ = inputs
-    ctx.save_for_backward(a, b)
+def setup_context_for_my_custom_op_list_mul(ctx, inputs, output) -> None:
+    tensors_list, *_ = inputs
+    ctx.save_for_backward(tensors_list[0], tensors_list[1])
 
 
-def backward_of_my_custom_op_mul(ctx, grad) -> tuple[torch.Tensor, torch.Tensor, None, None]:
+def backward_of_my_custom_op_list_mul(ctx, grad) -> tuple[list[torch.Tensor], None, None]:
     a, b = ctx.saved_tensors
-    return torch.ops.my_custom_op.mul(grad, b), torch.ops.my_custom_op.mul(grad, a), None, None
+    return [torch.ops.my_custom_op.list_mul([grad, b]), torch.ops.my_custom_op.mul([grad, a])], None, None
 
 
 torch.library.register_autograd(
-    "my_custom_op::mul",
-    backward_of_my_custom_op_mul,
-    setup_context=setup_context_for_my_custom_op_mul,
+    "my_custom_op::list_mul",
+    backward_of_my_custom_op_list_mul,
+    setup_context=setup_context_for_my_custom_op_list_mul,
 )
 
 
@@ -69,7 +71,7 @@ if has_triton_op:
     DEVICE = triton.runtime.driver.active.get_active_torch_device()
 
     @triton.jit
-    def mul_triton_kernel(
+    def list_mul_triton_kernel(
         x_ptr,  # *Pointer* to first input vector.
         y_ptr,  # *Pointer* to second input vector.
         output_ptr,  # *Pointer* to output vector.
@@ -96,18 +98,22 @@ if has_triton_op:
         # Write x + y back to DRAM.
         tl.store(output_ptr + offsets, output, mask=mask)
 
-    @torch.library.triton_op("my_triton_op::mul", mutates_args=())
-    def mul_triton(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+    @torch.library.triton_op("my_triton_op::list_mul", mutates_args=())
+    def list_mul_triton(tensors: list[torch.Tensor]) -> list[torch.Tensor]:
+        if len(tensors) != 2:
+            raise ValueError("The list of tensors must contain exactly two elements for this operation.")
+        x = tensors[0]
+        y = tensors[1]
         output = torch.empty_like(x)
         n_elements = output.numel()
         grid = lambda meta: (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
-        torch.library.wrap_triton(mul_triton_kernel)[grid](x, y, output, n_elements, BLOCK_SIZE=1024)
-        return output
+        torch.library.wrap_triton(list_mul_triton_kernel)[grid](x, y, output, n_elements, BLOCK_SIZE=1024)
+        return [output]
 
     torch.library.register_autograd(
-        "my_triton_op::mul",
-        backward_of_my_custom_op_mul,
-        setup_context=setup_context_for_my_custom_op_mul,
+        "my_triton_op::list_mul",
+        backward_of_my_custom_op_list_mul,
+        setup_context=setup_context_for_my_custom_op_list_mul,
     )
 
 
@@ -122,11 +128,11 @@ def _run_test(module_cls, custom_op: CustomOpDef, device: torch.device, dtype: t
 
     x = torch.testing.make_tensor(SHAPE, device=device, dtype=dtype)
     y = torch.testing.make_tensor(SHAPE, device=device, dtype=dtype)
-    x_ref = x.clone().detach()
-    y_ref = y.clone().detach()
+    inputs_list = [x, y]
+    inputs_list_ref = [x.clone().detach() for x in inputs_list]
 
-    ref_out = ref(x_ref, y_ref)
-    out = jitted(x, y)
+    ref_out = ref(inputs_list_ref)
+    out = jitted(inputs_list)
     torch.testing.assert_close(ref_out, out)
     out.mean().backward()
 
@@ -150,13 +156,13 @@ def test_torch_library_custom_op(_, device: str, dtype: dtypes.dtype):
             super().__init__()
             self.linear = nn.Linear(2, 2, bias=False)
 
-        def forward(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-            h = torch.ops.my_custom_op.mul(x, y)
-            activation = torch.relu(h)
+        def forward(self, tensors: list[torch.Tensor]) -> torch.Tensor:
+            h = torch.ops.my_custom_op.list_mul(tensors)
+            activation = torch.relu(h[0])
             out = self.linear(activation)
             return out
 
-    _run_test(MyModule, mul, devices.to_torch_device(device), dtypes.to_torch_dtype(dtype))
+    _run_test(MyModule, list_mul, devices.to_torch_device(device), dtypes.to_torch_dtype(dtype))
 
 
 @pytest.mark.skipif(not has_triton_op, reason="triton is not available")
@@ -171,10 +177,10 @@ def test_torch_library_triton_op(_, device: str, dtype: dtypes.dtype):
             super().__init__()
             self.linear = nn.Linear(2, 2, bias=False)
 
-        def forward(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-            h = torch.ops.my_triton_op.mul(x, y)
-            activation = torch.relu(h)
+        def forward(self, tensors: list[torch.Tensor]) -> torch.Tensor:
+            h = torch.ops.my_triton_op.list_mul(tensors)
+            activation = torch.relu(h[0])
             out = self.linear(activation)
             return out
 
-    _run_test(MyModule, mul_triton, devices.to_torch_device(device), dtypes.to_torch_dtype(dtype))
+    _run_test(MyModule, list_mul_triton, devices.to_torch_device(device), dtypes.to_torch_dtype(dtype))

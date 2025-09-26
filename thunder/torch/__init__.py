@@ -6697,7 +6697,7 @@ def _get_fake_arg(inp: Any):
             raise NotImplementedError("Unsupported for NumberProxy.value=None")
         else:
             return inp.value
-    elif isinstance(inp, TensorProxy):
+    elif isinstance(inp, (TensorProxy, torch.Tensor)):
         return torch.empty(
             inp.shape,
             dtype=to_torch_dtype(inp.dtype),
