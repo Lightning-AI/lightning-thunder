@@ -186,7 +186,8 @@ def build_global_context() -> dict[str, Any]:
     # Availability and reasons
     fp8_avail, reason_no_fp8 = FP8GlobalStateManager.is_fp8_available()
     mxfp8_avail, reason_no_mx = FP8GlobalStateManager.is_mxfp8_available()
-    fp8blk_avail, reason_no_blk = FP8GlobalStateManager.is_fp8_block_scaling_available()
+    # Thunder does not support fp8 block scaling: https://github.com/Lightning-AI/lightning-thunder/issues/2476
+    fp8blk_avail, reason_no_blk = (False, "Thunder does not support fp8 block scaling")
 
     # Versions / device
     cuda_version = getattr(torch.version, "cuda", None)
