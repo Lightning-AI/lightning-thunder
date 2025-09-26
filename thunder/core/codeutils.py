@@ -436,7 +436,10 @@ def get_siginfo(fn: Callable, args, kwargs, *, _make_named_inputs: bool = False)
         fn_ = fn_.meta
 
     # Binds args and kwargs to signature
-    sig = inspect.signature(fn_)
+    try:
+        sig = inspect.signature(fn_)
+    except ValueError:
+        sig = inspect.signature(lambda *args, **kwargs: None)
     kwargs.update(partial_kwargs)
     ba = sig.bind(*args, **kwargs)
 

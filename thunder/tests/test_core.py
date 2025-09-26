@@ -1620,6 +1620,19 @@ def test_nested_trace_no_name_collision(executor, device, _):
     thunder.trace()(bar, a, b)
 
 
+# Tests if Thunder can trace a function without a valid signature
+@instantiate(dtypes=NOTHING)
+def test_no_signature(executor, device, _):
+    a = make_tensor((2, 3), device=device, dtype=torch.float32)
+
+    fn_trace = thunder.trace()(getattr, a, "mT")
+
+    jfn = executor.make_callable(fn_trace)
+    actual = jfn(a, "mT")
+    expected = getattr(a, "mT")
+    assert_close(actual, expected)
+
+
 @instantiate(dtypes=NOTHING)
 def test_trace_args_no_name_collision(executor, device, _):
     from thunder.core.trace import detached_trace
