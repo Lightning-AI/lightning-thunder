@@ -83,7 +83,7 @@ class ThunderCompilerOnGraphModuleSpecification(CompileSpecificationInterface):
 
         thunder_compiler = ThunderCompiler(**kwargs)
         split_gm = thunder_compiler(gm, sample_args=None)
-        return split_gm, thunder_compiler
+        return split_gm
 
 
 class TorchCompileSpecification(CompileSpecificationInterface):

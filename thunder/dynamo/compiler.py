@@ -106,9 +106,8 @@ class ThunderCompiler:
         self._torch_compile = torch.compile
 
     def __call__(self, gm: torch.fx.GraphModule, sample_args: list[torch.SymInt, torch.Tensor]):
-        print(f"-----------------------backend call func: {id(gm)}")
-        #from thunder.dynamo.utils import _readable
-        #with open(f"/home/wayan/trtllm/torch_gms/g_{id(gm)}.py",'w') as f:
+        # from thunder.dynamo.utils import _readable
+        # with open(f"/home/wayan/trtllm/torch_gms/g_{id(gm)}.py",'w') as f:
         #    f.write(str(_readable(gm,"gmodule")))
         remove_empty_autocast(gm)
 
@@ -119,8 +118,6 @@ class ThunderCompiler:
         # The whole graph may not be supported by `thunder`, so we split it in `thunder` supported sections
         # and unsupported sections which are passed to `torch.compile(backend='inductor')`
         split_module, subgraph_info = _splitter(gm, self._thunder_jit, self._torch_compile, sample_args)
-        #exit()
-        #print(split_module, "from splitter")
         self.subgraph_infos.append(subgraph_info)
         return split_module
 
@@ -311,8 +308,7 @@ def thunder_profile(fn):
     tao: ThunderAoTOptimizer = ThunderAoTOptimizer()
 
     def dispatching_backend(gm, *args):
-        print(f"++++++++++++++++++++++++++++++++++++++++++++++++is profile: {tao.is_profiling}, {id(gm)}")
-        #print(gm)
+        print(f"++++++++++++++ thunder_profile: is profile: {tao.is_profiling}, {id(gm)}")
 
         if tao.is_profiling:
             idx: int = id(gm)
@@ -331,23 +327,11 @@ def thunder_profile(fn):
             tao.dispatch_map[idx] = record_stats
 
             def _dispatch(*args):
-                print(f"run dispatch+++++++++++++++++++++, {id(gm)}")
-                tmp = tao.dispatch_map[idx]
-                #if isinstance(tmp, torch.nn.Module):
-                #    torch.save(tmp,"/home/wayan/trtllm/gm.pt")
-                #    torch.save(args,"/home/wayan/trtllm/inp.pt")
-                #    xx=list(tmp.named_buffers())[0:4]
-                #    print(xx)
-                #    for x in xx:
-                #        print(x[1].shape)
-                #    for x in list(tmp.named_buffers())[4:]:
-                #        print(x[0], x[1].shape)
-                #    from thunder.dynamo.report import save_thunderfx_repros
-                #    save_thunderfx_repros(tmp,"/home/wayan/trtllm/dispatch_gms_thunder",force_overwrite=True)(*args)
+                print(f"++++++++++++++++++++++ Run dispatch: is_profile-{tao.is_profiling}, {id(gm)}")
                 return tao.dispatch_map[idx](*args)
 
             return _dispatch
-        print("not profile---------------fallback eager")
+        print(f"+++++++++ Not profile: thunderfx misses a dynamo graph {id(gm)}: fallback eager")
 
         # NOTE When not in profiling mode, this just returns the gm for eager execution
         return gm
@@ -411,16 +395,17 @@ def thunder_optimize(
             profile_stats = tao.id_to_profile_stats[idx]
             try:
                 dispatch_map[idx] = optimizer(gm, profile_stats)
-                print("set dispatch_map: ", type(dispatch_map[idx]), len(dispatch_map))
+                print("+++++++++++ set dispatch_map: ", idx)
             except NotImplementedError:
+                print(f"+++++++++++ thunderfx optimize failed: {idx}")
                 # Executes the gm eagerly if the optimizer can't optimize it
                 dispatch_map[idx] = gm
         else:
-            print(f"++++++++++++ dispatch misses,{idx} not exists")
+            print(f"++++++++++++ choose not to optimize,{idx}")
             dispatch_map[idx] = id_to_gm_map[idx]
 
     # 3) Marks the profiling period as over
     tao.is_profiling = False
 
     # 4) Returns the actual torch.compile'd callable to minimize calling latency
-    return profiling_callable._compiled_fn, profiling_callable
+    return profiling_callable._compiled_fn

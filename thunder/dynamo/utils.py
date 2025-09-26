@@ -304,18 +304,18 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
         cache_info["default_dtype"] = torch.get_default_dtype()
         cache_info["default_device"] = torch.get_default_device()
 
-        #try:
-        proxy_args, proxy_kwargs = get_proxy_inputs_from_node(node)
-        #except Exception as e:
-        #    return False, SplitReason(
-        #        SplitReasonType.EXCEPTION_PROXY_THUNDER_OP,
-        #        f"Failed while creating proxy for node with name: {node.name} and target: {node.target}, see exception field {str(e)}",
-        #        exception=str(e),
-        #    )
+        try:
+            proxy_args, proxy_kwargs = get_proxy_inputs_from_node(node)
+        except Exception as e:
+            return False, SplitReason(
+                SplitReasonType.EXCEPTION_PROXY_THUNDER_OP,
+                f"Failed while creating proxy for node with name: {node.name} and target: {node.target}, see exception field {str(e)}",
+                exception=str(e),
+            )
         # skip the node input that are output of flashinfer
         for a in proxy_args:
             if isinstance(a, torch.fx.Node):
-                #print(f"splitter: skip {node.format_node()}")
+                # print(f"splitter: skip {node.format_node()}")
                 return True, None
         function_to_run = value_and_grad(thunder_symbol) if requires_grad else thunder_symbol
         # We need to be under trace context to generate proxies.
@@ -413,8 +413,6 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
     # If the operation has automatic registration, we mark it as unsupported as `inductor` might be
     # able to deal with it better.
     if target in auto_register_ops:
-        #if target in (torch.ops.attention.prepare_flashinfer_metadata, torch.ops.attention.flashinfer_mha_with_cache):
-        #    return True, None
         split_reason = SplitReason(
             SplitReasonType.MISSING_OP_SUPPORT,
             info=f"node with name: {node.name} and target: {node.target} only has an automatic torch fallback in thunder.",
@@ -458,14 +456,14 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
     # NOTE: We pass `node.target` which is a `str` (and not `target` from above which is actually function object).
     if torchctx.has_method(node.target):
         # `torchctx.get_method` requires args and kwargs to resolve which overload of the method is picked.
-        #try:
-        args, kwargs = get_proxy_inputs_from_node(node)
-        #except Exception as e:
-        #    return False, SplitReason(
-        #        SplitReasonType.EXCEPTION_PROXY_THUNDER_OP,
-        #        f"Failed while creating proxy for node with name: {node.name} and target: {node.target}, see exception field {str(e)}",
-        #        exception=str(e),
-        #    )
+        try:
+            args, kwargs = get_proxy_inputs_from_node(node)
+        except Exception as e:
+            return False, SplitReason(
+                SplitReasonType.EXCEPTION_PROXY_THUNDER_OP,
+                f"Failed while creating proxy for node with name: {node.name} and target: {node.target}, see exception field {str(e)}",
+                exception=str(e),
+            )
         # NOTE: `get_method` may throw if relevant method is not found, so we have guarded it with `has_method`.
         method = torchctx.get_method(node.target, args, kwargs)
         did_run, opt_split_reason = try_execute_thunder_symbol(method, node)
@@ -759,7 +757,7 @@ def arg_like(arg: Any):
     elif isinstance(arg, (int, bool, float)):
         return f"{arg},"
     elif arg is None:
-        return f"None,"
+        return "None,"
     else:
         raise TypeError(f"Unsupported input type: {type(arg)}, {arg}")
 
@@ -991,10 +989,8 @@ def get_or_create_example_inputs_from_placeholders(placeholders: list[torch.fx.N
                 input = input.node.hint
         except (KeyError, AssertionError):
             # needs to create a new example input
-            print("new exap inp")
             outs.append(_get_example_inputs_from_placeholder(p, only_metadata=False))
         else:
-            #print("weakref ",input)
             outs.append(input)
     return outs
 
@@ -1068,28 +1064,30 @@ def default_optimizer(gm: torch.fx.GraphModule, stats: ProfileStats) -> Callable
 
 
 from dataclasses import dataclass
+
+
 @dataclass
 class KVCacheManager:
     cm: CachedSequenceInterface
     attn_descriptor: AttentionDescriptor
     cache_config: CacheConfig
     ad_config: _AutoDeployLlmArgs
-    init_cache=False
-    resize_cache=False
-    gid=0
+    init_cache = False
+    resize_cache = False
+    gid = 0
 
-    def get_information(self, gm: torch.fx.GraphModule):
+    def get_attn_nodes(self, gm: torch.fx.GraphModule):
         from tensorrt_llm._torch.auto_deploy.utils.node_utils import is_op
+
         source_op = torch._C._nn.scaled_dot_product_attention
 
-        # pick up graph``
         graph = gm.graph
 
         # look for relevant source attention nodes
         source_attn_nodes = [n for n in graph.nodes if is_op(n, source_op)]
         return source_attn_nodes
-    
-    def update_information(self, attn_nodes: list[torch.fx.Node]):
+
+    def update_cache_initializers(self, attn_nodes: list[torch.fx.Node]):
         buffer_in_lookup: Dict[str, Node] = {}
         for idx, attn_node in enumerate(attn_nodes):
             # store cache initializers
@@ -1105,62 +1103,57 @@ class KVCacheManager:
                     self.cm.add_cache(k, get_buffer)
                     buffer_in_lookup[k] = None
 
-    
-    def transform_graph(self, gm: torch.fx.GraphModule, cm, new_args):
-        src_attn_nodes = self.get_information(gm)
+    def transform_graph(self, gm: torch.fx.GraphModule, cm, cached_attn_args_names):
+        src_attn_nodes = self.get_attn_nodes(gm)
         if not src_attn_nodes:
             return gm
 
-        #new_args = cm.info.switch_to_cached_attn_inputs()
         if cm.info.is_paged:
             assert self.attn_descriptor.is_paged(), "Paged sequence info requires paged attention op."
 
-        self.update_information(src_attn_nodes)
+        self.update_cache_initializers(src_attn_nodes)
         if not self.init_cache:
-            print(self.init_cache,"++++")
             cm.initialize_caches()
-            self.init_cache=True
+            self.init_cache = True
 
         get_metadata_attrs = []
-        for name, arg in zip(new_args, cm.info.args[2:]):
-            #print("+++++++++++++++++arg shape:", arg.shape, name)
+        from thunder.core.utils import safe_zip
+
+        for name, arg in safe_zip(cached_attn_args_names, cm.info.args[2:]):
             get_metadata_attrs.append(add_graph_attr(gm, name, arg))
 
-        #with open("/home/wayan/trtllm/newattr_g1.py",'w') as f:
+        # with open("/home/wayan/trtllm/newattr_g1.py",'w') as f:
         #    f.write(str(gm.graph))
 
-	
-        from tensorrt_llm._torch.auto_deploy.custom_ops.attention_interface import AttentionDescriptor, CacheConfig
-        from tensorrt_llm._torch.auto_deploy.utils.node_utils import get_all_input_output_nodes
         from tensorrt_llm._torch.auto_deploy.transformations._graph import canonicalize_graph
-        from tensorrt_llm._torch.auto_deploy.utils.node_utils import is_op
         import operator
         # retrieve input nodes
-        input_nodes, _ = get_all_input_output_nodes(gm.graph)
 
         # insert metadata computation and extract each argument as a node
         node_inputs = gm.graph.find_nodes(op="placeholder", sort=True)
-        tensorinput_nodes=[]
+        # Since the Dynamo graph treats all parameters as graph inputs, we identify actual input tensors by checking the type of each placeholder node
+        # NOTE: here we assume the order of the input tensors are not changed by dynamo
+        tensor_input_nodes = []
         for n in node_inputs:
-            if not isinstance(n.meta["example_value"], torch.nn.Parameter) and isinstance(n.meta["example_value"], torch.Tensor):
-                tensorinput_nodes.append(n)
+            if not isinstance(n.meta["example_value"], torch.nn.Parameter) and isinstance(
+                n.meta["example_value"], torch.Tensor
+            ):
+                tensor_input_nodes.append(n)
         get_metadata, num_metadata = self.attn_descriptor.get_prepare_metadata_op()
         with gm.graph.inserting_before(get_metadata_attrs[0].next):
             ret_node = gm.graph.call_function(
                 get_metadata,
                 args=(
-                    *tensorinput_nodes[:2],
+                    *tensor_input_nodes[: cm.info._num_uncached_attn_args],
                     *get_metadata_attrs,
                     cm.info.page_size,
                 ),
             )
             metadata_nodes = [
-                gm.graph.call_function(operator.getitem, args=(ret_node, idx))
-                for idx in range(num_metadata)
+                gm.graph.call_function(operator.getitem, args=(ret_node, idx)) for idx in range(num_metadata)
             ]
 
-
-        #with open("/home/wayan/trtllm/newattr_g2.py",'w') as f:
+        # with open("/home/wayan/trtllm/newattr_g2.py",'w') as f:
         #    f.write(str(gm.graph))
         buffer_in_lookup: Dict[str, Node] = {}
 
@@ -1172,27 +1165,29 @@ class KVCacheManager:
 
             # setup + store cache initializers and caches as input nodes
             cache_in_nodes = []
-            for k in ("k_cache", "v_cache"): #self.attn_descriptor.get_cache_initializers(attn_node, self.cache_config).keys():
+            # keys are from self.attn_descriptor.get_cache_initializers(attn_node, self.cache_config).keys()
+            for k in ("k_cache", "v_cache"):
                 k_indexed = f"{k}_{idx}"
                 cache_in_nodes.append(add_graph_attr(gm, k_indexed, cm._caches[k_indexed]))
 
             # setup + store global buffer initializers and buffers as input nodes
             # NOTE: we have to check against existing keys to make sure nothing is registered twice...
             buffer_in_nodes = []
-            for k in ("workspace_buffer",):#self.attn_descriptor.get_global_buffer_initializers(attn_node).keys():
+            # keys are from self.attn_descriptor.get_global_buffer_initializers(attn_node).keys()
+            for k in ("workspace_buffer",):
                 if k not in buffer_in_lookup:
                     buffer_in_lookup[k] = add_graph_attr(gm, k, cm._caches[k])
                 buffer_in_nodes.append(buffer_in_lookup[k])  # store buffer nodes for this op
 
             # retrieve constants for attention_op
-            #constants = attn_descriptor.get_constants(attn_node)
+            # copied from constants = self.attn_descriptor.get_constants(attn_node)
             if len(attn_node.args) > 6:
                 scale = attn_node.args[6]
             else:
                 scale = attn_node.kwargs.get("scale", None)
 
             if not isinstance(scale, float):
-                #ad_logger.warning("Provided scale is not a float. Using default scale instead.")
+                # ad_logger.warning("Provided scale is not a float. Using default scale instead.")
                 scale = None
 
             constants = [
@@ -1200,7 +1195,6 @@ class KVCacheManager:
                 1.0,  # k_scale
                 1.0,  # v_scale
             ]
-
 
             # insert cached attention replacement op
             with gm.graph.inserting_before(attn_node):
@@ -1211,21 +1205,16 @@ class KVCacheManager:
             attn_node.replace_all_uses_with(cached_attn_node)
             gm.graph.erase_node(attn_node)
             num_cached_attn_replacements += 1
-        with open(f"/home/wayan/trtllm/newattr_g{self.gid}.py",'w') as f:
-            f.write(str(gm.graph))
-            self.gid+=1
+
+        # with open(f"/home/wayan/trtllm/newattr_g{self.gid}.py", "w") as f:
+        #     f.write(str(gm.graph))
+        #     self.gid += 1
 
         gm = canonicalize_graph(gm)
         gm.recompile()
 
-        #placeholders = [n for n in gm.graph.nodes if n.op == "placeholder"]
-        #example_inputs_meta = [_get_example_inputs_from_placeholder(p, only_metadata=True) for p in placeholders]
-        #from thunder.dynamo.utils import get_or_create_example_inputs_from_placeholders
-        #example_inputs = get_or_create_example_inputs_from_placeholders(placeholders)
-        #exit()
-
         if not self.resize_cache:
-            #if has_symbolic_input(gm):
+            # if has_symbolic_input(gm):
             #    node_inputs = gm.graph.find_nodes(op="placeholder", sort=True)
             #    input_tensor_list = [n for n in node_inputs if n.type is torch.Tensor and not n.type is torch.nn.Parameter]
             #    #print(type(input_tensor_list[0].meta["example_value"].shape[1]))
@@ -1235,21 +1224,17 @@ class KVCacheManager:
             #        from tensorrt_llm._torch.auto_deploy.transformations.library import resize_kv_cache
             #        resize_kv_cache(gm, cm, free_mem_ratio=self.ad_config.free_mem_ratio,is_thunder=True)
             cm.resize_cache(1800)
-            self.resize_cache=True
-
-
-        print("after transform_graph ------------",len(cm.info.args))
-        for arg in cm.info.args[2:]:
-            print("+++++++++++++++++arg shape:", arg.shape)
+            self.resize_cache = True
 
         return gm
-        
 
 
 def add_graph_attr(
-    gm: torch.fx.GraphModule, attr_name: str, attr_tensor: None|torch.Tensor = None, dynamic_shape=None
+    gm: torch.fx.GraphModule,
+    attr_name: str,
+    attr_tensor: None | torch.Tensor = None,
 ) -> torch.fx.Node:
-    """Add a graph input to the given GraphModule and return the newly created node.
+    """Add a graph attribute/buffer to the given GraphModule and return the newly created node.
 
     NOTE: function does NOT do any graph canonicalization. This is left to the user!
 
@@ -1257,154 +1242,17 @@ def add_graph_attr(
         gm (GraphModule): The GraphModule to add the input to.
         attr_name (str): The name of the attribute.
         val (torch.Tensor): the attribute tensor to be added to the graph module
-        dynamic_shape: The dynamic shape of the input tensor [NOT SUPPORTED YET]
     """
-    # check that no dynamic shape is provided...
-    if dynamic_shape:
-        raise NotImplementedError("Dynamic shape not supported for adding graph inputs")
-
     # extract graph and input spec
     graph: torch.fx.Graph = gm.graph
 
-    # insert input node after currently last input node
+    # insert attr node after currently last input node
     node_last_input = graph.find_nodes(op="placeholder", sort=True)[-1]
     from torch.fx.graph_module import _assign_attr
+
     _assign_attr(attr_tensor, gm, attr_name)
-        
+
     with graph.inserting_after(node_last_input):
         kvcache_tensor_attr = gm.graph.get_attr(attr_name)
 
     return kvcache_tensor_attr
-
-def update_graph_module_for_flashinfer(egm: torch.fx.GraphModule, cm):
-    from tensorrt_llm._torch.auto_deploy.utils.node_utils import get_all_input_output_nodes
-    from tensorrt_llm._torch.auto_deploy.transformations._graph import canonicalize_graph
-
-    # loop through nodes to get input, output, and get_attr nodes
-    input_nodes, output_nodes = get_all_input_output_nodes(egm.graph)
-
-    # we only expect one input node
-    #assert len(input_nodes) == 2, "Expected exactly two input nodes (input_ids, position_ids)."
-
-    # NOTE: for now, we wanna make sure we *only* return the final output and no hidden states.
-    # Later on, we can revisit how to support returning hidden states.
-    assert len(output_nodes) == 1, "Expected exactly one output node!"
-    assert len(output_nodes[0].all_input_nodes) == 1, "Expected to only return final tensor output!"
-
-
-    # Activate and add extra argument nodes
-    new_args = cm.info.switch_to_cached_attn_inputs()
-    for name in new_args:
-        input_nodes.append(add_graph_input(egm, name))
-
-    egm = canonicalize_graph(egm)
-
-    return egm
-
-def insert_flashinfer_cached_attention(
-    egm: GraphModule,
-    cm, # : CachedSequenceInterface,
-    attn_descriptor, # : AttentionDescriptor,
-    cache_config, # : CacheConfig,
-) -> GraphModule:
-    """Replace uncached source attention node with corresponding cached attn node."""
-
-    from tensorrt_llm._torch.auto_deploy.custom_ops.attention_interface import AttentionDescriptor, CacheConfig
-    from tensorrt_llm._torch.auto_deploy.utils.node_utils import get_all_input_output_nodes
-    from tensorrt_llm._torch.auto_deploy.transformations._graph import canonicalize_graph
-    from tensorrt_llm._torch.auto_deploy.utils.node_utils import is_op
-    import operator
-
-    # Get all attention nodes and their info objects
-    # source_op = attn_descriptor.get_source_attention_op()
-    source_op = torch._C._nn.scaled_dot_product_attention
-
-    # pick up graph``
-    graph = egm.graph
-
-    # look for relevant source attention nodes
-    source_attn_nodes = [n for n in graph.nodes if is_op(n, source_op)]
-
-    if not source_attn_nodes:
-        # If there are no nodes for kv cache insertion found, return current graph
-        return egm
-
-    # Sanity check
-    if cm.info.is_paged:
-        assert attn_descriptor.is_paged(), "Paged sequence info requires paged attention op."
-
-
-    # retrieve input nodes
-    input_nodes, _ = get_all_input_output_nodes(egm.graph)
-
-    # insert metadata computation and extract each argument as a node
-    get_metadata, num_metadata = attn_descriptor.get_prepare_metadata_op()
-    with graph.inserting_before(input_nodes[-1].next):
-        ret_node = graph.call_function(
-            get_metadata,
-            args=(
-                *input_nodes,
-                cm.info.page_size,
-            ),
-        )
-        metadata_nodes = [
-            graph.call_function(operator.getitem, args=(ret_node, idx))
-            for idx in range(num_metadata)
-        ]
-
-    buffer_in_lookup: Dict[str, Node] = {}
-
-    # replace fused attention node with attention node that has kv cache
-    num_cached_attn_replacements = 0
-    for idx, attn_node in enumerate(source_attn_nodes):
-        # pick out GEMMs
-        qkv = attn_node.args[: attn_descriptor.get_num_qkv_args()]
-
-        # setup + store cache initializers and caches as input nodes
-        cache_in_nodes = []
-        for k, get_cache in attn_descriptor.get_cache_initializers(attn_node, cache_config).items():
-            k_indexed = f"{k}_{idx}"
-            cm.add_cache(k_indexed, get_cache)
-            cache_in_nodes.append(add_graph_input(egm, k_indexed))
-
-        # setup + store global buffer initializers and buffers as input nodes
-        # NOTE: we have to check against existing keys to make sure nothing is registered twice...
-        buffer_in_nodes = []
-        for k, get_buffer in attn_descriptor.get_global_buffer_initializers(attn_node).items():
-            if k not in buffer_in_lookup:
-                cm.add_cache(k, get_buffer)
-                buffer_in_lookup[k] = add_graph_input(egm, k)
-            buffer_in_nodes.append(buffer_in_lookup[k])  # store buffer nodes for this op
-
-        # retrieve constants for attention_op
-        #constants = attn_descriptor.get_constants(attn_node)
-        if len(attn_node.args) > 6:
-            scale = attn_node.args[6]
-        else:
-            scale = attn_node.kwargs.get("scale", None)
-
-        if not isinstance(scale, float):
-            #ad_logger.warning("Provided scale is not a float. Using default scale instead.")
-            scale = None
-
-        constants = [
-            scale,  # softmax scale
-            1.0,  # k_scale
-            1.0,  # v_scale
-        ]
-
-
-        # insert cached attention replacement op
-        with graph.inserting_before(attn_node):
-            cached_attn_node = graph.call_function(
-                attn_descriptor.get_cached_attention_op(),
-                args=(*qkv, *metadata_nodes, *cache_in_nodes, *buffer_in_nodes, *constants),
-            )
-        attn_node.replace_all_uses_with(cached_attn_node)
-        graph.erase_node(attn_node)
-        num_cached_attn_replacements += 1
-
-    egm = canonicalize_graph(egm)
-
-    return egm
-
