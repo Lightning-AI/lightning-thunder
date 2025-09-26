@@ -28,12 +28,14 @@ def list_mul(tensors: list[torch.Tensor], c: float | None = None, d: str = "") -
 
 @torch.library.register_kernel("my_custom_op::list_mul", "cpu")
 def _(tensors: list[torch.Tensor], c: float | None = None, d: str = "") -> list[torch.Tensor]:
-    return [torch.from_numpy(
-        np.multiply(
-            tensors[0].numpy(force=True),
-            tensors[1].numpy(force=True),
+    return [
+        torch.from_numpy(
+            np.multiply(
+                tensors[0].numpy(force=True),
+                tensors[1].numpy(force=True),
+            )
         )
-    )]
+    ]
 
 
 @torch.library.register_kernel("my_custom_op::list_mul", "cuda")
