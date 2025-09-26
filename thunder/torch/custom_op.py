@@ -249,6 +249,11 @@ def _convert_to_meta_function(func):
 
 
 def _get_meta_function_from(custom_op: CustomOpDef) -> Callable[[Any], TensorProxy | tuple[TensorProxy, ...]]:
+    if custom_op._abstract_fn is None:
+        raise ValueError(
+            f"Custom op {custom_op._qualname} has no _abstract_fn defined. "
+            "You must provide an abstract function (using @torch.library.register_fake) when defining the custom op."
+        )
     return _convert_to_meta_function(custom_op._abstract_fn)
 
 
