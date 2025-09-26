@@ -77,7 +77,7 @@ dtensor_supported_opinfos = (
         supports_grad=True,
         sample_inputs=get_opinfo("exp").sample_inputs,
         # Ref:https://github.com/NVIDIA/Fuser/pull/5124
-        skip_non_contiguous_for_executor=("nvfuser",),
+        skip_noncontiguous_for_executor=("nvfuser",),
     ),
 )
 
