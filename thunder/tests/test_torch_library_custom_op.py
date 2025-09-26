@@ -1,4 +1,5 @@
 from typing import TYPE_CHECKING
+import importlib
 
 from lightning_utilities.core.imports import package_available
 import numpy as np
@@ -19,6 +20,12 @@ from thunder.tests.framework import instantiate
 
 if TYPE_CHECKING:
     from thunder.core.symbol import BoundSymbol
+
+
+@pytest.fixture(autouse=True)
+def reload_thunder():
+    yield
+    importlib.reload(thunder)
 
 
 @torch.library.custom_op("my_custom_op::mul", mutates_args=())
