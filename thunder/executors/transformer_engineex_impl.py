@@ -40,8 +40,8 @@ from transformer_engine.pytorch.tensor import Quantizer
 from transformer_engine.pytorch.utils import check_dim_for_fp8_exec
 
 
-transformer_engine_v2_ex = StatefulExecutor("transformer_engine_v2")
-register_executor(transformer_engine_v2_ex)
+transformer_engine_ex = StatefulExecutor("transformer_engine")
+register_executor(transformer_engine_ex)
 
 
 def _te_fp8_recipe_meta() -> AnyProxy:
@@ -64,7 +64,7 @@ class TERecipe:
         return self.fp8_recipe
 
 
-_get_te_fp8_recipe = transformer_engine_v2_ex.register_stateful_operator(
+_get_te_fp8_recipe = transformer_engine_ex.register_stateful_operator(
     "get_te_fp8_recipe", meta=_te_fp8_recipe_meta, state_class=TERecipe
 )
 
@@ -91,7 +91,7 @@ class TEQuantizerState:
         return quantizers
 
 
-_get_te_fp8_quantizers = transformer_engine_v2_ex.register_stateful_operator(
+_get_te_fp8_quantizers = transformer_engine_ex.register_stateful_operator(
     "get_te_fp8_quantizers", TEQuantizerState, meta=_get_te_fp8_quantizers_meta
 )
 
@@ -123,7 +123,7 @@ class TERecipeState:
         return recipe_state
 
 
-_get_te_fp8_state = transformer_engine_v2_ex.register_stateful_operator(
+_get_te_fp8_state = transformer_engine_ex.register_stateful_operator(
     "get_te_fp8_state", TERecipeState, meta=_get_te_fp8_state_meta
 )
 
@@ -153,7 +153,7 @@ def _linear_fwd_impl(a, w, bias, input_quantizer: Quantizer, weight_quantizer: Q
     return out, quantized_a, quantized_w
 
 
-_te_linear_fwd = transformer_engine_v2_ex.register_operator(
+_te_linear_fwd = transformer_engine_ex.register_operator(
     "te_functional_linear_fwd", meta=_linear_fwd_meta, fn=_linear_fwd_impl
 )
 
@@ -198,7 +198,7 @@ def _linear_bwd_impl(
     return grad_input, grad_weight
 
 
-_te_linear_bwd = transformer_engine_v2_ex.register_operator(
+_te_linear_bwd = transformer_engine_ex.register_operator(
     "te_functional_linear_bwd", meta=_linear_bwd_meta, fn=_linear_bwd_impl
 )
 
@@ -285,7 +285,7 @@ def _linear_checker(
     return all(map(is_cuda, inputs)) and check_valid_fp8_shapes(_view_input_as_2d(a)) and check_valid_fp8_shapes(w)
 
 
-transformer_engine_v2_ex.register_implementation(
+transformer_engine_ex.register_implementation(
     linear_prim,
     checker=_linear_checker,
     execution_transform=_te_linear_execution_transform,
@@ -321,14 +321,14 @@ def _te_fp8_amax_and_scale_update_impl(recipe: Recipe, states: tuple[RecipeState
     return (*tokens,)
 
 
-_te_fp8_amax_and_scale_update = transformer_engine_v2_ex.register_operator(
+_te_fp8_amax_and_scale_update = transformer_engine_ex.register_operator(
     "te_fp8_amax_and_scale_update",
     meta=_te_fp8_amax_and_scale_update_meta,
     fn=_te_fp8_amax_and_scale_update_impl,
 )
 
 
-class TransformerEngineTransformV2(Transform):
+class TransformerEngineTransform(Transform):
     """
     A transform to pair up with the functional TransformerEngine executor.
 
@@ -362,7 +362,7 @@ class TransformerEngineTransformV2(Transform):
             computation_trace: Trace to perform the replacement on.
         """
 
-        if "transformer_engine_v2" not in map(lambda x: x.name, kwargs["executors_list"]):
+        if "transformer_engine" not in map(lambda x: x.name, kwargs["executors_list"]):
             return computation_trace
 
         start_time_ns = time.perf_counter_ns()
