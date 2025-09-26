@@ -844,6 +844,37 @@ def test_checkpoint_converter_submodule():
             assert isinstance(n.target, Symbol) or callable(n.target)
 
 
+@requiresCUDA
+@pytest.mark.parametrize("op", [torch.sin, torch.sinc])
+def test_checkpoint_memory_use(op):
+    import torch.utils.checkpoint as checkpoint
+
+    def fn(x):
+        return op(op(op(op(x))))
+
+    def checkpoint_fn(x):
+        return checkpoint.checkpoint(fn, x, use_reentrant=False)
+
+    initial_mem = torch.cuda.memory_allocated()
+
+    x = torch.randn((1024 // 4, 1024, 1024), device="cuda", requires_grad=True)
+    jfn = thunderfx(checkpoint_fn)
+    y = jfn(x)
+
+    peak_mem_usage = torch.cuda.max_memory_allocated() - initial_mem
+
+    y_ref = fn(x)
+    torch.testing.assert_close(y, y_ref)
+
+    if op == torch.sin:
+        assert peak_mem_usage == x.nbytes * 2
+    else:
+        assert peak_mem_usage == x.nbytes * 3
+        # Make sure the checkpointed region falled back to PyTorch
+        sinfo = jfn._backend.subgraph_infos[-1]
+        assert any(n.name.startswith("inductor") for n in sinfo.split_graph_module.graph.nodes)
+
+
 @instantiate(
     dtypes=NOTHING,
     executors=[DynamoThunderExecutor],
