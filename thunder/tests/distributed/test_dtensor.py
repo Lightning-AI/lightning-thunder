@@ -39,7 +39,7 @@ functions_to_test = {
 #       to choose between DTensor supported symbol (from `dtensor_torch_and_prims.py`) or the usual `ltorch` symbol.
 #       This is why we need to make sure that the OpInfo uses PyTorch native op as `op` which is passed to thunder.jit.
 class DTensorOpInfo:
-    def __init__(self, *, name, op, torch_reference, supports_grad, sample_inputs, supports_noncontiguous_input=True):
+    def __init__(self, *, name, op, torch_reference, supports_grad, sample_inputs, skip_noncontiguous_for_executor=()):
         self.name = name
         assert "torch" in op.__module__, "OpInfo must use PyTorch native op as `op` which is passed to thunder.jit"
         self.op = op
@@ -48,6 +48,10 @@ class DTensorOpInfo:
         self.supports_grad = supports_grad
         # NOTE: This should generally reuse the sample_inputs from the OpInfo
         self.sample_inputs = sample_inputs
+
+        # In some cases, non-contiguous inputs are not supported by the executor.
+        assert isinstance(skip_noncontiguous_for_executor, tuple), "skip_noncontiguous_for_executor must be a tuple"
+        self.skip_noncontiguous_for_executor = skip_noncontiguous_for_executor
 
 
 # DTensor supported ops
@@ -72,6 +76,8 @@ dtensor_supported_opinfos = (
         torch_reference=torch.exp,
         supports_grad=True,
         sample_inputs=get_opinfo("exp").sample_inputs,
+        # Ref:https://github.com/NVIDIA/Fuser/pull/5124
+        skip_non_contiguous_for_executor=("nvfuser",),
     ),
 )
 
@@ -245,6 +251,10 @@ class DTensorTest(DistributedParallelTestCase):
         tested_sample_count = 0
 
         for sample in op.sample_inputs("cpu", dtypes.float32, requires_grad=op.supports_grad):
+            # Skip if non-contiguous inputs are not supported by the executor.
+            if executor in op.skip_noncontiguous_for_executor and not sample.args[0].is_contiguous():
+                continue
+
             # DTensorConverter converts inputs tensors to DTensor and creates DTensor
             # with possible placements based on the input shapes.
             # See - https://github.com/pytorch/pytorch/blob/eaa5d9d3d3dc642832b269b184f0c3ab8c990274/torch/testing/_internal/distributed/_tensor/common_dtensor.py#L521
