@@ -2310,12 +2310,13 @@ reciprocal = _make_elementwise_unary_prim(
 )
 
 # Rounds to nearest even
-# NOTE This round produces an output with the same dtype as its input
+# NOTE This round produces an output SAME to allow differentiation
 round = _make_elementwise_unary_prim(
     PrimIDs.ROUND,
     "round",
     number_fn=builtins.round,
     supported_input_dtypes=fp_math_dtypes,
+    output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.SAME,
 )
 
 rsqrt = _make_elementwise_unary_prim(

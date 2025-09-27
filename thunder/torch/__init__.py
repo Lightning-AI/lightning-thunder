@@ -6712,6 +6712,13 @@ def _get_fake_arg(inp: Any):
         return devices.to_torch_device(inp)
     elif isinstance(inp, dtypes.dtype):
         return to_torch_dtype(inp)
+    elif isinstance(inp, (torch.Tensor)):
+        return torch.empty(
+            inp.shape,
+            dtype=to_torch_dtype(inp.dtype),
+            requires_grad=inp.requires_grad,
+            device=devices.to_torch_device(inp.device),
+        )
     else:
         raise NotImplementedError(f"Unsupported type: {builtins.type(inp)}")
 

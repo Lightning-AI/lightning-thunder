@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 import ast
 import inspect
 
-from torch import TensorType
+from torch import TensorType, ListType
 
 from thunder.core import baseutils
 from thunder.core.symbol import Symbol
@@ -94,16 +94,19 @@ class SetupContextAnalyzer(ast.NodeVisitor):
             self.generic_visit(node)
 
     def visit_Assign(self, node):
+        print(f"entered visit_Assign")
         """Track variable assignments and ctx attribute assignments"""
         if not self.in_function:
             return
 
+        print(f"self.in_function = {self.in_function}")
         # Handle tuple unpacking: a, b, c = inputs
         if (
             isinstance(node.targets[0], ast.Tuple)
             and isinstance(node.value, ast.Name)
             and node.value.id in self.var_to_source
         ):
+            print(f"entered tuple unpacking")
             source_type, _ = self.var_to_source[node.value.id]
             for i, target in enumerate(node.targets[0].elts):
                 if isinstance(target, ast.Name):
@@ -117,6 +120,7 @@ class SetupContextAnalyzer(ast.NodeVisitor):
             and isinstance(node.value.value, ast.Name)
             and isinstance(node.value.slice, ast.Constant)
         ):
+            print(f"entered single indexing")
             var_name = node.targets[0].id
             source_name = node.value.value.id
             index = node.value.slice.value
@@ -131,14 +135,18 @@ class SetupContextAnalyzer(ast.NodeVisitor):
             and isinstance(node.targets[0].value, ast.Name)
             and node.targets[0].value.id == "ctx"
         ):
+            print(f"entered ctx.attr = value")
             attr_name = node.targets[0].attr
+            print(f"attr_name = {attr_name}")
             if attr_name != "save_for_backward":
                 value = self._extract_value(node.value)
+                print(f"value = {value}")
                 self.scalar_data[attr_name] = value
 
         self.generic_visit(node)
 
     def visit_Call(self, node):
+        print(f"entered visit_Call")
         """Track ctx.save_for_backward calls"""
         if not self.in_function:
             return
@@ -249,6 +257,9 @@ def _convert_to_meta_function(func):
 
 
 def _get_meta_function_from(custom_op: CustomOpDef) -> Callable[[Any], TensorProxy | tuple[TensorProxy, ...]]:
+    if custom_op._abstract_fn is None:
+        raise ValueError(f"Custom op {custom_op._qualname} has no _abstract_fn defined. "
+            "You must provide an abstract function (using @torch.library.register_fake) when defining the custom op.")
     return _convert_to_meta_function(custom_op._abstract_fn)
 
 
@@ -286,6 +297,7 @@ def define_backward_for(
     custom_op: CustomOpDef,
     num_saved_tensors: int,
     tensor_indices: tuple[int, ...],
+    saved_indices: SavedIndices,
 ) -> tuple[Callable[[Any], Any], Callable[[Any], Any]]:
     import torch
 
@@ -295,6 +307,11 @@ def define_backward_for(
         # NOTE: It'd be possible to use lighter objects instead of `FunctionCtx`.
         ctx = torch.autograd.function.FunctionCtx()
         setattr(ctx, "saved_tensors", tuple(args[:num_saved_tensors]))
+        print(f"len(saved_indices.scalar_data.items()) = {len(saved_indices.scalar_data.items())}")
+        print(f"saved_indices.scalar_data.items() = {saved_indices.scalar_data.items()}")
+
+        for attr_name, attr_value in saved_indices.scalar_data.items():
+            setattr(ctx, attr_name, attr_value)
         backward_results = baseutils.sequencify(backward_fn(ctx, *args[num_saved_tensors:]))
         grad_results = [backward_results[i] for i in tensor_indices]
         return grad_results
@@ -332,15 +349,16 @@ def _register_custom_op(custom_op: CustomOpDef) -> Symbol:
 
     schema: FunctionSchema = torch_opoverload._schema
     schema_arguments: list[Argument] = schema.arguments
-    tensor_indices: tuple[int] = tuple(i for i, arg in enumerate(schema_arguments) if isinstance(arg.type, TensorType))
+    tensor_indices: tuple[int] = tuple(i for i, arg in enumerate(schema_arguments) if (isinstance(arg.type, TensorType) or arg.type.isSubtypeOf(ListType.ofTensors())))
     tensor_arity: int = len(tensor_indices)
     baseutils.check(tensor_arity > 0, lambda: f"arity of {custom_op._qualname} should be greater than 0: {schema}")
     schema_returns: list[Argument] = schema.returns
     return_arity: int = len(schema_returns)
-    tensor_return_arity: int = len(list(filter(lambda a: isinstance(a.type, TensorType), schema_returns)))
+    tensor_return_arity: int = len(list(filter(lambda a: isinstance(a.type, TensorType) or a.type.isSubtypeOf(ListType.ofTensors()), schema_returns)))
     baseutils.check(return_arity == tensor_return_arity, lambda: f"Return values include non-Tensor values: {schema}")
 
     has_autograd_def = _has_autograd_def(custom_op)
+    print(f"has_autograd_def = {has_autograd_def}")
     fn_name = custom_op._qualname.replace("::", "_")
     op_id = f"torch::ops::{custom_op._qualname}".replace("::", ".")
     meta_fn = _get_meta_function_from(custom_op)
@@ -373,7 +391,7 @@ def _register_custom_op(custom_op: CustomOpDef) -> Symbol:
         register_augmented_forward(symbol.id)(create_augmented_forward_for_custom_op(symbol, saved_indices))
         num_saved_tensors: int = saved_indices.num_tensors_saved_for_backward
         bwd_fn_name = f"{fn_name}_backward"
-        backward_meta, backward_impl = define_backward_for(custom_op, num_saved_tensors, tensor_indices)
+        backward_meta, backward_impl = define_backward_for(custom_op, num_saved_tensors, tensor_indices, saved_indices)
         backward_op = custom_op_ex.register_operator(bwd_fn_name, meta=backward_meta, fn=backward_impl)
         register_backward(symbol.id)(backward_op)
 

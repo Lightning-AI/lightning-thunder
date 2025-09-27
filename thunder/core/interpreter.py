@@ -13,6 +13,7 @@ import inspect
 import os
 import re
 import sys
+import torch
 import traceback
 import weakref
 from typing import Any, Literal, TypedDict
@@ -705,6 +706,33 @@ class InterpreterRuntimeCtx:
     def format_traceback(self):
         return os.linesep.join(f.format_with_source() for f in self.frame_stack)
 
+def _torch_assert_lookaside(condition, message=""):
+    """Lookaside for torch._assert to properly handle wrapped values."""
+    def impl(condition, message):
+        # Unwrap the condition if it's a WrappedValue
+        unwrapped_condition = unwrap(condition) if isinstance(condition, WrappedValue) else condition
+        
+        # Handle the case where condition might be a tensor
+        if hasattr(unwrapped_condition, 'item'):
+            unwrapped_condition = unwrapped_condition.item()
+        
+        if not unwrapped_condition:
+            raise AssertionError(message)
+    
+    return _interpret_call(impl, condition, message)
+
+def _handle_dtype_comparison(left, right):
+    """Helper to handle dtype comparisons with proper unwrapping."""
+    # Handle the case where we're comparing dtypes
+    if hasattr(left, 'dtype') and isinstance(right, (list, tuple)):
+        left_dtype = left.dtype
+        return left_dtype in right
+    elif hasattr(right, 'dtype') and isinstance(left, (list, tuple)):
+        right_dtype = right.dtype
+        return right_dtype in left
+    
+    # For other comparisons, just unwrap and compare
+    return unwrap(left) == unwrap(right) if isinstance(left, WrappedValue) or isinstance(right, WrappedValue) else left == right
 
 def print_to_log(*objects, sep=" ", end=os.linesep):
     if sep is None:
@@ -2854,6 +2882,7 @@ _default_lookaside_map: dict[Callable, Callable] = {
     functools.reduce: _functools_reduce_lookaside,
     operator.getitem: _getitem_lookaside,
     collections.namedtuple: _collections_namedtuple_lookaside,
+    torch._assert: _torch_assert_lookaside,
 }
 
 
@@ -3986,6 +4015,40 @@ def _call_method_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kw
 
 # https://docs.python.org/3.10/library/dis.html#opcode-CONTAINS_OP
 # https://docs.python.org/3.10/reference/expressions.html#membership-test-operations
+# @register_opcode_handler("CONTAINS_OP")
+# def _contains_op_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
+    tos = stack.pop_wrapped()
+    tos1 = stack.pop_wrapped()
+
+    assert isinstance(inst.arg, int)
+    invert: bool = inst.arg == 1
+
+    def impl(tos, tos1):
+        if hasattr(tos, "__contains__"):
+            return getattr(tos, "__contains__")(tos1)
+
+        if hasattr(tos, "__iter__"):
+            return any(v is tos1 or v == tos1 for v in tos)
+
+        if hasattr(tos, "__getitem__") and hasattr(tos, "__len__"):
+            return any(tos[i] is tos1 or tos[i] == tos1 for i in range(len(tos)))
+
+        err: NotImplementedError = NotImplementedError(
+            f"__contains__, __iter__, __getitem__, and __len__ are not implemented for input {type(tos)}'"
+        )
+        raise err
+
+    result = _interpret_call(impl, tos, tos1)
+    if result is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+        return result
+
+    if invert:
+        result = _interpret_call(lambda result: not result, result)
+        if result is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+            return result
+
+    stack.append(result)
+# Update the _contains_op_handler function (around line 3338)
 @register_opcode_handler("CONTAINS_OP")
 def _contains_op_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     tos = stack.pop_wrapped()
@@ -3995,6 +4058,13 @@ def _contains_op_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kw
     invert: bool = inst.arg == 1
 
     def impl(tos, tos1):
+        # Special handling for dtype comparisons
+        if hasattr(tos1, 'dtype') and isinstance(tos.value if isinstance(tos, WrappedValue) else tos, (list, tuple)):
+            container = tos.value if isinstance(tos, WrappedValue) else tos
+            dtype_to_check = tos1.dtype
+            return dtype_to_check in container
+        
+        # Original implementation
         if hasattr(tos, "__contains__"):
             return getattr(tos, "__contains__")(tos1)
 
