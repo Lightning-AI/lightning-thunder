@@ -1650,7 +1650,7 @@ unpack_empty_dict = make_prim(
 
 
 def unpack_dict(d: dict | CollectionProxy) -> tuple[Any, ...]:
-    l = []
+    arr = []
 
     baseutils.check_type(d, (dict, CollectionProxy))
     if isinstance(d, CollectionProxy):
@@ -1665,9 +1665,9 @@ def unpack_dict(d: dict | CollectionProxy) -> tuple[Any, ...]:
 
     for k in keys:
         v = unpack_key(d, k)
-        l.append(v)
+        arr.append(v)
 
-    return tuple(l)
+    return tuple(arr)
 
 
 def unpack(x: Any) -> Any:
