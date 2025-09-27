@@ -3510,8 +3510,8 @@ def take_meta(a: TensorProxy, /, index: TensorProxy, dim: int) -> TensorProxy:
         lambda: "Attempting to index a 0-length dimension {dim=} with a non-empty index",
     )
 
-    l = index.shape[0] if index.ndim == 1 else 1
-    new_shape = a.shape[:dim] + (l,) + a.shape[dim + 1 :]
+    length = index.shape[0] if index.ndim == 1 else 1
+    new_shape = a.shape[:dim] + (length,) + a.shape[dim + 1 :]
 
     return TensorProxy(like=a, shape=new_shape)
 
