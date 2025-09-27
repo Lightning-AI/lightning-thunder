@@ -1205,8 +1205,8 @@ def pack_list_printer(
         exception_type=AssertionError,
     )
 
-    l = out_printables.name
-    call_str = f"{codeutils.prettyprint(l)}"
+    name = out_printables.name
+    call_str = f"{codeutils.prettyprint(name)}"
 
     parts = [f"{codeutils.prettyprint(arg, literals_as_underscores=True)}, " for arg in arg_printables]
     final_str = call_str.strip("'") + f" = [{''.join(parts)}]"
