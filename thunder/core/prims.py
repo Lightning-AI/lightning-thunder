@@ -3482,13 +3482,13 @@ def squeeze_meta(a: TensorProxy, /, dims: tuple[int, ...]) -> TensorProxy:
         )
 
     shape = []
-    for idx, l in enumerate(a.shape):
+    for idx, length in enumerate(a.shape):
         # Checks that squeezed dims have length one
         if idx in dims:
-            utils.check(l == 1, lambda: f"Cannot squeeze dimension {idx} of length {l} in a.shape={a.shape}")
+            utils.check(length == 1, lambda: f"Cannot squeeze dimension {idx} of length {length} in a.shape={a.shape}")
             continue
 
-        shape.append(l)
+        shape.append(length)
 
     return TensorProxy(like=a, shape=shape)
 
