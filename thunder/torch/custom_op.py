@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 import ast
 import inspect
 
-from torch import TensorType
+from torch import TensorType, ListType
 
 from thunder.core import baseutils
 from thunder.core.symbol import Symbol
@@ -332,12 +332,20 @@ def _register_custom_op(custom_op: CustomOpDef) -> Symbol:
 
     schema: FunctionSchema = torch_opoverload._schema
     schema_arguments: list[Argument] = schema.arguments
-    tensor_indices: tuple[int] = tuple(i for i, arg in enumerate(schema_arguments) if isinstance(arg.type, TensorType))
+    tensor_indices: tuple[int] = tuple(
+        i
+        for i, arg in enumerate(schema_arguments)
+        if (isinstance(arg.type, TensorType) or arg.type.isSubtypeOf(ListType.ofTensors()))
+    )
     tensor_arity: int = len(tensor_indices)
     baseutils.check(tensor_arity > 0, lambda: f"arity of {custom_op._qualname} should be greater than 0: {schema}")
     schema_returns: list[Argument] = schema.returns
     return_arity: int = len(schema_returns)
-    tensor_return_arity: int = len(list(filter(lambda a: isinstance(a.type, TensorType), schema_returns)))
+    tensor_return_arity: int = len(
+        list(
+            filter(lambda a: isinstance(a.type, TensorType) or a.type.isSubtypeOf(ListType.ofTensors()), schema_returns)
+        )
+    )
     baseutils.check(return_arity == tensor_return_arity, lambda: f"Return values include non-Tensor values: {schema}")
 
     has_autograd_def = _has_autograd_def(custom_op)
