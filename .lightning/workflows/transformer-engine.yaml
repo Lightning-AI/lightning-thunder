@@ -26,4 +26,4 @@ run: |
   # Ref: https://github.com/NVIDIA/TransformerEngine/issues/918#issuecomment-2187703769
   CPLUS_INCLUDE_PATH="/usr/local/lib/python3.10/dist-packages/nvidia/cudnn/include/" pip install --no-build-isolation 'transformer_engine[pytorch]'
   pip list # for debugging purposes
-  pytest tests/${test_file} -v -rs
+  pytest thunder/tests/${test_file} -v -rs
