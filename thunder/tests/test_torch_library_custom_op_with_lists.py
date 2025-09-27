@@ -55,7 +55,7 @@ def setup_context_for_my_custom_op_list_mul(ctx, inputs, output) -> None:
 
 def backward_of_my_custom_op_list_mul(ctx, grad) -> tuple[list[torch.Tensor], None, None]:
     a, b = ctx.saved_tensors
-    return [torch.ops.my_custom_op.list_mul([grad, b]), torch.ops.my_custom_op.mul([grad, a])], None, None
+    return [torch.ops.my_custom_op.list_mul([grad, b]), torch.ops.my_custom_op.list_mul([grad, a])], None, None
 
 
 torch.library.register_autograd(
