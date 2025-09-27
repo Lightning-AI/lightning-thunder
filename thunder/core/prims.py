@@ -3634,7 +3634,7 @@ def gather_meta(a: TensorProxy, /, index: TensorProxy, dim: int) -> TensorProxy:
     )
     utils.validate_idx(a.ndim, dim)
 
-    for idx, l in enumerate(index.shape):
+    for idx, _ in enumerate(index.shape):
         if idx != dim:
             utils.check(
                 index.shape[idx] <= a.shape[idx],
