@@ -91,7 +91,9 @@ run: |
   elif [ "${testing}" == "distributed" ]; then
     pytest thunder/tests/distributed \
      -v --durations=0 \
+     --ignore=thunder/tests/distributed/test_dtensor.py \
      --random-order-seed=42
+    torchrun --nproc-per-node 2 --no-python pytest thunder/tests/distributed/test_dtensor.py
   else
     echo "Unknown testing type: ${testing}"
     exit 1
