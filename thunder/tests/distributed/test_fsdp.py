@@ -1237,6 +1237,112 @@ def _test_fsdp_transformer_engine_bucketing(input_data):
         return None
 
 
+def _test_fsdp_transformer_engine_reporter(input_data):
+    # Test Description:
+    # Verify that the TEStateReporter correctly captures and reports TransformerEngine
+    # FP8 state information during DDP training execution, including global context,
+    # recipe summaries, and forward/backward state summaries across distributed processes.
+
+    init_method, world_size, rank, executor, device, _dtype, kwargs = input_data
+    thunder_fsdp_strategy, intermediate_activation_sharding = kwargs["thunder_fsdp_strategy_and_intermediate_sharding"]
+    devicetype = devices.device_from_string(device).devicetype
+
+    # Setting LOCAL_RANK is necessary for thunder.distributed.fsdp
+    with unittest.mock.patch.dict(os.environ, {"LOCAL_RANK": str(rank)}):
+        pg = init_per_process_distributed(init_method, devicetype, world_size, rank)
+        torch.cuda.set_device(rank)
+        torch_device = torch.device("cuda", rank)
+        dtype_t = torch.bfloat16
+
+        fp8_recipe = get_default_fp8_recipe()
+
+        dim = 256
+
+        class ThunderModel(torch.nn.Module):
+            def __init__(self) -> None:
+                super().__init__()
+                self.fc1 = torch.nn.Linear(dim, dim, bias=False, device=torch_device, dtype=dtype_t)
+                self.fc2 = torch.nn.Linear(dim, dim, bias=False, device=torch_device, dtype=dtype_t)
+                self.fc3 = torch.nn.Linear(dim, dim, bias=False, device=torch_device, dtype=dtype_t)
+
+            def forward(self, x):
+                return self.fc3(self.fc2(torch.nn.functional.relu(self.fc1(x))))
+
+        # Inputs (different input on different rank).
+        if rank == 0:
+            x = torch.arange(dim * dim, dtype=dtype_t, device=torch_device).view(dim, dim)
+        if rank == 1:
+            x = torch.randn(dim, dim, device=torch_device, dtype=dtype_t) * 100
+
+        model = ThunderModel()
+        jmodel = thunder.distributed.fsdp(
+            thunder.jit(
+                model,
+                executors=[
+                    transformer_engine_ex,
+                ]
+                + executor.executors_list(),
+                fp8_shard_intermediate_activation=intermediate_activation_sharding,
+                transforms=[TransformerEngineTransform()],
+            ),
+            sharding_strategy=thunder_fsdp_strategy,
+        )
+
+        def train(model):
+            iters = 10
+            for _ in range(iters):
+                with fp8_autocast(fp8_recipe=fp8_recipe):
+                    y = model(x)
+                y.backward(torch.ones_like(y))
+
+        train(jmodel)
+
+        rep = getattr(jmodel, "te_reporter", None)
+        if rep is None:
+            if rank == 0:
+                return [AssertionError("TransformerEngine reporter not found")]
+            return None
+
+        payload = {
+            "rank": rank,
+            "error": None if rep is not None else "no reporter",
+            "global": {} if rep is None else rep.global_ctx,
+            "recipes": 0 if rep is None else len(rep.recipe_summaries),
+            "forward": 0 if rep is None else len(rep.state_summaries_forward),
+            "backward": 0 if rep is None else len(rep.state_summaries_backward),
+            "quantizers": 0 if rep is None else len(rep.quantizer_summaries),
+            "has_sections": (
+                {
+                    "global": "Global Context:" in rep.render_report(),
+                    "forward": "Forward States (" in rep.render_report(),
+                    "backward": "Backward States (" in rep.render_report(),
+                }
+                if rep is not None
+                else {"global": False, "forward": False, "backward": False}
+            ),
+        }
+
+        gathered = [None] * world_size if rank == 0 else None
+        tdist.gather_object(payload, object_gather_list=gathered, dst=0, group=pg)
+
+        tdist.barrier(pg)
+        tdist.destroy_process_group(pg)
+
+        if rank == 0:
+            exceptions = []
+            for p in gathered:
+                if p["error"]:
+                    exceptions.append(AssertionError(p["error"]))
+                    continue
+                assert p["has_sections"]["global"]
+                assert p["recipes"] == 1
+                assert p["forward"] == 3  # 2 forward linear ops
+                assert p["backward"] == 3  # 2 backward linear ops
+                assert p["quantizers"] == 9  # 2 quantizers per forward linear op, 1 quantizers per backward linear op
+            return exceptions
+        return None
+
+
 @instantiate(
     dtypes=(thunder.float32,),
     num_devices=2,
@@ -1266,6 +1372,35 @@ def _test_fsdp_transformer_engine_bucketing(input_data):
 )
 @distributed_wrapper("test_fsdp_transformer_engine", _test_fsdp_transformer_engine)
 def test_fsdp_transformer_engine(executor, devices, dtype, thunder_fsdp_strategy_and_intermediate_sharding):
+    pass
+
+
+@instantiate(
+    dtypes=(thunder.float32,),
+    num_devices=2,
+    devicetypes=(devices.DeviceType.CUDA,),
+    executors=(TorchExecutor,),
+    decorators=(
+        pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices"),
+        unittest.mock.patch.dict(os.environ, {"NVTE_TORCH_COMPILE": "0"}),
+        pytest.mark.parametrize(
+            "thunder_fsdp_strategy_and_intermediate_sharding",
+            (
+                (FSDPType.ZERO2, False),
+                (FSDPType.ZERO3, False),
+                # Intermediate sharding is only availabe TE v1.8 onwards
+                pytest.param(
+                    (FSDPType.ZERO3, True),
+                    marks=pytest.mark.skip("Intermediate sharding is errors in TE 2.0 (also with eager)."),
+                ),
+            ),
+        ),
+        pytest.mark.skipif(not TE_AVAILABLE, reason="TransformerEngine is not installed."),
+        pytest.mark.skipif(not is_fp8_supported, reason=fp8_support_reason),
+    ),
+)
+@distributed_wrapper("test_fsdp_transformer_engine_reporter", _test_fsdp_transformer_engine_reporter)
+def test_fsdp_transformer_engine_reporter(executor, devices, dtype, thunder_fsdp_strategy_and_intermediate_sharding):
     pass
 
 
