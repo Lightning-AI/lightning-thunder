@@ -261,7 +261,7 @@ def _cudnn_sdpa_fwd_impl(
         Bias,
         Seed,
         Offset,
-        O,
+        output,
         softmax_stats,
         graph,
     ) = _make_cudnn_sdpa_forward_graph(
@@ -295,7 +295,7 @@ def _cudnn_sdpa_fwd_impl(
         Attn_scale: Attn_scale_cpu,
         Seed: seed_tensor,
         Offset: offset_tensor,
-        O: O_actual,
+        output: O_actual,
         softmax_stats: softmax_stats_actual,
     }
     if attn_mask is not None:
