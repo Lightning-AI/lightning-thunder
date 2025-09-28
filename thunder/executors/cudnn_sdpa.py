@@ -428,8 +428,8 @@ def _make_cudnn_sdpa_backward_graph(
 
     dim_o = (b, h, s_q, d_v)
     stride_o = (h * s_q * d_v, s_q * d_v, d_v, 1)
-    O = graph.tensor(name="O", dim=dim_o, stride=stride_o, data_type=torch_to_cudnn_dtype(query.dtype))
-    dO = graph.tensor_like(O)
+    output = graph.tensor(name="O", dim=dim_o, stride=stride_o, data_type=torch_to_cudnn_dtype(query.dtype))
+    dO = graph.tensor_like(output)
 
     dim_stats = (b, h, s_q, 1)
     stride_stats = (h * s_q, s_q, 1, 1)
@@ -469,7 +469,7 @@ def _make_cudnn_sdpa_backward_graph(
         q=Q,
         k=K,
         v=V,
-        o=O,
+        o=output,
         dO=dO,
         stats=Stats,
         attn_scale=Attn_scale,
@@ -496,7 +496,7 @@ def _make_cudnn_sdpa_backward_graph(
             Q,
             K,
             V,
-            O,
+            output,
             dO,
             Stats,
             Seed,
