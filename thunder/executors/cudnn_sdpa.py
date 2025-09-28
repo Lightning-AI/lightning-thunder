@@ -112,7 +112,7 @@ def _make_cudnn_sdpa_forward_graph(
         is_pass_by_value=True,
     )
 
-    O, softmax_stats = graph.scaled_dot_product_flash_attention(
+    output, softmax_stats = graph.scaled_dot_product_flash_attention(
         name="scaled_dot_product_flash_attention",
         q=Q,
         k=K,
@@ -130,7 +130,7 @@ def _make_cudnn_sdpa_forward_graph(
 
     dim_o = (b, h, s_q, d_v)
     stride_o = (h * s_q * d_v, s_q * d_v, d_v, 1)
-    O.set_output(True).set_data_type(torch_to_cudnn_dtype(value.dtype)).set_dim(dim_o).set_stride(stride_o)
+    output.set_output(True).set_data_type(torch_to_cudnn_dtype(value.dtype)).set_dim(dim_o).set_stride(stride_o)
 
     softmax_stats.set_output(True).set_data_type(torch_to_cudnn_dtype(torch.float32))
 
@@ -147,7 +147,7 @@ def _make_cudnn_sdpa_forward_graph(
             Bias,
             Seed,
             Offset,
-            O,
+            output,
             softmax_stats,
             graph,
         )
