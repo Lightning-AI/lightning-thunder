@@ -155,6 +155,24 @@ def test_basic_splitter(executor, device: str, dtype: dtypes.dtype, dynamic: boo
     assert any(target.startswith("thunder_") for target in targets)  # Verify that the submodules have name `thunder_*`
 
 
+@instantiate(dtypes=NOTHING)
+def test_inductor_fallback(executor, device, dtype):
+    x = torch.randn(3, 3, device=device, dtype=dtype)
+
+    def func(x):
+        return x.sinc().cos().sinc().sinc()
+
+    def trivial_compile(model, *args, **kwargs):
+        return model
+
+    cfunc = thunderfx(func)
+    with patch("torch._inductor.compile_fx.compile_fx", side_effect=trivial_compile) as mock_call:
+        cfunc(x)
+
+    # Once for sinc() and once for sinc().sinc()
+    assert mock_call.call_count == 2
+
+
 @instantiate(
     dtypes=NOTHING,
     executors=[DynamoThunderExecutor],
