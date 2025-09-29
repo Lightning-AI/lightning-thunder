@@ -1325,6 +1325,7 @@ def test_thunder_specific_reports(tmp_path, file_indices):
         run_script(file, cmd)
 
 
+@pytest.mark.skip(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2546")
 @requiresCUDA
 def test_WallTime_KernelTime():
     from nvfuser import FusionDefinition, DataType
@@ -1435,6 +1436,7 @@ def test_reports_repro(tmp_path, file_indices):
         run_script(file, cmd)
 
 
+@pytest.mark.skip(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2546")
 @requiresCUDA
 @given(file_indices=st.lists(st.integers(min_value=0, max_value=4), min_size=1, max_size=1, unique=True))
 @settings(max_examples=2, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
