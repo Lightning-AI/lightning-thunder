@@ -1122,12 +1122,12 @@ def test_torch_autograd_module(executor, device, _):
 def test_torch_autograd_module_get_compile_stats(executor, device, _):
     from thunder import compile_stats
 
-    l = torch.nn.Linear(3, 4, bias=False, device=device)
+    linear = torch.nn.Linear(3, 4, bias=False, device=device)
     a = make_tensor((2, 3), device=device, dtype=torch.float32, requires_grad=True)
     g = make_tensor((2, 4), device=device, dtype=torch.float32)
 
     lc = thunder.jit(
-        l,
+        linear,
     )
     lc.zero_grad()
     a.grad = None
