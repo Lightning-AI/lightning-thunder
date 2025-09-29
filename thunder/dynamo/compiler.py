@@ -12,7 +12,6 @@ from torch._inductor.compile_fx import compile_fx
 from torch.utils import _pytree as torch_pytree
 
 from thunder.dynamo.utils import (
-    recompile_graph,
     remove_empty_autocast,
     CompilerType,
     get_split_reasons_string,
