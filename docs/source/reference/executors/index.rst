@@ -24,4 +24,3 @@ thunder.executors
     torchex
     triton_crossentropy
     utils
-    custom_op_ex
