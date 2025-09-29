@@ -2606,9 +2606,9 @@ def test_set_grad_enabled(global_grad_enabled, n_flips, next_enable, starts_with
 def test_serialize_trace():
     import dill as pickle
 
-    def fn(a, b, l):
+    def fn(a, b, arr):
         res = a + b
-        for t in l:
+        for t in arr:
             res = res + t
         return res
 
