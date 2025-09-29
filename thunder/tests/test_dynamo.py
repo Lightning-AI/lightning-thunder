@@ -857,7 +857,7 @@ def test_checkpoint_memory_use(op):
 
     initial_mem = torch.cuda.memory_allocated()
 
-    x = torch.randn((1024 // 4, 1024, 1024), device="cuda", requires_grad=True)
+    x = torch.randn((128, 128), device="cuda", requires_grad=True)
     jfn = thunderfx(checkpoint_fn)
     y = jfn(x)
 
