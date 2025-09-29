@@ -1445,8 +1445,8 @@ def all_eq(arr):
 
 # Asserts that all the elements of a collection are not equal to each other,
 # and that elements are equal to themselves.
-def all_neq(l):
-    el = enumerate(l)
+def all_neq(arr):
+    el = enumerate(arr)
     for i, e1 in el:
         for j, e2 in el:
             assert e1 == e2 if i == j else e1 != e2
