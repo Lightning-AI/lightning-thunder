@@ -3293,8 +3293,8 @@ def test_prims_pack_list():
     with tracectx(trace):
         x = prims.unpack_trivial(a, name="x")
         y = prims.unpack_trivial(b, name="y")
-        l = prims.pack_list(x, y)
-        prims.python_return(l)
+        packed_list = prims.pack_list(x, y)
+        prims.python_return(packed_list)
 
     func = trace.python_callable()
     actual = func()
