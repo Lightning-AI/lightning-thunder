@@ -866,10 +866,8 @@ def test_checkpoint_memory_use(op):
     y_ref = fn(x)
     torch.testing.assert_close(y, y_ref)
 
-    if op == torch.sin:
-        assert peak_mem_usage == x.nbytes * 2
-    else:
-        assert peak_mem_usage == x.nbytes * 3
+    assert peak_mem_usage == x.nbytes * 2
+    if op == torch.sinc:
         # Make sure the checkpointed region falled back to PyTorch
         sinfo = jfn._backend.subgraph_infos[-1]
         assert any(n.name.startswith("inductor") for n in sinfo.split_graph_module.graph.nodes)
