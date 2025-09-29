@@ -198,7 +198,18 @@ def _splitter(
             )
         elif node.name.startswith("submod"):  # For inductor
             graph_module = getattr(split_gm, node.name)
-            jit_fn = torch_inductor(graph_module)
+
+            class Wrapped(torch.nn.Module):
+                def __init__(self, gm):
+                    super().__init__()
+                    self.gm = gm
+
+                def forward(self, *a):
+                    return self.gm(*a)
+
+            # Make sure Inductor does not skip graph_module's compilation by wrapping it
+            # See https://github.com/Lightning-AI/lightning-thunder/issues/2527#issuecomment-3345877210
+            jit_fn = torch_inductor(Wrapped(graph_module))
             # Update the node name from "submod_*" to "inductor_*" for more user-friendly names
             update_node_and_submodule(split_gm, node, node.name.replace("submod", "inductor"), jit_fn)
             submodule_to_compiled_fns[getattr(original_split_gm, node_name)] = CompiledFunction(
