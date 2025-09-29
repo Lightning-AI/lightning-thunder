@@ -1097,13 +1097,13 @@ def test_torch_autograd_crazy_collections_in_and_out(executor, device, dtype):
     dtypes=NOTHING,
 )
 def test_torch_autograd_module(executor, device, _):
-    l = torch.nn.Linear(3, 4, bias=False, device=device)
+    linear = torch.nn.Linear(3, 4, bias=False, device=device)
     a = make_tensor((2, 3), device=device, dtype=torch.float32, requires_grad=True)
     g = make_tensor((2, 4), device=device, dtype=torch.float32)
 
     for cache_mode in ("constant values", "same input"):
         lc = executor.make_callable(
-            l,
+            linear,
             disable_torch_autograd=False,
             cache_mode=cache_mode,
         )
@@ -1111,9 +1111,9 @@ def test_torch_autograd_module(executor, device, _):
         a.grad = None
         out = lc(a)
         out.backward(g)
-        l_grad = l.weight.grad
-        torch.testing.assert_close(l_grad, g.mT @ a)
-        torch.testing.assert_close(a.grad, g @ l.weight)
+        linear_grad = linear.weight.grad
+        torch.testing.assert_close(linear_grad, g.mT @ a)
+        torch.testing.assert_close(a.grad, g @ linear.weight)
 
 
 @instantiate(
