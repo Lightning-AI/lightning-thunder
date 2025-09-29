@@ -14,7 +14,6 @@ from thunder.torch.custom_op import _deregister_custom_op
 from thunder.torch.custom_op import _register_custom_op
 from thunder.torch.custom_op import _register_nvfuser_translator
 from thunder.executors.custom_op_ex import custom_op_ex
-from thunder.executors.custom_op_ex import _override_custom_op_forward
 from thunder.tests.framework import TorchExecutor, nvFuserExecutor
 from thunder.tests.framework import instantiate
 
@@ -200,112 +199,6 @@ class MyModule2(nn.Module):
     def forward(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         out = torch.ops.my_custom_op.mul(self.linear(x), y)
         return torch.relu(out)
-
-
-@instantiate(
-    executors=(TorchExecutor,),
-    devicetypes=(devices.DeviceType.CUDA,),
-    dtypes=(dtypes.float32,),
-)
-def test_custom_impl_for_torch_library_custom_op(_, device: str, dtype: dtypes.dtype):
-    SHAPE = (8, 2)
-    _symbol = _register_custom_op(mul)
-
-    if has_triton_op:
-        _cupy_mul = mul_triton
-    else:
-
-        def _cupy_mul(x, y):
-            return x + y
-
-    _override_custom_op_forward(_symbol, _cupy_mul)
-
-    torch_device, torch_dtype = devices.to_torch_device(device), dtypes.to_torch_dtype(dtype)
-    module = MyModule2().to(device=torch_device, dtype=torch_dtype)
-    jitted = thunder.jit(module)
-    ref = MyModule2().to(device=torch_device, dtype=torch_dtype)
-    ref.load_state_dict(module.state_dict())
-
-    x = torch.testing.make_tensor(SHAPE, device=torch_device, dtype=torch_dtype)
-    y = torch.testing.make_tensor(SHAPE, device=torch_device, dtype=torch_dtype)
-    x_ref = x.clone().detach()
-    y_ref = y.clone().detach()
-
-    ref_out = ref(x_ref, y_ref)
-    out = jitted(x, y)
-    torch.testing.assert_close(ref_out, out)
-    out.mean().backward()
-
-    bsym: BoundSymbol
-    fwd_extrace = thunder.last_traces(jitted)[-1]
-    custom_ex_bsym_found: bool = False
-    for bsym in fwd_extrace.bound_symbols:
-        if (bsym.sym.name != _symbol.name and _symbol.name in bsym.sym.name) and bsym.sym.executor is custom_op_ex:
-            custom_ex_bsym_found = True
-    assert custom_ex_bsym_found
-
-    bwd_extrace = thunder.last_backward_traces(jitted)[-1]
-    bsym_custom_ex_bsym_found: bool = False
-    for bsym in bwd_extrace.bound_symbols:
-        if bsym.sym.name == f"{_symbol.name}_backward" and bsym.sym.executor is custom_op_ex:
-            bsym_custom_ex_bsym_found = True
-    assert bsym_custom_ex_bsym_found
-
-
-@instantiate(
-    executors=(nvFuserExecutor,),
-    devicetypes=(devices.DeviceType.CUDA,),
-    dtypes=(dtypes.float32,),
-)
-def test_nvfuser_impl_for_torch_library_custom_op(_, device: str, dtype: dtypes.dtype):
-    from nvfuser_direct import FusionDefinition
-    from thunder.core.dtypes import to_dtype
-    from thunder.executors.nvfuserex_impl import lcdtype_to_nvdtype
-
-    def nvfuser_direct_mul(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-        with FusionDefinition() as fd:
-            t0 = fd.from_pytorch(x)
-            t1 = fd.from_pytorch(y)
-            mul = fd.ops.mul(t0, t1)
-            cast_mul = fd.ops.cast(mul, lcdtype_to_nvdtype(to_dtype(x.dtype)))
-            fd.add_output(cast_mul)
-
-        return fd.execute([x, y])[0]
-
-    _symbol = _register_custom_op(mul)
-    _override_custom_op_forward(_symbol, nvfuser_direct_mul)
-
-    SHAPE = (8, 2)
-    torch_device, torch_dtype = devices.to_torch_device(device), dtypes.to_torch_dtype(dtype)
-    module = MyModule2().to(device=torch_device, dtype=torch_dtype)
-    jitted = thunder.jit(module)
-    ref = MyModule2().to(device=torch_device, dtype=torch_dtype)
-    ref.load_state_dict(module.state_dict())
-
-    x = torch.testing.make_tensor(SHAPE, device=torch_device, dtype=torch_dtype)
-    y = torch.testing.make_tensor(SHAPE, device=torch_device, dtype=torch_dtype)
-    x_ref = x.clone().detach()
-    y_ref = y.clone().detach()
-
-    ref_out = ref(x_ref, y_ref)
-    out = jitted(x, y)
-    torch.testing.assert_close(ref_out, out)
-    out.mean().backward()
-
-    bsym: BoundSymbol
-    fwd_extrace = thunder.last_traces(jitted)[-1]
-    custom_ex_bsym_found: bool = False
-    for bsym in fwd_extrace.bound_symbols:
-        if (bsym.sym.name != _symbol.name and _symbol.name in bsym.sym.name) and bsym.sym.executor is custom_op_ex:
-            custom_ex_bsym_found = True
-    assert custom_ex_bsym_found
-
-    bwd_extrace = thunder.last_backward_traces(jitted)[-1]
-    bsym_custom_ex_bsym_found: bool = False
-    for bsym in bwd_extrace.bound_symbols:
-        if bsym.sym.name == f"{_symbol.name}_backward" and bsym.sym.executor is custom_op_ex:
-            bsym_custom_ex_bsym_found = True
-    assert bsym_custom_ex_bsym_found
 
 
 @instantiate(
