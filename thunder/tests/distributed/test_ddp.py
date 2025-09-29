@@ -976,6 +976,8 @@ def test_ddp_transformer_engine_llama_sanity(executor, devices, dtype):
     devicetypes=(devices.DeviceType.CUDA,),
     executors=(TorchExecutor,),
     decorators=(
+        pytest.mark.skipif(not TE_AVAILABLE, reason="TransformerEngine is not installed."),
+        pytest.mark.skipif(not is_fp8_supported, reason=fp8_support_reason),
         pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices"),
         unittest.mock.patch.dict(os.environ, {"NVTE_TORCH_COMPILE": "0"}),
     ),
