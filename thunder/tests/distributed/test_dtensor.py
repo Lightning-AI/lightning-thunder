@@ -83,6 +83,12 @@ def get_num_devices():
     return world_size
 
 
+@pytest.fixture(scope="session", autouse=True)
+def teardown():
+    yield
+    torch.distributed.destroy_process_group()
+
+
 @pytest.mark.parametrize("executor", tuple(executors_map.keys()))
 @pytest.mark.parametrize("fn_key", functions_to_test.keys())
 def test_dtensor_basic_op(executor, fn_key):
