@@ -137,6 +137,7 @@ class ThunderCompiler:
 
         # Convert tag_activation_checkpoint operators, which is meaningless in eager mode, to actual checkpoint calls
         # This will not be needed when we have found a way to make tag_activation_checkpoint fall back to PyTorch's backend
+        # See https://github.com/Lightning-AI/lightning-thunder/issues/2539
         convert_checkpoint_tags(gm)
 
         # The whole graph may not be supported by `thunder`, so we split it in `thunder` supported sections

@@ -633,7 +633,7 @@ def _get_example_inputs_from_placeholder(
 
 def convert_checkpoint_tags(gm: torch.fx.GraphModule):
     """
-    Replaces tag_activation_checkpoint operators with torch.utils.checkpoint.checkpoint calls.
+    Replaces tag_activation_checkpoint operators in-place with torch.utils.checkpoint.checkpoint calls.
 
     tag_activation_checkpoint only marks nodes for torch.compile stack but does not execute actual checkpointing in eager mode.
     """
