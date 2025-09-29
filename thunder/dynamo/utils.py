@@ -1214,17 +1214,23 @@ class KVCacheManager:
         gm.recompile()
 
         if not self.resize_cache:
-            # if has_symbolic_input(gm):
-            #    node_inputs = gm.graph.find_nodes(op="placeholder", sort=True)
-            #    input_tensor_list = [n for n in node_inputs if n.type is torch.Tensor and not n.type is torch.nn.Parameter]
-            #    #print(type(input_tensor_list[0].meta["example_value"].shape[1]))
-            #    if isinstance(input_tensor_list[0].meta["example_value"].shape[1], torch.SymInt):
-            #        #print(_readable(gm,"model"))
-            #        self.resize_cache=True
-            #        from tensorrt_llm._torch.auto_deploy.transformations.library import resize_kv_cache
-            #        resize_kv_cache(gm, cm, free_mem_ratio=self.ad_config.free_mem_ratio,is_thunder=True)
-            cm.resize_cache(1800)
-            self.resize_cache = True
+            # TODO: there is a bug when actually running the model with [1,4096], the meta_function fails for
+            # SequenceInfo._get_sanitized_seq_len in the prepare_flashinfer_metadata_fake
+            if has_symbolic_input(gm):
+                node_inputs = gm.graph.find_nodes(op="placeholder", sort=True)
+                input_tensor_list = [
+                    n for n in node_inputs if n.type is torch.Tensor and n.type is not torch.nn.Parameter
+                ]
+                # print(type(input_tensor_list[0].meta["example_value"].shape[1]))
+                if isinstance(input_tensor_list[0].meta["example_value"].shape[1], torch.SymInt):
+                    # print(_readable(gm,"model"))
+                    self.resize_cache = True
+                    from tensorrt_llm._torch.auto_deploy.transformations.library import resize_kv_cache
+
+                    resize_kv_cache(gm, cm, free_mem_ratio=self.ad_config.free_mem_ratio, is_thunder=True)
+            # NOTE: Because of the above bug, here we manually set the cache size to 1800
+            # cm.resize_cache(1800)
+            # self.resize_cache = True
 
         return gm
 
