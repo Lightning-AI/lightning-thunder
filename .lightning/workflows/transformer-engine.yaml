@@ -11,7 +11,7 @@ parametrize:
   matrix:
     test_file:
       - test_transformer_engine_executor.py
-      - test_transformer_engine_v2_executor.py
+      - test_transformer_engine_v1_executor.py
 
 run: |
   whereis nvidia
@@ -22,6 +22,8 @@ run: |
   # conda install -c conda-forge libstdcxx-ng
   # sudo apt install libstdc++6 libstdc++-*-dev
   pip install . -U -q -r requirements/test.txt
-  pip install --no-build-isolation 'transformer_engine[pytorch]'
+  # Need to explicitly point to cudnn.h as it is installed at a non-standard location
+  # Ref: https://github.com/NVIDIA/TransformerEngine/issues/918#issuecomment-2187703769
+  CPLUS_INCLUDE_PATH="/usr/local/lib/python3.10/dist-packages/nvidia/cudnn/include/" pip install --no-build-isolation 'transformer_engine[pytorch]'
   pip list # for debugging purposes
-  pytest tests/${test_file} -v -rs
+  pytest thunder/tests/${test_file} -v -rs
