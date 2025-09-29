@@ -8,6 +8,7 @@ import copy
 
 import torch
 from torch._guards import CompileContext as TorchCompileContext
+from torch._inductor.compile_fx import compile_fx
 from torch.utils import _pytree as torch_pytree
 
 from thunder.dynamo.utils import (
@@ -128,7 +129,6 @@ class ThunderCompiler:
             "thunderfx_disable_split_autograd", _DEFAULT_THUNDERFX_DISABLE_SPLIT_AUTOGRAD
         )
         self.thunder_options = thunder_options
-        self._torch_compile = torch.compile
 
     def __call__(self, gm: torch.fx.GraphModule, sample_args: list[torch.SymInt, torch.Tensor]):
         from thunder import jit
@@ -144,7 +144,7 @@ class ThunderCompiler:
         split_module, subgraph_info = _splitter(
             gm,
             partial(jit, **thunder_options),
-            self._torch_compile,
+            compile_fx,
             sample_args,
         )
         self.subgraph_infos.append(subgraph_info)
