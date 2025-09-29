@@ -1437,9 +1437,9 @@ def test_torch_call_recording(executor, device: str, _):
 
 
 # Asserts that all the elements of a collection are equal to each other.
-def all_eq(l):
-    for e1 in l:
-        for e2 in l:
+def all_eq(arr):
+    for e1 in arr:
+        for e2 in arr:
             assert e1 == e2
 
 
