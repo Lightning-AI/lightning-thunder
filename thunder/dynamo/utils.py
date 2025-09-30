@@ -1076,16 +1076,12 @@ class KVCacheManager:
     resize_cache = False
     gid = 0
 
-    def get_attn_nodes(self, gm: torch.fx.GraphModule):
+    def get_attn_nodes(self, gm: torch.fx.GraphModule, source_op):
         from tensorrt_llm._torch.auto_deploy.utils.node_utils import is_op
 
-        source_op = torch._C._nn.scaled_dot_product_attention
+        return [n for n in gm.graph.nodes if is_op(n, source_op)]
 
-        graph = gm.graph
-
-        # look for relevant source attention nodes
-        source_attn_nodes = [n for n in graph.nodes if is_op(n, source_op)]
-        return source_attn_nodes
+        # source_op = torch._C._nn.scaled_dot_product_attention
 
     def update_cache_initializers(self, attn_nodes: list[torch.fx.Node]):
         buffer_in_lookup: Dict[str, Node] = {}
@@ -1103,8 +1099,8 @@ class KVCacheManager:
                     self.cm.add_cache(k, get_buffer)
                     buffer_in_lookup[k] = None
 
-    def transform_graph(self, gm: torch.fx.GraphModule, cm, cached_attn_args_names):
-        src_attn_nodes = self.get_attn_nodes(gm)
+    def transform_graph(self, gm: torch.fx.GraphModule, cm, cached_attn_args_names, source_op):
+        src_attn_nodes = self.get_attn_nodes(gm, source_op)
         if not src_attn_nodes:
             return gm
 
