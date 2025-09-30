@@ -85,6 +85,8 @@ dtensor_supported_opinfos = (
         torch_reference=torch.neg,
         supports_grad=False,
         sample_inputs=get_opinfo("neg").sample_inputs,
+        # Ref:https://github.com/NVIDIA/Fuser/pull/5124
+        skip_noncontiguous_for_executor=("nvfuser",),
     ),
     DTensorOpInfo(
         name="reciprocal",
@@ -92,6 +94,8 @@ dtensor_supported_opinfos = (
         torch_reference=torch.reciprocal,
         supports_grad=False,
         sample_inputs=get_opinfo("reciprocal").sample_inputs,
+        # Ref:https://github.com/NVIDIA/Fuser/pull/5124
+        skip_noncontiguous_for_executor=("nvfuser",),
     ),
 )
 

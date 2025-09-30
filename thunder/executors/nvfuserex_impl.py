@@ -1639,6 +1639,7 @@ def neg(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) ->
 
 
 register_supported(PrimIDs.NEG, neg, _elementwise_unary_check)
+register_dtensor_supported(DTensorPrimIDs.NEG, neg, _elementwise_unary_check)
 
 
 def real(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
@@ -1666,6 +1667,7 @@ def reciprocal(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: d
 
 
 register_supported(PrimIDs.RECIPROCAL, reciprocal, _elementwise_unary_check)
+register_dtensor_supported(DTensorPrimIDs.RECIPROCAL, reciprocal, _elementwise_unary_check)
 
 
 # NOTE nv_round to avoid a name conflict with the builtin round
