@@ -6,6 +6,7 @@ trigger:
 
 timeout: "30" # minutes
 machine: "L4"
+interruptible: False
 image: "pytorchlightning/lightning-thunder:ubuntu24.04-cuda12.6.3-cudnn-fe1.10.0-py3.10-pt_2.8.0-dev"
 parametrize:
   matrix:
