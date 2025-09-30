@@ -58,14 +58,17 @@ def run_with_fake_tensor(torch_op, *args, **kwargs):
                 return t
 
             if isinstance(t, DTensorProxy):
-                i_t = torch.randn(
+                i_t = torch.ones(
                     t.local_tensor.shape,
                     device=to_torch_device(t.local_tensor.device),
                     dtype=to_torch_dtype(t.local_tensor.dtype),
                 )
-                return DTensor.from_local(i_t, t.spec._o.device_mesh, t.spec._o.placements)
 
-            return torch.randn(t.shape, device=to_torch_device(t.device), dtype=to_torch_dtype(t.dtype))
+                shape = t.spec._o.tensor_meta.shape if t.spec._o.tensor_meta is not None else None
+                stride = t.spec._o.tensor_meta.stride if t.spec._o.tensor_meta is not None else None
+                return DTensor.from_local(i_t, t.spec._o.device_mesh, t.spec._o.placements, shape=shape, stride=stride)
+
+            return torch.ones(t.shape, device=to_torch_device(t.device), dtype=to_torch_dtype(t.dtype))
 
         args, kwargs = tree_map(materialize_fake_tensors, (args, kwargs))
 
