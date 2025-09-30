@@ -1,0 +1,190 @@
+# torchrun --local-ranks-filter=0 --nproc_per_node=2 thunder/tests/distributed/test_moe.py
+
+from functools import partial
+
+import torch
+from torch.distributed import init_process_group
+from torch.distributed.tensor.placement_types import Placement, Shard, Replicate
+from torch.distributed.tensor.parallel import (
+    parallelize_module,
+    ColwiseParallel,
+    RowwiseParallel,
+    ParallelStyle,
+)
+from torch.distributed.tensor import (
+    DeviceMesh,
+    distribute_module,
+    distribute_tensor,
+    DTensor,
+)
+from torch.distributed.device_mesh import init_device_mesh
+import torch.nn as nn
+
+import thunder.tests.llama4_moe as llama4_moe
+
+
+# Referred from torchtitan: https://github.com/pytorch/torchtitan/blob/827255bb484d0f0a97fe5bec22b70f8b4750f685/torchtitan/experiments/llama4/infra/expert_parallel.py#L25
+class GroupedLinearColwiseParallel(ParallelStyle):
+    def __init__(
+        self,
+        *,
+        input_layouts: tuple[Placement | None] | None = None,
+        output_layouts: Placement | None = None,
+        use_local_output: bool = True,
+    ):
+        super().__init__()
+        self.input_layouts = input_layouts or (Replicate(), Replicate())
+        self.output_layout = output_layouts or Shard(-1)
+        self.desired_input_layouts = (Replicate(), Replicate())
+        self.use_local_output = use_local_output
+
+    @staticmethod
+    def _prepare_input_fn(input_layouts, desired_input_layouts, mod, inputs, device_mesh):
+        prepared_inputs = []
+        # annotate module input placements/sharding with input_layouts
+        for inp, input_layout, desired_input_layout in zip(inputs, input_layouts, desired_input_layouts):
+            if isinstance(inp, torch.Tensor):
+                if not isinstance(inp, DTensor):
+                    inp = DTensor.from_local(inp, device_mesh, (input_layout,), run_check=False)
+                if input_layout != desired_input_layout:
+                    inp = inp.redistribute(placements=(desired_input_layout,), async_op=True)
+            prepared_inputs.append(inp)
+        return tuple(prepared_inputs)
+
+    def _partition_fn(self, name, module, device_mesh):
+        module.register_parameter(
+            "weight", nn.Parameter(distribute_tensor(module.weight, device_mesh, [Shard(2)]))
+        )  # Column-wise sharding
+
+    @staticmethod
+    def _prepare_output_fn(output_layout, use_local_output, mod, outputs, device_mesh):
+        if outputs.placements != (output_layout,):
+            outputs = outputs.redistribute(placements=(output_layout,), async_op=True)
+        # back to local tensor
+        return outputs.to_local() if use_local_output else outputs
+
+    def _apply(self, module: nn.Module, device_mesh: DeviceMesh) -> nn.Module:
+        return distribute_module(
+            module,
+            device_mesh,
+            self._partition_fn,
+            partial(self._prepare_input_fn, self.input_layouts, self.desired_input_layouts),
+            partial(self._prepare_output_fn, self.output_layout, self.use_local_output),
+        )
+
+
+class GroupedLinearRowwiseParallel(ParallelStyle):
+    def __init__(
+        self,
+        *,
+        input_layouts: tuple[Placement | None] | None = None,
+        output_layouts: Placement | None = None,
+        use_local_output: bool = True,
+    ):
+        super().__init__()
+        self.input_layouts = input_layouts or (Shard(-1), Replicate())
+        self.output_layout = output_layouts or Replicate()
+        self.desired_input_layouts = (Shard(-1), Replicate())
+        self.use_local_output = use_local_output
+
+    @staticmethod
+    def _prepare_input_fn(input_layouts, desired_input_layouts, mod, inputs, device_mesh):
+        prepared_inputs = []
+        # annotate module input placements/sharding with input_layouts
+        for inp, input_layout, desired_input_layout in zip(inputs, input_layouts, desired_input_layouts):
+            if isinstance(inp, torch.Tensor):
+                if not isinstance(inp, DTensor):
+                    inp = DTensor.from_local(inp, device_mesh, (input_layout,), run_check=False)
+                if input_layout != desired_input_layout:
+                    inp = inp.redistribute(placements=(desired_input_layout,), async_op=True)
+            prepared_inputs.append(inp)
+        return tuple(prepared_inputs)
+
+    def _partition_fn(self, name, module, device_mesh):
+        module.register_parameter("weight", nn.Parameter(distribute_tensor(module.weight, device_mesh, [Shard(1)])))
+
+    @staticmethod
+    def _prepare_output_fn(output_layout, use_local_output, mod, outputs, device_mesh):
+        if outputs.placements != (output_layout,):
+            outputs = outputs.redistribute(placements=(output_layout,), async_op=True)
+        # back to local tensor
+        return outputs.to_local() if use_local_output else outputs
+
+    def _apply(self, module: nn.Module, device_mesh: DeviceMesh) -> nn.Module:
+        return distribute_module(
+            module,
+            device_mesh,
+            self._partition_fn,
+            partial(self._prepare_input_fn, self.input_layouts, self.desired_input_layouts),
+            partial(self._prepare_output_fn, self.output_layout, self.use_local_output),
+        )
+
+
+def parallelize_moe_model(model: llama4_moe.Llama4MoE, device_mesh: torch.distributed.DeviceMesh):
+    """Apply TensorParallel to the MoE model"""
+
+    # Define the parallelization plan as a dictionary
+    parallelize_plan = {
+        # "gate": ColwiseParallel(use_local_output=True),
+        # Shared experts - SwiGLU components
+        "shared_experts.gate_proj": ColwiseParallel(use_local_output=False, output_layouts=Shard(2)),
+        "shared_experts.up_proj": ColwiseParallel(use_local_output=False, output_layouts=Shard(2)),
+        "shared_experts.down_proj": RowwiseParallel(),
+        # Routed experts
+        "routed_experts.gate_proj": GroupedLinearColwiseParallel(use_local_output=False, output_layouts=Shard(1)),
+        "routed_experts.up_proj": GroupedLinearColwiseParallel(use_local_output=False, output_layouts=Shard(1)),
+        "routed_experts.down_proj": GroupedLinearRowwiseParallel(),
+    }
+
+    # Parallelize the model
+    parallelized_model = parallelize_module(
+        model,
+        device_mesh,
+        parallelize_plan,
+    )
+    return parallelized_model
+
+
+def test_llama4_moe_distributed():
+    # Initialize process group
+    init_process_group(backend="nccl")
+
+    # Get local rank and world size
+    local_rank = int(torch.distributed.get_rank())
+    world_size = torch.distributed.get_world_size()
+
+    # Set device
+    device = f"cuda:{local_rank}"
+    torch.cuda.set_device(device)
+
+    # Initialize device mesh for TensorParallel
+    device_mesh = init_device_mesh("cuda", (world_size,))
+
+    config = llama4_moe.Config(
+        name="small", hidden_size=256, intermediate_size=512, num_routed_experts=8, num_shared_experts=1
+    )
+
+    # Create model with distributed tensors
+    model = llama4_moe.Llama4MoE(config)
+
+    # Apply TensorParallel
+    parallelized_model = parallelize_moe_model(model, device_mesh)
+
+    torch.cuda.reset_peak_memory_stats()
+    print(torch.cuda.max_memory_allocated())
+    # Without this, `thunderfx` falls back to `inductor` for `_grouped_mm`
+    # as it doesn't have a grad-rule for the same.
+    parallelized_model.requires_grad_(False)
+
+    batch_size, seq_len = 1, 2048
+    inp = torch.randn(batch_size, seq_len, config.hidden_size, dtype=torch.bfloat16, device=device)
+
+    # Run forward pass
+    parallelized_model(inp)
+
+    print(torch.cuda.max_memory_allocated())
+
+    torch.distributed.destroy_process_group()
+
+
+test_llama4_moe_distributed()
