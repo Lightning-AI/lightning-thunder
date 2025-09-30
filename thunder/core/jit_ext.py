@@ -12,7 +12,6 @@ import sys
 import time
 import warnings
 from types import (
-    BuiltinFunctionType,
     BuiltinMethodType,
     CellType,
     FunctionType,
@@ -1132,7 +1131,7 @@ def _general_custom_op_def_call_lookaside(wrapped_opoverload_packet, *args, **kw
         symbol is not None,
         lambda: (
             f"{opoverload_packet} is not registered. Register its `custom_op` output with `thunder.torch.register_custom_op` "
-            "`custom_op(name)(fn)` output, not `{opoverload_packet}` itself"
+            f"`custom_op(name)(fn)` output, not `{opoverload_packet}` itself"
         ),
     )
 

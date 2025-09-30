@@ -5,14 +5,12 @@ from typing import TYPE_CHECKING
 import dataclasses
 import inspect
 import itertools
-import copy
 from types import NoneType
 from collections import defaultdict
 from collections import namedtuple
 
 import torch
 from torch.nn.modules.module import _addindent
-from torch._subclasses.fake_tensor import FakeTensor
 from torch.utils.weak import TensorWeakRef
 
 if torch.distributed.is_available():
@@ -340,7 +338,7 @@ def get_nodes_in_unsupported_ctx_regions(gm: torch.fx.GraphModule) -> set[torch.
     nodes_in_unsupported_ctx_regions: set[torch.fx.Node] = set()
     ctx_cnt = 0  # Count of  we have seen till now
 
-    UNSUPPORTED_THUNDER_CTX = ()
+    UNSUPPORTED_THUNDER_CTX = (torch._C._functorch._vmap_increment_nesting, torch._C._functorch._vmap_decrement_nesting)
     for node in gm.graph.nodes:
         if node.op == "call_function" and node.target in UNSUPPORTED_THUNDER_CTX:
             ctx_cnt += 1

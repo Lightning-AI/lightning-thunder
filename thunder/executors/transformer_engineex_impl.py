@@ -1,5 +1,6 @@
 import time
 from typing import TYPE_CHECKING
+import warnings
 
 import torch.distributed as torch_dist
 
@@ -7,10 +8,10 @@ from thunder.core.prims import linear as linear_prim
 from thunder.core.prims import get_grad, put_grad
 from thunder.core.proxies import AnyProxy, TensorProxy
 from thunder.extend import StatefulExecutor, register_executor
-from thunder.executors.transformer_engineex import _linear_checker
 import thunder.torch as ltorch
 from thunder import Transform
 from thunder.core import prims
+import thunder.core.devices as devices
 from thunder.core.proxies import Proxy, Variable, unvariableify, variableify
 from thunder.core.trace import from_trace, TraceProvenance, TraceTag, TraceCtx
 from thunder.core.transforms import (
@@ -27,8 +28,8 @@ if TYPE_CHECKING:
     from thunder.core.proxies import TensorProxy
 
 import transformer_engine.pytorch as te
-from transformer_engine.pytorch.tensor import Quantizer
-from transformer_engine.pytorch.ops import BasicLinear
+import transformer_engine.common.recipe as te_recipe
+from transformer_engine.pytorch.constants import MXFP8_BLOCK_SCALING_SIZE
 from transformer_engine.pytorch.fp8 import (
     _amax_and_scale_update,
     get_fp8_max,
@@ -36,10 +37,13 @@ from transformer_engine.pytorch.fp8 import (
     RecipeState,
     FP8GlobalStateManager,
 )
+from transformer_engine.pytorch.ops import BasicLinear
+from transformer_engine.pytorch.tensor import Quantizer
+from transformer_engine.pytorch.utils import check_dim_for_fp8_exec
 
 
-transformer_engine_v2_ex = StatefulExecutor("transformer_engine_v2")
-register_executor(transformer_engine_v2_ex)
+transformer_engine_ex = StatefulExecutor("transformer_engine")
+register_executor(transformer_engine_ex)
 
 
 def _te_fp8_recipe_meta() -> AnyProxy:
@@ -62,7 +66,7 @@ class TERecipe:
         return self.fp8_recipe
 
 
-_get_te_fp8_recipe = transformer_engine_v2_ex.register_stateful_operator(
+_get_te_fp8_recipe = transformer_engine_ex.register_stateful_operator(
     "get_te_fp8_recipe", meta=_te_fp8_recipe_meta, state_class=TERecipe
 )
 
@@ -89,7 +93,7 @@ class TEQuantizerState:
         return quantizers
 
 
-_get_te_fp8_quantizers = transformer_engine_v2_ex.register_stateful_operator(
+_get_te_fp8_quantizers = transformer_engine_ex.register_stateful_operator(
     "get_te_fp8_quantizers", TEQuantizerState, meta=_get_te_fp8_quantizers_meta
 )
 
@@ -121,7 +125,7 @@ class TERecipeState:
         return recipe_state
 
 
-_get_te_fp8_state = transformer_engine_v2_ex.register_stateful_operator(
+_get_te_fp8_state = transformer_engine_ex.register_stateful_operator(
     "get_te_fp8_state", TERecipeState, meta=_get_te_fp8_state_meta
 )
 
@@ -151,7 +155,7 @@ def _linear_fwd_impl(a, w, bias, input_quantizer: Quantizer, weight_quantizer: Q
     return out, quantized_a, quantized_w
 
 
-_te_linear_fwd = transformer_engine_v2_ex.register_operator(
+_te_linear_fwd = transformer_engine_ex.register_operator(
     "te_functional_linear_fwd", meta=_linear_fwd_meta, fn=_linear_fwd_impl
 )
 
@@ -196,7 +200,7 @@ def _linear_bwd_impl(
     return grad_input, grad_weight
 
 
-_te_linear_bwd = transformer_engine_v2_ex.register_operator(
+_te_linear_bwd = transformer_engine_ex.register_operator(
     "te_functional_linear_bwd", meta=_linear_bwd_meta, fn=_linear_bwd_impl
 )
 
@@ -250,7 +254,61 @@ def _te_linear_grad_transform(a, w, bias):
     return primal
 
 
-transformer_engine_v2_ex.register_implementation(
+def _linear_checker(
+    a: TensorProxy,
+    w: TensorProxy,
+    bias: None | TensorProxy,
+) -> bool:
+    def is_cuda(t):
+        return t.device.devicetype == devices.DeviceType.CUDA
+
+    inputs = (a, w)
+    if bias is not None:
+        inputs = inputs + (bias,)
+
+    # Helper function as input shape can be (*, Hin)
+    def _view_input_as_2d(x):
+        shape = x.shape
+        return x.view((-1, shape[-1]))
+
+    fp8_recipe = FP8GlobalStateManager.get_fp8_recipe()
+
+    supported_recipes = (te_recipe.DelayedScaling, te_recipe.MXFP8BlockScaling)
+    if hasattr(te_recipe, "NVFP4BlockScaling"):
+        supported_recipes = (*supported_recipes, te_recipe.NVFP4BlockScaling)
+
+    if not isinstance(fp8_recipe, supported_recipes):
+        warnings.warn(f"{type(fp8_recipe)} is not supported by TE executor, TE wont be used.")
+        return False
+
+    def check_valid_fp8_shapes(a):
+        # Each recipe type has different shape requirements.
+        if fp8_recipe.delayed():
+            return check_dim_for_fp8_exec(a)
+
+        shape = a.shape
+
+        if fp8_recipe.mxfp8():
+            return shape[0] % MXFP8_BLOCK_SCALING_SIZE == 0 and shape[1] % MXFP8_BLOCK_SCALING_SIZE == 0
+
+        if hasattr(fp8_recipe, "nvfp4") and fp8_recipe.nvfp4():
+            from transformer_engine.pytorch.constants import NVFP4_BLOCK_SCALING_SIZE
+
+            # Check inherited from TE https://github.com/ksivaman/TransformerEngine-1/blob/1af7dd88aae5afb45e82148089038e1d1de9675d/transformer_engine/pytorch/tensor/nvfp4_tensor.py#L176-L184
+            return (
+                len(shape) >= 2
+                and shape[0] % NVFP4_BLOCK_SCALING_SIZE == 0
+                and shape[1] % NVFP4_BLOCK_SCALING_SIZE == 0
+            )
+
+        return False
+
+    # Inputs must be on CUDA and
+    # input sizes must satisfy size constraints based on the recipe.
+    return all(map(is_cuda, inputs)) and check_valid_fp8_shapes(_view_input_as_2d(a)) and check_valid_fp8_shapes(w)
+
+
+transformer_engine_ex.register_implementation(
     linear_prim,
     checker=_linear_checker,
     execution_transform=_te_linear_execution_transform,
@@ -286,14 +344,14 @@ def _te_fp8_amax_and_scale_update_impl(recipe: Recipe, states: tuple[RecipeState
     return (*tokens,)
 
 
-_te_fp8_amax_and_scale_update = transformer_engine_v2_ex.register_operator(
+_te_fp8_amax_and_scale_update = transformer_engine_ex.register_operator(
     "te_fp8_amax_and_scale_update",
     meta=_te_fp8_amax_and_scale_update_meta,
     fn=_te_fp8_amax_and_scale_update_impl,
 )
 
 
-class TransformerEngineTransformV2(Transform):
+class TransformerEngineTransform(Transform):
     """
     A transform to pair up with the functional TransformerEngine executor.
 
@@ -327,7 +385,7 @@ class TransformerEngineTransformV2(Transform):
             computation_trace: Trace to perform the replacement on.
         """
 
-        if "transformer_engine_v2" not in map(lambda x: x.name, kwargs["executors_list"]):
+        if "transformer_engine" not in map(lambda x: x.name, kwargs["executors_list"]):
             return computation_trace
 
         start_time_ns = time.perf_counter_ns()
