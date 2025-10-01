@@ -235,7 +235,7 @@ class BitsAndBytesLinearQuant4bit(Transform):
         for i, bsym in enumerate(computation_trace.bound_symbols):
             if bsym.sym.id == prims.PrimIDs.UNPACK_TRIVIAL:
                 insert_idx = i + 1
-        
+
         computation_trace.bound_symbols[insert_idx:insert_idx] = new_bindings
 
         # Now update metadata for the complete trace
