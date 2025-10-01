@@ -46,7 +46,7 @@ def test_nanogpt_complete(executor, device, dtype, recwarn):
     # can be on the order of 1e-3, which exceeds the default tolerances for torch.testing.assert_close.
     # This is expected due to the reduced precision of TF32 matrix multiplications.
     if torch.device(device).type == "cuda":
-        torch.backends.cuda.matmul.fp32_precision = 'ieee'
+        torch.backends.cuda.matmul.fp32_precision = "ieee"
 
     # Creates a nanoGPT model with a smaller size than any of the default options for testing
     # NOTE Sets dropout to zero for reproducibility

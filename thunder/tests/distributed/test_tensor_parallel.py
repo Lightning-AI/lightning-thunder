@@ -158,7 +158,7 @@ class TensorParallelTest(DistributedParallelTestCase):
         # Note: When running with TF32 enabled on CUDA, the maximum absolute difference between outputs
         # can be on the order of 1e-3, which exceeds the default tolerances for torch.testing.assert_close.
         # This is expected due to the reduced precision of TF32 matrix multiplications.
-        torch.backends.cuda.matmul.fp32_precision = 'ieee'
+        torch.backends.cuda.matmul.fp32_precision = "ieee"
 
         x = torch.randint(0, num_embeddings - 1, (16, 16), device=device)
         x_ref = x.clone().detach()
