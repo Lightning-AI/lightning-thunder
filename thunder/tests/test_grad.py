@@ -1500,6 +1500,12 @@ def test_populate_grads_nanogpt(executor, device, dtype):
 
     from thunder.benchmarks import NanoGPTBenchmark, NanoGPTConfig
 
+    # Note: When running with TF32 enabled on CUDA, the maximum absolute difference between outputs
+    # can be on the order of 1e-3, which exceeds the default tolerances for torch.testing.assert_close.
+    # This is expected due to the reduced precision of TF32 matrix multiplications.
+    if torch.device(device).type == "cuda":
+        torch.backends.cuda.matmul.fp32_precision = 'ieee'
+
     # NOTE Currently setting dropout to zero for reproducibility
     config = NanoGPTConfig(dropout=0, n_layer=2, n_head=1, n_embd=64)
 

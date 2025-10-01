@@ -42,6 +42,12 @@ def test_nanogpt_complete(executor, device, dtype, recwarn):
     tdtype = ttorch.to_torch_dtype(dtype)
     make = partial(make_tensor, dtype=torch.int64, device=device)
 
+    # Note: When running with TF32 enabled on CUDA, the maximum absolute difference between outputs
+    # can be on the order of 1e-3, which exceeds the default tolerances for torch.testing.assert_close.
+    # This is expected due to the reduced precision of TF32 matrix multiplications.
+    if torch.device(device).type == "cuda":
+        torch.backends.cuda.matmul.fp32_precision = 'ieee'
+
     # Creates a nanoGPT model with a smaller size than any of the default options for testing
     # NOTE Sets dropout to zero for reproducibility
     config = nanogpt_model.GPTConfig(dropout=0, block_size=512, n_layer=6, n_head=6, n_embd=768)
