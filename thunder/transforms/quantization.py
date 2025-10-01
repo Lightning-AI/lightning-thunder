@@ -218,6 +218,21 @@ class BitsAndBytesLinearQuant4bit(Transform):
             if psym.shape != csym.shape or psym.dtype != csym.dtype
         }
 
+        # Add new compute inputs to the trace args before processing
+        computation_trace.args = (*computation_trace.args, *new_compute_inputs)
+        computation_trace.names.update(i.name for i in new_compute_inputs)
+        computation_trace._siginfo.args = [(a.name, None) for a in computation_trace.args]
+
+        # Add unpack_trivial bindings for new inputs
+        with tracectx(computation_trace):
+            new_bindings = [
+                thunder.core.prims.unpack_trivial.bind(i, output=i, name=i.name) for i in new_compute_inputs
+            ]
+
+        # Insert the new bindings at the beginning of the trace
+        computation_trace.bound_symbols = new_bindings + computation_trace.bound_symbols
+
+        # Now update metadata for the complete trace
         new_computation_trace = trace_with_replaced_proxy_metadata(computation_trace, computation_proxy_map)
 
         class QuantizationProcessor(TraceSubstitutionProcessor):
@@ -265,20 +280,6 @@ class BitsAndBytesLinearQuant4bit(Transform):
         processor = QuantizationProcessor(
             new_computation_trace, quantized_proxies, additional_proxies, self.quant_states, new_compute_inputs
         )
-
-        # Add new compute inputs to the trace args before processing
-        new_computation_trace.args = (*new_computation_trace.args, *new_compute_inputs)
-        new_computation_trace.names.update(i.name for i in new_compute_inputs)
-        new_computation_trace._siginfo.args = [(a.name, None) for a in new_computation_trace.args]
-
-        # Add unpack_trivial bindings for new inputs
-        with tracectx(new_computation_trace):
-            new_bindings = [
-                thunder.core.prims.unpack_trivial.bind(i, output=i, name=i.name) for i in new_compute_inputs
-            ]
-
-        # Insert the new bindings at the beginning of the trace
-        new_computation_trace.bound_symbols = new_bindings + new_computation_trace.bound_symbols
 
         # Now process the trace
         new_computation_trace, _ = processor()
