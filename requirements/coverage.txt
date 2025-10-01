@@ -4,6 +4,6 @@ pytest-cov ==6.2.1
 pytest-benchmark ==5.1.0
 transformers ==4.52.4
 lightning_sdk
-diffusers==0.34.0
+diffusers==0.35.1
 accelerate
-bitsandbytes==0.47.0
+bitsandbytes==0.48.0
