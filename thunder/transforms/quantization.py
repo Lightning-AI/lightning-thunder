@@ -223,14 +223,20 @@ class BitsAndBytesLinearQuant4bit(Transform):
         computation_trace.names.update(i.name for i in new_compute_inputs)
         computation_trace._siginfo.args = [(a.name, None) for a in computation_trace.args]
 
-        # Add unpack_trivial bindings for new inputs
+        # Add unpack_trivial bindings for new inputs in the correct position
         with tracectx(computation_trace):
             new_bindings = [
                 thunder.core.prims.unpack_trivial.bind(i, output=i, name=i.name) for i in new_compute_inputs
             ]
 
-        # Insert the new bindings at the beginning of the trace
-        computation_trace.bound_symbols = new_bindings + computation_trace.bound_symbols
+        # Insert the new bindings after the existing unpack_trivial bindings to maintain arg order
+        # Find the last unpack_trivial binding and insert after it
+        insert_idx = len(computation_trace.bound_symbols)
+        for i, bsym in enumerate(computation_trace.bound_symbols):
+            if bsym.sym.id == prims.PrimIDs.UNPACK_TRIVIAL:
+                insert_idx = i + 1
+        
+        computation_trace.bound_symbols[insert_idx:insert_idx] = new_bindings
 
         # Now update metadata for the complete trace
         new_computation_trace = trace_with_replaced_proxy_metadata(computation_trace, computation_proxy_map)
