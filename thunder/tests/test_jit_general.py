@@ -676,7 +676,7 @@ def test_litgpt_variants(name, device):
     # can be on the order of 1e-3, which exceeds the default tolerances for torch.testing.assert_close.
     # This is expected due to the reduced precision of TF32 matrix multiplications.
     if device == "cuda":
-        torch.backends.cuda.matmul.fp32_precision = "ieee"
+        torch.backends.cuda.matmul.allow_tf32 = False
 
     if device == "cuda" and not torch.cuda.is_available():
         pytest.skip("CUDA not available")
@@ -744,7 +744,7 @@ def test_litgpt_variants_kvcache(name, device):
     # can be on the order of 1e-3, which exceeds the default tolerances for torch.testing.assert_close.
     # This is expected due to the reduced precision of TF32 matrix multiplications.
     if device == "cuda":
-        torch.backends.cuda.matmul.fp32_precision = "ieee"
+        torch.backends.cuda.matmul.allow_tf32 = False
 
     device = torch.device(device)
     x = torch.randint(0, 200, (1, 2), device=device)
