@@ -20,7 +20,7 @@ jsonargparse # thunder/benchmarks/benchmark_litgpt.py
 bitsandbytes==0.47.0; 'arm' not in platform_machine and 'aarch' not in platform_machine
 bitsandbytes>=0.42,<0.43; 'arm' in platform_machine or 'aarch' in platform_machine
 transformers==4.52.4 # for test_networks.py
-diffusers==0.34.0 # for test_networks.py
+diffusers==0.35.1 # for test_networks.py
 accelerate # for test_networks.py
 
 asvdb @ git+https://github.com/rapidsai/asvdb.git
