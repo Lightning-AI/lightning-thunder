@@ -6,6 +6,7 @@ trigger:
 
 timeout: "50" # minutes
 machine: "L4"
+interruptible: False
 parametrize:
   matrix:
     image:
