@@ -187,7 +187,12 @@ if torch.distributed.is_available():
 
             local_rank = self.rank % torch.cuda.device_count()
             torch.cuda.set_device(local_rank)
+
+            # nvFuser Multi-GPU expects these environment variables to be set
             os.environ["LOCAL_RANK"] = str(local_rank)
+            os.environ["LOCAL_WORLD_SIZE"] = str(torch.cuda.device_count())
+            os.environ["RANK"] = str(self.rank)
+            os.environ["WORLD_SIZE"] = str(self.world_size)
 
             torch.distributed.barrier()
             try:

@@ -204,6 +204,11 @@ class DTensorTest(DistributedParallelTestCase):
         num_devices = self.world_size
         mesh = DeviceMesh("cuda", list(range(num_devices)))
 
+        if (torch.cuda.get_device_capability() < (9, 0)) and executor == "torch":
+            raise unittest.SkipTest(
+                "test_dtensor_grouped_mm: torch._grouped_mm doesn't support device capability < 9.0"
+            )
+
         M = 16
         N = 64
         K = 32
@@ -217,7 +222,13 @@ class DTensorTest(DistributedParallelTestCase):
         tfn = thunder.jit(torch._grouped_mm, executors=executors_map[executor].executors_list())
 
         tfn(in_dtensor, w_dtensor, offsets_dtensor)
-        print(thunder.last_traces(tfn)[-1])
+
+        trcs = thunder.last_traces(tfn)
+        init_trc = trcs[0]
+
+        from thunder.torch.experimental.dtensor_torch_and_prims import dtensor_grouped_mm
+
+        assert any(bsym.sym == dtensor_grouped_mm for bsym in init_trc.bound_symbols)
 
     @common_utils.parametrize(
         "op, executor",
