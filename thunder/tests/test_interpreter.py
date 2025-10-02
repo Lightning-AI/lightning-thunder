@@ -553,38 +553,38 @@ def test_exception_traceback(jit):
 
 def test_finally(jit):
     jitting = False
-    l = []
+    arr = []
 
     def foo():
         try:
             assert is_jitting_with_raise() == jitting
-            l.append(1)
+            arr.append(1)
             raise ValueError("test")
-            l.append(2)
+            arr.append(2)
         except KeyError:
             assert is_jitting_with_raise() == jitting
-            l.append(3)
+            arr.append(3)
         except ValueError:
             assert is_jitting_with_raise() == jitting
-            l.append(4)
+            arr.append(4)
             raise
         finally:
             assert is_jitting_with_raise() == jitting
-            l.append(5)
+            arr.append(5)
 
     with pytest.raises(ValueError):
         jitting = False
         foo()
 
-    l_orig = l
+    arr_orig = arr
 
-    l = []
+    arr = []
 
     with pytest.raises(ValueError):
         jitting = True
         jit(foo)()
 
-    assert l_orig == l
+    assert arr_orig == arr
 
 
 def test_raise(jit):
