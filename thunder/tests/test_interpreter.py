@@ -181,14 +181,14 @@ def test_while(jit):
             v = arr[i]
         return res
 
-    def tom(l):
+    def tom(arr):
         i = 0
         res = []
-        v = l[0]
+        v = arr[0]
         while v is None:
             res.append(i)
             i = i + 1
-            v = l[i]
+            v = arr[i]
         return res
 
     l = [True, True, False, True]
