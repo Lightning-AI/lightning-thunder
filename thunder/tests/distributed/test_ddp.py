@@ -19,13 +19,13 @@ from thunder.core import devices
 from thunder.distributed import ddp
 from thunder.tests.framework import instantiate, TorchExecutor
 
-from thunder.executors.transformer_engineex import (
-    transformer_engine_ex,
+from thunder.executors.transformer_engine_v1ex import (
+    transformer_engine_v1_ex,
     TE_AVAILABLE,
     te_sync_fp8_meta_bwd,
 )
 
-from thunder.executors.transformer_engine_v2ex import transformer_engine_v2_ex, TransformerEngineTransformV2
+from thunder.executors.transformer_engineex import transformer_engine_ex, TransformerEngineTransform
 
 
 is_fp8_supported: bool = False
@@ -359,7 +359,7 @@ def _test_native_ddp_helper(input_data):
     return None
 
 
-def _test_ddp_transformer_engine(input_data):
+def _test_ddp_transformer_engine_v1(input_data):
     # Test Description: We run a dummy training loop for a simple `Linear(Relu(Linear(x)))`
     # model with thunder (using TE executor) and with PyTorch eager + TE
     # and verify that the weights have converged to same value and
@@ -404,7 +404,7 @@ def _test_ddp_transformer_engine(input_data):
         thunder.jit(
             thunder_model,
             executors=[
-                transformer_engine_ex,
+                transformer_engine_v1_ex,
             ]
             + executor.executors_list(),
         )
@@ -505,12 +505,12 @@ def _test_ddp_transformer_engine(input_data):
     return comparison_exceptions
 
 
-def _test_ddp_transformer_engine_llama_sanity(input_data):
+def _test_ddp_transformer_engine_v1_llama_sanity(input_data):
     # Test Description: We run a dummy training loop for a Transformer Model
     # We run a few iterations to see that TransformerEngine doesn't throw internal assertion
     # due to reordering of forward and backward operators.
     # (This test will fail without `_rearrange_transformer_engine_linear` in `torch_autograd.py`)
-    # For more details, see docstring for `_rearrange_transformer_engine_linear` in transformer_engine_ex.py.
+    # For more details, see docstring for `_rearrange_transformer_engine_linear` in transformer_engine_v1_ex.py.
     from thunder.tests.llama2_model import Transformer, ModelArgs
 
     init_method, world_size, rank, executor, device, dtype, _unused_kwargs = input_data
@@ -541,7 +541,7 @@ def _test_ddp_transformer_engine_llama_sanity(input_data):
     x = torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int64, device=device)
     y = torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int64, device=device)
     jit_model = thunder.distributed.ddp(
-        thunder.jit(model, executors=(transformer_engine_ex,) + thunder.get_default_executors())
+        thunder.jit(model, executors=(transformer_engine_v1_ex,) + thunder.get_default_executors())
     )
 
     sanity_exceptions = []
@@ -574,7 +574,7 @@ def _test_ddp_transformer_engine_llama_sanity(input_data):
     return None
 
 
-def _test_ddp_transformer_engine_v2(input_data):
+def _test_ddp_transformer_engine(input_data):
     # Test Description: We run a dummy training loop for a simple `Linear(Relu(Linear(x)))`
     # model with thunder (using TE executor) and with PyTorch eager + TE
     # and verify that the weights have converged to same value after `n_iter`.
@@ -621,10 +621,10 @@ def _test_ddp_transformer_engine_v2(input_data):
         thunder.jit(
             thunder_model,
             executors=[
-                transformer_engine_v2_ex,
+                transformer_engine_ex,
             ]
             + executor.executors_list(),
-            transforms=[TransformerEngineTransformV2()],
+            transforms=[TransformerEngineTransform()],
         )
     )
 
@@ -677,12 +677,12 @@ def _test_ddp_transformer_engine_v2(input_data):
     return comparison_exceptions
 
 
-def _test_ddp_transformer_engine_v2_llama_sanity(input_data):
+def _test_ddp_transformer_engine_llama_sanity(input_data):
     # Test Description: We run a dummy training loop for a Transformer Model
     # We run a few iterations to see that TransformerEngine doesn't throw internal assertion
     # due to reordering of forward and backward operators.
     # (This test will fail without `_rearrange_transformer_engine_linear` in `torch_autograd.py`)
-    # For more details, see docstring for `_rearrange_transformer_engine_linear` in transformer_engine_ex.py.
+    # For more details, see docstring for `_rearrange_transformer_engine_linear` in transformer_engine_v1_ex.py.
     from thunder.tests.llama2_model import Transformer, ModelArgs
     from thunder.core.proxies import variableify
 
@@ -718,8 +718,8 @@ def _test_ddp_transformer_engine_v2_llama_sanity(input_data):
     jit_model = thunder.distributed.ddp(
         thunder.jit(
             model,
-            executors=(transformer_engine_v2_ex,) + thunder.get_default_executors(),
-            transforms=[TransformerEngineTransformV2()],
+            executors=(transformer_engine_ex,) + thunder.get_default_executors(),
+            transforms=[TransformerEngineTransform()],
         )
     )
 
@@ -808,8 +808,8 @@ def test_native_ddp(executor, devices, dtype, bucket_size_in_mb):
         unittest.mock.patch.dict(os.environ, {"NVTE_TORCH_COMPILE": "0"}),
     ),
 )
-@distributed_wrapper("test_ddp_transformer_engine", _test_ddp_transformer_engine)
-def test_ddp_transformer_engine(executor, devices, dtype):
+@distributed_wrapper("test_ddp_transformer_engine_v1", _test_ddp_transformer_engine_v1)
+def test_ddp_transformer_engine_v1(executor, devices, dtype):
     pass
 
 
@@ -827,8 +827,8 @@ def test_ddp_transformer_engine(executor, devices, dtype):
         unittest.mock.patch.dict(os.environ, {"NVTE_TORCH_COMPILE": "0"}),
     ),
 )
-@distributed_wrapper("test_ddp_transformer_engine_llama_sanity", _test_ddp_transformer_engine_llama_sanity)
-def test_ddp_transformer_engine_llama_sanity(executor, devices, dtype):
+@distributed_wrapper("test_ddp_transformer_engine_v1_llama_sanity", _test_ddp_transformer_engine_v1_llama_sanity)
+def test_ddp_transformer_engine_v1_llama_sanity(executor, devices, dtype):
     pass
 
 
@@ -853,8 +853,8 @@ def test_ddp_transformer_engine_llama_sanity(executor, devices, dtype):
         unittest.mock.patch.dict(os.environ, {"NVTE_TORCH_COMPILE": "0"}),
     ),
 )
-@distributed_wrapper("test_ddp_transformer_engine_v2", _test_ddp_transformer_engine_v2)
-def test_ddp_transformer_engine_v2(executor, devices, dtype):
+@distributed_wrapper("test_ddp_transformer_engine", _test_ddp_transformer_engine)
+def test_ddp_transformer_engine(executor, devices, dtype):
     pass
 
 
@@ -872,8 +872,8 @@ def test_ddp_transformer_engine_v2(executor, devices, dtype):
         unittest.mock.patch.dict(os.environ, {"NVTE_TORCH_COMPILE": "0"}),
     ),
 )
-@distributed_wrapper("test_ddp_transformer_engine_v2_llama_sanity", _test_ddp_transformer_engine_v2_llama_sanity)
-def test_ddp_transformer_engine_v2_llama_sanity(executor, devices, dtype):
+@distributed_wrapper("test_ddp_transformer_engine_llama_sanity", _test_ddp_transformer_engine_llama_sanity)
+def test_ddp_transformer_engine_llama_sanity(executor, devices, dtype):
     pass
 
 

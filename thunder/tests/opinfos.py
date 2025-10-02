@@ -2969,6 +2969,7 @@ addcdiv_opinfo = OpInfo(
         DecorateInfo(
             pytest.mark.xfail,
             "test_vjp_correctness",
+            devicetypes=(devices.DeviceType.CUDA,),
         ),
     ),
 )
@@ -3832,10 +3833,6 @@ expand_opinfo = OpInfo(
     sample_input_generator=expand_sample_generator,
     error_input_generator=expand_error_generator,
     torch_reference=torch.Tensor.expand,
-    test_directives=(
-        # vjp not yet implemented
-        DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
-    ),
 )
 shape_ops.append(expand_opinfo)
 
@@ -3880,10 +3877,6 @@ expand_as_opinfo = OpInfo(
     sample_input_generator=expand_as_sample_generator,
     error_input_generator=expand_as_error_generator,
     torch_reference=torch.Tensor.expand_as,
-    test_directives=(
-        # vjp not yet implemented
-        DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
-    ),
 )
 shape_ops.append(expand_as_opinfo)
 
@@ -4319,12 +4312,6 @@ getitem_opinfo = OpInfo(
         ),
         DecorateInfo(pytest.mark.xfail, "test_vjp_correctness", active_if=IS_WINDOWS),
         DecorateInfo(pytest.mark.xfail, "test_phantom_grad_vs_torch_consistency", active_if=IS_WINDOWS),
-        # TODO: https://github.com/Lightning-AI/lightning-thunder/issues/841
-        # check_slice_value(p0, slice(1, 3, 1)) in prologue trace fails
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_vjp_correctness",
-        ),
     ),
 )
 shape_ops.append(getitem_opinfo)
@@ -9529,7 +9516,6 @@ def nll_loss_sample_generator(op, device, dtype, requires_grad, **kwargs):
         if target.ndim != 0:
             # sprinkle ignore_index in the target, verify correctness, see issue 1744.
             target = torch.where(make(target_shape, low=0.0, high=1.0, requires_grad=False) > 0.3, target, ignore_index)
-
         yield SampleInput(
             a,
             target=target,
@@ -9539,13 +9525,16 @@ def nll_loss_sample_generator(op, device, dtype, requires_grad, **kwargs):
         )
 
     # Test empty input and target tensor short-circuit
-    for reduction_str, ignore_index in itertools.product(reduction_options, ignore_index_options):
-        yield SampleInput(
-            torch.tensor([], device=device, dtype=dtype),
-            torch.tensor([], device=device, dtype=torch.long),
-            ignore_index=ignore_index,
-            reduction=reduction_str,
-        )
+    # PyTorch disallows these inputs as of
+    # https://github.com/pytorch/pytorch/pull/161412
+    # so we drop this shape
+    # for reduction_str, ignore_index in itertools.product(reduction_options, ignore_index_options):
+    #     yield SampleInput(
+    #         torch.tensor([], device=device, dtype=dtype),
+    #         torch.tensor([], device=device, dtype=torch.long),
+    #         ignore_index=ignore_index,
+    #         reduction=reduction_str,
+    #     )
 
 
 def nll_loss_error_generator(op, device, dtype=torch.float32, **kwargs):

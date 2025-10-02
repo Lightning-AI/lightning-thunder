@@ -34,10 +34,76 @@ functions_to_test = {
 }
 
 
-# DTensor supported ops
-dtensor_supported_ops = ("reshape",)
+# NOTE: OpInfo may use `clang` or `ltorch` ops to be jitted with thunder.jit.
+#       However, for the current DTensor implementation, we add a dispatch in the `torch` operation lookaside
+#       to choose between DTensor supported symbol (from `dtensor_torch_and_prims.py`) or the usual `ltorch` symbol.
+#       This is why we need to make sure that the OpInfo uses PyTorch native op as `op` which is passed to thunder.jit.
+class DTensorOpInfo:
+    def __init__(self, *, name, op, torch_reference, supports_grad, sample_inputs, skip_noncontiguous_for_executor=()):
+        self.name = name
+        assert "torch" in op.__module__, "OpInfo must use PyTorch native op as `op` which is passed to thunder.jit"
+        self.op = op
+        self.torch_reference = torch_reference
+        # NOTE: Not all DTensor ops support grad initially, use this to disable grad tests for them
+        self.supports_grad = supports_grad
+        # NOTE: This should generally reuse the sample_inputs from the OpInfo
+        self.sample_inputs = sample_inputs
 
-dtensor_supported_opinfos = [get_opinfo(op) for op in dtensor_supported_ops]
+        # In some cases, non-contiguous inputs are not supported by the executor.
+        assert isinstance(skip_noncontiguous_for_executor, tuple), "skip_noncontiguous_for_executor must be a tuple"
+        self.skip_noncontiguous_for_executor = skip_noncontiguous_for_executor
+
+
+# DTensor supported ops
+dtensor_supported_opinfos = (
+    DTensorOpInfo(
+        name="reshape",
+        op=torch.reshape,
+        torch_reference=torch.reshape,
+        supports_grad=True,
+        sample_inputs=get_opinfo("reshape").sample_inputs,
+    ),
+    DTensorOpInfo(
+        name="linear",
+        op=torch.nn.functional.linear,
+        torch_reference=torch.nn.functional.linear,
+        supports_grad=False,
+        sample_inputs=get_opinfo("linear").sample_inputs,
+    ),
+    DTensorOpInfo(
+        name="exp",
+        op=torch.exp,
+        torch_reference=torch.exp,
+        supports_grad=True,
+        sample_inputs=get_opinfo("exp").sample_inputs,
+        # Ref:https://github.com/NVIDIA/Fuser/pull/5124
+        skip_noncontiguous_for_executor=("nvfuser",),
+    ),
+    DTensorOpInfo(
+        name="neg",
+        op=torch.neg,
+        torch_reference=torch.neg,
+        supports_grad=False,
+        sample_inputs=get_opinfo("neg").sample_inputs,
+        # Ref:https://github.com/NVIDIA/Fuser/pull/5124
+        skip_noncontiguous_for_executor=("nvfuser",),
+    ),
+    DTensorOpInfo(
+        name="reciprocal",
+        op=torch.reciprocal,
+        torch_reference=torch.reciprocal,
+        supports_grad=False,
+        sample_inputs=get_opinfo("reciprocal").sample_inputs,
+        # Ref:https://github.com/NVIDIA/Fuser/pull/5124
+        skip_noncontiguous_for_executor=("nvfuser",),
+    ),
+)
+
+skip_opinfos = (
+    # RuntimeError: Metadata (placement and mesh) has changed for cotangent between tracing and runtimeduring tracing
+    # it was Spec(S(1) on (1, 2, 1)) but at runtime it is Spec(S(1) on (1, 2, 1)).
+    "reshape",
+)
 
 
 @unittest.skipUnless(
@@ -236,15 +302,24 @@ class DTensorTest(DistributedParallelTestCase):
         lambda op, executor: op.name + "_" + executor,
     )
     def test_dtensor_opinfo(self, op: OpInfo, executor):
+        if op.name in skip_opinfos:
+            raise unittest.SkipTest(f"test_dtensor_opinfo: Skipping {op.name} as it is in skip_opinfos")
+
         # NOTE: This test only tests for dtype=torch.float32 and requires_grad=True
         #       not for all dtype which are supported by the operation.
         num_devices = self.world_size
         mesh = DeviceMesh("cuda", list(range(num_devices)))
 
-        thunder_op = thunder.jit(op.op, executors=executors_map[executor].executors_list())
+        thunder_op = thunder.jit(op.op, executors=executors_map[executor].executors_list(), nv_enable_linear=True)
+        torch_op = op.torch_reference
 
         tested_sample_count = 0
-        for sample in op.sample_inputs("cpu", dtypes.float32, requires_grad=True):
+
+        for sample in op.sample_inputs("cpu", dtypes.float32, requires_grad=op.supports_grad):
+            # Skip if non-contiguous inputs are not supported by the executor.
+            if executor in op.skip_noncontiguous_for_executor and not sample.args[0].is_contiguous():
+                continue
+
             # DTensorConverter converts inputs tensors to DTensor and creates DTensor
             # with possible placements based on the input shapes.
             # See - https://github.com/pytorch/pytorch/blob/eaa5d9d3d3dc642832b269b184f0c3ab8c990274/torch/testing/_internal/distributed/_tensor/common_dtensor.py#L521
@@ -252,8 +327,6 @@ class DTensorTest(DistributedParallelTestCase):
             for dtensor_args, dtensor_kwargs in dtensor_converter:
                 if not dtensor_converter.successful():
                     continue
-
-                torch_op = op.torch_reference
 
                 # Computes PyTorch result
                 try:
@@ -267,34 +340,38 @@ class DTensorTest(DistributedParallelTestCase):
                 thunder_result = thunder_op(*dtensor_args, **dtensor_kwargs)
                 torch.testing.assert_close(thunder_result, torch_result)
 
-                torch_flats, _ = tree_flatten((dtensor_args, dtensor_kwargs))
-                torch_result = filter_differentiable_outputs(torch_result)
-                if torch_result == []:
-                    raise RuntimeError("test_dtensor_opinfo: Expected atleast 1 differentiable output.")
+                trace = thunder.last_traces(thunder_op)[0]
+                assert any("dtensor" in bsym.sym.name for bsym in trace.bound_symbols)
 
-                grads = []
-                assert isinstance(torch_result, torch.Tensor) or isinstance(torch_result, Sequence), (
-                    "test_dtensor_opinfo:Expected a single torch tensor or a sequence of torch tensors"
-                )
-                if isinstance(torch_result, Sequence):
-                    for x in torch_result:
-                        assert isinstance(x, torch.Tensor), (
-                            "test_dtensor_opinfo: Expected a single torch tensor or a sequence of torch tensors"
-                        )
-                        if is_output_differentiable(x):
-                            grads.append(torch.ones_like(x))
-                else:
-                    if is_output_differentiable(torch_result):
-                        grads = [torch.ones_like(torch_result)]
+                if op.supports_grad:
+                    torch_flats, _ = tree_flatten((dtensor_args, dtensor_kwargs))
+                    torch_result = filter_differentiable_outputs(torch_result)
+                    if torch_result == []:
+                        raise RuntimeError("test_dtensor_opinfo: Expected atleast 1 differentiable output.")
 
-                torch_tensors_requiring_grad = tuple(
-                    f for f in torch_flats if isinstance(f, torch.Tensor) and f.requires_grad
-                )
-                torch_grad_result = torch.autograd.grad(torch_result, torch_tensors_requiring_grad, grads)
+                    grads = []
+                    assert isinstance(torch_result, torch.Tensor) or isinstance(torch_result, Sequence), (
+                        "test_dtensor_opinfo:Expected a single torch tensor or a sequence of torch tensors"
+                    )
+                    if isinstance(torch_result, Sequence):
+                        for x in torch_result:
+                            assert isinstance(x, torch.Tensor), (
+                                "test_dtensor_opinfo: Expected a single torch tensor or a sequence of torch tensors"
+                            )
+                            if is_output_differentiable(x):
+                                grads.append(torch.ones_like(x))
+                    else:
+                        if is_output_differentiable(torch_result):
+                            grads = [torch.ones_like(torch_result)]
 
-                thunder_result = filter_differentiable_outputs(thunder_result)
-                thunder_grad_result = torch.autograd.grad(thunder_result, torch_tensors_requiring_grad, grads)
-                torch.testing.assert_close(thunder_grad_result, torch_grad_result)
+                    torch_tensors_requiring_grad = tuple(
+                        f for f in torch_flats if isinstance(f, torch.Tensor) and f.requires_grad
+                    )
+                    torch_grad_result = torch.autograd.grad(torch_result, torch_tensors_requiring_grad, grads)
+
+                    thunder_result = filter_differentiable_outputs(thunder_result)
+                    thunder_grad_result = torch.autograd.grad(thunder_result, torch_tensors_requiring_grad, grads)
+                    torch.testing.assert_close(thunder_grad_result, torch_grad_result)
 
                 # Increment tested sample count
                 tested_sample_count += 1

@@ -4,7 +4,8 @@ trigger:
   pull_request:
     branches: ["main"]
 
-timeout: "40" # minutes
+timeout: "60" # minutes
+interruptible: False
 parametrize:
   matrix:
     image:

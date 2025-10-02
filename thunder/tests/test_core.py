@@ -1620,6 +1620,19 @@ def test_nested_trace_no_name_collision(executor, device, _):
     thunder.trace()(bar, a, b)
 
 
+# Tests if Thunder can trace a function without a valid signature
+@instantiate(dtypes=NOTHING)
+def test_no_signature(executor, device, _):
+    a = make_tensor((2, 3), device=device, dtype=torch.float32)
+
+    fn_trace = thunder.trace()(getattr, a, "mT")
+
+    jfn = executor.make_callable(fn_trace)
+    actual = jfn(a, "mT")
+    expected = getattr(a, "mT")
+    assert_close(actual, expected)
+
+
 @instantiate(dtypes=NOTHING)
 def test_trace_args_no_name_collision(executor, device, _):
     from thunder.core.trace import detached_trace
@@ -2587,12 +2600,15 @@ def test_set_grad_enabled(global_grad_enabled, n_flips, next_enable, starts_with
     torch.set_grad_enabled(global_grad_enabled)
     jfn = thunder.jit(fn)
     y = jfn(x)
+    is_grad_enabled = torch.is_grad_enabled()
 
     torch.set_grad_enabled(global_grad_enabled)
     y_ref = fn(x_ref)
+    is_grad_enabled_ref = torch.is_grad_enabled()
 
     torch.testing.assert_close(y, y_ref)
     assert (y.grad_fn is None) == (y_ref.grad_fn is None)
+    assert is_grad_enabled == is_grad_enabled_ref
     if y.grad_fn is not None:
         with torch.enable_grad():
             y.sum().backward()

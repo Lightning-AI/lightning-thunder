@@ -625,19 +625,19 @@ class Benchmark_litGPT:
 
                 executors.insert(0, torch_compile_ex)
 
-            if "transformerengine_v2" in self.compile:
-                from thunder.executors.transformer_engine_v2ex import (
-                    transformer_engine_v2_ex,
-                    TransformerEngineTransformV2,
-                )
+            if "transformerengine_v1" in self.compile:
+                from thunder.executors.transformer_engine_v1ex import transformer_engine_v1_ex
 
-                executors.insert(0, transformer_engine_v2_ex)
-                transforms.insert(0, TransformerEngineTransformV2())
+                executors.insert(0, transformer_engine_v1_ex)
 
             elif "transformerengine" in self.compile:
-                from thunder.executors.transformer_engineex import transformer_engine_ex
+                from thunder.executors.transformer_engineex import (
+                    transformer_engine_ex,
+                    TransformerEngineTransform,
+                )
 
                 executors.insert(0, transformer_engine_ex)
+                transforms.insert(0, TransformerEngineTransform())
 
             if "dynamo" in self.compile:
                 if self.distributed_mode == "fsdp2":
