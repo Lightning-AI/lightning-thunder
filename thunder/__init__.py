@@ -55,6 +55,7 @@ from thunder.core.transform_common import (
     unwrap_return_value,
     wrap_return_value_together_with_arguments,
 )
+from thunder.dev_utils.export_stateful_ex_transform import ExportStatefulExecutorsTransform
 from thunder.core.update_aliases import insert_alias_updates
 from thunder.executors.torch_autograd import connect_to_autograd
 import thunder.extend as extend
@@ -845,6 +846,28 @@ def jit(
     # For more context see `NOTE: Split autograd.Function`
     disable_split_autograd: bool = compile_options.get("thunderfx_disable_split_autograd", False)
 
+    def wrapped_compiled_fn(fn: Callable, mode: str, *args):
+        """
+        Wraps the compiled function to run the export stateful executors transform after the function is executed.
+        Stateful executors materialize information about the state at runtime.
+        """
+        out = fn(*args)
+        cs = weakref_cs()
+        cd = weakref_cd()
+        assert cd is not None, "cd has been cleared."
+        assert cs is not None, "cs has been cleared."
+        if cs is None or cd is None:
+            return out
+
+        trace = cs.last_traces[-1] if mode == "forward" else cs.last_backward_traces[-1]
+        if not trace:
+            return out
+        for transform in cd.transforms or []:
+            if isinstance(transform, ExportStatefulExecutorsTransform):
+                transform.transform_trace_post_execution(trace)
+                break
+        return out
+
     def maybe_connect_to_autograd(cache_entry, result):
         if cache_entry.backward_fn:
             # If the backward function is available, we need to connect the
@@ -854,8 +877,11 @@ def jit(
 
             is_differentiable_outputs = compile_options.get("is_differentiable_outputs", None)
 
+            def wrapped_backward_fn(saved_and_other, args):
+                return wrapped_compiled_fn(cache_entry.backward_fn, "backward", saved_and_other, args)
+
             connect_to_autograd(
-                backward_fn=cache_entry.backward_fn,
+                backward_fn=cache_entry.backward_fn if not has_to_export() else wrapped_backward_fn,
                 flat_args=data_for_autograd["flat_args"],
                 flat_output=data_for_autograd["flat_output"],
                 saved_tensors=saved_tensors,
@@ -872,6 +898,11 @@ def jit(
         result = cache_entry.epilogue_fn(*pro_to_epi, *comp_result)
         return result
 
+    def has_to_export():
+        cd = weakref_cd()
+        assert cd is not None, "cd has been cleared."
+        return any(isinstance(t, ExportStatefulExecutorsTransform) for t in cd.transforms or [])
+
     @wraps(fn)
     @update_call_statistics
     def fn_(*args, **kwargs) -> Any:
@@ -886,7 +917,12 @@ def jit(
 
         cache_entry, inps, pro_to_epi = get_computation_and_inputs(*args, **kwargs)
 
-        result = cache_entry.computation_fn(*inps)
+        def wrapped_computation_fn(*args):
+            return wrapped_compiled_fn(cache_entry.computation_fn, "forward", *args)
+
+        computation_fn = cache_entry.computation_fn if not has_to_export() else wrapped_computation_fn
+
+        result = computation_fn(*inps)
         result = maybe_connect_to_autograd(cache_entry, result)
         result = call_epilogue(cache_entry, result, pro_to_epi)
 

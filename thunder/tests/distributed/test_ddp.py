@@ -26,6 +26,7 @@ from thunder.executors.transformer_engine_v1ex import (
 )
 
 from thunder.executors.transformer_engineex import transformer_engine_ex, TransformerEngineTransform
+from thunder.dev_utils.export_stateful_ex_transform import ExportStatefulExecutorsTransform
 
 
 is_fp8_supported: bool = False
@@ -774,11 +775,12 @@ def _test_ddp_transformer_engine_llama_sanity(input_data):
     return None
 
 
-def _test_ddp_transformer_engine_reporter(input_data):
+def _test_ddp_transformer_engine_state_export(input_data):
     # Test Description:
-    # Verify that the TEStateReporter correctly captures and reports TransformerEngine
-    # FP8 state information during DDP training execution, including global context,
-    # recipe summaries, and forward/backward state summaries across distributed processes.
+    # This test ensures that the ExportStatefulExecutorsTransform correctly collects and exports
+    # TransformerEngine FP8 state information (such as amax/scale and quantizer stats) during
+    # distributed DDP training. It verifies that the state reporter works as expected across
+    # multiple processes, capturing both forward and backward state summaries for each rank.
 
     init_method, world_size, rank, _executor, device, _dtype, _unused_kwargs = input_data
     devicetype = devices.device_from_string(device).devicetype
@@ -808,11 +810,18 @@ def _test_ddp_transformer_engine_reporter(input_data):
 
     model = Module()
     jmodel = thunder.distributed.ddp(
-        thunder.jit(model, executors=[transformer_engine_ex], transforms=[TransformerEngineTransform()])
+        thunder.jit(
+            model,
+            executors=[transformer_engine_ex],
+            transforms=[TransformerEngineTransform(), ExportStatefulExecutorsTransform()],
+        )
     )
 
+    # Use default TE recipe for this test
+    fp8_recipe = get_default_fp8_recipe()
+
+    iters = 10
     def train(model):
-        iters = 10
         for _ in range(iters):
             with fp8_autocast(fp8_recipe=fp8_recipe):
                 y = model(x)
@@ -820,29 +829,19 @@ def _test_ddp_transformer_engine_reporter(input_data):
 
     train(jmodel)
 
-    rep = getattr(jmodel, "te_reporter", None)
-    if rep is None:
+    stats = getattr(jmodel, "te_fp8_stats", None)
+    if stats is None:
         if rank == 0:
-            return [AssertionError("TransformerEngine reporter not found")]
+            return [AssertionError("TransformerEngine FP8 stats not found")]
         return None
 
     payload = {
         "rank": rank,
-        "error": None if rep is not None else "no reporter",
-        "global": {} if rep is None else rep.global_ctx,
-        "recipes": 0 if rep is None else len(rep.recipe_summaries),
-        "forward": 0 if rep is None else len(rep.state_summaries_forward),
-        "backward": 0 if rep is None else len(rep.state_summaries_backward),
-        "quantizers": 0 if rep is None else len(rep.quantizer_summaries),
-        "has_sections": (
-            {
-                "global": "Global Context:" in rep.render_report(),
-                "forward": "Forward States (" in rep.render_report(),
-                "backward": "Backward States (" in rep.render_report(),
-            }
-            if rep is not None
-            else {"global": False, "forward": False, "backward": False}
-        ),
+        "error": None,
+        "forward": len(stats.get("forward", [])),
+        "backward": len(stats.get("backward", [])),
+        # Include minimal info for delayed-scaling check on rank 0
+        "has_delayed": any("delayed" in e and e["delayed"] for e in stats.get("forward", [])),
     }
 
     gathered = [None] * world_size if rank == 0 else None
@@ -854,15 +853,14 @@ def _test_ddp_transformer_engine_reporter(input_data):
     if rank == 0:
         exceptions = []
         for p in gathered:
-            print(p)
             if p["error"]:
                 exceptions.append(AssertionError(p["error"]))
                 continue
-            assert p["has_sections"]["global"]
-            assert p["recipes"] == 1
-            assert p["forward"] == 2  # 2 forward linear ops
-            assert p["backward"] == 2  # 2 backward linear ops
-            assert p["quantizers"] == 6  # 2 quantizers per forward linear op, 1 quantizers per backward linear op
+            # We export one entry per iteration for both forward and backward
+            assert p["forward"] == iters
+            assert p["backward"] == iters
+            # At least one entry should include delayed info on platforms using delayed scaling
+            # We do not enforce across ranks since recipe may vary by platform
         return exceptions
     return None
 
@@ -982,8 +980,8 @@ def test_ddp_transformer_engine_llama_sanity(executor, devices, dtype):
         unittest.mock.patch.dict(os.environ, {"NVTE_TORCH_COMPILE": "0"}),
     ),
 )
-@distributed_wrapper("test_ddp_transformer_engine_reporter", _test_ddp_transformer_engine_reporter)
-def test_ddp_transformer_engine_reporter(executor, devices, dtype):
+@distributed_wrapper("test_ddp_transformer_engine_state_export", _test_ddp_transformer_engine_state_export)
+def test_ddp_transformer_engine_state_export(executor, devices, dtype):
     pass
 
 

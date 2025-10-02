@@ -29,6 +29,7 @@ from thunder.executors.transformer_engine_v1ex import (
 )
 
 from thunder.executors.transformer_engineex import transformer_engine_ex, TransformerEngineTransform
+from thunder.dev_utils.export_stateful_ex_transform import ExportStatefulExecutorsTransform
 
 
 is_fp8_supported: bool = False
@@ -1237,7 +1238,7 @@ def _test_fsdp_transformer_engine_bucketing(input_data):
         return None
 
 
-def _test_fsdp_transformer_engine_reporter(input_data):
+def _test_fsdp_transformer_engine_state_export(input_data):
     # Test Description:
     # Verify that the TEStateReporter correctly captures and reports TransformerEngine
     # FP8 state information during DDP training execution, including global context,
@@ -1283,13 +1284,13 @@ def _test_fsdp_transformer_engine_reporter(input_data):
                 ]
                 + executor.executors_list(),
                 fp8_shard_intermediate_activation=intermediate_activation_sharding,
-                transforms=[TransformerEngineTransform()],
+                transforms=[TransformerEngineTransform(), ExportStatefulExecutorsTransform()],
             ),
             sharding_strategy=thunder_fsdp_strategy,
         )
 
+        iters = 10
         def train(model):
-            iters = 10
             for _ in range(iters):
                 with fp8_autocast(fp8_recipe=fp8_recipe):
                     y = model(x)
@@ -1297,29 +1298,19 @@ def _test_fsdp_transformer_engine_reporter(input_data):
 
         train(jmodel)
 
-        rep = getattr(jmodel, "te_reporter", None)
-        if rep is None:
+        stats = getattr(jmodel, "te_fp8_stats", None)
+        if stats is None:
             if rank == 0:
-                return [AssertionError("TransformerEngine reporter not found")]
+                return [AssertionError("TransformerEngine FP8 stats not found")]
             return None
 
         payload = {
             "rank": rank,
-            "error": None if rep is not None else "no reporter",
-            "global": {} if rep is None else rep.global_ctx,
-            "recipes": 0 if rep is None else len(rep.recipe_summaries),
-            "forward": 0 if rep is None else len(rep.state_summaries_forward),
-            "backward": 0 if rep is None else len(rep.state_summaries_backward),
-            "quantizers": 0 if rep is None else len(rep.quantizer_summaries),
-            "has_sections": (
-                {
-                    "global": "Global Context:" in rep.render_report(),
-                    "forward": "Forward States (" in rep.render_report(),
-                    "backward": "Backward States (" in rep.render_report(),
-                }
-                if rep is not None
-                else {"global": False, "forward": False, "backward": False}
-            ),
+            "error": None,
+            "forward": len(stats.get("forward", [])),
+            "backward": len(stats.get("backward", [])),
+            # Include minimal info for delayed-scaling check on rank 0
+            "has_delayed": any("delayed" in e and e["delayed"] for e in stats.get("forward", [])),
         }
 
         gathered = [None] * world_size if rank == 0 else None
@@ -1334,11 +1325,10 @@ def _test_fsdp_transformer_engine_reporter(input_data):
                 if p["error"]:
                     exceptions.append(AssertionError(p["error"]))
                     continue
-                assert p["has_sections"]["global"]
-                assert p["recipes"] == 1
-                assert p["forward"] == 3  # 2 forward linear ops
-                assert p["backward"] == 3  # 2 backward linear ops
-                assert p["quantizers"] == 9  # 2 quantizers per forward linear op, 1 quantizers per backward linear op
+                # We export one entry per iteration for both forward and backward
+                assert p["forward"] == iters
+                assert p["backward"] == iters
+                # At least one entry should include delayed info on platforms using delayed scaling
             return exceptions
         return None
 
@@ -1399,8 +1389,8 @@ def test_fsdp_transformer_engine(executor, devices, dtype, thunder_fsdp_strategy
         pytest.mark.skipif(not is_fp8_supported, reason=fp8_support_reason),
     ),
 )
-@distributed_wrapper("test_fsdp_transformer_engine_reporter", _test_fsdp_transformer_engine_reporter)
-def test_fsdp_transformer_engine_reporter(executor, devices, dtype, thunder_fsdp_strategy_and_intermediate_sharding):
+@distributed_wrapper("test_fsdp_transformer_engine_state_export", _test_fsdp_transformer_engine_state_export)
+def test_fsdp_transformer_engine_state_export(executor, devices, dtype, thunder_fsdp_strategy_and_intermediate_sharding):
     pass
 
 

@@ -1,10 +1,11 @@
 import time
 from typing import TYPE_CHECKING
-import weakref
+import warnings
+from collections import defaultdict
 
+import torch
 import torch.distributed as torch_dist
 
-from thunder.core.compile_data import get_compile_data
 from thunder.core.prims import linear as linear_prim
 from thunder.core.prims import get_grad, put_grad
 from thunder.core.proxies import AnyProxy, TensorProxy
@@ -22,7 +23,6 @@ from thunder.core.transforms import (
 from thunder.core.transform_common import cse_single_bsym
 from thunder.executors.passes import del_last_used
 import thunder.core.utils as utils
-from thunder.dev_utils.te_states_reporter import TEStateReporter
 
 if TYPE_CHECKING:
     from thunder.core.trace import VariableInterface
@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from thunder.core.proxies import TensorProxy
 
 import transformer_engine.pytorch as te
+import transformer_engine.common.recipe as te_recipe
 from transformer_engine.pytorch.constants import MXFP8_BLOCK_SCALING_SIZE
 from transformer_engine.pytorch.fp8 import (
     _amax_and_scale_update,
@@ -38,41 +39,16 @@ from transformer_engine.pytorch.fp8 import (
     RecipeState,
     FP8GlobalStateManager,
 )
-
 from transformer_engine.pytorch.ops import BasicLinear
 from transformer_engine.pytorch.tensor import Quantizer
 from transformer_engine.pytorch.utils import check_dim_for_fp8_exec
-from thunder.core.module import get_thunder_module
+from thunder.dev_utils.export_stateful_ex_transform import (
+    ExportStatefulExecutorsTransform as _ExportSETransform,
+)
 
 
 transformer_engine_ex = StatefulExecutor("transformer_engine")
 register_executor(transformer_engine_ex)
-
-
-def _export_te_states(*, recipe=None, states=None, mode=None, quantizers=None, holder=None):
-    tm = None
-    if holder is not None:
-        tm_ref = getattr(holder, "_tm_ref", None)
-        if tm_ref is not None and isinstance(tm_ref, weakref.ref):
-            tm = tm_ref()
-
-    # Cannot fallback to compile data as during execution we don't have compile_data context
-    if tm is None:
-        import warnings
-
-        warnings.warn("No ThunderModule found for exporting TE states", UserWarning)
-        return
-
-    if not hasattr(tm, "te_reporter"):
-        tm.te_reporter = TEStateReporter()
-
-    tm.te_reporter.update_from_runtime(
-        holder=holder,
-        recipe=recipe,
-        states=states,
-        mode=mode,
-        quantizers=quantizers,
-    )
 
 
 def _te_fp8_recipe_meta() -> AnyProxy:
@@ -91,9 +67,6 @@ class TERecipe:
 
         if not self.fp8_recipe or self.fp8_recipe is not te_fp8_recipe:
             self.fp8_recipe = te_fp8_recipe
-
-        # Duplicate recipies are handled by the TEStateReporter as we don't have any early return logic here
-        _export_te_states(recipe=self.fp8_recipe, holder=self)
 
         return self.fp8_recipe
 
@@ -117,14 +90,10 @@ class TEQuantizerState:
     def __call__(self, recipe_state: RecipeState, num_quantizers: int) -> list[Quantizer]:
         if self.quantizers and self.parent_recipe_state is recipe_state:
             return self.quantizers
-
         quantizers = recipe_state.make_quantizers()
 
         self.quantizers = quantizers
         self.parent_recipe_state = recipe_state
-
-        # Export only new quantizers
-        _export_te_states(recipe=recipe_state.recipe, quantizers=quantizers, holder=self)
 
         return quantizers
 
@@ -157,9 +126,6 @@ class TERecipeState:
 
         self.state = recipe_state
         self.parent_recipe = recipe
-
-        # Export only new states
-        _export_te_states(recipe=recipe, states=(recipe_state,), mode=mode, holder=self)
 
         return recipe_state
 
@@ -312,14 +278,35 @@ def _linear_checker(
 
     fp8_recipe = FP8GlobalStateManager.get_fp8_recipe()
 
+    supported_recipes = (te_recipe.DelayedScaling, te_recipe.MXFP8BlockScaling)
+    if hasattr(te_recipe, "NVFP4BlockScaling"):
+        supported_recipes = (*supported_recipes, te_recipe.NVFP4BlockScaling)
+
+    if not isinstance(fp8_recipe, supported_recipes):
+        warnings.warn(f"{type(fp8_recipe)} is not supported by TE executor, TE wont be used.")
+        return False
+
     def check_valid_fp8_shapes(a):
-        # DelayedScaling and MXFP8BlockScaling have different shape requirements.
+        # Each recipe type has different shape requirements.
         if fp8_recipe.delayed():
             return check_dim_for_fp8_exec(a)
 
-        assert fp8_recipe.mxfp8()
         shape = a.shape
-        return shape[0] % MXFP8_BLOCK_SCALING_SIZE == 0 and shape[1] % MXFP8_BLOCK_SCALING_SIZE == 0
+
+        if fp8_recipe.mxfp8():
+            return shape[0] % MXFP8_BLOCK_SCALING_SIZE == 0 and shape[1] % MXFP8_BLOCK_SCALING_SIZE == 0
+
+        if hasattr(fp8_recipe, "nvfp4") and fp8_recipe.nvfp4():
+            from transformer_engine.pytorch.constants import NVFP4_BLOCK_SCALING_SIZE
+
+            # Check inherited from TE https://github.com/ksivaman/TransformerEngine-1/blob/1af7dd88aae5afb45e82148089038e1d1de9675d/transformer_engine/pytorch/tensor/nvfp4_tensor.py#L176-L184
+            return (
+                len(shape) >= 2
+                and shape[0] % NVFP4_BLOCK_SCALING_SIZE == 0
+                and shape[1] % NVFP4_BLOCK_SCALING_SIZE == 0
+            )
+
+        return False
 
     # Inputs must be on CUDA and
     # input sizes must satisfy size constraints based on the recipe.
@@ -384,11 +371,6 @@ class TransformerEngineTransform(Transform):
         self.rhs_to_bsym_map: dict[BoundSymbolRHS, BoundSymbol] = {}
         self.redundant_map: dict[Variable, Proxy] = {}
         self.new_saved_for_backward = None
-        self._tm_ref = None
-
-    def transform_module(self, model) -> None:
-        # Cache a weakref to the ThunderModule for later runtime export
-        self._tm_ref = weakref.ref(model)
 
     def reset(self):
         self.fp8_recipe = None
@@ -397,19 +379,120 @@ class TransformerEngineTransform(Transform):
         self.redundant_map = {}
         self.new_saved_for_backward = None
 
-    def _stamp_te_refs_to_bsym(self, tr):
-        for bsym in tr.bound_symbols:
-            call_ctx = getattr(bsym, "_call_ctx", None)
-            if not call_ctx:
-                continue
-            te_prefixes = ["get_te_fp8_recipe", "get_te_fp8_state", "get_te_fp8_quantizers"]
-            if not any(bsym.sym.name.startswith(prefix) for prefix in te_prefixes):
-                continue
-            state_obj = next(iter(call_ctx.values()))
+    @staticmethod
+    def export_state(computation_trace, tm) -> None:
+        """
+        Extracts and exports the FP8 amax/scale state information from TransformerEngine (TE) holders
+        present in the Python context of a computation trace.
 
-            assert getattr(state_obj, "_tm_ref", None) is None
+        This method is intended to be called after a TE-enabled computation has executed, in order to
+        serialize and record the relevant FP8 state (such as amax and scale tensors) and quantizer
+        information for later inspection, debugging, or export.
 
-            setattr(state_obj, "_tm_ref", self._tm_ref)  # stamp the ThunderModule weakref here
+        Args:
+            computation_trace: The Thunder computation trace object containing the Python context
+                with TE state and quantizer holders.
+            tm: The ThunderModule object.
+
+        Returns:
+            None.
+        """
+        # Extract FP8 amax/scale information from TE holders available in python context
+        python_ctx = computation_trace.python_ctx()
+
+        # Helper: serialize small tensors; skip oversized payloads
+        def _to_list_limited(t, max_numel: int = 8192):
+            if not isinstance(t, torch.Tensor):
+                return None
+            try:
+                n = min(t.numel(), max_numel)
+                if t.numel() > max_numel:
+                    warnings.warn(
+                        f"TE Stateful Executor: Exporting only first {max_numel} elements of tensor with {t.numel()} elements",
+                        UserWarning,
+                    )
+                flat = t.detach().float().cpu().view(-1)[:n].tolist()
+                return flat
+            except Exception:
+                return None
+
+        # Infer context mode from available TE functional symbols
+        te_mode = None
+        if "te_functional_linear_fwd" in python_ctx:
+            te_mode = "forward"
+        elif "te_functional_linear_bwd" in python_ctx:
+            te_mode = "backward"
+
+        delayed_entries: list[dict] = []
+        block_entries: list[dict] = []
+
+        # Gather state and quantizer holders from context
+        state_holders = [v for k, v in python_ctx.items() if isinstance(k, str) and k.startswith("get_te_fp8_state")]
+        quantizer_holders = [
+            v for k, v in python_ctx.items() if isinstance(k, str) and k.startswith("get_te_fp8_quantizers")
+        ]
+
+        # Map RecipeState -> quantizers (if materialized)
+        state_to_quantizers: dict[int, list] = {}
+        for qh in quantizer_holders:
+            prs = getattr(qh, "parent_recipe_state", None)
+            qs = getattr(qh, "quantizers", None)
+            if prs is not None and qs:
+                state_to_quantizers.setdefault(id(prs), []).extend(qs)
+
+        for sh in state_holders:
+            recipe = getattr(sh, "parent_recipe", None)
+            state = getattr(sh, "state", None)
+            if recipe is None:
+                continue
+
+            # Determine recipe family
+            is_delayed = bool(recipe.delayed())
+            is_mxfp8_or_block = bool(recipe.mxfp8())
+
+            # DelayedScaling: values live on state.scale and state.amax_history
+            if is_delayed and state is not None:
+                scale_vals = _to_list_limited(getattr(state, "scale", None))
+                amax_hist = getattr(state, "amax_history", None)
+                amax_vals = None
+                if isinstance(amax_hist, torch.Tensor) and amax_hist.numel() > 0:
+                    amax_slice = amax_hist[-1] if amax_hist.dim() >= 1 else amax_hist
+                    amax_vals = _to_list_limited(amax_slice)
+                delayed_entries.append(
+                    {
+                        "scale_shape": getattr(getattr(state, "scale", None), "shape", None),
+                        "scale": scale_vals,
+                        "amax_shape": getattr(getattr(state, "amax_history", None), "shape", None),
+                        "amax": amax_vals,
+                    }
+                )
+
+            # MXFP8/Float8 block scaling: values live on quantizers
+            elif is_mxfp8_or_block and state is not None:
+                qs = state_to_quantizers.get(id(state), [])
+                for q in qs:
+                    rowwise_usage = getattr(q, "rowwise_usage", None)
+                    columnwise_usage = getattr(q, "columnwise_usage", None)
+                    block_entries.append(
+                        {
+                            "cls": q.__class__.__name__,
+                            "rowwise_usage": rowwise_usage,
+                            "columnwise_usage": columnwise_usage,
+                            "dtype": str(getattr(q, "dtype", None)),
+                        }
+                    )
+
+        entry = defaultdict(list)
+        if delayed_entries:
+            entry["delayed"] = delayed_entries
+        if block_entries:
+            entry["mxfp8_or_block"] = block_entries
+
+        collected = getattr(tm, "te_fp8_stats", None)
+        if collected is None:
+            tm.te_fp8_stats = {"forward": [], "backward": []}
+        if entry["delayed"] or entry["mxfp8_or_block"]:
+            tm.te_fp8_stats[te_mode].append(entry)
 
     def transform_trace_post_optimization(self, computation_trace, **kwargs):
         """
@@ -424,14 +507,6 @@ class TransformerEngineTransform(Transform):
 
         if "transformer_engine" not in map(lambda x: x.name, kwargs["executors_list"]):
             return computation_trace
-
-        # Ensure we have a ThunderModule weakref available
-        if self._tm_ref is None:
-            cd = get_compile_data()
-            if cd is not None and getattr(cd, "is_module", False):
-                tm = get_thunder_module(cd.fn)
-                if tm is not None:
-                    self._tm_ref = weakref.ref(tm)
 
         start_time_ns = time.perf_counter_ns()
 
@@ -489,8 +564,6 @@ class TransformerEngineTransform(Transform):
             _update_forward_with_new_saved_for_backward(new_trace, self.new_saved_for_backward)
 
         sync_trace = del_last_used(new_trace)
-
-        self._stamp_te_refs_to_bsym(sync_trace)
 
         end_time_ns = time.perf_counter_ns()
         elapsed_time_ns = end_time_ns - start_time_ns
@@ -560,3 +633,10 @@ def _te_activation_checkpointing_transform(joint_trace: TraceCtx) -> TraceCtx:
     new_trace.bound_symbols = [bsym.from_bsym_swap_proxies(swapmap) for bsym in reversed(reversed_bsyms)]
 
     return new_trace
+
+
+# Register TE export callback with the singleton export transform
+try:
+    _ExportSETransform.register_export_callback("transformer_engine", TransformerEngineTransform.export_state)
+except Exception:
+    pass
