@@ -93,7 +93,6 @@ run: |
     pytest thunder/tests/distributed \
      -v --durations=0 \
      --random-order-seed=42
-    torchrun --local-ranks-filter=0 --nproc_per_node=2 thunder/tests/distributed/test_moe.py
   else
     echo "Unknown testing type: ${testing}"
     exit 1

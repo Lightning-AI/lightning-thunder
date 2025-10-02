@@ -1,9 +1,6 @@
-# torchrun --local-ranks-filter=0 --nproc_per_node=2 thunder/tests/distributed/test_moe.py
-
 from functools import partial
 
 import torch
-from torch.distributed import init_process_group
 from torch.distributed.tensor.placement_types import Placement, Shard, Replicate
 from torch.distributed.tensor.parallel import (
     parallelize_module,
@@ -21,6 +18,7 @@ from torch.distributed.device_mesh import init_device_mesh
 import torch.nn as nn
 
 import thunder.tests.llama4_moe as llama4_moe
+from thunder.tests.distributed.helper import DistributedParallelTestCase
 
 
 # Referred from torchtitan: https://github.com/pytorch/torchtitan/blob/827255bb484d0f0a97fe5bec22b70f8b4750f685/torchtitan/experiments/llama4/infra/expert_parallel.py#L25
@@ -28,8 +26,6 @@ class GroupedLinearColwiseParallel(ParallelStyle):
     def __init__(
         self,
         *,
-        input_layouts: tuple[Placement | None] | None = None,
-        output_layouts: Placement | None = None,
         use_local_output: bool = True,
     ):
         super().__init__()
@@ -56,7 +52,7 @@ class GroupedLinearColwiseParallel(ParallelStyle):
 
     @staticmethod
     def _prepare_output_fn(use_local_output, mod, outputs, device_mesh):
-        OUTPUT_LAYOUT = Shard(-1)
+        OUTPUT_LAYOUT = Shard(1)
         if outputs.placements != (OUTPUT_LAYOUT,):
             outputs = outputs.redistribute(placements=(OUTPUT_LAYOUT,), async_op=True)
         # back to local tensor
@@ -124,14 +120,13 @@ def parallelize_moe_model(model: llama4_moe.Llama4MoE, device_mesh: torch.distri
 
     # Define the parallelization plan as a dictionary
     parallelize_plan = {
-        # "gate": ColwiseParallel(use_local_output=True),
         # Shared experts - SwiGLU components
         "shared_experts.gate_proj": ColwiseParallel(use_local_output=False, output_layouts=Shard(2)),
         "shared_experts.up_proj": ColwiseParallel(use_local_output=False, output_layouts=Shard(2)),
         "shared_experts.down_proj": RowwiseParallel(),
         # Routed experts
-        "routed_experts.gate_proj": GroupedLinearColwiseParallel(use_local_output=False, output_layouts=Shard(1)),
-        "routed_experts.up_proj": GroupedLinearColwiseParallel(use_local_output=False, output_layouts=Shard(1)),
+        "routed_experts.gate_proj": GroupedLinearColwiseParallel(use_local_output=False),
+        "routed_experts.up_proj": GroupedLinearColwiseParallel(use_local_output=False),
         "routed_experts.down_proj": GroupedLinearRowwiseParallel(),
     }
 
@@ -144,46 +139,34 @@ def parallelize_moe_model(model: llama4_moe.Llama4MoE, device_mesh: torch.distri
     return parallelized_model
 
 
-def test_llama4_moe_distributed():
-    # Initialize process group
-    init_process_group(backend="nccl")
+class TestLlama4MoEDistributed(DistributedParallelTestCase):
+    def test_llama4_moe_distributed(self):
+        # Get world size
+        world_size = self.world_size
+        device = f"cuda:{self.rank}"
 
-    # Get local rank and world size
-    local_rank = int(torch.distributed.get_rank())
-    world_size = torch.distributed.get_world_size()
+        # Initialize device mesh for TensorParallel
+        device_mesh = init_device_mesh("cuda", (world_size,))
 
-    # Set device
-    device = f"cuda:{local_rank}"
-    torch.cuda.set_device(device)
+        config = llama4_moe.Config(
+            name="small", hidden_size=256, intermediate_size=512, num_routed_experts=8, num_shared_experts=1
+        )
 
-    # Initialize device mesh for TensorParallel
-    device_mesh = init_device_mesh("cuda", (world_size,))
+        # Create model with distributed tensors
+        model = llama4_moe.Llama4MoE(config)
 
-    config = llama4_moe.Config(
-        name="small", hidden_size=256, intermediate_size=512, num_routed_experts=8, num_shared_experts=1
-    )
+        # Apply TensorParallel
+        parallelized_model = parallelize_moe_model(model, device_mesh)
 
-    # Create model with distributed tensors
-    model = llama4_moe.Llama4MoE(config)
+        # Without this, `thunderfx` falls back to `inductor` for `_grouped_mm`
+        # as it doesn't have a grad-rule for the same.
+        parallelized_model.requires_grad_(False)
 
-    # Apply TensorParallel
-    parallelized_model = parallelize_moe_model(model, device_mesh)
+        batch_size, seq_len = 1, 2048
+        inp = torch.randn(batch_size, seq_len, config.hidden_size, dtype=torch.bfloat16, device=device)
 
-    torch.cuda.reset_peak_memory_stats()
-    print(torch.cuda.max_memory_allocated())
-    # Without this, `thunderfx` falls back to `inductor` for `_grouped_mm`
-    # as it doesn't have a grad-rule for the same.
-    parallelized_model.requires_grad_(False)
+        # Run forward pass
+        actual = parallelized_model(inp)
+        expected = model(inp)
 
-    batch_size, seq_len = 1, 2048
-    inp = torch.randn(batch_size, seq_len, config.hidden_size, dtype=torch.bfloat16, device=device)
-
-    # Run forward pass
-    parallelized_model(inp)
-
-    print(torch.cuda.max_memory_allocated())
-
-    torch.distributed.destroy_process_group()
-
-
-test_llama4_moe_distributed()
+        torch.testing.assert_close(actual, expected, atol=1e-5, rtol=1e-5)
