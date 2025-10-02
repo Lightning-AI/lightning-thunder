@@ -1487,8 +1487,11 @@ def test_populate_grads_block(executor, device, dtype):
     assert_close(torch_grads, thunder_grads, atol=1e-2, rtol=1e-2)
 
 
+# Note: When running with TF32 enabled on CUDA, the maximum absolute difference between outputs
+# can be on the order of 1e-3, which exceeds the default tolerances for torch.testing.assert_close.
+# This is expected due to the reduced precision of TF32 matrix multiplications.
 @instantiate(dtypes=(thunder.float32,))
-def test_populate_grads_nanogpt(executor, device, dtype):
+def test_populate_grads_nanogpt(executor, device, dtype, turn_off_tf32_and_set_seed):
     import sys
 
     if sys.platform == "win32":
