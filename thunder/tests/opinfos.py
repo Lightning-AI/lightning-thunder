@@ -6230,8 +6230,10 @@ cumsum_opinfo = OpInfo(
             devicetypes=(devices.DeviceType.CPU,),
         ),
         # nvfuserex follows pytorch convention to run cumsum in reduced
-        # precision, this causes opinfo tests numerical mismatch, because
-        # reference implementation is done in double, as reference should.
+        # precision, this causes opinfo tests numerical mismatch for bf16/fp16
+        # NOTE: Even though both nvfuserex and torch uses reduced precision
+        # math, because the reduction order is not the same due to
+        # implementation, error would accumulate.
         DecorateInfo(
             custom_comparator(partial(assert_close, atol=1e-1, rtol=1e-1)),
             "test_core_vs_torch_consistency",
