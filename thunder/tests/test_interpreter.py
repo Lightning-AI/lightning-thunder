@@ -2034,10 +2034,10 @@ def test_iter_lookaside_and_sentinel(jit):
             assert x != "Unreachable"
 
         sentinel = object()
-        l = [1, 2, 3, "Unreachable"]
-        for x in iter(lambda: l.pop(0) if len(l) != 1 else sentinel, sentinel):
+        arr = [1, 2, 3, "Unreachable"]
+        for x in iter(lambda: arr.pop(0) if len(arr) != 1 else sentinel, sentinel):
             assert x != "Unreachable"
-        assert l == ["Unreachable"]
+        assert arr == ["Unreachable"]
 
     foo()
     jit(foo)()
