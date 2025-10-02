@@ -1,6 +1,7 @@
 import unittest
 from itertools import product
 from collections.abc import Sequence
+from looseversion import LooseVersion
 
 import pytest
 import torch
@@ -267,6 +268,9 @@ class DTensorTest(DistributedParallelTestCase):
         ],
     )
     def test_dtensor_grouped_mm(self, executor, input_shardings):
+        if LooseVersion(torch.__version__) < "2.8":
+            raise unittest.SkipTest("test_dtensor_grouped_mm: torch._grouped_mm is not available in torch < 2.8")
+
         num_devices = self.world_size
         mesh = DeviceMesh("cuda", list(range(num_devices)))
 

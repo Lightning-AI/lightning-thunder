@@ -1,6 +1,7 @@
 from functools import partial
 from collections.abc import Callable
 from enum import auto, Enum
+from looseversion import LooseVersion
 
 from thunder.torch import torchsymbol, TensorLike, register_function
 import thunder.torch as ltorch
@@ -364,30 +365,32 @@ def dtensor_reciprocal(a: TensorLike) -> TensorLike:
     )
 
 
-def dtensor_grouped_mm_meta(a, b, offsets):
-    output = run_with_fake_tensor(torch._grouped_mm, a, b, offsets)
-    local_tensor_proxy = TensorProxy(
-        like=a.local_tensor, dtype=dtypes.to_dtype(output._local_tensor.dtype), shape=output._local_tensor.shape
+if LooseVersion(torch.__version__) >= "2.8":
+
+    def dtensor_grouped_mm_meta(a, b, offsets):
+        output = run_with_fake_tensor(torch._grouped_mm, a, b, offsets)
+        local_tensor_proxy = TensorProxy(
+            like=a.local_tensor, dtype=dtypes.to_dtype(output._local_tensor.dtype), shape=output._local_tensor.shape
+        )
+        spec = output._spec
+        spec_proxy = AnyProxy(spec, history=a.history)
+        return create_dtensor_proxy_from_proxies(local_tensor_proxy, spec_proxy, False)
+
+    dtensor_grouped_mm_prim = make_prim(
+        DTensorPrimIDs._GROUPED_MM, "dtensor_grouped_mm_prim", meta=dtensor_grouped_mm_meta
     )
-    spec = output._spec
-    spec_proxy = AnyProxy(spec, history=a.history)
-    return create_dtensor_proxy_from_proxies(local_tensor_proxy, spec_proxy, False)
 
+    dtensor_grouped_mm_prim_impl = pytorchex.register_operator(
+        "dtensor_grouped_mm_prim", like=dtensor_grouped_mm_prim, fn=torch._grouped_mm
+    )
 
-dtensor_grouped_mm_prim = make_prim(DTensorPrimIDs._GROUPED_MM, "dtensor_grouped_mm_prim", meta=dtensor_grouped_mm_meta)
+    pytorchex.register_implementation(dtensor_grouped_mm_prim, dtensor_grouped_mm_prim_impl)
 
-dtensor_grouped_mm_prim_impl = pytorchex.register_operator(
-    "dtensor_grouped_mm_prim", like=dtensor_grouped_mm_prim, fn=torch._grouped_mm
-)
-
-pytorchex.register_implementation(dtensor_grouped_mm_prim, dtensor_grouped_mm_prim_impl)
-
-
-@dtensor_torchsymbol(torch._grouped_mm, id="dtensor.torch._grouped_mm")
-def dtensor_grouped_mm(a: TensorLike, b: TensorLike, offsets: TensorLike, *, bias=None, dtype=None) -> TensorLike:
-    assert bias is None, "bias is not supported"
-    assert dtype is None, "dtype is not supported"
-    return dtensor_grouped_mm_prim(a, b, offsets)
+    @dtensor_torchsymbol(torch._grouped_mm, id="dtensor.torch._grouped_mm")
+    def dtensor_grouped_mm(a: TensorLike, b: TensorLike, offsets: TensorLike, *, bias=None, dtype=None) -> TensorLike:
+        assert bias is None, "bias is not supported"
+        assert dtype is None, "dtype is not supported"
+        return dtensor_grouped_mm_prim(a, b, offsets)
 
 
 def register_dtensor_torch_and_prims():
@@ -397,4 +400,5 @@ def register_dtensor_torch_and_prims():
     register_function_for_dtensor(torch.exp, ltorch.exp, dtensor_exp, is_method=True)
     register_function_for_dtensor(torch.neg, ltorch.neg, dtensor_neg, is_method=True)
     register_function_for_dtensor(torch.reciprocal, ltorch.reciprocal, dtensor_reciprocal, is_method=True)
-    register_function_for_dtensor(torch._grouped_mm, ltorch._grouped_mm, dtensor_grouped_mm, is_method=False)
+    if LooseVersion(torch.__version__) >= "2.8":
+        register_function_for_dtensor(torch._grouped_mm, ltorch._grouped_mm, dtensor_grouped_mm, is_method=False)
