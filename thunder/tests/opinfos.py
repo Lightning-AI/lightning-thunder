@@ -6234,8 +6234,9 @@ cumsum_opinfo = OpInfo(
         # reference implementation is done in double, as reference should.
         DecorateInfo(
             custom_comparator(partial(assert_close, atol=1e-1, rtol=1e-1)),
-            "test_core_vs_torch_consistency_nvfuser",
+            "test_core_vs_torch_consistency",
             dtypes=(datatypes.float16,),
+            executors=("nvfuser",),
         ),
     ),
 )
