@@ -1,3 +1,4 @@
+# torchrun --local-ranks-filter=0 --nproc_per_node=2 test_moe_distributed.py
 import math
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -327,6 +328,11 @@ def test_llama4_moe_distributed():
     # torch.compile(parallelized_model)(inp)
     tfn = thunderfx(parallelized_model, nv_enable_linear=True, nv_enable_scatter=True)
     actual = tfn(inp)
+    assert len(tfn._backend.subgraph_infos) == 1
+    assert len(tfn._backend.subgraph_infos[0].split_reasons) == 0
+    import thunder
+
+    thunder.last_traces(tfn._backend.subgraph_infos[0].thunder_compiled_fns[0])[-1].save_trace("moe_exec_trc.py")
 
     print(torch.cuda.max_memory_allocated())
 
