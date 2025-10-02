@@ -191,18 +191,18 @@ def test_while(jit):
             v = arr[i]
         return res
 
-    l = [True, True, False, True]
+    foo_arr = [True, True, False, True]
 
-    assert foo(l) == jit(foo)(l)
+    assert foo(foo_arr) == jit(foo)(foo_arr)
 
-    l = [False, False, True]
-    assert bar(l) == jit(bar)(l)
+    bar_arr = [False, False, True]
+    assert bar(bar_arr) == jit(bar)(bar_arr)
 
-    l = [False, False, None]
-    assert baz(l) == jit(baz)(l)
+    baz_arr = [False, False, None]
+    assert baz(baz_arr) == jit(baz)(baz_arr)
 
-    l = [None, None, False]
-    assert tom(l) == jit(tom)(l)
+    tom_arr = [None, None, False]
+    assert tom(tom_arr) == jit(tom)(tom_arr)
 
 
 def test_and_or(jit):
