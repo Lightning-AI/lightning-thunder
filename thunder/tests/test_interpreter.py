@@ -677,12 +677,12 @@ def test_match_as(jit):
 
 def test_list(jit):
     def foo():
-        l = [1, 2, 3]
-        l = l.copy()
-        l[3:] = l[:2]
-        l[0] = l[-1]
-        del l[2]
-        return l
+        arr = [1, 2, 3]
+        arr = arr.copy()
+        arr[3:] = arr[:2]
+        arr[0] = arr[-1]
+        del arr[2]
+        return arr
 
     assert foo() == jit(foo)()
 
