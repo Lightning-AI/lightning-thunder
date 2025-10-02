@@ -151,14 +151,14 @@ def test_if(jit):
 
 def test_while(jit):
     # produces POP_JUMP_BACKWARD_IF_TRUE/FALSE in 3.11
-    def foo(l):
+    def foo(arr):
         i = 0
         res = []
-        v = l[0]
+        v = arr[0]
         while v:
             res.append(i)
             i = i + 1
-            v = l[i]
+            v = arr[i]
         return res
 
     def bar(l):
