@@ -1572,17 +1572,17 @@ def test_locals_lookaside_313(jit):
             assert locals() == {}
 
             # Modifications to locals are preserved
-            l = locals()
-            assert locals()["l"] is not None, locals()
-            l["a"] = 5
+            locals_dict = locals()
+            assert locals()["locals_dict"] is not None, locals()
+            locals_dict["a"] = 5
 
             # The identity of locals() is the same across calls
-            assert l is not locals(), (l, locals())
+            assert locals_dict is not locals(), (locals_dict, locals())
             assert "a" not in locals()
 
             # Deletions in localsplus are deleted in locals
-            del l
-            assert "l" not in locals().keys(), locals()
+            del locals_dict
+            assert "locals_dict" not in locals().keys(), locals()
 
             # The objects stored in variables are the same as those in locals
             b = object()
