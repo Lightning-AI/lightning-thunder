@@ -1,5 +1,5 @@
 import weakref
-from typing import Callable, Dict
+from collections.abc import Callable
 
 from thunder.core.transform_common import (
     Transform,
@@ -29,7 +29,7 @@ class ExportStatefulExecutorsTransform(Transform):
     """
 
     _instance = None
-    _callbacks: Dict[str, Callable] = {}
+    _callbacks: dict[str, Callable] = {}
 
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:

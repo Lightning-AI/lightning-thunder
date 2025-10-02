@@ -19,6 +19,7 @@ try:
     import transformer_engine.pytorch as te  # type: ignore
     from transformer_engine.common import recipe  # type: ignore
     from thunder.executors.transformer_engineex import transformer_engine_ex, TransformerEngineTransform
+
     TE_AVAILABLE = True
 except Exception:
     te = None  # type: ignore
@@ -106,7 +107,7 @@ def test_export_te_states_linear_forward(fp8_recipe):
     )
     # If delayed scaling is used, ensure amax and scale are present
     if isinstance(fp8_recipe, recipe.DelayedScaling) or (fp8_recipe is None and te.fp8.check_fp8_support()[0]):
-        assert 'delayed' in f_entry
+        assert "delayed" in f_entry
         d = f_entry["delayed"][0]
         assert d.get("scale") is not None
         assert d.get("amax") is not None
@@ -235,13 +236,15 @@ def test_export_te_states_linear_forward_backward_multiple_recipies_iteration():
 
     stats = jmodel.te_fp8_stats
     from pprint import pprint
+
     pprint(stats)
     # We expect as many forward/backward entries as iterations
     assert len(stats["forward"]) == iters
     assert len(stats["backward"]) == iters
     # Across all entries, we should see delayed info and, if supported, possibly block info
-    has_delayed = any(e.get("delayed") for e in stats["forward"]) or any(e.get("delayed") for e in stats["backward"]) 
+    has_delayed = any(e.get("delayed") for e in stats["forward"]) or any(e.get("delayed") for e in stats["backward"])
     assert has_delayed
+
 
 @requiresCUDA
 @pytest.mark.skipif(not TE_AVAILABLE, reason="TransformerEngine is not installed.")
@@ -295,6 +298,7 @@ def test_export_te_states_with_torch_compile_and_thunder_backend(fp8_recipe):
 
     # Run one forward/backward under FP8 autocast
     iters = 10
+
     def train_model(model):
         for _ in range(iters):
             with te.fp8_autocast(fp8_recipe=fp8_recipe):

@@ -821,6 +821,7 @@ def _test_ddp_transformer_engine_state_export(input_data):
     fp8_recipe = get_default_fp8_recipe()
 
     iters = 10
+
     def train(model):
         for _ in range(iters):
             with fp8_autocast(fp8_recipe=fp8_recipe):

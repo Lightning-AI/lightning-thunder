@@ -1290,6 +1290,7 @@ def _test_fsdp_transformer_engine_state_export(input_data):
         )
 
         iters = 10
+
         def train(model):
             for _ in range(iters):
                 with fp8_autocast(fp8_recipe=fp8_recipe):
@@ -1390,7 +1391,9 @@ def test_fsdp_transformer_engine(executor, devices, dtype, thunder_fsdp_strategy
     ),
 )
 @distributed_wrapper("test_fsdp_transformer_engine_state_export", _test_fsdp_transformer_engine_state_export)
-def test_fsdp_transformer_engine_state_export(executor, devices, dtype, thunder_fsdp_strategy_and_intermediate_sharding):
+def test_fsdp_transformer_engine_state_export(
+    executor, devices, dtype, thunder_fsdp_strategy_and_intermediate_sharding
+):
     pass
 
 
