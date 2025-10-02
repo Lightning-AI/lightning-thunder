@@ -21,7 +21,7 @@ import thunder.tests.llama4_moe as llama4_moe
 from thunder.tests.distributed.helper import DistributedParallelTestCase
 
 
-# Referred from torchtitan: https://github.com/pytorch/torchtitan/blob/827255bb484d0f0a97fe5bec22b70f8b4750f685/torchtitan/experiments/llama4/infra/expert_parallel.py#L25
+# Referred from torchtitan: https://github.com/pytorch/torchtitan/blob/827255bb/torchtitan/experiments/llama4/infra/expert_parallel.py#L25
 class GroupedLinearColwiseParallel(ParallelStyle):
     def __init__(
         self,
