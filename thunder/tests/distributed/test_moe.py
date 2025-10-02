@@ -33,21 +33,19 @@ class GroupedLinearColwiseParallel(ParallelStyle):
         use_local_output: bool = True,
     ):
         super().__init__()
-        self.input_layouts = input_layouts or (Replicate(), Replicate())
-        self.output_layout = output_layouts or Shard(-1)
-        self.desired_input_layouts = (Replicate(), Replicate())
         self.use_local_output = use_local_output
 
     @staticmethod
-    def _prepare_input_fn(input_layouts, desired_input_layouts, mod, inputs, device_mesh):
+    def _prepare_input_fn(mod, inputs, device_mesh):
         prepared_inputs = []
+        INPUT_LAYOUTS = (Replicate(), Replicate())
+        assert len(INPUT_LAYOUTS) == len(inputs), "input_layouts and inputs have different lengths"
         # annotate module input placements/sharding with input_layouts
-        for inp, input_layout, desired_input_layout in zip(inputs, input_layouts, desired_input_layouts):
+        for inp, input_layout in zip(inputs, INPUT_LAYOUTS):
+            assert isinstance(inp, (torch.Tensor, list)), f"inp is not a torch.Tensor or list: {type(inp)}"
             if isinstance(inp, torch.Tensor):
-                if not isinstance(inp, DTensor):
-                    inp = DTensor.from_local(inp, device_mesh, (input_layout,), run_check=False)
-                if input_layout != desired_input_layout:
-                    inp = inp.redistribute(placements=(desired_input_layout,), async_op=True)
+                assert not isinstance(inp, DTensor), "inp is already a DTensor"
+                inp = DTensor.from_local(inp, device_mesh, (input_layout,), run_check=False)
             prepared_inputs.append(inp)
         return tuple(prepared_inputs)
 
@@ -57,9 +55,10 @@ class GroupedLinearColwiseParallel(ParallelStyle):
         )  # Column-wise sharding
 
     @staticmethod
-    def _prepare_output_fn(output_layout, use_local_output, mod, outputs, device_mesh):
-        if outputs.placements != (output_layout,):
-            outputs = outputs.redistribute(placements=(output_layout,), async_op=True)
+    def _prepare_output_fn(use_local_output, mod, outputs, device_mesh):
+        OUTPUT_LAYOUT = Shard(-1)
+        if outputs.placements != (OUTPUT_LAYOUT,):
+            outputs = outputs.redistribute(placements=(OUTPUT_LAYOUT,), async_op=True)
         # back to local tensor
         return outputs.to_local() if use_local_output else outputs
 
@@ -68,8 +67,8 @@ class GroupedLinearColwiseParallel(ParallelStyle):
             module,
             device_mesh,
             self._partition_fn,
-            partial(self._prepare_input_fn, self.input_layouts, self.desired_input_layouts),
-            partial(self._prepare_output_fn, self.output_layout, self.use_local_output),
+            self._prepare_input_fn,
+            partial(self._prepare_output_fn, self.use_local_output),
         )
 
 
