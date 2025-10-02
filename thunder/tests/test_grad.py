@@ -30,7 +30,7 @@ from thunder.tests.framework import (
 )
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
 from thunder.tests.opinfos import get_opinfo, opinfos, tensor_creation_ops
-from thunder.tests.utils import is_output_differentiable, filter_differentiable_outputs, turn_off_tf32_and_set_seed
+from thunder.tests.utils import is_output_differentiable, filter_differentiable_outputs
 
 # TODO: Move this to thunder.tests.opinfos
 op_skip = {

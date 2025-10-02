@@ -14,7 +14,6 @@ from lightning_utilities import compare_version
 import thunder
 
 from thunder.tests.framework import requiresCUDA, IS_WINDOWS
-from thunder.tests.utils import turn_off_tf32_and_set_seed
 from thunder.core.options import CACHE_OPTIONS
 import thunder.core.prims as prims
 from thunder import pytorch_executor, nvfuser_executor
@@ -706,6 +705,7 @@ def test_litgpt_variants(name, device, turn_off_tf32_and_set_seed):
         assert param1 is not param2
         assert param1.grad is not None
         torch.testing.assert_close(param1.grad, param2.grad, rtol=1e-2, atol=1e-2)
+
 
 # Note: When running with TF32 enabled on CUDA, the maximum absolute difference between outputs
 # can be on the order of 1e-3, which exceeds the default tolerances for torch.testing.assert_close.

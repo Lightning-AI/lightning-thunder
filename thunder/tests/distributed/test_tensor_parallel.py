@@ -12,7 +12,6 @@ from thunder.distributed import column_parallel, row_parallel
 import thunder.executors
 from thunder.tests.distributed.helper import ToyModel, DistributedParallelTestCase
 from thunder.tests.distributed.modules import ParallelMLP
-from thunder.tests.utils import turn_off_tf32_and_set_seed
 
 from torch.testing._internal import common_utils
 

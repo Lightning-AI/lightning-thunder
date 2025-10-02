@@ -10,7 +10,6 @@ import pytest
 import torch
 import torch.nn as nn
 from torch.testing import assert_close, make_tensor
-from thunder.tests.utils import turn_off_tf32_and_set_seed
 
 import thunder
 import thunder.torch as ttorch

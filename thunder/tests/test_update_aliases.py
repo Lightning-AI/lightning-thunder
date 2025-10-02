@@ -12,7 +12,6 @@ import thunder.core.dtypes as dtypes
 from thunder.core.symbol import Symbol
 import thunder.core.devices as devices
 from thunder.tests.opinfos import opinfos, OpInfo, make_number, SampleInput
-from thunder.tests.utils import turn_off_tf32_and_set_seed
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
 from thunder.tests.framework import (
     instantiate,
