@@ -1349,8 +1349,8 @@ def test_callable_classes_jitting(jit):
 
 def test_build_slice(jit):
     def foo(a, b):
-        l = [0, 1, 2, 3, 4, 5, 6]
-        return l[a:b], l[a:], l[:b], l[1:2:2], l[0:a:b]
+        arr = [0, 1, 2, 3, 4, 5, 6]
+        return arr[a:b], arr[a:], arr[:b], arr[1:2:2], arr[0:a:b]
 
     jfoo = jit(foo)
 
