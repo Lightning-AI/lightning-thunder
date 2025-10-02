@@ -10,6 +10,7 @@ import pytest
 import torch
 import torch.nn as nn
 from torch.testing import assert_close, make_tensor
+from thunder.tests.utils import turn_off_tf32_and_set_seed
 
 import thunder
 import thunder.torch as ttorch
@@ -38,15 +39,9 @@ all_test_executors_and_dynamo = _all_test_executors() + [DynamoThunderExecutor]
 
 # see https://docs.pytest.org/en/stable/how-to/capture-warnings.html#recwarn for the recwarn fixture
 @instantiate(dtypes=(thunder.float32,), executors=all_test_executors_and_dynamo)
-def test_nanogpt_complete(executor, device, dtype, recwarn):
+def test_nanogpt_complete(executor, device, dtype, recwarn, turn_off_tf32_and_set_seed):
     tdtype = ttorch.to_torch_dtype(dtype)
     make = partial(make_tensor, dtype=torch.int64, device=device)
-
-    # Note: When running with TF32 enabled on CUDA, the maximum absolute difference between outputs
-    # can be on the order of 1e-3, which exceeds the default tolerances for torch.testing.assert_close.
-    # This is expected due to the reduced precision of TF32 matrix multiplications.
-    if torch.device(device).type == "cuda":
-        torch.backends.cuda.matmul.allow_tf32 = False
 
     # Creates a nanoGPT model with a smaller size than any of the default options for testing
     # NOTE Sets dropout to zero for reproducibility

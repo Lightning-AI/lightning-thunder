@@ -14,6 +14,7 @@ from lightning_utilities import compare_version
 import thunder
 
 from thunder.tests.framework import requiresCUDA, IS_WINDOWS
+from thunder.tests.utils import turn_off_tf32_and_set_seed
 from thunder.core.options import CACHE_OPTIONS
 import thunder.core.prims as prims
 from thunder import pytorch_executor, nvfuser_executor
@@ -649,6 +650,9 @@ def test_nanogpt():
     assert_close(result, module(*args, **kwargs))
 
 
+# Note: When running with TF32 enabled on CUDA, the maximum absolute difference between outputs
+# can be on the order of 1e-3, which exceeds the default tolerances for torch.testing.assert_close.
+# This is expected due to the reduced precision of TF32 matrix multiplications.
 @skipif_not_pytorch_2_1
 @pytest.mark.parametrize(
     "name",
@@ -668,15 +672,9 @@ def test_nanogpt():
     "device",
     ("cpu", "cuda", "meta"),
 )
-def test_litgpt_variants(name, device):
+def test_litgpt_variants(name, device, turn_off_tf32_and_set_seed):
     from thunder.tests.litgpt_model import Config
     from litgpt.model import GPT
-
-    # Note: When running with TF32 enabled on CUDA, the maximum absolute difference between outputs
-    # can be on the order of 1e-3, which exceeds the default tolerances for torch.testing.assert_close.
-    # This is expected due to the reduced precision of TF32 matrix multiplications.
-    if device == "cuda":
-        torch.backends.cuda.matmul.allow_tf32 = False
 
     if device == "cuda" and not torch.cuda.is_available():
         pytest.skip("CUDA not available")
@@ -709,7 +707,9 @@ def test_litgpt_variants(name, device):
         assert param1.grad is not None
         torch.testing.assert_close(param1.grad, param2.grad, rtol=1e-2, atol=1e-2)
 
-
+# Note: When running with TF32 enabled on CUDA, the maximum absolute difference between outputs
+# can be on the order of 1e-3, which exceeds the default tolerances for torch.testing.assert_close.
+# This is expected due to the reduced precision of TF32 matrix multiplications.
 @skipif_not_pytorch_2_1
 @pytest.mark.parametrize(
     "name",
@@ -730,7 +730,7 @@ def test_litgpt_variants(name, device):
     "device",
     ("cpu", "cuda"),
 )
-def test_litgpt_variants_kvcache(name, device):
+def test_litgpt_variants_kvcache(name, device, turn_off_tf32_and_set_seed):
     from thunder.tests.litgpt_model import Config
     from litgpt.model import GPT
     import torch._dynamo  # this monkeypatches torch.manual_seed
@@ -739,12 +739,6 @@ def test_litgpt_variants_kvcache(name, device):
         pytest.skip("CUDA not available")
     if IS_WINDOWS:
         pytest.skip("slow on windows")
-
-    # Note: When running with TF32 enabled on CUDA, the maximum absolute difference between outputs
-    # can be on the order of 1e-3, which exceeds the default tolerances for torch.testing.assert_close.
-    # This is expected due to the reduced precision of TF32 matrix multiplications.
-    if device == "cuda":
-        torch.backends.cuda.matmul.allow_tf32 = False
 
     device = torch.device(device)
     x = torch.randint(0, 200, (1, 2), device=device)

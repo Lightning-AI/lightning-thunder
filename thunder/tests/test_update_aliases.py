@@ -12,6 +12,7 @@ import thunder.core.dtypes as dtypes
 from thunder.core.symbol import Symbol
 import thunder.core.devices as devices
 from thunder.tests.opinfos import opinfos, OpInfo, make_number, SampleInput
+from thunder.tests.utils import turn_off_tf32_and_set_seed
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
 from thunder.tests.framework import (
     instantiate,
@@ -80,14 +81,6 @@ for op in opinfos:
             torch_reference=_torchsymbol_to_torch[inplace_op],
         )
         _inplace_opinfos.append(inplace_opinfo)
-
-
-@pytest.fixture
-def turn_off_tf32_and_set_seed(monkeypatch):
-    monkeypatch.setenv("NVIDIA_TF32_OVERRIDE", "0")
-    torch.manual_seed(42)
-    yield
-    torch.seed()
 
 
 @instantiate(

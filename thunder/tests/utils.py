@@ -53,3 +53,11 @@ def skip_on_sm120_and_sm121(fn):
             fn(*args, **kwargs)
 
     return wrapped_fn
+
+
+@pytest.fixture
+def turn_off_tf32_and_set_seed(monkeypatch):
+    monkeypatch.setenv("NVIDIA_TF32_OVERRIDE", "0")
+    torch.manual_seed(42)
+    yield
+    torch.seed()

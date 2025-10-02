@@ -30,7 +30,7 @@ from thunder.tests.framework import (
 )
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
 from thunder.tests.opinfos import get_opinfo, opinfos, tensor_creation_ops
-from thunder.tests.utils import is_output_differentiable, filter_differentiable_outputs
+from thunder.tests.utils import is_output_differentiable, filter_differentiable_outputs, turn_off_tf32_and_set_seed
 
 # TODO: Move this to thunder.tests.opinfos
 op_skip = {
@@ -1487,8 +1487,11 @@ def test_populate_grads_block(executor, device, dtype):
     assert_close(torch_grads, thunder_grads, atol=1e-2, rtol=1e-2)
 
 
+# Note: When running with TF32 enabled on CUDA, the maximum absolute difference between outputs
+# can be on the order of 1e-3, which exceeds the default tolerances for torch.testing.assert_close.
+# This is expected due to the reduced precision of TF32 matrix multiplications.
 @instantiate(dtypes=(thunder.float32,))
-def test_populate_grads_nanogpt(executor, device, dtype):
+def test_populate_grads_nanogpt(executor, device, dtype, turn_off_tf32_and_set_seed):
     import sys
 
     if sys.platform == "win32":
@@ -1499,12 +1502,6 @@ def test_populate_grads_nanogpt(executor, device, dtype):
         pytest.skip("Skipping the CPU version of this test in CI because it's very slow")
 
     from thunder.benchmarks import NanoGPTBenchmark, NanoGPTConfig
-
-    # Note: When running with TF32 enabled on CUDA, the maximum absolute difference between outputs
-    # can be on the order of 1e-3, which exceeds the default tolerances for torch.testing.assert_close.
-    # This is expected due to the reduced precision of TF32 matrix multiplications.
-    if torch.device(device).type == "cuda":
-        torch.backends.cuda.matmul.allow_tf32 = False
 
     # NOTE Currently setting dropout to zero for reproducibility
     config = NanoGPTConfig(dropout=0, n_layer=2, n_head=1, n_embd=64)

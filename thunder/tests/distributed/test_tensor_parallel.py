@@ -12,6 +12,7 @@ from thunder.distributed import column_parallel, row_parallel
 import thunder.executors
 from thunder.tests.distributed.helper import ToyModel, DistributedParallelTestCase
 from thunder.tests.distributed.modules import ParallelMLP
+from thunder.tests.utils import turn_off_tf32_and_set_seed
 
 from torch.testing._internal import common_utils
 
@@ -131,6 +132,10 @@ class TensorParallelTest(DistributedParallelTestCase):
             actual=tp_jitted_model.get_parameter("embed.weight").grad,
         )
 
+    # Note: When running with TF32 enabled on CUDA, the maximum absolute difference between outputs
+    # can be on the order of 1e-3, which exceeds the default tolerances for torch.testing.assert_close.
+    # This is expected due to the reduced precision of TF32 matrix multiplications.
+    @pytest.mark.usefixtures("turn_off_tf32_and_set_seed")
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="")
     @common_utils.parametrize("bias", (True, False))
     def test_both_column_and_row(self, bias):
@@ -154,11 +159,6 @@ class TensorParallelTest(DistributedParallelTestCase):
                 return h
 
         device = torch.device("cuda", self.rank)
-
-        # Note: When running with TF32 enabled on CUDA, the maximum absolute difference between outputs
-        # can be on the order of 1e-3, which exceeds the default tolerances for torch.testing.assert_close.
-        # This is expected due to the reduced precision of TF32 matrix multiplications.
-        torch.backends.cuda.matmul.allow_tf32 = False
 
         x = torch.randint(0, num_embeddings - 1, (16, 16), device=device)
         x_ref = x.clone().detach()
