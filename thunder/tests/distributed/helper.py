@@ -190,7 +190,8 @@ if torch.distributed.is_available():
 
             # nvFuser Multi-GPU expects these environment variables to be set
             os.environ["LOCAL_RANK"] = str(local_rank)
-            os.environ["LOCAL_WORLD_SIZE"] = str(torch.cuda.device_count())
+            # We only have single node tests, so `LOCAL_WORLD_SIZE` is the same as `WORLD_SIZE`
+            os.environ["LOCAL_WORLD_SIZE"] = str(self.world_size)
             os.environ["RANK"] = str(self.rank)
             os.environ["WORLD_SIZE"] = str(self.world_size)
 
