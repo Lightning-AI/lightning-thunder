@@ -3228,6 +3228,7 @@ def _grouped_mm_transform(
 
 
 register_supported(prims._grouped_mm, _grouped_mm_transform, _grouped_mm_check)
+register_supported(DTensorPrimIDs._GROUPED_MM, _grouped_mm_transform, _grouped_mm_check)
 
 
 def _cumsum_check(a: TensorProxy, dim: int, /, dtype: dtypes.dtype | None = None) -> bool:
