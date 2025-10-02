@@ -171,14 +171,14 @@ def test_while(jit):
             v = arr[i]
         return res
 
-    def baz(l):
+    def baz(arr):
         i = 0
         res = []
-        v = l[0]
+        v = arr[0]
         while v is not None:
             res.append(i)
             i = i + 1
-            v = l[i]
+            v = arr[i]
         return res
 
     def tom(l):
