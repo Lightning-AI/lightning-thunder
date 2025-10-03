@@ -2225,32 +2225,32 @@ def test_unpack_ex(jit):
     alphabet = "abcdefghijklmnopqrstuvwxyz"
 
     def foo(a):
-        a, b, *l = a
-        return a, b, l
+        a, b, *rest = a
+        return a, b, rest
 
     jfoo = jit(foo)
 
     assert jfoo(alphabet) == foo(alphabet)
 
     def foo(a):
-        *l, x, y, z = a
-        return l, x, y, z
+        *rest, x, y, z = a
+        return rest, x, y, z
 
     jfoo = jit(foo)
 
     assert jfoo(alphabet) == foo(alphabet)
 
     def foo(a):
-        a, b, c, d, *l, z = a
-        return a, b, c, d, l, z
+        a, b, c, d, *rest, z = a
+        return a, b, c, d, rest, z
 
     jfoo = jit(foo)
 
     assert jfoo(alphabet) == foo(alphabet)
 
     def foo(a):
-        (*l,) = a
-        return l
+        (*rest,) = a
+        return rest
 
     jfoo = jit(foo)
 
