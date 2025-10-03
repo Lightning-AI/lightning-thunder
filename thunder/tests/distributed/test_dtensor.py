@@ -14,6 +14,10 @@ from thunder.tests.distributed.helper import DistributedParallelTestCase
 from torch.distributed._tensor import DeviceMesh, distribute_tensor
 from torch.distributed.tensor.placement_types import Shard
 from torch.testing._internal.distributed._tensor.common_dtensor import DTensorConverter
+from torch.distributed.tensor.parallel import (
+    parallelize_module,
+    ColwiseParallel,
+)
 
 from torch.testing._internal import common_utils
 
@@ -22,6 +26,7 @@ from thunder.tests.opinfos import OpInfo, get_opinfo
 from thunder.tests.utils import is_output_differentiable, filter_differentiable_outputs
 import thunder.core.dtypes as dtypes
 from thunder.core.pytree import tree_flatten
+from thunder.dynamo import thunderfx
 
 
 # NOTE: We run all these similar functions seperately
@@ -248,6 +253,40 @@ class DTensorTest(DistributedParallelTestCase):
         expected = in_dtensor.broadcast_to((dim_size, dim_size))
 
         torch.testing.assert_close(actual, expected)
+
+    @common_utils.parametrize("jit_fn", (thunder.jit, thunderfx), name_fn=lambda jit_fn: jit_fn.__name__)
+    def test_dtensor_columnwise_parallel(self, jit_fn):
+        if jit_fn == thunder.jit:
+            # File "/opt/pytorch/lightning-thunder/thunder/core/jit_ext.py", line 444, in _general_jit_getattr_lookaside
+            # obj.original_value.__dict__,
+            # ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+            # AttributeError: 'object' object has no attribute '__dict__'. Did you mean: '__dir__'?
+            raise unittest.SkipTest("thunder.jit fails with AttributeError")
+
+        num_devices = self.world_size
+        mesh = DeviceMesh("cuda", list(range(num_devices)))
+        dim_size = 16
+        in_dtensor = torch.randn(dim_size, dim_size, requires_grad=False)
+        m = torch.nn.Linear(dim_size, dim_size)
+        m.requires_grad_(False)
+
+        parallelized_model = parallelize_module(m, mesh, ColwiseParallel())
+
+        # `parallelize_module` sets `requires_grad` to True, set it to False again.
+        parallelized_model.requires_grad_(False)
+
+        actual = parallelized_model(in_dtensor)
+        expected = m(in_dtensor)
+        torch.testing.assert_close(actual, expected)
+
+        tmodel = jit_fn(parallelized_model, nv_enable_linear=True)
+        actual = tmodel(in_dtensor)
+        torch.testing.assert_close(actual, expected)
+
+        if jit_fn == thunderfx:
+            assert len(tmodel._backend.subgraph_infos) == 1
+            assert len(tmodel._backend.subgraph_infos[0].thunder_compiled_fns) == 1
+            assert len(tmodel._backend.subgraph_infos[0].split_reasons) == 0
 
     @common_utils.parametrize(
         "op, executor",
