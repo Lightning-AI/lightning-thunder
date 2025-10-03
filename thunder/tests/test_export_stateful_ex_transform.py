@@ -15,15 +15,15 @@ from thunder.dynamo import ThunderCompiler
 # Make TE optional so this file can host tests for other executors too
 TE_AVAILABLE = False
 try:
-    import transformer_engine as _te_mod  # noqa: F401
-    import transformer_engine.pytorch as te  # type: ignore
-    from transformer_engine.common import recipe  # type: ignore
+    import transformer_engine as _te_mod
+    import transformer_engine.pytorch as te
+    from transformer_engine.common import recipe
     from thunder.executors.transformer_engineex import transformer_engine_ex, TransformerEngineTransform
 
     TE_AVAILABLE = True
 except Exception:
-    te = None  # type: ignore
-    recipe = None  # type: ignore
+    te = None
+    recipe = None
     TE_AVAILABLE = False
 
 if TE_AVAILABLE:
