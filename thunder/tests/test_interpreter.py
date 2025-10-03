@@ -3231,27 +3231,27 @@ def test_torch_autocast_nograd(jit):
 
 
 def test_module_hooks(jit):
-    def cook_hook(l, name):
+    def cook_hook(log, name):
         def fn(*args):
-            l.append((name, thunder.core.interpreter.is_jitting_with_raise()))
+            log.append((name, thunder.core.interpreter.is_jitting_with_raise()))
 
         return fn
 
     m = torch.nn.Linear(4, 4)
-    l = []
+    log = []
     handles = []
 
     try:
-        handles.append(torch.nn.modules.module.register_module_forward_hook(cook_hook(l, "global forward")))
-        handles.append(torch.nn.modules.module.register_module_forward_pre_hook(cook_hook(l, "global forward pre")))
-        handles.append(torch.nn.modules.module.register_module_full_backward_hook(cook_hook(l, "global full backward")))
+        handles.append(torch.nn.modules.module.register_module_forward_hook(cook_hook(log, "global forward")))
+        handles.append(torch.nn.modules.module.register_module_forward_pre_hook(cook_hook(log, "global forward pre")))
+        handles.append(torch.nn.modules.module.register_module_full_backward_hook(cook_hook(log, "global full backward")))
         handles.append(
-            torch.nn.modules.module.register_module_full_backward_pre_hook(cook_hook(l, "global full backward pre"))
+            torch.nn.modules.module.register_module_full_backward_pre_hook(cook_hook(log, "global full backward pre"))
         )
-        handles.append(m.register_forward_hook(cook_hook(l, "module forward")))
-        handles.append(m.register_forward_pre_hook(cook_hook(l, "module forward pre")))
-        handles.append(m.register_full_backward_hook(cook_hook(l, "module full backward")))
-        handles.append(m.register_full_backward_pre_hook(cook_hook(l, "module full backward pre")))
+        handles.append(m.register_forward_hook(cook_hook(log, "module forward")))
+        handles.append(m.register_forward_pre_hook(cook_hook(log, "module forward pre")))
+        handles.append(m.register_full_backward_hook(cook_hook(log, "module full backward")))
+        handles.append(m.register_full_backward_pre_hook(cook_hook(log, "module full backward pre")))
 
         x = torch.randn(3, 4)
 
@@ -3280,13 +3280,13 @@ def test_module_hooks(jit):
         assert match_against in buf.getvalue()
         buf.close()
 
-        jit_l = l[:]
-        l.clear()
+        jit_log = log[:]
+        log.clear()
         y = m(x)
         y.sum().backward()
 
-        assert len(jit_l) == len(l)
-        for (jn, jj), (pn, pj) in zip(jit_l, l):
+        assert len(jit_log) == len(log)
+        for (jn, jj), (pn, pj) in zip(jit_log, log):
             assert jn == pn
             # we expect forward to be execute via the jit, backward
             # assert bool(jj), f"{jn} {jj=}"
