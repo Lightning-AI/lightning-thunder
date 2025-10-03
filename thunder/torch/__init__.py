@@ -1380,8 +1380,8 @@ def split(a: TensorProxy, size_or_sections: int | Sequence[int], /, dim=0) -> Te
     # NOTE: because split requires overspecifying the lengths, the final split is ignored
     cur = 0
     indices = []
-    for l in size_or_sections[: len(size_or_sections) - 1]:
-        cur += l
+    for length in size_or_sections[: len(size_or_sections) - 1]:
+        cur += length
         indices.append(cur)
 
     return _split_indices(a, indices, dim)
