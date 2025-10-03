@@ -786,8 +786,6 @@ def _test_ddp_transformer_engine_state_export(input_data):
     devicetype = devices.device_from_string(device).devicetype
     pg = init_per_process_distributed(init_method, devicetype, world_size, rank)
 
-    fp8_recipe = get_default_fp8_recipe()
-
     torch.cuda.set_device(rank)
     torch_device = torch.device("cuda", rank)
 
@@ -830,19 +828,25 @@ def _test_ddp_transformer_engine_state_export(input_data):
 
     train(jmodel)
 
-    stats = getattr(jmodel, "te_fp8_stats", None)
-    if stats is None:
-        if rank == 0:
-            return [AssertionError("TransformerEngine FP8 stats not found")]
-        return None
+    # Resolve latest TE FP8 states on demand (forward and backward)
+    resolved_fwd = False
+    resolved_bw = False
+    try:
+        if hasattr(jmodel, "te_fp8_states"):
+            f_entry = jmodel.te_fp8_states()
+            if isinstance(f_entry, dict) and ("delayed" in f_entry or "mxfp8" in f_entry):
+                resolved_fwd = True
+            b_entry = jmodel.te_fp8_states(mode="backward")
+            if isinstance(b_entry, dict) and ("delayed" in b_entry or "mxfp8" in b_entry):
+                resolved_bw = True
+    except Exception:
+        pass
 
     payload = {
         "rank": rank,
         "error": None,
-        "forward": len(stats.get("forward", [])),
-        "backward": len(stats.get("backward", [])),
-        # Include minimal info for delayed-scaling check on rank 0
-        "has_delayed": any("delayed" in e and e["delayed"] for e in stats.get("forward", [])),
+        "resolved_fwd": resolved_fwd,
+        "resolved_bw": resolved_bw,
     }
 
     gathered = [None] * world_size if rank == 0 else None
@@ -857,11 +861,9 @@ def _test_ddp_transformer_engine_state_export(input_data):
             if p["error"]:
                 exceptions.append(AssertionError(p["error"]))
                 continue
-            # We export one entry per iteration for both forward and backward
-            assert p["forward"] == iters
-            assert p["backward"] == iters
-            # At least one entry should include delayed info on platforms using delayed scaling
-            # We do not enforce across ranks since recipe may vary by platform
+            # We should resolve both forward and backward entries
+            assert p["resolved_fwd"]
+            assert p["resolved_bw"]
         return exceptions
     return None
 

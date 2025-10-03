@@ -2,10 +2,13 @@ import time
 from typing import TYPE_CHECKING
 import warnings
 from collections import defaultdict
+from collections.abc import Callable
 
 import torch
 import torch.distributed as torch_dist
 
+import thunder
+from thunder.core.module import ThunderModule
 from thunder.core.prims import linear as linear_prim
 from thunder.core.prims import get_grad, put_grad
 from thunder.core.proxies import AnyProxy, TensorProxy
@@ -44,6 +47,7 @@ from transformer_engine.pytorch.tensor import Quantizer
 from transformer_engine.pytorch.utils import check_dim_for_fp8_exec
 from thunder.dev_utils.export_stateful_ex_transform import (
     ExportStatefulExecutorsTransform as _ExportSETransform,
+    ExportStatefulExecutorsStats,
 )
 
 
@@ -379,120 +383,158 @@ class TransformerEngineTransform(Transform):
         self.redundant_map = {}
         self.new_saved_for_backward = None
 
+    class TEFP8Stats(ExportStatefulExecutorsStats):
+        def __init__(self, tm: ThunderModule, resolver_fn: Callable):
+            """Accessor attached on the module to resolve TE FP8 states on demand.
+
+            Args:
+                tm: ThunderModule to which this accessor is bound.
+                resolver_fn: Callable invoked as `resolver_fn(mode, tm)` to produce
+                    the latest snapshot of FP8 state based on registered refs.
+            """
+            super().__init__(tm, resolver_fn)
+            self.refs = {"forward": None, "backward": None}
+
+        def __call__(self, mode: str = "forward") -> dict:
+            """Resolve and return the latest FP8 state for the given mode.
+
+            Args:
+                mode: "forward" or "backward". Defaults to "forward".
+            Returns:
+                A dictionary snapshot of resolved values (e.g., delayed or mxfp8 entries),
+                or an empty dict on invalid mode or if nothing is recorded.
+            """
+            if mode not in ["forward", "backward"]:
+                warnings.warn(f"Received an invalid inspection mode: {mode}. Please use 'forward' or 'backward'.")
+                return {}
+            return self.resolver_fn(mode, self.tm)
+
     @staticmethod
-    def export_state(computation_trace, tm) -> None:
+    def register_refs(computation_trace, tm) -> None:
+        """Record where FP8 values will materialize for later lazy resolution.
+
+        This inspects the trace's python context, finds TE state and quantizer
+        holders, and stores only references (holder objects and attribute paths)
+        into the module accessor. No tensors or runtime data are copied here.
+        The actual values are read by `resolve_values` after execution.
         """
-        Extracts and exports the FP8 amax/scale state information from TransformerEngine (TE) holders
-        present in the Python context of a computation trace.
-
-        This method is intended to be called after a TE-enabled computation has executed, in order to
-        serialize and record the relevant FP8 state (such as amax and scale tensors) and quantizer
-        information for later inspection, debugging, or export.
-
-        Args:
-            computation_trace: The Thunder computation trace object containing the Python context
-                with TE state and quantizer holders.
-            tm: The ThunderModule object.
-
-        Returns:
-            None.
-        """
-        # Extract FP8 amax/scale information from TE holders available in python context
         python_ctx = computation_trace.python_ctx()
 
-        # Helper: serialize small tensors; skip oversized payloads
-        def _to_list_limited(t, max_numel: int = 8192):
-            if not isinstance(t, torch.Tensor):
-                return None
-            try:
-                n = min(t.numel(), max_numel)
-                if t.numel() > max_numel:
-                    warnings.warn(
-                        f"TE Stateful Executor: Exporting only first {max_numel} elements of tensor with {t.numel()} elements",
-                        UserWarning,
-                    )
-                flat = t.detach().float().cpu().view(-1)[:n].tolist()
-                return flat
-            except Exception:
-                return None
+        # Collect holders and where to read values from later
+        refs = defaultdict(list)
 
-        # Infer context mode from available TE functional symbols
-        te_mode = None
-        if "te_functional_linear_fwd" in python_ctx:
-            te_mode = "forward"
-        elif "te_functional_linear_bwd" in python_ctx:
-            te_mode = "backward"
+        # Collect mode from trace tags
+        mode = "forward" if TraceTag.AUGMENTED_FORWARD in computation_trace.tags else "backward"
 
-        delayed_entries: list[dict] = []
-        block_entries: list[dict] = []
-
-        # Gather state and quantizer holders from context
+        # States: register all state holders; decide recipe type at resolve time
         state_holders = [v for k, v in python_ctx.items() if isinstance(k, str) and k.startswith("get_te_fp8_state")]
+        for sh in state_holders:
+            # Always store attrs we may need; recipe classification happens later
+            refs["state_holder"].append(
+                {
+                    "holder": sh,
+                    "scale_attr": "state.scale",
+                    "amax_attr": "state.amax_history",
+                }
+            )
+
+        # Quantizers (MXFP8/block): resolve via TEQuantizerState linked to RecipeState
         quantizer_holders = [
             v for k, v in python_ctx.items() if isinstance(k, str) and k.startswith("get_te_fp8_quantizers")
         ]
-
-        # Map RecipeState -> quantizers (if materialized)
-        state_to_quantizers: dict[int, list] = {}
         for qh in quantizer_holders:
-            prs = getattr(qh, "parent_recipe_state", None)
-            qs = getattr(qh, "quantizers", None)
-            if prs is not None and qs:
-                state_to_quantizers.setdefault(id(prs), []).extend(qs)
+            refs["quantizer_holder"].append(
+                {"holder": qh, "quant_attr": "quantizers", "parent_state_attr": "parent_recipe_state"}
+            )
 
-        for sh in state_holders:
+        if len(refs) > 0:
+            tm.te_fp8_states.refs[mode] = refs
+
+    @staticmethod
+    def resolve_values(mode: str, tm: ThunderModule) -> dict:
+        """Load and serialize FP8 values using previously-registered references.
+
+        Args:
+            mode: "forward" or "backward" indicating which refs to resolve.
+            tm: ThunderModule whose accessor holds the recorded references.
+        Returns:
+            A dictionary with resolved entries (e.g., {"delayed": [...]} or
+            {"mxfp8": [...]}); returns empty dict if nothing is recorded.
+        """
+
+        def _get_attr(obj, attr_path: str):
+            cur = obj
+            for part in attr_path.split("."):
+                cur = getattr(cur, part)
+            return cur
+
+        def _tensor_head(t, max_numel: int = 8192):
+            if not isinstance(t, torch.Tensor):
+                return None
+            n = min(t.numel(), max_numel)
+            return t.detach().float().cpu().view(-1)[:n].tolist()
+
+        # Pull last registered refs for this mode
+        refs = tm.te_fp8_states.refs[mode]
+        if refs is None:
+            return {}
+
+        out = defaultdict(list)
+
+        # Classify states now that recipes and states have materialized
+        # MXFP8/block scaling: will be collected via quantizers section below
+        for ref in refs.get("state_holder", []):
+            sh = ref["holder"]
             recipe = getattr(sh, "parent_recipe", None)
             state = getattr(sh, "state", None)
-            if recipe is None:
+            if recipe is None or state is None:
                 continue
-
-            # Determine recipe family
-            is_delayed = bool(recipe.delayed())
-            is_mxfp8_or_block = bool(recipe.mxfp8())
-
-            # DelayedScaling: values live on state.scale and state.amax_history
-            if is_delayed and state is not None:
-                scale_vals = _to_list_limited(getattr(state, "scale", None))
-                amax_hist = getattr(state, "amax_history", None)
-                amax_vals = None
-                if isinstance(amax_hist, torch.Tensor) and amax_hist.numel() > 0:
-                    amax_slice = amax_hist[-1] if amax_hist.dim() >= 1 else amax_hist
-                    amax_vals = _to_list_limited(amax_slice)
-                delayed_entries.append(
+            # Delayed scaling: extract from state tensors
+            if getattr(recipe, "delayed", lambda: False)():
+                scale = _get_attr(sh, ref["scale_attr"])  # state.scale
+                amax_hist = _get_attr(sh, ref["amax_attr"])  # state.amax_history
+                scale_vals = _tensor_head(scale)
+                amax_vals = _tensor_head(
+                    amax_hist[-1] if isinstance(amax_hist, torch.Tensor) and amax_hist.numel() > 0 else amax_hist
+                )
+                out["delayed"].append(
                     {
-                        "scale_shape": getattr(getattr(state, "scale", None), "shape", None),
+                        "scale_shape": getattr(scale, "shape", None),
                         "scale": scale_vals,
-                        "amax_shape": getattr(getattr(state, "amax_history", None), "shape", None),
+                        "amax_shape": getattr(amax_hist, "shape", None),
                         "amax": amax_vals,
                     }
                 )
 
-            # MXFP8/Float8 block scaling: values live on quantizers
-            elif is_mxfp8_or_block and state is not None:
-                qs = state_to_quantizers.get(id(state), [])
-                for q in qs:
-                    rowwise_usage = getattr(q, "rowwise_usage", None)
-                    columnwise_usage = getattr(q, "columnwise_usage", None)
-                    block_entries.append(
-                        {
-                            "cls": q.__class__.__name__,
-                            "rowwise_usage": rowwise_usage,
-                            "columnwise_usage": columnwise_usage,
-                            "dtype": str(getattr(q, "dtype", None)),
-                        }
-                    )
+        # MXFP8 via quantizers
+        # First, build mapping from recipe state id to quantizers
+        state_to_qs = {}
+        for ref in refs.get("quantizer_holder", []):
+            qh = ref["holder"]
+            prs = getattr(qh, "parent_recipe_state", None)
+            qs = getattr(qh, "quantizers", None)
+            if prs is not None and qs:
+                state_to_qs.setdefault(id(prs), []).extend(qs)
 
-        entry = defaultdict(list)
-        if delayed_entries:
-            entry["delayed"] = delayed_entries
-        if block_entries:
-            entry["mxfp8_or_block"] = block_entries
+        # For MXFP8/block scaling, gather quantizers linked to each materialized state
+        for ref in refs.get("state_holder", []):
+            sh = ref["holder"]
+            recipe = getattr(sh, "parent_recipe", None)
+            state = getattr(sh, "state", None)
+            if recipe is None or state is None:
+                continue
+            if getattr(recipe, "mxfp8", lambda: False)():
+                for q in state_to_qs.get(id(state), []):
+                    entry = {
+                        "cls": q.__class__.__name__,
+                        "rowwise_usage": getattr(q, "rowwise_usage", None),
+                        "columnwise_usage": getattr(q, "columnwise_usage", None),
+                        "dtype": str(getattr(q, "dtype", None)),
+                    }
+                    if entry not in out["mxfp8"]:
+                        out["mxfp8"].append(entry)
 
-        collected = getattr(tm, "te_fp8_stats", None)
-        if collected is None:
-            tm.te_fp8_stats = {"forward": [], "backward": []}
-        if entry["delayed"] or entry["mxfp8_or_block"]:
-            tm.te_fp8_stats[te_mode].append(entry)
+        return out
 
     def transform_trace_post_optimization(self, computation_trace, **kwargs):
         """
@@ -635,8 +677,13 @@ def _te_activation_checkpointing_transform(joint_trace: TraceCtx) -> TraceCtx:
     return new_trace
 
 
-# Register TE export callback with the singleton export transform
+# Register TE reference and resolve callbacks with the singleton export transform
 try:
-    _ExportSETransform.register_export_callback("transformer_engine", TransformerEngineTransform.export_state)
+    _ExportSETransform.register_ref_callback(
+        "te_fp8_states",
+        TransformerEngineTransform.register_refs,
+        TransformerEngineTransform.resolve_values,
+        TransformerEngineTransform.TEFP8Stats,
+    )
 except Exception:
     pass

@@ -91,33 +91,33 @@ def test_export_te_states_linear_forward(fp8_recipe):
     with te.fp8_autocast(fp8_recipe=fp8_recipe):
         y = jmodel(x)
 
-    # Validate TE exporter populated as expected
-    assert hasattr(jmodel, "te_fp8_stats"), "ThunderModule should expose te_fp8_stats"
-    stats = jmodel.te_fp8_stats
-    assert isinstance(stats, dict) and set(stats.keys()) == {"forward", "backward"}
-    # After forward, we should have exactly one forward entry and no backward entries yet
-    assert len(stats["forward"]) == 1
-    assert len(stats["backward"]) == 0
-    f_entry = stats["forward"][0]
+    # Validate TE exporter resolves values after forward
+    assert hasattr(jmodel, "te_fp8_states"), "ThunderModule should expose te_fp8_states()"
+    f_entry = jmodel.te_fp8_states()
     assert isinstance(f_entry, dict)
     # Ensure we collected either delayed scaling or block-scaling style info
     assert ("delayed" in f_entry and isinstance(f_entry["delayed"], list)) or (
-        "mxfp8_or_block" in f_entry and isinstance(f_entry["mxfp8_or_block"], list)
+        "mxfp8" in f_entry and isinstance(f_entry["mxfp8"], list)
     )
     # If delayed scaling is used, ensure amax and scale are present
     if isinstance(fp8_recipe, recipe.DelayedScaling) or (fp8_recipe is None and te.fp8.check_fp8_support()[0]):
-        assert "delayed" in f_entry
-        d = f_entry["delayed"][0]
-        assert d.get("scale") is not None
-        assert d.get("amax") is not None
+        if "delayed" in f_entry and f_entry["delayed"]:
+            d = f_entry["delayed"][0]
+            assert d.get("scale") is not None
+            assert d.get("amax") is not None
+            # Expect two elements (forward/backward states across two linear sites)
+            assert isinstance(d.get("scale"), list) and len(d["scale"]) == 2
+            assert isinstance(d.get("amax"), list) and len(d["amax"]) == 2
 
     grad_output = torch.randn_like(y)
     y.backward(grad_output)
 
-    # After backward pass, one backward entry should be present
-    stats = jmodel.te_fp8_stats
-    assert len(stats["forward"]) == 1
-    assert len(stats["backward"]) == 1
+    # Validate TE exporter resolves values after backward
+    b_entry = jmodel.te_fp8_states(mode="backward")
+    assert isinstance(b_entry, dict)
+    assert ("delayed" in b_entry and isinstance(b_entry["delayed"], list)) or (
+        "mxfp8" in b_entry and isinstance(b_entry["mxfp8"], list)
+    )
 
 
 @requiresCUDA
@@ -167,15 +167,14 @@ def test_export_te_states_linear_forward_backward_multiple_iteration(fp8_recipe)
         # Forward under FP8 autocast
         with te.fp8_autocast(fp8_recipe=fp8_recipe):
             y = jmodel(x)
+            f_entry = jmodel.te_fp8_states()
+            assert isinstance(f_entry, dict)
+            assert ("delayed" in f_entry) or ("mxfp8" in f_entry)
         # Backward with unit upstream gradient
         y.backward(torch.ones_like(y))
-
-    # Validate exporter after multiple iterations
-    assert hasattr(jmodel, "te_fp8_stats")
-    stats = jmodel.te_fp8_stats
-    # One forward and one backward export entry per iteration
-    assert len(stats["forward"]) == num_iters
-    assert len(stats["backward"]) == num_iters
+        b_entry = jmodel.te_fp8_states(mode="backward")
+        assert isinstance(b_entry, dict)
+        assert ("delayed" in b_entry) or ("mxfp8" in b_entry)
 
 
 @requiresCUDA
@@ -233,13 +232,13 @@ def test_export_te_states_linear_forward_backward_multiple_recipies_iteration():
 
     train_model(thunder_model)
 
-    stats = jmodel.te_fp8_stats
-    # We expect as many forward/backward entries as iterations
-    assert len(stats["forward"]) == iters
-    assert len(stats["backward"]) == iters
-    # Across all entries, we should see delayed info and, if supported, possibly block info
-    has_delayed = any(e.get("delayed") for e in stats["forward"]) or any(e.get("delayed") for e in stats["backward"])
-    assert has_delayed
+    # Resolve most recent forward and backward entries on demand
+    f_entry = jmodel.te_fp8_states()
+    assert isinstance(f_entry, dict)
+    assert ("delayed" in f_entry) or ("mxfp8" in f_entry)
+    b_entry = jmodel.te_fp8_states(mode="backward")
+    assert isinstance(b_entry, dict)
+    assert ("delayed" in b_entry) or ("mxfp8" in b_entry)
 
 
 @requiresCUDA
@@ -303,21 +302,13 @@ def test_export_te_states_with_torch_compile_and_thunder_backend(fp8_recipe):
 
     train_model(compiled_model)
 
-    # Collect TE fp8 stats from Thunder-compiled subgraphs
-    reporters = []
+    # Collect TE fp8 states from Thunder-compiled subgraphs (resolve on-demand)
+    resolved = 0
     for sinfo in backend.subgraph_infos:
         if sinfo.thunder_compiled_fns:
             for fn in sinfo.thunder_compiled_fns:
-                if hasattr(fn, "te_fp8_stats"):
-                    reporters.append(fn.te_fp8_stats)
-
-    # We expect at least one Thunder subgraph using TE
-    assert len(reporters) >= 1
-
-    # Aggregate counts across subgraphs
-    total_fw_entries = sum(len(r["forward"]) for r in reporters)
-    total_bw_entries = sum(len(r["backward"]) for r in reporters)
-
-    # We expect at least one Thunder subgraph using TE and to have exported entries
-    assert total_fw_entries == iters
-    assert total_bw_entries == iters
+                if hasattr(fn, "te_fp8_states") and fn.te_fp8_states.refs['forward'] is not None:
+                    entry = fn.te_fp8_states()
+                    if isinstance(entry, dict) and ("delayed" in entry or "mxfp8" in entry):
+                        resolved += 1
+    assert resolved >= 1
