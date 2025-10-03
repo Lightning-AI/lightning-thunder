@@ -1633,7 +1633,8 @@ def test_spliter_bwd():
     val = torch.randn(nz, dtype=torch.bfloat16, requires_grad=True)
 
     cfn = thunderfx(fn)
-    cfn(x, idx, val)
+    with pytest.warns(match="Dynamic output shape operator"):
+        cfn(x, idx, val)
     reason = cfn._backend.subgraph_infos[0].split_reasons
     assert len(reason) == 1
     assert "Failed while running meta for node with name: setitem" in reason[0].info

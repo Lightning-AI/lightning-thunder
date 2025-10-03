@@ -1,4 +1,5 @@
 from __future__ import annotations
+import operator
 from typing import TYPE_CHECKING
 import copy
 from functools import partial
@@ -96,11 +97,12 @@ def _splitter(
     partition_cnt = 0
     supported_partitions: set[int] = set()
     split_reasons: list[SplitReason] = []
+    unsupported_collection_users: set[torch.fx.Node] = set()
 
     nodes_in_unsupported_ctx_regions = get_nodes_in_unsupported_ctx_regions(gm)
 
     def callback(node) -> int:
-        nonlocal prev_value, partition_cnt, split_reasons, supported_partitions
+        nonlocal prev_value, partition_cnt, split_reasons, supported_partitions, unsupported_collection_users
 
         assert node.op not in (
             "placeholder",
@@ -118,10 +120,18 @@ def _splitter(
                 info=f"node with name: {node.name} and target: {node.target} is not supported probably because it is in unsupported context.",
             )
             split_reasons.append(split_reason)
+        elif node in unsupported_collection_users:
+            is_thunder_supported = False
+            split_reason = None
         else:
             is_thunder_supported, split_reason = is_node_supported_by_thunder(node)
             if split_reason is not None:
                 split_reasons.append(split_reason)
+
+        if not is_thunder_supported and baseutils.is_collection(node.meta.get("example_value", None)):
+            for user in node.users:
+                assert user.target is operator.getitem
+                unsupported_collection_users.add(user)
 
         if prev_value == is_thunder_supported:  # We are in the same region.
             return partition_cnt
