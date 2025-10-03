@@ -2961,27 +2961,27 @@ def test_with(jit):
     jitting = False
 
     class CtxMgr:
-        def __init__(self, l):
+        def __init__(self, log):
             assert is_jitting_with_raise() == jitting
-            self.l = l
+            self.log = log
 
         def __enter__(self):
             assert is_jitting_with_raise() == jitting
-            self.l.append("enter")
+            self.log.append("enter")
             return self
 
         def __exit__(self, exc_type, exc_val, exc_tb):
             assert is_jitting_with_raise() == jitting
-            self.l.append((str(exc_type), str(exc_val)))
+            self.log.append((str(exc_type), str(exc_val)))
 
     def fn(should_raise: bool = False):
-        l = []
-        with CtxMgr(l) as ctx:
+        log = []
+        with CtxMgr(log) as ctx:
             assert is_jitting_with_raise() == jitting
-            ctx.l.append("within")
+            ctx.log.append("within")
             if should_raise:
-                raise RuntimeError("test", l)
-            return l
+                raise RuntimeError("test", log)
+            return log
 
     jitting = False
     res = fn()
