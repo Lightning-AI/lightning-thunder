@@ -3334,8 +3334,8 @@ def test_is_jitting_opaque(jit):
 
 
 def test_exception_in_list_init(jit):
-    def foo(l):
-        for i in l:
+    def foo(arr):
+        for i in arr:
             yield i
 
     def bar():
