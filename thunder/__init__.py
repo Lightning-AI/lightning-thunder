@@ -55,7 +55,6 @@ from thunder.core.transform_common import (
     unwrap_return_value,
     wrap_return_value_together_with_arguments,
 )
-from thunder.dev_utils.export_stateful_ex_transform import ExportStatefulExecutorsTransform
 from thunder.core.update_aliases import insert_alias_updates
 from thunder.executors.torch_autograd import connect_to_autograd
 import thunder.extend as extend
