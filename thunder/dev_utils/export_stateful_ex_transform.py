@@ -1,6 +1,5 @@
 import weakref
 from collections.abc import Callable
-from typing import List, Tuple
 
 from thunder.core.transform_common import (
     Transform,
@@ -60,7 +59,7 @@ class ExportStatefulExecutorsTransform(Transform):
     """
 
     _register_callbacks: dict[str, Callable] = {}
-    _callback_attributes: List[Tuple[str, type[ExportStatefulExecutorsStats], Callable]] = []
+    _callback_attributes: list[tuple[str, type[ExportStatefulExecutorsStats], Callable]] = []
 
     _instance = None
 

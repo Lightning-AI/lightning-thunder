@@ -307,7 +307,7 @@ def test_export_te_states_with_torch_compile_and_thunder_backend(fp8_recipe):
     for sinfo in backend.subgraph_infos:
         if sinfo.thunder_compiled_fns:
             for fn in sinfo.thunder_compiled_fns:
-                if hasattr(fn, "te_fp8_states") and fn.te_fp8_states.refs['forward'] is not None:
+                if hasattr(fn, "te_fp8_states") and fn.te_fp8_states.refs["forward"] is not None:
                     entry = fn.te_fp8_states()
                     if isinstance(entry, dict) and ("delayed" in entry or "mxfp8" in entry):
                         resolved += 1

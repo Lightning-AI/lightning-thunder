@@ -7,7 +7,6 @@ from collections.abc import Callable
 import torch
 import torch.distributed as torch_dist
 
-import thunder
 from thunder.core.module import ThunderModule
 from thunder.core.prims import linear as linear_prim
 from thunder.core.prims import get_grad, put_grad
