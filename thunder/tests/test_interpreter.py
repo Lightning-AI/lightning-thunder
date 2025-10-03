@@ -3061,11 +3061,11 @@ def test_async_for(jit):
             return i * 2
 
         assert is_jitting_with_raise() == jitting
-        l = [it2(i) async for i in async_gen()]
+        log = [it2(i) async for i in async_gen()]
         async for i in async_gen():
             assert is_jitting_with_raise() == jitting
-            l.append(i * 3)
-        return l
+            log.append(i * 3)
+        return log
 
     import asyncio
 
