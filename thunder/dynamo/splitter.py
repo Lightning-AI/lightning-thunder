@@ -238,6 +238,9 @@ def _splitter(
                     # This exception is meant to be handled by Dynamo, which is responsible for graph break
                     jit_fn = fallback_torch_compile(f"Dynamic output shape operator encountered: {e}.")
 
+            # This is for ease of debugging. We add graph attribute so GraphModule.print_readable will print it
+            jit_fn.graph = graph_module.graph
+
             # Update the node name from "submod_*" to "inductor_*" for more user-friendly names
             update_node_and_submodule(split_gm, node, node.name.replace("submod", "inductor"), jit_fn)
             submodule_to_compiled_fns[getattr(original_split_gm, node_name)] = CompiledFunction(
