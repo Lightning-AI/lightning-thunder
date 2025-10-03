@@ -3487,23 +3487,23 @@ def test_class_setattr():
 
 def test_setitem_setattr():
     class A:
-        def __init__(self, l):
-            super().__setattr__("l", l)  # avoid hitting our setattr
+        def __init__(self, arr):
+            super().__setattr__("arr", arr)  # avoid hitting our setattr
 
         def __setattr__(self, name, val):
-            self.l.append((name, val))
+            self.arr.append((name, val))
             return (name, val)  # unexpected
 
         def __setitem__(self, idx, val):
-            self.l.append((idx, val))
+            self.arr.append((idx, val))
             return (idx, val)  # unexpected
 
     def foo():
-        l = []
-        a = A(l)
+        arr = []
+        a = A(arr)
         a.attr = 3
         a[1] = 2
-        return l
+        return arr
 
     jfoo = thunder.jit(foo)
     res = jfoo()
