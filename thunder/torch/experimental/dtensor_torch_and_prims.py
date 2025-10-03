@@ -6,6 +6,7 @@ from thunder.torch import torchsymbol, TensorLike, register_function
 import thunder.torch as ltorch
 from thunder.core.pytree import tree_flatten
 from thunder import clang
+from thunder.clang.utils import create_maybe_convert_to_dtype_with_prim, _elementwise_unary_wrapper
 from thunder.torch.experimental.dtensor_utils import run_with_fake_tensor
 from thunder.torch.experimental.dtensor_proxy import DTensorProxy, create_dtensor_proxy_from_proxies
 from thunder.torch.langctx import register_method
@@ -35,7 +36,10 @@ class DTensorPrimIDs(Enum):
     RESHAPE = auto()
     CONVERT_ELEMENT_TYPE = auto()
     BROADCAST_IN_DIM = auto()
+    EXP = auto()
     LINEAR = auto()
+    NEG = auto()
+    RECIPROCAL = auto()
 
 
 dtensor_torchsymbol = partial(torchsymbol, allow_tensor_subclass_proxy=True)
@@ -242,6 +246,10 @@ dtensor_broadcast_in_dim_prim_impl = pytorchex.register_operator(
 pytorchex.register_implementation(dtensor_broadcast_in_dim_prim, dtensor_broadcast_in_dim_prim_impl)
 
 
+maybe_convert_to_dtype = create_maybe_convert_to_dtype_with_prim(dtensor_convert_element_type_prim)
+_elementwise_unary_wrapper = partial(_elementwise_unary_wrapper, dtype_conversion_fn=maybe_convert_to_dtype)
+
+
 def dtensor_linear_meta(a, w, bias):
     output = run_with_fake_tensor(torch.nn.functional.linear, a, w, bias)
     local_tensor_proxy = TensorProxy(like=a.local_tensor)
@@ -268,7 +276,97 @@ def dtensor_linear(a: TensorLike, w: TensorLike, bias: None | TensorLike = None)
     return dtensor_linear_prim(a, w, bias)
 
 
+def dtensor_exp_meta(a):
+    output = run_with_fake_tensor(torch.exp, a)
+    local_tensor_proxy = TensorProxy(like=a.local_tensor)
+    spec = output._spec
+    spec_proxy = AnyProxy(spec, history=a.history)
+    return create_dtensor_proxy_from_proxies(local_tensor_proxy, spec_proxy, False)
+
+
+dtensor_exp_prim = make_prim(DTensorPrimIDs.EXP, "dtensor_exp_prim", meta=dtensor_exp_meta)
+
+dtensor_exp_prim_impl = pytorchex.register_operator("dtensor_exp_prim", like=dtensor_exp_prim, fn=torch.exp)
+
+pytorchex.register_implementation(dtensor_exp_prim, dtensor_exp_prim_impl)
+
+
+def _dtensor_exp_prim_grad(a: TensorLike) -> TensorLike:
+    fwd = dtensor_exp_prim(a)
+
+    g = get_grad(fwd)
+    a_grad = g * fwd
+    put_grad(a, a_grad)
+
+    return fwd
+
+
+register_grad(dtensor_exp_prim, _dtensor_exp_prim_grad)
+
+
+@dtensor_torchsymbol(torch.exp, id="dtensor.torch.exp")
+def dtensor_exp(a: TensorLike) -> TensorLike:
+    return _elementwise_unary_wrapper(
+        a,
+        prim=dtensor_exp_prim,
+        type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT,
+    )
+
+
+def dtensor_neg_meta(a):
+    output = run_with_fake_tensor(torch.neg, a)
+    local_tensor_proxy = TensorProxy(like=a.local_tensor)
+    spec = output._spec
+    spec_proxy = AnyProxy(spec, history=a.history)
+    return create_dtensor_proxy_from_proxies(local_tensor_proxy, spec_proxy, False)
+
+
+dtensor_neg_prim = make_prim(DTensorPrimIDs.NEG, "dtensor_neg_prim", meta=dtensor_neg_meta)
+
+dtensor_neg_prim_impl = pytorchex.register_operator("dtensor_neg_prim", like=dtensor_neg_prim, fn=torch.neg)
+
+pytorchex.register_implementation(dtensor_neg_prim, dtensor_neg_prim_impl)
+
+
+@dtensor_torchsymbol(torch.neg, id="dtensor.torch.neg")
+def dtensor_neg(a: TensorLike) -> TensorLike:
+    return _elementwise_unary_wrapper(
+        a,
+        prim=dtensor_neg_prim,
+        type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT,
+    )
+
+
+def dtensor_reciprocal_meta(a):
+    output = run_with_fake_tensor(torch.reciprocal, a)
+    local_tensor_proxy = TensorProxy(like=a.local_tensor)
+    spec = output._spec
+    spec_proxy = AnyProxy(spec, history=a.history)
+    return create_dtensor_proxy_from_proxies(local_tensor_proxy, spec_proxy, False)
+
+
+dtensor_reciprocal_prim = make_prim(DTensorPrimIDs.RECIPROCAL, "dtensor_reciprocal_prim", meta=dtensor_reciprocal_meta)
+
+dtensor_reciprocal_prim_impl = pytorchex.register_operator(
+    "dtensor_reciprocal_prim", like=dtensor_reciprocal_prim, fn=torch.reciprocal
+)
+
+pytorchex.register_implementation(dtensor_reciprocal_prim, dtensor_reciprocal_prim_impl)
+
+
+@dtensor_torchsymbol(torch.reciprocal, id="dtensor.torch.reciprocal")
+def dtensor_reciprocal(a: TensorLike) -> TensorLike:
+    return _elementwise_unary_wrapper(
+        a,
+        prim=dtensor_reciprocal_prim,
+        type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT,
+    )
+
+
 def register_dtensor_torch_and_prims():
     register_function_for_dtensor(torch.mul, ltorch.mul, dtensor_mul, is_method=True)
     register_function_for_dtensor(torch.reshape, ltorch.reshape, dtensor_reshape, is_method=True)
     register_function_for_dtensor(torch.nn.functional.linear, ltorch.linear, dtensor_linear, is_method=False)
+    register_function_for_dtensor(torch.exp, ltorch.exp, dtensor_exp, is_method=True)
+    register_function_for_dtensor(torch.neg, ltorch.neg, dtensor_neg, is_method=True)
+    register_function_for_dtensor(torch.reciprocal, ltorch.reciprocal, dtensor_reciprocal, is_method=True)
