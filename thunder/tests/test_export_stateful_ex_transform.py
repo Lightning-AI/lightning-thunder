@@ -235,9 +235,6 @@ def test_export_te_states_linear_forward_backward_multiple_recipies_iteration():
     train_model(thunder_model)
 
     stats = jmodel.te_fp8_stats
-    from pprint import pprint
-
-    pprint(stats)
     # We expect as many forward/backward entries as iterations
     assert len(stats["forward"]) == iters
     assert len(stats["backward"]) == iters
