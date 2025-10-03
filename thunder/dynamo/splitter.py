@@ -19,6 +19,7 @@ from thunder.dynamo.utils import (
     checkpoint_converter,
     _get_example_inputs_from_placeholder,
     _ThunderSplitGraphModule,
+    translate_dtensor_ops,
 )
 
 if TYPE_CHECKING:
@@ -98,6 +99,7 @@ def _splitter(
     split_reasons: list[SplitReason] = []
 
     nodes_in_unsupported_ctx_regions = get_nodes_in_unsupported_ctx_regions(gm)
+    translate_dtensor_ops(gm)
 
     def callback(node) -> int:
         nonlocal prev_value, partition_cnt, split_reasons, supported_partitions
@@ -119,9 +121,14 @@ def _splitter(
             )
             split_reasons.append(split_reason)
         else:
-            is_thunder_supported, split_reason = is_node_supported_by_thunder(node)
-            if split_reason is not None:
-                split_reasons.append(split_reason)
+            # To support dynamo generated prims for `parallelize_module`.
+            # `translate_dtensor_ops` will mark the target as thunder supported if it is a DTensor operation.
+            if hasattr(node.target, "thunder_supported") and node.target.thunder_supported:
+                is_thunder_supported, split_reason = True, None
+            else:
+                is_thunder_supported, split_reason = is_node_supported_by_thunder(node)
+                if split_reason is not None:
+                    split_reasons.append(split_reason)
 
         if prev_value == is_thunder_supported:  # We are in the same region.
             return partition_cnt

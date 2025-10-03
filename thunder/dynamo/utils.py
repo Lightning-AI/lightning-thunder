@@ -1050,3 +1050,43 @@ def default_optimizer(gm: torch.fx.GraphModule, stats: ProfileStats) -> Callable
         err_msg = ", ".join([f"{x.name} raised exception: {x.compiled_fn}" for x in sorted_compiled_gm_to_measurement])
         raise RuntimeError(f"No compiler was able to compile the graph module, {err_msg}")
     return sorted_compiled_gm_to_measurement[0].compiled_fn
+
+
+def translate_dtensor_ops(gm: torch.fx.GraphModule):
+    for node in gm.graph.nodes:
+        from thunder.torch.experimental.dtensor_torch_and_prims import (
+            dtensor_from_local_prim,
+            dtensor_redistribute_prim,
+            dtensor_to_local_prim,
+        )
+
+        try:
+            closure_vars = inspect.getclosurevars(node.target)
+
+            if "from_local" in node.target.__name__:
+                mesh = closure_vars.nonlocals["args_as_value"][0]
+                placements = closure_vars.nonlocals["args_as_value"][1]
+
+                def dtensor_from_local_prim_wrapper(x, mesh=mesh, placements=placements):
+                    return dtensor_from_local_prim(x, mesh, placements)
+
+                dtensor_from_local_prim_wrapper.thunder_supported = True
+                node.target = dtensor_from_local_prim_wrapper
+            if "redistribute" in node.target.__name__:
+                kwargs = closure_vars.nonlocals["kwargs_as_value"]
+                placements = kwargs["placements"]
+
+                def dtensor_redistribute_prim_wrapper(x, placements=placements):
+                    return dtensor_redistribute_prim(x, placements=placements)
+
+                dtensor_redistribute_prim_wrapper.thunder_supported = True
+                node.target = dtensor_redistribute_prim_wrapper
+            if "to_local" in node.target.__name__:
+
+                def dtensor_to_local_prim_wrapper(x):
+                    return dtensor_to_local_prim(x)
+
+                dtensor_to_local_prim_wrapper.thunder_supported = True
+                node.target = dtensor_to_local_prim_wrapper
+        except Exception:
+            pass

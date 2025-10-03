@@ -69,6 +69,41 @@ class DTensorProxy(TensorProxy):
     def device_mesh(self):
         return self.spec._o.device_mesh
 
+    @staticmethod
+    def from_local(
+        x,
+        mesh,
+        placements,
+        *,
+        run_check: bool = False,
+        shape: torch.Size | None = None,
+        stride: tuple[int, ...] | None = None,
+    ):
+        import thunder.torch.experimental.dtensor_torch_and_prims as dtensor_torch_and_prims
+
+        res = dtensor_torch_and_prims.dtensor_from_local_prim(
+            x, mesh, placements, run_check=run_check, shape=shape, stride=stride
+        )
+        return res
+
+    def redistribute(
+        self,
+        device_mesh: "Optional[DeviceMesh]" = None,
+        placements: "Optional[Sequence[Placement]]" = None,
+        *,
+        async_op: bool = False,
+    ) -> "DTensor":
+        import thunder.torch.experimental.dtensor_torch_and_prims as dtensor_torch_and_prims
+
+        res = dtensor_torch_and_prims.dtensor_redistribute_prim(self, device_mesh, placements, async_op=async_op)
+        return res
+
+    def to_local(self, *, grad_placements: "Optional[Sequence[Placement]]" = None):
+        import thunder.torch.experimental.dtensor_torch_and_prims as dtensor_torch_and_prims
+
+        res = dtensor_torch_and_prims.dtensor_to_local_prim(self, grad_placements=grad_placements)
+        return res
+
     def replace(self, **changes):
         r"""Return a copy of the TensorProxy object with new values for the specified fields as given to the constructor as arguments.
         Valid keyword arguments are ``name``, ``history``, ``shape``, ``dtype``, ``device``, ``requires_grad``, ``distparallel_type``,  ``thunder_fsdp_padding_size``.
