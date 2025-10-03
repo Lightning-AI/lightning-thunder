@@ -1809,6 +1809,7 @@ def _add(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefiniti
 
 
 register_supported(PrimIDs.ADD, _add, _elementwise_binary_check)
+register_dtensor_supported(DTensorPrimIDs.ADD, _add, _elementwise_binary_check)
 
 
 def atan2(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
