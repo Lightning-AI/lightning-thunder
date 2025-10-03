@@ -15,7 +15,6 @@ from thunder.dynamo import ThunderCompiler
 # Make TE optional so this file can host tests for other executors too
 TE_AVAILABLE = False
 try:
-    import transformer_engine as _te_mod
     import transformer_engine.pytorch as te
     from transformer_engine.common import recipe
     from thunder.executors.transformer_engineex import transformer_engine_ex, TransformerEngineTransform
