@@ -3516,7 +3516,7 @@ def test_freeing_of_tensors():
     # this guards against ref cycles preventing reeing of tensors
     # see https://github.com/Lightning-AI/lightning-thunder/issues/886
 
-    l = []
+    arr = []
 
     def bar(x):
         return x + 1
@@ -3525,17 +3525,17 @@ def test_freeing_of_tensors():
 
     def foo(i):
         def on_finalize():
-            l.append(f"free {i}")
+            arr.append(f"free {i}")
 
         c = torch.randn(4, 4)
         weakref.finalize(c, on_finalize)
         return jbar(c)
 
     for i in range(3):
-        l.append(f"run {i}")
+        arr.append(f"run {i}")
         foo(i)
 
-    assert l == ["run 0", "free 0", "run 1", "free 1", "run 2", "free 2"]
+    assert arr == ["run 0", "free 0", "run 1", "free 1", "run 2", "free 2"]
 
 
 def test_tuple_mul():
