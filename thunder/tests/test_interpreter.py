@@ -3004,27 +3004,27 @@ def test_async_with(jit):
     jitting = False
 
     class ACtxMgr:
-        def __init__(self, l):
+        def __init__(self, log):
             assert is_jitting_with_raise() == jitting
-            self.l = l
+            self.log = log
 
         async def __aenter__(self):
             assert is_jitting_with_raise() == jitting
-            self.l.append("enter")
+            self.log.append("enter")
             return self
 
         async def __aexit__(self, exc_type, exc_val, exc_tb):
             assert is_jitting_with_raise() == jitting
-            self.l.append((str(exc_type), str(exc_val)))
+            self.log.append((str(exc_type), str(exc_val)))
 
     async def fn(should_raise: bool = False):
-        l = []
-        async with ACtxMgr(l) as ctx:
+        log = []
+        async with ACtxMgr(log) as ctx:
             assert is_jitting_with_raise() == jitting
-            ctx.l.append("within")
+            ctx.log.append("within")
             if should_raise:
-                raise RuntimeError("test", l)
-            return l
+                raise RuntimeError("test", log)
+            return log
 
     jfn = jit(fn)
 
