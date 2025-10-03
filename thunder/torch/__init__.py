@@ -1400,8 +1400,8 @@ def squeeze(a: TensorLike, /, dim: None | int | Sequence[int] = None) -> TensorL
     dims = dim
     if dim is None:
         dims = []
-        for idx, l in enumerate(a.shape):
-            if l == 1:
+        for idx, length in enumerate(a.shape):
+            if length == 1:
                 dims.append(idx)
     elif isinstance(dim, (int, NumberProxy)):
         dims = (dim,)
