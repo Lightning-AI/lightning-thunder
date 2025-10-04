@@ -4116,9 +4116,9 @@ def _matrix_chain_order(a: Sequence[TensorLike], /) -> TensorLike:
     p.append(a[n - 1].size(1))
     m = torch.zeros(n, n, dtype=torch.int64)
     s = torch.zeros(n, n, dtype=torch.int64)
-    for l in range(1, n):
-        for i in range(n - l):
-            j = i + l
+    for chain_len in range(1, n):
+        for i in range(n - chain_len):
+            j = i + chain_len
             m[i][j] = torch.iinfo(torch.int64).max
             for k in range(i, j):
                 q = m[i][k] + m[k + 1][j] + p[i] * p[k + 1] * p[j + 1]
