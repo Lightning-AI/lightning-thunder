@@ -3244,7 +3244,9 @@ def test_module_hooks(jit):
     try:
         handles.append(torch.nn.modules.module.register_module_forward_hook(cook_hook(log, "global forward")))
         handles.append(torch.nn.modules.module.register_module_forward_pre_hook(cook_hook(log, "global forward pre")))
-        handles.append(torch.nn.modules.module.register_module_full_backward_hook(cook_hook(log, "global full backward")))
+        handles.append(
+            torch.nn.modules.module.register_module_full_backward_hook(cook_hook(log, "global full backward"))
+        )
         handles.append(
             torch.nn.modules.module.register_module_full_backward_pre_hook(cook_hook(log, "global full backward pre"))
         )
