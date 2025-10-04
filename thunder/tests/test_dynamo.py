@@ -1765,20 +1765,15 @@ def test_thunderfx_node_with_no_example_value():
         return z + 2
 
     x = torch.tensor([1, 2, 3, 4, 5])
-    if LooseVersion(torch.__version__) < "2.10":
+    # Without this patch, tolist() would cause graph break. See https://github.com/pytorch/pytorch/pull/163807
+    with patch("torch._dynamo.config.capture_scalar_outputs", True):
         with pytest.warns(match="Example values for arguments are not available"):
             actual = thunderfx(test_fn)(x)
-    else:
-        actual = thunderfx(test_fn)(x)
     expected = test_fn(x)
     torch.testing.assert_close(actual, expected)
 
 
-@pytest.mark.xfail(
-    condition=LooseVersion(torch.__version__) < "2.10",
-    reason="Unsupported: Dynamo can't retrace autocast enter/exit",
-    raises=AssertionError,
-)
+@pytest.mark.xfail(reason="Unsupported: Dynamo can't retrace autocast enter/exit", raises=AssertionError)
 def test_thunderfx_no_example_value_and_autocast():
     def fn(x):
         with torch.autocast("cpu"):
@@ -1787,7 +1782,10 @@ def test_thunderfx_no_example_value_and_autocast():
             return z + 2
 
     x = torch.tensor([1, 2, 3, 4, 5])
-    actual = thunderfx(fn)(x)
+    # Without this patch, tolist() would cause graph break. See https://github.com/pytorch/pytorch/pull/163807
+    with patch("torch._dynamo.config.capture_scalar_outputs", True):
+        with pytest.warns(match="Example values for arguments are not available"):
+            actual = thunderfx(fn)(x)
     expected = fn(x)
     torch.testing.assert_close(actual, expected)
 
