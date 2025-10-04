@@ -1,11 +1,15 @@
 from __future__ import annotations
+import operator
 from typing import TYPE_CHECKING
 import copy
 from functools import partial
+import warnings
 
 import torch
+from torch._subclasses.fake_tensor import DynamicOutputShapeException
 from torch.fx.passes.split_module import split_module
 
+from thunder.core import baseutils
 from thunder.dynamo.utils import (
     SubgraphInfo,
     CompiledFunction,
@@ -17,6 +21,7 @@ from thunder.dynamo.utils import (
     update_node_and_submodule,
     recompile_graph,
     checkpoint_converter,
+    make_fake_arguments,
     _get_example_inputs_from_placeholder,
     _ThunderSplitGraphModule,
 )
@@ -96,11 +101,12 @@ def _splitter(
     partition_cnt = 0
     supported_partitions: set[int] = set()
     split_reasons: list[SplitReason] = []
+    unsupported_collection_users: set[torch.fx.Node] = set()
 
     nodes_in_unsupported_ctx_regions = get_nodes_in_unsupported_ctx_regions(gm)
 
     def callback(node) -> int:
-        nonlocal prev_value, partition_cnt, split_reasons, supported_partitions
+        nonlocal prev_value, partition_cnt, split_reasons, supported_partitions, unsupported_collection_users
 
         assert node.op not in (
             "placeholder",
@@ -118,10 +124,18 @@ def _splitter(
                 info=f"node with name: {node.name} and target: {node.target} is not supported probably because it is in unsupported context.",
             )
             split_reasons.append(split_reason)
+        elif node in unsupported_collection_users:
+            is_thunder_supported = False
+            split_reason = None
         else:
             is_thunder_supported, split_reason = is_node_supported_by_thunder(node)
             if split_reason is not None:
                 split_reasons.append(split_reason)
+
+        if not is_thunder_supported and baseutils.is_collection(node.meta.get("example_value", None)):
+            for user in node.users:
+                assert user.target is operator.getitem
+                unsupported_collection_users.add(user)
 
         if prev_value == is_thunder_supported:  # We are in the same region.
             return partition_cnt
@@ -198,7 +212,35 @@ def _splitter(
             )
         elif node.name.startswith("submod"):  # For inductor
             graph_module = getattr(split_gm, node.name)
-            jit_fn = torch_inductor(graph_module)
+
+            class ModuleWrapper(torch.nn.Module):
+                def __init__(self, fn):
+                    super().__init__()
+                    self.fn = fn
+
+                def forward(self, *args, **kwargs):
+                    return self.fn(*args, **kwargs)
+
+            def fallback_torch_compile(reason: str) -> torch.nn.Module:
+                warnings.warn(f"{reason} Falling back to torch.compile.")
+                # torch.compile does not lower GraphModule properly. See https://github.com/Lightning-AI/lightning-thunder/issues/2539
+                # We work around this by wrapping it in a Module
+                return torch.compile(ModuleWrapper(graph_module))
+
+            fake_args = make_fake_arguments(graph_module)
+            if fake_args is None:
+                jit_fn = fallback_torch_compile("Example values for arguments are not available.")
+            else:
+                try:
+                    # torch._inductor.compile returns a function, but update_node_and_submodule expects a Module
+                    jit_fn = ModuleWrapper(torch_inductor(graph_module, fake_args))
+                except DynamicOutputShapeException as e:
+                    # This exception is meant to be handled by Dynamo, which is responsible for graph break
+                    jit_fn = fallback_torch_compile(f"Dynamic output shape operator encountered: {e}.")
+
+            # This is for ease of debugging. We add graph attribute so GraphModule.print_readable will print it
+            jit_fn.graph = graph_module.graph
+
             # Update the node name from "submod_*" to "inductor_*" for more user-friendly names
             update_node_and_submodule(split_gm, node, node.name.replace("submod", "inductor"), jit_fn)
             submodule_to_compiled_fns[getattr(original_split_gm, node_name)] = CompiledFunction(
