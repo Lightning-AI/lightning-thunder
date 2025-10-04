@@ -2969,6 +2969,7 @@ addcdiv_opinfo = OpInfo(
         DecorateInfo(
             pytest.mark.xfail,
             "test_vjp_correctness",
+            devicetypes=(devices.DeviceType.CUDA,),
         ),
     ),
 )
@@ -3832,10 +3833,6 @@ expand_opinfo = OpInfo(
     sample_input_generator=expand_sample_generator,
     error_input_generator=expand_error_generator,
     torch_reference=torch.Tensor.expand,
-    test_directives=(
-        # vjp not yet implemented
-        DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
-    ),
 )
 shape_ops.append(expand_opinfo)
 
@@ -3880,10 +3877,6 @@ expand_as_opinfo = OpInfo(
     sample_input_generator=expand_as_sample_generator,
     error_input_generator=expand_as_error_generator,
     torch_reference=torch.Tensor.expand_as,
-    test_directives=(
-        # vjp not yet implemented
-        DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
-    ),
 )
 shape_ops.append(expand_as_opinfo)
 
@@ -4319,12 +4312,6 @@ getitem_opinfo = OpInfo(
         ),
         DecorateInfo(pytest.mark.xfail, "test_vjp_correctness", active_if=IS_WINDOWS),
         DecorateInfo(pytest.mark.xfail, "test_phantom_grad_vs_torch_consistency", active_if=IS_WINDOWS),
-        # TODO: https://github.com/Lightning-AI/lightning-thunder/issues/841
-        # check_slice_value(p0, slice(1, 3, 1)) in prologue trace fails
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_vjp_correctness",
-        ),
     ),
 )
 shape_ops.append(getitem_opinfo)

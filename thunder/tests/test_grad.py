@@ -670,6 +670,10 @@ def test_vjp_correctness_nll_loss_manual(op, device, dtype, executor, comp):
 
 @ops((get_opinfo("cross_entropy"),), supported_dtypes=(dtypes.float64,))
 def test_vjp_correctness_cross_entropy_manual(op, device, dtype, executor, comp):
+    from thunder.tests.framework import nvFuserTestExecutor
+
+    if type(executor) is nvFuserTestExecutor:
+        pytest.skip("https://github.com/Lightning-AI/lightning-thunder/issues/2535")
     for sample in op.sample_inputs(device, dtype, requires_grad=True, no_rhs_numbers=True):
         # Traced backwards function does not follow PyTorch cross_entropy behavior with zero element tensors
         if sample.args[0].numel() == 0:
