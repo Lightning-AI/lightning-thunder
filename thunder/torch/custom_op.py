@@ -336,6 +336,11 @@ def _register_custom_op(custom_op: CustomOpDef) -> Symbol:
     torch_opoverload_packet: OpOverloadPacket = torch_opoverload._overloadpacket
 
     schema: FunctionSchema = torch_opoverload._schema
+    baseutils.check(
+        not schema.is_mutable,
+        lambda: f"{custom_op} mutates one or more of its arguments, which is not supported",
+    )
+
     schema_arguments: list[Argument] = schema.arguments
     tensor_indices: tuple[int] = tuple(
         i
