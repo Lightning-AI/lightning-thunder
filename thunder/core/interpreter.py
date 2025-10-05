@@ -202,12 +202,12 @@ def wrap_kwargs_from_dict(d):  # returns a new dict
     return {k: _interpret_call(lambda d, k: d[k], d, wrap_const(k)) for k in unwrap(d)}
 
 
-def wrapped_build_tuple(tup: Sequence[WrappedValue]) -> WrappedValue:
-    assert all(isinstance(v, WrappedValue) for v in tup)
-    if tup:
-        pr = ProvenanceRecord(PseudoInst.BUILD_TUPLE, inputs=[v.provenance for v in tup][::-1])  # other inst?
-        out = wrap(tuple(v.value for v in tup), provenance=pr)
-        out.item_wrappers = list(tup)
+def wrapped_build_tuple(seq: Sequence[WrappedValue]) -> WrappedValue:
+    assert all(isinstance(v, WrappedValue) for v in seq)
+    if seq:
+        pr = ProvenanceRecord(PseudoInst.BUILD_TUPLE, inputs=[v.provenance for v in seq][::-1])  # other inst?
+        out = wrap(tuple(v.value for v in seq), provenance=pr)
+        out.item_wrappers = list(seq)
     else:
         # Note: if we revisit returning const here instead of an empty tuple from BUILD_TUPLE, we need to add this to wrap_aergs
         out = wrap_const(())
