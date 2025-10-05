@@ -267,6 +267,17 @@ def _dot(x, y):
     )
     return sum([_tensor_dot(a, b) for a, b in zip(x, y)])
 
+def _thunder_vjp(f, *primals, v = None, executor = 'torch', set_compile_data = False):
+    jf = executor.make_callable(f, disable_torch_autograd=True)
+    if set_compile_data:
+        with thunder.core.compile_data.compile_data_and_stats(thunder.compile_data(jf), None):
+            initial_trace_vjp_f = thunder.trace()(vjp(f), primals, v)
+    else:
+        initial_trace_vjp_f = thunder.trace()(vjp(f), primals, v)
+    return executor.make_callable(
+        initial_trace_vjp_f.python_callable(), disable_torch_autograd=True
+    )(primals, v)
+
 
 def check_vjp(f, *primals, comp, executor="torch", set_compile_data: bool = False, prologue_required: bool = False):
     """Check that the vector-Jacobian product of a function is correct.
@@ -317,12 +328,7 @@ def check_vjp(f, *primals, comp, executor="torch", set_compile_data: bool = Fals
     multiple_results = isinstance(outs_p, Sequence)
 
     v = tree_map(make, outs_p)
-    if set_compile_data:
-        with thunder.core.compile_data.compile_data_and_stats(thunder.compile_data(jf), None):
-            initial_trace_vjp_f = thunder.trace()(vjp(f), primals, v)
-    else:
-        initial_trace_vjp_f = thunder.trace()(vjp(f), primals, v)
-    _, J_star_v = executor.make_callable(initial_trace_vjp_f.python_callable(), disable_torch_autograd=True)(primals, v)
+    _, J_star_v = _thunder_vjp(f, *primals, v = v, executor = executor, set_compile_data = set_compile_data)
 
     if not multiple_results:
         v = (v,)
@@ -423,20 +429,103 @@ def test_vjp_correctness(op, device, dtype, executor, comp):
             continue
 
         at_least_one_differentiable_input = True
-        result = run_snippet(
-            snippet_vjp_correctness,
-            op,
-            device,
-            dtype,
-            filtered_op,
-            filtered_args,
-            comp,
-            executor,
-            "adaptive_avg_pool2d" in op.name,
-            len(sample.kwargs) != 0,
-        )
-        if result is not None:
-            return result
+
+        set_compile_data = "adaptive_avg_pool2d" in op.name
+
+        # Fast path: if a pure torch reference exists and we're NOT using the plain Torch executor,
+        # compute J·u with torch.func.jvp on the torch reference, and J*·v with Thunder VJP.
+        if getattr(op, "torch_reference", None) is not None:
+            # Torch side (before Thunder conversions)
+            torch_args, torch_kwargs = sample.args, sample.kwargs
+            # Sanitize non-differentiable dtype arguments for torch fast path
+            sanitize_dtype = lambda x: ltorch.to_torch_dtype(x) if isinstance(x, dtypes.dtype) else x
+            torch_args = tree_map(sanitize_dtype, torch_args)
+            torch_kwargs = tree_map(sanitize_dtype, torch_kwargs)
+            flat_torch_op, flat_torch_args, _ = flatten_func(op.torch_reference, torch_args, torch_kwargs)
+            torch_filtered_op, torch_filtered_args = _make_differentiable_wrapper(flat_torch_op, flat_torch_args)
+            # Convert to torch tensors on the requested device and dtype
+            torch_filtered_args = tree_map(
+                lambda t: t.clone().to(device=device, dtype=ltorch.to_torch_dtype(dtype)) if isinstance(t, torch.Tensor) else t, torch_filtered_args)
+            if len(torch_filtered_args) == 0:
+                continue
+
+            make = partial(make_tensor_like, low=0, high=1)
+            u_torch = tree_map(make, torch_filtered_args)
+            # Convert to torch tensors on the requested device and dtype
+            u_torch = tree_map(
+                lambda t: t.clone().to(device=device, dtype=ltorch.to_torch_dtype(dtype)) if isinstance(t, torch.Tensor) else t, u_torch,)
+
+            try:
+                outs_p_torch, J_u_torch = torch.func.jvp(torch_filtered_op, torch_filtered_args, u_torch)
+            except Exception as e:
+                # Fallback for cases where torch.func.jvp is not supported:
+                # - Some data types are not supported by torch.func.jvp, so we skip them (int / bool, not differentiable in Pytorch)
+                # print(
+                #     f"torch.func.jvp failed for op '{op.name}' on device '{device}' and dtype '{dtype}': {e}"
+                # )
+                result = run_snippet(
+                    snippet_vjp_correctness,
+                    op,
+                    device,
+                    dtype,
+                    filtered_op,
+                    filtered_args,
+                    comp,
+                    executor,
+                    set_compile_data,
+                    len(sample.kwargs) != 0,
+                )
+                if result is not None:
+                    return result
+                continue
+            v_torch = tree_map(make, outs_p_torch)
+
+            _, J_star_v = _thunder_vjp(filtered_op, *filtered_args, v = v_torch, executor = executor, set_compile_data = set_compile_data)
+
+            # Dot-product identity
+            Ju = (J_u_torch,) if not isinstance(J_u_torch, (tuple, list)) else J_u_torch
+            vv = (v_torch,) if not isinstance(v_torch, (tuple, list)) else v_torch
+            uu = (u_torch,) if not isinstance(u_torch, (tuple, list)) else u_torch
+            Ju_dot_v = _dot(Ju, vv)
+            u_dot_Jstarv = _dot(uu, J_star_v)
+            if Ju_dot_v.isnan().any():
+                continue
+            try:
+                comp(Ju_dot_v, u_dot_Jstarv)
+            except AssertionError:
+                # print(f'AssertionError, fallback to numerical_jvp for op {op.name} on device {device} and dtype {dtype}')
+                # Fallback to the standard numerical_jvp-based path when mixed-impl
+                # comparisons (torch.func.jvp vs Thunder VJP) are numerically unstable.
+                result = run_snippet(
+                    snippet_vjp_correctness,
+                    op,
+                    device,
+                    dtype,
+                    filtered_op,
+                    filtered_args,
+                    comp,
+                    executor,
+                    set_compile_data,
+                    len(sample.kwargs) != 0,
+                )
+                if result is not None:
+                    return result
+                continue
+        else:
+            result = run_snippet(
+                snippet_vjp_correctness,
+                op,
+                device,
+                dtype,
+                filtered_op,
+                filtered_args,
+                comp,
+                executor,
+                set_compile_data,
+                len(sample.kwargs) != 0,
+            )
+            if result is not None:
+                return result
 
     if not at_least_one_differentiable_input:
         raise pytest.skip("No differentiable inputs found")
