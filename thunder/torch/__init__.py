@@ -3653,7 +3653,7 @@ def einsum(equation: str, *operands: TensorLike | Sequence[TensorLike]) -> Tenso
                 continue
 
             n_subscripted_dims = n_subscripted_dims + 1
-            dims = label_dims_map.setdefault(l, [])
+            dims = label_dims_map.setdefault(label, [])
             if dims:
                 utils.check(
                     operand is None or operand.shape[d] == operand.shape[dims[-1]],
