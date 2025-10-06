@@ -88,16 +88,26 @@ def is_last_dim_divisible(dtype: dtypes.dtype, last_dim_size: int) -> bool:
     return last_dim_size % (128 // 8 // dtype.bytes) == 0
 
 
+quack_version: LooseVersion
+try:
+    import quack
+except ImportError:
+    quack_version = LooseVersion("0.0.0")
+else:
+    quack_version = LooseVersion(quack.__version__)
+
 # Register [`quack`](https://github.com/Dao-AILab/quack) ops
-if find_spec("quack") is not None:
+if quack_version >= LooseVersion("0.2.2"):
+    import quack
+
     # softmax
-    from quack.softmax import _softmax_fwd, _softmax_backward
+    from quack.softmax import softmax_fwd, softmax_bwd
 
     def quack_softmax_impl(a: torch.Tensor) -> torch.Tensor:
         original_shape = a.shape
         if requires_reshpae := a.ndim > 2:
             a = a.view(-1, original_shape[-1])
-        ret = _softmax_fwd(a)
+        ret = softmax_fwd(a)
         if requires_reshpae:
             ret = ret.view(original_shape)
         return ret
@@ -116,7 +126,7 @@ if find_spec("quack") is not None:
         if requires_reshape := g.ndim > 2:
             g = g.view(-1, original_shape[-1])
             a = a.view(-1, original_shape[-1])
-        ret = _softmax_backward(g, a)
+        ret = softmax_bwd(g, a)
         if requires_reshape:
             ret = ret.view(original_shape)
         return ret
@@ -196,13 +206,13 @@ if find_spec("quack") is not None:
         )
 
     # crossentropy
-    from quack.cross_entropy import _cross_entropy, _cross_entropy_backward
+    from quack.cross_entropy import cross_entropy_fwd, cross_entropy_bwd
 
     def quack_cross_entropy_forward_impl(
         x: torch.Tensor,
         target: torch.Tensor,
     ) -> torch.Tensor:
-        return _cross_entropy(x, target, return_lse=False)
+        return cross_entropy_fwd(x, target, return_lse=False)
 
     def quack_cross_entropy_forward_meta(x: TensorProxy, target: TensorProxy) -> TensorProxy:
         return TensorProxy(like=x, shape=(x.shape[0],), dtype=dtypes.float32)
@@ -219,7 +229,7 @@ if find_spec("quack") is not None:
         grad: torch.Tensor,
         lse: torch.Tensor,
     ) -> torch.Tensor:
-        return _cross_entropy_backward(x, target, grad, lse, False)
+        return cross_entropy_bwd(x, target, grad, lse, False)
 
     def quack_cross_entropy_backward_meta(
         x: TensorProxy,
@@ -290,7 +300,7 @@ if find_spec("quack") is not None:
         x: torch.Tensor,
         target: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        return _cross_entropy(x, target, return_lse=True)
+        return cross_entropy_fwd(x, target, return_lse=True)
 
     def quack_cross_entropy_aug_forward_meta(a: TensorProxy, target: TensorProxy) -> tuple[TensorProxy, TensorProxy]:
         return (
@@ -378,7 +388,7 @@ if find_spec("quack") is not None:
             or weight.dtype not in {dtypes.float32}
         ):
             return False
-        return is_device_quack_compat()
+        return is_device_quack_compat() and is_last_dim_divisible(a.dtype, a.shape[-1])
 
     def quack_layer_norm_transform(
         a: TensorProxy,
@@ -397,7 +407,7 @@ if find_spec("quack") is not None:
     )
 
     # rmsnorm
-    from quack.rmsnorm import _rmsnorm_fwd, _rmsnorm_backward
+    from quack.rmsnorm import rmsnorm_fwd, rmsnorm_bwd
 
     def quack_rms_norm_forward_impl(
         x: torch.Tensor,
@@ -407,7 +417,7 @@ if find_spec("quack") is not None:
         original_shape = x.shape
         if requires_reshape := x.ndim > 2:
             x = x.view(-1, original_shape[-1])
-        ret = _rmsnorm_fwd(x, weight, eps, return_rstd=False)
+        ret = rmsnorm_fwd(x, weight, eps=eps, store_rstd=False)[0]
         if requires_reshape:
             ret = ret.view(original_shape)
         return ret
@@ -435,7 +445,7 @@ if find_spec("quack") is not None:
         if requires_reshape := grad.ndim > 2:
             grad = grad.view(-1, original_shape[-1])
             x = x.view(-1, original_shape[-1])
-        ret = _rmsnorm_backward(x, weight, grad, rstd)
+        ret = rmsnorm_bwd(x, weight, grad, rstd)
         if requires_reshape:
             ret = ret.view(original_shape)
         return ret
@@ -479,7 +489,7 @@ if find_spec("quack") is not None:
         original_shape = x.shape
         if requires_reshape := x.ndim > 2:
             x = x.view(-1, original_shape[-1])
-        fwd, rstd = _rmsnorm_fwd(x, weight, eps, return_rstd=True)
+        fwd, _, rstd = rmsnorm_fwd(x, weight, eps=eps, store_rstd=True)
         if requires_reshape:
             fwd = fwd.view(original_shape)
         return fwd, rstd

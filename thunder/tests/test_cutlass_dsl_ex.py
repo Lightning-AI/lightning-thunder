@@ -78,12 +78,12 @@ def test_quack_softmax(dtype: torch.dtype, shape: tuple[int, ...]):
 @pytest.mark.parametrize("dtype", _DTYPES, ids=_DTYPE_IDS)
 def test_quack_layernorm(dtype: torch.dtype, shape: tuple[int, ...]):
     x = torch.randn(shape, dtype=dtype, requires_grad=True)
-    ref_x = x.clone().detach().to(torch.float32)
+    ref_x = x.clone().detach()
 
-    module = nn.LayerNorm(shape[-1]).cuda()
+    module = nn.LayerNorm(shape[-1]).to(device="cuda", dtype=dtype)
     jitted = jit_with_cutlass_dsl_ex(module)
 
-    expected = module(ref_x).to(dtype)
+    expected = module(ref_x)
     actual = jitted(x)
     torch.testing.assert_close(expected, actual)
 
@@ -95,7 +95,7 @@ def test_quack_rmsnorm(dtype: torch.dtype, shape: tuple[int, ...]):
     x = torch.randn(shape, dtype=dtype, requires_grad=True)
     ref_x = x.clone().detach()
 
-    module = nn.RMSNorm(shape[-1]).cuda()
+    module = nn.RMSNorm(shape[-1]).to(device="cuda", dtype=dtype)
     jitted = jit_with_cutlass_dsl_ex(module)
 
     expected = module(ref_x)
