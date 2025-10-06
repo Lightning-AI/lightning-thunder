@@ -40,7 +40,17 @@ functions_to_test = {
 #       to choose between DTensor supported symbol (from `dtensor_torch_and_prims.py`) or the usual `ltorch` symbol.
 #       This is why we need to make sure that the OpInfo uses PyTorch native op as `op` which is passed to thunder.jit.
 class DTensorOpInfo:
-    def __init__(self, *, name, op, torch_reference, supports_grad, sample_inputs, skip_noncontiguous_for_executor=()):
+    def __init__(
+        self,
+        *,
+        name,
+        op,
+        torch_reference,
+        supports_grad,
+        sample_inputs,
+        skip_noncontiguous_for_executor=(),
+        skip_for_executor=(),
+    ):
         self.name = name
         assert "torch" in op.__module__, "OpInfo must use PyTorch native op as `op` which is passed to thunder.jit"
         self.op = op
@@ -53,6 +63,9 @@ class DTensorOpInfo:
         # In some cases, non-contiguous inputs are not supported by the executor.
         assert isinstance(skip_noncontiguous_for_executor, tuple), "skip_noncontiguous_for_executor must be a tuple"
         self.skip_noncontiguous_for_executor = skip_noncontiguous_for_executor
+
+        assert isinstance(skip_for_executor, tuple), "skip_for_executor must be a tuple"
+        self.skip_for_executor = skip_for_executor
 
 
 # DTensor supported ops
@@ -97,6 +110,15 @@ dtensor_supported_opinfos = (
         sample_inputs=get_opinfo("reciprocal").sample_inputs,
         # Ref:https://github.com/NVIDIA/Fuser/pull/5124
         skip_noncontiguous_for_executor=("nvfuser",),
+    ),
+    DTensorOpInfo(
+        name="add",
+        op=torch.add,
+        torch_reference=torch.add,
+        supports_grad=False,
+        sample_inputs=get_opinfo("add").sample_inputs,
+        # Ref:https://github.com/NVIDIA/Fuser/issues/5314
+        skip_for_executor=("nvfuser",),
     ),
 )
 
@@ -308,6 +330,9 @@ class DTensorTest(DistributedParallelTestCase):
     def test_dtensor_opinfo(self, op: OpInfo, executor):
         if op.name in skip_opinfos:
             raise unittest.SkipTest(f"test_dtensor_opinfo: Skipping {op.name} as it is in skip_opinfos")
+
+        if executor in op.skip_for_executor:
+            raise unittest.SkipTest(f"test_dtensor_opinfo: Skipping {op.name} as it is in skip_for_executor")
 
         # NOTE: This test only tests for dtype=torch.float32 and requires_grad=True
         #       not for all dtype which are supported by the operation.
