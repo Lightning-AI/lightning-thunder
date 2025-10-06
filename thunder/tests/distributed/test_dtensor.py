@@ -1,6 +1,7 @@
 import unittest
 from itertools import product
 from collections.abc import Sequence
+from looseversion import LooseVersion
 
 import pytest
 import torch
@@ -12,7 +13,7 @@ import thunder
 
 from thunder.tests.distributed.helper import DistributedParallelTestCase
 from torch.distributed._tensor import DeviceMesh, distribute_tensor
-from torch.distributed.tensor.placement_types import Shard
+from torch.distributed.tensor.placement_types import Shard, Replicate
 from torch.testing._internal.distributed._tensor.common_dtensor import DTensorConverter
 
 from torch.testing._internal import common_utils
@@ -270,6 +271,56 @@ class DTensorTest(DistributedParallelTestCase):
         expected = in_dtensor.broadcast_to((dim_size, dim_size))
 
         torch.testing.assert_close(actual, expected)
+
+    @common_utils.parametrize("executor", tuple(executors_map.keys()))
+    @common_utils.parametrize(
+        "input_shardings",
+        [
+            (
+                [
+                    Shard(
+                        -1,
+                    )
+                ],
+                [
+                    Shard(1),
+                ],
+                [Replicate()],
+            ),
+        ],
+    )
+    def test_dtensor_grouped_mm(self, executor, input_shardings):
+        if LooseVersion(torch.__version__) < "2.8":
+            raise unittest.SkipTest("test_dtensor_grouped_mm: torch._grouped_mm is not available in torch < 2.8")
+
+        num_devices = self.world_size
+        mesh = DeviceMesh("cuda", list(range(num_devices)))
+
+        if (torch.cuda.get_device_capability() < (9, 0)) and executor == "torch":
+            raise unittest.SkipTest(
+                "test_dtensor_grouped_mm: torch._grouped_mm doesn't support device capability < 9.0"
+            )
+
+        M = 16
+        N = 64
+        K = 32
+        G = 2
+
+        inp_shard, w_shard, offsets_shard = input_shardings
+        in_dtensor = distribute_tensor(torch.randn(M, K, requires_grad=False, dtype=torch.bfloat16), mesh, inp_shard)
+        w_dtensor = distribute_tensor(torch.randn(G, K, N, requires_grad=False, dtype=torch.bfloat16), mesh, w_shard)
+        offsets_dtensor = distribute_tensor(torch.tensor([0, 16], dtype=torch.int32), mesh, offsets_shard)
+
+        tfn = thunder.jit(torch._grouped_mm, executors=executors_map[executor].executors_list())
+
+        tfn(in_dtensor, w_dtensor, offsets_dtensor)
+
+        trcs = thunder.last_traces(tfn)
+        init_trc = trcs[0]
+
+        from thunder.torch.experimental.dtensor_torch_and_prims import dtensor_grouped_mm
+
+        assert any(bsym.sym == dtensor_grouped_mm for bsym in init_trc.bound_symbols)
 
     @common_utils.parametrize(
         "op, executor",
