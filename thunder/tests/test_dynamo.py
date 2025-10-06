@@ -155,7 +155,15 @@ def test_basic_splitter(executor, device: str, dtype: dtypes.dtype, dynamic: boo
     assert any(target.startswith("thunder_") for target in targets)  # Verify that the submodules have name `thunder_*`
 
 
-@instantiate(dtypes=NOTHING)
+@instantiate(
+    dtypes=NOTHING,
+    decorators=(
+        pytest.mark.skipif(
+            condition=IS_WINDOWS,
+            reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
+        ),
+    ),
+)
 def test_fallback_to_inductor(executor, device, dtype):
     x = torch.randn(3, 3, device=device, dtype=dtype)
 
@@ -1007,7 +1015,13 @@ def test_deepcopy_graph_module():
 @instantiate(
     dtypes=NOTHING,
     executors=[DynamoThunderExecutor],
-    decorators=(pytest.mark.parametrize("use_pytest_benchmark", (True, False), ids=("benchmark", "repro")),),
+    decorators=(
+        pytest.mark.parametrize("use_pytest_benchmark", (True, False), ids=("benchmark", "repro")),
+        pytest.mark.skipif(
+            condition=IS_WINDOWS,
+            reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
+        ),
+    ),
 )
 @given(file_indices=st.lists(st.integers(min_value=0, max_value=2), min_size=2, max_size=2, unique=True))
 @settings(max_examples=1, deadline=None)
@@ -1276,6 +1290,10 @@ def test_fxreport(executor, device: str, dtype: dtypes.dtype, use_benchmark, tmp
         run_script(file, cmd)
 
 
+@pytest.mark.skipif(
+    condition=IS_WINDOWS,
+    reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
+)
 def test_leak_on_unsupported_thunder_operator():
     # This test is to check the fix for a previous leak
     # which was caused by holding onto the
@@ -1791,6 +1809,10 @@ def test_thunderfx_no_example_value_and_autocast():
 
 
 # This test addresses the bug reported in https://github.com/Lightning-AI/lightning-thunder/issues/2398
+@pytest.mark.skipif(
+    condition=IS_WINDOWS,
+    reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
+)
 def test_no_grad_region_split():
     def fn(x):
         # Thunder supports enclosing torch.set_grad_enabled(False/True)
