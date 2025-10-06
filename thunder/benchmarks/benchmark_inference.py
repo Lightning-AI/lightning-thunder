@@ -33,7 +33,6 @@ from transformers.models.llama4.modeling_llama4 import Llama4TextMoe
 
 import thunder
 from thunder.dynamo.compiler import thunderfx
-from thunder.dynamo.report import thunderfx_benchmark_report
 from thunder.benchmarks.layers_for_inference_benchmark import (
     GroupedLinear,
     Llama4MoE,
@@ -187,8 +186,6 @@ class InferenceBenchmark:
         return {}
 
     def _compile_model(self, model):
-        if self.config.fx_report_folder is not None:
-            return model
         match self.config.mode:
             case "eager":
                 return model
@@ -325,23 +322,8 @@ class InferenceBenchmark:
             "total_decode_time": total_decode_time,
         }
 
-    def _run_thunderfx_benchmark_report(self):
-        print(f"Running thunderfx benchmark report for {self.config.model_name} to {self.config.fx_report_folder}")
-        print(f"Batch size: {self.config.batch_size}")
-        print(f"Input length: {self.config.input_length}")
-        print(f"Output length: {self.config.output_length}")
-        input_ids, past_key_values = self.generate_batch()
-        thunderfx_benchmark_report(
-            self.model,
-            folder_path=self.config.fx_report_folder,
-            compare_fusion=True,
-        )(input_ids, past_key_values)
-
     def run_benchmark(self) -> InferenceMetrics:
         """Run the full benchmark and collect metrics"""
-        if self.config.fx_report_folder is not None:
-            self._run_thunderfx_benchmark_report()
-            return
         print(f"Running inference benchmark for {self.config.model_name}")
 
         print(f"Batch size: {self.config.batch_size}")
@@ -375,6 +357,10 @@ class InferenceBenchmark:
         if torch.cuda.is_available():
             self.metrics.memory_used_gb = torch.cuda.memory_allocated() / 1e9
             self.metrics.peak_memory_gb = torch.cuda.max_memory_allocated() / 1e9
+
+        if self.config.fx_report_folder is not None and self.config.mode == "thunder":
+            self.model._backend.save_reproducer_to_folder(self.config.fx_report_folder)
+            return
 
         return self.metrics
 
