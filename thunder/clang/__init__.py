@@ -1,6 +1,6 @@
 from __future__ import annotations
 from collections.abc import Callable, Sequence
-from functools import partial, reduce
+from functools import partial, reduce, update_wrapper
 from numbers import Number
 from types import EllipsisType, NoneType
 from typing import Any, Union
@@ -370,7 +370,12 @@ def diagonal(a: TensorLike, offset: int = 0, dim1: int = 0, dim2: int = 1) -> Te
 # Expands a to the specified shape, possibly adding new dimensions and expanding
 #   dimensions of length 1 to any length
 expand = clangop()(partial(clang_utils.expand_impl, broadcast_prim=prims.broadcast_in_dim))
+# To preserve the docstring
+update_wrapper(expand, clang_utils.expand_impl)
+
 maybe_broadcast = clangop()(partial(clang_utils.maybe_broadcast_impl, expand_fn=expand))
+# To preserve the docstring
+update_wrapper(maybe_broadcast, clang_utils.maybe_broadcast_impl)
 
 
 # TODO Resolve the start & end vs. start & stop inconsistencies with our operators (this one is start & end)
