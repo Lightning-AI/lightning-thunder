@@ -39,7 +39,7 @@ recipe_ids = ("default", "delayed_scaling", "mxfp8_e4m3")
 @pytest.mark.parametrize("fp8_recipe", recipes, ids=recipe_ids)
 @skip_on_sm120_and_sm121
 def test_te_linear_forward_backward(fp8_recipe: recipe.Recipe):
-    if fp8_recipe and not (fp8_recipe.delayed() or is_mxfp8_supported):
+    if fp8_recipe and fp8_recipe.mxfp8() and not is_mxfp8_supported:
         pytest.skip(msg_mxfp8)
 
     if is_sm120_orsm121 and fp8_recipe is None:
@@ -111,7 +111,7 @@ def test_te_linear_forward_backward_multiple_iteration(fp8_recipe: recipe.Recipe
             "When recipe is None a new recipe is created for each iteration. This makes the results not numerically comparable."
         )
 
-    if fp8_recipe and not (fp8_recipe.delayed() or is_mxfp8_supported):
+    if fp8_recipe and fp8_recipe.mxfp8() and not is_mxfp8_supported:
         pytest.skip(msg_mxfp8)
 
     # Test Description:
@@ -396,7 +396,7 @@ def test_te_grad_computation_with_intermediate():
 @pytest.mark.parametrize("fp8_recipe", recipes, ids=recipe_ids)
 @skip_on_sm120_and_sm121
 def test_te_trace_correctness(fp8_recipe: recipe.Recipe):
-    if fp8_recipe and not (fp8_recipe.delayed() or is_mxfp8_supported):
+    if fp8_recipe and fp8_recipe.mxfp8() and not is_mxfp8_supported:
         pytest.skip(msg_mxfp8)
 
     def foo(x, w):
@@ -467,7 +467,7 @@ def test_te_trace_correctness(fp8_recipe: recipe.Recipe):
 @pytest.mark.parametrize("compile_path", ["jit", "ThunderFX"])
 @skip_on_sm120_and_sm121
 def test_te_activation_checkpointing_trace(fp8_recipe: recipe.Recipe, compile_path: str):
-    if fp8_recipe and not (fp8_recipe.delayed() or is_mxfp8_supported):
+    if fp8_recipe and fp8_recipe.mxfp8() and not is_mxfp8_supported:
         pytest.skip(msg_mxfp8)
 
     if not fp8_recipe:
@@ -527,7 +527,7 @@ def test_te_activation_checkpointing_correctness(fp8_recipe: recipe.Recipe, comp
             "When recipe is None a new recipe is created for each iteration. This makes the results not numerically comparable."
         )
 
-    if fp8_recipe and not (fp8_recipe.delayed() or is_mxfp8_supported):
+    if fp8_recipe and fp8_recipe.mxfp8() and not is_mxfp8_supported:
         pytest.skip(msg_mxfp8)
 
     dtype = torch.bfloat16
