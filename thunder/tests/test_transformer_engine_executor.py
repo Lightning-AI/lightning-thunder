@@ -18,14 +18,20 @@ transformer_engine_module = pytest.importorskip(
 
 from thunder.executors.transformer_engineex import transformer_engine_ex, TransformerEngineTransform
 
+import transformer_engine
 from transformer_engine.common import recipe
 import transformer_engine.pytorch as te
 
 # FP8 is supported on compute arch 8.9 onwards.
 # MXFP8 is supported on compute arch 10.0 onwards.
+# NVFP4 is available from TE 2.8 onwards and supported only for arch 10.0 onwards.
 # Skip the tests if current hardware is not supported.
 is_fp8_supported, msg_fp8 = te.fp8.check_fp8_support()
 is_mxfp8_supported, msg_mxfp8 = te.fp8.check_mxfp8_support()
+is_nvfp4_supported = False
+is_nvfp4_available = LooseVersion(transformer_engine.__version__) >= LooseVersion("2.8")
+if is_nvfp4_available:
+    is_nvfp4_supported, msg_nvfp4 = te.fp8.check_nvfp4_support()
 
 # check_fp8_support is a subset of check_nvfp4_support, therefore even NVFP4 tests can be skipped if fp8 is not available
 # https://github.com/NVIDIA/TransformerEngine/blob/dfe5b7dfc2288afc5d2f247709b1e0328af331e4/transformer_engine/pytorch/fp8.py#L58
@@ -36,8 +42,15 @@ hybrid_fp8_delayed_scaling_recipe = recipe.DelayedScaling()
 mxfp8_e4m3_recipe = recipe.MXFP8BlockScaling()
 
 # `None` is used to test the default recipe.
-recipes = (None, hybrid_fp8_delayed_scaling_recipe, mxfp8_e4m3_recipe)
-recipe_ids = ("default", "delayed_scaling", "mxfp8_e4m3")
+recipes = [None, hybrid_fp8_delayed_scaling_recipe, mxfp8_e4m3_recipe]
+recipe_ids = ["default", "delayed_scaling", "mxfp8_e4m3"]
+
+if is_nvfp4_available:
+    # Disable randomness otherwise the results will differ.
+    nvfp4_e2m1_recipe = recipe.NVFP4BlockScaling(disable_rht=True, disable_stochastic_rounding=True)
+
+    recipes += [nvfp4_e2m1_recipe]
+    recipe_ids += ["nvfp4_e2m1"]
 
 
 @requiresCUDA
@@ -46,6 +59,8 @@ recipe_ids = ("default", "delayed_scaling", "mxfp8_e4m3")
 def test_te_linear_forward_backward(fp8_recipe: recipe.Recipe):
     if fp8_recipe and fp8_recipe.mxfp8() and not is_mxfp8_supported:
         pytest.skip(msg_mxfp8)
+    elif fp8_recipe and is_nvfp4_available and fp8_recipe.nvfp4() and not is_nvfp4_supported:
+        pytest.skip(msg_nvfp4)
 
     if is_sm120_orsm121 and fp8_recipe is None:
         pytest.skip("On SM120/121, default recipe is Float8BlockScaling which is not supported")
@@ -108,69 +123,6 @@ def test_te_linear_forward_backward(fp8_recipe: recipe.Recipe):
 
 
 @requiresCUDA
-@skip_on_sm120_and_sm121
-def test_te_linear_nvfp4_forward():
-    import transformer_engine
-    # NVFP4 is available from TE 2.8 onwards and supported only for arch 10.0 onwards.
-    is_nvfp4_available = LooseVersion(transformer_engine.__version__) >= LooseVersion("2.8")
-
-    if not is_nvfp4_available:
-        pytest.skip("TE NVFP4 recipe is not available")
-
-    is_nvfp4_supported, msg_nvfp4 = te.fp8.check_nvfp4_support()
-
-    if not is_nvfp4_supported:
-        pytest.skip(msg_nvfp4)
-
-    nvfp4_e2m1_recipe = recipe.NVFP4BlockScaling()
-
-    # Test Description:
-    # Verify that `torch.nn.functional.linear` is replaced with `te_linear_*`
-    # and the output as well as the gradients match for thunder compiled code.
-    dtype = torch.bfloat16
-    device = "cuda"
-
-    # TE inputs (3D input)
-    x_te = torch.randn(3, 768, 4096, device=device, dtype=dtype, requires_grad=False)
-    te_linear1 = te.Linear(4096, 4096, params_dtype=dtype)
-    te_linear2 = te.Linear(4096, 2048, params_dtype=dtype)
-
-    # thunder inputs
-    x = x_te.detach().clone()
-    w1 = te_linear1.weight.detach().clone()
-    w1.requires_grad_(True)
-    w2 = te_linear2.weight.detach().clone()
-    w2.requires_grad_(True)
-
-    def fn(x, w1, w2):
-        o = torch.nn.functional.linear(x, w1)
-        return torch.nn.functional.linear(o + x, w2)
-
-    cfn = thunder.jit(fn, executors=[transformer_engine_ex], transforms=[TransformerEngineTransform()])
-
-    # Enable autocasting for the forward pass
-    with te.fp8_autocast(fp8_recipe=nvfp4_e2m1_recipe):
-        thunder_result = cfn(x, w1, w2)
-
-    # Enable autocasting for the forward pass
-    with te.fp8_autocast(fp8_recipe=nvfp4_e2m1_recipe):
-        inter_result = te_linear1(x_te)
-        te_result = te_linear2(inter_result + x_te)
-
-    # Verifies the result is close to TE
-    assert_close(thunder_result, te_result)
-
-    # Verifies te_linear was called
-    forward_trace = thunder.last_traces(cfn)
-
-    assert any(bsym.sym.name.startswith("te_functional_linear") for bsym in forward_trace[-1].bound_symbols)
-    # and only two
-    assert 2 == len(
-        tuple(filter(lambda bsym: bsym.sym.name.startswith("te_functional_linear"), forward_trace[-1].bound_symbols))
-    )
-
-
-@requiresCUDA
 @pytest.mark.parametrize("fp8_recipe", recipes, ids=recipe_ids)
 @skip_on_sm120_and_sm121
 def test_te_linear_forward_backward_multiple_iteration(fp8_recipe: recipe.Recipe):
@@ -179,8 +131,10 @@ def test_te_linear_forward_backward_multiple_iteration(fp8_recipe: recipe.Recipe
             "When recipe is None a new recipe is created for each iteration. This makes the results not numerically comparable."
         )
 
-    if fp8_recipe and fp8_recipe.mxfp8() and not is_mxfp8_supported:
+    if fp8_recipe.mxfp8() and not is_mxfp8_supported:
         pytest.skip(msg_mxfp8)
+    elif fp8_recipe and is_nvfp4_available and fp8_recipe.nvfp4() and not is_nvfp4_supported:
+        pytest.skip(msg_nvfp4)
 
     # Test Description:
     # In this test, we verify whether a model using TransformerEngine Linear
@@ -466,6 +420,8 @@ def test_te_grad_computation_with_intermediate():
 def test_te_trace_correctness(fp8_recipe: recipe.Recipe):
     if fp8_recipe and fp8_recipe.mxfp8() and not is_mxfp8_supported:
         pytest.skip(msg_mxfp8)
+    elif fp8_recipe and is_nvfp4_available and fp8_recipe.nvfp4() and not is_nvfp4_supported:
+        pytest.skip(msg_nvfp4)
 
     def foo(x, w):
         return thunder.torch.linear(x, w)
@@ -537,6 +493,8 @@ def test_te_trace_correctness(fp8_recipe: recipe.Recipe):
 def test_te_activation_checkpointing_trace(fp8_recipe: recipe.Recipe, compile_path: str):
     if fp8_recipe and fp8_recipe.mxfp8() and not is_mxfp8_supported:
         pytest.skip(msg_mxfp8)
+    elif fp8_recipe and is_nvfp4_available and fp8_recipe.nvfp4() and not is_nvfp4_supported:
+        pytest.skip(msg_nvfp4)
 
     if not fp8_recipe:
         pytest.skip(
@@ -597,6 +555,8 @@ def test_te_activation_checkpointing_correctness(fp8_recipe: recipe.Recipe, comp
 
     if fp8_recipe and fp8_recipe.mxfp8() and not is_mxfp8_supported:
         pytest.skip(msg_mxfp8)
+    elif fp8_recipe and is_nvfp4_available and fp8_recipe.nvfp4() and not is_nvfp4_supported:
+        pytest.skip(msg_nvfp4)
 
     dtype = torch.bfloat16
     device = "cuda"
