@@ -1088,13 +1088,13 @@ def translate_dtensor_ops(gm: torch.fx.GraphModule):
     #         The reference for where this closure is created can be found at:
     #         https://github.com/pytorch/pytorch/blob/0ab075a69e4577a60c4dcbff7bcc2ecd0a15ce46/torch/_dynamo/variables/tensor.py#L1186-L1210
 
-    for node in gm.graph.nodes:
-        from thunder.torch.experimental.dtensor_torch_and_prims import (
-            dtensor_from_local_prim,
-            dtensor_redistribute_prim,
-            dtensor_to_local_prim,
-        )
+    from thunder.torch.experimental.dtensor_torch_and_prims import (
+        dtensor_from_local_prim,
+        dtensor_redistribute_prim,
+        dtensor_to_local_prim,
+    )
 
+    for node in gm.graph.nodes:
         try:
             closure_vars = inspect.getclosurevars(node.target)
 

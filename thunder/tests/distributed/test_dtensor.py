@@ -279,13 +279,6 @@ class DTensorTest(DistributedParallelTestCase):
 
     @common_utils.parametrize("jit_fn", (thunder.jit, thunderfx), name_fn=lambda jit_fn: jit_fn.__name__)
     def test_dtensor_columnwise_parallel(self, jit_fn):
-        if jit_fn == thunder.jit:
-            # File "/opt/pytorch/lightning-thunder/thunder/core/jit_ext.py", line 444, in _general_jit_getattr_lookaside
-            # obj.original_value.__dict__,
-            # ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-            # AttributeError: 'object' object has no attribute '__dict__'. Did you mean: '__dir__'?
-            raise unittest.SkipTest("thunder.jit fails with AttributeError")
-
         num_devices = self.world_size
         mesh = DeviceMesh("cuda", list(range(num_devices)))
         dim_size = 16
@@ -303,8 +296,18 @@ class DTensorTest(DistributedParallelTestCase):
         torch.testing.assert_close(actual, expected)
 
         tmodel = jit_fn(parallelized_model, nv_enable_linear=True)
-        actual = tmodel(in_dtensor)
-        torch.testing.assert_close(actual, expected)
+
+        if jit_fn == thunder.jit:
+            # Original error caught by the interpreter:
+            # File "/opt/pytorch/lightning-thunder/thunder/core/jit_ext.py", line 444, in _general_jit_getattr_lookaside
+            # obj.original_value.__dict__,
+            # ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+            # AttributeError: 'object' object has no attribute '__dict__'. Did you mean: '__dir__'?
+            with self.assertRaises(thunder.core.interpreter.InterpreterError):
+                actual = tmodel(in_dtensor)
+        else:
+            actual = tmodel(in_dtensor)
+            torch.testing.assert_close(actual, expected)
 
         if jit_fn == thunderfx:
             assert len(tmodel._backend.subgraph_infos) == 1
