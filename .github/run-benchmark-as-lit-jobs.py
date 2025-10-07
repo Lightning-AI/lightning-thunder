@@ -22,9 +22,7 @@ def main(gh_run_id: str = ""):
     print("Starting studio...")
     s.start()
     print("Installing Thunder and dependencies...")
-    s.run(
-        f"pip install {pkg_path} -U -r benchmarks/requirements.txt"
-    )
+    s.run(f"pip install {pkg_path} -U -r benchmarks/requirements.txt")
 
     print("Running HF benchmark script...")
     job = Job.run(
