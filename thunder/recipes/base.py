@@ -34,10 +34,11 @@ Alternatively, switch to the torch.compile fuser with `fuser="torch.compile"`.
     else:
         return f"""nvFuser was specified but we don't currently support torch {torch_version}.
 
-Please upgrade to torch 2.6 or 2.7 and then run
+Please upgrade to torch 2.6 to 2.8 and then run
 ```
 pip install nvfuser-cu126-torch26 # for torch 2.6
 pip install nvfuser-cu128-torch27 # for torch 2.7
+pip install nvfuser-cu128-torch28 # for torch 2.8
 ```
 
 For compatibility options, see:
