@@ -19,6 +19,7 @@ import torch.nn as nn
 
 import thunder.tests.llama4_moe as llama4_moe
 from thunder.tests.distributed.helper import DistributedParallelTestCase
+from thunder.dynamo import thunderfx
 
 
 # Referred from torchtitan: https://github.com/pytorch/torchtitan/blob/827255bb/torchtitan/experiments/llama4/infra/expert_parallel.py#L25
@@ -169,4 +170,8 @@ class TestLlama4MoEDistributed(DistributedParallelTestCase):
         actual = parallelized_model(inp)
         expected = model(inp)
 
+        torch.testing.assert_close(actual, expected, atol=1e-5, rtol=1e-5)
+
+        tmodel = thunderfx(parallelized_model, nv_enable_linear=True)
+        actual = tmodel(inp)
         torch.testing.assert_close(actual, expected, atol=1e-5, rtol=1e-5)

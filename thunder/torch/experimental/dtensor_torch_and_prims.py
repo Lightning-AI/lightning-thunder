@@ -127,40 +127,6 @@ def handle_check_dtensor_spec_in_prologue(prim, prologue_trace, args) -> bool:
     return False
 
 
-def dtensor_mul_meta(a, b):
-    output = run_with_fake_tensor(torch.mul, a, b)
-    local_tensor_proxy = TensorProxy(like=a.local_tensor)
-    spec = output._spec
-    spec_proxy = AnyProxy(spec, history=a.history)
-    return create_dtensor_proxy_from_proxies(local_tensor_proxy, spec_proxy, False)
-
-
-dtensor_mul_prim = make_prim(DTensorPrimIDs.MUL, "dtensor_mul_prim", meta=dtensor_mul_meta)
-
-dtensor_mul_prim_impl = pytorchex.register_operator("dtensor_mul_prim", like=dtensor_mul_prim, fn=torch.mul)
-
-pytorchex.register_implementation(dtensor_mul_prim, dtensor_mul_prim_impl)
-
-
-def _dtensor_mul_prim_grad(a: TensorLike, b: TensorLike) -> TensorLike:
-    fwd = dtensor_mul_prim(a, b)
-
-    g = get_grad(fwd)
-    a_grad = dtensor_mul_prim(b, g)
-    b_grad = dtensor_mul_prim(a, g)
-    put_grads((a, b), (a_grad, b_grad))
-
-    return fwd
-
-
-register_grad(dtensor_mul_prim, _dtensor_mul_prim_grad)
-
-
-@dtensor_torchsymbol(torch.mul, id="dtensor.torch.mul")
-def dtensor_mul(a: TensorLike, b: TensorLike) -> TensorLike:
-    return dtensor_mul_prim(a, b)
-
-
 def dtensor_reshape_meta(a, shape):
     output = run_with_fake_tensor(torch.reshape, a, shape)
     local_tensor_proxy = TensorProxy(
@@ -503,6 +469,45 @@ def dtensor_add(a: TensorLike, b: TensorLike) -> TensorLike:
         a,
         b,
         prim=dtensor_add_prim,
+        type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT,
+    )
+
+
+def dtensor_mul_meta(a, b):
+    output = run_with_fake_tensor(torch.mul, a, b)
+    local_tensor_proxy = TensorProxy(like=a.local_tensor)
+    spec = output._spec
+    spec_proxy = AnyProxy(spec, history=a.history)
+    return create_dtensor_proxy_from_proxies(local_tensor_proxy, spec_proxy, False)
+
+
+dtensor_mul_prim = make_prim(DTensorPrimIDs.MUL, "dtensor_mul_prim", meta=dtensor_mul_meta)
+
+dtensor_mul_prim_impl = pytorchex.register_operator("dtensor_mul_prim", like=dtensor_mul_prim, fn=torch.mul)
+
+pytorchex.register_implementation(dtensor_mul_prim, dtensor_mul_prim_impl)
+
+
+def _dtensor_mul_prim_grad(a: TensorLike, b: TensorLike) -> TensorLike:
+    fwd = dtensor_mul_prim(a, b)
+
+    g = get_grad(fwd)
+    a_grad = dtensor_mul_prim(b, g)
+    b_grad = dtensor_mul_prim(a, g)
+    put_grads((a, b), (a_grad, b_grad))
+
+    return fwd
+
+
+register_grad(dtensor_mul_prim, _dtensor_mul_prim_grad)
+
+
+@dtensor_torchsymbol(torch.mul, id="dtensor.torch.mul")
+def dtensor_mul(a: TensorLike, b: TensorLike) -> TensorLike:
+    return _elementwise_binary_wrapper(
+        a,
+        b,
+        prim=dtensor_mul_prim,
         type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT,
     )
 
