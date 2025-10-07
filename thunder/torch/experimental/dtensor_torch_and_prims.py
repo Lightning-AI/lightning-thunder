@@ -540,6 +540,21 @@ if LooseVersion(torch.__version__) >= "2.8":
         return dtensor_grouped_mm_prim(a, b, offsets)
 
 
+@dtensor_torchsymbol(torch.nn.functional.silu, id="dtensor.torch.nn.functional.silu")
+def dtensor_silu(a: TensorLike, inplace: bool = False) -> TensorLike:
+    assert not inplace, "inplace is not supported"
+
+    def sigmoid(x):
+        computation_dtype, result_dtype = utils.elementwise_type_promotion(
+            x, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
+        )
+        x = dtensor_convert_element_type_prim(x, computation_dtype)
+        result = dtensor_reciprocal(dtensor_add(dtensor_exp(-x), 1.0))
+        return dtensor_convert_element_type_prim(result, result_dtype)
+
+    return a * sigmoid(a)
+
+
 def register_dtensor_torch_and_prims():
     register_function_for_dtensor(torch.add, ltorch.add, dtensor_add, is_method=True)
     register_function_for_dtensor(torch.mul, ltorch.mul, dtensor_mul, is_method=True)
@@ -548,5 +563,6 @@ def register_dtensor_torch_and_prims():
     register_function_for_dtensor(torch.exp, ltorch.exp, dtensor_exp, is_method=True)
     register_function_for_dtensor(torch.neg, ltorch.neg, dtensor_neg, is_method=True)
     register_function_for_dtensor(torch.reciprocal, ltorch.reciprocal, dtensor_reciprocal, is_method=True)
+    register_function_for_dtensor(torch.nn.functional.silu, ltorch.silu, dtensor_silu, is_method=False)
     if LooseVersion(torch.__version__) >= "2.8":
         register_function_for_dtensor(torch._grouped_mm, ltorch._grouped_mm, dtensor_grouped_mm, is_method=False)
