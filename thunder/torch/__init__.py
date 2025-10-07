@@ -2379,7 +2379,7 @@ def div_(
     *,
     rounding_mode: None | str = None,
 ) -> TensorLike:
-    return _copy_(a, div(a, b))
+    return _copy_(a, div(a, b, rounding_mode=rounding_mode))
 
 
 @torchsymbol(torch.eq, torch.Tensor.__eq__, is_method=True)
