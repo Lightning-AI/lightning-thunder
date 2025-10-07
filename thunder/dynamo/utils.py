@@ -312,7 +312,6 @@ def try_execute_thunder_symbol(
                 exception=str(e),
             )
 
-        function_to_run = thunder_symbol
         function_to_run = (
             value_and_grad(thunder_symbol)
             if requires_grad and (disable_torch_autograd is None or not disable_torch_autograd)
