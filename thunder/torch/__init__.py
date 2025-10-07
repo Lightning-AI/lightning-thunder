@@ -1380,8 +1380,8 @@ def split(a: TensorProxy, size_or_sections: int | Sequence[int], /, dim=0) -> Te
     # NOTE: because split requires overspecifying the lengths, the final split is ignored
     cur = 0
     indices = []
-    for l in size_or_sections[: len(size_or_sections) - 1]:
-        cur += l
+    for length in size_or_sections[: len(size_or_sections) - 1]:
+        cur += length
         indices.append(cur)
 
     return _split_indices(a, indices, dim)
@@ -1400,8 +1400,8 @@ def squeeze(a: TensorLike, /, dim: None | int | Sequence[int] = None) -> TensorL
     dims = dim
     if dim is None:
         dims = []
-        for idx, l in enumerate(a.shape):
-            if l == 1:
+        for idx, length in enumerate(a.shape):
+            if length == 1:
                 dims.append(idx)
     elif isinstance(dim, (int, NumberProxy)):
         dims = (dim,)
@@ -3620,8 +3620,8 @@ def einsum(equation: str, *operands: TensorLike | Sequence[TensorLike]) -> Tenso
             return self
 
         def __next__(self):
-            l, d = next(self.eq_iter)
-            if l == ".":
+            label, d = next(self.eq_iter)
+            if label == ".":
                 utils.check(
                     not self.seen_ellipsis,
                     lambda: f"Incorrect subscript for operand #{self.pos}: it contains two or more ellipses",
@@ -3636,7 +3636,7 @@ def einsum(equation: str, *operands: TensorLike | Sequence[TensorLike]) -> Tenso
             # This variable has meaning only if ellipsis is present.
             self.ellipsis_end = d - 1
 
-            return l, d
+            return label, d
 
     # Returns a label -> list of dims positions map.
     # If Ellipsis is in the map,
@@ -3647,18 +3647,18 @@ def einsum(equation: str, *operands: TensorLike | Sequence[TensorLike]) -> Tenso
         n_subscripted_dims = 0
         label_dims_map = {}
         label_dim_iter = LabelDimIter(pos, subscript)
-        for l, d in label_dim_iter:
+        for label, d in label_dim_iter:
             # Skip ellipsis
-            if l == ".":
+            if label == ".":
                 continue
 
             n_subscripted_dims = n_subscripted_dims + 1
-            dims = label_dims_map.setdefault(l, [])
+            dims = label_dims_map.setdefault(label, [])
             if dims:
                 utils.check(
                     operand is None or operand.shape[d] == operand.shape[dims[-1]],
                     lambda: f"Incorrect subscript for operand #{pos}: "
-                    f"repeated label '{l}' requires dimensions "
+                    f"repeated label '{label}' requires dimensions "
                     f"{d} and {dims[-1]} to have the same lenght, "
                     f"but got {operand.shape[d]} != {operand.shape[dims[-1]]}",
                     ValueError,
@@ -3700,22 +3700,22 @@ def einsum(equation: str, *operands: TensorLike | Sequence[TensorLike]) -> Tenso
 
     # NOTE: the checks below are must since opt_einsum is not doing them. {
     operand_union_subscript_spec = collections.ChainMap(*operand_subscript_specs)
-    for l, dims in out_spec.items():
+    for label, dims in out_spec.items():
         # Skip ellipsis.
-        if l is Ellipsis:
+        if label is Ellipsis:
             continue
 
         # check uniqueness.
         utils.check(
             len(dims) == 1,
-            lambda: f"Output subscript string '{output_subscript}' includes multiple '{l}' labels",
+            lambda: f"Output subscript string '{output_subscript}' includes multiple '{label}' labels",
             ValueError,
         )
 
         # check output labels are coming from operand's subscripts.
         utils.check(
-            l in operand_union_subscript_spec,
-            lambda: f"Output subscript string '{output_subscript}' includes a '{l}' label "
+            label in operand_union_subscript_spec,
+            lambda: f"Output subscript string '{output_subscript}' includes a '{label}' label "
             "which does not apper in neither of the operand's subsripts",
             ValueError,
         )
@@ -3778,7 +3778,7 @@ def einsum(equation: str, *operands: TensorLike | Sequence[TensorLike]) -> Tenso
         for label, count in counts.items():
             # Process only repeated labels.
             if count > 1:
-                label_dims = [d for d, l in enumerate(orig_labels) if l == label]
+                label_dims = [d for d, label_orig in enumerate(orig_labels) if label_orig == label]
                 label_dim_len = operand.shape[label_dims[0]]
                 diag_groups.setdefault(label_dim_len, []).extend(label_dims)
                 if label not in keep_labels:
@@ -3801,8 +3801,8 @@ def einsum(equation: str, *operands: TensorLike | Sequence[TensorLike]) -> Tenso
 
     def find_broadcast_labels(a, a_labels, b, b_labels):
         common_contraction_set = frozenset(a_labels) & frozenset(b_labels) & contraction_set
-        a_contr_dims = [a_labels.index(l) for l in common_contraction_set]
-        b_contr_dims = [b_labels.index(l) for l in common_contraction_set]
+        a_contr_dims = [a_labels.index(label) for label in common_contraction_set]
+        b_contr_dims = [b_labels.index(label) for label in common_contraction_set]
 
         a_broadcast_dims = []
         a_broadcast_labels = []
@@ -3832,7 +3832,7 @@ def einsum(equation: str, *operands: TensorLike | Sequence[TensorLike]) -> Tenso
             counts = collections.Counter(labels)
 
             # Find unique contraction indices.
-            unique_labels = [l for l in contraction_set if counts[l] == 1]
+            unique_labels = [label for label in contraction_set if counts[label] == 1]
             unique_contr_dims, unique_contr_labels = find_unique_labels(operand, labels, unique_labels)
 
             # Find repeated indices over "diagonalized" operand.
@@ -3855,8 +3855,8 @@ def einsum(equation: str, *operands: TensorLike | Sequence[TensorLike]) -> Tenso
             a_counts = collections.Counter(a_labels)
             b_counts = collections.Counter(b_labels)
 
-            a_unique_labels = [l for l in contraction_set if a_counts[l] == 1 and b_counts[l] == 0]
-            b_unique_labels = [l for l in contraction_set if b_counts[l] == 1 and a_counts[l] == 0]
+            a_unique_labels = [label for label in contraction_set if a_counts[label] == 1 and b_counts[label] == 0]
+            b_unique_labels = [label for label in contraction_set if b_counts[label] == 1 and a_counts[label] == 0]
 
             # Find unique to each operand dims/labels
             a_unique_contr_dims, a_unique_contr_labels = find_unique_labels(a, a_labels, a_unique_labels)
@@ -4116,9 +4116,9 @@ def _matrix_chain_order(a: Sequence[TensorLike], /) -> TensorLike:
     p.append(a[n - 1].size(1))
     m = torch.zeros(n, n, dtype=torch.int64)
     s = torch.zeros(n, n, dtype=torch.int64)
-    for l in range(1, n):
-        for i in range(n - l):
-            j = i + l
+    for chain_len in range(1, n):
+        for i in range(n - chain_len):
+            j = i + chain_len
             m[i][j] = torch.iinfo(torch.int64).max
             for k in range(i, j):
                 q = m[i][k] + m[k + 1][j] + p[i] * p[k + 1] * p[j + 1]
