@@ -225,22 +225,21 @@ def _splitter(
                 def forward(self, *args, **kwargs):
                     return self.fn(*args, **kwargs)
 
-            def fallback_torch_compile(reason: str) -> torch.nn.Module:
+            def fallback_eager(reason: str) -> torch.nn.Module:
                 warnings.warn(f"{reason} Falling back to torch.compile.")
-                # torch.compile does not lower GraphModule properly. See https://github.com/Lightning-AI/lightning-thunder/issues/2539
-                # We work around this by wrapping it in a Module
-                return torch.compile(ModuleWrapper(graph_module))
+                # TODO: Use torch.compile here. Investigate its behavior and ensure correctness.
+                return graph_module
 
             fake_args = make_fake_arguments(graph_module)
             if fake_args is None:
-                jit_fn = fallback_torch_compile("Example values for arguments are not available.")
+                jit_fn = fallback_eager("Example values for arguments are not available.")
             else:
                 try:
                     # torch._inductor.compile returns a function, but update_node_and_submodule expects a Module
                     jit_fn = ModuleWrapper(torch_inductor(graph_module, fake_args))
                 except DynamicOutputShapeException as e:
                     # This exception is meant to be handled by Dynamo, which is responsible for graph break
-                    jit_fn = fallback_torch_compile(f"Dynamic output shape operator encountered: {e}.")
+                    jit_fn = fallback_eager(f"Dynamic output shape operator encountered: {e}.")
 
             # This is for ease of debugging. We add graph attribute so GraphModule.print_readable will print it
             jit_fn.graph = graph_module.graph
