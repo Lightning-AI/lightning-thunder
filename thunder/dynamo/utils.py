@@ -1052,7 +1052,7 @@ def default_optimizer(gm: torch.fx.GraphModule, stats: ProfileStats) -> Callable
     return sorted_compiled_gm_to_measurement[0].compiled_fn
 
 
-def translate_dtensor_ops(gm: torch.fx.GraphModule):
+def translate_dtensor_ops(gm: torch.fx.GraphModule) -> None:
     # We need this function because:
     #
     # For a program like:
