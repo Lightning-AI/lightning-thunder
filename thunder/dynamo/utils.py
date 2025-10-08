@@ -1071,3 +1071,78 @@ def make_fake_arguments(gm: torch.fx.GraphModule) -> list[FakeTensor] | None:
                 meta_val = fake_mode.fake_tensor_converter.from_real_tensor(fake_mode, meta_val)
             args.append(meta_val)
     return args
+
+
+def translate_dtensor_ops(gm: torch.fx.GraphModule) -> None:
+    # We need this function because:
+    #
+    # For a program like:
+    # ```
+    # model = nn.Linear(hidden_size, hidden_size, bias=False)
+    # parallel_model = parallelize_module(model, mesh, {"fc1": ColwiseParallel()})
+    # model.fc1.weight.requires_grad = False
+
+    # # parallelize_module will handle the conversion to DTensor
+    # i = torch.randn(hidden_size, hidden_size)
+    # ````
+    #
+    # Dynamo captures an FX-Graph like:
+    # ```
+    # def forward(self, L_x_: "f32[16, 16]", L_self_modules_fc1_parameters_weight_: "f32[16, 16]"):
+    #         l_x_ = L_x_
+    #         l_self_modules_fc1_parameters_weight_ = L_self_modules_fc1_parameters_weight_
+    #
+    #         input_tensor: "f32[16, 16]" = torch__dynamo_variables_torch_prim_from_local(l_x_);  l_x_ = None
+    #
+    #         linear: "f32[16, 16]" = torch._C._nn.linear(input_tensor, l_self_modules_fc1_parameters_weight_, None);  input_tensor = l_self_modules_fc1_parameters_weight_ = None
+    #
+    #         outputs: "f32[16, 16]" = torch__dynamo_variables_tensor_prim_redistribute(linear);  linear = None
+    #
+    #         hook_result: "f32[16, 8]" = torch__dynamo_variables_tensor_prim_to_local(outputs);  outputs = None
+    #         return (hook_result,)
+    # ```
+    # where:
+    #      1. In the FX Graph, the Tensor Parallel computation is decomposed into primitive operations such as `torch__dynamo_variables_torch_prim_from_local`, `torch__dynamo_variables_tensor_prim_redistribute`, and others.
+    #      2. It is important to note that these decompositions actually capture (close over) values such as `placements` and other metadata.
+    #         For example, to understand the placements to which the output will be redistributed using `torch__dynamo_variables_tensor_prim_redistribute`,
+    #         we need to use `inspect.getclosurevars(node.target)` to examine the values (like placements) that are captured and used during execution.
+    #         The reference for where this closure is created can be found at:
+    #         https://github.com/pytorch/pytorch/blob/0ab075a69e4577a60c4dcbff7bcc2ecd0a15ce46/torch/_dynamo/variables/tensor.py#L1186-L1210
+
+    from thunder.torch.experimental.dtensor_torch_and_prims import (
+        dtensor_from_local_prim,
+        dtensor_redistribute_prim,
+        dtensor_to_local_prim,
+    )
+
+    for node in gm.graph.nodes:
+        try:
+            closure_vars = inspect.getclosurevars(node.target)
+
+            if "from_local" in node.target.__name__:
+                mesh = closure_vars.nonlocals["args_as_value"][0]
+                placements = closure_vars.nonlocals["args_as_value"][1]
+
+                def dtensor_from_local_prim_wrapper(x, mesh=mesh, placements=placements):
+                    return dtensor_from_local_prim(x, mesh, placements)
+
+                dtensor_from_local_prim_wrapper.thunder_supported = True
+                node.target = dtensor_from_local_prim_wrapper
+            if "redistribute" in node.target.__name__:
+                kwargs = closure_vars.nonlocals["kwargs_as_value"]
+                placements = kwargs["placements"]
+
+                def dtensor_redistribute_prim_wrapper(x, placements=placements):
+                    return dtensor_redistribute_prim(x, placements=placements)
+
+                dtensor_redistribute_prim_wrapper.thunder_supported = True
+                node.target = dtensor_redistribute_prim_wrapper
+            if "to_local" in node.target.__name__:
+
+                def dtensor_to_local_prim_wrapper(x):
+                    return dtensor_to_local_prim(x)
+
+                dtensor_to_local_prim_wrapper.thunder_supported = True
+                node.target = dtensor_to_local_prim_wrapper
+        except Exception:
+            pass

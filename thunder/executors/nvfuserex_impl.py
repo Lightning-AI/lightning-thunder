@@ -67,15 +67,20 @@ from thunder.extend import FUEL_LEVEL, FusionExecutor, register_executor
 from thunder.executors.nvfuserex import nvfuser_version
 
 
-DTENSOR_SUPPORTED_VERSION = LooseVersion("0.2.28")
-if nvfuser_version() >= DTENSOR_SUPPORTED_VERSION:
-    import nvfuser_direct as nvfd
-    from nvfuser_direct import FusionDefinition as DirectFusionDefinition
-
 # NOTE This impl file is here because nvFuser may not be available, so it's imported conditionally
 #   by nvfuserex.py when nvFuser is available.
-import nvfuser
-from nvfuser import DataType, FusionDefinition
+
+DIRECT_BINDINGS_SUPPORTED_VERSION = LooseVersion("0.2.34")
+DTENSOR_SUPPORTED_VERSION = LooseVersion("0.2.28")
+if nvfuser_version() >= DIRECT_BINDINGS_SUPPORTED_VERSION:
+    import nvfuser_direct as nvfuser
+    from nvfuser_direct import DataType, FusionDefinition, multidevice, ParallelType, execute_with_dtensors
+else:
+    if nvfuser_version() >= DTENSOR_SUPPORTED_VERSION:
+        from nvfuser_direct import FusionDefinition as DirectFusionDefinition
+        from nvfuser_direct import multidevice, ParallelType, execute_with_dtensors
+    import nvfuser
+    from nvfuser import DataType, FusionDefinition
 
 #
 # Helper functions
@@ -258,9 +263,9 @@ def multidevice_schedule(fd: FusionDefinition, in_dtensors: list[Proxy]) -> None
 
         # nvfuser's DeviceMesh supports torch.Tensor since 0.2.30
         if nvfuser_version() >= LooseVersion("0.2.30"):
-            mesh = nvfd.multidevice.DeviceMesh(in_dtensor.device_mesh.mesh)
+            mesh = multidevice.DeviceMesh(in_dtensor.device_mesh.mesh)
         else:
-            mesh = nvfd.multidevice.DeviceMesh(in_dtensor.device_mesh.mesh.tolist())
+            mesh = multidevice.DeviceMesh(in_dtensor.device_mesh.mesh.tolist())
 
         in_tv.set_device_mesh(mesh)
 
@@ -273,7 +278,7 @@ def multidevice_schedule(fd: FusionDefinition, in_dtensors: list[Proxy]) -> None
         if placement.is_shard():
             dim = cast(Shard, placement).dim
             in_tv.split(dim, mesh.size, inner_split=False)
-            in_tv.axis(dim).parallelize(nvfd.ParallelType.mesh_x)
+            in_tv.axis(dim).parallelize(ParallelType.mesh_x)
             in_tv.set_allocation_domain(in_tv.get_loop_domain(), new_contiguity=True)
 
 
@@ -354,8 +359,6 @@ def create_fd(
             nvout = lc_to_nv_map[out]
             fd.add_output(nvout)
 
-    MAX_LENGTH = 9999
-
     if any(isinstance(t, DTensorProxy) for t in sorted_unique_inputs):
         # multi-GPU path
         utils.check(
@@ -375,7 +378,7 @@ def create_fd(
             lambda: "nvfuser: Expected runtime and tracing metadata to be the same for DTensor.",
         )
 
-        fd = DirectFusionDefinition()
+        fd = FusionDefinition() if nvfuser_version() >= DIRECT_BINDINGS_SUPPORTED_VERSION else DirectFusionDefinition()
         # Device may be set in one of the "factory" methods like full, iota, or uniform
         # NOTE: This should be called before defining because a factory method may look-up at `_selected_device` while being defined.
         fd._selected_device = None
@@ -383,11 +386,7 @@ def create_fd(
             definition(fd)
             multidevice_schedule(fd, sorted_unique_inputs)
     else:
-        # NOTE nvFuser's default max length is 1024 operations at the time of this writing
-        #   This arbitrarily increases it to 9999
-        # TODO Review splititng very large fusions or removing the max length restriction completely
-        #   See "Very large nvFuser fusions hit max_length"
-        fd = FusionDefinition(max_length=MAX_LENGTH)
+        fd = FusionDefinition()
         # Device may be set in one of the "factory" methods like full, iota, or uniform
         # NOTE: This should be called before defining because a factory method may look-up at `_selected_device` while being defined.
         fd._selected_device = None
@@ -427,23 +426,23 @@ def compute_symbolic_shape(
         Tuple[int, ...]: The shape of the tensor for FusionDefinition.
     """
     nvf_shape = []
-    for p_l, l in zip(proxy_shape, shape):
+    for p_l, length in zip(proxy_shape, shape):
         # loudly raise exception when runtime shape violates proxy_shape in the
         # trace, which indicates issues with the cache. This isn't necessarily
         # an exception.
         check(
-            isinstance(p_l, NumberProxy) or p_l == l,
+            isinstance(p_l, NumberProxy) or p_l == length,
             lambda: f"inconsistent fusion definition with runtime shape {shape} and trace shape {proxy_shape}",
             exception_type=AssertionError,
         )
 
         # broadcast is specialized in FusionDefinition, preserve it for correct broadcast semantics
-        if l == 1:
-            nvf_shape.append(l)
+        if length == 1:
+            nvf_shape.append(length)
         elif isinstance(p_l, NumberProxy):
             nvf_shape.append(-1)
         else:
-            nvf_shape.append(l)
+            nvf_shape.append(length)
 
     return tuple(nvf_shape)
 
@@ -539,7 +538,7 @@ class FusionDefinitionWrapper:
 
         if dist.is_available() and any(isinstance(t, torch.distributed.tensor.DTensor) for t in args):
             with annotate_for_profile(self.name):
-                output = nvfd.execute_with_dtensors(fd, args)
+                output = execute_with_dtensors(fd, args)
                 return output
         else:
             with annotate_for_profile(self.name):
@@ -633,42 +632,6 @@ class nvFuserExecutor(FusionExecutor):
             self.set_fuel(int(fuel_str))
         else:
             self.set_fuel(FUEL_LEVEL.UNLIMITED)
-
-        env_var_save_serde = os.getenv("ENABLE_NVFUSER_SERIALIZATION", None)
-        save_serde: bool = env_var_save_serde in ("true", "1")
-        self.write_cache_on_exit(save_serde)
-
-    def write_cache_on_exit(self, save_cache: bool = False):
-        """
-        Selects whether nvFuser writes its cache when the program exits.
-
-        Args:
-            save_cache (bool): A flag that enables saving nvFuser cache.
-            Defaults to False.
-
-        nvFuser's serialization will save the FusionCache data structure and any
-        CUDA cubins into a FlatBuffer binary upon exiting the python program.
-        The binary is stored in /tmp/nvfuser_kernel_db/ with the filename
-        nvf_serde_[local_rank]_[cuda_major]_[cuda_minor]_[nvrtc_major]_[nvrtc_minor].
-
-        Details:
-         * If the common workspace is exists, nvFuser will load it automatically
-         when the FusionCache is constructed.
-         * When this function is enabled, then when the program exits NvFuser
-         will save the FusionCache, overwritting the previous common workspace.
-         * If this function is disabled, then when the program exits NvFuser
-         does nothing. The previous common workspace is preserved if it exists.
-         * If there are any issues when loading the serialized binary, it is
-         deleted and the FusionCache is created with its default constructor.
-         * When the LOCAL_RANK environment variable is set for ddp or fsdp, a
-         separate fusion cache is saved for each device.
-        """
-        from nvfuser import enable_automatic_serialization, disable_automatic_serialization
-
-        if save_cache:
-            enable_automatic_serialization()
-        else:
-            disable_automatic_serialization()
 
     def get_fuel(self, amount: int = 1, /) -> bool:
         if self._optimization_fuel is FUEL_LEVEL.UNLIMITED:
@@ -1809,6 +1772,7 @@ def _add(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefiniti
 
 
 register_supported(PrimIDs.ADD, _add, _elementwise_binary_check)
+register_dtensor_supported(DTensorPrimIDs.ADD, _add, _elementwise_binary_check)
 
 
 def atan2(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
@@ -3228,6 +3192,7 @@ def _grouped_mm_transform(
 
 
 register_supported(prims._grouped_mm, _grouped_mm_transform, _grouped_mm_check)
+register_supported(DTensorPrimIDs._GROUPED_MM, _grouped_mm_transform, _grouped_mm_check)
 
 
 def _cumsum_check(a: TensorProxy, dim: int, /, dtype: dtypes.dtype | None = None) -> bool:

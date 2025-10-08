@@ -24,6 +24,7 @@ from thunder.dynamo.utils import (
     make_fake_arguments,
     _get_example_inputs_from_placeholder,
     _ThunderSplitGraphModule,
+    translate_dtensor_ops,
 )
 
 if TYPE_CHECKING:
@@ -104,6 +105,7 @@ def _splitter(
     unsupported_collection_users: set[torch.fx.Node] = set()
 
     nodes_in_unsupported_ctx_regions = get_nodes_in_unsupported_ctx_regions(gm)
+    translate_dtensor_ops(gm)
 
     def callback(node) -> int:
         nonlocal prev_value, partition_cnt, split_reasons, supported_partitions, unsupported_collection_users
@@ -129,9 +131,14 @@ def _splitter(
             is_thunder_supported = False
             split_reason = None
         else:
-            is_thunder_supported, split_reason = is_node_supported_by_thunder(node)
-            if split_reason is not None:
-                split_reasons.append(split_reason)
+            # To support dynamo generated prims for `parallelize_module`.
+            # `translate_dtensor_ops` will mark the target as thunder supported if it is a DTensor operation.
+            if hasattr(node.target, "thunder_supported") and node.target.thunder_supported:
+                is_thunder_supported, split_reason = True, None
+            else:
+                is_thunder_supported, split_reason = is_node_supported_by_thunder(node)
+                if split_reason is not None:
+                    split_reasons.append(split_reason)
 
         if not is_thunder_supported and baseutils.is_collection(node.meta.get("example_value", None)):
             # When a node returning a tuple is split out, we must extract its elements within the same submodule.
