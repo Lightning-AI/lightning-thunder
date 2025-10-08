@@ -69,6 +69,93 @@ device = torch.device("cuda", local_rank)
 torch.cuda.set_device(device)
 
 
+@dataclass
+class LowPrecisionHandler:
+    mode: str
+    fp8_recipe: recipe.Recipe | None = None
+
+    use_thunder_te: bool = True
+    use_legacy_thunder_te: bool = False
+
+    @property
+    def use_te_autocast(self) -> bool:
+        return self.enabled and not self.use_legacy_thunder_te
+
+    def __post_init__(self) -> None:
+        self.enabled = self.mode != "none" and self.mode in ["fp8-default-te", "fp8-default-te-wo_layernorm"]
+        if not self.enabled:
+            return
+
+        if not transformer_engine_available:
+            raise ImportError(
+                "Selected benchmark config is for TransformerEngine but could not import the TransformerEngine library!"
+            )
+
+        check_fp8_compute_capability()
+
+        self.fp8_recipe = fp8.get_default_fp8_recipe()
+
+    def check_and_update_config_for_te_if_needed(self, config: Config) -> None:
+        if not self.enabled:
+            return
+
+        updates_info = []
+
+        def update_if_not_divisible(attr_name, divisor):
+            current_value = getattr(config, attr_name, 0)
+            if current_value % divisor != 0:
+                new_value = current_value + (divisor - current_value % divisor)
+                setattr(config, attr_name, new_value)
+                updates_info.append((attr_name, new_value))
+                return True
+            return False
+
+        updated = False
+        updated |= update_if_not_divisible("padded_vocab_size", 16)
+        updated |= update_if_not_divisible("n_embd", 8)
+
+        if updated:
+            print("Configuration was updated with the following changes:")
+            for key, value in updates_info:
+                print(f"{key} updated to {value}")
+        else:
+            print("No updates were necessary.")
+
+    def swap_linear_layers_for_te(self, model: torch.nn.Module, device: Any) -> None:
+        if not self.enabled or self.use_thunder_te:
+            return
+
+        swap_layernorm = self.mode == "fp8-default-te-wo_layernorm"
+
+        def parameters_cnt(model: torch.nn.Module) -> int:
+            return sum(p.numel() for p in model.parameters())
+
+        def _resursively_swap_linear_layers_for_te(module: torch.nn.Module) -> None:
+            for n, m in module.named_children():
+                if len(list(m.children())) > 0:
+                    _resursively_swap_linear_layers_for_te(m)
+
+                if isinstance(m, torch.nn.Linear):
+                    has_bias = m.bias is not None
+                    # Pass device as str (as there is a bug in TransformerEngine's handling of torch.device)
+                    new_linear = te.Linear(m.in_features, m.out_features, bias=has_bias, device=str(device))
+                    setattr(module, n, new_linear)
+
+                if swap_layernorm and isinstance(m, torch.nn.LayerNorm):
+                    # Pass device as str (as there is a bug in TransformerEngine's handling of torch.device)
+                    new_layernorm = te.LayerNorm(m.normalized_shape[0], eps=m.eps, device=str(device))
+                    setattr(module, n, new_layernorm)
+
+        initial_params_cnt = parameters_cnt(model)
+
+        _resursively_swap_linear_layers_for_te(model)
+        assert initial_params_cnt == parameters_cnt(model)
+        for m in model.modules():
+            assert not isinstance(m, torch.nn.Linear)
+            if swap_layernorm:
+                assert not isinstance(m, torch.nn.LayerNorm)
+
+
 def check_fp8_compute_capability() -> None:
     device = torch.cuda.current_device()
     compute_capability = torch.cuda.get_device_capability(device)
@@ -80,64 +167,6 @@ def check_fp8_compute_capability() -> None:
             f"Compute capability {required_compute_capability} or higher is required for FP8 execution. "
             "Please ensure you are using a compatible GPU and the correct driver version."
         )
-
-
-def is_transformer_engine(low_precision_mode: str) -> bool:
-    return low_precision_mode in ["fp8-default-te", "fp8-default-te-wo_layernorm"]
-
-
-def check_and_update_config_for_te_if_needed(config: Config) -> None:
-    updates_info = []
-
-    def update_if_not_divisible(attr_name, divisor):
-        current_value = getattr(config, attr_name, 0)
-        if current_value % divisor != 0:
-            new_value = current_value + (divisor - current_value % divisor)
-            setattr(config, attr_name, new_value)
-            updates_info.append((attr_name, new_value))
-            return True
-        return False
-
-    updated = False
-    updated |= update_if_not_divisible("padded_vocab_size", 16)
-    updated |= update_if_not_divisible("n_embd", 8)
-
-    if updated:
-        print("Configuration was updated with the following changes:")
-        for key, value in updates_info:
-            print(f"{key} updated to {value}")
-    else:
-        print("No updates were necessary.")
-
-
-def swap_linear_layers_for_te(model: torch.nn.Module, device: Any, swap_layernorm: bool = True) -> None:
-    def parameters_cnt(model: torch.nn.Module) -> int:
-        return sum(p.numel() for p in model.parameters())
-
-    def _resursively_swap_linear_layers_for_te(module: torch.nn.Module) -> None:
-        for n, m in module.named_children():
-            if len(list(m.children())) > 0:
-                _resursively_swap_linear_layers_for_te(m)
-
-            if isinstance(m, torch.nn.Linear):
-                has_bias = m.bias is not None
-                # Pass device as str (as there is a bug in TransformerEngine's handling of torch.device)
-                new_linear = te.Linear(m.in_features, m.out_features, bias=has_bias, device=str(device))
-                setattr(module, n, new_linear)
-
-            if swap_layernorm and isinstance(m, torch.nn.LayerNorm):
-                # Pass device as str (as there is a bug in TransformerEngine's handling of torch.device)
-                new_layernorm = te.LayerNorm(m.normalized_shape[0], eps=m.eps, device=str(device))
-                setattr(module, n, new_layernorm)
-
-    initial_params_cnt = parameters_cnt(model)
-
-    _resursively_swap_linear_layers_for_te(model)
-    assert initial_params_cnt == parameters_cnt(model)
-    for m in model.modules():
-        assert not isinstance(m, torch.nn.Linear)
-        if swap_layernorm:
-            assert not isinstance(m, torch.nn.LayerNorm)
 
 
 # FIXME(crcrpar): Recompilation warning after 2 iterations
@@ -280,8 +309,6 @@ class Benchmark_litGPT:
         self.fsdp_bucket_params = fsdp_bucket_params
         self.checkpoint_activations = checkpoint_activations
         self.micro_batch_size = micro_batch_size
-        self.low_precision_mode = low_precision_mode
-        self.use_te_fp8_autocast = is_transformer_engine(low_precision_mode) and "thunder" not in compile
         self.is_thunder_as_torchcompile_backend = False
         self.dump_thunder_traces = dump_thunder_traces
         self.dump_memory_snapshot = dump_memory_snapshot
@@ -295,6 +322,13 @@ class Benchmark_litGPT:
                 "SDPA is enabled but the model is not compiled with eager or inductor. SDPA priority setting will be skipped."
             )
             self.use_sdpa = False
+
+        self.low_precision_handler = LowPrecisionHandler(
+            low_precision_mode,
+            use_thunder_te="thunder" in self.compile,
+            use_legacy_thunder_te="transformerengine_v1" in self.compile,
+        )
+
 
         if use_torchao_fp8_linear:
             if not torchao_available:
@@ -343,14 +377,7 @@ class Benchmark_litGPT:
             if self.bucketing_mode != "size":
                 warnings.warn(f"Bucketing mode is set to {self.bucketing_mode}. --fsdp_bucket_params will be ignored.")
 
-        if is_transformer_engine(low_precision_mode):
-            if not transformer_engine_available:
-                raise ImportError(
-                    "Selected benchmark config is for TransformerEngine but could not import the TransformerEngine library!"
-                )
-            check_fp8_compute_capability()
-
-        if "thunder" in self.compile and is_transformer_engine(self.low_precision_mode):
+        if "thunder" in self.compile and self.low_precision_handler.enabled:
             self.compile += "_transformerengine"
 
         if global_batch_size is not None:
@@ -385,8 +412,10 @@ class Benchmark_litGPT:
         # Initialize the model
         t0 = time.perf_counter()
         print(f"Loading model with {self.config.__dict__}")
-        if is_transformer_engine(self.low_precision_mode):
-            check_and_update_config_for_te_if_needed(self.config)
+
+        # Updates config using the LowPrecisionHandler
+        self.low_precision_handler.check_and_update_config_for_te_if_needed(self.config)
+
         self.model = self.init_model()
         print(f"Time to instantiate model: {time.perf_counter() - t0:.02f} seconds.")
 
@@ -463,9 +492,9 @@ class Benchmark_litGPT:
 
         # Handle fp8 related Linear layer swapping (for torchao or TransformerEngine)
         model = self._torchao_fp8_handler.convert_model_to_fp8(model)
-        if self.use_te_fp8_autocast:
-            is_wo_layernorm = self.low_precision_mode == "fp8-default-te-wo_layernorm"
-            swap_linear_layers_for_te(model, init_device, swap_layernorm=not is_wo_layernorm)
+
+        # Swap linears if needed for TE
+        self.low_precision_handler.swap_linear_layers_for_te(model, init_device)
 
         model.to(dtype=torch.bfloat16)
         return model
@@ -729,8 +758,8 @@ class Benchmark_litGPT:
                     input_ids, targets = next(self.train_data_iter)
                     input_ids = input_ids.to(self.device)
                     targets = targets.to(self.device)
-                    if self.use_te_fp8_autocast:
-                        with te.fp8_autocast():
+                    if self.low_precision_handler.use_te_autocast:
+                        with te.fp8_autocast(fp8_recipe=self.low_precision_handler.fp8_recipe):
                             logits = self.model(input_ids)
                     else:
                         logits = self.model(input_ids)
@@ -747,8 +776,8 @@ class Benchmark_litGPT:
             input_ids, targets = next(self.train_data_iter)
             input_ids = input_ids.to(self.device)
             targets = targets.to(self.device)
-            if self.use_te_fp8_autocast:
-                with te.fp8_autocast():
+            if self.low_precision_handler.use_te_autocast:
+                with te.fp8_autocast(fp8_recipe=self.low_precision_handler.fp8_recipe):
                     logits = self.model(input_ids)
             else:
                 logits = self.model(input_ids)
