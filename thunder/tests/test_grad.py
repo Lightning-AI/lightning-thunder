@@ -432,10 +432,23 @@ def test_vjp_correctness(op, device, dtype, executor, comp):
 
         set_compile_data = "adaptive_avg_pool2d" in op.name
 
+        def fallback_to_numerical_jvp():
+            return run_snippet(
+                snippet_vjp_correctness,
+                op,
+                device,
+                dtype,
+                filtered_op,
+                filtered_args,
+                comp,
+                executor,
+                set_compile_data,
+                len(sample.kwargs) != 0,
+            )
+
         # Fast path: if a pure torch reference exists and we're NOT using the plain Torch executor,
         # compute J·u with torch.func.jvp on the torch reference, and J*·v with Thunder VJP.
         if getattr(op, "torch_reference", None) is not None:
-            # Torch side (before Thunder conversions)
             torch_args, torch_kwargs = sample.args, sample.kwargs
             # Sanitize non-differentiable dtype arguments for torch fast path
             sanitize_dtype = lambda x: ltorch.to_torch_dtype(x) if isinstance(x, dtypes.dtype) else x
@@ -457,29 +470,14 @@ def test_vjp_correctness(op, device, dtype, executor, comp):
 
             try:
                 outs_p_torch, J_u_torch = torch.func.jvp(torch_filtered_op, torch_filtered_args, u_torch)
-            except Exception as e:
-                # Fallback for cases where torch.func.jvp is not supported:
-                # - Some data types are not supported by torch.func.jvp, so we skip them (int / bool, not differentiable in Pytorch)
-                # print(
-                #     f"torch.func.jvp failed for op '{op.name}' on device '{device}' and dtype '{dtype}': {e}"
-                # )
-                result = run_snippet(
-                    snippet_vjp_correctness,
-                    op,
-                    device,
-                    dtype,
-                    filtered_op,
-                    filtered_args,
-                    comp,
-                    executor,
-                    set_compile_data,
-                    len(sample.kwargs) != 0,
-                )
+            except Exception:
+                # Some data types are not supported by torch.func.jvp, so we skip them (int / bool, not differentiable in Pytorch). Fall back to numerical_jvp-based path
+                result = fallback_to_numerical_jvp()
                 if result is not None:
                     return result
                 continue
-            v_torch = tree_map(make, outs_p_torch)
 
+            v_torch = tree_map(make, outs_p_torch)
             _, J_star_v = _thunder_vjp(filtered_op, *filtered_args, v = v_torch, executor = executor, set_compile_data = set_compile_data)
 
             # Dot-product identity
@@ -493,37 +491,13 @@ def test_vjp_correctness(op, device, dtype, executor, comp):
             try:
                 comp(Ju_dot_v, u_dot_Jstarv)
             except AssertionError:
-                # print(f'AssertionError, fallback to numerical_jvp for op {op.name} on device {device} and dtype {dtype}')
-                # Fallback to the standard numerical_jvp-based path when mixed-impl
-                # comparisons (torch.func.jvp vs Thunder VJP) are numerically unstable.
-                result = run_snippet(
-                    snippet_vjp_correctness,
-                    op,
-                    device,
-                    dtype,
-                    filtered_op,
-                    filtered_args,
-                    comp,
-                    executor,
-                    set_compile_data,
-                    len(sample.kwargs) != 0,
-                )
+                # Currently for some tests with nvfuser we expect numerical instability, so we fall back to numerical_jvp-based path
+                result = fallback_to_numerical_jvp()
                 if result is not None:
                     return result
                 continue
         else:
-            result = run_snippet(
-                snippet_vjp_correctness,
-                op,
-                device,
-                dtype,
-                filtered_op,
-                filtered_args,
-                comp,
-                executor,
-                set_compile_data,
-                len(sample.kwargs) != 0,
-            )
+            result = fallback_to_numerical_jvp()
             if result is not None:
                 return result
 
