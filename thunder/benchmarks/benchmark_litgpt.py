@@ -329,7 +329,6 @@ class Benchmark_litGPT:
             use_legacy_thunder_te="transformerengine_v1" in self.compile,
         )
 
-
         if use_torchao_fp8_linear:
             if not torchao_available:
                 raise ValueError("`torchao` is not available")
