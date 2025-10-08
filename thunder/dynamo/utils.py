@@ -1063,6 +1063,8 @@ def make_fake_arguments(gm: torch.fx.GraphModule) -> list[FakeTensor] | None:
         if node.op == "placeholder":
             meta_val = node.meta.get("example_value")
             if meta_val is None:
+                # We observed Dynamo creating nodes without `example_value` on Tensor.tolist().
+                # This no longer happens in PyTorch 2.10 (see https://github.com/pytorch/pytorch/pull/163807).
                 return None
             if isinstance(meta_val, torch.Tensor):
                 # Tie to the currently enabled fake mode

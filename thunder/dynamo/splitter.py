@@ -125,6 +125,7 @@ def _splitter(
             )
             split_reasons.append(split_reason)
         elif node in unsupported_collection_users:
+            # split_reason has been specified when node was added to unsupported_collection_users
             is_thunder_supported = False
             split_reason = None
         else:
@@ -133,6 +134,9 @@ def _splitter(
                 split_reasons.append(split_reason)
 
         if not is_thunder_supported and baseutils.is_collection(node.meta.get("example_value", None)):
+            # When a node returning a tuple is split out, we must extract its elements within the same submodule.
+            # Inductor assumes the output node of a GraphModule to look like `return (t0, ..., tN)` or `return t0`,
+            # not like `return some_tuple`. See https://github.com/Lightning-AI/lightning-thunder/pull/2600
             for user in node.users:
                 assert user.target is operator.getitem
                 unsupported_collection_users.add(user)
