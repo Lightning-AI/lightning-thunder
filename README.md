@@ -373,6 +373,7 @@ This is how the trace looks like for a simple MLP:
 
 ```python
 import thunder
+import torch
 import torch.nn as nn
 
 model = nn.Sequential(nn.Linear(1024, 2048), nn.ReLU(), nn.Linear(2048, 256))
