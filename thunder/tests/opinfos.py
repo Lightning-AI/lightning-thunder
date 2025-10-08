@@ -683,9 +683,6 @@ elementwise_unary_ops.append(logical_not_opinfo)
 acos_opinfo = OpInfo(
     ltorch.acos,
     domain=(-1, 1),
-    # Push values away from the endpoints |x| = 1 where d/dx acos(x) blows up.
-    # Sign convention ensures we move toward the interior: subtract eps near +1, add eps near -1.
-    singularity_fn=lambda x: torch.where(x >= 0, x - 1, x + 1),
     sample_input_generator=elementwise_unary_generator,
     torch_reference=_elementwise_unary_torch(torch.acos),
     test_directives=(
@@ -703,9 +700,6 @@ elementwise_unary_ops.append(acos_opinfo)
 acosh_opinfo = OpInfo(
     ltorch.acosh,
     domain=(1, math.inf),
-    # Push values away from the boundary x = 1 where d/dx acosh(x) is singular.
-    # Positive signed distance x-1 ensures values slightly above 1 are nudged upward by eps.
-    singularity_fn=lambda x: x - 1,
     sample_input_generator=elementwise_unary_generator,
     torch_reference=_elementwise_unary_torch(torch.acosh),
     test_directives=(
@@ -750,8 +744,6 @@ elementwise_unary_ops.append(asin_opinfo)
 
 asinh_opinfo = OpInfo(
     clang.asinh,
-    # asinh has no finite singularities, but near large magnitudes different backends can diverge more.
-    # No singularity_fn needed; keep default behavior.
     sample_input_generator=elementwise_unary_generator,
     torch_reference=_elementwise_unary_torch(torch.asinh),
     test_directives=(
@@ -779,8 +771,6 @@ elementwise_unary_ops.append(asinh_opinfo)
 
 atan_opinfo = OpInfo(
     clang.atan,
-    # atan has no finite singularities; derivative is 1/(1+x^2) bounded.
-    # No singularity_fn necessary.
     sample_input_generator=elementwise_unary_generator,
     torch_reference=_elementwise_unary_torch(torch.atan),
     test_directives=(
@@ -798,8 +788,6 @@ elementwise_unary_ops.append(atan_opinfo)
 atanh_opinfo = OpInfo(
     clang.atanh,
     domain=(-1 + eps, 1 - eps),
-    # Push values away from the boundaries |x| = 1 where d/dx atanh(x) is singular.
-    singularity_fn=lambda x: torch.where(x >= 0, x - 1, x + 1),
     sample_input_generator=elementwise_unary_generator,
     torch_reference=_elementwise_unary_torch(torch.atanh),
     test_directives=(
@@ -9752,9 +9740,9 @@ def interpolate_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # All possible combinations to test that dependencies between dimensions are captured correctly.
     # Since specifying size will call the scale_factor path, we do not explicitly test scale_factor
     # in the loop below.
-    for b, c, l, dim in itertools.product(batch, channels, dim_options, n_spatial_dims):
-        for size in itertools.product(dim_options[l], repeat=dim):
-            spatial_dims = (l,) * dim
+    for b, c, dim_key, dim in itertools.product(batch, channels, dim_options, n_spatial_dims):
+        for size in itertools.product(dim_options[dim_key], repeat=dim):
+            spatial_dims = (dim_key,) * dim
             a_shape = b + c + spatial_dims
 
             yield SampleInput(make(a_shape), size=size)
@@ -9762,9 +9750,9 @@ def interpolate_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
     # mode = "bilinear" supports only 4D inputs in PyTorch, so 2 spatial dimensions
     n_spatial_dims_bilinear = (2,)
-    for b, c, l, dim in itertools.product(batch, channels, dim_options, n_spatial_dims_bilinear):
-        for size in itertools.product(dim_options[l], repeat=dim):
-            spatial_dims = (l,) * dim
+    for b, c, dim_key, dim in itertools.product(batch, channels, dim_options, n_spatial_dims_bilinear):
+        for size in itertools.product(dim_options[dim_key], repeat=dim):
+            spatial_dims = (dim_key,) * dim
             a_shape = b + c + spatial_dims
 
             yield SampleInput(make(a_shape), size=size, mode="bilinear")
