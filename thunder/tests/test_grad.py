@@ -267,16 +267,15 @@ def _dot(x, y):
     )
     return sum([_tensor_dot(a, b) for a, b in zip(x, y)])
 
-def _thunder_vjp(f, *primals, v = None, executor = 'torch', set_compile_data = False):
+
+def _thunder_vjp(f, *primals, v=None, executor="torch", set_compile_data=False):
     jf = executor.make_callable(f, disable_torch_autograd=True)
     if set_compile_data:
         with thunder.core.compile_data.compile_data_and_stats(thunder.compile_data(jf), None):
             initial_trace_vjp_f = thunder.trace()(vjp(f), primals, v)
     else:
         initial_trace_vjp_f = thunder.trace()(vjp(f), primals, v)
-    return executor.make_callable(
-        initial_trace_vjp_f.python_callable(), disable_torch_autograd=True
-    )(primals, v)
+    return executor.make_callable(initial_trace_vjp_f.python_callable(), disable_torch_autograd=True)(primals, v)
 
 
 def check_vjp(f, *primals, comp, executor="torch", set_compile_data: bool = False, prologue_required: bool = False):
@@ -328,7 +327,7 @@ def check_vjp(f, *primals, comp, executor="torch", set_compile_data: bool = Fals
     multiple_results = isinstance(outs_p, Sequence)
 
     v = tree_map(make, outs_p)
-    _, J_star_v = _thunder_vjp(f, *primals, v = v, executor = executor, set_compile_data = set_compile_data)
+    _, J_star_v = _thunder_vjp(f, *primals, v=v, executor=executor, set_compile_data=set_compile_data)
 
     if not multiple_results:
         v = (v,)
@@ -458,7 +457,11 @@ def test_vjp_correctness(op, device, dtype, executor, comp):
             torch_filtered_op, torch_filtered_args = _make_differentiable_wrapper(flat_torch_op, flat_torch_args)
             # Convert to torch tensors on the requested device and dtype
             torch_filtered_args = tree_map(
-                lambda t: t.clone().to(device=device, dtype=ltorch.to_torch_dtype(dtype)) if isinstance(t, torch.Tensor) else t, torch_filtered_args)
+                lambda t: t.clone().to(device=device, dtype=ltorch.to_torch_dtype(dtype))
+                if isinstance(t, torch.Tensor)
+                else t,
+                torch_filtered_args,
+            )
             if len(torch_filtered_args) == 0:
                 continue
 
@@ -466,7 +469,11 @@ def test_vjp_correctness(op, device, dtype, executor, comp):
             u_torch = tree_map(make, torch_filtered_args)
             # Convert to torch tensors on the requested device and dtype
             u_torch = tree_map(
-                lambda t: t.clone().to(device=device, dtype=ltorch.to_torch_dtype(dtype)) if isinstance(t, torch.Tensor) else t, u_torch,)
+                lambda t: t.clone().to(device=device, dtype=ltorch.to_torch_dtype(dtype))
+                if isinstance(t, torch.Tensor)
+                else t,
+                u_torch,
+            )
 
             try:
                 outs_p_torch, J_u_torch = torch.func.jvp(torch_filtered_op, torch_filtered_args, u_torch)
@@ -478,7 +485,9 @@ def test_vjp_correctness(op, device, dtype, executor, comp):
                 continue
 
             v_torch = tree_map(make, outs_p_torch)
-            _, J_star_v = _thunder_vjp(filtered_op, *filtered_args, v = v_torch, executor = executor, set_compile_data = set_compile_data)
+            _, J_star_v = _thunder_vjp(
+                filtered_op, *filtered_args, v=v_torch, executor=executor, set_compile_data=set_compile_data
+            )
 
             # Dot-product identity
             Ju = (J_u_torch,) if not isinstance(J_u_torch, (tuple, list)) else J_u_torch
