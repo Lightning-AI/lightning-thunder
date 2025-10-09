@@ -540,19 +540,21 @@ if LooseVersion(torch.__version__) >= "2.8":
         return dtensor_grouped_mm_prim(a, b, offsets)
 
 
+# NOTE: Currently only has a helper.
+# TODO: Add this as a torch symbol.
+def _dtensor_sigmoid(x):
+    computation_dtype, result_dtype = utils.elementwise_type_promotion(
+        x, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
+    )
+    x = dtensor_convert_element_type_prim(x, computation_dtype)
+    result = dtensor_reciprocal(dtensor_add(dtensor_exp(-x), 1.0))
+    return dtensor_convert_element_type_prim(result, result_dtype)
+
+
 @dtensor_torchsymbol(torch.nn.functional.silu, id="dtensor.torch.nn.functional.silu")
 def dtensor_silu(a: TensorLike, inplace: bool = False) -> TensorLike:
     assert not inplace, "inplace is not supported"
-
-    def sigmoid(x):
-        computation_dtype, result_dtype = utils.elementwise_type_promotion(
-            x, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
-        )
-        x = dtensor_convert_element_type_prim(x, computation_dtype)
-        result = dtensor_reciprocal(dtensor_add(dtensor_exp(-x), 1.0))
-        return dtensor_convert_element_type_prim(result, result_dtype)
-
-    return a * sigmoid(a)
+    return a * _dtensor_sigmoid(a)
 
 
 def register_dtensor_torch_and_prims():
