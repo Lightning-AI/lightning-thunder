@@ -509,14 +509,14 @@ class Llama4MoE(nn.Module):
     @staticmethod
     def from_transformers_llama4textmoe(moe: Llama4TextMoe) -> Llama4MoE:
         """[CAUTION] A converter written by Gemini 2.5."""
-        # This is defined in `thunder.tests.test_networks`
-        from thunder.tests.test_networks import Config
+        from thunder.tests.llama4_moe import Config
 
         # 1. Create a config for the Llama4MoE model from the transformers config
         config = Config(
-            hidden_size=moe.config.hidden_size,
-            intermediate_size=moe.config.intermediate_size,
-            num_routed_experts=moe.config.num_local_experts,
+            "Llama4MoE",
+            hidden_size=moe.hidden_dim,
+            intermediate_size=moe.experts.intermediate_size,
+            num_routed_experts=moe.num_experts,
             num_shared_experts=1,  # Based on HF implementation having one shared_expert
             dtype=moe.router.weight.dtype,
             device=moe.router.weight.device,
@@ -534,23 +534,22 @@ class Llama4MoE(nn.Module):
         new_moe.shared_experts.down_proj.weight.data.copy_(moe.shared_expert.down_proj.weight.data)
 
         # 5. For the routed experts, we need to handle the combined gate_up_proj
-        # and permute the weight dimensions to match GroupedLinear
-        # HF format: (groups, in_features, out_features)
-        # Our format: (groups, out_features, in_features)
-
-        # Permute from (num_experts, hidden_size, 2 * intermediate_size) to
-        # (num_experts, 2 * intermediate_size, hidden_size)
-        gate_up_proj_permuted = moe.experts.gate_up_proj.permute(0, 2, 1)
+        # to match GroupedLinear
+        # https://github.com/huggingface/transformers/blob/f4fc42216cd56ab6b68270bf80d811614d8d59e4/src/transformers/models/llama4/modeling_llama4.py#L55-L57
+        # HF format: (groups, hidden_size, 2 * intermediate_size)
+        # Our format: (groups, hidden_size, intermediate_size)
+        gate_up_proj_permuted = moe.experts.gate_up_proj
 
         # Split into gate and up projections
-        gate_proj_w, up_proj_w = gate_up_proj_permuted.chunk(2, dim=1)
+        gate_proj_w, up_proj_w = gate_up_proj_permuted.chunk(2, dim=2)
 
         new_moe.routed_experts.gate_proj.weight.data.copy_(gate_proj_w)
         new_moe.routed_experts.up_proj.weight.data.copy_(up_proj_w)
 
-        # Permute down_proj from (num_experts, intermediate_size, hidden_size) to
-        # (num_experts, hidden_size, intermediate_size)
-        down_proj_permuted = moe.experts.down_proj.permute(0, 2, 1)
+        # Handle down_proj
+        # HF format: (groups, intermediate_size, hidden_size)
+        # Our format: (groups, intermediate_size, hidden_size)
+        down_proj_permuted = moe.experts.down_proj
         new_moe.routed_experts.down_proj.weight.data.copy_(down_proj_permuted)
 
         return new_moe
