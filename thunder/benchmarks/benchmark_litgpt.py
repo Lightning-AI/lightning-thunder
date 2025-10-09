@@ -5,7 +5,7 @@ import time
 import warnings
 from contextlib import nullcontext
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from looseversion import LooseVersion
 
 import torch
@@ -33,6 +33,8 @@ torchao_available = package_available("torchao")
 
 if transformer_engine_available:
     import transformer_engine.pytorch as te
+    from transformer_engine.common import recipe
+    from transformer_engine.pytorch import fp8
 
 try:
     from torch.nn.attention import SDPBackend, sdpa_kernel
@@ -81,10 +83,21 @@ class LowPrecisionHandler:
     def use_te_autocast(self) -> bool:
         return self.enabled and not self.use_legacy_thunder_te
 
+    def check_and_add_compile_options(self, compile_options: str) -> str:
+        self.use_thunder_te = "thunder" in compile_options
+        self.use_legacy_thunder_te = "transformerengine_v1" in compile_options
+        if self.enabled and self.use_thunder_te and not self.use_legacy_thunder_te:
+            compile_options += "_transformerengine"
+        return compile_options
+
     def __post_init__(self) -> None:
-        self.enabled = self.mode != "none" and self.mode in ["fp8-default-te", "fp8-default-te-wo_layernorm"]
-        if not self.enabled:
+        SUPPORTED_LP_MODES = ["fp8-default-te", "fp8-default-te-wo_layernorm"]
+        if self.mode == "none":
             return
+
+        self.enabled = self.mode in SUPPORTED_LP_MODES
+        if self.mode != "none" and not self.enabled:
+            raise ValueError(f"Unsupported low precision mode: {self.mode}. Supported: {SUPPORTED_LP_MODES}")
 
         if not transformer_engine_available:
             raise ImportError(
@@ -130,10 +143,10 @@ class LowPrecisionHandler:
         def parameters_cnt(model: torch.nn.Module) -> int:
             return sum(p.numel() for p in model.parameters())
 
-        def _resursively_swap_linear_layers_for_te(module: torch.nn.Module) -> None:
+        def _recursively_swap_linear_layers_for_te(module: torch.nn.Module) -> None:
             for n, m in module.named_children():
                 if len(list(m.children())) > 0:
-                    _resursively_swap_linear_layers_for_te(m)
+                    _recursively_swap_linear_layers_for_te(m)
 
                 if isinstance(m, torch.nn.Linear):
                     has_bias = m.bias is not None
@@ -148,7 +161,7 @@ class LowPrecisionHandler:
 
         initial_params_cnt = parameters_cnt(model)
 
-        _resursively_swap_linear_layers_for_te(model)
+        _recursively_swap_linear_layers_for_te(model)
         assert initial_params_cnt == parameters_cnt(model)
         for m in model.modules():
             assert not isinstance(m, torch.nn.Linear)
@@ -323,12 +336,9 @@ class Benchmark_litGPT:
             )
             self.use_sdpa = False
 
-        self.low_precision_handler = LowPrecisionHandler(
-            low_precision_mode,
-            use_thunder_te="thunder" in self.compile,
-            use_legacy_thunder_te="transformerengine_v1" in self.compile,
-        )
-
+        self.low_precision_handler = LowPrecisionHandler(mode=low_precision_mode)
+        # Read and update compile options for te
+        self.compile = self.low_precision_handler.check_and_add_compile_options(self.compile)
 
         if use_torchao_fp8_linear:
             if not torchao_available:
@@ -376,9 +386,6 @@ class Benchmark_litGPT:
 
             if self.bucketing_mode != "size":
                 warnings.warn(f"Bucketing mode is set to {self.bucketing_mode}. --fsdp_bucket_params will be ignored.")
-
-        if "thunder" in self.compile and self.low_precision_handler.enabled:
-            self.compile += "_transformerengine"
 
         if global_batch_size is not None:
             self.global_batch_size = global_batch_size
@@ -946,7 +953,7 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
         elif benchmark.distributed_mode == "ddp":
             print(f"DDP Bucketing Size: {benchmark.ddp_bucket_size} MB")
         print(f"Compiler: {benchmark.compile}")
-        print(f"Low Precision Mode: {benchmark.low_precision_mode}")
+        print(f"Low Precision Mode: {benchmark.low_precision_handler.mode}")
         if benchmark._torchao_fp8_handler._enabled:
             msg = "linear"
             if benchmark._torchao_fp8_handler.use_fp8_allgather:
