@@ -545,7 +545,7 @@ class FusionDefinitionWrapper:
             self.last_inputs = args
 
         if dist.is_available():
-            # When using DTensor with FXGraph, argument can be AsyncCollectiveTensor.
+            # When using DTensor, argument can be AsyncCollectiveTensor.
             # Eg. https://github.com/pytorch/pytorch/blob/0ab075a69e4577a60c4dcbff7bcc2ecd0a15ce46/torch/distributed/tensor/parallel/style.py#L142-L145
             args = tuple(
                 arg.wait() if isinstance(arg, torch.distributed._functional_collectives.AsyncCollectiveTensor) else arg

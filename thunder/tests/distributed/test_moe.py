@@ -175,7 +175,9 @@ class TestLlama4MoEDistributed(DistributedParallelTestCase):
         tmodel = thunderfx(model, nv_enable_linear=True, nv_enable_scatter=True)
         actual = tmodel(inp)
 
+        # Verify that there was one FXGraph.
         assert len(tmodel._backend.subgraph_infos) == 1
+        # Verify that the graph was not split.
         assert len(tmodel._backend.subgraph_infos[0].split_reasons) == 0
 
         torch.testing.assert_close(actual, expected, atol=1e-2, rtol=1e-2)
