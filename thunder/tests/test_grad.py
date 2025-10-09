@@ -145,7 +145,7 @@ def _from_numpy(x, like):
 
     Args:
         x (torch.Tensor or numpy.ndarray or numpy.float64): The input tensor.
-        like (torch.Tensor): The tensor to use as a reference for the device and dtype.
+        like (torch.Tensor): The tensor to use as a reference for the device, dtype and requires_grad.
 
     Returns:
         torch.Tensor: The output tensor.
