@@ -126,14 +126,15 @@ def test_te_linear_forward_backward(fp8_recipe: recipe.Recipe):
 @pytest.mark.parametrize("fp8_recipe", recipes, ids=recipe_ids)
 @skip_on_sm120_and_sm121
 def test_te_linear_forward_backward_multiple_iteration(fp8_recipe: recipe.Recipe):
-    if not fp8_recipe:
+    if fp8_recipe is None:
         pytest.skip(
             "When recipe is None a new recipe is created for each iteration. This makes the results not numerically comparable."
         )
 
     if fp8_recipe.mxfp8() and not is_mxfp8_supported:
         pytest.skip(msg_mxfp8)
-    elif fp8_recipe and is_nvfp4_available and fp8_recipe.nvfp4() and not is_nvfp4_supported:
+
+    if fp8_recipe and is_nvfp4_available and fp8_recipe.nvfp4() and not is_nvfp4_supported:
         pytest.skip(msg_nvfp4)
 
     # Test Description:
@@ -491,15 +492,16 @@ def test_te_trace_correctness(fp8_recipe: recipe.Recipe):
 @pytest.mark.parametrize("compile_path", ["jit", "ThunderFX"])
 @skip_on_sm120_and_sm121
 def test_te_activation_checkpointing_trace(fp8_recipe: recipe.Recipe, compile_path: str):
-    if fp8_recipe and fp8_recipe.mxfp8() and not is_mxfp8_supported:
-        pytest.skip(msg_mxfp8)
-    elif fp8_recipe and is_nvfp4_available and fp8_recipe.nvfp4() and not is_nvfp4_supported:
-        pytest.skip(msg_nvfp4)
-
-    if not fp8_recipe:
+    if fp8_recipe is None:
         pytest.skip(
             "When recipe is None a new recipe is created for each iteration. This makes the results not numerically comparable."
         )
+
+    if fp8_recipe.mxfp8() and not is_mxfp8_supported:
+        pytest.skip(msg_mxfp8)
+
+    if is_nvfp4_available and fp8_recipe.nvfp4() and not is_nvfp4_supported:
+        pytest.skip(msg_nvfp4)
 
     checkpoint_fn = partial(torch.utils.checkpoint.checkpoint, use_reentrant=False)
 
@@ -548,14 +550,15 @@ def test_te_activation_checkpointing_trace(fp8_recipe: recipe.Recipe, compile_pa
 @pytest.mark.filterwarnings("ignore::FutureWarning")  # Coming from TE v2.3
 @skip_on_sm120_and_sm121
 def test_te_activation_checkpointing_correctness(fp8_recipe: recipe.Recipe, compile_path: str):
-    if not fp8_recipe:
+    if fp8_recipe is None:
         pytest.skip(
             "When recipe is None a new recipe is created for each iteration. This makes the results not numerically comparable."
         )
 
-    if fp8_recipe and fp8_recipe.mxfp8() and not is_mxfp8_supported:
+    if fp8_recipe.mxfp8() and not is_mxfp8_supported:
         pytest.skip(msg_mxfp8)
-    elif fp8_recipe and is_nvfp4_available and fp8_recipe.nvfp4() and not is_nvfp4_supported:
+
+    if is_nvfp4_available and fp8_recipe.nvfp4() and not is_nvfp4_supported:
         pytest.skip(msg_nvfp4)
 
     dtype = torch.bfloat16
