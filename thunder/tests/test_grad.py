@@ -269,8 +269,8 @@ def _dot(x, y):
 
 
 def _thunder_vjp(f, *primals, v=None, executor="torch", set_compile_data=False):
-    jf = executor.make_callable(f, disable_torch_autograd=True)
     if set_compile_data:
+        jf = executor.make_callable(f, disable_torch_autograd=True)
         with thunder.core.compile_data.compile_data_and_stats(thunder.compile_data(jf), None):
             initial_trace_vjp_f = thunder.trace()(vjp(f), primals, v)
     else:
@@ -467,7 +467,7 @@ def test_vjp_correctness(op, device, dtype, executor, comp):
 
             make = partial(make_tensor_like, low=0, high=1)
             u_torch = tree_map(make, torch_filtered_args)
-            # Convert to torch tensors on the requested device and dtype
+            # Clone and convert to torch tensors on the requested device and dtype (if needed)
             u_torch = tree_map(
                 lambda t: t.clone().to(device=device, dtype=ltorch.to_torch_dtype(dtype))
                 if isinstance(t, torch.Tensor)
