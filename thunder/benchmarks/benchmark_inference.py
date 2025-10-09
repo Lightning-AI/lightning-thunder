@@ -20,6 +20,8 @@ import statistics
 import sys
 import time
 import warnings
+from typing import Any
+from collections.abc import Callable
 
 import torch
 import torch.nn as nn
@@ -63,26 +65,62 @@ if WORLD_SIZE > 1:
 LLAMA4_MAVERICK_MODEL_ID: str = "meta-llama/Llama-4-Maverick-17B-128E"
 
 
+# The logic is based on https://github.com/pytorch/ao/blob/b34c1037/torchao/quantization/quant_api.py#L230
+def _replace_with_custom_fn_if_matches_filter_with_name(
+    model,
+    replacement_fn: Callable[[torch.nn.Module, str], torch.nn.Module],
+    filter_fn: Callable[[torch.nn.Module, str], bool],
+    cur_fqn="",
+) -> None:
+    """
+    Recursively replaces each child module in `model` with the result of `replacement_fn(child)`
+
+    replacement_fn (Callable[[torch.nn.Module, str], torch.nn.Module]): The function to replace matching modules.
+    filter_fn (Callable[[torch.nn.Module, str], bool]): The function to filter matching modules.
+    cur_fqn (str): The current fully qualified name of the module.
+
+    Returns:
+        None
+    """
+    if filter_fn(model, cur_fqn[:-1]):
+        print("Replacing", cur_fqn[:-1])
+        model = replacement_fn(model, cur_fqn[:-1])
+        return model
+    else:
+        named_children_list = list(model.named_children())
+        for name, child in named_children_list:
+            new_child = _replace_with_custom_fn_if_matches_filter_with_name(
+                child,
+                replacement_fn,
+                filter_fn,
+                f"{cur_fqn}{name}.",
+            )
+            if new_child is not child:
+                setattr(model, name, new_child)
+        return model
+
+
 def _replace_llama4_moe(model: nn.Module) -> None:
     """Replace Llama4TextMoe with Llama4MoE to use grouped gemm."""
-    # The logic is based on https://github.com/pytorch/ao/blob/b34c1037/torchao/quantization/quant_api.py#L230
-    named_children_list = list(model.named_children())
-    for name, child in named_children_list:
-        if isinstance(child, Llama4TextMoe):
-            new_child = Llama4MoE.from_llama4textmoe(child)
-            setattr(model, name, new_child)
+    _replace_with_custom_fn_if_matches_filter_with_name(
+        model,
+        lambda model, cur_fqn: Llama4MoE.from_transformers_llama4textmoe(model),
+        lambda model, cur_fqn: isinstance(model, Llama4TextMoe),
+    )
 
 
 def _quantize_llama4(model: nn.Module) -> None:
     """Replace linear and moe with nvfp4 inference version."""
-    named_children_list = list(model.named_children())
-    for name, child in named_children_list:
-        if isinstance(child, nn.Linear):
-            quantized_linear = NVFP4InferenceLinear.from_linear(child)
-            setattr(model, name, quantized_linear)
-        elif isinstance(child, GroupedLinear):
-            quantized_grouped_linear = NVFP4InferenceGroupedLinear.from_grouped_linear(child)
-            setattr(model, name, quantized_grouped_linear)
+    _replace_with_custom_fn_if_matches_filter_with_name(
+        model,
+        NVFP4InferenceLinear.from_linear,
+        lambda model, cur_fqn: isinstance(model, nn.Linear),
+    )
+    _replace_with_custom_fn_if_matches_filter_with_name(
+        model,
+        NVFP4InferenceGroupedLinear.from_grouped_linear,
+        lambda model, cur_fqn: isinstance(model, GroupedLinear),
+    )
 
 
 @contextmanager
@@ -145,7 +183,20 @@ class InferenceBenchmark:
         self.config = config
         self.metrics = InferenceMetrics()
 
+        # NOTE: Model resides on meta device
         model = self._load_model()
+        assert all(p.device == torch.device("meta") for p in model.parameters())
+
+        # NOTE: Replacement happens before model is materialized
+        #       otherwise, the memory usage will be increased due to
+        #       additional parameters materialized from the replacement module
+        if not self.config.disable_moe_replacement:
+            _replace_llama4_moe(model)
+        assert all(p.device == torch.device("meta") for p in model.parameters())
+
+        # Materialize the model on the device
+        model.to_empty(device=DEVICE)
+        assert all(p.device == DEVICE for p in model.parameters())
 
         tp_plan = {
             "*.layers.*.self_attn.q_proj": ColwiseParallel(use_local_output=True),
@@ -171,8 +222,6 @@ class InferenceBenchmark:
         # store it here before any compiler is applied.
         self.vocab_size = model.vocab_size
 
-        if not self.config.disable_moe_replacement:
-            _replace_llama4_moe(model)
         if self.config.enable_nvfp4:
             _quantize_llama4(model)
         self.model = self._compile_model(model)
@@ -210,7 +259,7 @@ class InferenceBenchmark:
 
         self.hf_config = config
 
-        with DEVICE:
+        with torch.device("meta"):
             model = AutoModelForCausalLM.from_config(config, torch_dtype=torch.bfloat16)
 
         return model
