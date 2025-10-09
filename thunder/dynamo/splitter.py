@@ -24,6 +24,7 @@ from thunder.dynamo.utils import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from typing import Any
 
 
 def _splitter(
@@ -31,7 +32,7 @@ def _splitter(
     thunder_jit: Callable,
     torch_inductor: Callable,
     _unused_sample_args: list[torch.SymInt, torch.Tensor],
-    thunder_options: dict[str, Any],
+    thunder_options: dict[str, Any] | None = None,
 ) -> tuple[torch.fx.GraphModule, SubgraphInfo]:
     """
     This method will split graph into multiple graph modules based on thunder supported operations.
@@ -127,7 +128,7 @@ def _splitter(
             if hasattr(node.target, "thunder_supported") and node.target.thunder_supported:
                 is_thunder_supported, split_reason = True, None
             else:
-                is_thunder_supported, split_reason = is_node_supported_by_thunder(node, thunder_options)
+                is_thunder_supported, split_reason = is_node_supported_by_thunder(node, thunder_options or {})
                 if split_reason is not None:
                     split_reasons.append(split_reason)
 
