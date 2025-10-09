@@ -426,8 +426,7 @@ def _register_custom_op(custom_op: CustomOpDef) -> Symbol:
 def _deregister_custom_op(custom_op: CustomOpDef) -> None:
     """Deregister ``custom_op`` and related things from Thunder, helper function for test."""
     from thunder.executors.custom_op_ex import custom_op_ex
-    from thunder.executors.nvfuserex_impl import ex as nvfuser_ex
-    from thunder.executors.nvfuserex_impl import _translation_map
+    from thunder.executors.nvfuserex import nvfuser_available
     from thunder.torch import _torch_to_thunder_function_map
 
     if custom_op not in _CUSTOM_OP_TO_TORCHFN_AND_SYMBOL:
@@ -441,9 +440,13 @@ def _deregister_custom_op(custom_op: CustomOpDef) -> None:
     if symbol.id in custom_op_ex._implmap:
         del custom_op_ex._implmap[symbol.id]
 
-    if symbol.id in _translation_map:
-        del _translation_map[symbol.id]
-        del nvfuser_ex._implmap[symbol.id]
+    if nvfuser_available():
+        from thunder.executors.nvfuserex_impl import ex as nvfuser_ex
+        from thunder.executors.nvfuserex_impl import _translation_map
+
+        if symbol.id in _translation_map:
+            del _translation_map[symbol.id]
+            del nvfuser_ex._implmap[symbol.id]
 
     del _CUSTOM_OP_TO_TORCHFN_AND_SYMBOL[custom_op]
 
