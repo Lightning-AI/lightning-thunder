@@ -466,11 +466,6 @@ def parse_args() -> argparse.Namespace:
         description="Thunder Inference Benchmark",
         formatter_class=CustomFormatter,
         epilog="""
-Standard Benchmark Scenarios:
-  summarization  - Prefill-Heavy: 4,000 input → 1,000 output tokens
-  chat          - Balanced: 1,000 input → 1,000 output tokens
-  reasoning     - Decode-Heavy: 1,000 input → 4,000 output tokens
-
 Examples:
   python benchmark_inference.py --input-length 2048 --output-length 512 --model-name meta-llama/Llama-4-Maverick-17B-128E --mode eager
         """,
