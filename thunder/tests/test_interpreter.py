@@ -3579,3 +3579,16 @@ def test_binary_subscr_on_types():
     jfn = thunder.jit(fn)
     out = jfn()
     assert out == ("list[int]", "dict[int, int]")
+
+
+def test_getattr_type(jit):
+    m = torch.nn.Linear(5, 2)
+
+    def fn():
+        return bool(m), getattr(m, "weight", None)
+
+    expected = fn()
+    actual = jit(fn)()
+
+    assert actual[0] == expected[0]
+    assert actual[1] is expected[1]
