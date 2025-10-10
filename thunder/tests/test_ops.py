@@ -525,3 +525,20 @@ def test_softmax_stacklevel():
     jfn = thunder.jit(fn)
     a = torch.randn(5, 5, requires_grad=True)  # trigger grad transform
     assert_close(fn(a), jfn(a))
+
+
+def test_div_exact():
+    def fn(a, b, c):
+        indices = torch.div(a, b, rounding_mode="trunc")
+        # this would throw an error if indices are not ints
+        return c[indices]
+
+    jfn = thunder.jit(fn)
+    a = torch.randint(1, 10, (5,))
+    b = torch.randint(1, 10, (5,))
+    c = torch.randn(5, 5)
+    assert_close(fn(a, b, c), jfn(a, b, c))
+    trc = thunder.last_traces(jfn)[-1]
+    for bsym in trc.bound_symbols:
+        if bsym.sym.id == "div":
+            assert "div_exact" in [ssym.sym.name for ssym in bsym.subsymbols[0].subsymbols]
