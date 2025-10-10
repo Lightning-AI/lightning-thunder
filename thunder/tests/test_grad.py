@@ -1951,13 +1951,8 @@ def test_silu_decomposition_numerical_stability():
     from torch.nn.functional import linear, silu
 
     def fn(to_3, weight):
-        # [1, 2048, 256] -> [1, 2048, 128]
         x_fc_1 = linear(to_3, weight, bias=None)
-
-        # [1, 2048, 128] -> [1, 2048, 128]
         x = silu(x_fc_1)
-
-        # [1, 2048, 128] -> [2048, 128]
         x_1 = x[0]
         return x_1
 
@@ -1969,10 +1964,8 @@ def test_silu_decomposition_numerical_stability():
 
     res = jfn(a, b)
     grads_res = torch.autograd.grad(res.sum(), [a, b])
-    print(grads_res)
 
     ref = torch_fn(a, b)
     grads_ref = torch.autograd.grad(ref.sum(), [a, b])
-    print(grads_ref)
 
     torch.testing.assert_close(grads_res, grads_ref)
