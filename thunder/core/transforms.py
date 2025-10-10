@@ -1767,6 +1767,21 @@ def digamma_backward(a: Proxy, g):
     return g * polygamma(1, a)
 
 
+@register_augmented_forward("torch.nn.functional.silu")
+def silu_aug_fwd(a: Proxy, inplace):
+    from thunder.torch import silu
+
+    primal = silu(a, inplace)
+    residuals = (a,)
+    return VJPDual(primal, residuals)
+
+
+@register_backward("torch.nn.functional.silu")
+def silu_backward(a, g):
+    sigmoid = 1 / (1 + prims.exp(-a))
+    return g * sigmoid * (1 + a * (1 - sigmoid))
+
+
 @register_augmented_forward("torch.polygamma")
 def polygamma_aug_fwd(n: int, a: Proxy):
     from thunder.torch import polygamma
