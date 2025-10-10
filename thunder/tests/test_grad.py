@@ -1947,6 +1947,7 @@ def test_disambiguate_grad_names():
     assert_close(res_grads, ref_grads)
 
 
+@requiresCUDA
 def test_silu_decomposition_numerical_stability():
     from torch.nn.functional import linear, silu
 
