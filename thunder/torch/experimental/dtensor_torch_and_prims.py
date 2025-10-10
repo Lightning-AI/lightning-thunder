@@ -1,6 +1,7 @@
 from functools import partial
 from collections.abc import Callable
 from enum import auto, Enum
+from collections.abc import Sequence
 from looseversion import LooseVersion
 
 from thunder.torch import torchsymbol, TensorLike, register_function
@@ -369,6 +370,100 @@ def dtensor_reciprocal(a: TensorLike) -> TensorLike:
         prim=dtensor_reciprocal_prim,
         type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT,
     )
+
+
+if torch.distributed.is_available():
+    from torch.distributed.tensor import DTensor
+    from torch.distributed.tensor.placement_types import Placement, DeviceMesh
+
+    def dtensor_from_local_meta(
+        x,
+        mesh,
+        placements,
+        *,
+        run_check: bool = False,
+        shape: torch.Size | None = None,
+        stride: tuple[int, ...] | None = None,
+    ):
+        res = run_with_fake_tensor(
+            DTensor.from_local, x, mesh, placements, run_check=run_check, shape=shape, stride=stride
+        )
+        from thunder.torch.experimental.dtensor_proxy import proxify_dtensor
+
+        res = proxify_dtensor(res)
+        return res
+
+    dtensor_from_local_prim = make_prim("dtensor_from_local", "dtensor_from_local", meta=dtensor_from_local_meta)
+
+    dtensor_from_local_prim_impl = pytorchex.register_operator(
+        "dtensor_from_local", like=dtensor_from_local_prim, fn=DTensor.from_local
+    )
+
+    pytorchex.register_implementation(dtensor_from_local_prim, dtensor_from_local_prim_impl)
+
+    @dtensor_torchsymbol(DTensor.from_local, id="dtensor.torch.from_local")
+    def dtensor_from_local(
+        x,
+        mesh,
+        placements,
+        *,
+        run_check: bool = False,
+        shape: torch.Size | None = None,
+        stride: tuple[int, ...] | None = None,
+    ) -> DTensorProxy | None:
+        return dtensor_from_local_prim(x, mesh, placements, run_check=run_check, shape=shape, stride=stride)
+
+    def dtensor_redistribute_meta(
+        dtensor,
+        device_mesh: DeviceMesh | None = None,
+        placements: Sequence[Placement] | None = None,
+        *,
+        async_op: bool = False,
+    ) -> DTensorProxy | None:
+        res = run_with_fake_tensor(DTensor.redistribute, dtensor, device_mesh, placements, async_op=async_op)
+        from thunder.torch.experimental.dtensor_proxy import proxify_dtensor
+
+        res = proxify_dtensor(res)
+        return res
+
+    dtensor_redistribute_prim = make_prim(
+        "dtensor_redistribute", "dtensor_redistribute", meta=dtensor_redistribute_meta
+    )
+
+    dtensor_redistribute_prim_impl = pytorchex.register_operator(
+        "dtensor_redistribute", like=dtensor_redistribute_prim, fn=DTensor.redistribute
+    )
+
+    @dtensor_torchsymbol(DTensor.redistribute, id="dtensor.torch.redistribute")
+    def dtensor_redistribute(
+        dtensor,
+        device_mesh: DeviceMesh | None = None,
+        placements: Sequence[Placement] | None = None,
+        *,
+        async_op: bool = False,
+    ) -> DTensorProxy | None:
+        return dtensor_redistribute_prim(dtensor, device_mesh, placements, async_op=async_op)
+
+    pytorchex.register_implementation(dtensor_redistribute_prim, dtensor_redistribute_prim_impl)
+
+    def dtensor_to_local_meta(dtensor, *, grad_placements: Sequence[Placement] | None = None):
+        res = run_with_fake_tensor(DTensor.to_local, dtensor, grad_placements=grad_placements)
+        from thunder.core.proxies import proxy
+
+        res = proxy(res)
+        return res
+
+    dtensor_to_local_prim = make_prim("dtensor_to_local", "dtensor_to_local", meta=dtensor_to_local_meta)
+
+    dtensor_to_local_prim_impl = pytorchex.register_operator(
+        "dtensor_to_local", like=dtensor_to_local_prim, fn=DTensor.to_local
+    )
+
+    pytorchex.register_implementation(dtensor_to_local_prim, dtensor_to_local_prim_impl)
+
+    @dtensor_torchsymbol(DTensor.to_local, id="dtensor.torch.to_local")
+    def dtensor_to_local(dtensor, *, grad_placements: Sequence[Placement] | None = None) -> DTensorProxy | None:
+        return dtensor_to_local_prim(dtensor, grad_placements=grad_placements)
 
 
 expand = partial(expand_impl, broadcast_prim=dtensor_broadcast_in_dim_prim)
