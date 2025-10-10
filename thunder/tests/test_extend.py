@@ -127,6 +127,7 @@ def test_get_all_executors_includes_all_native_executors():
     expected = {
         "apex",
         "fa3",
+        "liger",
         "torch",
         "sdpa",
         "torchcompile",
