@@ -224,6 +224,7 @@ class InferenceBenchmark:
             for p in model.parameters():
                 p.requires_grad_(False)
 
+            # Sanity check
             assert type(model.model.layers[1].feed_forward.shared_experts.gate_proj.weight) == DTensor
             assert type(model.model.layers[1].feed_forward.shared_experts.up_proj.weight) == DTensor
             assert type(model.model.layers[1].feed_forward.shared_experts.down_proj.weight) == DTensor
