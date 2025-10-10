@@ -16,7 +16,9 @@ from hypothesis import strategies as st
 from hypothesis import given, settings
 from hypothesis import HealthCheck
 import copy
+from functools import partial
 
+import thunder
 from thunder import dtypes
 from thunder.dynamo import thunderfx
 from thunder.dynamo.utils import CompilerType
@@ -676,8 +678,6 @@ def test_empty_autocast():
 # It must be located in the same folder as the test file to ensure the configuration.
 @requiresCUDA
 def test_ThunderCompilerGraphBenchmarking_LitGTMLPBenchmark(benchmark):
-    import thunder
-
     backend = ThunderCompilerGraphBenchmarking(
         benchmark, executors={"thunder": thunder.jit, "inductor": torch.compile, "eager": None}
     )
@@ -710,8 +710,6 @@ def test_ThunderCompilerGraphBenchmarking_groupby(benchmark):
             x = torch.sinc(y) + torch.cos(x)
             return x
 
-    import thunder
-
     backend = ThunderCompilerGraphBenchmarking(benchmark, executors={"thunder": thunder.jit, "inductor": torch.compile})
     compiled = torch.compile(backend=backend)(f)
     x = torch.ones(2).cuda()
@@ -723,9 +721,6 @@ def test_ThunderCompilerGraphBenchmarking_groupby(benchmark):
 def test_ThunderCompilerGraphBenchmarking_post_graph(benchmark):
     def f(x):
         return torch.sin(x)
-
-    import thunder
-    from functools import partial
 
     x = torch.randn((2, 2), device="cuda").requires_grad_()
     post_gp = partial(torch.cuda.make_graphed_callables, num_warmup_iters=1, allow_unused_input=True)
@@ -991,8 +986,6 @@ def test_dynamo_reproducer_submodules(use_pytest_benchmark, tmp_path):
 
 
 def test_deepcopy_graph_module():
-    import thunder
-
     class MyModule(torch.nn.Module):
         def __init__(self):
             super().__init__()
