@@ -204,17 +204,39 @@ class InferenceBenchmark:
             "*.layers.*.feed_forward.gate_proj": ColwiseParallel(use_local_output=False),
             "*.layers.*.feed_forward.up_proj": ColwiseParallel(use_local_output=False),
             "*.layers.*.feed_forward.down_proj": RowwiseParallel(use_local_output=True),
-            "*.layers.*.feed_forward.shared_experts.gate_proj": ColwiseParallel(
-                use_local_output=False, output_layouts=Shard(2)
-            ),
-            "*.layers.*.feed_forward.shared_experts.up_proj": ColwiseParallel(
-                use_local_output=False, output_layouts=Shard(2)
-            ),
-            "*.layers.*.feed_forward.shared_experts.down_proj": RowwiseParallel(),
-            "*.layers.*.feed_forward.routed_experts.gate_proj": GroupedLinearColwiseParallel(use_local_output=False),
-            "*.layers.*.feed_forward.routed_experts.up_proj": GroupedLinearColwiseParallel(use_local_output=False),
-            "*.layers.*.feed_forward.routed_experts.down_proj": GroupedLinearRowwiseParallel(),
         }
+
+        if not self.config.disable_moe_replacement:
+            tp_plan.update(
+                {
+                    # Custom MoE
+                    "*.layers.*.feed_forward.shared_experts.gate_proj": ColwiseParallel(
+                        use_local_output=False, output_layouts=Shard(2)
+                    ),
+                    "*.layers.*.feed_forward.shared_experts.up_proj": ColwiseParallel(
+                        use_local_output=False, output_layouts=Shard(2)
+                    ),
+                    "*.layers.*.feed_forward.shared_experts.down_proj": RowwiseParallel(),
+                    "*.layers.*.feed_forward.routed_experts.gate_proj": GroupedLinearColwiseParallel(
+                        use_local_output=False
+                    ),
+                    "*.layers.*.feed_forward.routed_experts.up_proj": GroupedLinearColwiseParallel(
+                        use_local_output=False
+                    ),
+                    "*.layers.*.feed_forward.routed_experts.down_proj": GroupedLinearRowwiseParallel(),
+                }
+            )
+
+        else:
+            tp_plan.update(
+                {
+                    # HF MoE
+                    "*.layers.*.feed_forward.shared_expert.gate_proj": ColwiseParallel(use_local_output=False),
+                    "*.layers.*.feed_forward.shared_expert.up_proj": ColwiseParallel(use_local_output=False),
+                    "*.layers.*.feed_forward.shared_expert.down_proj": RowwiseParallel(use_local_output=True),
+                    # TODO:Need to write ParallelStyle for HF's grouped_mm implementation.
+                }
+            )
 
         if self.config.dtensor_single_gpu or WORLD_SIZE > 1:
             model = parallelize_module(model, mesh, tp_plan)
@@ -224,12 +246,17 @@ class InferenceBenchmark:
                 p.requires_grad_(False)
 
             # Sanity check
-            assert type(model.model.layers[1].feed_forward.shared_experts.gate_proj.weight) == DTensor
-            assert type(model.model.layers[1].feed_forward.shared_experts.up_proj.weight) == DTensor
-            assert type(model.model.layers[1].feed_forward.shared_experts.down_proj.weight) == DTensor
-            assert type(model.model.layers[1].feed_forward.routed_experts.gate_proj.weight) == DTensor
-            assert type(model.model.layers[1].feed_forward.routed_experts.up_proj.weight) == DTensor
-            assert type(model.model.layers[1].feed_forward.routed_experts.down_proj.weight) == DTensor
+            if not self.config.disable_moe_replacement:
+                assert type(model.model.layers[1].feed_forward.shared_experts.gate_proj.weight) == DTensor
+                assert type(model.model.layers[1].feed_forward.shared_experts.up_proj.weight) == DTensor
+                assert type(model.model.layers[1].feed_forward.shared_experts.down_proj.weight) == DTensor
+                assert type(model.model.layers[1].feed_forward.routed_experts.gate_proj.weight) == DTensor
+                assert type(model.model.layers[1].feed_forward.routed_experts.up_proj.weight) == DTensor
+                assert type(model.model.layers[1].feed_forward.routed_experts.down_proj.weight) == DTensor
+            else:
+                assert type(model.model.layers[1].feed_forward.shared_expert.gate_proj.weight) == DTensor
+                assert type(model.model.layers[1].feed_forward.shared_expert.up_proj.weight) == DTensor
+                assert type(model.model.layers[1].feed_forward.shared_expert.down_proj.weight) == DTensor
 
         # Materialize the model on the device (after Llama4MoE replacement and sharding)
         model.to_empty(device=DEVICE)
