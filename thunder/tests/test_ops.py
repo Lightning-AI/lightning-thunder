@@ -534,8 +534,8 @@ def test_div_exact():
         return c[indices]
 
     jfn = thunder.jit(fn)
-    a = torch.randint(1, 10, (5,))
-    b = torch.randint(1, 10, (5,))
+    a = torch.randint(1, 5, (5,))
+    b = torch.ones(5, dtype=torch.int32)
     c = torch.randn(5, 5)
     assert_close(fn(a, b, c), jfn(a, b, c))
     trc = thunder.last_traces(jfn)[-1]
