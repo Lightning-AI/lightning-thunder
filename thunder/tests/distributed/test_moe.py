@@ -132,6 +132,10 @@ def parallelize_moe_model(model: llama4_moe.Llama4MoE, device_mesh: torch.distri
         "routed_experts.down_proj": GroupedLinearRowwiseParallel(),
     }
 
+    # Create a copy of the original model as
+    # `parallelize_module` will modify the model in place.
+    model = copy.deepcopy(model)
+
     # Parallelize the model
     parallelized_model = parallelize_module(
         model,
@@ -157,10 +161,6 @@ class TestLlama4MoEDistributed(DistributedParallelTestCase):
         # Create model with distributed tensors
         model = llama4_moe.Llama4MoE(config)
 
-        # Create a copy of the original model as
-        # `parallelize_module` will modify the model in place.
-        org_model = copy.deepcopy(model)
-
         # Apply TensorParallel
         parallelized_model = parallelize_moe_model(model, device_mesh)
 
@@ -173,9 +173,9 @@ class TestLlama4MoEDistributed(DistributedParallelTestCase):
 
         # Run forward pass
         actual = parallelized_model(inp)
-        expected = org_model(inp)
+        expected = model(inp)
         assert any(isinstance(p, DTensor) for p in parallelized_model.parameters())
-        assert all(not isinstance(p, DTensor) for p in org_model.parameters())
+        assert all(not isinstance(p, DTensor) for p in model.parameters())
 
         torch.testing.assert_close(actual, expected, atol=1e-2, rtol=1e-2)
 
