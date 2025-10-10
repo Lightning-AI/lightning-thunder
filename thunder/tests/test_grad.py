@@ -1945,3 +1945,34 @@ def test_disambiguate_grad_names():
 
     assert_close(res, ref)
     assert_close(res_grads, ref_grads)
+
+
+def test_silu_decomposition_numerical_stability():
+    from torch.nn.functional import linear, silu
+
+    def fn(to_3, weight):
+        # [1, 2048, 256] -> [1, 2048, 128]
+        x_fc_1 = linear(to_3, weight, bias=None)
+
+        # [1, 2048, 128] -> [1, 2048, 128]
+        x = silu(x_fc_1)
+
+        # [1, 2048, 128] -> [2048, 128]
+        x_1 = x[0]
+        return x_1
+
+    jfn = thunder.jit(fn)
+    torch_fn = torch.compile(fn)
+
+    a = torch.full((1, 2048, 256), -4.0, device="cuda", requires_grad=True)
+    b = torch.full((128, 256), 4.0, device="cuda", requires_grad=True)
+
+    res = jfn(a, b)
+    grads_res = torch.autograd.grad(res.sum(), [a, b])
+    print(grads_res)
+
+    ref = torch_fn(a, b)
+    grads_ref = torch.autograd.grad(ref.sum(), [a, b])
+    print(grads_ref)
+
+    torch.testing.assert_close(grads_res, grads_ref)
