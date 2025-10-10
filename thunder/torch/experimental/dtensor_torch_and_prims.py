@@ -540,7 +540,7 @@ if LooseVersion(torch.__version__) >= "2.8":
         return dtensor_grouped_mm_prim(a, b, offsets)
 
 
-# NOTE: Currently only has a helper.
+# NOTE: Currently only as a helper.
 # TODO: Add this as a torch symbol.
 def _dtensor_sigmoid(x):
     computation_dtype, result_dtype = utils.elementwise_type_promotion(
