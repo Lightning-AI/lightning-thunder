@@ -878,18 +878,22 @@ def test_checkpoint_memory_use(op):
     def checkpoint_fn(x):
         return checkpoint.checkpoint(fn, x, use_reentrant=False)
 
-    initial_mem = torch.cuda.memory_allocated()
-
     x = torch.randn((128, 128), device="cuda", requires_grad=True)
     jfn = thunderfx(checkpoint_fn)
-    y = jfn(x)
 
+    # Warmup
+    jfn(x)
+
+    torch.cuda.reset_peak_memory_stats()
+    initial_mem = torch.cuda.memory_allocated()
+
+    y = jfn(x)
     peak_mem_usage = torch.cuda.max_memory_allocated() - initial_mem
 
     y_ref = fn(x)
     torch.testing.assert_close(y, y_ref)
 
-    assert peak_mem_usage == x.nbytes * 2
+    assert peak_mem_usage == y.nbytes
     if op == torch.sinc:
         # Make sure the checkpointed region falled back to PyTorch
         sinfo = jfn._backend.subgraph_infos[-1]
