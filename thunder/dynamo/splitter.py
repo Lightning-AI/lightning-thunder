@@ -233,7 +233,7 @@ def _splitter(
                     return self.fn(*args, **kwargs)
 
             def fallback_eager(reason: str) -> torch.nn.Module:
-                warnings.warn(f"{reason} Falling back to torch.compile.")
+                warnings.warn(f"{reason} Falling back to eager.")
                 # TODO: Use torch.compile here. Investigate its behavior and ensure correctness.
                 return graph_module
 
