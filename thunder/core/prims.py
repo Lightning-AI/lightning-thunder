@@ -223,6 +223,7 @@ class PrimIDs(Enum):
     BITWISE_OR = auto()
     BITWISE_XOR = auto()
     DIV = auto()
+    DIV_EXACT = auto()
     EQ = auto()
     PY_FLOORDIV = auto()
     FMOD = auto()
@@ -2614,6 +2615,14 @@ def _div_numbers(a: Number, b: Number) -> Number:
 div = _make_elementwise_binary_prim(
     PrimIDs.DIV,
     "div",
+    number_fn=_div_numbers,
+    supported_input_dtypes=math_dtypes,
+)
+
+# The non-differentiable version of div
+div_exact = _make_elementwise_binary_prim(
+    PrimIDs.DIV_EXACT,
+    "div_exact",
     number_fn=_div_numbers,
     supported_input_dtypes=math_dtypes,
 )
