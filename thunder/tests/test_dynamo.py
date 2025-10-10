@@ -155,6 +155,24 @@ def test_basic_splitter(executor, device: str, dtype: dtypes.dtype, dynamic: boo
     assert any(target.startswith("thunder_") for target in targets)  # Verify that the submodules have name `thunder_*`
 
 
+@instantiate(dtypes=NOTHING)
+def test_inductor_fallback(executor, device, dtype):
+    x = torch.randn(3, 3, device=device, dtype=dtype)
+
+    def func(x):
+        return x.sinc().cos().sinc().sinc()
+
+    def trivial_compile(model, *args, **kwargs):
+        return model
+
+    cfunc = thunderfx(func)
+    with patch("torch._inductor.compile_fx.compile_fx", side_effect=trivial_compile) as mock_call:
+        cfunc(x)
+
+    # Once for sinc() and once for sinc().sinc()
+    assert mock_call.call_count == 2
+
+
 @instantiate(
     dtypes=NOTHING,
     executors=[DynamoThunderExecutor],
@@ -842,6 +860,35 @@ def test_checkpoint_converter_submodule():
     for n in submodule.graph.nodes:
         if n.op == "call_function":
             assert isinstance(n.target, Symbol) or callable(n.target)
+
+
+@requiresCUDA
+@pytest.mark.parametrize("op", [torch.sin, torch.sinc])
+def test_checkpoint_memory_use(op):
+    import torch.utils.checkpoint as checkpoint
+
+    def fn(x):
+        return op(op(op(op(x))))
+
+    def checkpoint_fn(x):
+        return checkpoint.checkpoint(fn, x, use_reentrant=False)
+
+    initial_mem = torch.cuda.memory_allocated()
+
+    x = torch.randn((128, 128), device="cuda", requires_grad=True)
+    jfn = thunderfx(checkpoint_fn)
+    y = jfn(x)
+
+    peak_mem_usage = torch.cuda.max_memory_allocated() - initial_mem
+
+    y_ref = fn(x)
+    torch.testing.assert_close(y, y_ref)
+
+    assert peak_mem_usage == x.nbytes * 2
+    if op == torch.sinc:
+        # Make sure the checkpointed region fell back to PyTorch
+        sinfo = jfn._backend.subgraph_infos[-1]
+        assert any(n.name.startswith("inductor") for n in sinfo.split_graph_module.graph.nodes)
 
 
 @instantiate(
