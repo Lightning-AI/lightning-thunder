@@ -2624,7 +2624,7 @@ div_exact = _make_elementwise_binary_prim(
     PrimIDs.DIV_EXACT,
     "div_exact",
     number_fn=_div_numbers,
-    supported_input_dtypes=math_dtypes,
+    supported_input_dtypes=dtypes.exact_dtypes,
 )
 
 # We currently do not support floordiv on tensors.
