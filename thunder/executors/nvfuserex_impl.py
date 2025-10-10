@@ -122,6 +122,14 @@ if nvfuser_version() >= LooseVersion("0.2.27"):
         }
     )
 
+if nvfuser_version() >= LooseVersion("0.2.28"):
+    _lcdtype_to_nvdtype_map.update(
+        {
+            dtypes.float4_e2m1fn_x2: DataType.Float4_e2m1fn_x2,
+            dtypes.float4_e2m1fn_x2_: DataType.Float4_e2m1fn_x2,
+        }
+    )
+
 _lcfp8_to_nvfp8_map: dict[dtypes.dtype, DataType] = {
     dtypes.float8_e5m2: DataType.Float8_e5m2,
     dtypes.float8_e5m2_: DataType.Float8_e5m2,
@@ -426,23 +434,23 @@ def compute_symbolic_shape(
         Tuple[int, ...]: The shape of the tensor for FusionDefinition.
     """
     nvf_shape = []
-    for p_l, l in zip(proxy_shape, shape):
+    for p_l, length in zip(proxy_shape, shape):
         # loudly raise exception when runtime shape violates proxy_shape in the
         # trace, which indicates issues with the cache. This isn't necessarily
         # an exception.
         check(
-            isinstance(p_l, NumberProxy) or p_l == l,
+            isinstance(p_l, NumberProxy) or p_l == length,
             lambda: f"inconsistent fusion definition with runtime shape {shape} and trace shape {proxy_shape}",
             exception_type=AssertionError,
         )
 
         # broadcast is specialized in FusionDefinition, preserve it for correct broadcast semantics
-        if l == 1:
-            nvf_shape.append(l)
+        if length == 1:
+            nvf_shape.append(length)
         elif isinstance(p_l, NumberProxy):
             nvf_shape.append(-1)
         else:
-            nvf_shape.append(l)
+            nvf_shape.append(length)
 
     return tuple(nvf_shape)
 

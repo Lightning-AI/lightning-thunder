@@ -9740,9 +9740,9 @@ def interpolate_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # All possible combinations to test that dependencies between dimensions are captured correctly.
     # Since specifying size will call the scale_factor path, we do not explicitly test scale_factor
     # in the loop below.
-    for b, c, l, dim in itertools.product(batch, channels, dim_options, n_spatial_dims):
-        for size in itertools.product(dim_options[l], repeat=dim):
-            spatial_dims = (l,) * dim
+    for b, c, dim_key, dim in itertools.product(batch, channels, dim_options, n_spatial_dims):
+        for size in itertools.product(dim_options[dim_key], repeat=dim):
+            spatial_dims = (dim_key,) * dim
             a_shape = b + c + spatial_dims
 
             yield SampleInput(make(a_shape), size=size)
@@ -9750,9 +9750,9 @@ def interpolate_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
     # mode = "bilinear" supports only 4D inputs in PyTorch, so 2 spatial dimensions
     n_spatial_dims_bilinear = (2,)
-    for b, c, l, dim in itertools.product(batch, channels, dim_options, n_spatial_dims_bilinear):
-        for size in itertools.product(dim_options[l], repeat=dim):
-            spatial_dims = (l,) * dim
+    for b, c, dim_key, dim in itertools.product(batch, channels, dim_options, n_spatial_dims_bilinear):
+        for size in itertools.product(dim_options[dim_key], repeat=dim):
+            spatial_dims = (dim_key,) * dim
             a_shape = b + c + spatial_dims
 
             yield SampleInput(make(a_shape), size=size, mode="bilinear")

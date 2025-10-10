@@ -1789,13 +1789,13 @@ def _pad_prim_impl(
     intermediate_slices = []
     pad_config = []
     just_pad = True
-    for l, (low, high, dilation) in zip(a.shape, padding_config):
+    for length, (low, high, dilation) in zip(a.shape, padding_config):
         assert dilation >= 0
 
         if dilation > 0:
             just_pad = False
 
-        intermediate_length = l + max(0, l - 1) * dilation
+        intermediate_length = length + max(0, length - 1) * dilation
         intermediate_shape.append(intermediate_length)
         intermediate_slices.append(slice(None, None, dilation + 1))
 
