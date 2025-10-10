@@ -32,6 +32,8 @@ from tqdm import tqdm
 from transformers import AutoConfig, AutoModelForCausalLM
 from transformers.cache_utils import HybridChunkedCache
 from transformers.models.llama4.modeling_llama4 import Llama4TextMoe
+from torch.distributed.tensor.placement_types import Shard
+from torch.distributed.tensor import DTensor
 
 import thunder
 from thunder.dynamo.compiler import thunderfx
@@ -44,6 +46,7 @@ from thunder.benchmarks.layers_for_inference_benchmark import (
     nvfuser_f16a_nvfp4weight_scaled_mm,
 )
 from thunder.torch.custom_op import _register_custom_op
+from thunder.tests.distributed.test_moe import GroupedLinearColwiseParallel, GroupedLinearRowwiseParallel
 
 if TYPE_CHECKING:
     from typing import Any
@@ -194,10 +197,6 @@ class InferenceBenchmark:
             _replace_llama4_moe(model)
         assert all(p.device == torch.device("meta") for p in model.parameters())
 
-        # Materialize the model on the device
-        model.to_empty(device=DEVICE)
-        assert all(p.device == DEVICE for p in model.parameters())
-
         tp_plan = {
             "*.layers.*.self_attn.q_proj": ColwiseParallel(use_local_output=True),
             "*.layers.*.self_attn.k_proj": ColwiseParallel(use_local_output=True),
@@ -206,9 +205,16 @@ class InferenceBenchmark:
             "*.layers.*.feed_forward.gate_proj": ColwiseParallel(use_local_output=False),
             "*.layers.*.feed_forward.up_proj": ColwiseParallel(use_local_output=False),
             "*.layers.*.feed_forward.down_proj": RowwiseParallel(use_local_output=True),
-            "*.layers.*.feed_forward.shared_expert.gate_proj": ColwiseParallel(use_local_output=False),
-            "*.layers.*.feed_forward.shared_expert.up_proj": ColwiseParallel(use_local_output=False),
-            "*.layers.*.feed_forward.shared_expert.down_proj": RowwiseParallel(use_local_output=True),
+            "*.layers.*.feed_forward.shared_experts.gate_proj": ColwiseParallel(
+                use_local_output=False, output_layouts=Shard(2)
+            ),
+            "*.layers.*.feed_forward.shared_experts.up_proj": ColwiseParallel(
+                use_local_output=False, output_layouts=Shard(2)
+            ),
+            "*.layers.*.feed_forward.shared_experts.down_proj": RowwiseParallel(),
+            "*.layers.*.feed_forward.routed_experts.gate_proj": GroupedLinearColwiseParallel(use_local_output=False),
+            "*.layers.*.feed_forward.routed_experts.up_proj": GroupedLinearColwiseParallel(use_local_output=False),
+            "*.layers.*.feed_forward.routed_experts.down_proj": GroupedLinearRowwiseParallel(),
         }
 
         if self.config.dtensor_single_gpu or WORLD_SIZE > 1:
@@ -217,6 +223,17 @@ class InferenceBenchmark:
             # Required as that doesn't understand inference mode
             for p in model.parameters():
                 p.requires_grad_(False)
+
+            assert type(model.model.layers[1].feed_forward.shared_experts.gate_proj.weight) == DTensor
+            assert type(model.model.layers[1].feed_forward.shared_experts.up_proj.weight) == DTensor
+            assert type(model.model.layers[1].feed_forward.shared_experts.down_proj.weight) == DTensor
+            assert type(model.model.layers[1].feed_forward.routed_experts.gate_proj.weight) == DTensor
+            assert type(model.model.layers[1].feed_forward.routed_experts.up_proj.weight) == DTensor
+            assert type(model.model.layers[1].feed_forward.routed_experts.down_proj.weight) == DTensor
+
+        # Materialize the model on the device (after Llama4MoE replacement and sharding)
+        model.to_empty(device=DEVICE)
+        assert all(p.device == DEVICE for p in model.parameters())
 
         # `thunderfx` seems to hide the access to vocab_size somewhere so
         # store it here before any compiler is applied.
@@ -306,7 +323,13 @@ class InferenceBenchmark:
         assert input_ids.shape[-1] == 1, f"Expected shape (B, 1), but found {input_ids.shape}"
         return self.get_next_token(input_ids, past_key_values)
 
-    @torch.inference_mode()
+    # TODO: Running `torchrun --nproc-per-node 2 thunder/benchmarks/benchmark_inference.py --input-length 32 --output-length 32 --mode eager --num-iterations 10`
+    # with inference mode results in
+    # [rank1]:   File "/opt/pytorch/lightning-thunder/thunder/benchmarks/layers_for_inference_benchmark.py", line 358, in grouped_mm
+    # [rank1]:     group_outs.append(group_a @ b[idx])
+    # [rank1]:                                 ~^^^^^
+    # [rank1]: RuntimeError: Cannot set version_counter for inference tensor
+    # @torch.inference_mode()
     def generate(
         self, input_ids: torch.Tensor, max_new_tokens: int, past_key_values: HybridChunkedCache
     ) -> dict[str, Any]:
