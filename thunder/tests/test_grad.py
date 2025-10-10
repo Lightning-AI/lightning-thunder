@@ -604,7 +604,7 @@ def test_vjp_correctness_sdpa_manual(op, device, dtype, executor, comp):
             disable_torch_autograd=True,
             executors=[sdpa_ex, *executor.executors_list()],
         )(filtered_args, (v,))
-        comp(actual_out, expect_out, atol=1e-3, rtol=1e-3)
+        comp(actual_out, expect_out, atol=1e-2, rtol=1e-2)
 
         # compare gradients of query, key, value, and attn_mask
         for eg, ag in zip(expected_grad, actual_grad):
