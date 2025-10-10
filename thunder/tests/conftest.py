@@ -1,13 +1,14 @@
+import importlib
+
 import pytest
 import pytest_benchmark
 from thunder.dynamo.compiler_graph_benchmark import GRAPH_BY_GRAPH_BENCHMARK_PARAMS_KEYS
 
 import torch
 
-try:
-    import nvfuser
-except ImportError:
-    nvfuser = None
+nvfuser = None
+if importlib.util.find_spec("nvfuser_direct") is None and importlib.util.find_spec("nvfuser") is not None:
+    nvfuser = importlib.import_module("nvfuser")
 
 
 @pytest.fixture(autouse=True)
