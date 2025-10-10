@@ -3258,3 +3258,70 @@ NVFUSER_SUPPORTS_OPTIONS = nvfuser_version() >= LooseVersion("0.2.23")
 assert NVFUSER_SUPPORTS_OPTIONS, (
     f"Installed version of nvFuser {nvfuser_version()} is not supported, please upgrade to 0.2.23 or later."
 )
+
+
+def _scaled_mm_check(
+    a: TensorLike,
+    b: TensorLike,
+    scale_a: TensorLike,
+    scale_b: TensorLike,
+    bias: TensorLike | None = None,
+    scale_result: TensorLike | None = None,
+    out_dtype: dtypes.dtype | None = None,
+    use_fast_accum: bool = False,
+) -> bool:
+    return nvfuser_version() > LooseVersion("0.2.27")
+
+
+# FIXME: Somehow the expected fd.ops does not seem to appear in the trace
+def _scaled_mm(
+    a: TensorLike,
+    b: TensorLike,
+    scale_a: TensorLike,
+    scale_b: TensorLike,
+    bias: TensorLike | None = None,
+    scale_result: TensorLike | None = None,
+    out_dtype: dtypes.dtype | None = None,
+    use_fast_accum: bool = False,
+    *,
+    fd: FusionDefinition,
+    lc_to_nv_map: dict,
+):
+    mat1 = getnv(a, fd, lc_to_nv_map)
+    mat2 = getnv(b, fd, lc_to_nv_map)
+    scale1 = getnv(scale_a, fd, lc_to_nv_map)
+    scale2 = getnv(scale_b, fd, lc_to_nv_map)
+    if bias is not None:
+        nv_bias = getnv(bias, fd, lc_to_nv_map)
+    else:
+        nv_bias = None
+    if out_dtype is not None:
+        out_dtype = dtypes.to_dtype(out_dtype)
+    if out_dtype is not None:
+        dtype = lcdtype_to_nvdtype(out_dtype)
+    else:
+        dtype = None
+    # TODO: figure out how to use `scale_result` in `fd.ops.scaled_mm`
+    # also what `alpha`, `output_block_scale_size`, `output_block_scale_dtype`, and `output_gamma` mean.
+    # if scale_result is not None:
+    #     nv_scale_result = getnv(scale_result, fd, lc_to_nv_map)
+    # else:
+    #     nv_scale_result = False
+
+    scaled_mm_result, _output_block_scale, _output_gamma = fd.ops.scaled_mm(
+        mat1,
+        mat2,
+        scale1,
+        scale2,
+        None,  # alpha
+        nv_bias,  # bias
+        None,  # beta
+        dtype,
+        # output_block_scale_size
+        # ouptut_block_scale_dtype
+        # output_gamma
+    )
+    return scaled_mm_result
+
+
+register_supported(prims._scaled_mm, _scaled_mm, _scaled_mm_check)
