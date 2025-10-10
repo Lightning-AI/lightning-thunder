@@ -145,6 +145,82 @@ def parallelize_moe_model(model: llama4_moe.Llama4MoE, device_mesh: torch.distri
     return parallelized_model
 
 
+def parallelize_linear_with_nvfuser(
+    linear: torch.nn.Linear,
+    mesh: DeviceMesh,
+    parallel_style: ParallelStyle,
+) -> torch.nn.Linear:
+    assert isinstance(linear, torch.nn.Linear), f"Unsupported layer: {linear}"
+
+    assert len(parallel_style.input_layouts) == 1, "Expect 1D mesh"
+    input_layout = parallel_style.input_layouts[0]
+
+    assert len(parallel_style.output_layouts) == 1, "Expect 1D mesh"
+    output_layout = parallel_style.output_layouts[0]
+
+    if isinstance(parallel_style, RowwiseParallel):
+        # We only support TP at this moment. A row-wise parallel linear is
+        # expected to have the input sharded on the contracting dimension and
+        # the output replicated.
+        assert input_layout.is_shard(-1), f"Unsupported layout: {input_layout}"
+        assert output_layout.is_replicate(), f"Unsupported layout: {output_layout}"
+
+        linear.register_parameter("weight", nn.Parameter(distribute_tensor(linear.weight, mesh, [Shard(-1)])))
+        return linear
+
+    if isinstance(parallel_style, ColwiseParallel):
+        # We only support TP at this moment. A column-wise parallel linear is
+        # expected to have the input replicated and the output sharded on the
+        # feature dimension.
+        assert input_layout.is_replicate(), f"Unsupported layout: {input_layout}"
+        assert output_layout.is_shard(-1), f"Unsupported layout: {output_layout}"
+        linear.register_parameter("weight", nn.Parameter(distribute_tensor(linear.weight, mesh, [Shard(0)])))
+        return linear
+
+    assert False, f"Unsupported parallel style: {parallel_style}"
+
+
+# Recursively finds all linear modules and replaces them with tensor-parallel
+# nvFuser definitions if a parallel plan is found.
+def parallelize_module_with_nvfuser(
+    module: torch.nn.Module,
+    mesh: DeviceMesh,
+    parallel_plan: dict[str, ParallelStyle],
+    fqn: str,  # stands for fully qualified name
+    parent_module: torch.nn.Module | None = None,
+):
+    for child_module_name, child_module in module.named_children():
+        if fqn:
+            child_fqn = f"{fqn}.{child_module_name}"
+        else:
+            child_fqn = child_module_name
+
+        parallelize_module_with_nvfuser(child_module, mesh, parallel_plan, child_fqn, module)
+
+    if (parallel_style := parallel_plan.get(fqn)) is None:
+        return
+
+    new_module = parallelize_linear_with_nvfuser(module, mesh, parallel_style)
+    assert parent_module is not None
+    module_name = fqn.split(".")[-1]
+    setattr(parent_module, module_name, new_module)
+
+
+def parallelize_moe_model_nvfuser(model: llama4_moe.Llama4MoE, device_mesh: torch.distributed.DeviceMesh):
+    parallelize_plan = {
+        "shared_experts.gate_proj": ColwiseParallel(),
+        "shared_experts.up_proj": ColwiseParallel(),
+        "shared_experts.down_proj": RowwiseParallel(),
+    }
+
+    parallelize_module_with_nvfuser(
+        model,
+        device_mesh,
+        parallelize_plan,
+        fqn="",
+    )
+
+
 class TestLlama4MoEDistributed(DistributedParallelTestCase):
     def test_llama4_moe_distributed(self):
         # Get world size
@@ -179,7 +255,9 @@ class TestLlama4MoEDistributed(DistributedParallelTestCase):
 
         torch.testing.assert_close(actual, expected, atol=1e-2, rtol=1e-2)
 
-        tmodel = thunderfx(parallelized_model, nv_enable_linear=True, nv_enable_scatter=True)
+        parallelize_moe_model_nvfuser(model, device_mesh)
+        model.requires_grad_(False)
+        tmodel = thunderfx(model, nv_enable_linear=True, nv_enable_scatter=True)
         actual = tmodel(inp)
 
         # Verify that there was one FXGraph.
