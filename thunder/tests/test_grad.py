@@ -342,10 +342,7 @@ def _thunder_vjp(f, *primals, v=None, executor="torch", set_compile_data=False):
     return executor.make_callable(initial_trace_vjp_f.python_callable(), disable_torch_autograd=True)(primals, v)
 
 
-def check_vjp_torch(
-    f_torch, f_thunder, primals_torch, primals_thunder, comp, dtype, device,
-    executor="torch", set_compile_data: bool = False
-):
+def check_vjp_torch(f_torch, f_thunder, primals_torch, primals_thunder, comp, executor="torch", set_compile_data: bool = False):
     """Check that the vector-Jacobian product of a function is correct.
 
     Args:
@@ -354,21 +351,16 @@ def check_vjp_torch(
         primals_torch (tuple): Inputs to f_torch.
         primals_thunder (tuple): Inputs to f_thunder.
         comp (callable): Comparison function for the two sides of the identity.
-        dtype: Target data type.
-        device (str): Device for computation.
         executor (str, optional): Executor to use for Thunder. Defaults to "torch".
         set_compile_data (bool, optional): Whether to set Thunder compile data. Defaults to False.
     """
-    # NOTE: Some tensors in some test cases are used as indices. Converting them to the requested dtype can lead to
-    # non-int types (e.g., float), which results in errors when they are used with functions that expect integer indices.
-    # Therefore, only cast to the target dtype if the tensor is floating-point or complex.
-    tgt_dtype = ltorch.to_torch_dtype(dtype)
+    if len(primals_torch) == 0:
+        return
+    # We need to clone the input tensors to avoid "unsupported operation: more than one element of the written-to tensor refers to a single memory location".
     torch_filtered_args = tree_map(
-        lambda t: _cast_preserving_index_dtype(t.clone() if isinstance(t, torch.Tensor) else t, device, tgt_dtype),
+        lambda t: t.clone() if isinstance(t, torch.Tensor) else t,
         primals_torch,
     )
-    if len(torch_filtered_args) == 0:
-        return
 
     make = partial(make_tensor_like, low=0, high=1)
     u_torch = tree_map(make, torch_filtered_args)
@@ -500,28 +492,6 @@ def _make_differentiable_wrapper(func, args):
     return wrapper, filtered_args
 
 
-def _cast_preserving_index_dtype(x, device, tgt_dtype):
-    """
-    Casts the input tensor to the specified device and (if floating-point or complex)
-    to the target dtype, while preserving integer and boolean index dtypes.
-
-    Args:
-        x: The input, which may be a torch.Tensor or another object.
-        device: The target device to move the tensor to.
-        tgt_dtype: The target dtype. Only applied if x is floating-point or complex.
-
-    Returns:
-        The tensor moved to the specified device and cast to tgt_dtype if applicable.
-        Non-tensors and tensors of integer/bool types are returned unchanged (except device move).
-    """
-    if not isinstance(x, torch.Tensor):
-        return x
-    x = x.to(device=device)
-    if torch.is_floating_point(x) or torch.is_complex(x):
-        return x.to(dtype=tgt_dtype)
-    return x
-
-
 def _thunder_to_torch_args(args, kwargs, dtype):
     """
     Converts arguments and keyword arguments from Thunder-specific dtypes to their corresponding
@@ -552,15 +522,13 @@ def snippet_vjp_correctness(func, args, comp, executor, set_compile_data, prolog
         prologue_required=prologue_required,
     )
 
-def snippet_vjp_correctness_torch(func_torch, func_thunder, args_torch, args_thunder, comp, dtype, device, executor, set_compile_data):
+def snippet_vjp_correctness_torch(func_torch, func_thunder, args_torch, args_thunder, comp, executor, set_compile_data):
     check_vjp_torch(
         func_torch,
         func_thunder,
         args_torch,
         args_thunder,
         comp=comp,
-        dtype=dtype,
-        device=device,
         executor=executor,
         set_compile_data=set_compile_data,
     )
@@ -628,8 +596,6 @@ def test_vjp_correctness(op, device, dtype, executor, comp):
                 torch_filtered_args,
                 filtered_args,
                 comp,
-                dtype,
-                device,
                 executor,
                 set_compile_data,
             )
