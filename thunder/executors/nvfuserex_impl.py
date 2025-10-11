@@ -544,6 +544,14 @@ class FusionDefinitionWrapper:
         if self.store_inputs:
             self.last_inputs = args
 
+        if dist.is_available():
+            # When using DTensor, argument can be AsyncCollectiveTensor.
+            # Eg. https://github.com/pytorch/pytorch/blob/0ab075a69e4577a60c4dcbff7bcc2ecd0a15ce46/torch/distributed/tensor/parallel/style.py#L142-L145
+            args = tuple(
+                arg.wait() if isinstance(arg, torch.distributed._functional_collectives.AsyncCollectiveTensor) else arg
+                for arg in args
+            )
+
         if dist.is_available() and any(isinstance(t, torch.distributed.tensor.DTensor) for t in args):
             with annotate_for_profile(self.name):
                 output = execute_with_dtensors(fd, args)
@@ -846,7 +854,22 @@ class nvFuserExecutor(FusionExecutor):
                 cuda_in_or_out: bool = self.has_cuda_input_or_output(bsym)
                 return can_fuse and cuda_in_or_out
 
-            return _can_fuse_node(a) and _can_fuse_node(b)
+            def bsym_input_types_match(a, b):
+                # NOTE: Don't allow creating a Fusion with mix of DTensor and Tensor inputs.
+                bsym_a: BoundSymbol = a.group_bsyms[0]
+                bsym_b: BoundSymbol = b.group_bsyms[0]
+                bsym_a_args_type = {type(arg) for arg in bsym_a.flat_proxy_args}
+                bsym_b_args_type = {type(arg) for arg in bsym_b.flat_proxy_args}
+
+                if DTensorProxy in bsym_a_args_type:
+                    assert bsym_a_args_type == {DTensorProxy}
+                    return bsym_b_args_type == bsym_a_args_type
+                if DTensorProxy in bsym_b_args_type:
+                    assert bsym_b_args_type == {DTensorProxy}
+                    return bsym_a_args_type == bsym_b_args_type
+                return True
+
+            return _can_fuse_node(a) and _can_fuse_node(b) and bsym_input_types_match(a, b)
 
         bound_symbol_groups = fuse_bound_symbols(trace, _should_fuse)
 
