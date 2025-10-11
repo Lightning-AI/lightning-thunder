@@ -78,6 +78,70 @@ vjp_op_force = {
     "local_response_norm",
 }
 
+_UNSTABLE_TORCH_JVP_OPS = {
+    "asinh",
+    "atan",
+    "clone",
+    "cos",
+    "cosh",
+    "cumsum",
+    "erf",
+    "erfc",
+    "erfcinv",
+    "erfinv",
+    "exp2",
+    "exp",
+    "expm1",
+    "flip",
+    "gelu",
+    "lgamma",
+    "log10",
+    "log1p",
+    "log2",
+    "log",
+    "logsigmoid",
+    "mish",
+    "ndtri",
+    "neg",
+    "polygamma",
+    "pow",
+    "prod",
+    "sigmoid",
+    "silu",
+    "sin",
+    "sinh",
+    "sqrt",
+    "square",
+    "tanh",
+    "tanhshrink",
+    "to",
+    "view",
+}
+
+_TORCH_JVP_UNSTABLE_OPS_FLOAT64 = {"pow", "prod", "view"}
+
+def _should_force_numerical_jvp(op_name, executor, device, dtype):
+    """
+    Return True when we should skip torch.func.jvp and fallback to numerical_jvp
+    for known-unstable cases (nvFuser + CUDA + float64 | torch + CPU/CUDA + float64) on specific ops.
+    """
+    from thunder.tests.framework import nvFuserTestExecutor, TorchTestExecutor
+
+    is_nvfuser = nvFuserTestExecutor is not None and type(executor) is nvFuserTestExecutor
+    is_torch_ex = TorchTestExecutor is not None and type(executor) is TorchTestExecutor
+
+    is_cuda = torch.device(device).type == "cuda"
+
+    # Known-unstable with nvFuser on CUDA float64 for many ops
+    if is_nvfuser and is_cuda and dtype is dtypes.float64 and op_name in _UNSTABLE_TORCH_JVP_OPS:
+        return True
+
+    # Torch fast-path instability on float64 for specific ops across cpu/cuda
+    if is_torch_ex and dtype is dtypes.float64 and op_name in _TORCH_JVP_UNSTABLE_OPS_FLOAT64:
+        return True
+
+    return False
+
 
 def _is_exact_dtype(torch_dtype):
     """Check if the given torch.dtype is an exact dtype.
@@ -278,6 +342,59 @@ def _thunder_vjp(f, *primals, v=None, executor="torch", set_compile_data=False):
     return executor.make_callable(initial_trace_vjp_f.python_callable(), disable_torch_autograd=True)(primals, v)
 
 
+def check_vjp_torch(
+    f_torch, f_thunder, primals_torch, primals_thunder, comp, dtype, device,
+    executor="torch", set_compile_data: bool = False
+):
+    """Check that the vector-Jacobian product of a function is correct.
+
+    Args:
+        f_torch (callable): PyTorch function whose JVP is computed.
+        f_thunder (callable): Function to compute VJP via Thunder.
+        primals_torch (tuple): Inputs to f_torch.
+        primals_thunder (tuple): Inputs to f_thunder.
+        comp (callable): Comparison function for the two sides of the identity.
+        dtype: Target data type.
+        device (str): Device for computation.
+        executor (str, optional): Executor to use for Thunder. Defaults to "torch".
+        set_compile_data (bool, optional): Whether to set Thunder compile data. Defaults to False.
+    """
+    # NOTE: Some tensors in some test cases are used as indices. Converting them to the requested dtype can lead to
+    # non-int types (e.g., float), which results in errors when they are used with functions that expect integer indices.
+    # Therefore, only cast to the target dtype if the tensor is floating-point or complex.
+    tgt_dtype = ltorch.to_torch_dtype(dtype)
+    torch_filtered_args = tree_map(
+        lambda t: _cast_preserving_index_dtype(t.clone() if isinstance(t, torch.Tensor) else t, device, tgt_dtype),
+        primals_torch,
+    )
+    if len(torch_filtered_args) == 0:
+        return
+
+    make = partial(make_tensor_like, low=0, high=1)
+    u_torch = tree_map(make, torch_filtered_args)
+
+            
+    outs_p_torch, J_u_torch = torch.func.jvp(f_torch, torch_filtered_args, u_torch)
+
+    v_torch = tree_map(make, outs_p_torch)
+    _, J_star_v = _thunder_vjp(
+        f_thunder, *primals_thunder, v=v_torch, executor=executor, set_compile_data=set_compile_data
+    )
+
+    # Dot-product identity
+    Ju = (J_u_torch,) if not isinstance(J_u_torch, (tuple, list)) else J_u_torch
+    vv = (v_torch,) if not isinstance(v_torch, (tuple, list)) else v_torch
+    uu = (u_torch,) if not isinstance(u_torch, (tuple, list)) else u_torch
+    Ju_dot_v = _dot(Ju, vv)
+    u_dot_Jstarv = _dot(uu, J_star_v)
+
+    # There are some cases when both sides are nan with fp64
+    if Ju_dot_v.isnan().any() and u_dot_Jstarv.isnan().any():
+        return
+
+    comp(Ju_dot_v, u_dot_Jstarv)
+
+
 def check_vjp(f, *primals, comp, executor="torch", set_compile_data: bool = False, prologue_required: bool = False):
     """Check that the vector-Jacobian product of a function is correct.
 
@@ -383,6 +500,48 @@ def _make_differentiable_wrapper(func, args):
     return wrapper, filtered_args
 
 
+def _cast_preserving_index_dtype(x, device, tgt_dtype):
+    """
+    Casts the input tensor to the specified device and (if floating-point or complex)
+    to the target dtype, while preserving integer and boolean index dtypes.
+
+    Args:
+        x: The input, which may be a torch.Tensor or another object.
+        device: The target device to move the tensor to.
+        tgt_dtype: The target dtype. Only applied if x is floating-point or complex.
+
+    Returns:
+        The tensor moved to the specified device and cast to tgt_dtype if applicable.
+        Non-tensors and tensors of integer/bool types are returned unchanged (except device move).
+    """
+    if not isinstance(x, torch.Tensor):
+        return x
+    x = x.to(device=device)
+    if torch.is_floating_point(x) or torch.is_complex(x):
+        return x.to(dtype=tgt_dtype)
+    return x
+
+
+def _thunder_to_torch_args(args, kwargs, dtype):
+    """
+    Converts arguments and keyword arguments from Thunder-specific dtypes to their corresponding
+    Torch dtypes, if applicable.
+
+    Args:
+        args (tuple): Positional arguments to be converted.
+        kwargs (dict): Keyword arguments to be converted.
+        dtype (type): The dtype class to check for conversion (e.g., thunder.float32).
+
+    Returns:
+        tuple: (args, kwargs) with values converted to Torch dtypes if they are of the given dtype.
+    """
+    mapper = lambda x: ltorch.to_torch_dtype(x) if isinstance(x, dtype) else x
+    args = tree_map(mapper, args)
+    kwargs = tree_map(mapper, kwargs)
+    return args, kwargs
+
+
+
 def snippet_vjp_correctness(func, args, comp, executor, set_compile_data, prologue_required):
     check_vjp(
         func,
@@ -391,6 +550,19 @@ def snippet_vjp_correctness(func, args, comp, executor, set_compile_data, prolog
         executor=executor,
         set_compile_data=set_compile_data,
         prologue_required=prologue_required,
+    )
+
+def snippet_vjp_correctness_torch(func_torch, func_thunder, args_torch, args_thunder, comp, dtype, device, executor, set_compile_data):
+    check_vjp_torch(
+        func_torch,
+        func_thunder,
+        args_torch,
+        args_thunder,
+        comp=comp,
+        dtype=dtype,
+        device=device,
+        executor=executor,
+        set_compile_data=set_compile_data,
     )
 
 
@@ -431,7 +603,7 @@ def test_vjp_correctness(op, device, dtype, executor, comp):
 
         set_compile_data = "adaptive_avg_pool2d" in op.name
 
-        def fallback_to_numerical_jvp():
+        def _fdm_jvp():
             return run_snippet(
                 snippet_vjp_correctness,
                 op,
@@ -445,70 +617,42 @@ def test_vjp_correctness(op, device, dtype, executor, comp):
                 len(sample.kwargs) != 0,
             )
 
-        # Fast path: if a pure torch reference exists and we're NOT using the plain Torch executor,
-        # compute J·u with torch.func.jvp on the torch reference, and J*·v with Thunder VJP.
-        if getattr(op, "torch_reference", None) is not None:
-            torch_args, torch_kwargs = sample.args, sample.kwargs
-            # Sanitize non-differentiable dtype arguments for torch fast path
-            sanitize_dtype = lambda x: ltorch.to_torch_dtype(x) if isinstance(x, dtypes.dtype) else x
-            torch_args = tree_map(sanitize_dtype, torch_args)
-            torch_kwargs = tree_map(sanitize_dtype, torch_kwargs)
-            flat_torch_op, flat_torch_args, _ = flatten_func(op.torch_reference, torch_args, torch_kwargs)
-            torch_filtered_op, torch_filtered_args = _make_differentiable_wrapper(flat_torch_op, flat_torch_args)
-            # Convert to torch tensors on the requested device and dtype
-            torch_filtered_args = tree_map(
-                lambda t: t.clone().to(device=device, dtype=ltorch.to_torch_dtype(dtype))
-                if isinstance(t, torch.Tensor)
-                else t,
+        def _torch_jvp():
+            return run_snippet(
+                snippet_vjp_correctness_torch,
+                op,
+                device,
+                dtype,
+                torch_filtered_op,
+                filtered_op,
                 torch_filtered_args,
-            )
-            if len(torch_filtered_args) == 0:
-                continue
-
-            make = partial(make_tensor_like, low=0, high=1)
-            u_torch = tree_map(make, torch_filtered_args)
-            # Clone and convert to torch tensors on the requested device and dtype (if needed)
-            u_torch = tree_map(
-                lambda t: t.clone().to(device=device, dtype=ltorch.to_torch_dtype(dtype))
-                if isinstance(t, torch.Tensor)
-                else t,
-                u_torch,
+                filtered_args,
+                comp,
+                dtype,
+                device,
+                executor,
+                set_compile_data,
             )
 
-            try:
-                outs_p_torch, J_u_torch = torch.func.jvp(torch_filtered_op, torch_filtered_args, u_torch)
-            except Exception:
-                # Some data types are not supported by torch.func.jvp, so we skip them (int / bool, not differentiable in Pytorch). Fall back to numerical_jvp-based path
-                result = fallback_to_numerical_jvp()
-                if result is not None:
-                    return result
-                continue
+        torch_args, torch_kwargs = _thunder_to_torch_args(sample.args, sample.kwargs, dtypes.dtype)
+        flat_torch_op, flat_torch_args, _ = flatten_func(op.torch_reference, torch_args, torch_kwargs)
+        torch_filtered_op, torch_filtered_args = _make_differentiable_wrapper(flat_torch_op, flat_torch_args)
 
-            v_torch = tree_map(make, outs_p_torch)
-            _, J_star_v = _thunder_vjp(
-                filtered_op, *filtered_args, v=v_torch, executor=executor, set_compile_data=set_compile_data
-            )
+        # If differentiable args include non-float/complex tensors, proactively fallback to numerical JVP
+        torch_not_supported = any(
+            isinstance(t, torch.Tensor) and not (torch.is_floating_point(t) or torch.is_complex(t))
+            for t in tree_flatten(torch_filtered_args)[0]
+        )
 
-            # Dot-product identity
-            Ju = (J_u_torch,) if not isinstance(J_u_torch, (tuple, list)) else J_u_torch
-            vv = (v_torch,) if not isinstance(v_torch, (tuple, list)) else v_torch
-            uu = (u_torch,) if not isinstance(u_torch, (tuple, list)) else u_torch
-            Ju_dot_v = _dot(Ju, vv)
-            u_dot_Jstarv = _dot(uu, J_star_v)
-            if Ju_dot_v.isnan().any():
-                continue
-            try:
-                comp(Ju_dot_v, u_dot_Jstarv)
-            except AssertionError:
-                # Currently for some tests with nvfuser we expect numerical instability, so we fall back to numerical_jvp-based path
-                result = fallback_to_numerical_jvp()
-                if result is not None:
-                    return result
-                continue
+        # Fast path: if a pure torch reference exists,
+        # compute J·u with torch.func.jvp on the torch reference, and J*·v with Thunder VJP.
+        if getattr(op, "torch_reference", None) is not None and not torch_not_supported and not _should_force_numerical_jvp(op.name, executor, device, dtype):
+            result = _torch_jvp()
         else:
-            result = fallback_to_numerical_jvp()
-            if result is not None:
-                return result
+            result = _fdm_jvp()
+
+        if result is not None:
+            return result
 
     if not at_least_one_differentiable_input:
         raise pytest.skip("No differentiable inputs found")
