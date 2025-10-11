@@ -14,17 +14,25 @@ def nvfuser_version() -> LooseVersion | None:
     if not torch.cuda.is_available():
         return None
 
+    # `importlib.util.find_spec` might make this logic cleaner.
     try:
-        import nvfuser
-
-        if hasattr(nvfuser, "version"):
-            return LooseVersion(nvfuser.version())
-
-        # NOTE: This import of nvFuser may or may not have version info
-        return LooseVersion("0.0.0")
+        import nvfuser_direct
     except ImportError:
-        pass
-
+        try:
+            import nvfuser
+        except ImportError:
+            pass
+        else:
+            if hasattr(nvfuser, "version"):
+                return LooseVersion(nvfuser.version())
+            else:
+                # NOTE: This import of nvFuser may or may not have version info
+                return LooseVersion("0.0.0")
+    else:
+        if hasattr(nvfuser_direct, "version"):
+            return LooseVersion(nvfuser_direct.version())
+        else:
+            return LooseVersion("0.0.0")
     # NOTE This occurs when nvFuser couldn't be imported
     return None
 
