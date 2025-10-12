@@ -383,14 +383,14 @@ class InferenceBenchmark:
         print(f"\nWarming up with {self.config.warmup_iterations} iterations...")
         input_ids, past_key_values = self.generate_batch()
 
-        for _ in tqdm(range(self.config.warmup_iterations)):
+        for _ in tqdm(range(self.config.warmup_iterations), disable=LOCAL_RANK != 0):
             past_key_values.reset()
             _ = self.measure_inference_step(input_ids, past_key_values, max_new_tokens=1)
 
         print(f"\nRunning {self.config.num_iterations} benchmark iterations...")
         all_metrics = []
 
-        for _ in tqdm(range(self.config.num_iterations)):
+        for _ in tqdm(range(self.config.num_iterations), disable=LOCAL_RANK != 0):
             past_key_values.reset()
             iter_metrics = self.measure_inference_step(input_ids, past_key_values, self.config.output_length)
             all_metrics.append(iter_metrics)
