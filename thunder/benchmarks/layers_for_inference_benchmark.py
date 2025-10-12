@@ -298,7 +298,7 @@ class NVFP4InferenceLinear(nn.Module):
         )
 
     @staticmethod
-    def from_linear(linear: nn.Linear) -> NVFP4InferenceLinear:
+    def from_linear(linear: nn.Linear, fqn: str | None = None) -> NVFP4InferenceLinear:
         weight = linear.weight
         bias = linear.bias
         out_features, in_features = weight.size()
@@ -414,6 +414,7 @@ class NVFP4InferenceGroupedLinear(nn.Module):
         ab_strides: torch.Tensor,
         c_strides: torch.Tensor,
     ) -> None:
+        super().__init__()
         self.register_buffer("fp4_weight", fp4_weight)
         self.register_buffer("weight_scaling_factor", weight_scaling_factor)
         self.register_buffer("weight_global_scale", weight_global_scale)
@@ -445,7 +446,7 @@ class NVFP4InferenceGroupedLinear(nn.Module):
         )
 
     @staticmethod
-    def from_grouped_linear(grouped_linear: GroupedLinear) -> NVFP4InferenceGroupedLinear:
+    def from_grouped_linear(grouped_linear: GroupedLinear, fqn: str | None = None) -> NVFP4InferenceGroupedLinear:
         weight = grouped_linear.weight
         (
             fp4_weight,
