@@ -201,9 +201,8 @@ def dequantize_to_dtype(tensor_fp4, tensor_sf, global_scale, dtype, device, bloc
     return out
 
 
-# TODO: Update this accordingly to the progress of nvfp4 kernel implementation.
-# An alternative is to use `_register_nvfuser_translator` of https://github.com/Lightning-AI/lightning-thunder/pull/2481
-# instead of updating this function itself.
+# NOTE: This custom op is registered with nvfuser translator in benchmark_inference.py
+# using _register_nvfuser_translator. See benchmark_inference._register_nvfp4_ops().
 @torch.library.custom_op("nvf_cutlass::f16a_nvfp4weight_scaled_mm", mutates_args=())
 def nvfuser_f16a_nvfp4weight_scaled_mm(
     activation: torch.Tensor,
@@ -212,10 +211,16 @@ def nvfuser_f16a_nvfp4weight_scaled_mm(
     weight_global_scale: torch.Tensor,
     bias: torch.Tensor | None,
 ) -> torch.Tensor:
+    # fp4_weight shape: (out_features, in_features // 2) - stored like nn.Linear weight
     hp_weight = dequantize_to_dtype(
         fp4_weight, weight_scaling_factor, weight_global_scale, activation.dtype, fp4_weight.device, 16
     )
-    return activation @ hp_weight + bias
+    # hp_weight shape after unpack: (out_features, in_features)
+    # Need to transpose to match nn.Linear: activation @ weight.T
+    result = activation @ hp_weight.T
+    if bias is not None:
+        result = result + bias
+    return result
 
 
 @torch.library.register_fake("nvf_cutlass::f16a_nvfp4weight_scaled_mm")
@@ -226,20 +231,26 @@ def _(
     weight_global_scale: torch.Tensor,
     bias: torch.Tensor | None,
 ) -> torch.Tensor:
-    return torch.empty((activation.size(0), fp4_weight.size(0)), device=activation.device, dtype=activation.dtype)
+    # fp4_weight shape: (out_features, in_features // 2)
+    # Validate that activation has at least 1 dimension
+    if activation.ndim == 0:
+        raise ValueError(f"Expected activation to have at least 1 dimension, got {activation.ndim}")
+
+    # Output shape should match activation.shape[:-1] + (out_features,)
+    # This handles both 2D (tokens, hidden) and 3D (batch, seq_len, hidden) inputs
+    out_features = fp4_weight.size(0)
+    output_shape = activation.shape[:-1] + (out_features,)
+    return torch.empty(output_shape, device=activation.device, dtype=activation.dtype)
 
 
-# TODO: Update this accordingly to the progress of nvfp4 kernel implementation.
-# An alternative is to use `_register_nvfuser_translator` of https://github.com/Lightning-AI/lightning-thunder/pull/2481
-# instead of updating this function itself.
+# NOTE: This custom op is registered with nvfuser translator in benchmark_inference.py
+# using _register_nvfuser_translator. See benchmark_inference._register_nvfp4_ops().
 @torch.library.custom_op("nvf_cutlass::f16a_nvfp4weight_scaled_grouped_mm", mutates_args=())
 def nvfuser_f16a_nvfp4weight_scaled_grouped_mm(
     activation: torch.Tensor,
     fp4_weight: torch.Tensor,
     weight_scaling_factor: torch.Tensor,
     weight_global_scale: torch.Tensor,
-    ab_strides: torch.Tensor,
-    c_strides: torch.Tensor,
     offsets: torch.Tensor,
     blockscale_offsets: torch.Tensor,
     problem_sizes: torch.Tensor,
@@ -262,13 +273,21 @@ def _(
     fp4_weight: torch.Tensor,
     weight_scaling_factor: torch.Tensor,
     weight_global_scale: torch.Tensor,
-    ab_strides: torch.Tensor,
-    c_strides: torch.Tensor,
     offsets: torch.Tensor,
     blockscale_offsets: torch.Tensor,
     problem_sizes: torch.Tensor,
 ) -> torch.Tensor:
-    return torch.empty((activation.size(0), fp4_weight.size(1)), device=activation.device, dtype=activation.dtype)
+    # fp4_weight shape: (groups, in_features, out_features // 2)
+    # Validate that activation has at least 1 dimension
+    if activation.ndim == 0:
+        raise ValueError(f"Expected activation to have at least 1 dimension, got {activation.ndim}")
+
+    # After unpacking: (groups, in_features, out_features)
+    # Output shape should match activation.shape[:-1] + (out_features,)
+    # This handles both 2D (tokens, hidden) and 3D (batch, seq_len, hidden) inputs
+    out_features = fp4_weight.size(2) * 2  # Unpack from FP4
+    output_shape = activation.shape[:-1] + (out_features,)
+    return torch.empty(output_shape, device=activation.device, dtype=activation.dtype)
 
 
 class NVFP4InferenceLinear(nn.Module):
@@ -375,20 +394,16 @@ class GroupedLinear(nn.Module):
 @torch.inference_mode()
 def quantize_grouped_linear_weight_to_nvfp4(
     weight: torch.Tensor | nn.Parameter,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Quantize grouped linear's weight to nvfp4
 
     Args:
         weight: Parameter of `GroupedLinear` of [g, n, k]
-        m: hidden_states.size(0)
-        tokens_per_expert_neg_one:
 
     Returns:
         fp4_weight: [g, n, k // 2]
         scale_factors: [g, n, k // 16]
         global_scales: [g]
-        ab_strides: [g]
-        c_strides: [g]
     """
     assert weight.ndim == 3, "Weight must be a 3D tensor"
 
@@ -396,9 +411,6 @@ def quantize_grouped_linear_weight_to_nvfp4(
     g, n, k = weight.size()
 
     with device:
-        ab_strides = torch.full((g,), k, dtype=torch.int32)
-        c_strides = torch.full((g,), n, dtype=torch.int32)
-
         fp4_weight = torch.empty((g, n, k // 2), dtype=torch.float4_e2m1fn_x2)
         global_scales = torch.empty((g,), dtype=torch.float32)
         scale_factors = torch.empty((g, n, k // 16), dtype=torch.float8_e4m3fn)
@@ -410,7 +422,7 @@ def quantize_grouped_linear_weight_to_nvfp4(
         fp4_weight[i] = cur_fp4_weight
         scale_factors[i] = linear_to_swizzled_128_4(cur_scale_factors)
 
-    return fp4_weight, scale_factors, global_scales, ab_strides, c_strides
+    return fp4_weight, scale_factors, global_scales
 
 
 class NVFP4InferenceGroupedLinear(nn.Module):
@@ -419,15 +431,11 @@ class NVFP4InferenceGroupedLinear(nn.Module):
         fp4_weight: torch.Tensor,
         weight_scaling_factor: torch.Tensor,
         weight_global_scale: torch.Tensor,
-        ab_strides: torch.Tensor,
-        c_strides: torch.Tensor,
     ) -> None:
         super().__init__()
         self.register_buffer("fp4_weight", fp4_weight)
         self.register_buffer("weight_scaling_factor", weight_scaling_factor)
         self.register_buffer("weight_global_scale", weight_global_scale)
-        self.register_buffer("ab_strides", ab_strides)
-        self.register_buffer("c_strides", c_strides)
 
     @staticmethod
     def compute_auxiliary_tensors(
@@ -475,8 +483,6 @@ class NVFP4InferenceGroupedLinear(nn.Module):
             self.fp4_weight,
             self.weight_scaling_factor,
             self.weight_global_scale,
-            self.ab_strides,
-            self.c_strides,
             offsets,
             blockscale_offsets,
             problem_sizes,
@@ -485,19 +491,11 @@ class NVFP4InferenceGroupedLinear(nn.Module):
     @staticmethod
     def from_grouped_linear(grouped_linear: GroupedLinear, fqn: str | None = None) -> NVFP4InferenceGroupedLinear:
         weight = grouped_linear.weight
-        (
-            fp4_weight,
-            weight_scaling_factor,
-            weight_global_scale,
-            ab_strides,
-            c_strides,
-        ) = quantize_grouped_linear_weight_to_nvfp4(weight)
+        fp4_weight, weight_scaling_factor, weight_global_scale = quantize_grouped_linear_weight_to_nvfp4(weight)
         return NVFP4InferenceGroupedLinear(
             fp4_weight,
             weight_scaling_factor,
             weight_global_scale,
-            ab_strides=ab_strides,
-            c_strides=c_strides,
         )
 
 
