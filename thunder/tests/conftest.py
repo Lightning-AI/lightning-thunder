@@ -1,4 +1,5 @@
 import importlib
+import importlib.util
 
 import pytest
 import pytest_benchmark
