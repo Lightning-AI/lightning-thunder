@@ -447,6 +447,13 @@ class NVFP4InferenceGroupedLinear(nn.Module):
 
     @staticmethod
     def from_grouped_linear(grouped_linear: GroupedLinear, fqn: str | None = None) -> NVFP4InferenceGroupedLinear:
+        """
+        Create an NVFP4InferenceGroupedLinear from a GroupedLinear.
+
+        Args:
+            grouped_linear (GroupedLinear): The source GroupedLinear.
+            fqn (str or None): Fully qualified name. Currently unused; reserved for future use or compatibility.
+        """
         weight = grouped_linear.weight
         (
             fp4_weight,
