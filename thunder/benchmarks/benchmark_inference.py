@@ -40,9 +40,9 @@ from torch.distributed.tensor import DTensor
 import thunder
 from thunder.dynamo.compiler import thunderfx
 from thunder.benchmarks.layers_for_inference_benchmark import (
-    GroupedLinear,
+    GroupedSwiGLU,
     Llama4MoE,
-    NVFP4InferenceGroupedLinear,
+    NVFP4InferenceGroupedSwiGLU,
     NVFP4InferenceLinear,
     nvfuser_f16a_nvfp4weight_scaled_grouped_mm,
     nvfuser_f16a_nvfp4weight_scaled_mm,
@@ -122,8 +122,8 @@ def _quantize_llama4(model: nn.Module) -> None:
     )
     _replace_with_custom_fn_if_matches_filter_with_name(
         model,
-        NVFP4InferenceGroupedLinear.from_grouped_linear,
-        lambda model, cur_fqn: isinstance(model, GroupedLinear),
+        NVFP4InferenceGroupedSwiGLU.from_grouped_swiglu,
+        lambda model, cur_fqn: isinstance(model, GroupedSwiGLU),
     )
 
 

@@ -28,8 +28,10 @@ if TYPE_CHECKING:
 
 __all__ = [
     "GroupedLinear",
+    "GroupedSwiGLU",
     "Llama4MoE",
     "NVFP4InferenceGroupedLinear",
+    "NVFP4InferenceGroupedSwiGLU",
     "NVFP4InferenceLinear",
     "nvfuser_f16a_nvfp4weight_scaled_grouped_mm",
     "nvfuser_f16a_nvfp4weight_scaled_mm",
@@ -301,14 +303,6 @@ class NVFP4InferenceLinear(nn.Module):
 
     @staticmethod
     def from_linear(linear: nn.Linear, fqn: str | None = None) -> NVFP4InferenceLinear:
-        """
-        Creates an NVFP4InferenceLinear layer from a standard nn.Linear layer.
-
-        Args:
-            linear (nn.Linear): The source linear layer.
-            fqn (str | None, optional): Fully qualified name of the layer. Currently unused,
-                but retained for compatibility with interfaces that require it or for future use.
-        """
         weight = linear.weight
         bias = linear.bias
         out_features, in_features = weight.size()
@@ -435,18 +429,47 @@ class NVFP4InferenceGroupedLinear(nn.Module):
         self.register_buffer("ab_strides", ab_strides)
         self.register_buffer("c_strides", c_strides)
 
-    # TODO: Update this accordingly to the progress of nvfp4 kernel implementation.
-    def forward(self, hidden_states: torch.Tensor, offsets: torch.Tensor) -> torch.Tensor:
+    @staticmethod
+    def compute_auxiliary_tensors(
+        hidden_states: torch.Tensor,
+        offsets: torch.Tensor,
+        out_features: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Compute blockscale_offsets and problem_sizes for grouped mm.
+
+        These can be computed once and reused across multiple forward calls with the same offsets.
+        """
         tokens_per_group = offsets[1:] - offsets[:-1]
         problem_sizes = torch.stack(
             [
                 tokens_per_group,
-                torch.full_like(tokens_per_group, hidden_states.size(0)),
-                torch.full_like(tokens_per_group, self.fp4_weight.size(2) * 2),
+                torch.full_like(tokens_per_group, hidden_states.size(1)),
+                torch.full_like(tokens_per_group, out_features),
             ],
             dim=1,
         )
-        blockscale_offsets = torch.cumsum(torch.ceil(tokens_per_group, 128) * 128)
+        # Calculate block-scale offsets: round up to 128, then cumsum with initial 0
+        rounded_tokens = ((tokens_per_group + 127) // 128) * 128
+        blockscale_offsets = torch.cat(
+            [
+                torch.zeros(1, dtype=torch.int32, device=tokens_per_group.device),
+                torch.cumsum(rounded_tokens, 0, dtype=torch.int32),
+            ]
+        )
+        return blockscale_offsets, problem_sizes
+
+    # TODO: Update this accordingly to the progress of nvfp4 kernel implementation.
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        offsets: torch.Tensor,
+        blockscale_offsets: torch.Tensor | None = None,
+        problem_sizes: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        if blockscale_offsets is None or problem_sizes is None:
+            # Compute them if not provided (backward compatibility)
+            out_features = self.fp4_weight.size(2) * 2
+            blockscale_offsets, problem_sizes = self.compute_auxiliary_tensors(hidden_states, offsets, out_features)
         return torch.ops.nvf_cutlass.f16a_nvfp4weight_scaled_grouped_mm(
             hidden_states,
             self.fp4_weight,
@@ -461,13 +484,6 @@ class NVFP4InferenceGroupedLinear(nn.Module):
 
     @staticmethod
     def from_grouped_linear(grouped_linear: GroupedLinear, fqn: str | None = None) -> NVFP4InferenceGroupedLinear:
-        """
-        Create an NVFP4InferenceGroupedLinear from a GroupedLinear.
-
-        Args:
-            grouped_linear (GroupedLinear): The source GroupedLinear.
-            fqn (str or None): Fully qualified name. Currently unused; reserved for future use or compatibility.
-        """
         weight = grouped_linear.weight
         (
             fp4_weight,
@@ -497,6 +513,49 @@ class GroupedSwiGLU(nn.Module):
             torch.nn.functional.silu(self.gate_proj(hidden_states, offsets)) * self.up_proj(hidden_states, offsets),
             offsets,
         )
+
+
+class NVFP4InferenceGroupedSwiGLU(nn.Module):
+    """NVFP4 GroupedSwiGLU that efficiently reuses auxiliary tensor computations."""
+
+    def __init__(
+        self,
+        gate_proj: NVFP4InferenceGroupedLinear,
+        up_proj: NVFP4InferenceGroupedLinear,
+        down_proj: NVFP4InferenceGroupedLinear,
+    ):
+        super().__init__()
+        self.gate_proj = gate_proj
+        self.up_proj = up_proj
+        self.down_proj = down_proj
+
+    def forward(self, hidden_states: torch.Tensor, offsets: torch.Tensor) -> torch.Tensor:
+        # Compute auxiliary tensors once for all three operations
+        intermediate_features = self.gate_proj.fp4_weight.size(2) * 2
+        blockscale_offsets_gate, problem_sizes_gate = NVFP4InferenceGroupedLinear.compute_auxiliary_tensors(
+            hidden_states, offsets, intermediate_features
+        )
+
+        gate_out = self.gate_proj(hidden_states, offsets, blockscale_offsets_gate, problem_sizes_gate)
+        up_out = self.up_proj(hidden_states, offsets, blockscale_offsets_gate, problem_sizes_gate)
+
+        intermediate = torch.nn.functional.silu(gate_out) * up_out
+
+        # For down_proj, we need different problem_sizes (different output features)
+        hidden_features = self.down_proj.fp4_weight.size(2) * 2
+        blockscale_offsets_down, problem_sizes_down = NVFP4InferenceGroupedLinear.compute_auxiliary_tensors(
+            intermediate, offsets, hidden_features
+        )
+
+        return self.down_proj(intermediate, offsets, blockscale_offsets_down, problem_sizes_down)
+
+    @staticmethod
+    def from_grouped_swiglu(grouped_swiglu: GroupedSwiGLU, fqn: str | None = None) -> NVFP4InferenceGroupedSwiGLU:
+        """Convert a GroupedSwiGLU to NVFP4InferenceGroupedSwiGLU."""
+        gate_proj = NVFP4InferenceGroupedLinear.from_grouped_linear(grouped_swiglu.gate_proj)
+        up_proj = NVFP4InferenceGroupedLinear.from_grouped_linear(grouped_swiglu.up_proj)
+        down_proj = NVFP4InferenceGroupedLinear.from_grouped_linear(grouped_swiglu.down_proj)
+        return NVFP4InferenceGroupedSwiGLU(gate_proj, up_proj, down_proj)
 
 
 # Slightly modified version of `thunder.tests.test_networks.Llama4MoE`
@@ -599,7 +658,13 @@ class Llama4MoE(nn.Module):
 
         # Without `torch.int32`, we see `RuntimeError: Offsets tensor must be integer (int32) tensor, but got torch.int64.`
         # from PyTorch when calling _grouped_mm.
-        offsets = torch.cumsum(tokens_per_expert, 0, dtype=torch.int32)  # [n]
+        # Prepend 0 to offsets for correct grouping
+        offsets = torch.cat(
+            [
+                torch.zeros(1, dtype=torch.int32, device=tokens_per_expert.device),
+                torch.cumsum(tokens_per_expert, 0, dtype=torch.int32),
+            ]
+        )  # [n+1]
         outs_sorted_by_expert_id = self.routed_experts(tokens_sorted_by_expert_id, offsets)  # [s, h]
 
         token_ids_sorted_by_expert_inverse_id = torch.argsort(token_ids_sorted_by_expert_id)
