@@ -17,7 +17,6 @@ import argparse
 import json
 import os
 import statistics
-import sys
 import time
 import warnings
 from typing import Any
@@ -46,10 +45,13 @@ from thunder.benchmarks.layers_for_inference_benchmark import (
     NVFP4InferenceLinear,
     nvfuser_f16a_nvfp4weight_scaled_grouped_mm,
     nvfuser_f16a_nvfp4weight_scaled_mm,
+    FLOAT4_E2M1_MAX,
+    FLOAT8_E4M3_EPS,
+    FLOAT8_E4M3_MAX,
 )
-from thunder.torch.custom_op import _register_custom_op
 from thunder.tests.distributed.test_moe import GroupedLinearColwiseParallel, GroupedLinearRowwiseParallel
 from thunder.transforms.cudagraph import CUDAGraphTransform
+from thunder.torch.custom_op import _register_custom_op, _register_nvfuser_translator
 
 if TYPE_CHECKING:
     from typing import Any
@@ -71,6 +73,114 @@ else:
     mesh = None
 
 LLAMA4_MAVERICK_MODEL_ID: str = "meta-llama/Llama-4-Maverick-17B-128E"
+
+
+# Register nvfp4 custom ops with Thunder and nvFuser
+def _register_nvfp4_ops():
+    """Register nvfp4 custom operations with Thunder."""
+    # Register f16a_nvfp4weight_scaled_mm
+    _nvfp4_mm_symbol = _register_custom_op(nvfuser_f16a_nvfp4weight_scaled_mm)
+
+    def nvfp4_mm_translator(
+        activation,
+        fp4_weight,
+        weight_scaling_factor,
+        weight_global_scale,
+        bias,
+        *,
+        fd,
+        lc_to_nv_map,
+    ):
+        """Translator for nvfp4 matmul to nvfuser."""
+        from thunder.executors.nvfuserex_impl import getnv
+
+        nv_activation = getnv(activation, fd, lc_to_nv_map)
+        nv_fp4_weight = getnv(fp4_weight, fd, lc_to_nv_map)
+        nv_weight_sf = getnv(weight_scaling_factor, fd, lc_to_nv_map)
+        nv_weight_gs = getnv(weight_global_scale, fd, lc_to_nv_map)
+
+        if bias is not None:
+            nv_bias = getnv(bias, fd, lc_to_nv_map)
+        else:
+            nv_bias = None
+
+        # Call nvfuser's nvfp4 operation
+        result = fd.ops.nvfp4_matmul(
+            nv_activation,
+            nv_fp4_weight,
+            nv_weight_sf,
+            nv_weight_gs,
+        )
+
+        if nv_bias is not None:
+            result = fd.ops.add(result, nv_bias)
+
+        return result
+
+    _register_nvfuser_translator(_nvfp4_mm_symbol, nvfp4_mm_translator)
+
+    # Register f16a_nvfp4weight_scaled_grouped_mm
+    _nvfp4_grouped_mm_symbol = _register_custom_op(nvfuser_f16a_nvfp4weight_scaled_grouped_mm)
+
+    def nvfp4_grouped_mm_translator(
+        activation,
+        fp4_weight,
+        weight_scaling_factor,
+        global_scale,
+        offsets,
+        blockscale_offsets,
+        problem_sizes,
+        *,
+        fd,
+        lc_to_nv_map,
+    ):
+        from nvfuser_direct import DataType
+        from thunder.executors.nvfuserex_impl import getnv
+
+        nv_act = getnv(activation, fd, lc_to_nv_map)
+        nv_fp4_w = getnv(fp4_weight, fd, lc_to_nv_map)
+        nv_sf_w = getnv(weight_scaling_factor, fd, lc_to_nv_map)
+        nv_alpha = getnv(global_scale, fd, lc_to_nv_map)
+        nv_offsets = getnv(offsets, fd, lc_to_nv_map)
+        nv_blocksf_offsets = getnv(blockscale_offsets, fd, lc_to_nv_map)
+        nv_problem_sizes = getnv(problem_sizes, fd, lc_to_nv_map)
+        # dynamic shape support has some concretization issue
+        m_size = activation.shape[0]
+        k_size = activation.shape[1]
+        k_tile_size = k_size // 16
+
+        reshaped_mat1 = fd.ops.reshape(nv_act, [m_size, k_tile_size, 16])
+        scale1 = fd.ops.abs(reshaped_mat1)
+        scale1 = fd.ops.max(scale1, 2)
+        scale1 = fd.ops.div(scale1, FLOAT4_E2M1_MAX)
+        scale1 = fd.ops.clamp(scale1, FLOAT8_E4M3_EPS, FLOAT8_E4M3_MAX)
+
+        broadcast_scale1 = fd.ops.broadcast(scale1, [False, False, True])
+        reshaped_scaled_mat1 = fd.ops.div(reshaped_mat1, broadcast_scale1)
+        reshaped_scaled_mat1 = fd.ops.clamp(reshaped_scaled_mat1, -FLOAT8_E4M3_MAX, FLOAT8_E4M3_MAX)
+
+        scaled_mat1 = fd.ops.reshape(reshaped_scaled_mat1, [m_size, k_size])
+        fp4_mat1 = fd.ops.cast(scaled_mat1, DataType.Float4_e2m1fn)
+        fp8_scale1 = fd.ops.cast(scale1, DataType.Float8_e4m3fn)
+        layout_fp8_scale1 = fd.ops.preprocess_grouped_matmul_input_sf(fp8_scale1, nv_offsets, nv_blocksf_offsets)
+        out = fd.ops.cutlass_nvfp4_grouped_mm(
+            fp4_mat1,
+            nv_fp4_w,
+            layout_fp8_scale1,
+            nv_sf_w,
+            nv_alpha,
+            # NOTE: we might need to call contiguous on problem_sizes
+            nv_problem_sizes,
+            nv_offsets,
+            nv_blocksf_offsets,
+            DataType.BFloat16,
+        )
+        return out
+
+    _register_nvfuser_translator(_nvfp4_grouped_mm_symbol, nvfp4_grouped_mm_translator)
+
+
+# Note: _register_nvfp4_ops() is called conditionally in main() when --enable-nvfp4 is specified
 
 
 # The logic is based on https://github.com/pytorch/ao/blob/b34c1037/torchao/quantization/quant_api.py#L230
@@ -116,18 +226,26 @@ def _replace_llama4_moe(model: nn.Module) -> None:
     )
 
 
-def _quantize_llama4(model: nn.Module) -> None:
-    """Replace linear and moe with nvfp4 inference version."""
-    _replace_with_custom_fn_if_matches_filter_with_name(
-        model,
-        NVFP4InferenceLinear.from_linear,
-        lambda model, cur_fqn: isinstance(model, nn.Linear),
-    )
-    _replace_with_custom_fn_if_matches_filter_with_name(
-        model,
-        NVFP4InferenceGroupedSwiGLU.from_grouped_swiglu,
-        lambda model, cur_fqn: isinstance(model, GroupedSwiGLU),
-    )
+def _quantize_llama4(model: nn.Module, quantize_linear: bool = True, quantize_grouped_linear: bool = True) -> None:
+    """Replace linear and moe with nvfp4 inference version.
+
+    Args:
+        model: The model to quantize
+        quantize_linear: Whether to quantize regular nn.Linear layers
+        quantize_grouped_linear: Whether to quantize GroupedSwiGLU layers
+    """
+    if quantize_linear:
+        _replace_with_custom_fn_if_matches_filter_with_name(
+            model,
+            NVFP4InferenceLinear.from_linear,
+            lambda model, cur_fqn: isinstance(model, nn.Linear),
+        )
+    if quantize_grouped_linear:
+        _replace_with_custom_fn_if_matches_filter_with_name(
+            model,
+            NVFP4InferenceGroupedSwiGLU.from_grouped_swiglu,
+            lambda model, cur_fqn: isinstance(model, GroupedSwiGLU),
+        )
 
 
 @contextmanager
@@ -151,6 +269,10 @@ class InferenceBenchmarkConfig:
     num_iterations: int
     warmup_iterations: int
     enable_nvfp4: bool  # Enable NVFP4 quantization
+    dtensor_single_gpu: bool
+    enable_nvfp4: bool  # Enable NVFP4 registration (required for any nvfp4 quantization)
+    quantize_linear: bool  # Quantize regular nn.Linear layers to NVFP4
+    quantize_grouped_linear: bool  # Quantize GroupedLinear/GroupedSwiGLU to NVFP4
     fx_report_folder: str | None
     enable_nv_linear: bool
     mode: str
@@ -278,7 +400,11 @@ class InferenceBenchmark:
         self.vocab_size = model.vocab_size
 
         if self.config.enable_nvfp4:
-            _quantize_llama4(model)
+            _quantize_llama4(
+                model,
+                quantize_linear=self.config.quantize_linear,
+                quantize_grouped_linear=self.config.quantize_grouped_linear,
+            )
         self.model = self._compile_model(model)
 
     @property
@@ -672,6 +798,26 @@ Examples:
 
     parser.add_argument("--enable-nvfp4", action="store_true", help="Enable NVFP4 quantization for linear layers")
     parser.add_argument(
+        "--dtensor-single-gpu",
+        action="store_true",
+        help="Use DTensor for single GPU",
+    )
+    parser.add_argument(
+        "--enable-nvfp4",
+        action="store_true",
+        help="Enable NVFP4 custom op registration (required for --quantize-linear or --quantize-grouped-linear)",
+    )
+    parser.add_argument(
+        "--quantize-linear",
+        action="store_true",
+        help="Quantize regular nn.Linear layers to NVFP4 (requires --enable-nvfp4)",
+    )
+    parser.add_argument(
+        "--quantize-grouped-linear",
+        action="store_true",
+        help="Quantize GroupedLinear/GroupedSwiGLU to NVFP4 for MoE layers (requires --enable-nvfp4)",
+    )
+    parser.add_argument(
         "--enable-nv-linear",
         action="store_true",
         help="let nvfuser take care of linear and matmul, note that this might fail with distributed run. See: https://github.com/NVIDIA/Fuser/issues/4507",
@@ -702,13 +848,17 @@ def main():
     if args.save_results:
         os.makedirs(args.output_dir, exist_ok=True)
 
-    # TODO: Override the forward with nvfuser_direct based implementation like
-    # https://github.com/Lightning-AI/lightning-thunder/blob/8b72715d/thunder/tests/test_torch_library_custom_op.py#L250-L266 does.
-    # Note that the linked code is in a draft pull request of https://github.com/Lightning-AI/lightning-thunder/pull/2481
-    # so we might want to do it more clumsily by copying the code in the pull request for now.
+    # Validate quantization flags
+    if (args.quantize_linear or args.quantize_grouped_linear) and not args.enable_nvfp4:
+        raise ValueError("--quantize-linear or --quantize-grouped-linear requires --enable-nvfp4 to be set")
+
+    # Register NVFP4 custom ops with nvfuser translators when enabled
     if args.enable_nvfp4:
-        sym_of_nvfp4_scaled_mm = _register_custom_op(nvfuser_f16a_nvfp4weight_scaled_mm)  # noqa: F841
-        sym_of_nvfp4_scaled_grouped_mm = _register_custom_op(nvfuser_f16a_nvfp4weight_scaled_grouped_mm)  # noqa: F841
+        try:
+            _register_nvfp4_ops()
+        except Exception as e:
+            # If registration fails (e.g., nvfuser not available), warn and continue
+            warnings.warn(f"Failed to register nvfp4 custom ops: {e}")
 
     config = InferenceBenchmarkConfig(
         model_name=args.model_name,
@@ -720,6 +870,8 @@ def main():
         warmup_iterations=args.warmup_iterations,
         mode=args.mode,
         enable_nvfp4=args.enable_nvfp4,
+        quantize_linear=args.quantize_linear,
+        quantize_grouped_linear=args.quantize_grouped_linear,
         fx_report_folder=args.fx_report_folder,
         enable_nv_linear=args.enable_nv_linear,
         disable_moe_replacement=args.disable_moe_replacement,
@@ -729,11 +881,6 @@ def main():
         enable_thunder_cudagraph=args.enable_thunder_cudagraph,
     )
     benchmark = InferenceBenchmark(config)
-
-    if args.enable_nvfp4:
-        msg = "NVFP4 kernels are not yet available. `--enable-nvfp4` runs only quantization but not benchmark"
-        warnings.warn(msg)
-        sys.exit(0)
 
     benchmark.run_benchmark()
     benchmark.print_results()
