@@ -299,6 +299,14 @@ class NVFP4InferenceLinear(nn.Module):
 
     @staticmethod
     def from_linear(linear: nn.Linear, fqn: str | None = None) -> NVFP4InferenceLinear:
+        """
+        Creates an NVFP4InferenceLinear layer from a standard nn.Linear layer.
+
+        Args:
+            linear (nn.Linear): The source linear layer.
+            fqn (str | None, optional): Fully qualified name of the layer. Currently unused,
+                but retained for compatibility with interfaces that require it or for future use.
+        """
         weight = linear.weight
         bias = linear.bias
         out_features, in_features = weight.size()
