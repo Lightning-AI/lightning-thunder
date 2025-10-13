@@ -1778,7 +1778,7 @@ def silu_aug_fwd(a: Proxy, inplace: bool = False):
 
 @register_backward("torch.nn.functional.silu")
 def silu_backward(a, g):
-    sigmoid = 1 / (1 + prims.exp(-a))
+    sigmoid = 1 / (1 + clang.exp(-a))
     return g * sigmoid * (1 + a * (1 - sigmoid))
 
 
