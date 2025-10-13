@@ -120,6 +120,7 @@ _UNSTABLE_TORCH_JVP_OPS = {
 
 _TORCH_JVP_UNSTABLE_OPS_FLOAT64 = {"pow", "prod", "view"}
 
+
 def _should_force_numerical_jvp(op_name, executor, device, dtype):
     """
     Return True when we should skip torch.func.jvp and fallback to numerical_jvp
@@ -342,7 +343,9 @@ def _thunder_vjp(f, *primals, v=None, executor="torch", set_compile_data=False):
     return executor.make_callable(initial_trace_vjp_f.python_callable(), disable_torch_autograd=True)(primals, v)
 
 
-def check_vjp_torch(f_torch, f_thunder, primals_torch, primals_thunder, comp, executor="torch", set_compile_data: bool = False):
+def check_vjp_torch(
+    f_torch, f_thunder, primals_torch, primals_thunder, comp, executor="torch", set_compile_data: bool = False
+):
     """Check that the vector-Jacobian product of a function is correct.
 
     Args:
@@ -364,7 +367,7 @@ def check_vjp_torch(f_torch, f_thunder, primals_torch, primals_thunder, comp, ex
 
     make = partial(make_tensor_like, low=0, high=1)
     u_torch = tree_map(make, torch_filtered_args)
-            
+
     outs_p_torch, J_u_torch = torch.func.jvp(f_torch, torch_filtered_args, u_torch)
 
     v_torch = tree_map(make, outs_p_torch)
@@ -511,7 +514,6 @@ def _thunder_to_torch_args(args, kwargs, dtype):
     return args, kwargs
 
 
-
 def snippet_vjp_correctness(func, args, comp, executor, set_compile_data, prologue_required):
     check_vjp(
         func,
@@ -521,6 +523,7 @@ def snippet_vjp_correctness(func, args, comp, executor, set_compile_data, prolog
         set_compile_data=set_compile_data,
         prologue_required=prologue_required,
     )
+
 
 def snippet_vjp_correctness_torch(func_torch, func_thunder, args_torch, args_thunder, comp, executor, set_compile_data):
     check_vjp_torch(
@@ -612,7 +615,11 @@ def test_vjp_correctness(op, device, dtype, executor, comp):
 
         # Fast path: if a pure torch reference exists,
         # compute J·u with torch.func.jvp on the torch reference, and J*·v with Thunder VJP.
-        if getattr(op, "torch_reference", None) is not None and not torch_not_supported and not _should_force_numerical_jvp(op.name, executor, device, dtype):
+        if (
+            getattr(op, "torch_reference", None) is not None
+            and not torch_not_supported
+            and not _should_force_numerical_jvp(op.name, executor, device, dtype)
+        ):
             result = _torch_jvp()
         else:
             result = _fdm_jvp()
