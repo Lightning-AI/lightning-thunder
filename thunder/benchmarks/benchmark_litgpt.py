@@ -86,8 +86,12 @@ class LowPrecisionHandler:
         return self.enabled and not self.use_legacy_thunder_te
 
     def check_and_add_compile_options(self, compile_options: str) -> str:
+        if not self.enabled and "_transformerengine" in compile_options:
+            raise ValueError("Low precision mode not specified but found transfomerengine in the compile options!")
+
         self.use_thunder_te = "thunder" in compile_options
         self.use_legacy_thunder_te = "transformerengine_v1" in compile_options
+
         if self.enabled and self.use_thunder_te and not self.use_legacy_thunder_te:
             compile_options += "_transformerengine"
         return compile_options
