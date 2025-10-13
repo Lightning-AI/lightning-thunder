@@ -1,4 +1,5 @@
 from functools import partial
+import copy
 
 import torch
 from torch.distributed.tensor.placement_types import Placement, Shard, Replicate
@@ -19,6 +20,7 @@ import torch.nn as nn
 
 import thunder.tests.llama4_moe as llama4_moe
 from thunder.tests.distributed.helper import DistributedParallelTestCase
+from thunder.dynamo import thunderfx
 
 
 # Referred from torchtitan: https://github.com/pytorch/torchtitan/blob/827255bb/torchtitan/experiments/llama4/infra/expert_parallel.py#L25
@@ -155,6 +157,10 @@ class TestLlama4MoEDistributed(DistributedParallelTestCase):
         # Create model with distributed tensors
         model = llama4_moe.Llama4MoE(config)
 
+        # Create a copy of the original model as
+        # `parallelize_module` will modify the model in place.
+        org_model = copy.deepcopy(model)
+
         # Apply TensorParallel
         parallelized_model = parallelize_moe_model(model, device_mesh)
 
@@ -167,6 +173,18 @@ class TestLlama4MoEDistributed(DistributedParallelTestCase):
 
         # Run forward pass
         actual = parallelized_model(inp)
-        expected = model(inp)
+        expected = org_model(inp)
+        assert any(isinstance(p, DTensor) for p in parallelized_model.parameters())
+        assert all(not isinstance(p, DTensor) for p in org_model.parameters())
 
-        torch.testing.assert_close(actual, expected, atol=1e-5, rtol=1e-5)
+        torch.testing.assert_close(actual, expected, atol=1e-2, rtol=1e-2)
+
+        tmodel = thunderfx(parallelized_model, nv_enable_linear=True, nv_enable_scatter=True)
+        actual = tmodel(inp)
+
+        # Verify that there was one FXGraph.
+        assert len(tmodel._backend.subgraph_infos) == 1
+        # Verify that the graph was not split.
+        assert len(tmodel._backend.subgraph_infos[0].split_reasons) == 0
+
+        torch.testing.assert_close(actual, expected, atol=1e-2, rtol=1e-2)
