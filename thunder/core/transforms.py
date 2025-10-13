@@ -77,6 +77,7 @@ import numpy as np
 
 
 TraceTag.register_tag("AUGMENTED_FORWARD")
+TraceTag.register_tag("BACKWARD")
 ProxyTag.register_tag("RECOMPUTE_IN_BACKWARD")
 
 
