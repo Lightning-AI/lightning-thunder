@@ -20,6 +20,8 @@ import statistics
 import sys
 import time
 import warnings
+from typing import Any
+from collections.abc import Callable
 
 import torch
 import torch.nn as nn
@@ -30,6 +32,8 @@ from tqdm import tqdm
 from transformers import AutoConfig, AutoModelForCausalLM
 from transformers.cache_utils import HybridChunkedCache
 from transformers.models.llama4.modeling_llama4 import Llama4TextMoe
+from torch.distributed.tensor.placement_types import Shard
+from torch.distributed.tensor import DTensor
 
 import thunder
 from thunder.dynamo.compiler import thunderfx
@@ -42,6 +46,7 @@ from thunder.benchmarks.layers_for_inference_benchmark import (
     nvfuser_f16a_nvfp4weight_scaled_mm,
 )
 from thunder.torch.custom_op import _register_custom_op
+from thunder.tests.distributed.test_moe import GroupedLinearColwiseParallel, GroupedLinearRowwiseParallel
 
 if TYPE_CHECKING:
     from typing import Any
@@ -63,26 +68,61 @@ if WORLD_SIZE > 1:
 LLAMA4_MAVERICK_MODEL_ID: str = "meta-llama/Llama-4-Maverick-17B-128E"
 
 
+# The logic is based on https://github.com/pytorch/ao/blob/b34c1037/torchao/quantization/quant_api.py#L230
+def _replace_with_custom_fn_if_matches_filter_with_name(
+    model,
+    replacement_fn: Callable[[torch.nn.Module, str], torch.nn.Module],
+    filter_fn: Callable[[torch.nn.Module, str], bool],
+    cur_fqn="",
+) -> None:
+    """
+    Recursively replaces each child module in `model` with the result of `replacement_fn(child)`
+
+    replacement_fn (Callable[[torch.nn.Module, str], torch.nn.Module]): The function to replace matching modules.
+    filter_fn (Callable[[torch.nn.Module, str], bool]): The function to filter matching modules.
+    cur_fqn (str): The current fully qualified name of the module.
+
+    Returns:
+        None
+    """
+    if filter_fn(model, cur_fqn[:-1]):
+        model = replacement_fn(model, cur_fqn[:-1])
+        return model
+    else:
+        named_children_list = list(model.named_children())
+        for name, child in named_children_list:
+            new_child = _replace_with_custom_fn_if_matches_filter_with_name(
+                child,
+                replacement_fn,
+                filter_fn,
+                f"{cur_fqn}{name}.",
+            )
+            if new_child is not child:
+                setattr(model, name, new_child)
+        return model
+
+
 def _replace_llama4_moe(model: nn.Module) -> None:
     """Replace Llama4TextMoe with Llama4MoE to use grouped gemm."""
-    # The logic is based on https://github.com/pytorch/ao/blob/b34c1037/torchao/quantization/quant_api.py#L230
-    named_children_list = list(model.named_children())
-    for name, child in named_children_list:
-        if isinstance(child, Llama4TextMoe):
-            new_child = Llama4MoE.from_llama4textmoe(child)
-            setattr(model, name, new_child)
+    _replace_with_custom_fn_if_matches_filter_with_name(
+        model,
+        lambda model, cur_fqn: Llama4MoE.from_transformers_llama4textmoe(model),
+        lambda model, cur_fqn: isinstance(model, Llama4TextMoe),
+    )
 
 
 def _quantize_llama4(model: nn.Module) -> None:
     """Replace linear and moe with nvfp4 inference version."""
-    named_children_list = list(model.named_children())
-    for name, child in named_children_list:
-        if isinstance(child, nn.Linear):
-            quantized_linear = NVFP4InferenceLinear.from_linear(child)
-            setattr(model, name, quantized_linear)
-        elif isinstance(child, GroupedLinear):
-            quantized_grouped_linear = NVFP4InferenceGroupedLinear.from_grouped_linear(child)
-            setattr(model, name, quantized_grouped_linear)
+    _replace_with_custom_fn_if_matches_filter_with_name(
+        model,
+        NVFP4InferenceLinear.from_linear,
+        lambda model, cur_fqn: isinstance(model, nn.Linear),
+    )
+    _replace_with_custom_fn_if_matches_filter_with_name(
+        model,
+        NVFP4InferenceGroupedLinear.from_grouped_linear,
+        lambda model, cur_fqn: isinstance(model, GroupedLinear),
+    )
 
 
 @contextmanager
@@ -145,7 +185,16 @@ class InferenceBenchmark:
         self.config = config
         self.metrics = InferenceMetrics()
 
+        # NOTE: Model resides on meta device
         model = self._load_model()
+        assert all(p.device == torch.device("meta") for p in model.parameters())
+
+        # NOTE: Replacement happens before model is materialized
+        #       otherwise, the memory usage will be increased due to
+        #       additional parameters materialized from the replacement module
+        if not self.config.disable_moe_replacement:
+            _replace_llama4_moe(model)
+        assert all(p.device == torch.device("meta") for p in model.parameters())
 
         tp_plan = {
             "*.layers.*.self_attn.q_proj": ColwiseParallel(use_local_output=True),
@@ -155,10 +204,39 @@ class InferenceBenchmark:
             "*.layers.*.feed_forward.gate_proj": ColwiseParallel(use_local_output=False),
             "*.layers.*.feed_forward.up_proj": ColwiseParallel(use_local_output=False),
             "*.layers.*.feed_forward.down_proj": RowwiseParallel(use_local_output=True),
-            "*.layers.*.feed_forward.shared_expert.gate_proj": ColwiseParallel(use_local_output=False),
-            "*.layers.*.feed_forward.shared_expert.up_proj": ColwiseParallel(use_local_output=False),
-            "*.layers.*.feed_forward.shared_expert.down_proj": RowwiseParallel(use_local_output=True),
         }
+
+        if not self.config.disable_moe_replacement:
+            tp_plan.update(
+                {
+                    # Custom MoE
+                    "*.layers.*.feed_forward.shared_experts.gate_proj": ColwiseParallel(
+                        use_local_output=False, output_layouts=Shard(2)
+                    ),
+                    "*.layers.*.feed_forward.shared_experts.up_proj": ColwiseParallel(
+                        use_local_output=False, output_layouts=Shard(2)
+                    ),
+                    "*.layers.*.feed_forward.shared_experts.down_proj": RowwiseParallel(),
+                    "*.layers.*.feed_forward.routed_experts.gate_proj": GroupedLinearColwiseParallel(
+                        use_local_output=False
+                    ),
+                    "*.layers.*.feed_forward.routed_experts.up_proj": GroupedLinearColwiseParallel(
+                        use_local_output=False
+                    ),
+                    "*.layers.*.feed_forward.routed_experts.down_proj": GroupedLinearRowwiseParallel(),
+                }
+            )
+
+        else:
+            tp_plan.update(
+                {
+                    # HF MoE
+                    "*.layers.*.feed_forward.shared_expert.gate_proj": ColwiseParallel(use_local_output=False),
+                    "*.layers.*.feed_forward.shared_expert.up_proj": ColwiseParallel(use_local_output=False),
+                    "*.layers.*.feed_forward.shared_expert.down_proj": RowwiseParallel(use_local_output=True),
+                    # TODO:Need to write ParallelStyle for HF's grouped_mm implementation.
+                }
+            )
 
         if self.config.dtensor_single_gpu or WORLD_SIZE > 1:
             model = parallelize_module(model, mesh, tp_plan)
@@ -167,12 +245,27 @@ class InferenceBenchmark:
             for p in model.parameters():
                 p.requires_grad_(False)
 
+            # Sanity check
+            if not self.config.disable_moe_replacement:
+                assert type(model.model.layers[1].feed_forward.shared_experts.gate_proj.weight) == DTensor
+                assert type(model.model.layers[1].feed_forward.shared_experts.up_proj.weight) == DTensor
+                assert type(model.model.layers[1].feed_forward.shared_experts.down_proj.weight) == DTensor
+                assert type(model.model.layers[1].feed_forward.routed_experts.gate_proj.weight) == DTensor
+                assert type(model.model.layers[1].feed_forward.routed_experts.up_proj.weight) == DTensor
+                assert type(model.model.layers[1].feed_forward.routed_experts.down_proj.weight) == DTensor
+            else:
+                assert type(model.model.layers[1].feed_forward.shared_expert.gate_proj.weight) == DTensor
+                assert type(model.model.layers[1].feed_forward.shared_expert.up_proj.weight) == DTensor
+                assert type(model.model.layers[1].feed_forward.shared_expert.down_proj.weight) == DTensor
+
+        # Materialize the model on the device (after Llama4MoE replacement and sharding)
+        model.to_empty(device=DEVICE)
+        assert all(p.device == DEVICE for p in model.parameters())
+
         # `thunderfx` seems to hide the access to vocab_size somewhere so
         # store it here before any compiler is applied.
         self.vocab_size = model.vocab_size
 
-        if not self.config.disable_moe_replacement:
-            _replace_llama4_moe(model)
         if self.config.enable_nvfp4:
             _quantize_llama4(model)
         self.model = self._compile_model(model)
@@ -210,7 +303,7 @@ class InferenceBenchmark:
 
         self.hf_config = config
 
-        with DEVICE:
+        with torch.device("meta"):
             model = AutoModelForCausalLM.from_config(config, torch_dtype=torch.bfloat16)
 
         return model
@@ -257,7 +350,13 @@ class InferenceBenchmark:
         assert input_ids.shape[-1] == 1, f"Expected shape (B, 1), but found {input_ids.shape}"
         return self.get_next_token(input_ids, past_key_values)
 
-    @torch.inference_mode()
+    # TODO: Running `torchrun --nproc-per-node 2 thunder/benchmarks/benchmark_inference.py --input-length 32 --output-length 32 --mode eager --num-iterations 10`
+    # with inference mode results in
+    # [rank1]:   File "/opt/pytorch/lightning-thunder/thunder/benchmarks/layers_for_inference_benchmark.py", line 358, in grouped_mm
+    # [rank1]:     group_outs.append(group_a @ b[idx])
+    # [rank1]:                                 ~^^^^^
+    # [rank1]: RuntimeError: Cannot set version_counter for inference tensor
+    # @torch.inference_mode()
     def generate(
         self, input_ids: torch.Tensor, max_new_tokens: int, past_key_values: HybridChunkedCache
     ) -> dict[str, Any]:
@@ -334,14 +433,14 @@ class InferenceBenchmark:
         print(f"\nWarming up with {self.config.warmup_iterations} iterations...")
         input_ids, past_key_values = self.generate_batch()
 
-        for _ in tqdm(range(self.config.warmup_iterations)):
+        for _ in tqdm(range(self.config.warmup_iterations), disable=LOCAL_RANK != 0):
             past_key_values.reset()
             _ = self.measure_inference_step(input_ids, past_key_values, max_new_tokens=1)
 
         print(f"\nRunning {self.config.num_iterations} benchmark iterations...")
         all_metrics = []
 
-        for _ in tqdm(range(self.config.num_iterations)):
+        for _ in tqdm(range(self.config.num_iterations), disable=LOCAL_RANK != 0):
             past_key_values.reset()
             iter_metrics = self.measure_inference_step(input_ids, past_key_values, self.config.output_length)
             all_metrics.append(iter_metrics)
@@ -466,11 +565,6 @@ def parse_args() -> argparse.Namespace:
         description="Thunder Inference Benchmark",
         formatter_class=CustomFormatter,
         epilog="""
-Standard Benchmark Scenarios:
-  summarization  - Prefill-Heavy: 4,000 input → 1,000 output tokens
-  chat          - Balanced: 1,000 input → 1,000 output tokens
-  reasoning     - Decode-Heavy: 1,000 input → 4,000 output tokens
-
 Examples:
   python benchmark_inference.py --input-length 2048 --output-length 512 --model-name meta-llama/Llama-4-Maverick-17B-128E --mode eager
         """,

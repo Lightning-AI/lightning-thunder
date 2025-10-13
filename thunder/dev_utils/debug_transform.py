@@ -52,6 +52,8 @@ class DebugTransform(thunder.core.transforms.Transform):
         new_bsyms: list[BoundSymbol] = []
         for bsym in trace.bound_symbols:
             sym_name = bsym.sym.name
+            # Replace dots in the symbol name to avoid NameError in debug symbol names
+            sym_name = sym_name.replace(".", "_")
 
             if bsym.sym.id in NON_COMPUTATION_PRIMS:
                 new_bsyms.append(bsym)
