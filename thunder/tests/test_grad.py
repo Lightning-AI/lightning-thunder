@@ -362,7 +362,7 @@ def check_vjp_torch(
 
     make = partial(make_tensor_like, low=0, high=1)
     u_torch = tree_map(make, primals_torch)
-            
+
     outs_p_torch, J_u_torch = torch.func.jvp(f_torch, primals_torch, u_torch)
 
     v_torch = tree_map(make, outs_p_torch)
