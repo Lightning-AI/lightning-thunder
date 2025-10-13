@@ -346,6 +346,7 @@ ne = ex.register_operator("ne", like=prims.ne, module=operator)
 pythonex_pow = ex.register_operator("pow", like=prims.pow, module=operator)
 sub = ex.register_operator("sub", like=prims.sub, module=operator)
 div = ex.register_operator("div", like=prims.div, fn=_div_prim_impl)
+div_exact = ex.register_operator("div_exact", like=prims.div_exact, fn=_div_prim_impl)
 shape = ex.register_operator("shape", like=prims.shape, fn=lambda x: x.shape)
 
 # TODO: Restore truediv once we find it...
@@ -370,6 +371,7 @@ ex.register_implementation(prims.ne, ne, checker=_elementwise_binary_checker)
 ex.register_implementation(prims.pow, pythonex_pow, checker=_elementwise_binary_checker)
 ex.register_implementation(prims.sub, sub, checker=_elementwise_binary_checker)
 ex.register_implementation(prims.div, div, checker=_elementwise_binary_checker)
+ex.register_implementation(prims.div_exact, div_exact, checker=_elementwise_binary_checker)
 ex.register_implementation(prims.shape, shape, checker=_always_executable)
 
 

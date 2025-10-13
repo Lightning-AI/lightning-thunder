@@ -193,8 +193,8 @@ def check_valid_shape(shape: tuple[int, NumberProxy, ...] | list[int]):
 
     check_type(shape, (tuple, list))
 
-    for l in shape:
-        check_valid_length(l)
+    for length in shape:
+        check_valid_length(length)
 
 
 #
