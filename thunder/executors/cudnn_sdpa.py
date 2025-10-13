@@ -97,10 +97,10 @@ def _make_cudnn_sdpa_forward_graph(
     Offset = None
     if dropout_p != 0.0:
         Seed = graph.tensor(
-            name="Seed", dim=scalar_dim_stride, stride=scalar_dim_stride, data_type=cudnn.data_type.INT32
+            name="Seed", dim=scalar_dim_stride, stride=scalar_dim_stride, data_type=cudnn.data_type.INT64
         )
         Offset = graph.tensor(
-            name="Offset", dim=scalar_dim_stride, stride=scalar_dim_stride, data_type=cudnn.data_type.INT32
+            name="Offset", dim=scalar_dim_stride, stride=scalar_dim_stride, data_type=cudnn.data_type.INT64
         )
         dropout_tuple = (dropout_p, Seed, Offset)
 
@@ -112,7 +112,7 @@ def _make_cudnn_sdpa_forward_graph(
         is_pass_by_value=True,
     )
 
-    O, softmax_stats = graph.scaled_dot_product_flash_attention(
+    output, softmax_stats = graph.scaled_dot_product_flash_attention(
         name="scaled_dot_product_flash_attention",
         q=Q,
         k=K,
@@ -130,7 +130,7 @@ def _make_cudnn_sdpa_forward_graph(
 
     dim_o = (b, h, s_q, d_v)
     stride_o = (h * s_q * d_v, s_q * d_v, d_v, 1)
-    O.set_output(True).set_data_type(torch_to_cudnn_dtype(value.dtype)).set_dim(dim_o).set_stride(stride_o)
+    output.set_output(True).set_data_type(torch_to_cudnn_dtype(value.dtype)).set_dim(dim_o).set_stride(stride_o)
 
     softmax_stats.set_output(True).set_data_type(torch_to_cudnn_dtype(torch.float32))
 
@@ -147,7 +147,7 @@ def _make_cudnn_sdpa_forward_graph(
             Bias,
             Seed,
             Offset,
-            O,
+            output,
             softmax_stats,
             graph,
         )
@@ -261,7 +261,7 @@ def _cudnn_sdpa_fwd_impl(
         Bias,
         Seed,
         Offset,
-        O,
+        output,
         softmax_stats,
         graph,
     ) = _make_cudnn_sdpa_forward_graph(
@@ -295,7 +295,7 @@ def _cudnn_sdpa_fwd_impl(
         Attn_scale: Attn_scale_cpu,
         Seed: seed_tensor,
         Offset: offset_tensor,
-        O: O_actual,
+        output: O_actual,
         softmax_stats: softmax_stats_actual,
     }
     if attn_mask is not None:
@@ -428,8 +428,8 @@ def _make_cudnn_sdpa_backward_graph(
 
     dim_o = (b, h, s_q, d_v)
     stride_o = (h * s_q * d_v, s_q * d_v, d_v, 1)
-    O = graph.tensor(name="O", dim=dim_o, stride=stride_o, data_type=torch_to_cudnn_dtype(query.dtype))
-    dO = graph.tensor_like(O)
+    output = graph.tensor(name="O", dim=dim_o, stride=stride_o, data_type=torch_to_cudnn_dtype(query.dtype))
+    dO = graph.tensor_like(output)
 
     dim_stats = (b, h, s_q, 1)
     stride_stats = (h * s_q, s_q, 1, 1)
@@ -450,10 +450,10 @@ def _make_cudnn_sdpa_backward_graph(
     Offset = None
     if dropout_p != 0.0:
         Seed = graph.tensor(
-            name="Seed", dim=scalar_dim_stride, stride=scalar_dim_stride, data_type=cudnn.data_type.INT32
+            name="Seed", dim=scalar_dim_stride, stride=scalar_dim_stride, data_type=cudnn.data_type.INT64
         )
         Offset = graph.tensor(
-            name="Offset", dim=scalar_dim_stride, stride=scalar_dim_stride, data_type=cudnn.data_type.INT32
+            name="Offset", dim=scalar_dim_stride, stride=scalar_dim_stride, data_type=cudnn.data_type.INT64
         )
         dropout_tuple = (dropout_p, Seed, Offset)
 
@@ -469,7 +469,7 @@ def _make_cudnn_sdpa_backward_graph(
         q=Q,
         k=K,
         v=V,
-        o=O,
+        o=output,
         dO=dO,
         stats=Stats,
         attn_scale=Attn_scale,
@@ -496,7 +496,7 @@ def _make_cudnn_sdpa_backward_graph(
             Q,
             K,
             V,
-            O,
+            output,
             dO,
             Stats,
             Seed,
@@ -619,7 +619,7 @@ def _cudnn_sdpa_bwd_impl(
         Q,
         K,
         V,
-        O,
+        output,
         dO,
         Stats,
         Seed,
@@ -657,7 +657,7 @@ def _cudnn_sdpa_bwd_impl(
         K: key.detach(),
         V: value.detach(),
         Attn_scale: Attn_scale_cpu,
-        O: out.detach(),
+        output: out.detach(),
         Stats: softmax_stats,
         Seed: philox_seed,
         Offset: philox_offset,

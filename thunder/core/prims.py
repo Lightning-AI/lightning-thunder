@@ -223,6 +223,7 @@ class PrimIDs(Enum):
     BITWISE_OR = auto()
     BITWISE_XOR = auto()
     DIV = auto()
+    DIV_EXACT = auto()
     EQ = auto()
     PY_FLOORDIV = auto()
     FMOD = auto()
@@ -830,13 +831,13 @@ unpack_cache_info = make_prim(
 
 
 # TODO Restore const criteria
-def unpack_sequence_meta(x: Sequence | CollectionProxy, l: int, /) -> list:
+def unpack_sequence_meta(x: Sequence | CollectionProxy, length: int, /) -> list:
     if isinstance(x, CollectionProxy):
         x = x.collection()
 
     utils.check_type(x, Sequence)
-    utils.check_type(l, (int, IntegerProxy))
-    baseutils.check(len(x) == l, lambda x=x, l=l: f"Expected the length of {x=} to be {l=}")
+    utils.check_type(length, (int, IntegerProxy))
+    baseutils.check(len(x) == length, lambda x=x, length=length: f"Expected the length of {x=} to be {length=}")
 
     return list(_collectify(y) for y in x)
 
@@ -876,7 +877,7 @@ def unpack_sequence_printer(
     )
     utils.check_type(bsym.output, Sequence)
 
-    x, l = arg_printables
+    x, _ = arg_printables
     call_str = f"{codeutils.prettyprint(x)}"
 
     # Short-circuits if there's nothing to unpack:
@@ -894,7 +895,7 @@ def unpack_sequence_printer(
     return lines
 
 
-def unpack_sequence_impl(x: Sequence, l: int) -> list:
+def unpack_sequence_impl(x: Sequence) -> list:
     return list(x)
 
 
@@ -1205,8 +1206,8 @@ def pack_list_printer(
         exception_type=AssertionError,
     )
 
-    l = out_printables.name
-    call_str = f"{codeutils.prettyprint(l)}"
+    name = out_printables.name
+    call_str = f"{codeutils.prettyprint(name)}"
 
     parts = [f"{codeutils.prettyprint(arg, literals_as_underscores=True)}, " for arg in arg_printables]
     final_str = call_str.strip("'") + f" = [{''.join(parts)}]"
@@ -1650,7 +1651,7 @@ unpack_empty_dict = make_prim(
 
 
 def unpack_dict(d: dict | CollectionProxy) -> tuple[Any, ...]:
-    l = []
+    arr = []
 
     baseutils.check_type(d, (dict, CollectionProxy))
     if isinstance(d, CollectionProxy):
@@ -1665,9 +1666,9 @@ def unpack_dict(d: dict | CollectionProxy) -> tuple[Any, ...]:
 
     for k in keys:
         v = unpack_key(d, k)
-        l.append(v)
+        arr.append(v)
 
-    return tuple(l)
+    return tuple(arr)
 
 
 def unpack(x: Any) -> Any:
@@ -2618,6 +2619,14 @@ div = _make_elementwise_binary_prim(
     supported_input_dtypes=math_dtypes,
 )
 
+# The non-differentiable version of div
+div_exact = _make_elementwise_binary_prim(
+    PrimIDs.DIV_EXACT,
+    "div_exact",
+    number_fn=_div_numbers,
+    supported_input_dtypes=dtypes.exact_dtypes,
+)
+
 # We currently do not support floordiv on tensors.
 py_floordiv = _make_elementwise_binary_prim(
     PrimIDs.PY_FLOORDIV,
@@ -3373,9 +3382,9 @@ def pad_meta(a: TensorProxy, /, padding_value: Number, padding_config: Sequence[
     utils.check_same_dtype(a, padding_value)
 
     shape = []
-    for l, (lo, hi, dilation) in zip(a.shape, padding_config):
+    for length, (lo, hi, dilation) in zip(a.shape, padding_config):
         utils.check(dilation >= 0, lambda: f"Expected {dilation=} to be weakly positive")
-        final_length = l + max(0, l - 1) * dilation + lo + hi
+        final_length = length + max(0, length - 1) * dilation + lo + hi
         utils.check(final_length >= 0, lambda: f"The length of a dimension after padding would be {final_length=} < 0")
         shape.append(final_length)
 
@@ -3482,13 +3491,13 @@ def squeeze_meta(a: TensorProxy, /, dims: tuple[int, ...]) -> TensorProxy:
         )
 
     shape = []
-    for idx, l in enumerate(a.shape):
+    for idx, length in enumerate(a.shape):
         # Checks that squeezed dims have length one
         if idx in dims:
-            utils.check(l == 1, lambda: f"Cannot squeeze dimension {idx} of length {l} in a.shape={a.shape}")
+            utils.check(length == 1, lambda: f"Cannot squeeze dimension {idx} of length {length} in a.shape={a.shape}")
             continue
 
-        shape.append(l)
+        shape.append(length)
 
     return TensorProxy(like=a, shape=shape)
 
@@ -3510,8 +3519,8 @@ def take_meta(a: TensorProxy, /, index: TensorProxy, dim: int) -> TensorProxy:
         lambda: "Attempting to index a 0-length dimension {dim=} with a non-empty index",
     )
 
-    l = index.shape[0] if index.ndim == 1 else 1
-    new_shape = a.shape[:dim] + (l,) + a.shape[dim + 1 :]
+    length = index.shape[0] if index.ndim == 1 else 1
+    new_shape = a.shape[:dim] + (length,) + a.shape[dim + 1 :]
 
     return TensorProxy(like=a, shape=new_shape)
 
@@ -3634,7 +3643,7 @@ def gather_meta(a: TensorProxy, /, index: TensorProxy, dim: int) -> TensorProxy:
     )
     utils.validate_idx(a.ndim, dim)
 
-    for idx, l in enumerate(index.shape):
+    for idx, _ in enumerate(index.shape):
         if idx != dim:
             utils.check(
                 index.shape[idx] <= a.shape[idx],
@@ -3663,7 +3672,7 @@ def scatter_add_meta(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, 
     )
     utils.validate_idx(a.ndim, dim)
 
-    for idx, l in enumerate(index.shape):
+    for idx, _ in enumerate(index.shape):
         if idx != dim:
             utils.check(
                 index.shape[idx] <= a.shape[idx],

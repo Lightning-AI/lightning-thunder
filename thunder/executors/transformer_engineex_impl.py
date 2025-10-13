@@ -1,5 +1,6 @@
 import time
 from typing import TYPE_CHECKING
+import warnings
 
 import torch.distributed as torch_dist
 
@@ -27,6 +28,7 @@ if TYPE_CHECKING:
     from thunder.core.proxies import TensorProxy
 
 import transformer_engine.pytorch as te
+import transformer_engine.common.recipe as te_recipe
 from transformer_engine.pytorch.constants import MXFP8_BLOCK_SCALING_SIZE
 from transformer_engine.pytorch.fp8 import (
     _amax_and_scale_update,
@@ -271,14 +273,35 @@ def _linear_checker(
 
     fp8_recipe = FP8GlobalStateManager.get_fp8_recipe()
 
+    supported_recipes = (te_recipe.DelayedScaling, te_recipe.MXFP8BlockScaling)
+    if hasattr(te_recipe, "NVFP4BlockScaling"):
+        supported_recipes = (*supported_recipes, te_recipe.NVFP4BlockScaling)
+
+    if not isinstance(fp8_recipe, supported_recipes):
+        warnings.warn(f"{type(fp8_recipe)} is not supported by TE executor, TE wont be used.")
+        return False
+
     def check_valid_fp8_shapes(a):
-        # DelayedScaling and MXFP8BlockScaling have different shape requirements.
+        # Each recipe type has different shape requirements.
         if fp8_recipe.delayed():
             return check_dim_for_fp8_exec(a)
 
-        assert fp8_recipe.mxfp8()
         shape = a.shape
-        return shape[0] % MXFP8_BLOCK_SCALING_SIZE == 0 and shape[1] % MXFP8_BLOCK_SCALING_SIZE == 0
+
+        if fp8_recipe.mxfp8():
+            return shape[0] % MXFP8_BLOCK_SCALING_SIZE == 0 and shape[1] % MXFP8_BLOCK_SCALING_SIZE == 0
+
+        if hasattr(fp8_recipe, "nvfp4") and fp8_recipe.nvfp4():
+            from transformer_engine.pytorch.constants import NVFP4_BLOCK_SCALING_SIZE
+
+            # Check inherited from TE https://github.com/NVIDIA/TransformerEngine/blob/7e45be73bb8d513abe8785ee078ac88719bcd9f1/transformer_engine/pytorch/tensor/nvfp4_tensor.py#L180-L188
+            return (
+                len(shape) >= 2
+                and shape[0] % NVFP4_BLOCK_SCALING_SIZE == 0
+                and shape[1] % NVFP4_BLOCK_SCALING_SIZE == 0
+            )
+
+        return False
 
     # Inputs must be on CUDA and
     # input sizes must satisfy size constraints based on the recipe.

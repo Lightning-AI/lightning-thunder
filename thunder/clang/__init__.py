@@ -1,6 +1,6 @@
 from __future__ import annotations
 from collections.abc import Callable, Sequence
-from functools import partial, reduce
+from functools import partial, reduce, update_wrapper
 from numbers import Number
 from types import EllipsisType, NoneType
 from typing import Any, Union
@@ -9,6 +9,8 @@ import operator
 import warnings
 
 from thunder.clang.langctx import register_method
+from thunder.clang.utils import create_maybe_convert_to_dtype_with_prim, _elementwise_unary_wrapper
+import thunder.clang.utils as clang_utils
 from thunder.core import utils
 from thunder.core.baseutils import run_once
 from thunder.core.langctxs import langctx, Languages
@@ -140,39 +142,7 @@ def construct_tuple(tup: tuple, /) -> tuple:
 
 
 # TODO Review revising enforce_safe_casting to be more like NumPy's
-@clangop()
-def maybe_convert_to_dtype(a, dtype, *, enforce_safe_casting=False):
-    """If a has the same dtype as the given dtype, returns a unmodified.
-
-    Otherwise returns a converted to the given dtype.
-    """
-
-    utils.check(utils.is_dtype(dtype), lambda: f"Unknown dtype {dtype}!")
-
-    if isinstance(a, Sequence):
-        return tuple(maybe_convert_to_dtype(x, dtype) for x in a)
-    if isinstance(a, TensorProxy):
-        # Translates numbertypes to dtypes
-        if dtypes.is_numbertype(dtype):
-            dtype = dtypes.numbertype_to_dtype(dtype)
-    elif isinstance(a, (Number, NumberProxy)):
-        # NOTE This allows conversions like (5, float32) -> 5., which is a little odd
-        dtype = utils.dtype_to_numbertype(dtype)
-    else:
-        raise ValueError(
-            f"Trying to convert the type of the data of an unknown object {a} of {type(a)} that is neither a tensor, number, or sequence!"
-        )
-
-    if not utils.are_same_dtypes(a, dtype):
-        if enforce_safe_casting:
-            utils.check(
-                utils.can_safe_cast_to(cast_from=utils.to_dtype(a), cast_to=dtype),
-                lambda: f"Can't safe case from a={a} with dtype {utils.to_dtype(a)} to {dtype}!",
-            )
-
-        return prims.convert_element_type(a, dtype)
-
-    return a
+maybe_convert_to_dtype = clangop()(create_maybe_convert_to_dtype_with_prim(prims.convert_element_type))
 
 
 # TODO Consider maybe_device_put analogous to maybe_convert_to_dtype above
@@ -399,33 +369,13 @@ def diagonal(a: TensorLike, offset: int = 0, dim1: int = 0, dim2: int = 1) -> Te
 
 # Expands a to the specified shape, possibly adding new dimensions and expanding
 #   dimensions of length 1 to any length
-@clangop()
-def expand(a: TensorLike, *shape: int) -> TensorLike:
-    shape = utils.extract_shape_from_varargs(shape)
+expand = clangop()(partial(clang_utils.expand_impl, broadcast_prim=prims.broadcast_in_dim))
+# To preserve the docstring
+update_wrapper(expand, clang_utils.expand_impl)
 
-    # TODO: improve this error message with error context
-    utils.check(
-        len(shape) >= len(a.shape),
-        lambda: "expand: the requested shape has too few dimensions!",
-    )
-
-    offset = len(shape) - len(a.shape)
-    shape_ = list(shape)
-    for idx, x in enumerate(a.shape):
-        offset_idx = idx + offset
-        requested_length = shape[offset_idx]
-        utils.check(
-            requested_length == x or x == 1 or requested_length == -1,
-            lambda: f"expand: attempting to expand a dimension of length {x}!",
-        )
-
-        shape_[offset_idx] = requested_length if requested_length != -1 else x
-
-    # At this point shape must be valid
-    # utils.check_valid_shape(shape_)
-
-    # NOTE: Converting shape_ to tuple makes it possible to apply CSE
-    return prims.broadcast_in_dim(a, tuple(shape_), tuple(range(offset, len(a.shape) + offset)))
+maybe_broadcast = clangop()(partial(clang_utils.maybe_broadcast_impl, expand_fn=expand))
+# To preserve the docstring
+update_wrapper(maybe_broadcast, clang_utils.maybe_broadcast_impl)
 
 
 # TODO Resolve the start & end vs. start & stop inconsistencies with our operators (this one is start & end)
@@ -503,10 +453,10 @@ def _basic_indexing(a: TensorLike, /, key) -> TensorLike:
 
     # Handles numbers and slices
     squeeze_dims = []
-    for idx, (l, x) in enumerate(zip(a.shape, key)):
+    for idx, (length, x) in enumerate(zip(a.shape, key)):
         if isinstance(x, slice):
             start = x.start if x.start is not None else 0
-            stop = x.stop if x.stop is not None else l
+            stop = x.stop if x.stop is not None else length
             step = x.step if x.step is not None else 1
 
             # Tests for negative step (PyTorch doesn't allow step < 1)
@@ -515,11 +465,11 @@ def _basic_indexing(a: TensorLike, /, key) -> TensorLike:
             # Canonicalizes start and stop (allowing for values like -1)
             # NOTE: canonicalization is custom because start and stop beyond the length are allowed
             if start < 0:
-                start = start + l
-            utils.check(start >= 0, lambda: f"start={x.start} is not a valid index for length {l}")
+                start = start + length
+            utils.check(start >= 0, lambda: f"start={x.start} is not a valid index for length {length}")
             if stop < 0:
-                stop = stop + l
-            utils.check(stop >= 0, lambda: f"end={x.stop} is not a valid index for length {l}")
+                stop = stop + length
+            utils.check(stop >= 0, lambda: f"end={x.stop} is not a valid index for length {length}")
 
             # Handles start > stop, which occurs with slices like 3:1:1
             # NOTE Because step is always strictly positive, it's sufficient to check start
@@ -530,19 +480,19 @@ def _basic_indexing(a: TensorLike, /, key) -> TensorLike:
 
             # Handles overflow
             # NOTE This is a little odd, but we just want the slice to be zero
-            if start >= l:
+            if start >= length:
                 start = 0
                 stop = 0
 
-            if stop >= l:
-                stop = l
+            if stop >= length:
+                stop = length
 
             start_indices.append(start)
             end_indices.append(stop)
             strides.append(step)
         elif isinstance(x, (Number, NumberProxy)):
             # NOTE Numbers must be valid indices after canonicalization, unlike start and stop
-            x = utils.canonicalize_dim(l, x)
+            x = utils.canonicalize_dim(length, x)
             start_indices.append(x)
             end_indices.append(x + 1)
             strides.append(1)
@@ -554,7 +504,7 @@ def _basic_indexing(a: TensorLike, /, key) -> TensorLike:
     # performance optimization; check if we need slicing
     if (
         all([x == 0 for x in start_indices])
-        and all([x == l for x, l in zip(end_indices, a.shape)])
+        and all([x == length for x, length in zip(end_indices, a.shape)])
         and all([x == 1 for x in strides])
         and len(squeeze_dims) == 0
     ):
@@ -854,11 +804,11 @@ def reshape(a: TensorLike, shape: Sequence[int]) -> TensorLike:
     # Checks for -1 marker value
     numel = 1
     neg_one_idx = None
-    for idx, l in enumerate(shape):
-        if l >= 0:
-            numel *= l
+    for idx, length in enumerate(shape):
+        if length >= 0:
+            numel *= length
         else:
-            utils.check(l == -1, "Found a negative dimension length {l} in shape={shape}!")
+            utils.check(length == -1, "Found a negative dimension length {length} in shape={shape}!")
             utils.check(neg_one_idx is None, "Found two -1 markers in shape={shape}!")
             neg_one_idx = idx
 
@@ -1116,31 +1066,7 @@ def stack(tensors: list[TensorProxy], dim: int):
     return cat(tensors_, dim)
 
 
-@clangop()
-def compute_broadcast_shape(*_shapes):
-    """Computes the common shape with the fewest dimensions that all input shapes can be broadcast to."""
-    shapes = tuple(x for x in filter(lambda x: x is not None, _shapes))
-
-    # Short-circuits if there are no inputs shapes
-    #   This might happen in calls like add(2, 3)
-    if len(shapes) == 0:
-        return None
-
-    common_shape = [
-        1,
-    ] * reduce(max, (len(shape) for shape in shapes))
-
-    for shape in shapes:
-        for idx in range(-1, -1 - len(shape), -1):
-            if common_shape[idx] == 1:
-                common_shape[idx] = shape[idx]
-
-            utils.check(
-                (shape[idx] == 1) or (common_shape[idx] == shape[idx]),
-                lambda: f"Attempting to broadcast a dimension of length {shape[idx]}!",
-            )
-
-    return tuple(common_shape)
+compute_broadcast_shape = clangop()(clang_utils.compute_broadcast_shape)
 
 
 @run_once
@@ -1186,48 +1112,11 @@ def matrix_transpose(a: TensorProxy) -> TensorProxy:
     return transpose(a, permutation)
 
 
-# TODO: add scalar support
-# TODO: review hasattr pattern
-# NOTE: the tensor is not broadcasted if it is a CPU scalar tensor and treat_cpu_scalar_tensors_as_numbers=True
-@clangop()
-def maybe_broadcast(*args, treat_cpu_scalar_tensors_as_numbers=True):
-    """Returns tensors with the same shape, possibly broadcasting inputs to the result shape."""
-
-    # Computes common shape
-    common_shape = compute_broadcast_shape(*map(lambda t: t.shape if hasattr(t, "shape") else None, args))
-
-    def _maybe_broadcast(x, shape):
-        if treat_cpu_scalar_tensors_as_numbers and utils.is_cpu_scalar_tensor(x):
-            return x
-        if hasattr(x, "shape"):
-            if not utils.same_shape(x.shape, common_shape):
-                return expand(x, common_shape)
-
-        return x
-
-    return tuple(_maybe_broadcast(x, common_shape) for x in args)
-
-
 #
 # Elementwise unary operations
 #
 # TODO Consider annotating these operators with kind and type promotion information
-
-
-# TODO Add supported dtypes
-def _elementwise_unary_wrapper(
-    a,
-    *,
-    prim,
-    type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT,
-):
-    computation_dtype, result_dtype = utils.elementwise_type_promotion(a, type_promotion_kind=type_promotion_kind)
-
-    a = maybe_convert_to_dtype(a, computation_dtype)
-    result = prim(a)
-    result = maybe_convert_to_dtype(result, result_dtype)
-
-    return result
+_elementwise_unary_wrapper = partial(_elementwise_unary_wrapper, dtype_conversion_fn=maybe_convert_to_dtype)
 
 
 # TODO Return self for bool and uint datatypes?
@@ -1712,6 +1601,12 @@ def eq(a, b):
 # NOTE This is distinct from true_divide, which also wraps prims.div, because it doesn't promote
 #   integers to floating point values
 def _c_div(a: TensorProxy | Number, b: TensorProxy | Number) -> TensorProxy | Number:
+    # Uses non-differentiable version of div for exact types
+    if utils.is_exact_dtype(utils.to_dtype(a)) and utils.is_exact_dtype(utils.to_dtype(b)):
+        return _elementwise_binary_wrapper(
+            a, b, prim=prims.div_exact, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT
+        )
+    # OTOH trunc_div, which uses _c_div, is differentiable for inexact types
     return _elementwise_binary_wrapper(
         a, b, prim=prims.div, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT
     )
