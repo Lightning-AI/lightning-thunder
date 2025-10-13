@@ -24,7 +24,7 @@ optree.register_pytree_node(
 
 optree.register_pytree_node(
     immutable_list,
-    lambda l: (list(l), None, None),
+    lambda lst: (list(lst), None, None),
     lambda _, children: immutable_list(children),
     namespace=OPTREE_NAMESPACE,
 )

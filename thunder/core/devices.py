@@ -140,7 +140,7 @@ def available_devices() -> tuple[Device]:
     available_devices = [cpu]
 
     # Short-circuits if there are no CUDA devices
-    if not torch.cuda.is_available:
+    if not torch.cuda.is_available():
         return available_devices
 
     # NOTE torch.cuda.is_available, extends with CUDA devices
