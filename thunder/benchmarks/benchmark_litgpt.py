@@ -113,7 +113,7 @@ class LowPrecisionHandler:
 
     def maybe_apply_te_autocast(self):
         if self.enabled and not self.use_legacy_thunder_te:
-            return te.fp8_autocast(fp8_recipe=self.low_precision_handler.fp8_recipe)
+            return te.fp8_autocast(fp8_recipe=self.fp8_recipe)
         else:
             return nullcontext()
 
