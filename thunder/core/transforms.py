@@ -1768,7 +1768,7 @@ def digamma_backward(a: Proxy, g):
 
 
 @register_augmented_forward("torch.nn.functional.silu")
-def silu_aug_fwd(a: Proxy, inplace):
+def silu_aug_fwd(a: Proxy, inplace: bool = False):
     from thunder.torch import silu
 
     primal = silu(a, inplace)
