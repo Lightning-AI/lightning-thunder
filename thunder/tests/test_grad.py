@@ -359,16 +359,11 @@ def check_vjp_torch(
     """
     if len(primals_torch) == 0:
         return
-    # We need to clone the input tensors to avoid "unsupported operation: more than one element of the written-to tensor refers to a single memory location".
-    torch_filtered_args = tree_map(
-        lambda t: t.clone() if isinstance(t, torch.Tensor) else t,
-        primals_torch,
-    )
 
     make = partial(make_tensor_like, low=0, high=1)
-    u_torch = tree_map(make, torch_filtered_args)
-
-    outs_p_torch, J_u_torch = torch.func.jvp(f_torch, torch_filtered_args, u_torch)
+    u_torch = tree_map(make, primals_torch)
+            
+    outs_p_torch, J_u_torch = torch.func.jvp(f_torch, primals_torch, u_torch)
 
     v_torch = tree_map(make, outs_p_torch)
     _, J_star_v = _thunder_vjp(

@@ -471,10 +471,7 @@ def elementwise_unary_generator(
     )
 
     for shape, strides, offset in strided_cases:
-        a = make_arg(
-            500,
-        ).as_strided(shape, strides, offset)
-        a = a.detach().requires_grad_(requires_grad)
+        a = make_arg(500).as_strided(shape, strides, offset).clone().detach().requires_grad_(requires_grad)
         yield SampleInput(a)
 
 
@@ -3682,7 +3679,7 @@ def cat_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
     # Tests concatenating with a tensor broadcast along the concatenation dimension
     a = make((5,))
-    b = make((1,)).expand((5,))
+    b = make((1,)).expand((5,)).clone()
     yield SampleInput(a, b, dim=0)
 
 
