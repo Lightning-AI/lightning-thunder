@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 import ast
 import inspect
 
-from torch import TensorType
+from torch import TensorType, ListType
 
 from thunder.core import baseutils
 from thunder.core.symbol import Symbol
@@ -249,6 +249,11 @@ def _convert_to_meta_function(func):
 
 
 def _get_meta_function_from(custom_op: CustomOpDef) -> Callable[[Any], TensorProxy | tuple[TensorProxy, ...]]:
+    if custom_op._abstract_fn is None:
+        raise ValueError(
+            f"Custom op {custom_op._qualname} has no _abstract_fn defined. "
+            "You must provide an abstract function (using @torch.library.register_fake) when defining the custom op."
+        )
     return _convert_to_meta_function(custom_op._abstract_fn)
 
 
@@ -331,13 +336,26 @@ def _register_custom_op(custom_op: CustomOpDef) -> Symbol:
     torch_opoverload_packet: OpOverloadPacket = torch_opoverload._overloadpacket
 
     schema: FunctionSchema = torch_opoverload._schema
+    baseutils.check(
+        not schema.is_mutable,
+        lambda: f"{custom_op} mutates one or more of its arguments, which is not supported",
+    )
+
     schema_arguments: list[Argument] = schema.arguments
-    tensor_indices: tuple[int] = tuple(i for i, arg in enumerate(schema_arguments) if isinstance(arg.type, TensorType))
+    tensor_indices: tuple[int] = tuple(
+        i
+        for i, arg in enumerate(schema_arguments)
+        if (isinstance(arg.type, TensorType) or arg.type.isSubtypeOf(ListType.ofTensors()))
+    )
     tensor_arity: int = len(tensor_indices)
     baseutils.check(tensor_arity > 0, lambda: f"arity of {custom_op._qualname} should be greater than 0: {schema}")
     schema_returns: list[Argument] = schema.returns
     return_arity: int = len(schema_returns)
-    tensor_return_arity: int = len(list(filter(lambda a: isinstance(a.type, TensorType), schema_returns)))
+    tensor_return_arity: int = len(
+        list(
+            filter(lambda a: isinstance(a.type, TensorType) or a.type.isSubtypeOf(ListType.ofTensors()), schema_returns)
+        )
+    )
     baseutils.check(return_arity == tensor_return_arity, lambda: f"Return values include non-Tensor values: {schema}")
 
     has_autograd_def = _has_autograd_def(custom_op)
@@ -357,7 +375,7 @@ def _register_custom_op(custom_op: CustomOpDef) -> Symbol:
         name=fn_name,
         meta=meta_fn,
         id=op_id,
-        is_prim=False,
+        is_prim=True,
         tags=tags,
     )
     # Register both `torch.ops.my_lib.foo` and `torch.ops.my_lib.foo.default`.

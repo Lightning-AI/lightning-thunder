@@ -23,12 +23,12 @@ from thunder.distributed import FSDPBucketingStrategy, FSDPType
 from thunder.distributed import fsdp
 from thunder.tests.framework import instantiate, TorchExecutor
 
-from thunder.executors.transformer_engineex import (
-    transformer_engine_ex,
+from thunder.executors.transformer_engine_v1ex import (
+    transformer_engine_v1_ex,
     TE_AVAILABLE,
 )
 
-from thunder.executors.transformer_engine_v2ex import transformer_engine_v2_ex, TransformerEngineTransformV2
+from thunder.executors.transformer_engineex import transformer_engine_ex, TransformerEngineTransform
 
 
 is_fp8_supported: bool = False
@@ -768,7 +768,7 @@ def _test_native_fsdp_helper(input_data):
     return None
 
 
-def _test_fsdp_transformer_engine(input_data):
+def _test_fsdp_transformer_engine_v1(input_data):
     # Test Description: We run a dummy training loop for a simple `Linear(Relu(Linear(x)))`
     # model with thunder (using TE executor) and with PyTorch eager + TE
     # and verify that the weights have converged to same value and
@@ -815,7 +815,7 @@ def _test_fsdp_transformer_engine(input_data):
             thunder.jit(
                 thunder_model,
                 executors=[
-                    transformer_engine_ex,
+                    transformer_engine_v1_ex,
                 ]
                 + executor.executors_list(),
                 fp8_shard_intermediate_activation=intermediate_activation_sharding,
@@ -916,7 +916,7 @@ def _test_fsdp_transformer_engine(input_data):
         return comparison_exceptions
 
 
-def _test_fsdp_transformer_engine_bucketing(input_data):
+def _test_fsdp_transformer_engine_v1_bucketing(input_data):
     # Test Description: Test is to that TE works with bucketing.
     from thunder.tests.llama2_model import Transformer, ModelArgs
 
@@ -951,7 +951,7 @@ def _test_fsdp_transformer_engine_bucketing(input_data):
         x = torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int64, device=device)
         y = torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int64, device=device)
         jit_model = thunder.distributed.fsdp(
-            thunder.jit(model, executors=(transformer_engine_ex,) + thunder.get_default_executors()),
+            thunder.jit(model, executors=(transformer_engine_v1_ex,) + thunder.get_default_executors()),
             sharding_strategy=thunder_fsdp_strategy,
             bucketing_strategy=bucketing,
         )
@@ -1026,8 +1026,8 @@ def test_native_fsdp(executor, devices, dtype, fsdp_bucketing_strategy):
         unittest.mock.patch.dict(os.environ, {"NVTE_TORCH_COMPILE": "0"}),
     ),
 )
-@distributed_wrapper("test_fsdp_transformer_engine", _test_fsdp_transformer_engine)
-def test_fsdp_transformer_engine(executor, devices, dtype, thunder_fsdp_strategy_and_intermediate_sharding):
+@distributed_wrapper("test_fsdp_transformer_engine_v1", _test_fsdp_transformer_engine_v1)
+def test_fsdp_transformer_engine_v1(executor, devices, dtype, thunder_fsdp_strategy_and_intermediate_sharding):
     pass
 
 
@@ -1053,12 +1053,12 @@ def test_fsdp_transformer_engine(executor, devices, dtype, thunder_fsdp_strategy
         unittest.mock.patch.dict(os.environ, {"NVTE_TORCH_COMPILE": "0"}),
     ),
 )
-@distributed_wrapper("test_fsdp_transformer_engine_bucketing", _test_fsdp_transformer_engine_bucketing)
-def test_fsdp_transformer_engine_bucketing(executor, devices, dtype, thunder_fsdp_strategy_and_bucketing):
+@distributed_wrapper("test_fsdp_transformer_engine_bucketing", _test_fsdp_transformer_engine_v1_bucketing)
+def test_fsdp_transformer_engine_v1_bucketing(executor, devices, dtype, thunder_fsdp_strategy_and_bucketing):
     pass
 
 
-def _test_fsdp_transformer_engine_v2(input_data):
+def _test_fsdp_transformer_engine(input_data):
     # Test Description: We run a dummy training loop for a simple `Linear(Relu(Linear(x)))`
     # model with thunder (using TE executor) and with PyTorch eager + TE
     # and verify that the weights have converged to same value after `n_iter`.
@@ -1107,11 +1107,11 @@ def _test_fsdp_transformer_engine_v2(input_data):
             thunder.jit(
                 thunder_model,
                 executors=[
-                    transformer_engine_v2_ex,
+                    transformer_engine_ex,
                 ]
                 + executor.executors_list(),
                 fp8_shard_intermediate_activation=intermediate_activation_sharding,
-                transforms=[TransformerEngineTransformV2()],
+                transforms=[TransformerEngineTransform()],
             ),
             sharding_strategy=thunder_fsdp_strategy,
         )
@@ -1169,7 +1169,7 @@ def _test_fsdp_transformer_engine_v2(input_data):
         return comparison_exceptions
 
 
-def _test_fsdp_transformer_engine_v2_bucketing(input_data):
+def _test_fsdp_transformer_engine_bucketing(input_data):
     # Test Description: Test is to that TEv2 works with bucketing.
     from thunder.tests.llama2_model import Transformer, ModelArgs
 
@@ -1208,8 +1208,8 @@ def _test_fsdp_transformer_engine_v2_bucketing(input_data):
         jit_model = thunder.distributed.fsdp(
             thunder.jit(
                 model,
-                executors=(transformer_engine_v2_ex,) + thunder.get_default_executors(),
-                transforms=[TransformerEngineTransformV2()],
+                executors=(transformer_engine_ex,) + thunder.get_default_executors(),
+                transforms=[TransformerEngineTransform()],
             ),
             sharding_strategy=thunder_fsdp_strategy,
             bucketing_strategy=bucketing,
@@ -1264,8 +1264,8 @@ def _test_fsdp_transformer_engine_v2_bucketing(input_data):
         unittest.mock.patch.dict(os.environ, {"NVTE_TORCH_COMPILE": "0"}),
     ),
 )
-@distributed_wrapper("test_fsdp_transformer_engine_v2", _test_fsdp_transformer_engine_v2)
-def test_fsdp_transformer_engine_v2(executor, devices, dtype, thunder_fsdp_strategy_and_intermediate_sharding):
+@distributed_wrapper("test_fsdp_transformer_engine", _test_fsdp_transformer_engine)
+def test_fsdp_transformer_engine(executor, devices, dtype, thunder_fsdp_strategy_and_intermediate_sharding):
     pass
 
 
@@ -1291,8 +1291,8 @@ def test_fsdp_transformer_engine_v2(executor, devices, dtype, thunder_fsdp_strat
         unittest.mock.patch.dict(os.environ, {"NVTE_TORCH_COMPILE": "0"}),
     ),
 )
-@distributed_wrapper("test_fsdp_transformer_engine_v2_bucketing", _test_fsdp_transformer_engine_v2_bucketing)
-def test_fsdp_transformer_engine_v2_bucketing(executor, devices, dtype, thunder_fsdp_strategy_and_bucketing):
+@distributed_wrapper("test_fsdp_transformer_engine_bucketing", _test_fsdp_transformer_engine_bucketing)
+def test_fsdp_transformer_engine_bucketing(executor, devices, dtype, thunder_fsdp_strategy_and_bucketing):
     pass
 
 

@@ -649,6 +649,9 @@ def test_nanogpt():
     assert_close(result, module(*args, **kwargs))
 
 
+# Note: When running with TF32 enabled on CUDA, the maximum absolute difference between outputs
+# can be on the order of 1e-3, which exceeds the default tolerances for torch.testing.assert_close.
+# This is expected due to the reduced precision of TF32 matrix multiplications.
 @skipif_not_pytorch_2_1
 @pytest.mark.parametrize(
     "name",
@@ -668,7 +671,7 @@ def test_nanogpt():
     "device",
     ("cpu", "cuda", "meta"),
 )
-def test_litgpt_variants(name, device):
+def test_litgpt_variants(name, device, turn_off_tf32_and_set_seed):
     from thunder.tests.litgpt_model import Config
     from litgpt.model import GPT
 
@@ -704,6 +707,9 @@ def test_litgpt_variants(name, device):
         torch.testing.assert_close(param1.grad, param2.grad, rtol=1e-2, atol=1e-2)
 
 
+# Note: When running with TF32 enabled on CUDA, the maximum absolute difference between outputs
+# can be on the order of 1e-3, which exceeds the default tolerances for torch.testing.assert_close.
+# This is expected due to the reduced precision of TF32 matrix multiplications.
 @skipif_not_pytorch_2_1
 @pytest.mark.parametrize(
     "name",
@@ -724,7 +730,7 @@ def test_litgpt_variants(name, device):
     "device",
     ("cpu", "cuda"),
 )
-def test_litgpt_variants_kvcache(name, device):
+def test_litgpt_variants_kvcache(name, device, turn_off_tf32_and_set_seed):
     from thunder.tests.litgpt_model import Config
     from litgpt.model import GPT
     import torch._dynamo  # this monkeypatches torch.manual_seed
@@ -1730,3 +1736,17 @@ def test_jit_nn_module_cycle_leak():
     ref = _allocate_and_call_model_in_function()
     assert ref() is None
     assert torch.cuda.memory_allocated() == memory_start
+
+
+def test_dataclass_dict():
+    # diffusers model outputs are like this
+    from dataclasses import dataclass
+
+    @dataclass
+    class Foo(dict):
+        musthave: int
+
+    def fn():
+        return Foo(musthave=1)
+
+    assert fn() == thunder.jit(fn)()

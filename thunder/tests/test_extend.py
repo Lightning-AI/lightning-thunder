@@ -133,7 +133,7 @@ def test_get_all_executors_includes_all_native_executors():
         "torchcompile_cat",
         "torchcompile_xentropy",
         "python",
-        "transformer_engine",
+        "transformer_engine_v1",
     }
     if package_available("triton"):
         # `triton` maybe installed on a system without GPU.
@@ -143,7 +143,7 @@ def test_get_all_executors_includes_all_native_executors():
         expected.update({"cudnn"})
         expected.update({"cudnn_layernorm"})
     if package_available("transformer_engine"):
-        expected.update({"transformer_engine_v2"})
+        expected.update({"transformer_engine"})
 
     actual.discard("inplace_index_copy_ex")  # might be left over from recipes
     assert actual == expected

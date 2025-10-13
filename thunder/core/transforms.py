@@ -274,9 +274,9 @@ def toposort_bsym_dag(
 #   Maybe we should be temporarily converting to a deque, or some intermediate datastructure that has to be
 #   translated into a list.
 # Helper function that extends a list with the values in "extension" from the specified starting index "start"
-def _insert_extend_list(l: list, start: int, extension: Sequence[Any]) -> None:
+def _insert_extend_list(arr: list, start: int, extension: Sequence[Any]) -> None:
     for offset, arg in enumerate(extension):
-        l.insert(start + offset, arg)
+        arr.insert(start + offset, arg)
 
 
 # NOTE This operation is inplace. It will modify the trace's bound_symbols.
@@ -2574,6 +2574,7 @@ nondifferentiable_vjp_symbols: set[prims.PrimIDs] = {
     prims.PrimIDs.BITWISE_XOR,
     prims.PrimIDs.SIGNBIT,
     prims.PrimIDs.FULL,
+    prims.PrimIDs.DIV_EXACT,
 }
 
 

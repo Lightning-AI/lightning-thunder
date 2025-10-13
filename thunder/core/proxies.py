@@ -522,11 +522,11 @@ class ListProxy(Proxy, list):
     _DEFAULT_PREFIX = "lst"
 
     def __new__(cls, lst: list, *, name: None | str = None, history: None | tuple = None, tags: set | None = None):
-        l = list.__new__(cls, lst)
+        proxy_list = list.__new__(cls, lst)
 
         # NOTE This intentionally does not call the ListProxy.extend() method
-        list.extend(l, lst)
-        return l
+        list.extend(proxy_list, lst)
+        return proxy_list
 
     def __init__(self, lst: list, *, name: None | str = None, history: None | tuple = None, tags: set | None = None):
         Proxy.__init__(self, name=name, history=history, tags=tags)

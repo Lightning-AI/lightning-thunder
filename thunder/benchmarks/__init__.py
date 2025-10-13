@@ -27,7 +27,7 @@ from thunder.core.transforms import grad, clear_grads, populate_grads
 from thunder.executors.apexex import apex_ex, apex_entropy_available
 from thunder.executors.cudnn_layernormex import cudnn_layernorm_ex
 from thunder.executors.cudnnex import cudnn_ex, cudnn_available
-from thunder.executors.transformer_engineex import transformer_engine_ex, TE_AVAILABLE
+from thunder.executors.transformer_engineex import transformer_engine_ex, TransformerEngineTransform
 from thunder.executors.sdpaex import sdpa_ex
 from thunder.executors.torch_compile import torch_compile_cat_ex, torch_compile_ex
 from thunder.transforms.cudagraph import CUDAGraphTransform
@@ -764,10 +764,16 @@ if cudnn_available():
 
 thunder_transformerengine_executor: None | Callable = None
 
-if TE_AVAILABLE:
+if transformer_engine_ex is not None:
 
     def thunder_transformerengine_executor(fn: Callable):
-        return thunder.jit(fn, executors=(transformer_engine_ex,) + thunder.get_default_executors())
+        return thunder.jit(
+            fn,
+            executors=(transformer_engine_ex,) + thunder.get_default_executors(),
+            transforms=[
+                TransformerEngineTransform(),
+            ],
+        )
 
 
 def thunder_sdpa_executor(fn: Callable) -> Callable:
