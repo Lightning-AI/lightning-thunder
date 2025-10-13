@@ -16,14 +16,13 @@ def main(gh_run_id: str = ""):
     print("Uploading package and benchmark script...")
     s.upload_folder("dist", remote_path="dist")
     pkg_path = glob.glob("dist/*.whl")[0]
+    s.upload_file("examples/coverage/requirements.txt", remote_path="benchmarks/requirements.txt")
     s.upload_file("thunder/benchmarks/benchmark_hf.py", remote_path="benchmarks/benchmark_hf.py")
 
     print("Starting studio...")
     s.start()
     print("Installing Thunder and dependencies...")
-    s.run(
-        f"pip install {pkg_path} -U transformers==4.52.4 nvidia-cudnn-frontend 'numpy<2.0' 'nvfuser_cu128_torch27==0.2.27.dev20250615'"
-    )
+    s.run(f"pip install {pkg_path} -U -r benchmarks/requirements.txt")
 
     print("Running HF benchmark script...")
     job = Job.run(
