@@ -351,7 +351,7 @@ def test_lora_transform_linear():
     rank = 16
     alpha = 32
 
-    seed = torch.manual_seed(0)
+    torch.manual_seed(0)
 
     class Model(torch.nn.Module):
         def __init__(self) -> None:
@@ -586,7 +586,8 @@ def test_disable_params_and_buffer_check():
     assert len(check_bsyms) == 1  # We only have the check for input.
 
 
-def test_disable_params_check_thunderfx():
+@pytest.mark.parametrize("dynamic", (False, True))
+def test_disable_params_check_thunderfx(dynamic: bool):
     from thunder.dynamo import thunderfx
 
     class Model(torch.nn.Module):
@@ -607,7 +608,7 @@ def test_disable_params_check_thunderfx():
     model = Model()
     x = torch.randn(16, 16)
     # NOTE: The `ExtractionOnlyPrologueTransform` transform is applied by default on `thunderfx` path.
-    cmodel = thunderfx(model)
+    cmodel = thunderfx(model, dynamic=dynamic)
     _ = cmodel(x)
     tfn = cmodel._backend.subgraph_infos[0].thunder_compiled_fns[0]
     prologue_trc = thunder.last_prologue_traces(tfn)[-1]
@@ -622,7 +623,8 @@ def test_disable_params_check_thunderfx():
     # Currently we don't detect buffers on thunderfx path and hence don't remove
     # the corresponding checks from prologue.
     # This will fails when we detect buffers and remove their checks from prologue.
-    assert len(check_bsyms) == 2  # 1 check for input and 1 for buffer (and 0 for parameters)
+    # NOTE(crcrpar): The model above is free from `torch.SymInt` so all the tensor check are removed even dynamic=True
+    assert not check_bsyms
 
 
 def test_buffer_dtype_casting():
@@ -646,8 +648,6 @@ def test_buffer_dtype_casting():
                 model._overrides_buffers[n] = qb
 
         def transform_traces_pre_prologue(self, prologue_trace, computation_trace, epilogue_trace, **kwargs):
-            tm = self.thunder_module
-
             checks = thunder.transforms.utils.get_checks(prologue_trace)
 
             prologue_proxy_map = {
@@ -799,14 +799,14 @@ def test_dce_duplicate_number_proxies():
 
     def fn(x):
         shape_0 = x.shape
-        shape_1 = x.clone().shape  # duplicate shape query
+        x.clone().shape  # duplicate shape query
         return sum(shape_0)
 
     # symbolic values is necessary to have the shape query in trace
     jfn = thunder.jit(fn, cache="symbolic values")
 
     a = torch.randn(2, 3, 4, 5)
-    out = jfn(a)
+    jfn(a)
 
     def _count_shape_query(trace):
         count = 0

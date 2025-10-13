@@ -1,15 +1,27 @@
 from collections.abc import Callable
+from contextlib import nullcontext
 from functools import partial
 import pytest
 import torch.testing
 
+
+import torch
 import thunder
 from thunder.examine import get_fusions
 import thunder.core.dtypes as dtypes
 from thunder.core.symbol import Symbol
+import thunder.core.devices as devices
 from thunder.tests.opinfos import opinfos, OpInfo, make_number, SampleInput
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
-from thunder.tests.framework import instantiate, ops, NOTHING, TorchExecutor, TorchCompileExecutor, nvFuserExecutor
+from thunder.tests.framework import (
+    instantiate,
+    ops,
+    NOTHING,
+    TorchExecutor,
+    TorchCompileExecutor,
+    nvFuserExecutor,
+    requiresCUDA,
+)
 from thunder.torch import _torch_to_thunder_function_map, _inplace_to_out_of_place
 
 
@@ -68,6 +80,43 @@ for op in opinfos:
             torch_reference=_torchsymbol_to_torch[inplace_op],
         )
         _inplace_opinfos.append(inplace_opinfo)
+
+
+@instantiate(
+    dtypes=(thunder.float32, thunder.float64),
+    devicetypes=(devices.DeviceType.CUDA,),
+    decorators=(pytest.mark.parametrize("train", (False, True)),),
+)
+@requiresCUDA
+def test_parse_resnet18(executor, device, dtype, turn_off_tf32_and_set_seed, train: bool):
+    torchvision = pytest.importorskip("torchvision")
+
+    tdtype = thunder.torch.to_torch_dtype(dtype)
+    model = torchvision.models.resnet18(weights=None).to(device=device, dtype=tdtype)
+    ref_model = torchvision.models.resnet18(weights=None).to(device=device, dtype=tdtype)
+    if not train:
+        model = model.eval()
+        ref_model = ref_model.eval()
+        ctx = torch.no_grad
+    else:
+        model = model.train()
+        ref_model = ref_model.train()
+        ctx = nullcontext
+    ref_model.load_state_dict(model.state_dict())
+
+    jitted = executor.make_callable(model)
+    x = make_tensor((1, 3, 224, 224), dtype=tdtype, device=device)
+
+    with ctx():
+        out1 = ref_model(x)
+        out2 = jitted(x)
+        torch.testing.assert_close(out1, out2, atol=1e-4, rtol=1e-1)
+        # TODO: https://github.com/Lightning-AI/lightning-thunder/issues/2497
+        # Numerical accuracy error when dtype is fp32.
+        if train and dtype == thunder.float64:
+            torch_grads = torch.autograd.grad(out1, ref_model.parameters(), torch.ones_like(out1))
+            thunder_grads = torch.autograd.grad(out2, jitted.parameters(), torch.ones_like(out2))
+            torch.testing.assert_close(torch_grads, thunder_grads, atol=1e-3, rtol=1e-1)
 
 
 @ops(_inplace_opinfos, supported_dtypes=(dtypes.float32,))

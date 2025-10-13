@@ -18,8 +18,8 @@ jobs:
   releasing-nightly:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.10"
 
@@ -33,7 +33,7 @@ jobs:
       # We do this, since failures on test.pypi aren't that bad
       - name: Publish to Test PyPI
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-        uses: pypa/gh-action-pypi-publish@v1.12.4
+        uses: pypa/gh-action-pypi-publish@v1.13.0
         with:
           user: __token__
           password: ${{ secrets.test_pypi_password }}
@@ -41,7 +41,7 @@ jobs:
 
       - name: Publish distribution 📦 to PyPI
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-        uses: pypa/gh-action-pypi-publish@v1.12.4
+        uses: pypa/gh-action-pypi-publish@v1.13.0
         with:
           user: __token__
           password: ${{ secrets.pypi_password }}

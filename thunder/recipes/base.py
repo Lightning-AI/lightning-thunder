@@ -13,6 +13,7 @@ def get_nvfuser_package_hint() -> str:
         "2.5": "nvfuser-cu124-torch25",
         "2.6": "nvfuser-cu126-torch26",
         "2.7": "nvfuser-cu128-torch27",
+        "2.8": "nvfuser-cu128-torch28",
     }
 
     torch_key = ".".join(torch_version.split(".")[:2])
@@ -33,10 +34,11 @@ Alternatively, switch to the torch.compile fuser with `fuser="torch.compile"`.
     else:
         return f"""nvFuser was specified but we don't currently support torch {torch_version}.
 
-Please upgrade to torch 2.6 or 2.7 and then run
+Please upgrade to torch 2.6 to 2.8 and then run
 ```
 pip install nvfuser-cu126-torch26 # for torch 2.6
 pip install nvfuser-cu128-torch27 # for torch 2.7
+pip install nvfuser-cu128-torch28 # for torch 2.8
 ```
 
 For compatibility options, see:
@@ -73,8 +75,17 @@ class BaseRecipe(Recipe):
         plugins=None,
     ):
         super().__init__(interpreter=interpreter, plugins=plugins)
-        self.executor_names = ["cudnn", "sdpa", "torchcompile_xentropy"]
         self.fuser = fuser
+        self.executor_names = []
+
+        if torch.cuda.is_available():
+            self.executor_names = ["cudnn", "sdpa"]
+            if self.fuser == "nvfuser":
+                self.executor_names.append("torchcompile_xentropy")
+        else:
+            print("GPU not found, nvFuser not available. Setting fusing executor to torch.compile")
+            self.fuser = "torch.compile"
+
         self.setup_fuser()
         self.show_progress = show_progress
 
@@ -114,8 +125,6 @@ class BaseRecipe(Recipe):
             if "nvfuser" not in self.executor_names:
                 self.executor_names.append("nvfuser")
         elif self.fuser == "torch.compile":
-            if "torchcompile_xentropy" in self.executor_names:
-                self.executor_names.remove("torchcompile_xentropy")
             if "torchcompile" not in self.executor_names:
                 self.executor_names.append("torchcompile")
         else:

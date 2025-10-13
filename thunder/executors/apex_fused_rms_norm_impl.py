@@ -16,7 +16,7 @@ try:
     if not is_available():
         raise ImportError
     import fused_layer_norm_cuda
-    from apex.normalization.fused_layer_norm import FusedRMSNormAffineMixedDtypesFunction
+    from apex.normalization.fused_layer_norm import FusedRMSNormAffineMixedDtypesFunction  # noqa: F401
 except ImportError:
     APEX_FUSED_NORMS_AVAILABLE = False
 
@@ -28,8 +28,6 @@ def apex_fused_norms_available() -> bool:
 def apex_fused_rms_norm_forward_affine_meta(
     input: TensorLike, normalized_shape: Sequence[int], weight: TensorLike, eps: float
 ):
-    output_or_input = TensorProxy(like=input)
-    weight = TensorProxy(like=input, shape=normalized_shape)
     unnormalized_dims = len(input.shape) - len(normalized_shape)
     invvar = TensorProxy(like=input, shape=(math.prod(input.shape[:unnormalized_dims]),))
     return TensorProxy(like=input), invvar

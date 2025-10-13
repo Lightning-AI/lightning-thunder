@@ -131,6 +131,10 @@ class TensorParallelTest(DistributedParallelTestCase):
             actual=tp_jitted_model.get_parameter("embed.weight").grad,
         )
 
+    # Note: When running with TF32 enabled on CUDA, the maximum absolute difference between outputs
+    # can be on the order of 1e-3, which exceeds the default tolerances for torch.testing.assert_close.
+    # This is expected due to the reduced precision of TF32 matrix multiplications.
+    @pytest.mark.usefixtures("turn_off_tf32_and_set_seed")
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="")
     @common_utils.parametrize("bias", (True, False))
     def test_both_column_and_row(self, bias):
@@ -154,6 +158,7 @@ class TensorParallelTest(DistributedParallelTestCase):
                 return h
 
         device = torch.device("cuda", self.rank)
+
         x = torch.randint(0, num_embeddings - 1, (16, 16), device=device)
         x_ref = x.clone().detach()
 
@@ -190,7 +195,7 @@ class TensorParallelTest(DistributedParallelTestCase):
                 if is_tensor_parallel and (ref_grad.ndim > 1 or dim == 0):
                     ref_grad = ref_grad.chunk(self.world_size, dim)[self.rank]
                 grad = tp_model.get_parameter(param_fqn).grad
-                torch.testing.assert_close(actual=grad, expected=ref_grad, msg=msg)
+                torch.testing.assert_close(actual=grad, expected=ref_grad, msg=msg, atol=1e-5, rtol=1e-5)
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="")
     @common_utils.parametrize("meta_init", (False, True))
@@ -292,7 +297,7 @@ class TensorParallelTest(DistributedParallelTestCase):
         sin = make_tensor(sin_shape, device=device, dtype=dtype, requires_grad=True)
 
         # TODO(crcrpar): add numeircal check
-        y = tp_attention(x, cos, sin, mask, input_pos)
+        tp_attention(x, cos, sin, mask, input_pos)
         tp_syncs = {PrimIDs.SYNCHRONIZE_TENSOR_PARALLEL_INPUT, PrimIDs.SYNCHRONIZE_TENSOR_PARALLEL_OUTPUT}
         fwd_traces_with_tensor_parallel_syncs = list(
             filter(

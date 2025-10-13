@@ -120,7 +120,6 @@ def test_fa3_accuracy_vs_ref(dtype: torch.dtype):
     seq_len = 128
     num_heads = 6
     dim_per_head = 64
-    device = "cuda"
 
     q = torch.randn([batch, seq_len, num_heads, dim_per_head], device="cuda", dtype=dtype, requires_grad=True)
     k = torch.randn([batch, seq_len, num_heads, dim_per_head], device="cuda", dtype=dtype, requires_grad=True)
@@ -143,7 +142,7 @@ def test_fa3_accuracy_vs_ref(dtype: torch.dtype):
     )[0]
 
     g = torch.randn_like(out)
-    do_o = (g.float() * out.float()).sum(-1)
+    (g.float() * out.float()).sum(-1)
     dq, dk, dv = torch.autograd.grad(out, (q, k, v), g)
     dq_ref, dk_ref, dv_ref = torch.autograd.grad(out_ref, (q, k, v), g)
     dq_pt, dk_pt, dv_pt = torch.autograd.grad(out_pt, (q, k, v), g)
@@ -163,7 +162,6 @@ def test_fa3_accuracy_vs_torch_sdpa(dtype: torch.dtype):
     seq_len = 128
     num_heads = 6
     dim_per_head = 64
-    device = "cuda"
 
     q = torch.randn([batch, seq_len, num_heads, dim_per_head], device="cuda", dtype=dtype, requires_grad=True)
     k = torch.randn([batch, seq_len, num_heads, dim_per_head], device="cuda", dtype=dtype, requires_grad=True)
@@ -195,7 +193,6 @@ def test_fa3_used(dtype: torch.dtype):
     seq_len = 128
     num_heads = 6
     dim_per_head = 64
-    device = "cuda"
 
     query = torch.randn([batch, seq_len, num_heads, dim_per_head], device="cuda", dtype=dtype, requires_grad=True)
     key = torch.randn([batch, seq_len, num_heads, dim_per_head], device="cuda", dtype=dtype, requires_grad=True)
@@ -250,7 +247,7 @@ def test_checker():
 
         cfn = thunder.jit(fn, executors=[fa3_ex])
 
-        thunder_result = cfn(query, key, value, attn_mask=attn_mask, dropout_p=dropout_p)
+        cfn(query, key, value, attn_mask=attn_mask, dropout_p=dropout_p)
 
         # Verifies fa3 was not called
         extrace = thunder.last_traces(cfn)[-1]

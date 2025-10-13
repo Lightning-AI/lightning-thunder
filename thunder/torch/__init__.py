@@ -51,10 +51,12 @@ from thunder.core.transforms import register_grad, register_augmented_forward, r
 from thunder.core.prims import get_grad, put_grad
 import thunder
 from thunder.torch.default_torch_ops import _auto_registered_operators_returning_views
+from thunder.torch.custom_op import _register_custom_op
 
 
 __all__ = [
     "is_available",
+    "_register_custom_op",
 ]
 
 # NOTE torch is a requirement
@@ -1378,8 +1380,8 @@ def split(a: TensorProxy, size_or_sections: int | Sequence[int], /, dim=0) -> Te
     # NOTE: because split requires overspecifying the lengths, the final split is ignored
     cur = 0
     indices = []
-    for l in size_or_sections[: len(size_or_sections) - 1]:
-        cur += l
+    for length in size_or_sections[: len(size_or_sections) - 1]:
+        cur += length
         indices.append(cur)
 
     return _split_indices(a, indices, dim)
@@ -1398,8 +1400,8 @@ def squeeze(a: TensorLike, /, dim: None | int | Sequence[int] = None) -> TensorL
     dims = dim
     if dim is None:
         dims = []
-        for idx, l in enumerate(a.shape):
-            if l == 1:
+        for idx, length in enumerate(a.shape):
+            if length == 1:
                 dims.append(idx)
     elif isinstance(dim, (int, NumberProxy)):
         dims = (dim,)
@@ -2377,7 +2379,7 @@ def div_(
     *,
     rounding_mode: None | str = None,
 ) -> TensorLike:
-    return _copy_(a, div(a, b))
+    return _copy_(a, div(a, b, rounding_mode=rounding_mode))
 
 
 @torchsymbol(torch.eq, torch.Tensor.__eq__, is_method=True)
@@ -3618,8 +3620,8 @@ def einsum(equation: str, *operands: TensorLike | Sequence[TensorLike]) -> Tenso
             return self
 
         def __next__(self):
-            l, d = next(self.eq_iter)
-            if l == ".":
+            label, d = next(self.eq_iter)
+            if label == ".":
                 utils.check(
                     not self.seen_ellipsis,
                     lambda: f"Incorrect subscript for operand #{self.pos}: it contains two or more ellipses",
@@ -3634,7 +3636,7 @@ def einsum(equation: str, *operands: TensorLike | Sequence[TensorLike]) -> Tenso
             # This variable has meaning only if ellipsis is present.
             self.ellipsis_end = d - 1
 
-            return l, d
+            return label, d
 
     # Returns a label -> list of dims positions map.
     # If Ellipsis is in the map,
@@ -3645,18 +3647,18 @@ def einsum(equation: str, *operands: TensorLike | Sequence[TensorLike]) -> Tenso
         n_subscripted_dims = 0
         label_dims_map = {}
         label_dim_iter = LabelDimIter(pos, subscript)
-        for l, d in label_dim_iter:
+        for label, d in label_dim_iter:
             # Skip ellipsis
-            if l == ".":
+            if label == ".":
                 continue
 
             n_subscripted_dims = n_subscripted_dims + 1
-            dims = label_dims_map.setdefault(l, [])
+            dims = label_dims_map.setdefault(label, [])
             if dims:
                 utils.check(
                     operand is None or operand.shape[d] == operand.shape[dims[-1]],
                     lambda: f"Incorrect subscript for operand #{pos}: "
-                    f"repeated label '{l}' requires dimensions "
+                    f"repeated label '{label}' requires dimensions "
                     f"{d} and {dims[-1]} to have the same lenght, "
                     f"but got {operand.shape[d]} != {operand.shape[dims[-1]]}",
                     ValueError,
@@ -3698,22 +3700,22 @@ def einsum(equation: str, *operands: TensorLike | Sequence[TensorLike]) -> Tenso
 
     # NOTE: the checks below are must since opt_einsum is not doing them. {
     operand_union_subscript_spec = collections.ChainMap(*operand_subscript_specs)
-    for l, dims in out_spec.items():
+    for label, dims in out_spec.items():
         # Skip ellipsis.
-        if l is Ellipsis:
+        if label is Ellipsis:
             continue
 
         # check uniqueness.
         utils.check(
             len(dims) == 1,
-            lambda: f"Output subscript string '{output_subscript}' includes multiple '{l}' labels",
+            lambda: f"Output subscript string '{output_subscript}' includes multiple '{label}' labels",
             ValueError,
         )
 
         # check output labels are coming from operand's subscripts.
         utils.check(
-            l in operand_union_subscript_spec,
-            lambda: f"Output subscript string '{output_subscript}' includes a '{l}' label "
+            label in operand_union_subscript_spec,
+            lambda: f"Output subscript string '{output_subscript}' includes a '{label}' label "
             "which does not apper in neither of the operand's subsripts",
             ValueError,
         )
@@ -3776,7 +3778,7 @@ def einsum(equation: str, *operands: TensorLike | Sequence[TensorLike]) -> Tenso
         for label, count in counts.items():
             # Process only repeated labels.
             if count > 1:
-                label_dims = [d for d, l in enumerate(orig_labels) if l == label]
+                label_dims = [d for d, label_orig in enumerate(orig_labels) if label_orig == label]
                 label_dim_len = operand.shape[label_dims[0]]
                 diag_groups.setdefault(label_dim_len, []).extend(label_dims)
                 if label not in keep_labels:
@@ -3799,8 +3801,8 @@ def einsum(equation: str, *operands: TensorLike | Sequence[TensorLike]) -> Tenso
 
     def find_broadcast_labels(a, a_labels, b, b_labels):
         common_contraction_set = frozenset(a_labels) & frozenset(b_labels) & contraction_set
-        a_contr_dims = [a_labels.index(l) for l in common_contraction_set]
-        b_contr_dims = [b_labels.index(l) for l in common_contraction_set]
+        a_contr_dims = [a_labels.index(label) for label in common_contraction_set]
+        b_contr_dims = [b_labels.index(label) for label in common_contraction_set]
 
         a_broadcast_dims = []
         a_broadcast_labels = []
@@ -3830,7 +3832,7 @@ def einsum(equation: str, *operands: TensorLike | Sequence[TensorLike]) -> Tenso
             counts = collections.Counter(labels)
 
             # Find unique contraction indices.
-            unique_labels = [l for l in contraction_set if counts[l] == 1]
+            unique_labels = [label for label in contraction_set if counts[label] == 1]
             unique_contr_dims, unique_contr_labels = find_unique_labels(operand, labels, unique_labels)
 
             # Find repeated indices over "diagonalized" operand.
@@ -3853,8 +3855,8 @@ def einsum(equation: str, *operands: TensorLike | Sequence[TensorLike]) -> Tenso
             a_counts = collections.Counter(a_labels)
             b_counts = collections.Counter(b_labels)
 
-            a_unique_labels = [l for l in contraction_set if a_counts[l] == 1 and b_counts[l] == 0]
-            b_unique_labels = [l for l in contraction_set if b_counts[l] == 1 and a_counts[l] == 0]
+            a_unique_labels = [label for label in contraction_set if a_counts[label] == 1 and b_counts[label] == 0]
+            b_unique_labels = [label for label in contraction_set if b_counts[label] == 1 and a_counts[label] == 0]
 
             # Find unique to each operand dims/labels
             a_unique_contr_dims, a_unique_contr_labels = find_unique_labels(a, a_labels, a_unique_labels)
@@ -4114,9 +4116,9 @@ def _matrix_chain_order(a: Sequence[TensorLike], /) -> TensorLike:
     p.append(a[n - 1].size(1))
     m = torch.zeros(n, n, dtype=torch.int64)
     s = torch.zeros(n, n, dtype=torch.int64)
-    for l in range(1, n):
-        for i in range(n - l):
-            j = i + l
+    for chain_len in range(1, n):
+        for i in range(n - chain_len):
+            j = i + chain_len
             m[i][j] = torch.iinfo(torch.int64).max
             for k in range(i, j):
                 q = m[i][k] + m[k + 1][j] + p[i] * p[k + 1] * p[j + 1]
@@ -5155,10 +5157,10 @@ def cross_entropy(
             output_shape = list(a.shape)
             output_shape.pop(class_dim)
             return full(output_shape, 0.0, device=a.device, dtype=a.dtype)
-        elif reduction == "sum":
-            return full(result_shape := [], fill_value := 0.0, device=a.device, dtype=a.dtype)
-        elif reduction == "mean":
-            return full(result_shape := [], fill_value := float("nan"), device=a.device, dtype=a.dtype)
+        if reduction == "sum":
+            return full([], fill_value=0.0, device=a.device, dtype=a.dtype)
+        if reduction == "mean":
+            return full([], fill_value=float("nan"), device=a.device, dtype=a.dtype)
 
     if a.shape == target.shape:
         return _cross_entropy_loss_probability_target(a, target, weight, ignore_index, reduction, label_smoothing)
@@ -5507,17 +5509,18 @@ def _interpolate_scale_factor_helper(
             *,
             dim_h: int = 2,
             dim_w: int = 3,
+            math_dtype: torch.dtype = torch.float32,
         ) -> TensorLike:
             # The X pass
-            x_dst = arange(out_w, device=t.device)
-            scale_w = to(in_w / out_w, a.dtype)
+            x_dst = arange(out_w, device=t.device).to(math_dtype)
+            scale_w = to(in_w / out_w, math_dtype)
             # The 0.5s come from the fact that we treat each element as a pixel,
             # that has its centerpoint at x0 + 0.5. With the formula below we
             # make sure that the centerpoints of these "images" align, because align_corners
             # is not yet implemented
-            x_src_f = to((x_dst + 0.5) * scale_w - 0.5, a.dtype)
+            x_src_f = to((x_dst + 0.5) * scale_w - 0.5, math_dtype)
             x0 = clamp(clang.floor(x_src_f), 0, in_w - 1).to(to_dtype(torch.int64))
-            x1 = clamp((x0 + 1), max=in_w - 1)
+            x1 = clamp(clang.ceil(x_src_f), 0, in_w - 1).to(to_dtype(torch.int64))
             wx = unsqueeze(unsqueeze((x_src_f - x0.to(x_src_f.dtype)), 0), 0)
 
             v0 = clang.take(t, x0, dim=dim_w)
@@ -5526,16 +5529,17 @@ def _interpolate_scale_factor_helper(
             t_x = v0 * (1 - wx) + v1 * wx
 
             # The Y pass
-            y_dst = arange(out_h, device=t.device)
-            scale_h = to(in_h / out_h, a.dtype)
-            y_src_f = to((y_dst + 0.5) * scale_h - 0.5, a.dtype)
+            y_dst = arange(out_h, device=t.device).to(math_dtype)
+            scale_h = to(in_h / out_h, math_dtype)
+            y_src_f = to((y_dst + 0.5) * scale_h - 0.5, math_dtype)
             y0 = clamp(clang.floor(y_src_f), 0, in_h - 1).to(to_dtype(torch.int64))
-            y1 = clamp((y0 + 1), max=in_h - 1)
+            y1 = clamp(clang.ceil(y_src_f), 0, in_h - 1).to(to_dtype(torch.int64))
             wy = unsqueeze(unsqueeze(unsqueeze((y_src_f - y0.to(y_src_f.dtype)), 0), 0), -1)
 
             v0 = clang.take(t_x, y0, dim=dim_h)
             v1 = clang.take(t_x, y1, dim=dim_h)
-            return v0 * (1 - wy) + v1 * wy
+            result = v0 * (1 - wy) + v1 * wy
+            return to(result, a.dtype)
 
         utils.check(
             len(spatial_dims) == 2,
@@ -5545,7 +5549,7 @@ def _interpolate_scale_factor_helper(
         out_h = int(in_h * scale_factor[0])
         out_w = int(in_w * scale_factor[1])
         utils.check(out_h > 0 and out_w > 0, lambda: f"scale_factor leads to zero-size output ({out_h}x{out_w})")
-        return _bilinear_sampler_2d(a, in_h, in_w, out_h, out_w)
+        return _bilinear_sampler_2d(a, in_h, in_w, out_h, out_w, math_dtype=utils.get_computation_dtype(a.dtype))
     elif mode == "nearest" or mode == "nearest-exact":
         # perform nearest up/down-sampling
         def nearest_sampler(
@@ -5658,7 +5662,7 @@ def interpolate(
     utils.check(a.ndim >= 3, lambda: f"Expected {a.ndim=} >= 3")
     utils.check(a.numel() > 0, lambda: f"Expected {a.numel=} to be greater than 0")
     utils.check(
-        align_corners == None,
+        align_corners is None,
         lambda: "Thunder does not yet support 'align_corners'.",
         exception_type=NotImplementedError,
     )
@@ -5781,11 +5785,11 @@ def _nll_loss_helper(
         if reduction == "none":
             # Keep target shape if it is non-trivial
             result_shape = target.shape if target.shape != (0,) else []
-            return full(result_shape, fill_value := 0.0, device=a.device, dtype=a.dtype), None
+            return full(result_shape, fill_value=0.0, device=a.device, dtype=a.dtype), None
         elif reduction == "sum":
-            return full(result_shape := [], fill_value := 0.0, device=a.device, dtype=a.dtype), None
+            return full(shape=[], fill_value=0.0, device=a.device, dtype=a.dtype), None
         elif reduction == "mean":
-            return full(result_shape := [], fill_value := float("nan"), device=a.device, dtype=a.dtype), None
+            return full(shape=[], fill_value=float("nan"), device=a.device, dtype=a.dtype), None
 
     utils.check(
         utils.is_integer_dtype(target.dtype),
@@ -6693,7 +6697,7 @@ def _get_fake_arg(inp: Any):
             raise NotImplementedError("Unsupported for NumberProxy.value=None")
         else:
             return inp.value
-    elif isinstance(inp, TensorProxy):
+    elif isinstance(inp, (TensorProxy, torch.Tensor)):
         return torch.empty(
             inp.shape,
             dtype=to_torch_dtype(inp.dtype),

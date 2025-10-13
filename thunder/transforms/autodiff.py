@@ -180,7 +180,9 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
             # 1. constant for gradients (no grad required)
             #    executing synchronize here terrible hack to cope with non-grad-needing sharded tensors
             #    as required by LoRA. We should have a symbol tag "always compute grad" instead.
-            if is_constant_for_vjp(bsym) and not bsym.sym.name == "synchronize":
+            if (is_constant_for_vjp(bsym) and not bsym.sym.name == "synchronize") or (
+                bsym.sym.tags and (prims.OpTags.TORCH_COMPILE_COMPLIANT_CUSTOM_OP in bsym.sym.tags)
+            ):
                 self.add_processed_bsyms([bsym.from_bsym()])
                 self.set_result(bsym.output)
                 return
@@ -593,7 +595,7 @@ def split_into_forward_and_backward(joint_trace: TraceCtx):
 
     # Importing here to avoid cyclical dependencies in future.
     # NOTE: This is required only for v1 executor.
-    from thunder.executors.transformer_engineex import transformer_engine_v1_bwd_fp8_meta_sync
+    from thunder.executors.transformer_engine_v1ex import transformer_engine_v1_bwd_fp8_meta_sync
 
     transformer_engine_v1_bwd_fp8_meta_sync(forward_trace, backward_trace)
 

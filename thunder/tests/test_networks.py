@@ -1,6 +1,8 @@
 import math
+import os
 from functools import partial
 import warnings
+from looseversion import LooseVersion
 
 import pytest
 import torch
@@ -13,12 +15,11 @@ from thunder.tests.framework import (
     requiresCUDA,
     DynamoThunderExecutor,
     _all_test_executors,
-    version_between,
-    BITSANDBYTES_AVAILABLE,
     requiresDeviceMemory,
 )
 import thunder.tests.nanogpt_model as nanogpt_model
 import thunder.tests.hf_bart_self_attn as hf_bart_self_attn
+import thunder.tests.llama4_moe as llama4_moe
 
 #
 # nanoGPT tests
@@ -35,7 +36,7 @@ all_test_executors_and_dynamo = _all_test_executors() + [DynamoThunderExecutor]
 
 # see https://docs.pytest.org/en/stable/how-to/capture-warnings.html#recwarn for the recwarn fixture
 @instantiate(dtypes=(thunder.float32,), executors=all_test_executors_and_dynamo)
-def test_nanogpt_complete(executor, device, dtype, recwarn):
+def test_nanogpt_complete(executor, device, dtype, recwarn, turn_off_tf32_and_set_seed):
     tdtype = ttorch.to_torch_dtype(dtype)
     make = partial(make_tensor, dtype=torch.int64, device=device)
 
@@ -515,7 +516,16 @@ LLAMA_3_2_1B_CFG = {
 # eager - 698067456
 @requiresCUDA
 @requiresDeviceMemory(required_memory_bytes=int(0.7 * 1024 * 1024 * 1024))
-@pytest.mark.parametrize("attn_implementation", [None, "eager"])
+@pytest.mark.parametrize(
+    "attn_implementation",
+    [
+        None,
+        pytest.param(
+            "eager",
+            marks=pytest.mark.skipif(bool(os.getenv("SKIP_WITH_GPT_CI")), reason="Skipping this test on litGPT CI"),
+        ),
+    ],
+)
 def test_hf_phi3_vision(attn_implementation):
     # This test takes around 697805312 bytes (~0.7GB) of memory.
     # Shapes for data generated with help of the following script
@@ -631,7 +641,7 @@ def test_checkpointing_thunderfx():
     forward_backward_peak(jm, inp)
 
     mem_thunder = forward_backward_peak(jm, inp)
-    mem_eager = forward_backward_peak(m, inp)
+    forward_backward_peak(m, inp)
 
     assert mem_thunder < 105  # this ~35% is more than eager, in isolation 100 vs. 74
 
@@ -646,6 +656,7 @@ def test_checkpointing_thunderfx():
 
 
 @requiresCUDA
+@pytest.mark.skipif(os.getenv("SKIP_WITH_GPT_CI"), reason="Skipping this test on litGPT CI")
 def test_hf_kvcache():
     from transformers.models.llama import LlamaForCausalLM, LlamaConfig
     from transformers.models.llama.modeling_llama import logger as llama_logger
@@ -714,3 +725,64 @@ def test_hf_kvcache():
 
     assert_close(j_static_cache.key_cache, ref_static_cache.key_cache, rtol=1e-1, atol=1e-1)
     assert_close(j_static_cache.value_cache, ref_static_cache.value_cache, rtol=1e-1, atol=1e-1)
+
+
+small_config = llama4_moe.Config(
+    name="small", hidden_size=256, intermediate_size=512, num_routed_experts=8, num_shared_experts=1
+)
+llama4_config = llama4_moe.Config(
+    name="llama4", hidden_size=5120, intermediate_size=8192, num_routed_experts=128, num_shared_experts=1
+)
+
+
+@requiresCUDA
+@pytest.mark.skipif(
+    LooseVersion(torch.__version__) < LooseVersion("2.8.0"), reason="torch._grouped_mm is not available"
+)
+@pytest.mark.parametrize("jit_fn", (thunder.dynamo.thunderfx, thunder.jit), ids=("thunderfx", "thunder.jit"))
+@pytest.mark.parametrize("config", (small_config, llama4_config), ids=("small", "llama4"))
+def test_llama4_moe(jit_fn, config):
+    # Small config requires 33MB
+    # Llama4 config requires around 33GB
+    required_memory = int(33 * 1024 * 1024) if config.name == "small" else int(33 * 1024 * 1024 * 1024)
+
+    @requiresDeviceMemory(required_memory_bytes=required_memory)
+    def _test():
+        model = llama4_moe.Llama4MoE(config)
+
+        # Without this, `thunderfx` falls back to `inductor` for `_grouped_mm`
+        # as it doesn't have a grad-rule for the same.
+        model.requires_grad_(False)
+
+        batch_size, seq_len = 1, 2048
+        inp = torch.randn(batch_size, seq_len, config.hidden_size, dtype=torch.bfloat16, device="cuda")
+        expected = model(inp)
+
+        assert expected.size() == (batch_size, seq_len, config.hidden_size)
+        assert expected.dtype == torch.bfloat16
+        assert expected.is_cuda
+
+        tmodel = jit_fn(model, nv_enable_linear=True, nv_enable_scatter=True)
+
+        actual = tmodel(inp)
+
+        if hasattr(tmodel, "_backend"):
+            assert len(tmodel._backend.subgraph_infos) == 1
+            assert len(tmodel._backend.subgraph_infos[0].split_reasons) == 0
+            exec_trc = tmodel.last_traces[-1]
+        else:
+            exec_trc = thunder.last_traces(tmodel)[-1]
+
+        fusion_bsyms = tuple(filter(lambda a: a.sym.is_fusion, exec_trc.bound_symbols))
+
+        assert len(fusion_bsyms) == 1
+        assert {el.sym.name for el in exec_trc.bound_symbols if not el.sym.is_fusion} == {
+            "unpack_trivial",
+            "python_return",
+        }
+
+        # TODO: Verify that thunder output is closer to higher precision than PyTorch eager
+        #       due to fewer upcast/downcast operations.
+        torch.testing.assert_close(actual, expected, atol=1e-2, rtol=1e-2)
+
+    _test()

@@ -35,6 +35,8 @@ import thunder.core.prims as prims
 from thunder.core.trace import TraceCtx, set_tracectx, reset_tracectx, tracectx
 from thunder.core.symbol import BoundSymbol
 
+from looseversion import LooseVersion
+
 
 #
 # Tests related to the test framework itself
@@ -190,7 +192,7 @@ def test_crazy_collections_in_and_out(executor, device, dtype):
         g = e + f
         h = f + ka + kb
         # NOTE The following line is intentionally not returned
-        i = ka + ka  # noqa
+        # i = ka + ka
         j = kc[0] + kc[1]
 
         d["j"] = j
@@ -436,8 +438,7 @@ def test_varargs_and_kwargs(executor, device, dtype):
 @instantiate(dtypes=(thunder.float32,))
 def test_no_return(executor, device, dtype):
     def foo(a, b):
-        c = a + b  # noqa
-        pass
+        a + b
 
     traced_foo = executor.make_callable(foo)
     tdtype = ltorch.to_torch_dtype(dtype)
@@ -1112,7 +1113,7 @@ def test_bsym_toposort(executor: TestExecutor, device: str, dtype: dtypes.dtype)
     a = make((4, 3, 2, 3))
 
     cbar = executor.make_callable(bar)
-    expected = cbar(a, (12, -1))
+    cbar(a, (12, -1))
     traces = thunder.last_traces(cbar)
     trc = traces[0]
 
@@ -1436,16 +1437,16 @@ def test_torch_call_recording(executor, device: str, _):
 
 
 # Asserts that all the elements of a collection are equal to each other.
-def all_eq(l):
-    for e1 in l:
-        for e2 in l:
+def all_eq(arr):
+    for e1 in arr:
+        for e2 in arr:
             assert e1 == e2
 
 
 # Asserts that all the elements of a collection are not equal to each other,
 # and that elements are equal to themselves.
-def all_neq(l):
-    el = enumerate(l)
+def all_neq(arr):
+    el = enumerate(arr)
     for i, e1 in el:
         for j, e2 in el:
             assert e1 == e2 if i == j else e1 != e2
@@ -1617,6 +1618,19 @@ def test_nested_trace_no_name_collision(executor, device, _):
     b = make_tensor((2, 2), device=device, dtype=torch.float32)
 
     thunder.trace()(bar, a, b)
+
+
+# Tests if Thunder can trace a function without a valid signature
+@instantiate(dtypes=NOTHING)
+def test_no_signature(executor, device, _):
+    a = make_tensor((2, 3), device=device, dtype=torch.float32)
+
+    fn_trace = thunder.trace()(getattr, a, "mT")
+
+    jfn = executor.make_callable(fn_trace)
+    actual = jfn(a, "mT")
+    expected = getattr(a, "mT")
+    assert_close(actual, expected)
 
 
 @instantiate(dtypes=NOTHING)
@@ -2111,28 +2125,6 @@ def test_torch_scaled_dot_product_attention_non_decomposed(executor, device, _):
     assert "scaled_dot_product_attention" in tuple(bsym.sym.id for bsym in traces[-1].bound_symbols)
 
 
-@instantiate(dtypes=NOTHING)
-def test_no_passthrough_symbol(executor, device, _):
-    # A test case for the situation reported in
-    # "backward trace contains symbols not present in forward that cause
-    # NotImplementedError"
-    # When an operation simply passes through its input, we should not
-    # add it to the trace.
-
-    def func(x):
-        return x.type_as(x)
-
-    x = make_tensor((2, 2), device=device, dtype=torch.float32)
-    compiled = executor.make_callable(func)
-    out = compiled(x)
-    assert out is x
-    initial_trace_with_dce = thunder.last_traces(compiled)[3]
-    assert "Constructed by Dead Code Elimination" in str(initial_trace_with_dce)
-    assert len(initial_trace_with_dce.bound_symbols) == 2
-    assert initial_trace_with_dce.bound_symbols[0].sym.id == prims.PrimIDs.UNPACK_TRIVIAL
-    assert initial_trace_with_dce.bound_symbols[1].sym.id == prims.PrimIDs.RETURN
-
-
 @instantiate(
     dtypes=NOTHING,
     # https://github.com/Lightning-AI/lightning-thunder/issues/946
@@ -2399,7 +2391,6 @@ def test_bound_symbol_source_location_context(executor, device: str, dtype: dtyp
     trace = thunder.last_traces(jfn)[0]
 
     assert len(trace.bound_symbols) == 3
-    sin_symbol = trace.bound_symbols[1]
     assert str(trace).count("return clang.sin(x)") == 1
     assert str(trace).count(f"# {__file__}:{lineno}") == 1
 
@@ -2583,12 +2574,54 @@ def test_grad_ctx():
     assert thunder.cache_misses(jfoo) == 2
 
 
+@pytest.mark.parametrize("global_grad_enabled", [False, True])
+@pytest.mark.parametrize("n_flips", range(4))
+@pytest.mark.parametrize("next_enable", [False, True])
+@pytest.mark.parametrize("starts_with_op", [False, True])
+@pytest.mark.parametrize("ends_with_op", [False, True])
+def test_set_grad_enabled(global_grad_enabled, n_flips, next_enable, starts_with_op, ends_with_op, request):
+    initial_grad_enabled = torch.is_grad_enabled()
+    request.addfinalizer(lambda: torch.set_grad_enabled(initial_grad_enabled))
+
+    def fn(x):
+        next_enable_local = next_enable
+        for i in range(n_flips):
+            if starts_with_op or i > 0:
+                x = x.sin()
+            torch.set_grad_enabled(next_enable_local)
+            next_enable_local = not next_enable_local
+        if ends_with_op:
+            x = x.sin()
+        return x
+
+    x = torch.randn(10, requires_grad=True)
+    x_ref = x.detach().clone().requires_grad_(True)
+
+    torch.set_grad_enabled(global_grad_enabled)
+    jfn = thunder.jit(fn)
+    y = jfn(x)
+    is_grad_enabled = torch.is_grad_enabled()
+
+    torch.set_grad_enabled(global_grad_enabled)
+    y_ref = fn(x_ref)
+    is_grad_enabled_ref = torch.is_grad_enabled()
+
+    torch.testing.assert_close(y, y_ref)
+    assert (y.grad_fn is None) == (y_ref.grad_fn is None)
+    assert is_grad_enabled == is_grad_enabled_ref
+    if y.grad_fn is not None:
+        with torch.enable_grad():
+            y.sum().backward()
+            y_ref.sum().backward()
+            torch.testing.assert_close(x.grad, x_ref.grad)
+
+
 def test_serialize_trace():
     import dill as pickle
 
-    def fn(a, b, l):
+    def fn(a, b, arr):
         res = a + b
-        for t in l:
+        for t in arr:
             res = res + t
         return res
 
@@ -2994,19 +3027,6 @@ def test_thunder_optimized_module_is_freed():
     assert ref_opt_mod() is None
 
 
-@pytest.mark.xfail(strict=True)
-def test_user_module_is_freed():
-    mod = torch.nn.ReLU()
-    opt_mod = thunder.jit(mod)
-    ref_mod = weakref.ref(mod)
-    x = torch.randn(10, 10)
-    opt_mod(x)
-    del x
-    del mod
-    del opt_mod
-    assert ref_mod() is None
-
-
 @pytest.mark.parametrize("requires_grad", [True, False])
 def test_return_bsym_has_none_output(requires_grad):
     def fn(x):
@@ -3158,9 +3178,9 @@ def test_proxy_same_name():
     from thunder.core.devices import cpu
 
     with detached_trace():
-        t = TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32)
+        TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32)
         with pytest.raises(RuntimeError, match="already used"):
-            t2 = TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32)
+            TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32)
 
 
 def test_save_trace():
@@ -3232,6 +3252,18 @@ def test_apply_autograd_memory(thunderfx_disable_split_autograd):
     assert not any(wr() for wr in foo())
 
 
+@pytest.mark.skipif(LooseVersion(torch.__version__) < LooseVersion("2.9.0"), reason="Requires torch 2.9.0 or later")
+def test_float4_e2m1fn_x2():
+    x = torch.ones(2, 2, dtype=torch.uint8).view(torch.float4_e2m1fn_x2)
+
+    @thunder.jit
+    def f(x):
+        return x
+
+    y = f(x)
+    assert y.dtype == torch.float4_e2m1fn_x2
+
+
 def test_thunder_jit_parts():
     m = torch.nn.Sequential(
         torch.nn.Linear(64, 128),
@@ -3274,8 +3306,8 @@ def test_prims_pack_list():
     with tracectx(trace):
         x = prims.unpack_trivial(a, name="x")
         y = prims.unpack_trivial(b, name="y")
-        l = prims.pack_list(x, y)
-        prims.python_return(l)
+        packed_list = prims.pack_list(x, y)
+        prims.python_return(packed_list)
 
     func = trace.python_callable()
     actual = func()

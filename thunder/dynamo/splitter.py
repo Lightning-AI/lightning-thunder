@@ -19,10 +19,12 @@ from thunder.dynamo.utils import (
     checkpoint_converter,
     _get_example_inputs_from_placeholder,
     _ThunderSplitGraphModule,
+    translate_dtensor_ops,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from typing import Any
 
 
 def _splitter(
@@ -30,6 +32,7 @@ def _splitter(
     thunder_jit: Callable,
     torch_inductor: Callable,
     _unused_sample_args: list[torch.SymInt, torch.Tensor],
+    thunder_options: dict[str, Any] | None = None,
 ) -> tuple[torch.fx.GraphModule, SubgraphInfo]:
     """
     This method will split graph into multiple graph modules based on thunder supported operations.
@@ -98,6 +101,7 @@ def _splitter(
     split_reasons: list[SplitReason] = []
 
     nodes_in_unsupported_ctx_regions = get_nodes_in_unsupported_ctx_regions(gm)
+    translate_dtensor_ops(gm)
 
     def callback(node) -> int:
         nonlocal prev_value, partition_cnt, split_reasons, supported_partitions
@@ -119,9 +123,14 @@ def _splitter(
             )
             split_reasons.append(split_reason)
         else:
-            is_thunder_supported, split_reason = is_node_supported_by_thunder(node)
-            if split_reason is not None:
-                split_reasons.append(split_reason)
+            # To support dynamo generated prims for `parallelize_module`.
+            # `translate_dtensor_ops` will mark the target as thunder supported if it is a DTensor operation.
+            if hasattr(node.target, "thunder_supported") and node.target.thunder_supported:
+                is_thunder_supported, split_reason = True, None
+            else:
+                is_thunder_supported, split_reason = is_node_supported_by_thunder(node, thunder_options or {})
+                if split_reason is not None:
+                    split_reasons.append(split_reason)
 
         if prev_value == is_thunder_supported:  # We are in the same region.
             return partition_cnt
@@ -144,17 +153,20 @@ def _splitter(
     gm.recompile()
 
     # `split_module` iterates over nodes and determines the partition to place them based on the callback.
-    original_split_gm: torch.fx.GraphModule = split_module(
+    split_gm: torch.fx.GraphModule = split_module(
         gm, root_m=None, split_callback=callback, keep_original_order=True, keep_original_node_name=True
     )
 
     # Workaround for the Torch bug https://github.com/pytorch/pytorch/pull/139275
-    for submodule in original_split_gm.children():
+    for submodule in split_gm.children():
         if not submodule.graph.find_nodes(op="output"):
             submodule.graph.output(())
-    if not original_split_gm.graph.find_nodes(op="output"):
-        original_split_gm.graph.output(())
-    split_gm = copy.deepcopy(original_split_gm)
+    if not split_gm.graph.find_nodes(op="output"):
+        split_gm.graph.output(())
+
+    # If split_gm contains Parameters or Tensors then deepcopy would also create their copies.
+    # TODO: Eliminate deepcopy
+    original_split_gm = copy.deepcopy(split_gm)
 
     def is_thunder_supported_partition(node: torch.fx.Node) -> bool:
         return node.name.startswith("submod") and int(node.name.replace("submod_", "")) in supported_partitions
@@ -172,7 +184,7 @@ def _splitter(
             for n in graph_module.graph.nodes:
                 if n.op == "output":
                     for n in n.all_input_nodes:
-                        if "example_value" not in n.meta or n.meta["example_value"].grad_fn is None:
+                        if "example_value" not in n.meta or getattr(n.meta["example_value"], "grad_fn", None) is None:
                             is_differentiable_outputs.append(False)
                         else:
                             is_differentiable_outputs.append(True)

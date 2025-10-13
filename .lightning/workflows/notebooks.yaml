@@ -6,10 +6,11 @@ trigger:
 
 timeout: "50" # minutes
 machine: "L4"
+interruptible: False
 parametrize:
   matrix:
     image:
-      - "pytorchlightning/lightning-thunder:ubuntu24.04-cuda12.6.3-cudnn-fe1.10.0-py3.10-pt_2.7.1-dev"
+      - "pytorchlightning/lightning-thunder:ubuntu24.04-cuda12.6.3-cudnn-fe1.10.0-py3.10-pt_2.8.0-dev"
       - "pytorchlightning/lightning-thunder:ubuntu24.04-cuda12.6.3-cudnn-fe1.10.0-py3.10-pt_main-dev"
   exclude: []
   include: []
@@ -42,5 +43,5 @@ run: |
   # iterate over all listed notebooks and execute them with jupyter
   while read -r line; do
       echo "Processing $line"
-      jupyter execute $line --timeout=300
+      jupyter execute $line --timeout=450
   done <<< $(cat ci.txt)

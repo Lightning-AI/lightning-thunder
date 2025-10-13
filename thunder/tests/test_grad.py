@@ -45,6 +45,7 @@ op_skip = {
     "index_put",
     "batch_norm",
     "instance_norm",
+    "torch_type",
     "type_as",
 }
 
@@ -669,6 +670,10 @@ def test_vjp_correctness_nll_loss_manual(op, device, dtype, executor, comp):
 
 @ops((get_opinfo("cross_entropy"),), supported_dtypes=(dtypes.float64,))
 def test_vjp_correctness_cross_entropy_manual(op, device, dtype, executor, comp):
+    from thunder.tests.framework import nvFuserTestExecutor
+
+    if type(executor) is nvFuserTestExecutor:
+        pytest.skip("https://github.com/Lightning-AI/lightning-thunder/issues/2535")
     for sample in op.sample_inputs(device, dtype, requires_grad=True, no_rhs_numbers=True):
         # Traced backwards function does not follow PyTorch cross_entropy behavior with zero element tensors
         if sample.args[0].numel() == 0:
@@ -814,11 +819,11 @@ def test_multiple_output_vjp(executor, device, _):
 
     # Let's check that we get the correct error if we don't pass the right number of cotangents
     with pytest.raises(RuntimeError, match="Expected cotangents to be a sequence of length 2"):
-        initial_trace = thunder.trace()(vjp(func), (x,), (v,))
+        thunder.trace()(vjp(func), (x,), (v,))
 
     # The "vjp" function defined above is incorrect, let's check that we get the correct error
     with pytest.raises(RuntimeError, match="Backward for sincos returned 2 values, but expected at most 1"):
-        initial_trace = thunder.trace()(vjp(func), (x,), (v, v))
+        thunder.trace()(vjp(func), (x,), (v, v))
 
     # Let's define a correct sincos_backward function
     @register_backward("sincos")
@@ -1050,7 +1055,7 @@ def test_torch_autograd_crazy_collections_in_and_out(executor, device, dtype):
         g = e + f
         h = f + ka + kb
         # NOTE The following computation is intentionally unused
-        i = ka + ka  # noqa
+        # i = ka + ka
         j = kc[0] + kc[1]
 
         d["j"] = j
@@ -1096,13 +1101,13 @@ def test_torch_autograd_crazy_collections_in_and_out(executor, device, dtype):
     dtypes=NOTHING,
 )
 def test_torch_autograd_module(executor, device, _):
-    l = torch.nn.Linear(3, 4, bias=False, device=device)
+    linear = torch.nn.Linear(3, 4, bias=False, device=device)
     a = make_tensor((2, 3), device=device, dtype=torch.float32, requires_grad=True)
     g = make_tensor((2, 4), device=device, dtype=torch.float32)
 
     for cache_mode in ("constant values", "same input"):
         lc = executor.make_callable(
-            l,
+            linear,
             disable_torch_autograd=False,
             cache_mode=cache_mode,
         )
@@ -1110,9 +1115,9 @@ def test_torch_autograd_module(executor, device, _):
         a.grad = None
         out = lc(a)
         out.backward(g)
-        l_grad = l.weight.grad
-        torch.testing.assert_close(l_grad, g.mT @ a)
-        torch.testing.assert_close(a.grad, g @ l.weight)
+        linear_grad = linear.weight.grad
+        torch.testing.assert_close(linear_grad, g.mT @ a)
+        torch.testing.assert_close(a.grad, g @ linear.weight)
 
 
 @instantiate(
@@ -1121,12 +1126,12 @@ def test_torch_autograd_module(executor, device, _):
 def test_torch_autograd_module_get_compile_stats(executor, device, _):
     from thunder import compile_stats
 
-    l = torch.nn.Linear(3, 4, bias=False, device=device)
+    linear = torch.nn.Linear(3, 4, bias=False, device=device)
     a = make_tensor((2, 3), device=device, dtype=torch.float32, requires_grad=True)
     g = make_tensor((2, 4), device=device, dtype=torch.float32)
 
     lc = thunder.jit(
-        l,
+        linear,
     )
     lc.zero_grad()
     a.grad = None
@@ -1262,7 +1267,6 @@ def test_backward_none_propagation(executor, device, _):
 #
 # Phantom grad tests
 #
-# TODO Jax consistency testing (slice and slice_in_dim don't have torch references)
 # TODO Double-backward testing
 # TODO Add more module tests
 
@@ -1483,8 +1487,11 @@ def test_populate_grads_block(executor, device, dtype):
     assert_close(torch_grads, thunder_grads, atol=1e-2, rtol=1e-2)
 
 
+# Note: When running with TF32 enabled on CUDA, the maximum absolute difference between outputs
+# can be on the order of 1e-3, which exceeds the default tolerances for torch.testing.assert_close.
+# This is expected due to the reduced precision of TF32 matrix multiplications.
 @instantiate(dtypes=(thunder.float32,))
-def test_populate_grads_nanogpt(executor, device, dtype):
+def test_populate_grads_nanogpt(executor, device, dtype, turn_off_tf32_and_set_seed):
     import sys
 
     if sys.platform == "win32":
@@ -1543,7 +1550,7 @@ def test_too_few_results_from_backward():
 
     myex = thunder.extend.OperatorExecutor("myex", version="0.1")
     thunder.extend.register_executor(myex)
-    myadd_op = myex.register_operator("myadd", like=myadd_meta, fn=lambda a, b: a + b)
+    myex.register_operator("myadd", like=myadd_meta, fn=lambda a, b: a + b)
 
     @register_augmented_forward("myadd")
     def myadd_augmented_fw(a, b):
@@ -1564,7 +1571,7 @@ def test_too_few_results_from_backward():
     b = torch.tensor(1.0, requires_grad=True)
 
     with pytest.raises(RuntimeError, match=r"Backward for myadd returned 1 value\(s\), but expected 2"):
-        fw_out = cfunc(a, b)
+        cfunc(a, b)
 
     thunder.extend.deregister_executor(myex)
 
@@ -1941,3 +1948,28 @@ def test_disambiguate_grad_names():
 
     assert_close(res, ref)
     assert_close(res_grads, ref_grads)
+
+
+@requiresCUDA
+def test_silu_decomposition_numerical_stability():
+    from torch.nn.functional import linear, silu
+
+    def fn(to_3, weight):
+        x_fc_1 = linear(to_3, weight, bias=None)
+        x = silu(x_fc_1)
+        x_1 = x[0]
+        return x_1
+
+    jfn = thunder.jit(fn)
+    torch_fn = torch.compile(fn)
+
+    a = torch.full((1, 2048, 256), -4.0, device="cuda", requires_grad=True)
+    b = torch.full((128, 256), 4.0, device="cuda", requires_grad=True)
+
+    res = jfn(a, b)
+    grads_res = torch.autograd.grad(res.sum(), [a, b])
+
+    ref = torch_fn(a, b)
+    grads_ref = torch.autograd.grad(ref.sum(), [a, b])
+
+    torch.testing.assert_close(grads_res, grads_ref)

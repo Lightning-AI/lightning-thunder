@@ -78,7 +78,26 @@ _PROJECT_ROOT = os.path.dirname(_PACKAGE_ROOT)
 
 # TODO RC1 Review exposed names
 __all__ = [
+    # module aliases
+    "clang",
+    "dtypes",
+    "devices",
     "transforms",
+    # function aliases
+    "get_compile_data",
+    "trace",
+    # class aliases
+    "Proxy",
+    "TensorProxy",
+    "NumberProxy",
+    "StringProxy",
+    "IntegerProxy",
+    "FloatProxy",
+    "ComplexProxy",
+    "TupleProxy",
+    "ListProxy",
+    "DictProxy",
+    "AnyProxy",
     # dtype aliases
     "bool8",
     "uint8",
@@ -136,7 +155,7 @@ __all__ = [
 ]
 
 
-from thunder.__about__ import *  # import all
+from thunder.__about__ import *  # noqa: F403
 
 
 # TODO maybe move these aliases to the core language?
@@ -382,6 +401,7 @@ def jit(
     weakref_cd = weakref.ref(cd)
 
     cs = CompileStats()
+    weakref_cs = weakref.ref(cs)
 
     def _alias_tensor_of_args_kwargs_dict(*args, **kwargs) -> dict[int, list[int]]:
         flat_args, _ = tree_flatten((args, kwargs))
@@ -532,6 +552,7 @@ def jit(
                 from thunder.transforms.autodiff import grad_transform_on_trace
 
                 computation_trc = grad_transform_on_trace(computation_trc)
+                computation_traces.append(computation_trc)
 
             from thunder.executors.passes import _transform_for_operator_executor_execution
             from thunder.distributed.utils import maybe_sort_waits
@@ -553,8 +574,8 @@ def jit(
             if requires_grad:
                 from thunder.transforms.autodiff import split_into_forward_and_backward
 
-                if "transformer_engine_v2" in {ex.name for ex in cd.executors_list}:
-                    from thunder.executors.transformer_engine_v2ex import _te_activation_checkpointing_transform
+                if "transformer_engine" in {ex.name for ex in cd.executors_list}:
+                    from thunder.executors.transformer_engineex import _te_activation_checkpointing_transform
 
                     computation_trc = _te_activation_checkpointing_transform(computation_trc)
 
@@ -670,9 +691,11 @@ def jit(
     @langctxs.langctx(cd.langctx)
     @_with_cache_info_ctx
     def get_computation_and_inputs(*args, **kwargs):
-        # NOTE: Don't capture cd in the closure, otherwise it will create a cycle
+        # NOTE: Don't capture cd or cs in the closure, otherwise it will create a cycle
         cd = weakref_cd()
         assert cd is not None, "cd has been cleared."
+        cs = weakref_cs()
+        assert cs is not None, "cs has been cleared."
 
         # set up a record of things in the current environment that impact caching / prologues
         # this could be replaced by the respective querying in the prologues
@@ -763,6 +786,9 @@ def jit(
 
     def host_execution_timer(fn):
         def wrapped(*args, **kwargs):
+            # NOTE: Don't capture cd or cs in the closure, otherwise it will create a cycle
+            cs = weakref_cs()
+            assert cs is not None, "cs has been cleared."
             cs.last_trace_host_execution_start = time.perf_counter_ns()
             try:
                 return fn(*args, **kwargs)
@@ -773,6 +799,9 @@ def jit(
 
     def prologue_execution_timer(fn):
         def wrapped(*args, **kwargs):
+            # NOTE: Don't capture cd or cs in the closure, otherwise it will create a cycle
+            cs = weakref_cs()
+            assert cs is not None, "cs has been cleared."
             cs.last_prologue_execution_start = time.perf_counter_ns()
             try:
                 return fn(*args, **kwargs)
@@ -801,6 +830,9 @@ def jit(
 
     def update_call_statistics(fn):
         def wrapped(*args, **kwargs):
+            # NOTE: Don't capture cd or cs in the closure, otherwise it will create a cycle
+            cs = weakref_cs()
+            assert cs is not None, "cs has been cleared."
             cs.calls += 1
             cs.last_trace_host_start = time.perf_counter_ns()
             try:
@@ -843,6 +875,11 @@ def jit(
     @wraps(fn)
     @update_call_statistics
     def fn_(*args, **kwargs) -> Any:
+        # NOTE: Don't capture cd or cs in the closure, otherwise it will create a cycle
+        cd = weakref_cd()
+        assert cd is not None, "cd has been cleared."
+        cs = weakref_cs()
+        assert cs is not None, "cs has been cleared."
         if is_tracing():
             _recursive_jit_call_warning()
             return fn(*args, **kwargs)
@@ -852,6 +889,9 @@ def jit(
         result = cache_entry.computation_fn(*inps)
         result = maybe_connect_to_autograd(cache_entry, result)
         result = call_epilogue(cache_entry, result, pro_to_epi)
+
+        # Reflect the state of is_grad_enabled, as its changes were tracked only inside Thunder
+        pytorch.set_grad_enabled(cd.is_grad_enabled)
 
         cs.last_computation = cache_entry.computation_fn
         return result
@@ -1073,7 +1113,6 @@ def _grad_transform(original_trace):
     current_inputs = grad_fwd_trace.args
     for bsym in original_trace.bound_symbols:
         grad_defined = bsym.sym.grad_defined
-        grad_ignored = bsym.sym.grad_ignored
         grad_fwd, grad_bwd = bsym.sym.grad_fwd, bsym.sym.grad_bwd
 
         if not grad_defined:
@@ -1124,7 +1163,7 @@ def grad(fn):
         original_result, original_trace = cfn(*args, **kwargs)
         original_trace = last_traces(cfn)
 
-        gradir = _grad_transform(original_trace)
+        _grad_transform(original_trace)
 
         return original_result, original_trace
 
