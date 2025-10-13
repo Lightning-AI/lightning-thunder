@@ -1783,7 +1783,6 @@ def test_thunderfx_node_with_no_example_value():
     torch.testing.assert_close(actual, expected)
 
 
-@pytest.mark.xfail(reason="Unsupported: Dynamo can't retrace autocast enter/exit", raises=AssertionError)
 def test_thunderfx_no_example_value_and_autocast():
     def fn(x):
         with torch.autocast("cpu"):
