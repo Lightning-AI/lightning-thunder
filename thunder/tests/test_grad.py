@@ -360,7 +360,7 @@ def check_vjp_torch(
       especially with float64, leading to small discrepancies leading to assertion failures.
     - `torch.func.jvp` has shown to have some issues on a few ops in float64 (see
       `_TORCH_JVP_UNSTABLE_OPS_FLOAT64`), producing a zero J*u.
-    
+
     In these unstable cases, we fall back to the finite-difference JVP used in `check_vjp`.
 
     Args:
