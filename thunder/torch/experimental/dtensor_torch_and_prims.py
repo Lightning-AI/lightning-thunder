@@ -1,6 +1,7 @@
 from functools import partial
 from collections.abc import Callable
 from enum import auto, Enum
+from collections.abc import Sequence
 from looseversion import LooseVersion
 
 from thunder.torch import torchsymbol, TensorLike, register_function
@@ -124,40 +125,6 @@ def handle_check_dtensor_spec_in_prologue(prim, prologue_trace, args) -> bool:
         return True
 
     return False
-
-
-def dtensor_mul_meta(a, b):
-    output = run_with_fake_tensor(torch.mul, a, b)
-    local_tensor_proxy = TensorProxy(like=a.local_tensor)
-    spec = output._spec
-    spec_proxy = AnyProxy(spec, history=a.history)
-    return create_dtensor_proxy_from_proxies(local_tensor_proxy, spec_proxy, False)
-
-
-dtensor_mul_prim = make_prim(DTensorPrimIDs.MUL, "dtensor_mul_prim", meta=dtensor_mul_meta)
-
-dtensor_mul_prim_impl = pytorchex.register_operator("dtensor_mul_prim", like=dtensor_mul_prim, fn=torch.mul)
-
-pytorchex.register_implementation(dtensor_mul_prim, dtensor_mul_prim_impl)
-
-
-def _dtensor_mul_prim_grad(a: TensorLike, b: TensorLike) -> TensorLike:
-    fwd = dtensor_mul_prim(a, b)
-
-    g = get_grad(fwd)
-    a_grad = dtensor_mul_prim(b, g)
-    b_grad = dtensor_mul_prim(a, g)
-    put_grads((a, b), (a_grad, b_grad))
-
-    return fwd
-
-
-register_grad(dtensor_mul_prim, _dtensor_mul_prim_grad)
-
-
-@dtensor_torchsymbol(torch.mul, id="dtensor.torch.mul")
-def dtensor_mul(a: TensorLike, b: TensorLike) -> TensorLike:
-    return dtensor_mul_prim(a, b)
 
 
 def dtensor_reshape_meta(a, shape):
@@ -371,6 +338,100 @@ def dtensor_reciprocal(a: TensorLike) -> TensorLike:
     )
 
 
+if torch.distributed.is_available():
+    from torch.distributed.tensor import DTensor
+    from torch.distributed.tensor.placement_types import Placement, DeviceMesh
+
+    def dtensor_from_local_meta(
+        x,
+        mesh,
+        placements,
+        *,
+        run_check: bool = False,
+        shape: torch.Size | None = None,
+        stride: tuple[int, ...] | None = None,
+    ):
+        res = run_with_fake_tensor(
+            DTensor.from_local, x, mesh, placements, run_check=run_check, shape=shape, stride=stride
+        )
+        from thunder.torch.experimental.dtensor_proxy import proxify_dtensor
+
+        res = proxify_dtensor(res)
+        return res
+
+    dtensor_from_local_prim = make_prim("dtensor_from_local", "dtensor_from_local", meta=dtensor_from_local_meta)
+
+    dtensor_from_local_prim_impl = pytorchex.register_operator(
+        "dtensor_from_local", like=dtensor_from_local_prim, fn=DTensor.from_local
+    )
+
+    pytorchex.register_implementation(dtensor_from_local_prim, dtensor_from_local_prim_impl)
+
+    @dtensor_torchsymbol(DTensor.from_local, id="dtensor.torch.from_local")
+    def dtensor_from_local(
+        x,
+        mesh,
+        placements,
+        *,
+        run_check: bool = False,
+        shape: torch.Size | None = None,
+        stride: tuple[int, ...] | None = None,
+    ) -> DTensorProxy | None:
+        return dtensor_from_local_prim(x, mesh, placements, run_check=run_check, shape=shape, stride=stride)
+
+    def dtensor_redistribute_meta(
+        dtensor,
+        device_mesh: DeviceMesh | None = None,
+        placements: Sequence[Placement] | None = None,
+        *,
+        async_op: bool = False,
+    ) -> DTensorProxy | None:
+        res = run_with_fake_tensor(DTensor.redistribute, dtensor, device_mesh, placements, async_op=async_op)
+        from thunder.torch.experimental.dtensor_proxy import proxify_dtensor
+
+        res = proxify_dtensor(res)
+        return res
+
+    dtensor_redistribute_prim = make_prim(
+        "dtensor_redistribute", "dtensor_redistribute", meta=dtensor_redistribute_meta
+    )
+
+    dtensor_redistribute_prim_impl = pytorchex.register_operator(
+        "dtensor_redistribute", like=dtensor_redistribute_prim, fn=DTensor.redistribute
+    )
+
+    @dtensor_torchsymbol(DTensor.redistribute, id="dtensor.torch.redistribute")
+    def dtensor_redistribute(
+        dtensor,
+        device_mesh: DeviceMesh | None = None,
+        placements: Sequence[Placement] | None = None,
+        *,
+        async_op: bool = False,
+    ) -> DTensorProxy | None:
+        return dtensor_redistribute_prim(dtensor, device_mesh, placements, async_op=async_op)
+
+    pytorchex.register_implementation(dtensor_redistribute_prim, dtensor_redistribute_prim_impl)
+
+    def dtensor_to_local_meta(dtensor, *, grad_placements: Sequence[Placement] | None = None):
+        res = run_with_fake_tensor(DTensor.to_local, dtensor, grad_placements=grad_placements)
+        from thunder.core.proxies import proxy
+
+        res = proxy(res)
+        return res
+
+    dtensor_to_local_prim = make_prim("dtensor_to_local", "dtensor_to_local", meta=dtensor_to_local_meta)
+
+    dtensor_to_local_prim_impl = pytorchex.register_operator(
+        "dtensor_to_local", like=dtensor_to_local_prim, fn=DTensor.to_local
+    )
+
+    pytorchex.register_implementation(dtensor_to_local_prim, dtensor_to_local_prim_impl)
+
+    @dtensor_torchsymbol(DTensor.to_local, id="dtensor.torch.to_local")
+    def dtensor_to_local(dtensor, *, grad_placements: Sequence[Placement] | None = None) -> DTensorProxy | None:
+        return dtensor_to_local_prim(dtensor, grad_placements=grad_placements)
+
+
 expand = partial(expand_impl, broadcast_prim=dtensor_broadcast_in_dim_prim)
 maybe_broadcast = partial(maybe_broadcast_impl, expand_fn=expand)
 
@@ -412,6 +473,45 @@ def dtensor_add(a: TensorLike, b: TensorLike) -> TensorLike:
     )
 
 
+def dtensor_mul_meta(a, b):
+    output = run_with_fake_tensor(torch.mul, a, b)
+    local_tensor_proxy = TensorProxy(like=a.local_tensor)
+    spec = output._spec
+    spec_proxy = AnyProxy(spec, history=a.history)
+    return create_dtensor_proxy_from_proxies(local_tensor_proxy, spec_proxy, False)
+
+
+dtensor_mul_prim = make_prim(DTensorPrimIDs.MUL, "dtensor_mul_prim", meta=dtensor_mul_meta)
+
+dtensor_mul_prim_impl = pytorchex.register_operator("dtensor_mul_prim", like=dtensor_mul_prim, fn=torch.mul)
+
+pytorchex.register_implementation(dtensor_mul_prim, dtensor_mul_prim_impl)
+
+
+def _dtensor_mul_prim_grad(a: TensorLike, b: TensorLike) -> TensorLike:
+    fwd = dtensor_mul_prim(a, b)
+
+    g = get_grad(fwd)
+    a_grad = dtensor_mul_prim(b, g)
+    b_grad = dtensor_mul_prim(a, g)
+    put_grads((a, b), (a_grad, b_grad))
+
+    return fwd
+
+
+register_grad(dtensor_mul_prim, _dtensor_mul_prim_grad)
+
+
+@dtensor_torchsymbol(torch.mul, id="dtensor.torch.mul")
+def dtensor_mul(a: TensorLike, b: TensorLike) -> TensorLike:
+    return _elementwise_binary_wrapper(
+        a,
+        b,
+        prim=dtensor_mul_prim,
+        type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT,
+    )
+
+
 if LooseVersion(torch.__version__) >= "2.8":
 
     def dtensor_grouped_mm_meta(a, b, offsets):
@@ -440,6 +540,23 @@ if LooseVersion(torch.__version__) >= "2.8":
         return dtensor_grouped_mm_prim(a, b, offsets)
 
 
+# NOTE: Currently only as a helper.
+# TODO: Add this as a torch symbol.
+def _dtensor_sigmoid(x):
+    computation_dtype, result_dtype = utils.elementwise_type_promotion(
+        x, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
+    )
+    x = dtensor_convert_element_type_prim(x, computation_dtype)
+    result = dtensor_reciprocal(dtensor_add(dtensor_exp(-x), 1.0))
+    return dtensor_convert_element_type_prim(result, result_dtype)
+
+
+@dtensor_torchsymbol(torch.nn.functional.silu, id="dtensor.torch.nn.functional.silu")
+def dtensor_silu(a: TensorLike, inplace: bool = False) -> TensorLike:
+    assert not inplace, "inplace is not supported"
+    return a * _dtensor_sigmoid(a)
+
+
 def register_dtensor_torch_and_prims():
     register_function_for_dtensor(torch.add, ltorch.add, dtensor_add, is_method=True)
     register_function_for_dtensor(torch.mul, ltorch.mul, dtensor_mul, is_method=True)
@@ -448,5 +565,6 @@ def register_dtensor_torch_and_prims():
     register_function_for_dtensor(torch.exp, ltorch.exp, dtensor_exp, is_method=True)
     register_function_for_dtensor(torch.neg, ltorch.neg, dtensor_neg, is_method=True)
     register_function_for_dtensor(torch.reciprocal, ltorch.reciprocal, dtensor_reciprocal, is_method=True)
+    register_function_for_dtensor(torch.nn.functional.silu, ltorch.silu, dtensor_silu, is_method=False)
     if LooseVersion(torch.__version__) >= "2.8":
         register_function_for_dtensor(torch._grouped_mm, ltorch._grouped_mm, dtensor_grouped_mm, is_method=False)

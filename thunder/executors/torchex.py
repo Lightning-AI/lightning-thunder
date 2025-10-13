@@ -1024,6 +1024,7 @@ _register_elementwise_binary_implementation(prims.bitwise_or, bitwise_or)
 _register_elementwise_binary_implementation(prims.bitwise_xor, bitwise_xor)
 div_prim_impl = ex.register_operator("torch_div_prim_impl", meta=prims.div.meta, fn=_div_prim_impl)
 _register_elementwise_binary_implementation(prims.div, div_prim_impl)
+_register_elementwise_binary_implementation(prims.div_exact, div_prim_impl)
 _register_elementwise_binary_implementation(prims.eq, eq)
 _register_elementwise_binary_implementation(prims.fmod, fmod)
 _register_elementwise_binary_implementation(prims.ge, ge)
@@ -1789,13 +1790,13 @@ def _pad_prim_impl(
     intermediate_slices = []
     pad_config = []
     just_pad = True
-    for l, (low, high, dilation) in zip(a.shape, padding_config):
+    for length, (low, high, dilation) in zip(a.shape, padding_config):
         assert dilation >= 0
 
         if dilation > 0:
             just_pad = False
 
-        intermediate_length = l + max(0, l - 1) * dilation
+        intermediate_length = length + max(0, length - 1) * dilation
         intermediate_shape.append(intermediate_length)
         intermediate_slices.append(slice(None, None, dilation + 1))
 
