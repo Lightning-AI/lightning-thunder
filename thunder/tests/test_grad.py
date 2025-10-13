@@ -377,11 +377,11 @@ def check_vjp_torch(
     Ju_dot_v = _dot(Ju, vv)
     u_dot_Jstarv = _dot(uu, J_star_v)
 
-    # Currently, assert_close from torch.testing is used to check the equality of two tensors.
-    if getattr(comp, "__name__", "") == "assert_close" and getattr(comp, "__module__", "").startswith("torch.testing"):
+    try:
         # We've seen that in some cases both sides are nan with fp64
+        # Some comparators are not from torch.testing, so we need to catch the exception
         comp(Ju_dot_v, u_dot_Jstarv, equal_nan=True)
-    else:
+    except TypeError:
         comp(Ju_dot_v, u_dot_Jstarv)
 
 
