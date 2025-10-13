@@ -1767,6 +1767,19 @@ def digamma_backward(a: Proxy, g):
     return g * polygamma(1, a)
 
 
+def _silu_grad(a: Proxy, inplace: bool = False):
+    from thunder.torch import silu
+
+    fwd = silu(a, inplace)
+    g = get_grad(fwd)
+    sigmoid = 1 / (1 + clang.exp(-a))
+    put_grad(a, g * sigmoid * (1 + a * (1 - sigmoid)))
+    return fwd
+
+
+register_grad("torch.nn.functional.silu", _silu_grad)
+
+
 @register_augmented_forward("torch.polygamma")
 def polygamma_aug_fwd(n: int, a: Proxy):
     from thunder.torch import polygamma
