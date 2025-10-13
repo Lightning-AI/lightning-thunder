@@ -45,6 +45,7 @@ class HFTransformers(BaseRecipe):
 
     Args:
         show_progress (bool, optional): Forwarded to :class:`BaseRecipe`.
+        fuser (str, optional): which fuser to use, default NvFuser.
         interpreter (str, optional): Thunder interpreter to use.
         plugins (Iterable | None, optional): Extra Thunder plugins.
     """
@@ -52,10 +53,11 @@ class HFTransformers(BaseRecipe):
     def __init__(
         self,
         show_progress=False,
+        fuser="nvfuser",
         interpreter="thunder.jit",
         plugins=None,
     ):
-        super().__init__(show_progress=show_progress, interpreter=interpreter, plugins=plugins)
+        super().__init__(show_progress=show_progress, fuser=fuser, interpreter=interpreter, plugins=plugins)
 
         # for kv-cache inplace ops
         self.inplace_index_copy_transform = InplaceIndexCopyTransform()
