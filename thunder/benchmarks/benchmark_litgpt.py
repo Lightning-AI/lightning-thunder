@@ -110,6 +110,12 @@ class LowPrecisionHandler:
         if self.fp8_recipe is None:
             self.fp8_recipe = fp8.get_default_fp8_recipe()
 
+    def maybe_apply_te_autocast(self):
+        if self.enabled and not self.use_legacy_thunder_te:
+            return te.fp8_autocast(fp8_recipe=self.low_precision_handler.fp8_recipe)
+        else:
+            return nullcontext()
+
     def check_and_update_config_for_te_if_needed(self, config: Config) -> None:
         if not self.enabled:
             return
@@ -767,11 +773,10 @@ class Benchmark_litGPT:
                     input_ids, targets = next(self.train_data_iter)
                     input_ids = input_ids.to(self.device)
                     targets = targets.to(self.device)
-                    if self.low_precision_handler.use_te_autocast:
-                        with te.fp8_autocast(fp8_recipe=self.low_precision_handler.fp8_recipe):
-                            logits = self.model(input_ids)
-                    else:
+
+                    with self.low_precision_handler.maybe_apply_te_autocast():
                         logits = self.model(input_ids)
+
                     if not isinstance(logits, torch.Tensor):
                         logits = logits["last_hidden_state"]
                     logits = logits.reshape(-1, logits.size(-1))
@@ -785,11 +790,10 @@ class Benchmark_litGPT:
             input_ids, targets = next(self.train_data_iter)
             input_ids = input_ids.to(self.device)
             targets = targets.to(self.device)
-            if self.low_precision_handler.use_te_autocast:
-                with te.fp8_autocast(fp8_recipe=self.low_precision_handler.fp8_recipe):
-                    logits = self.model(input_ids)
-            else:
+
+            with self.low_precision_handler.maybe_apply_te_autocast():
                 logits = self.model(input_ids)
+
             if not isinstance(logits, torch.Tensor):
                 logits = logits["last_hidden_state"]
             # This information is accurate only in the case when torch.compile
