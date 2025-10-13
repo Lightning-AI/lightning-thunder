@@ -125,6 +125,15 @@ dtensor_supported_opinfos = (
         # Ref:https://github.com/NVIDIA/Fuser/issues/5314
         skip_for_executor=("nvfuser",),
     ),
+    DTensorOpInfo(
+        name="silu",
+        op=torch.nn.functional.silu,
+        torch_reference=torch.nn.functional.silu,
+        supports_grad=False,
+        sample_inputs=get_opinfo("silu").sample_inputs,
+        # Ref:https://github.com/NVIDIA/Fuser/pull/5124
+        skip_noncontiguous_for_executor=("nvfuser",),
+    ),
 )
 
 skip_opinfos = (

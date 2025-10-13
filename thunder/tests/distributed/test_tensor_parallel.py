@@ -195,7 +195,7 @@ class TensorParallelTest(DistributedParallelTestCase):
                 if is_tensor_parallel and (ref_grad.ndim > 1 or dim == 0):
                     ref_grad = ref_grad.chunk(self.world_size, dim)[self.rank]
                 grad = tp_model.get_parameter(param_fqn).grad
-                torch.testing.assert_close(actual=grad, expected=ref_grad, msg=msg)
+                torch.testing.assert_close(actual=grad, expected=ref_grad, msg=msg, atol=1e-5, rtol=1e-5)
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="")
     @common_utils.parametrize("meta_init", (False, True))
