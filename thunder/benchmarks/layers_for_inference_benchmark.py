@@ -19,6 +19,8 @@ from looseversion import LooseVersion
 import torch
 import torch.nn as nn
 from torch.testing._internal.common_quantized import _f32_to_floatx_unpacked
+from torch.distributed.tensor import DTensor
+from torch.distributed.tensor.placement_types import Replicate
 
 if TYPE_CHECKING:
     from transformers.models.llama4.modeling_llama4 import Llama4TextMoe
@@ -327,6 +329,10 @@ class SwiGLU(nn.Module):
 def _group_sizes_from_offsets(offsets: torch.Tensor) -> list[int]:
     group_sizes = []
     prev = 0
+    if isinstance(offsets, DTensor):
+        assert offsets.placements == (Replicate(),)
+        offsets = offsets.to_local()
+
     for offset in offsets:
         group_sizes.append(offset - prev)
         prev = offset
@@ -348,8 +354,8 @@ def grouped_mm(a: torch.Tensor, b: torch.Tensor, offsets: torch.Tensor) -> torch
 
     group_sizes = _group_sizes_from_offsets(offsets)
     group_outs = []
-    for group_a, group_b in zip(a.split(group_sizes), b.unbind()):
-        group_outs.append(group_a @ group_b)
+    for idx, group_a in enumerate(a.split(group_sizes)):
+        group_outs.append(group_a @ b[idx])
     return torch.cat(group_outs)
 
 
