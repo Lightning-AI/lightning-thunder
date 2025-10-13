@@ -348,6 +348,21 @@ def check_vjp_torch(
 ):
     """Check that the vector-Jacobian product of a function is correct.
 
+    This variant uses `torch.func.jvp` to compute J*u directly, which is
+    significantly faster than the finite-difference JVP used in `check_vjp`.
+    The speedup materially reduces CI runtime.
+
+    Currently this path is preferred over the finite-difference JVP used in `check_vjp` because it is faster.
+
+    Notes on numerical stability:
+    - When nvFuser is enabled, ops in `_UNSTABLE_TORCH_JVP_OPS` can exhibit
+      different error accumulation between eager PyTorch and Thunder executions,
+      especially with float64, leading to small discrepancies leading to assertion failures.
+    - `torch.func.jvp` has shown to have some issues on a few ops in float64 (see
+      `_TORCH_JVP_UNSTABLE_OPS_FLOAT64`), producing a zero J*u.
+    
+    In these unstable cases, we fall back to the finite-difference JVP used in `check_vjp`.
+
     Args:
         f_torch (callable): PyTorch function whose JVP is computed.
         f_thunder (callable): Function to compute VJP via Thunder.
