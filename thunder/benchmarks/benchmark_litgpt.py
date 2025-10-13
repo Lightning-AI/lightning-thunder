@@ -6,10 +6,11 @@ import warnings
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
+import functools
+
 from looseversion import LooseVersion
 
 import torch
-import functools
 from torch.utils.data import DataLoader, IterableDataset
 import torch.distributed as torch_dist
 from torch.distributed.device_mesh import init_device_mesh
@@ -926,14 +927,7 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
 
         attention_ctx = sdpa_kernel(backends, **kwargs)
 
-    te_autocast_ctx = nullcontext()
-
-    if "transformerengine_v2" in benchmark.compile:
-        from transformer_engine.pytorch.fp8 import fp8_autocast
-
-        te_autocast_ctx = fp8_autocast(enabled=True)
-
-    with attention_ctx, te_autocast_ctx:
+    with attention_ctx:
         benchmark.train()
 
     if global_rank in [0, None]:
