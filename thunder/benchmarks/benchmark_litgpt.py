@@ -76,6 +76,7 @@ torch.cuda.set_device(device)
 class LowPrecisionHandler:
     mode: str
     fp8_recipe: recipe.Recipe | None = None
+    enabled: bool = False
 
     use_thunder_te: bool = True
     use_legacy_thunder_te: bool = False
