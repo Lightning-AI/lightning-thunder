@@ -364,7 +364,6 @@ def check_vjp_torch(f_torch, f_thunder, primals_torch, primals_thunder, comp, ex
 
     make = partial(make_tensor_like, low=0, high=1)
     u_torch = tree_map(make, torch_filtered_args)
-
             
     outs_p_torch, J_u_torch = torch.func.jvp(f_torch, torch_filtered_args, u_torch)
 
@@ -380,11 +379,12 @@ def check_vjp_torch(f_torch, f_thunder, primals_torch, primals_thunder, comp, ex
     Ju_dot_v = _dot(Ju, vv)
     u_dot_Jstarv = _dot(uu, J_star_v)
 
-    # There are some cases when both sides are nan with fp64
-    if Ju_dot_v.isnan().any() and u_dot_Jstarv.isnan().any():
-        return
-
-    comp(Ju_dot_v, u_dot_Jstarv)
+    # Currently, assert_close from torch.testing is used to check the equality of two tensors.
+    if getattr(comp, "__name__", "") == "assert_close" and getattr(comp, "__module__", "").startswith("torch.testing"):
+        # We've seen that in some cases both sides are nan with fp64
+        comp(Ju_dot_v, u_dot_Jstarv, equal_nan=True)
+    else:
+        comp(Ju_dot_v, u_dot_Jstarv)
 
 
 def check_vjp(f, *primals, comp, executor="torch", set_compile_data: bool = False, prologue_required: bool = False):
