@@ -106,7 +106,9 @@ class LowPrecisionHandler:
 
         check_fp8_compute_capability()
 
-        self.fp8_recipe = fp8.get_default_fp8_recipe()
+        # Use default recipe if no TE recipe is provided
+        if self.fp8_recipe is None:
+            self.fp8_recipe = fp8.get_default_fp8_recipe()
 
     def check_and_update_config_for_te_if_needed(self, config: Config) -> None:
         if not self.enabled:
