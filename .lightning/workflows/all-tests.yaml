@@ -5,6 +5,7 @@ trigger:
     branches: ["main"]
 
 timeout: "60" # minutes
+interruptible: False
 parametrize:
   matrix:
     image:

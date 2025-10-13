@@ -151,58 +151,58 @@ def test_if(jit):
 
 def test_while(jit):
     # produces POP_JUMP_BACKWARD_IF_TRUE/FALSE in 3.11
-    def foo(l):
+    def foo(arr):
         i = 0
         res = []
-        v = l[0]
+        v = arr[0]
         while v:
             res.append(i)
             i = i + 1
-            v = l[i]
+            v = arr[i]
         return res
 
-    def bar(l):
+    def bar(arr):
         i = 0
         res = []
-        v = l[0]
+        v = arr[0]
         while not v:
             res.append(i)
             i = i + 1
-            v = l[i]
+            v = arr[i]
         return res
 
-    def baz(l):
+    def baz(arr):
         i = 0
         res = []
-        v = l[0]
+        v = arr[0]
         while v is not None:
             res.append(i)
             i = i + 1
-            v = l[i]
+            v = arr[i]
         return res
 
-    def tom(l):
+    def tom(arr):
         i = 0
         res = []
-        v = l[0]
+        v = arr[0]
         while v is None:
             res.append(i)
             i = i + 1
-            v = l[i]
+            v = arr[i]
         return res
 
-    l = [True, True, False, True]
+    foo_arr = [True, True, False, True]
 
-    assert foo(l) == jit(foo)(l)
+    assert foo(foo_arr) == jit(foo)(foo_arr)
 
-    l = [False, False, True]
-    assert bar(l) == jit(bar)(l)
+    bar_arr = [False, False, True]
+    assert bar(bar_arr) == jit(bar)(bar_arr)
 
-    l = [False, False, None]
-    assert baz(l) == jit(baz)(l)
+    baz_arr = [False, False, None]
+    assert baz(baz_arr) == jit(baz)(baz_arr)
 
-    l = [None, None, False]
-    assert tom(l) == jit(tom)(l)
+    tom_arr = [None, None, False]
+    assert tom(tom_arr) == jit(tom)(tom_arr)
 
 
 def test_and_or(jit):
@@ -553,38 +553,38 @@ def test_exception_traceback(jit):
 
 def test_finally(jit):
     jitting = False
-    l = []
+    arr = []
 
     def foo():
         try:
             assert is_jitting_with_raise() == jitting
-            l.append(1)
+            arr.append(1)
             raise ValueError("test")
-            l.append(2)
+            arr.append(2)
         except KeyError:
             assert is_jitting_with_raise() == jitting
-            l.append(3)
+            arr.append(3)
         except ValueError:
             assert is_jitting_with_raise() == jitting
-            l.append(4)
+            arr.append(4)
             raise
         finally:
             assert is_jitting_with_raise() == jitting
-            l.append(5)
+            arr.append(5)
 
     with pytest.raises(ValueError):
         jitting = False
         foo()
 
-    l_orig = l
+    arr_orig = arr
 
-    l = []
+    arr = []
 
     with pytest.raises(ValueError):
         jitting = True
         jit(foo)()
 
-    assert l_orig == l
+    assert arr_orig == arr
 
 
 def test_raise(jit):
@@ -677,12 +677,12 @@ def test_match_as(jit):
 
 def test_list(jit):
     def foo():
-        l = [1, 2, 3]
-        l = l.copy()
-        l[3:] = l[:2]
-        l[0] = l[-1]
-        del l[2]
-        return l
+        arr = [1, 2, 3]
+        arr = arr.copy()
+        arr[3:] = arr[:2]
+        arr[0] = arr[-1]
+        del arr[2]
+        return arr
 
     assert foo() == jit(foo)()
 
@@ -1349,8 +1349,8 @@ def test_callable_classes_jitting(jit):
 
 def test_build_slice(jit):
     def foo(a, b):
-        l = [0, 1, 2, 3, 4, 5, 6]
-        return l[a:b], l[a:], l[:b], l[1:2:2], l[0:a:b]
+        arr = [0, 1, 2, 3, 4, 5, 6]
+        return arr[a:b], arr[a:], arr[:b], arr[1:2:2], arr[0:a:b]
 
     jfoo = jit(foo)
 
@@ -1535,16 +1535,16 @@ def test_locals_lookaside_pre_313(jit):
             assert locals() == {}
 
             # Modifications to locals are preserved
-            l = locals()
-            assert locals()["l"] is not None, locals()
-            l["a"] = 5
+            locals_dict = locals()
+            assert locals()["locals_dict"] is not None, locals()
+            locals_dict["a"] = 5
 
             # The identity of locals() is the same across calls
-            assert l is locals(), (l, locals())
+            assert locals_dict is locals(), (locals_dict, locals())
 
             # Deletions in localsplus are deleted in locals
-            del l
-            assert "l" not in locals().keys(), locals()
+            del locals_dict
+            assert "locals_dict" not in locals().keys(), locals()
 
             # The objects stored in variables are the same as those in locals
             b = object()
@@ -1572,17 +1572,17 @@ def test_locals_lookaside_313(jit):
             assert locals() == {}
 
             # Modifications to locals are preserved
-            l = locals()
-            assert locals()["l"] is not None, locals()
-            l["a"] = 5
+            locals_dict = locals()
+            assert locals()["locals_dict"] is not None, locals()
+            locals_dict["a"] = 5
 
             # The identity of locals() is the same across calls
-            assert l is not locals(), (l, locals())
+            assert locals_dict is not locals(), (locals_dict, locals())
             assert "a" not in locals()
 
             # Deletions in localsplus are deleted in locals
-            del l
-            assert "l" not in locals().keys(), locals()
+            del locals_dict
+            assert "locals_dict" not in locals().keys(), locals()
 
             # The objects stored in variables are the same as those in locals
             b = object()
@@ -2034,10 +2034,10 @@ def test_iter_lookaside_and_sentinel(jit):
             assert x != "Unreachable"
 
         sentinel = object()
-        l = [1, 2, 3, "Unreachable"]
-        for x in iter(lambda: l.pop(0) if len(l) != 1 else sentinel, sentinel):
+        arr = [1, 2, 3, "Unreachable"]
+        for x in iter(lambda: arr.pop(0) if len(arr) != 1 else sentinel, sentinel):
             assert x != "Unreachable"
-        assert l == ["Unreachable"]
+        assert arr == ["Unreachable"]
 
     foo()
     jit(foo)()
@@ -2225,32 +2225,32 @@ def test_unpack_ex(jit):
     alphabet = "abcdefghijklmnopqrstuvwxyz"
 
     def foo(a):
-        a, b, *l = a
-        return a, b, l
+        a, b, *rest = a
+        return a, b, rest
 
     jfoo = jit(foo)
 
     assert jfoo(alphabet) == foo(alphabet)
 
     def foo(a):
-        *l, x, y, z = a
-        return l, x, y, z
+        *rest, x, y, z = a
+        return rest, x, y, z
 
     jfoo = jit(foo)
 
     assert jfoo(alphabet) == foo(alphabet)
 
     def foo(a):
-        a, b, c, d, *l, z = a
-        return a, b, c, d, l, z
+        a, b, c, d, *rest, z = a
+        return a, b, c, d, rest, z
 
     jfoo = jit(foo)
 
     assert jfoo(alphabet) == foo(alphabet)
 
     def foo(a):
-        (*l,) = a
-        return l
+        (*rest,) = a
+        return rest
 
     jfoo = jit(foo)
 
@@ -2961,27 +2961,27 @@ def test_with(jit):
     jitting = False
 
     class CtxMgr:
-        def __init__(self, l):
+        def __init__(self, log):
             assert is_jitting_with_raise() == jitting
-            self.l = l
+            self.log = log
 
         def __enter__(self):
             assert is_jitting_with_raise() == jitting
-            self.l.append("enter")
+            self.log.append("enter")
             return self
 
         def __exit__(self, exc_type, exc_val, exc_tb):
             assert is_jitting_with_raise() == jitting
-            self.l.append((str(exc_type), str(exc_val)))
+            self.log.append((str(exc_type), str(exc_val)))
 
     def fn(should_raise: bool = False):
-        l = []
-        with CtxMgr(l) as ctx:
+        log = []
+        with CtxMgr(log) as ctx:
             assert is_jitting_with_raise() == jitting
-            ctx.l.append("within")
+            ctx.log.append("within")
             if should_raise:
-                raise RuntimeError("test", l)
-            return l
+                raise RuntimeError("test", log)
+            return log
 
     jitting = False
     res = fn()
@@ -3004,27 +3004,27 @@ def test_async_with(jit):
     jitting = False
 
     class ACtxMgr:
-        def __init__(self, l):
+        def __init__(self, log):
             assert is_jitting_with_raise() == jitting
-            self.l = l
+            self.log = log
 
         async def __aenter__(self):
             assert is_jitting_with_raise() == jitting
-            self.l.append("enter")
+            self.log.append("enter")
             return self
 
         async def __aexit__(self, exc_type, exc_val, exc_tb):
             assert is_jitting_with_raise() == jitting
-            self.l.append((str(exc_type), str(exc_val)))
+            self.log.append((str(exc_type), str(exc_val)))
 
     async def fn(should_raise: bool = False):
-        l = []
-        async with ACtxMgr(l) as ctx:
+        log = []
+        async with ACtxMgr(log) as ctx:
             assert is_jitting_with_raise() == jitting
-            ctx.l.append("within")
+            ctx.log.append("within")
             if should_raise:
-                raise RuntimeError("test", l)
-            return l
+                raise RuntimeError("test", log)
+            return log
 
     jfn = jit(fn)
 
@@ -3061,11 +3061,11 @@ def test_async_for(jit):
             return i * 2
 
         assert is_jitting_with_raise() == jitting
-        l = [it2(i) async for i in async_gen()]
+        log = [it2(i) async for i in async_gen()]
         async for i in async_gen():
             assert is_jitting_with_raise() == jitting
-            l.append(i * 3)
-        return l
+            log.append(i * 3)
+        return log
 
     import asyncio
 
@@ -3231,27 +3231,29 @@ def test_torch_autocast_nograd(jit):
 
 
 def test_module_hooks(jit):
-    def cook_hook(l, name):
+    def cook_hook(log, name):
         def fn(*args):
-            l.append((name, thunder.core.interpreter.is_jitting_with_raise()))
+            log.append((name, thunder.core.interpreter.is_jitting_with_raise()))
 
         return fn
 
     m = torch.nn.Linear(4, 4)
-    l = []
+    log = []
     handles = []
 
     try:
-        handles.append(torch.nn.modules.module.register_module_forward_hook(cook_hook(l, "global forward")))
-        handles.append(torch.nn.modules.module.register_module_forward_pre_hook(cook_hook(l, "global forward pre")))
-        handles.append(torch.nn.modules.module.register_module_full_backward_hook(cook_hook(l, "global full backward")))
+        handles.append(torch.nn.modules.module.register_module_forward_hook(cook_hook(log, "global forward")))
+        handles.append(torch.nn.modules.module.register_module_forward_pre_hook(cook_hook(log, "global forward pre")))
         handles.append(
-            torch.nn.modules.module.register_module_full_backward_pre_hook(cook_hook(l, "global full backward pre"))
+            torch.nn.modules.module.register_module_full_backward_hook(cook_hook(log, "global full backward"))
         )
-        handles.append(m.register_forward_hook(cook_hook(l, "module forward")))
-        handles.append(m.register_forward_pre_hook(cook_hook(l, "module forward pre")))
-        handles.append(m.register_full_backward_hook(cook_hook(l, "module full backward")))
-        handles.append(m.register_full_backward_pre_hook(cook_hook(l, "module full backward pre")))
+        handles.append(
+            torch.nn.modules.module.register_module_full_backward_pre_hook(cook_hook(log, "global full backward pre"))
+        )
+        handles.append(m.register_forward_hook(cook_hook(log, "module forward")))
+        handles.append(m.register_forward_pre_hook(cook_hook(log, "module forward pre")))
+        handles.append(m.register_full_backward_hook(cook_hook(log, "module full backward")))
+        handles.append(m.register_full_backward_pre_hook(cook_hook(log, "module full backward pre")))
 
         x = torch.randn(3, 4)
 
@@ -3280,13 +3282,13 @@ def test_module_hooks(jit):
         assert match_against in buf.getvalue()
         buf.close()
 
-        jit_l = l[:]
-        l.clear()
+        jit_log = log[:]
+        log.clear()
         y = m(x)
         y.sum().backward()
 
-        assert len(jit_l) == len(l)
-        for (jn, jj), (pn, pj) in zip(jit_l, l):
+        assert len(jit_log) == len(log)
+        for (jn, jj), (pn, pj) in zip(jit_log, log):
             assert jn == pn
             # we expect forward to be execute via the jit, backward
             # assert bool(jj), f"{jn} {jj=}"
@@ -3334,8 +3336,8 @@ def test_is_jitting_opaque(jit):
 
 
 def test_exception_in_list_init(jit):
-    def foo(l):
-        for i in l:
+    def foo(arr):
+        for i in arr:
             yield i
 
     def bar():
@@ -3487,23 +3489,23 @@ def test_class_setattr():
 
 def test_setitem_setattr():
     class A:
-        def __init__(self, l):
-            super().__setattr__("l", l)  # avoid hitting our setattr
+        def __init__(self, arr):
+            super().__setattr__("arr", arr)  # avoid hitting our setattr
 
         def __setattr__(self, name, val):
-            self.l.append((name, val))
+            self.arr.append((name, val))
             return (name, val)  # unexpected
 
         def __setitem__(self, idx, val):
-            self.l.append((idx, val))
+            self.arr.append((idx, val))
             return (idx, val)  # unexpected
 
     def foo():
-        l = []
-        a = A(l)
+        arr = []
+        a = A(arr)
         a.attr = 3
         a[1] = 2
-        return l
+        return arr
 
     jfoo = thunder.jit(foo)
     res = jfoo()
@@ -3516,7 +3518,7 @@ def test_freeing_of_tensors():
     # this guards against ref cycles preventing reeing of tensors
     # see https://github.com/Lightning-AI/lightning-thunder/issues/886
 
-    l = []
+    arr = []
 
     def bar(x):
         return x + 1
@@ -3525,17 +3527,17 @@ def test_freeing_of_tensors():
 
     def foo(i):
         def on_finalize():
-            l.append(f"free {i}")
+            arr.append(f"free {i}")
 
         c = torch.randn(4, 4)
         weakref.finalize(c, on_finalize)
         return jbar(c)
 
     for i in range(3):
-        l.append(f"run {i}")
+        arr.append(f"run {i}")
         foo(i)
 
-    assert l == ["run 0", "free 0", "run 1", "free 1", "run 2", "free 2"]
+    assert arr == ["run 0", "free 0", "run 1", "free 1", "run 2", "free 2"]
 
 
 def test_tuple_mul():
@@ -3577,3 +3579,16 @@ def test_binary_subscr_on_types():
     jfn = thunder.jit(fn)
     out = jfn()
     assert out == ("list[int]", "dict[int, int]")
+
+
+def test_getattr_type(jit):
+    m = torch.nn.Linear(5, 2)
+
+    def fn():
+        return bool(m), getattr(m, "weight", None)
+
+    expected = fn()
+    actual = jit(fn)()
+
+    assert actual[0] == expected[0]
+    assert actual[1] is expected[1]

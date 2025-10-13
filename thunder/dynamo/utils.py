@@ -244,7 +244,9 @@ def get_proxy_inputs_from_node(node: torch.fx.Node) -> tuple[tuple, dict]:
         return proxy_args, proxy_kwargs
 
 
-def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> tuple[bool, SplitReason | None]:
+def try_execute_thunder_symbol(
+    thunder_symbol: Symbol, node: torch.fx.Node, thunder_options: dict[str, Any]
+) -> tuple[bool, SplitReason | None]:
     """
     Attempts to execute a given Thunder symbol within a tracing context, using proxies for the node's arguments.
 
@@ -288,6 +290,7 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
 
     args, _ = tree_flatten((node.args, node.kwargs))
     requires_grad = any(map(get_requires_grad, args))
+    disable_torch_autograd: bool | None = thunder_options.get("disable_torch_autograd", None)
 
     @compile_data_and_stats(cd, cs)
     @thunder._with_cache_info_ctx
@@ -310,7 +313,11 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
                 exception=str(e),
             )
 
-        function_to_run = value_and_grad(thunder_symbol) if requires_grad else thunder_symbol
+        function_to_run = (
+            value_and_grad(thunder_symbol)
+            if requires_grad and (disable_torch_autograd is None or not disable_torch_autograd)
+            else thunder_symbol
+        )
         # We need to be under trace context to generate proxies.
         with thunder.core.trace.tracectx(TraceCtx()):
             try:
@@ -352,7 +359,7 @@ def get_nodes_in_unsupported_ctx_regions(gm: torch.fx.GraphModule) -> set[torch.
     return nodes_in_unsupported_ctx_regions
 
 
-def is_graphmodule_supported_by_thunder(gm):
+def is_graphmodule_supported_by_thunder(gm, thunder_options: dict[str, Any]):
     nodes_in_unsupported_ctx_regions = get_nodes_in_unsupported_ctx_regions(gm)
     for node in gm.graph.nodes:
         if node.op in (
@@ -368,13 +375,15 @@ def is_graphmodule_supported_by_thunder(gm):
             )
             return False, split_reason
 
-        is_thunder_supported, split_reason = is_node_supported_by_thunder(node)
+        is_thunder_supported, split_reason = is_node_supported_by_thunder(node, thunder_options)
         if not is_thunder_supported:
             return False, split_reason
     return True, None
 
 
-def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason | None]:
+def is_node_supported_by_thunder(
+    node: torch.fx.Node, thunder_options: dict[str, Any]
+) -> tuple[bool, SplitReason | None]:
     """
     Determine whether thunder can execute the operation described by this node.
     """
@@ -426,7 +435,7 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
         for arg_node in node.args:
             if arg_node.op == "get_attr":
                 called_module = getattr(m, arg_node.target)
-                is_module_supported, split_reason = is_graphmodule_supported_by_thunder(called_module)
+                is_module_supported, split_reason = is_graphmodule_supported_by_thunder(called_module, thunder_options)
                 if not is_module_supported:
                     return is_module_supported, split_reason
         return True, None
@@ -439,7 +448,7 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
     # We try to proxify the arguments and call these operations on them to see if they are supported.
     if target in _torch_to_thunder_function_map or inspect.isbuiltin(target):
         thunder_symbol_or_builtin = _torch_to_thunder_function_map.get(target, target)
-        did_run, opt_split_reason = try_execute_thunder_symbol(thunder_symbol_or_builtin, node)
+        did_run, opt_split_reason = try_execute_thunder_symbol(thunder_symbol_or_builtin, node, thunder_options)
         return did_run, opt_split_reason
 
     # There are few operations which are registered only as method in `torchctx` and hence they don't exist
@@ -458,7 +467,7 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
             )
         # NOTE: `get_method` may throw if relevant method is not found, so we have guarded it with `has_method`.
         method = torchctx.get_method(node.target, args, kwargs)
-        did_run, opt_split_reason = try_execute_thunder_symbol(method, node)
+        did_run, opt_split_reason = try_execute_thunder_symbol(method, node, thunder_options)
         return did_run, opt_split_reason
 
     # checks einops operators
@@ -534,6 +543,7 @@ def _get_min_and_val(t: torch.Tensor) -> tuple[Number | None, Number | None]:
         or t.device.type == "meta"
         or t.numel() == 0
         or t.dtype.is_complex
+        or (hasattr(torch, "float4_e2m1fn_x2") and t.dtype == torch.float4_e2m1fn_x2)
     ):
         return None, None
     if t.dtype in (torch.float8_e4m3fn, torch.float8_e4m3fnuz, torch.float8_e5m2, torch.float8_e5m2fnuz):
@@ -1009,3 +1019,78 @@ def default_optimizer(gm: torch.fx.GraphModule, stats: ProfileStats) -> Callable
         err_msg = ", ".join([f"{x.name} raised exception: {x.compiled_fn}" for x in sorted_compiled_gm_to_measurement])
         raise RuntimeError(f"No compiler was able to compile the graph module, {err_msg}")
     return sorted_compiled_gm_to_measurement[0].compiled_fn
+
+
+def translate_dtensor_ops(gm: torch.fx.GraphModule) -> None:
+    # We need this function because:
+    #
+    # For a program like:
+    # ```
+    # model = nn.Linear(hidden_size, hidden_size, bias=False)
+    # parallel_model = parallelize_module(model, mesh, {"fc1": ColwiseParallel()})
+    # model.fc1.weight.requires_grad = False
+
+    # # parallelize_module will handle the conversion to DTensor
+    # i = torch.randn(hidden_size, hidden_size)
+    # ````
+    #
+    # Dynamo captures an FX-Graph like:
+    # ```
+    # def forward(self, L_x_: "f32[16, 16]", L_self_modules_fc1_parameters_weight_: "f32[16, 16]"):
+    #         l_x_ = L_x_
+    #         l_self_modules_fc1_parameters_weight_ = L_self_modules_fc1_parameters_weight_
+    #
+    #         input_tensor: "f32[16, 16]" = torch__dynamo_variables_torch_prim_from_local(l_x_);  l_x_ = None
+    #
+    #         linear: "f32[16, 16]" = torch._C._nn.linear(input_tensor, l_self_modules_fc1_parameters_weight_, None);  input_tensor = l_self_modules_fc1_parameters_weight_ = None
+    #
+    #         outputs: "f32[16, 16]" = torch__dynamo_variables_tensor_prim_redistribute(linear);  linear = None
+    #
+    #         hook_result: "f32[16, 8]" = torch__dynamo_variables_tensor_prim_to_local(outputs);  outputs = None
+    #         return (hook_result,)
+    # ```
+    # where:
+    #      1. In the FX Graph, the Tensor Parallel computation is decomposed into primitive operations such as `torch__dynamo_variables_torch_prim_from_local`, `torch__dynamo_variables_tensor_prim_redistribute`, and others.
+    #      2. It is important to note that these decompositions actually capture (close over) values such as `placements` and other metadata.
+    #         For example, to understand the placements to which the output will be redistributed using `torch__dynamo_variables_tensor_prim_redistribute`,
+    #         we need to use `inspect.getclosurevars(node.target)` to examine the values (like placements) that are captured and used during execution.
+    #         The reference for where this closure is created can be found at:
+    #         https://github.com/pytorch/pytorch/blob/0ab075a69e4577a60c4dcbff7bcc2ecd0a15ce46/torch/_dynamo/variables/tensor.py#L1186-L1210
+
+    from thunder.torch.experimental.dtensor_torch_and_prims import (
+        dtensor_from_local_prim,
+        dtensor_redistribute_prim,
+        dtensor_to_local_prim,
+    )
+
+    for node in gm.graph.nodes:
+        try:
+            closure_vars = inspect.getclosurevars(node.target)
+
+            if "from_local" in node.target.__name__:
+                mesh = closure_vars.nonlocals["args_as_value"][0]
+                placements = closure_vars.nonlocals["args_as_value"][1]
+
+                def dtensor_from_local_prim_wrapper(x, mesh=mesh, placements=placements):
+                    return dtensor_from_local_prim(x, mesh, placements)
+
+                dtensor_from_local_prim_wrapper.thunder_supported = True
+                node.target = dtensor_from_local_prim_wrapper
+            if "redistribute" in node.target.__name__:
+                kwargs = closure_vars.nonlocals["kwargs_as_value"]
+                placements = kwargs["placements"]
+
+                def dtensor_redistribute_prim_wrapper(x, placements=placements):
+                    return dtensor_redistribute_prim(x, placements=placements)
+
+                dtensor_redistribute_prim_wrapper.thunder_supported = True
+                node.target = dtensor_redistribute_prim_wrapper
+            if "to_local" in node.target.__name__:
+
+                def dtensor_to_local_prim_wrapper(x):
+                    return dtensor_to_local_prim(x)
+
+                dtensor_to_local_prim_wrapper.thunder_supported = True
+                node.target = dtensor_to_local_prim_wrapper
+        except Exception:
+            pass
