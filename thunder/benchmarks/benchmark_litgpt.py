@@ -111,6 +111,17 @@ class LowPrecisionHandler:
         if self.fp8_recipe is None:
             self.fp8_recipe = fp8.get_default_fp8_recipe()
 
+    @property
+    def executor_str(self) -> str:
+        if not self.enabled:
+            return "low precision is not enabled"
+        elif self.use_legacy_thunder_te:
+            return "Thunder TE executor v1"
+        elif self.use_thunder_te:
+            return "Thunder TE executor"
+        else:
+            return "TransformerEngine without Thunder"
+
     def maybe_apply_te_autocast(self):
         if self.enabled and not self.use_legacy_thunder_te:
             return te.fp8_autocast(fp8_recipe=self.fp8_recipe)
@@ -953,7 +964,10 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
         elif benchmark.distributed_mode == "ddp":
             print(f"DDP Bucketing Size: {benchmark.ddp_bucket_size} MB")
         print(f"Compiler: {benchmark.compile}")
-        print(f"Low Precision Mode: {benchmark.low_precision_handler.mode}")
+
+        print(
+            f"Low Precision Mode: {benchmark.low_precision_handler.mode} using {benchmark.low_precision_handler.executor_str}"
+        )
         if benchmark._torchao_fp8_handler._enabled:
             msg = "linear"
             if benchmark._torchao_fp8_handler.use_fp8_allgather:
