@@ -1,6 +1,9 @@
 from distutils.version import LooseVersion
 from functools import partial
 import warnings
+from typing import Callable
+
+import torch
 
 import thunder
 from thunder.recipes import BaseRecipe
@@ -51,10 +54,10 @@ class SDPAMaskTransform(thunder.Transform):
 
         def transformers_masking_utils_sdpa_mask_recent_torch_meta(
             batch_size: int,
-            cache_position,  # torch.Tensor
+            cache_position: thunder.TensorProxy,
             kv_length: int,
             kv_offset: int = 0,
-            attention_mask=None,  # torch.Tensor | None
+            attention_mask: thunder.TensorProxy | None = None,
             local_size: int | None = None,
             allow_is_causal_skip: bool = True,
             mask_function: str | None = None,
@@ -68,13 +71,13 @@ class SDPAMaskTransform(thunder.Transform):
 
         def transformers_masking_utils_sdpa_mask_recent_torch_impl(
             batch_size: int,
-            cache_position,  # torch.Tensor,
+            cache_position: torch.Tensor,
             kv_length: int,
             kv_offset: int = 0,
-            attention_mask=None,  # torch.Tensor | None,
+            attention_mask: torch.Tensor | None = None,
             local_size: int | None = None,
             allow_is_causal_skip: bool = True,
-            mask_function: str = None,
+            mask_function: str | None = None,
         ):
             import transformers
 
@@ -97,11 +100,11 @@ class SDPAMaskTransform(thunder.Transform):
 
         def transformers_masking_utils_sdpa_mask_recent_torch_lookaside(
             batch_size: int,
-            cache_position,  # torch.Tensor
+            cache_position: torch.Tensor | thunder.TensorProxy,
             kv_length: int,
             kv_offset: int = 0,
-            mask_function=transformers.masking_utils.causal_mask_function,  # Callable
-            attention_mask=None,  # torch.Tensor | None
+            mask_function: Callable = transformers.masking_utils.causal_mask_function,
+            attention_mask: torch.Tensor | thunder.TensorProxy | None = None,
             local_size: int | None = None,
             allow_is_causal_skip: bool = True,
             **kwargs,
