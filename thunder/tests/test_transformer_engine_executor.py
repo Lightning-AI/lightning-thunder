@@ -58,11 +58,13 @@ if is_nvfp4_available:
 def te_assert_close(actual, expected, **kwargs):
     tolerances = {}
 
-    if actual.dtype == torch.float32:
+    if not isinstance(actual, torch.Tensor) and isinstance(actual, float):
         tolerances = dict(rtol=1.3e-6, atol=1e-5)
-    if actual.dtype == torch.float16:
+    elif actual.dtype == torch.float32:
+        tolerances = dict(rtol=1.3e-6, atol=1e-5)
+    elif actual.dtype == torch.float16:
         tolerances = dict(rtol=1e-3, atol=1e-5)
-    if actual.dtype == torch.bfloat16:
+    elif actual.dtype == torch.bfloat16:
         tolerances = dict(rtol=1.6e-2, atol=1e-5)
 
     kwargs.update(tolerances)
