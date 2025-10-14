@@ -44,6 +44,7 @@ class SDPAMaskTransform(thunder.Transform):
         self.executor = thunder.extend.OperatorExecutor("sdpa_mask_transform_ex")
         thunder.extend.register_executor(self.executor)  # needed if you want to pickle traces
         import transformers
+
         if LooseVersion(transformers.__version__) < LooseVersion("4.55"):
             return
         import transformers.masking_utils
