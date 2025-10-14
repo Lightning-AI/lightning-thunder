@@ -21,7 +21,7 @@ FROM nvidia/cuda:${CUDA_VERSION}-${IMAGE_TYPE}-ubuntu${UBUNTU_VERSION}
 
 ARG CUDNN_VERSION="9.8.0.87"
 ARG CUDNN_FRONTEND_VERSION="1.10.0"
-ARG PYTHON_VERSION="3.10"
+ARG PYTHON_VERSION="3.12"
 ARG TORCH_VERSION="2.2.1"
 ARG TRITON_VERSION="2.2.0"
 ARG TORCH_INSTALL="stable"
@@ -74,7 +74,7 @@ RUN \
     update-alternatives --install /usr/bin/python${PYTHON_VERSION%%.*} python${PYTHON_VERSION%%.*} /usr/bin/python${PYTHON_VERSION} 1 && \
     update-alternatives --install /usr/bin/python python /usr/bin/python${PYTHON_VERSION} 1 && \
     curl https://bootstrap.pypa.io/get-pip.py | python${PYTHON_VERSION} && \
-    pip install "numpy >=1.23.0,<2" && \
+    pip install numpy && \
     # Cleaning
     apt-get autoremove -y && \
     apt-get clean && \
