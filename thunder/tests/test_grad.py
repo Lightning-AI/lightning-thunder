@@ -210,7 +210,7 @@ def _from_numpy(x, like):
 
     Args:
         x (torch.Tensor or numpy.ndarray or numpy.float64): The input tensor.
-        like (torch.Tensor): The tensor to use as a reference for the device and dtype.
+        like (torch.Tensor): The tensor to use as a reference for the device, dtype and requires_grad.
 
     Returns:
         torch.Tensor: The output tensor.
@@ -220,9 +220,17 @@ def _from_numpy(x, like):
     """
     assert isinstance(like, torch.Tensor), f"_from_numpy: Unsupported type of the second argument {type(like)}"
     if isinstance(x, np.ndarray):
-        return torch.from_numpy(x).to(device=like.device)
+        t = torch.from_numpy(x).to(device=like.device, dtype=like.dtype)
+        # Preserve the requires_grad property to avoid cache mismatches
+        t.requires_grad_(getattr(like, "requires_grad", False))
+        return t
     if isinstance(x, torch.Tensor) or isinstance(x, np.float64):
-        return torch.tensor(x, device=like.device, dtype=like.dtype)
+        return torch.tensor(
+            x,
+            device=like.device,
+            dtype=like.dtype,
+            requires_grad=getattr(like, "requires_grad", False),
+        )
     raise ValueError(f"_from_numpy: Unsupported type of the first argument {type(x)}")
 
 

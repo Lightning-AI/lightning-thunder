@@ -1,6 +1,9 @@
 from distutils.version import LooseVersion
 from functools import partial
 import warnings
+from collections.abc import Callable
+
+import torch
 
 import thunder
 from thunder.recipes import BaseRecipe
@@ -38,6 +41,96 @@ class InplaceIndexCopyTransform(thunder.Transform):
         return pro, comp_new, epi
 
 
+class SDPAMaskTransform(thunder.Transform):
+    def __init__(self):
+        self._MASK_FUNCTIONS = {}
+        self.executor = thunder.extend.OperatorExecutor("sdpa_mask_transform_ex")
+        thunder.extend.register_executor(self.executor)  # needed if you want to pickle traces
+        import transformers
+
+        if LooseVersion(transformers.__version__) < LooseVersion("4.55"):
+            return
+        import transformers.masking_utils
+
+        def transformers_masking_utils_sdpa_mask_recent_torch_meta(
+            batch_size: int,
+            cache_position: thunder.TensorProxy,
+            kv_length: int,
+            kv_offset: int = 0,
+            attention_mask: thunder.TensorProxy | None = None,
+            local_size: int | None = None,
+            allow_is_causal_skip: bool = True,
+            mask_function: str | None = None,
+        ):
+            # batch, num_attention_heads, seq_len, kvcache_len
+            return thunder.TensorProxy(
+                shape=(batch_size, 1, cache_position.shape[0], kv_length),
+                dtype=thunder.dtypes.bool8,
+                device=cache_position.device,
+            )
+
+        def transformers_masking_utils_sdpa_mask_recent_torch_impl(
+            batch_size: int,
+            cache_position: torch.Tensor,
+            kv_length: int,
+            kv_offset: int = 0,
+            attention_mask: torch.Tensor | None = None,
+            local_size: int | None = None,
+            allow_is_causal_skip: bool = True,
+            mask_function: str | None = None,
+        ):
+            import transformers
+
+            return transformers.masking_utils.sdpa_mask_recent_torch(
+                batch_size,
+                cache_position,
+                kv_length,
+                kv_offset=kv_offset,
+                attention_mask=attention_mask,
+                local_size=local_size,
+                allow_is_causal_skip=allow_is_causal_skip,
+                mask_function=self._MASK_FUNCTIONS[mask_function],
+            )
+
+        self.transformers_masking_utils_sdpa_mask_recent_torch_sym = self.executor.register_operator(
+            "transformers_masking_utils_sdpa_mask_recent_torch",
+            meta=transformers_masking_utils_sdpa_mask_recent_torch_meta,
+            fn=transformers_masking_utils_sdpa_mask_recent_torch_impl,
+        )
+
+        def transformers_masking_utils_sdpa_mask_recent_torch_lookaside(
+            batch_size: int,
+            cache_position: torch.Tensor | thunder.TensorProxy,
+            kv_length: int,
+            kv_offset: int = 0,
+            mask_function: Callable = transformers.masking_utils.causal_mask_function,
+            attention_mask: torch.Tensor | thunder.TensorProxy | None = None,
+            local_size: int | None = None,
+            allow_is_causal_skip: bool = True,
+            **kwargs,
+        ):
+            assert set(kwargs.keys()) == {"config", "dtype"}  # ignore
+            mask_name = mask_function.__name__
+            self._MASK_FUNCTIONS[mask_name] = mask_function
+            return self.transformers_masking_utils_sdpa_mask_recent_torch_sym(
+                batch_size,
+                cache_position,
+                kv_length,
+                kv_offset=kv_offset,
+                attention_mask=attention_mask,
+                local_size=local_size,
+                allow_is_causal_skip=allow_is_causal_skip,
+                mask_function=mask_name,
+            )
+
+        self.executor._lookasides[transformers.masking_utils.sdpa_mask_recent_torch] = (
+            transformers_masking_utils_sdpa_mask_recent_torch_lookaside
+        )
+
+    def get_executor(self):
+        return self.executor
+
+
 @Recipe.register("hf-transformers")
 class HFTransformers(BaseRecipe):
     """
@@ -59,7 +152,9 @@ class HFTransformers(BaseRecipe):
 
         # for kv-cache inplace ops
         self.inplace_index_copy_transform = InplaceIndexCopyTransform()
+        self.sdpa_mask_transform = SDPAMaskTransform()
         self.executor_names.append(self.inplace_index_copy_transform.executor.name)
+        self.executor_names.append(self.sdpa_mask_transform.executor.name)
 
     @classmethod
     def validate(cls, model):
