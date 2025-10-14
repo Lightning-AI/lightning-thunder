@@ -345,7 +345,7 @@ class InferenceBenchmark:
 
         return input_ids, past_key_values
 
-    def get_next_token(self, input_ids: torch.Tensor, past_key_values: HybridChunkedCache) -> torch.Tensor:
+    def get_next_token(self, input_ids: torch.Tensor, past_key_values: HybridChunkedCache | StaticCache) -> torch.Tensor:
         start_pos = past_key_values.get_seq_length()
         cache_position = start_pos + torch.arange(0, input_ids.shape[1], device=start_pos.device, dtype=start_pos.dtype)
         with torch.no_grad():
