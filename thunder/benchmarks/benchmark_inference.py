@@ -22,6 +22,7 @@ import time
 import warnings
 from typing import Any
 from collections.abc import Callable
+from looseversion import LooseVersion
 
 import torch
 import torch.nn as nn
@@ -29,8 +30,9 @@ from torch.distributed.device_mesh import init_device_mesh
 from torch.distributed.distributed_c10d import destroy_process_group
 from torch.distributed.tensor.parallel import parallelize_module, RowwiseParallel, ColwiseParallel
 from tqdm import tqdm
+import transformers
 from transformers import AutoConfig, AutoModelForCausalLM
-from transformers.cache_utils import HybridChunkedCache
+from transformers.cache_utils import HybridChunkedCache, StaticCache
 from transformers.models.llama4.modeling_llama4 import Llama4TextMoe
 from torch.distributed.tensor.placement_types import Shard
 from torch.distributed.tensor import DTensor
@@ -274,9 +276,17 @@ class InferenceBenchmark:
     def _thunder_jit_options(self) -> dict[str, Any]:
         # `nv_enable_linear=True` might fail with distributed run
         # ref: https://github.com/NVIDIA/Fuser/issues/4507
+        res = {}
         if self.config.enable_nv_linear:
-            return {"nv_enable_linear": True, "nv_enable_matmul": True}
-        return {}
+            res = {"nv_enable_linear": True, "nv_enable_matmul": True}
+        if self.config.mode == "thunderjit":
+            from thunder.recipes.hf_transformers import SDPAMaskTransform
+
+            if not hasattr(self, "_mask_transform"):
+                self._mask_transform = SDPAMaskTransform()
+            res["transforms"] = [self._mask_transform]
+            res["executors"] = [self._mask_transform.get_executor(), *thunder.get_default_executors()]
+        return res
 
     def _compile_model(self, model):
         match self.config.mode:
@@ -314,19 +324,36 @@ class InferenceBenchmark:
         input_length = self.config.input_length
 
         input_ids = torch.randint(0, self.vocab_size, (batch_size, input_length), device=DEVICE)
-        past_key_values = HybridChunkedCache(
-            self.hf_config, input_ids.shape[0], input_ids.shape[1] + self.config.output_length
-        )
-        for layer_idx in range(self.hf_config.num_hidden_layers):
-            # key_states.shape[1] is used to retrieve the number of key value heads, all other dimensions can be 1 and ignored
-            # https://github.com/huggingface/transformers/blob/9300728665aaeb0ebf4db99f9d9fbce916b4a183/src/transformers/cache_utils.py#L1822
-            dummy_key_states = torch.empty(1, self.hf_config.num_key_value_heads // WORLD_SIZE, 1, 1, device=DEVICE)
-            past_key_values.initialise_cache_layer(layer_idx, dummy_key_states)
+        if LooseVersion(transformers.__version__) >= LooseVersion("4.55"):
+            # Transformers deprecated HybridChunkedCache in favour of static in 4.55.x
+            past_key_values = StaticCache(
+                config=self.hf_config,
+                max_batch_size=input_ids.shape[0],
+                max_cache_len=input_ids.shape[1] + self.config.output_length,
+                device=DEVICE,
+                dtype=torch.bfloat16,
+            )
+        else:
+            past_key_values = HybridChunkedCache(
+                self.hf_config, input_ids.shape[0], input_ids.shape[1] + self.config.output_length
+            )
+            for layer_idx in range(self.hf_config.num_hidden_layers):
+                # key_states.shape[1] is used to retrieve the number of key value heads, all other dimensions can be 1 and ignored
+                # https://github.com/huggingface/transformers/blob/9300728665aaeb0ebf4db99f9d9fbce916b4a183/src/transformers/cache_utils.py#L1822
+                dummy_key_states = torch.empty(1, self.hf_config.num_key_value_heads // WORLD_SIZE, 1, 1, device=DEVICE)
+                past_key_values.initialise_cache_layer(layer_idx, dummy_key_states)
 
         return input_ids, past_key_values
 
-    def get_next_token(self, input_ids: torch.Tensor, past_key_values: HybridChunkedCache) -> torch.Tensor:
-        outputs = self.model(input_ids, past_key_values=past_key_values, use_cache=True)
+    def get_next_token(
+        self, input_ids: torch.Tensor, past_key_values: HybridChunkedCache | StaticCache
+    ) -> torch.Tensor:
+        start_pos = past_key_values.get_seq_length()
+        cache_position = start_pos + torch.arange(0, input_ids.shape[1], device=start_pos.device, dtype=start_pos.dtype)
+        with torch.no_grad():
+            outputs = self.model(
+                input_ids, cache_position=cache_position, past_key_values=past_key_values, use_cache=True
+            )
         logits = outputs.logits  # [B, seq_len, vocab_size]
         next_token_logits = logits[:, -1, :]
         next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
@@ -435,7 +462,10 @@ class InferenceBenchmark:
 
         for _ in tqdm(range(self.config.warmup_iterations), disable=LOCAL_RANK != 0):
             past_key_values.reset()
-            _ = self.measure_inference_step(input_ids, past_key_values, max_new_tokens=1)
+            # Use output_length to warm up sufficiently. Otherwise, Thunder's
+            # first-run latency is terribly slow due to lack of dynamic shape
+            # support.
+            _ = self.measure_inference_step(input_ids, past_key_values, self.config.output_length)
 
         print(f"\nRunning {self.config.num_iterations} benchmark iterations...")
         all_metrics = []
