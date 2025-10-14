@@ -471,10 +471,7 @@ def elementwise_unary_generator(
     )
 
     for shape, strides, offset in strided_cases:
-        a = make_arg(
-            500,
-        ).as_strided(shape, strides, offset)
-        a = a.detach().requires_grad_(requires_grad)
+        a = make_arg(500).as_strided(shape, strides, offset).clone().detach().requires_grad_(requires_grad)
         yield SampleInput(a)
 
 
@@ -3682,7 +3679,7 @@ def cat_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
     # Tests concatenating with a tensor broadcast along the concatenation dimension
     a = make((5,))
-    b = make((1,)).expand((5,))
+    b = make((1,)).expand((5,)).clone()
     yield SampleInput(a, b, dim=0)
 
 
@@ -9853,20 +9850,6 @@ interpolate_opinfo = OpInfo(
     error_input_generator=interpolate_error_generator,
     torch_reference=torch.nn.functional.interpolate,
     dtypes=(datatypes.floating,),
-    test_directives=(
-        # PyTorch does not support CPU Half upsample used in interpolate
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_core_vs_torch_consistency",
-            dtypes=(datatypes.float16,),
-            devicetypes=(devices.DeviceType.CPU,),
-        ),
-        # This should be fixed now; TODO re-enable and test
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_vjp_correctness",
-        ),
-    ),
 )
 nn_ops.append(interpolate_opinfo)
 
