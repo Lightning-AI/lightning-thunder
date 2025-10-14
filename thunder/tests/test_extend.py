@@ -146,6 +146,7 @@ def test_get_all_executors_includes_all_native_executors():
         expected.update({"transformer_engine"})
 
     actual.discard("inplace_index_copy_ex")  # might be left over from recipes
+    actual.discard("sdpa_mask_transform_ex")  # might be left over from recipes
     assert actual == expected
 
 
