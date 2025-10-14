@@ -763,7 +763,7 @@ class Benchmark_litGPT:
                 self.calculate_model_flops()
                 # Setup throughput Collection
                 self.throughput = Throughput(window_size=self.max_iters - self.warmup_iters, world_size=world_size)
-            except:
+            except Exception:
                 self.throughput = None
                 print(
                     f"Model Flops/Throughput calculation failed for model {self.model_name}. Skipping throughput metric collection."

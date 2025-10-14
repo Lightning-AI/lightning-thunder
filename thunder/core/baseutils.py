@@ -288,7 +288,7 @@ def fnprint(fn: FunctionType | MethodType | CodeType, first=True) -> Callable:
     if first:
         try:
             source = inspect.getsource(x)
-        except:
+        except Exception:
             source = "Source could not be found."
     else:
         source = f"SUBFUNCTION {x.co_name}:"
@@ -389,7 +389,7 @@ _type_to_str_map = {
 def is_base_printable_type(typ: type, /) -> bool:
     try:
         return typ in _type_to_str_map
-    except:
+    except Exception:
         return False
 
 
@@ -443,7 +443,7 @@ _printable_value_types = {
 def is_base_printable_literal(x: Any, /) -> bool:
     try:
         return x in _printable_literals
-    except:
+    except Exception:
         return False
 
 
