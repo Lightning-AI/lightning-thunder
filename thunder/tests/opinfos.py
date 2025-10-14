@@ -9853,20 +9853,6 @@ interpolate_opinfo = OpInfo(
     error_input_generator=interpolate_error_generator,
     torch_reference=torch.nn.functional.interpolate,
     dtypes=(datatypes.floating,),
-    test_directives=(
-        # PyTorch does not support CPU Half upsample used in interpolate
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_core_vs_torch_consistency",
-            dtypes=(datatypes.float16,),
-            devicetypes=(devices.DeviceType.CPU,),
-        ),
-        # This should be fixed now; TODO re-enable and test
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_vjp_correctness",
-        ),
-    ),
 )
 nn_ops.append(interpolate_opinfo)
 

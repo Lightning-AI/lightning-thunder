@@ -2588,6 +2588,8 @@ nondifferentiable_vjp_symbols: set[prims.PrimIDs] = {
     prims.PrimIDs.BITWISE_XOR,
     prims.PrimIDs.SIGNBIT,
     prims.PrimIDs.FULL,
+    prims.PrimIDs.FLOOR,
+    prims.PrimIDs.CEIL,
     prims.PrimIDs.DIV_EXACT,
 }
 
