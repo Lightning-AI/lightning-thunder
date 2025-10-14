@@ -57,7 +57,7 @@ class SDPAMaskTransform(thunder.Transform):
             attention_mask=None,  # torch.Tensor | None
             local_size: int | None = None,
             allow_is_causal_skip: bool = True,
-            mask_function: str = None,
+            mask_function: str | None = None,
         ):
             # batch, num_attention_heads, seq_len, kvcache_len
             return thunder.TensorProxy(
