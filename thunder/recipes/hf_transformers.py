@@ -44,6 +44,7 @@ class SDPAMaskTransform(thunder.Transform):
         self.executor = thunder.extend.OperatorExecutor("sdpa_mask_transform_ex")
         thunder.extend.register_executor(self.executor)  # needed if you want to pickle traces
         import transformers
+        import transformers.masking_utils
 
         def transformers_masking_utils_sdpa_mask_recent_torch_meta(
             batch_size: int,
