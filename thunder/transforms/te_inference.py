@@ -19,6 +19,7 @@ def get_te_inference_executor():
     global transformer_engine_torch
     global te_inference_executor
     global te_linear_fp8
+    global te_groupedmm_fp8
 
     if te_inference_executor is None:
         import transformer_engine
@@ -57,7 +58,7 @@ def get_te_inference_executor():
                 x,
                 w,
                 input_quantizer=xq,
-                with_quantized_compute=True,
+                with_quantized_compute=False,
                 weight_requires_grad=False,
                 input_requires_grad=False,
             )
@@ -70,6 +71,45 @@ def get_te_inference_executor():
         te_linear_fp8 = te_inference_executor.register_operator(
             "te_linear_fp8", meta=te_linear_fp8_meta, fn=te_linear_fp8_impl
         )
+
+        def te_groupedmm_fp8_meta(a, b, offs=None, bias=None, dtype=None, *, b_absmax, b_scale):
+            assert (len(a.shape) == 2 or len(a.shape) == 3) and (len(b.shape) == 2 or len(b.shape) == 3)
+            assert a.shape[-1] == b.shape[-2], "contraction dims have to match"
+            if len(a.shape) == 2:
+                if len(b.shape) == 2:
+                    out_shape = (offs.shape[0], a.shape[0], b.shape[1])
+                else:
+                    assert offs.size[0] == b.size[0], "matrix batch sizes have to match"
+                    out_shape = (a.shape[0], b.shape[-1])
+            else:  # a.shape == 3
+                if len(b.shape) == 2:
+                    assert offs.shape[0] == a.shape[0], "matrix batch sizes have to match"
+                    out_shape = (a.shape[1], b.shape[-1])
+                else:
+                    assert a.shape[0] == b.shape[0], "batched dimensions have to match"
+                    out_shape = (a.shape[0], a.shape[1], b.shape[-1])
+            if dtype is None:
+                dtype = a.dtype
+
+            return thunder.TensorProxy(like=a, shape=out_shape, dtype=dtype)
+
+        def te_groupedmm_fp8_impl(a, b, offs=None, bias=None, dtype=None, *, b_absmax, b_scale):
+            bq = transformer_engine.pytorch.Float8Quantizer(
+                scale=b_scale,
+                amax=b_absmax,
+                fp8_dtype=transformer_engine_torch.DType.kFloat8E4M3,
+                rowwise=True,
+                columnwise=False,
+            )
+
+            b = bq.create_tensor_from_data(b, fake_dtype=a.dtype, requires_grad=False)
+            b = b.to(a.dtype)
+            return torch._grouped_mm(a, b, offs=offs, bias=bias, out_dtype=dtype)
+
+        te_groupedmm_fp8 = te_inference_executor.register_operator(
+            "te_groupedmm_fp8", meta=te_groupedmm_fp8_meta, fn=te_groupedmm_fp8_impl
+        )
+
     return te_inference_executor
 
 
@@ -137,7 +177,7 @@ class TEInference8BitTransform(Transform):
             processed_names.add(weight_name)
 
         for n, submodule in model._model.named_modules():
-            if isinstance(submodule, torch.nn.Linear):
+            if isinstance(submodule, torch.nn.Linear) or submodule.__class__.__name__ == "GroupedLinear":
                 convert_linear_submodule(model, n)
 
     def transform_state_dict_for_submodule(self, model: thunder.ThunderModule, submodule_name: str, state_dict: dict):
@@ -150,7 +190,7 @@ class TEInference8BitTransform(Transform):
         assert w.dtype == qs_dict["dtype"]
         assert w.shape == qs_dict["shape"]
 
-        qw, absmax, scale = self.quantize_weight(w)
+        qw, absmax, scale = self.quantize_weight(w.to("cuda"))
 
         state_dict = state_dict.copy()
         state_dict["weight"] = qw
@@ -298,6 +338,23 @@ class TEInference8BitTransform(Transform):
                         sym=te_linear_fp8,
                         subsymbols=[],
                         args=new_args,
+                    )
+                    self.add_processed_bsyms([mm_bsym])
+                    self.set_result(bsym.output)
+                elif bsym.sym == thunder.torch._grouped_mm and bsym.args[1].name in self.quantized_proxies:
+                    # assert len(bsym.args) == 3  # torch.linear(input, weight, bias)
+                    n = self.quantized_proxies[bsym.args[1].name]
+                    # signature of the new symbol:
+                    # te_linear_fp8(x, qweight, bias, absmax, scale)
+                    new_kwargs = {
+                        **bsym.kwargs,
+                        "b_absmax": self.additional_proxies[f"{n}.absmax"],
+                        "b_scale": self.additional_proxies[f"{n}.scale"],
+                    }
+                    mm_bsym = bsym.from_bsym(
+                        sym=te_groupedmm_fp8,
+                        subsymbols=[],
+                        kwargs=new_kwargs,
                     )
                     self.add_processed_bsyms([mm_bsym])
                     self.set_result(bsym.output)
