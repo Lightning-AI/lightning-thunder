@@ -22,6 +22,7 @@ import time
 import warnings
 from typing import Any
 from collections.abc import Callable
+from looseversion import LooseVersion
 
 import torch
 import torch.nn as nn
@@ -29,8 +30,9 @@ from torch.distributed.device_mesh import init_device_mesh
 from torch.distributed.distributed_c10d import destroy_process_group
 from torch.distributed.tensor.parallel import parallelize_module, RowwiseParallel, ColwiseParallel
 from tqdm import tqdm
+import transformers
 from transformers import AutoConfig, AutoModelForCausalLM
-from transformers.cache_utils import HybridChunkedCache
+from transformers.cache_utils import HybridChunkedCache, StaticCache
 from transformers.models.llama4.modeling_llama4 import Llama4TextMoe
 from torch.distributed.tensor.placement_types import Shard
 from torch.distributed.tensor import DTensor
@@ -322,7 +324,7 @@ class InferenceBenchmark:
         input_length = self.config.input_length
 
         input_ids = torch.randint(0, self.vocab_size, (batch_size, input_length), device=DEVICE)
-        if self.config.mode == "thunderjit":
+        if LooseVersion(transformers.__version__) >= LooseVersion("4.55"):
             # Transformers deprecated HybridChunkedCache in favour of static in 4.55.x
             past_key_values = StaticCache(
                 config=self.hf_config,
@@ -346,7 +348,10 @@ class InferenceBenchmark:
     def get_next_token(self, input_ids: torch.Tensor, past_key_values: HybridChunkedCache) -> torch.Tensor:
         start_pos = past_key_values.get_seq_length()
         cache_position = start_pos + torch.arange(0, input_ids.shape[1], device=start_pos.device, dtype=start_pos.dtype)
-        outputs = self.model(input_ids, cache_position=cache_position, past_key_values=past_key_values, use_cache=True)
+        with torch.no_grad():
+            outputs = self.model(
+                input_ids, cache_position=cache_position, past_key_values=past_key_values, use_cache=True
+            )
         logits = outputs.logits  # [B, seq_len, vocab_size]
         next_token_logits = logits[:, -1, :]
         next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
