@@ -108,7 +108,7 @@ class SDPAMaskTransform(thunder.Transform):
             **kwargs,
         ):
             assert set(kwargs.keys()) == {"config", "dtype"}  # ignore
-            mask_name = f"{mask_function}"
+            mask_name = mask_function.__name__
             self._MASK_FUNCTIONS[mask_name] = mask_function
             return self.transformers_masking_utils_sdpa_mask_recent_torch_sym(
                 batch_size,
