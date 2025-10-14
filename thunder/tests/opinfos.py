@@ -6229,6 +6229,20 @@ cumsum_opinfo = OpInfo(
             dtypes=(datatypes.float16,),
             devicetypes=(devices.DeviceType.CPU,),
         ),
+        # nvfuserex follows pytorch convention to run cumsum in reduced
+        # precision, this causes opinfo tests numerical mismatch for bf16/fp16
+        # NOTE: Even though both nvfuserex and torch uses reduced precision
+        # math, because the reduction order is not the same due to
+        # implementation, error would accumulate.
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=1e-1, rtol=1e-1)),
+            "test_core_vs_torch_consistency",
+            dtypes=(
+                datatypes.bfloat16,
+                datatypes.float16,
+            ),
+            executors=("nvfuser",),
+        ),
     ),
 )
 reduction_ops.append(cumsum_opinfo)
@@ -9839,20 +9853,6 @@ interpolate_opinfo = OpInfo(
     error_input_generator=interpolate_error_generator,
     torch_reference=torch.nn.functional.interpolate,
     dtypes=(datatypes.floating,),
-    test_directives=(
-        # PyTorch does not support CPU Half upsample used in interpolate
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_core_vs_torch_consistency",
-            dtypes=(datatypes.float16,),
-            devicetypes=(devices.DeviceType.CPU,),
-        ),
-        # This should be fixed now; TODO re-enable and test
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_vjp_correctness",
-        ),
-    ),
 )
 nn_ops.append(interpolate_opinfo)
 
