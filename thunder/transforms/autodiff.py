@@ -558,6 +558,7 @@ def split_into_forward_and_backward(joint_trace: TraceCtx):
         pass
 
     backward_trace = TraceCtx(fn=backward_fn)
+    backward_trace.tags.add(TraceTag.BACKWARD)
     backward_trace.names = forward_trace.names
     backward_trace.name_ctr = forward_trace.name_ctr
 
