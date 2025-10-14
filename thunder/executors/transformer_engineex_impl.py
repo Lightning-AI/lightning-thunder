@@ -30,10 +30,10 @@ if TYPE_CHECKING:
 import transformer_engine.pytorch as te
 import transformer_engine.common.recipe as te_recipe
 from transformer_engine.pytorch.constants import MXFP8_BLOCK_SCALING_SIZE
+from transformer_engine.common.recipe import Recipe
 from transformer_engine.pytorch.fp8 import (
     _amax_and_scale_update,
     get_fp8_max,
-    Recipe,
     RecipeState,
     FP8GlobalStateManager,
 )
