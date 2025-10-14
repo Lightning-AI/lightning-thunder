@@ -78,6 +78,71 @@ vjp_op_force = {
     "local_response_norm",
 }
 
+_UNSTABLE_TORCH_JVP_OPS = {
+    "asinh",
+    "atan",
+    "clone",
+    "cos",
+    "cosh",
+    "cumsum",
+    "erf",
+    "erfc",
+    "erfcinv",
+    "erfinv",
+    "exp2",
+    "exp",
+    "expm1",
+    "flip",
+    "gelu",
+    "lgamma",
+    "log10",
+    "log1p",
+    "log2",
+    "log",
+    "logsigmoid",
+    "mish",
+    "ndtri",
+    "neg",
+    "polygamma",
+    "pow",
+    "prod",
+    "sigmoid",
+    "silu",
+    "sin",
+    "sinh",
+    "sqrt",
+    "square",
+    "tanh",
+    "tanhshrink",
+    "to",
+    "view",
+}
+
+_TORCH_JVP_UNSTABLE_OPS_FLOAT64 = {"pow", "prod", "view"}
+
+
+def _should_force_numerical_jvp(op_name, executor, device, dtype):
+    """
+    Return True when we should skip torch.func.jvp and fallback to numerical_jvp
+    for known-unstable cases (nvFuser + CUDA + float64 | torch + CPU/CUDA + float64) on specific ops.
+    """
+    from thunder.tests.framework import nvFuserTestExecutor, TorchTestExecutor
+
+    is_nvfuser = nvFuserTestExecutor is not None and type(executor) is nvFuserTestExecutor
+    is_torch_ex = TorchTestExecutor is not None and type(executor) is TorchTestExecutor
+
+    is_cuda = torch.device(device).type == "cuda"
+
+    # Known-unstable with nvFuser on CUDA float64 for many ops
+    if is_nvfuser and is_cuda and dtype is dtypes.float64 and op_name in _UNSTABLE_TORCH_JVP_OPS:
+        return True
+
+    # Torch fast-path instability on float64 for specific ops across cpu/cuda
+    if is_torch_ex and dtype is dtypes.float64 and op_name in _TORCH_JVP_UNSTABLE_OPS_FLOAT64:
+        return True
+
+    return False
+
 
 def _is_exact_dtype(torch_dtype):
     """Check if the given torch.dtype is an exact dtype.
@@ -268,6 +333,73 @@ def _dot(x, y):
     return sum([_tensor_dot(a, b) for a, b in zip(x, y)])
 
 
+def _thunder_vjp(f, *primals, v=None, executor="torch", set_compile_data=False):
+    if set_compile_data:
+        jf = executor.make_callable(f, disable_torch_autograd=True)
+        with thunder.core.compile_data.compile_data_and_stats(thunder.compile_data(jf), None):
+            initial_trace_vjp_f = thunder.trace()(vjp(f), primals, v)
+    else:
+        initial_trace_vjp_f = thunder.trace()(vjp(f), primals, v)
+    return executor.make_callable(initial_trace_vjp_f.python_callable(), disable_torch_autograd=True)(primals, v)
+
+
+def check_vjp_torch(
+    f_torch, f_thunder, primals_torch, primals_thunder, comp, executor="torch", set_compile_data: bool = False
+):
+    """Check that the vector-Jacobian product of a function is correct.
+
+    This variant uses `torch.func.jvp` to compute J*u directly, which is
+    significantly faster than the finite-difference JVP used in `check_vjp`.
+    The speedup materially reduces CI runtime.
+
+    Currently this path is preferred over the finite-difference JVP used in `check_vjp` because it is faster.
+
+    Notes on numerical stability:
+    - When nvFuser is enabled, ops in `_UNSTABLE_TORCH_JVP_OPS` can exhibit
+      different error accumulation between eager PyTorch and Thunder executions,
+      especially with float64, leading to small discrepancies leading to assertion failures.
+    - `torch.func.jvp` has shown to have some issues on a few ops in float64 (see
+      `_TORCH_JVP_UNSTABLE_OPS_FLOAT64`), producing a zero J*u.
+
+    In these unstable cases, we fall back to the finite-difference JVP used in `check_vjp`.
+
+    Args:
+        f_torch (callable): PyTorch function whose JVP is computed.
+        f_thunder (callable): Function to compute VJP via Thunder.
+        primals_torch (tuple): Inputs to f_torch.
+        primals_thunder (tuple): Inputs to f_thunder.
+        comp (callable): Comparison function for the two sides of the identity.
+        executor (str, optional): Executor to use for Thunder. Defaults to "torch".
+        set_compile_data (bool, optional): Whether to set Thunder compile data. Defaults to False.
+    """
+    if len(primals_torch) == 0:
+        return
+
+    make = partial(make_tensor_like, low=0, high=1)
+    u_torch = tree_map(make, primals_torch)
+
+    outs_p_torch, J_u_torch = torch.func.jvp(f_torch, primals_torch, u_torch)
+
+    v_torch = tree_map(make, outs_p_torch)
+    _, J_star_v = _thunder_vjp(
+        f_thunder, *primals_thunder, v=v_torch, executor=executor, set_compile_data=set_compile_data
+    )
+
+    # Dot-product identity
+    Ju = (J_u_torch,) if not isinstance(J_u_torch, (tuple, list)) else J_u_torch
+    vv = (v_torch,) if not isinstance(v_torch, (tuple, list)) else v_torch
+    uu = (u_torch,) if not isinstance(u_torch, (tuple, list)) else u_torch
+    Ju_dot_v = _dot(Ju, vv)
+    u_dot_Jstarv = _dot(uu, J_star_v)
+
+    try:
+        # We've seen that in some cases both sides are nan with fp64
+        # Some comparators are not from torch.testing, so we need to catch the exception
+        comp(Ju_dot_v, u_dot_Jstarv, equal_nan=True)
+    except TypeError:
+        comp(Ju_dot_v, u_dot_Jstarv)
+
+
 def check_vjp(f, *primals, comp, executor="torch", set_compile_data: bool = False, prologue_required: bool = False):
     """Check that the vector-Jacobian product of a function is correct.
 
@@ -317,12 +449,7 @@ def check_vjp(f, *primals, comp, executor="torch", set_compile_data: bool = Fals
     multiple_results = isinstance(outs_p, Sequence)
 
     v = tree_map(make, outs_p)
-    if set_compile_data:
-        with thunder.core.compile_data.compile_data_and_stats(thunder.compile_data(jf), None):
-            initial_trace_vjp_f = thunder.trace()(vjp(f), primals, v)
-    else:
-        initial_trace_vjp_f = thunder.trace()(vjp(f), primals, v)
-    _, J_star_v = executor.make_callable(initial_trace_vjp_f.python_callable(), disable_torch_autograd=True)(primals, v)
+    _, J_star_v = _thunder_vjp(f, *primals, v=v, executor=executor, set_compile_data=set_compile_data)
 
     if not multiple_results:
         v = (v,)
@@ -378,6 +505,25 @@ def _make_differentiable_wrapper(func, args):
     return wrapper, filtered_args
 
 
+def _thunder_to_torch_args(args, kwargs, dtype):
+    """
+    Converts arguments and keyword arguments from Thunder-specific dtypes to their corresponding
+    Torch dtypes, if applicable.
+
+    Args:
+        args (tuple): Positional arguments to be converted.
+        kwargs (dict): Keyword arguments to be converted.
+        dtype (type): The dtype class to check for conversion (e.g., thunder.float32).
+
+    Returns:
+        tuple: (args, kwargs) with values converted to Torch dtypes if they are of the given dtype.
+    """
+    mapper = lambda x: ltorch.to_torch_dtype(x) if isinstance(x, dtype) else x
+    args = tree_map(mapper, args)
+    kwargs = tree_map(mapper, kwargs)
+    return args, kwargs
+
+
 def snippet_vjp_correctness(func, args, comp, executor, set_compile_data, prologue_required):
     check_vjp(
         func,
@@ -386,6 +532,18 @@ def snippet_vjp_correctness(func, args, comp, executor, set_compile_data, prolog
         executor=executor,
         set_compile_data=set_compile_data,
         prologue_required=prologue_required,
+    )
+
+
+def snippet_vjp_correctness_torch(func_torch, func_thunder, args_torch, args_thunder, comp, executor, set_compile_data):
+    check_vjp_torch(
+        func_torch,
+        func_thunder,
+        args_torch,
+        args_thunder,
+        comp=comp,
+        executor=executor,
+        set_compile_data=set_compile_data,
     )
 
 
@@ -423,18 +581,59 @@ def test_vjp_correctness(op, device, dtype, executor, comp):
             continue
 
         at_least_one_differentiable_input = True
-        result = run_snippet(
-            snippet_vjp_correctness,
-            op,
-            device,
-            dtype,
-            filtered_op,
-            filtered_args,
-            comp,
-            executor,
-            "adaptive_avg_pool2d" in op.name,
-            len(sample.kwargs) != 0,
+
+        set_compile_data = "adaptive_avg_pool2d" in op.name
+
+        def _fdm_jvp():
+            return run_snippet(
+                snippet_vjp_correctness,
+                op,
+                device,
+                dtype,
+                filtered_op,
+                filtered_args,
+                comp,
+                executor,
+                set_compile_data,
+                len(sample.kwargs) != 0,
+            )
+
+        def _torch_jvp():
+            return run_snippet(
+                snippet_vjp_correctness_torch,
+                op,
+                device,
+                dtype,
+                torch_filtered_op,
+                filtered_op,
+                torch_filtered_args,
+                filtered_args,
+                comp,
+                executor,
+                set_compile_data,
+            )
+
+        torch_args, torch_kwargs = _thunder_to_torch_args(sample.args, sample.kwargs, dtypes.dtype)
+        flat_torch_op, flat_torch_args, _ = flatten_func(op.torch_reference, torch_args, torch_kwargs)
+        torch_filtered_op, torch_filtered_args = _make_differentiable_wrapper(flat_torch_op, flat_torch_args)
+
+        # If differentiable args include non-float/complex tensors, proactively fallback to numerical JVP
+        torch_not_supported = any(
+            isinstance(t, torch.Tensor) and not (torch.is_floating_point(t) or torch.is_complex(t))
+            for t in tree_flatten(torch_filtered_args)[0]
         )
+
+        # Fast path: if a pure torch reference exists,
+        # compute J·u with torch.func.jvp on the torch reference, and J*·v with Thunder VJP.
+        if (
+            getattr(op, "torch_reference", None) is not None
+            and not torch_not_supported
+            and not _should_force_numerical_jvp(op.name, executor, device, dtype)
+        ):
+            result = _torch_jvp()
+        else:
+            result = _fdm_jvp()
+
         if result is not None:
             return result
 
