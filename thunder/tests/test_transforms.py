@@ -883,3 +883,30 @@ def test_cache_symbolic_values_grad_unsqueeze():
     expected.sum().backward()
     assert_close(actual, expected)
     assert_close(a.grad, a_ref.grad)
+
+
+@requiresCUDA
+def test_profile_transform():
+    from thunder.dev_utils.profile_transform import ProfileTransform
+
+    with torch.device("cuda"):
+        m = torch.nn.Sequential(
+            torch.nn.Linear(32, 128),
+            torch.nn.ReLU(),
+            torch.nn.Linear(128, 32),
+        )
+        inp = torch.randn(8, 32)
+
+    ptransform_fw = ProfileTransform(backward=False)
+    ptransform_bw = ProfileTransform(backward=True)
+    jm = thunder.jit(m, transforms=(ptransform_fw, ptransform_bw))
+    for _ in range(5):
+        jm(inp).sum().backward()
+
+    prof_fw = ptransform_fw.get_profile()
+    assert "aten::addmm" in prof_fw.key_averages().table(sort_by="self_device_time_total")
+    assert "torch.matmul" not in prof_fw.key_averages().table(sort_by="self_device_time_total")
+
+    prof_bw = ptransform_bw.get_profile()
+    assert "torch.matmul" in prof_bw.key_averages().table(sort_by="self_device_time_total")
+    assert "aten::addmm" not in prof_bw.key_averages().table(sort_by="self_device_time_total")
