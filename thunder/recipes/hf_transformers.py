@@ -95,7 +95,6 @@ class SDPAMaskTransform(thunder.Transform):
             fn=transformers_masking_utils_sdpa_mask_recent_torch_impl,
         )
 
-        # @thunder.core.interpreter.interpreter_needs_wrap
         def transformers_masking_utils_sdpa_mask_recent_torch_lookaside(
             batch_size: int,
             cache_position,  # torch.Tensor
