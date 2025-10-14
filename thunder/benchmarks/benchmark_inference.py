@@ -385,7 +385,10 @@ class InferenceBenchmark:
 
         for _ in tqdm(range(self.config.warmup_iterations)):
             past_key_values.reset()
-            _ = self.measure_inference_step(input_ids, past_key_values, max_new_tokens=1)
+            # Use output_length to warm up sufficiently. Otherwise, Thunder's
+            # first-run latency is terribly slow due to lack of dynamic shape
+            # support.
+            _ = self.measure_inference_step(input_ids, past_key_values, self.config.output_length)
 
         print(f"\nRunning {self.config.num_iterations} benchmark iterations...")
         all_metrics = []
