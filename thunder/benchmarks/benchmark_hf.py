@@ -61,6 +61,8 @@ def run_and_profile(tag: str, fn, model, inp, compiled_models: dict[str, torch.n
             with open(profile_path, "w") as f:
                 f.write(thunder_prof.key_averages().table(sort_by="cpu_time_total"))
 
+        print(timings)
+
     with open(root / f"{tag}_timings_{plugins_str}.txt", "w") as f:
         f.write("\n".join(timings))
 

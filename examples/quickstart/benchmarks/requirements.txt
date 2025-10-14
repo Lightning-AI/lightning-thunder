@@ -1,0 +1,4 @@
+transformers==4.55.4
+numpy<2.0
+torch==2.7.1
+nvfuser-cu128-torch27

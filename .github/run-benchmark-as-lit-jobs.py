@@ -16,7 +16,7 @@ def main(gh_run_id: str = ""):
     print("Uploading package and benchmark script...")
     s.upload_folder("dist", remote_path="dist")
     pkg_path = glob.glob("dist/*.whl")[0]
-    s.upload_file("examples/coverage/requirements.txt", remote_path="benchmarks/requirements.txt")
+    s.upload_file("examples/quickstart/benchmarks/requirements.txt", remote_path="benchmarks/requirements.txt")
     s.upload_file("thunder/benchmarks/benchmark_hf.py", remote_path="benchmarks/benchmark_hf.py")
 
     print("Starting studio...")
