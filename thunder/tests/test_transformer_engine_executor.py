@@ -52,6 +52,16 @@ if is_nvfp4_available:
     recipes += [nvfp4_e2m1_recipe]
     recipe_ids += ["nvfp4_e2m1"]
 
+# Returns the estimated numerical error for a given dtype as per TE spec here:
+# https://github.com/NVIDIA/TransformerEngine/blob/7ad130efd52c3aa4a386d25f1d42b28d5aa20090/tests/pytorch/test_numerics.py#L155-L167
+def dtype_tolerance(dtype):
+    if dtype == torch.float32:
+        return dict(rtol=1.3e-6, atol=1e-5)
+    if dtype == torch.float16:
+        return dict(rtol=1e-3, atol=1e-5)
+    if dtype == torch.bfloat16:
+        return dict(rtol=1.6e-2, atol=1e-5)
+    raise ValueError(f"Unsuppored dtype ({dtype})")
 
 @requiresCUDA
 @pytest.mark.parametrize("fp8_recipe", recipes, ids=recipe_ids)
@@ -69,6 +79,7 @@ def test_te_linear_forward_backward(fp8_recipe: recipe.Recipe):
     # Verify that `torch.nn.functional.linear` is replaced with `te_linear_*`
     # and the output as well as the gradients match for thunder compiled code.
     dtype = torch.bfloat16
+    tolerances = dtype_tolerance(dtype)
     device = "cuda"
 
     # TE inputs (3D input)
@@ -106,9 +117,9 @@ def test_te_linear_forward_backward(fp8_recipe: recipe.Recipe):
     te_result.backward(grad_output)
     thunder_result.backward(grad_output)
 
-    assert_close(x.grad, x_te.grad)
-    assert_close(w1.grad, te_linear1.weight.grad)
-    assert_close(w2.grad, te_linear2.weight.grad)
+    assert_close(x.grad, x_te.grad, *tolerances)
+    assert_close(w1.grad, te_linear1.weight.grad, *tolerances)
+    assert_close(w2.grad, te_linear2.weight.grad, *tolerances)
 
     # Verifies te_linear was called
     forward_trace = thunder.last_traces(cfn)
@@ -143,6 +154,7 @@ def test_te_linear_forward_backward_multiple_iteration(fp8_recipe: recipe.Recipe
     # Since, the FP8 operations are stateful, we want to verify that
     # our output matches over multiple iterations (where state handling comes into picture)
     dtype = torch.bfloat16
+    tolerances = dtype_tolerance(dtype)
     device = "cuda"
     # Running more iterations leads to `nan` for both eager and thunder
     # with BlockScaling.
@@ -200,10 +212,10 @@ def test_te_linear_forward_backward_multiple_iteration(fp8_recipe: recipe.Recipe
     train_model(thunder_model, thunder_sgd_optimizer)
 
     # Verify that the weights and biases converge to same value after few iterations.
-    assert_close(w1, te_linear1.weight)
-    assert_close(w2, te_linear2.weight)
-    assert_close(b1, te_linear1.bias)
-    assert_close(b2, te_linear2.bias)
+    assert_close(w1, te_linear1.weight, *tolerances)
+    assert_close(w2, te_linear2.weight, *tolerances)
+    assert_close(b1, te_linear1.bias, *tolerances)
+    assert_close(b2, te_linear2.bias, *tolerances)
 
 
 @requiresCUDA
@@ -220,6 +232,7 @@ def test_te_linear_forward_backward_multiple_iteration_multiple_recipes():
         pytest.skip("platform does not support two different recipes")
 
     dtype = torch.bfloat16
+    tolerances = dtype_tolerance(dtype)
     device = "cuda"
     # Running more iterations leads to `nan` for both eager and thunder
     # with BlockScaling.
@@ -278,10 +291,10 @@ def test_te_linear_forward_backward_multiple_iteration_multiple_recipes():
     train_model(thunder_model, thunder_sgd_optimizer)
 
     # Verify that the weights and biases converge to same value after few iterations.
-    assert_close(w1, te_linear1.weight)
-    assert_close(w2, te_linear2.weight)
-    assert_close(b1, te_linear1.bias)
-    assert_close(b2, te_linear2.bias)
+    assert_close(w1, te_linear1.weight, *tolerances)
+    assert_close(w2, te_linear2.weight, *tolerances)
+    assert_close(b1, te_linear1.bias, *tolerances)
+    assert_close(b2, te_linear2.bias, *tolerances)
 
 
 @requiresCUDA
@@ -562,6 +575,7 @@ def test_te_activation_checkpointing_correctness(fp8_recipe: recipe.Recipe, comp
         pytest.skip(msg_nvfp4)
 
     dtype = torch.bfloat16
+    tolerances = dtype_tolerance(dtype)
     device = "cuda"
     iterations = 6
 
@@ -650,10 +664,10 @@ def test_te_activation_checkpointing_correctness(fp8_recipe: recipe.Recipe, comp
     for loss, te_loss in zip(thunder_loss_hist, te_loss_hist):
         assert_close(loss, te_loss)
 
-    assert_close(w1, te_linear1.weight)
-    assert_close(w2, te_linear2.weight)
-    assert_close(b1, te_linear1.bias)
-    assert_close(b2, te_linear2.bias)
+    assert_close(w1, te_linear1.weight, *tolerances)
+    assert_close(w2, te_linear2.weight, *tolerances)
+    assert_close(b1, te_linear1.bias, *tolerances)
+    assert_close(b2, te_linear2.bias, *tolerances)
 
     # TE does not expose the scales for MXFP8
     if fp8_recipe.delayed():
