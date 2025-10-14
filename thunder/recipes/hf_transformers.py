@@ -1,7 +1,7 @@
 from distutils.version import LooseVersion
 from functools import partial
 import warnings
-from typing import Callable
+from collections.abc import Callable
 
 import torch
 

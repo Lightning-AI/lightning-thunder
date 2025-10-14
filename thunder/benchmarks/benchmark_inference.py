@@ -279,6 +279,7 @@ class InferenceBenchmark:
             res = {"nv_enable_linear": True, "nv_enable_matmul": True}
         if self.config.mode == "thunderjit":
             from thunder.recipes.hf_transformers import SDPAMaskTransform
+
             if not hasattr(self, "_mask_transform"):
                 self._mask_transform = SDPAMaskTransform()
             res["transforms"] = [self._mask_transform]
