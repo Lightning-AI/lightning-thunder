@@ -5743,12 +5743,12 @@ def interpolate(
         exception_type=NotImplementedError,
     )
     utils.check(
-        recompute_scale_factor is None or recompute_scale_factor == False,
+        recompute_scale_factor is None or not recompute_scale_factor,
         lambda: "Thunder does not yet support 'recompute_scale_factor=True'.",
         exception_type=NotImplementedError,
     )
     utils.check(
-        antialias == False,
+        not antialias,
         lambda: "Thunder does not yet support 'antialias=True'.",
         exception_type=NotImplementedError,
     )
