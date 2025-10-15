@@ -49,7 +49,7 @@ class GroupedLinearColwiseParallel(ParallelStyle):
 
     def _partition_fn(self, name, module, device_mesh):
         module.register_parameter(
-            "weight", nn.Parameter(distribute_tensor(module.weight, device_mesh, [Shard(2)]))
+            "weight", nn.Parameter(distribute_tensor(module.weight, device_mesh, [Shard(1)]))
         )  # Column-wise sharding
 
     @staticmethod
@@ -98,7 +98,7 @@ class GroupedLinearRowwiseParallel(ParallelStyle):
         return tuple(prepared_inputs)
 
     def _partition_fn(self, name, module, device_mesh):
-        module.register_parameter("weight", nn.Parameter(distribute_tensor(module.weight, device_mesh, [Shard(1)])))
+        module.register_parameter("weight", nn.Parameter(distribute_tensor(module.weight, device_mesh, [Shard(-1)])))
 
     @staticmethod
     def _prepare_output_fn(output_layout, use_local_output, mod, outputs, device_mesh):

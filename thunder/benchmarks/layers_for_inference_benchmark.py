@@ -370,12 +370,12 @@ def grouped_mm(a: torch.Tensor, b: torch.Tensor, offsets: torch.Tensor) -> torch
 class GroupedLinear(nn.Module):
     def __init__(self, groups: int, in_features: int, out_features: int, dtype: torch.dtype, device: str):
         super().__init__()
-        self.weight = nn.Parameter(torch.empty(groups, in_features, out_features, dtype=dtype, device=device))
+        self.weight = nn.Parameter(torch.empty(groups, out_features, in_features, dtype=dtype, device=device))
         # Initialize the weight in the same way as nn.Linear
         nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
 
     def forward(self, hidden_states: torch.Tensor, offsets: torch.Tensor) -> torch.Tensor:
-        return grouped_mm(hidden_states, self.weight, offsets)
+        return grouped_mm(hidden_states, torch.transpose(self.weight.data, -1, -2), offsets)
 
 
 @torch.inference_mode()
@@ -559,20 +559,18 @@ class Llama4MoE(nn.Module):
         # to match GroupedLinear
         # https://github.com/huggingface/transformers/blob/f4fc42216cd56ab6b68270bf80d811614d8d59e4/src/transformers/models/llama4/modeling_llama4.py#L55-L57
         # HF format: (groups, hidden_size, 2 * intermediate_size)
-        # Our format: (groups, hidden_size, intermediate_size)
-        gate_up_proj_permuted = moe.experts.gate_up_proj
+        # Our format: (groups, intermediate_size, hidden_size)
 
         # Split into gate and up projections
-        gate_proj_w, up_proj_w = gate_up_proj_permuted.chunk(2, dim=2)
+        gate_proj_w, up_proj_w = moe.experts.gate_up_proj.chunk(2, dim=2)
 
-        new_moe.routed_experts.gate_proj.weight.data.copy_(gate_proj_w)
-        new_moe.routed_experts.up_proj.weight.data.copy_(up_proj_w)
+        new_moe.routed_experts.gate_proj.weight.data.copy_(gate_proj_w.transpose(-1, -2))
+        new_moe.routed_experts.up_proj.weight.data.copy_(up_proj_w.transpose(-1, -2))
 
         # Handle down_proj
         # HF format: (groups, intermediate_size, hidden_size)
-        # Our format: (groups, intermediate_size, hidden_size)
-        down_proj_permuted = moe.experts.down_proj
-        new_moe.routed_experts.down_proj.weight.data.copy_(down_proj_permuted)
+        # Our format: (groups, hidden, intermediate_size)
+        new_moe.routed_experts.down_proj.weight.data.copy_(moe.experts.down_proj.transpose(-1, -2))
 
         return new_moe
 

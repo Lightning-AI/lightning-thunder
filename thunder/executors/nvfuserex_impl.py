@@ -1377,6 +1377,7 @@ def transpose(a: TensorProxy, /, permutation: Sequence[int], *, fd: FusionDefini
 
 
 register_supported(PrimIDs.TRANSPOSE, transpose, _transpose_check)
+register_supported(DTensorPrimIDs.TRANSPOSE, transpose, _transpose_check)
 
 #
 # Elementwise unary operations
