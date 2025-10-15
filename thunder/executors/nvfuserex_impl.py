@@ -545,7 +545,7 @@ class FusionDefinitionWrapper:
         if self.store_inputs:
             self.last_inputs = args
 
-        if dist.is_available():
+        if IS_TORCH_DISTRIBUTED_AVAILABLE:
             # When using DTensor, argument can be AsyncCollectiveTensor.
             # Eg. https://github.com/pytorch/pytorch/blob/0ab075a69e4577a60c4dcbff7bcc2ecd0a15ce46/torch/distributed/tensor/parallel/style.py#L142-L145
             args = tuple(
