@@ -375,7 +375,7 @@ class GroupedLinear(nn.Module):
         nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
 
     def forward(self, hidden_states: torch.Tensor, offsets: torch.Tensor) -> torch.Tensor:
-        return grouped_mm(hidden_states, torch.transpose(self.weight.data, -1, -2), offsets)
+        return grouped_mm(hidden_states, self.weight.transpose(-1, -2), offsets)
 
 
 @torch.inference_mode()
