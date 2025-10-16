@@ -397,10 +397,24 @@ class InferenceBenchmark:
         prefill_time = prefill_timer()
         generated_tokens = [first_token]
 
+        # Fake decoding until the last token
+        for _ in range(max_new_tokens - 2):
+            for layer_idx in range(self.hf_config.num_hidden_layers):
+                key_value_states = torch.empty(
+                    self.config.batch_size,
+                    1,
+                    self.hf_config.num_key_value_heads // WORLD_SIZE,
+                    self.hf_config.head_dim,
+                    device=DEVICE,
+                ).transpose(1, 2)
+                past_key_values.update(
+                    key_value_states, key_value_states, layer_idx, {"cache_position": torch.tensor([0], device=DEVICE)}
+                )
+
         # Decode phase - generate remaining tokens one by one
         next_token = first_token
         with timer() as decode_timer:
-            for _ in range(max_new_tokens - 1):
+            for _ in range(1):
                 next_token = self.decode_one_token(next_token, past_key_values)
                 generated_tokens.append(next_token)
 
