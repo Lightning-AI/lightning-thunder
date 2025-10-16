@@ -536,7 +536,7 @@ def test_div_exact():
     jfn = thunder.jit(fn)
     a = torch.randint(1, 5, (5,))
     b = torch.ones(5, dtype=torch.int32)
-    c = torch.randn(5, 5)
+    c = torch.randn((5, 5), requires_grad=True)
     assert_close(fn(a, b, c), jfn(a, b, c))
     trc = thunder.last_traces(jfn)[-1]
     for bsym in trc.bound_symbols:
