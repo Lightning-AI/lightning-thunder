@@ -603,7 +603,7 @@ class Llama4MoE(nn.Module):
         token_ids_sorted_by_expert_inverse_id = torch.argsort(token_ids_sorted_by_expert_id)
         outs_sorted_by_token_id = outs_sorted_by_expert_id[token_ids_sorted_by_expert_inverse_id]
 
-        return outs_sorted_by_token_id, router_logits
+        return outs_sorted_by_token_id.view(batch_size, seq_len, -1), router_logits.view(batch_size, seq_len, -1)
 
     def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         outs_sorted_by_token_id, router_logits = self.run_routed_experts(hidden_states)
