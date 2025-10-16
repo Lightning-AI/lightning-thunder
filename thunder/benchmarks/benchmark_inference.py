@@ -17,11 +17,11 @@ import argparse
 import json
 import os
 import statistics
-import sys
 import time
 import warnings
 from typing import Any
 from collections.abc import Callable
+from looseversion import LooseVersion
 
 import torch
 import torch.nn as nn
@@ -29,21 +29,28 @@ from torch.distributed.device_mesh import init_device_mesh
 from torch.distributed.distributed_c10d import destroy_process_group
 from torch.distributed.tensor.parallel import parallelize_module, RowwiseParallel, ColwiseParallel
 from tqdm import tqdm
+import transformers
 from transformers import AutoConfig, AutoModelForCausalLM
-from transformers.cache_utils import HybridChunkedCache
+from transformers.cache_utils import HybridChunkedCache, StaticCache
 from transformers.models.llama4.modeling_llama4 import Llama4TextMoe
+from torch.distributed.tensor.placement_types import Shard
+from torch.distributed.tensor import DTensor
 
 import thunder
 from thunder.dynamo.compiler import thunderfx
 from thunder.benchmarks.layers_for_inference_benchmark import (
-    GroupedLinear,
+    GroupedSwiGLU,
     Llama4MoE,
-    NVFP4InferenceGroupedLinear,
+    NVFP4InferenceGroupedSwiGLU,
     NVFP4InferenceLinear,
     nvfuser_f16a_nvfp4weight_scaled_grouped_mm,
     nvfuser_f16a_nvfp4weight_scaled_mm,
+    FLOAT4_E2M1_MAX,
+    FLOAT8_E4M3_EPS,
+    FLOAT8_E4M3_MAX,
 )
-from thunder.torch.custom_op import _register_custom_op
+from thunder.tests.distributed.test_moe import GroupedLinearColwiseParallel, GroupedLinearRowwiseParallel
+from thunder.torch.custom_op import _register_custom_op, _register_nvfuser_translator
 
 if TYPE_CHECKING:
     from typing import Any
@@ -65,6 +72,74 @@ if WORLD_SIZE > 1:
 LLAMA4_MAVERICK_MODEL_ID: str = "meta-llama/Llama-4-Maverick-17B-128E"
 
 
+# Register nvfp4 custom ops with Thunder and nvFuser
+def _register_nvfp4_ops():
+    """Register nvfp4 custom operations with Thunder."""
+    # Register f16a_nvfp4weight_scaled_mm (without nvfuser translator - not yet implemented)
+    _nvfp4_mm_symbol = _register_custom_op(nvfuser_f16a_nvfp4weight_scaled_mm)
+    # Note: nvfuser translator is not provided as nvfuser has not implemented nvfp4_matmul yet
+
+    # Register f16a_nvfp4weight_scaled_grouped_mm with nvfuser translator
+    _nvfp4_grouped_mm_symbol = _register_custom_op(nvfuser_f16a_nvfp4weight_scaled_grouped_mm)
+
+    def nvfp4_grouped_mm_translator(
+        activation,
+        fp4_weight,
+        weight_scaling_factor,
+        global_scale,
+        offsets,
+        blockscale_offsets,
+        problem_sizes,
+        *,
+        fd,
+        lc_to_nv_map,
+    ):
+        from nvfuser_direct import DataType
+        from thunder.executors.nvfuserex_impl import getnv
+
+        nv_act = getnv(activation, fd, lc_to_nv_map)
+        nv_fp4_w = getnv(fp4_weight, fd, lc_to_nv_map)
+        nv_sf_w = getnv(weight_scaling_factor, fd, lc_to_nv_map)
+        nv_alpha = getnv(global_scale, fd, lc_to_nv_map)
+        nv_offsets = getnv(offsets, fd, lc_to_nv_map)
+        nv_blocksf_offsets = getnv(blockscale_offsets, fd, lc_to_nv_map)
+        nv_problem_sizes = getnv(problem_sizes, fd, lc_to_nv_map)
+        # dynamic shape support has some concretization issue
+        m_size = activation.shape[0]
+        k_size = activation.shape[1]
+        k_tile_size = k_size // 16
+
+        reshaped_mat1 = fd.ops.reshape(nv_act, [m_size, k_tile_size, 16])
+        scale1 = fd.ops.abs(reshaped_mat1)
+        scale1 = fd.ops.max(scale1, 2)
+        scale1 = fd.ops.div(scale1, FLOAT4_E2M1_MAX)
+        scale1 = fd.ops.clamp(scale1, FLOAT8_E4M3_EPS, FLOAT8_E4M3_MAX)
+
+        broadcast_scale1 = fd.ops.broadcast(scale1, [False, False, True])
+        reshaped_scaled_mat1 = fd.ops.div(reshaped_mat1, broadcast_scale1)
+        reshaped_scaled_mat1 = fd.ops.clamp(reshaped_scaled_mat1, -FLOAT8_E4M3_MAX, FLOAT8_E4M3_MAX)
+
+        scaled_mat1 = fd.ops.reshape(reshaped_scaled_mat1, [m_size, k_size])
+        fp4_mat1 = fd.ops.cast(scaled_mat1, DataType.Float4_e2m1fn)
+        fp8_scale1 = fd.ops.cast(scale1, DataType.Float8_e4m3fn)
+        layout_fp8_scale1 = fd.ops.preprocess_grouped_matmul_input_sf(fp8_scale1, nv_offsets, nv_blocksf_offsets)
+        out = fd.ops.cutlass_nvfp4_grouped_mm(
+            fp4_mat1,
+            nv_fp4_w,
+            layout_fp8_scale1,
+            nv_sf_w,
+            nv_alpha,
+            # NOTE: we might need to call contiguous on problem_sizes
+            nv_problem_sizes,
+            nv_offsets,
+            nv_blocksf_offsets,
+            DataType.BFloat16,
+        )
+        return out
+
+    _register_nvfuser_translator(_nvfp4_grouped_mm_symbol, nvfp4_grouped_mm_translator)
+
+
 # The logic is based on https://github.com/pytorch/ao/blob/b34c1037/torchao/quantization/quant_api.py#L230
 def _replace_with_custom_fn_if_matches_filter_with_name(
     model,
@@ -83,7 +158,6 @@ def _replace_with_custom_fn_if_matches_filter_with_name(
         None
     """
     if filter_fn(model, cur_fqn[:-1]):
-        print("Replacing", cur_fqn[:-1])
         model = replacement_fn(model, cur_fqn[:-1])
         return model
     else:
@@ -109,17 +183,26 @@ def _replace_llama4_moe(model: nn.Module) -> None:
     )
 
 
-def _quantize_llama4(model: nn.Module) -> None:
-    """Replace linear and moe with nvfp4 inference version."""
+def _quantize_llama4(model: nn.Module, quantize_linear: bool = False) -> None:
+    """Replace linear and/or MoE with nvfp4 inference version.
+
+    Args:
+        model: The model to quantize
+        quantize_linear: Whether to quantize regular nn.Linear layers (experimental, nvfuser translator not implemented)
+
+    Note: GroupedSwiGLU is always quantized when this function is called.
+    """
+    if quantize_linear:
+        _replace_with_custom_fn_if_matches_filter_with_name(
+            model,
+            NVFP4InferenceLinear.from_linear,
+            lambda model, cur_fqn: isinstance(model, nn.Linear),
+        )
+    # Always quantize GroupedSwiGLU when this function is called
     _replace_with_custom_fn_if_matches_filter_with_name(
         model,
-        NVFP4InferenceLinear.from_linear,
-        lambda model, cur_fqn: isinstance(model, nn.Linear),
-    )
-    _replace_with_custom_fn_if_matches_filter_with_name(
-        model,
-        NVFP4InferenceGroupedLinear.from_grouped_linear,
-        lambda model, cur_fqn: isinstance(model, GroupedLinear),
+        NVFP4InferenceGroupedSwiGLU.from_grouped_swiglu,
+        lambda model, cur_fqn: isinstance(model, GroupedSwiGLU),
     )
 
 
@@ -144,7 +227,8 @@ class InferenceBenchmarkConfig:
     num_iterations: int
     warmup_iterations: int
     dtensor_single_gpu: bool
-    enable_nvfp4: bool  # Enable NVFP4 quantization
+    enable_nvfp4: bool  # Enable NVFP4 registration and quantize GroupedSwiGLU in MoE
+    quantize_linear: bool  # [Experimental] Quantize nn.Linear to NVFP4 (nvfuser translator not implemented)
     fx_report_folder: str | None
     enable_nv_linear: bool
     mode: str
@@ -194,10 +278,6 @@ class InferenceBenchmark:
             _replace_llama4_moe(model)
         assert all(p.device == torch.device("meta") for p in model.parameters())
 
-        # Materialize the model on the device
-        model.to_empty(device=DEVICE)
-        assert all(p.device == DEVICE for p in model.parameters())
-
         tp_plan = {
             "*.layers.*.self_attn.q_proj": ColwiseParallel(use_local_output=True),
             "*.layers.*.self_attn.k_proj": ColwiseParallel(use_local_output=True),
@@ -206,10 +286,39 @@ class InferenceBenchmark:
             "*.layers.*.feed_forward.gate_proj": ColwiseParallel(use_local_output=False),
             "*.layers.*.feed_forward.up_proj": ColwiseParallel(use_local_output=False),
             "*.layers.*.feed_forward.down_proj": RowwiseParallel(use_local_output=True),
-            "*.layers.*.feed_forward.shared_expert.gate_proj": ColwiseParallel(use_local_output=False),
-            "*.layers.*.feed_forward.shared_expert.up_proj": ColwiseParallel(use_local_output=False),
-            "*.layers.*.feed_forward.shared_expert.down_proj": RowwiseParallel(use_local_output=True),
         }
+
+        if not self.config.disable_moe_replacement:
+            tp_plan.update(
+                {
+                    # Custom MoE
+                    "*.layers.*.feed_forward.shared_experts.gate_proj": ColwiseParallel(
+                        use_local_output=False, output_layouts=Shard(2)
+                    ),
+                    "*.layers.*.feed_forward.shared_experts.up_proj": ColwiseParallel(
+                        use_local_output=False, output_layouts=Shard(2)
+                    ),
+                    "*.layers.*.feed_forward.shared_experts.down_proj": RowwiseParallel(),
+                    "*.layers.*.feed_forward.routed_experts.gate_proj": GroupedLinearColwiseParallel(
+                        use_local_output=False
+                    ),
+                    "*.layers.*.feed_forward.routed_experts.up_proj": GroupedLinearColwiseParallel(
+                        use_local_output=False
+                    ),
+                    "*.layers.*.feed_forward.routed_experts.down_proj": GroupedLinearRowwiseParallel(),
+                }
+            )
+
+        else:
+            tp_plan.update(
+                {
+                    # HF MoE
+                    "*.layers.*.feed_forward.shared_expert.gate_proj": ColwiseParallel(use_local_output=False),
+                    "*.layers.*.feed_forward.shared_expert.up_proj": ColwiseParallel(use_local_output=False),
+                    "*.layers.*.feed_forward.shared_expert.down_proj": RowwiseParallel(use_local_output=True),
+                    # TODO:Need to write ParallelStyle for HF's grouped_mm implementation.
+                }
+            )
 
         if self.config.dtensor_single_gpu or WORLD_SIZE > 1:
             model = parallelize_module(model, mesh, tp_plan)
@@ -218,21 +327,46 @@ class InferenceBenchmark:
             for p in model.parameters():
                 p.requires_grad_(False)
 
+            # Sanity check
+            if not self.config.disable_moe_replacement:
+                assert type(model.model.layers[1].feed_forward.shared_experts.gate_proj.weight) == DTensor
+                assert type(model.model.layers[1].feed_forward.shared_experts.up_proj.weight) == DTensor
+                assert type(model.model.layers[1].feed_forward.shared_experts.down_proj.weight) == DTensor
+                assert type(model.model.layers[1].feed_forward.routed_experts.gate_proj.weight) == DTensor
+                assert type(model.model.layers[1].feed_forward.routed_experts.up_proj.weight) == DTensor
+                assert type(model.model.layers[1].feed_forward.routed_experts.down_proj.weight) == DTensor
+            else:
+                assert type(model.model.layers[1].feed_forward.shared_expert.gate_proj.weight) == DTensor
+                assert type(model.model.layers[1].feed_forward.shared_expert.up_proj.weight) == DTensor
+                assert type(model.model.layers[1].feed_forward.shared_expert.down_proj.weight) == DTensor
+
+        # Materialize the model on the device (after Llama4MoE replacement and sharding)
+        model.to_empty(device=DEVICE)
+        assert all(p.device == DEVICE for p in model.parameters())
+
         # `thunderfx` seems to hide the access to vocab_size somewhere so
         # store it here before any compiler is applied.
         self.vocab_size = model.vocab_size
 
         if self.config.enable_nvfp4:
-            _quantize_llama4(model)
+            _quantize_llama4(model, quantize_linear=self.config.quantize_linear)
         self.model = self._compile_model(model)
 
     @property
     def _thunder_jit_options(self) -> dict[str, Any]:
         # `nv_enable_linear=True` might fail with distributed run
         # ref: https://github.com/NVIDIA/Fuser/issues/4507
+        res = {}
         if self.config.enable_nv_linear:
-            return {"nv_enable_linear": True, "nv_enable_matmul": True}
-        return {}
+            res = {"nv_enable_linear": True, "nv_enable_matmul": True}
+        if self.config.mode == "thunderjit":
+            from thunder.recipes.hf_transformers import SDPAMaskTransform
+
+            if not hasattr(self, "_mask_transform"):
+                self._mask_transform = SDPAMaskTransform()
+            res["transforms"] = [self._mask_transform]
+            res["executors"] = [self._mask_transform.get_executor(), *thunder.get_default_executors()]
+        return res
 
     def _compile_model(self, model):
         match self.config.mode:
@@ -270,19 +404,36 @@ class InferenceBenchmark:
         input_length = self.config.input_length
 
         input_ids = torch.randint(0, self.vocab_size, (batch_size, input_length), device=DEVICE)
-        past_key_values = HybridChunkedCache(
-            self.hf_config, input_ids.shape[0], input_ids.shape[1] + self.config.output_length
-        )
-        for layer_idx in range(self.hf_config.num_hidden_layers):
-            # key_states.shape[1] is used to retrieve the number of key value heads, all other dimensions can be 1 and ignored
-            # https://github.com/huggingface/transformers/blob/9300728665aaeb0ebf4db99f9d9fbce916b4a183/src/transformers/cache_utils.py#L1822
-            dummy_key_states = torch.empty(1, self.hf_config.num_key_value_heads // WORLD_SIZE, 1, 1, device=DEVICE)
-            past_key_values.initialise_cache_layer(layer_idx, dummy_key_states)
+        if LooseVersion(transformers.__version__) >= LooseVersion("4.55"):
+            # Transformers deprecated HybridChunkedCache in favour of static in 4.55.x
+            past_key_values = StaticCache(
+                config=self.hf_config,
+                max_batch_size=input_ids.shape[0],
+                max_cache_len=input_ids.shape[1] + self.config.output_length,
+                device=DEVICE,
+                dtype=torch.bfloat16,
+            )
+        else:
+            past_key_values = HybridChunkedCache(
+                self.hf_config, input_ids.shape[0], input_ids.shape[1] + self.config.output_length
+            )
+            for layer_idx in range(self.hf_config.num_hidden_layers):
+                # key_states.shape[1] is used to retrieve the number of key value heads, all other dimensions can be 1 and ignored
+                # https://github.com/huggingface/transformers/blob/9300728665aaeb0ebf4db99f9d9fbce916b4a183/src/transformers/cache_utils.py#L1822
+                dummy_key_states = torch.empty(1, self.hf_config.num_key_value_heads // WORLD_SIZE, 1, 1, device=DEVICE)
+                past_key_values.initialise_cache_layer(layer_idx, dummy_key_states)
 
         return input_ids, past_key_values
 
-    def get_next_token(self, input_ids: torch.Tensor, past_key_values: HybridChunkedCache) -> torch.Tensor:
-        outputs = self.model(input_ids, past_key_values=past_key_values, use_cache=True)
+    def get_next_token(
+        self, input_ids: torch.Tensor, past_key_values: HybridChunkedCache | StaticCache
+    ) -> torch.Tensor:
+        start_pos = past_key_values.get_seq_length()
+        cache_position = start_pos + torch.arange(0, input_ids.shape[1], device=start_pos.device, dtype=start_pos.dtype)
+        with torch.no_grad():
+            outputs = self.model(
+                input_ids, cache_position=cache_position, past_key_values=past_key_values, use_cache=True
+            )
         logits = outputs.logits  # [B, seq_len, vocab_size]
         next_token_logits = logits[:, -1, :]
         next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
@@ -306,7 +457,13 @@ class InferenceBenchmark:
         assert input_ids.shape[-1] == 1, f"Expected shape (B, 1), but found {input_ids.shape}"
         return self.get_next_token(input_ids, past_key_values)
 
-    @torch.inference_mode()
+    # TODO: Running `torchrun --nproc-per-node 2 thunder/benchmarks/benchmark_inference.py --input-length 32 --output-length 32 --mode eager --num-iterations 10`
+    # with inference mode results in
+    # [rank1]:   File "/opt/pytorch/lightning-thunder/thunder/benchmarks/layers_for_inference_benchmark.py", line 358, in grouped_mm
+    # [rank1]:     group_outs.append(group_a @ b[idx])
+    # [rank1]:                                 ~^^^^^
+    # [rank1]: RuntimeError: Cannot set version_counter for inference tensor
+    # @torch.inference_mode()
     def generate(
         self, input_ids: torch.Tensor, max_new_tokens: int, past_key_values: HybridChunkedCache
     ) -> dict[str, Any]:
@@ -383,14 +540,20 @@ class InferenceBenchmark:
         print(f"\nWarming up with {self.config.warmup_iterations} iterations...")
         input_ids, past_key_values = self.generate_batch()
 
-        for _ in tqdm(range(self.config.warmup_iterations)):
+        for _ in tqdm(range(self.config.warmup_iterations), disable=LOCAL_RANK != 0):
             past_key_values.reset()
-            _ = self.measure_inference_step(input_ids, past_key_values, max_new_tokens=1)
+            # Use output_length to warm up sufficiently. Otherwise, Thunder's
+            # first-run latency is terribly slow due to lack of dynamic shape
+            # support.
+            _ = self.measure_inference_step(input_ids, past_key_values, self.config.output_length)
 
         print(f"\nRunning {self.config.num_iterations} benchmark iterations...")
         all_metrics = []
 
-        for _ in tqdm(range(self.config.num_iterations)):
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats()
+
+        for _ in tqdm(range(self.config.num_iterations), disable=LOCAL_RANK != 0):
             past_key_values.reset()
             iter_metrics = self.measure_inference_step(input_ids, past_key_values, self.config.output_length)
             all_metrics.append(iter_metrics)
@@ -573,7 +736,16 @@ Examples:
         action="store_true",
         help="Use DTensor for single GPU",
     )
-    parser.add_argument("--enable-nvfp4", action="store_true", help="Enable NVFP4 quantization for linear layers")
+    parser.add_argument(
+        "--enable-nvfp4",
+        action="store_true",
+        help="Enable NVFP4 quantization for MoE GroupedSwiGLU layers (has nvfuser grouped_mm support)",
+    )
+    parser.add_argument(
+        "--quantize-linear",
+        action="store_true",
+        help="[Experimental] Quantize nn.Linear to NVFP4. Note: nvfuser has not yet implemented nvfp4_matmul translator",
+    )
     parser.add_argument(
         "--enable-nv-linear",
         action="store_true",
@@ -592,13 +764,20 @@ def main():
     if args.save_results:
         os.makedirs(args.output_dir, exist_ok=True)
 
-    # TODO: Override the forward with nvfuser_direct based implementation like
-    # https://github.com/Lightning-AI/lightning-thunder/blob/8b72715d/thunder/tests/test_torch_library_custom_op.py#L250-L266 does.
-    # Note that the linked code is in a draft pull request of https://github.com/Lightning-AI/lightning-thunder/pull/2481
-    # so we might want to do it more clumsily by copying the code in the pull request for now.
-    if args.enable_nvfp4:
-        sym_of_nvfp4_scaled_mm = _register_custom_op(nvfuser_f16a_nvfp4weight_scaled_mm)  # noqa: F841
-        sym_of_nvfp4_scaled_grouped_mm = _register_custom_op(nvfuser_f16a_nvfp4weight_scaled_grouped_mm)  # noqa: F841
+    # Warn if experimental flag is used
+    if args.quantize_linear:
+        warnings.warn(
+            "--quantize-linear is experimental. nvfuser has not implemented nvfp4_matmul translator yet. "
+            "The custom op is registered but fusion may not work optimally."
+        )
+
+    # Register NVFP4 custom ops with nvfuser translators when enabled
+    if args.enable_nvfp4 or args.quantize_linear:
+        try:
+            _register_nvfp4_ops()
+        except Exception as e:
+            # If registration fails (e.g., nvfuser not available), warn and continue
+            warnings.warn(f"Failed to register nvfp4 custom ops: {e}")
 
     config = InferenceBenchmarkConfig(
         model_name=args.model_name,
@@ -611,16 +790,12 @@ def main():
         mode=args.mode,
         dtensor_single_gpu=args.dtensor_single_gpu,
         enable_nvfp4=args.enable_nvfp4,
+        quantize_linear=args.quantize_linear,
         fx_report_folder=args.fx_report_folder,
         enable_nv_linear=args.enable_nv_linear,
         disable_moe_replacement=args.disable_moe_replacement,
     )
     benchmark = InferenceBenchmark(config)
-
-    if args.enable_nvfp4:
-        msg = "NVFP4 kernels are not yet available. `--enable-nvfp4` runs only quantization but not benchmark"
-        warnings.warn(msg)
-        sys.exit(0)
 
     benchmark.run_benchmark()
     benchmark.print_results()

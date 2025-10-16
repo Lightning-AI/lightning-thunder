@@ -1601,6 +1601,12 @@ def eq(a, b):
 # NOTE This is distinct from true_divide, which also wraps prims.div, because it doesn't promote
 #   integers to floating point values
 def _c_div(a: TensorProxy | Number, b: TensorProxy | Number) -> TensorProxy | Number:
+    # Uses non-differentiable version of div for exact types
+    if utils.is_exact_dtype(utils.to_dtype(a)) and utils.is_exact_dtype(utils.to_dtype(b)):
+        return _elementwise_binary_wrapper(
+            a, b, prim=prims.div_exact, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT
+        )
+    # OTOH trunc_div, which uses _c_div, is differentiable for inexact types
     return _elementwise_binary_wrapper(
         a, b, prim=prims.div, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT
     )

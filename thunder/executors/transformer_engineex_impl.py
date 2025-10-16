@@ -30,10 +30,10 @@ if TYPE_CHECKING:
 import transformer_engine.pytorch as te
 import transformer_engine.common.recipe as te_recipe
 from transformer_engine.pytorch.constants import MXFP8_BLOCK_SCALING_SIZE
+from transformer_engine.common.recipe import Recipe
 from transformer_engine.pytorch.fp8 import (
     _amax_and_scale_update,
     get_fp8_max,
-    Recipe,
     RecipeState,
     FP8GlobalStateManager,
 )
@@ -294,7 +294,7 @@ def _linear_checker(
         if hasattr(fp8_recipe, "nvfp4") and fp8_recipe.nvfp4():
             from transformer_engine.pytorch.constants import NVFP4_BLOCK_SCALING_SIZE
 
-            # Check inherited from TE https://github.com/ksivaman/TransformerEngine-1/blob/1af7dd88aae5afb45e82148089038e1d1de9675d/transformer_engine/pytorch/tensor/nvfp4_tensor.py#L176-L184
+            # Check inherited from TE https://github.com/NVIDIA/TransformerEngine/blob/7e45be73bb8d513abe8785ee078ac88719bcd9f1/transformer_engine/pytorch/tensor/nvfp4_tensor.py#L180-L188
             return (
                 len(shape) >= 2
                 and shape[0] % NVFP4_BLOCK_SCALING_SIZE == 0
