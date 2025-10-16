@@ -60,6 +60,7 @@ RUN \
         liblapack-dev \
         openmpi-bin \
         graphviz \
+	llvm-dev \
         libnccl2=$TO_INSTALL_NCCL \
         libnccl-dev=$TO_INSTALL_NCCL \
         ssh \
