@@ -470,6 +470,9 @@ class InferenceBenchmark:
         print(f"\nRunning {self.config.num_iterations} benchmark iterations...")
         all_metrics = []
 
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats()
+
         for _ in tqdm(range(self.config.num_iterations), disable=LOCAL_RANK != 0):
             past_key_values.reset()
             iter_metrics = self.measure_inference_step(input_ids, past_key_values, self.config.output_length)
