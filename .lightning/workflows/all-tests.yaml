@@ -92,7 +92,7 @@ run: |
   elif [ "${testing}" == "distributed" ]; then
     pytest thunder/tests/distributed \
      -v --durations=0 \
-     --random-order-seed=42
+     --random-order-seed=42 --timeout=360
   else
     echo "Unknown testing type: ${testing}"
     exit 1
