@@ -1139,8 +1139,8 @@ def _div_prim_grad(a: Number | TensorProxy, b: Number | TensorProxy, /) -> Numbe
     fwd = prims.div(a, b)
 
     g = get_grad(fwd)
-    a_grad = prims.div(g, b)
-    b_grad = -g * prims.div(prims.div(a, b), b)
+    a_grad = g / b
+    b_grad = -g * ((a / b) / b)
     put_grads((a, b), (a_grad, b_grad))
 
     return fwd
