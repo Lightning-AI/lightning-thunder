@@ -31,6 +31,7 @@ class InplaceIndexCopyTransform(thunder.Transform):
 
     def transform_traces_pre_prologue(self, pro, comp, epi, **kwargs):
         import transformers
+
         cache_classes = (transformers.cache_utils.StaticCache,)
         if hasattr(transformers.cache_utils, "StaticLayer"):
             cache_classes += (transformers.cache_utils.StaticLayer,)
@@ -62,9 +63,7 @@ class InplaceIndexCopyTransform(thunder.Transform):
 
         for bsym in bsyms:
             for out in bsym.flat_proxy_outs:
-                if isinstance(out, thunder.core.proxies.AnyProxy) and isinstance(
-                    out._o, cache_classes
-                ):
+                if isinstance(out, thunder.core.proxies.AnyProxy) and isinstance(out._o, cache_classes):
                     visited = set()
                     recursively_collect_consumers_outputs(out, consumers, visited, target_proxies)
         return_bsym = bsyms[-1]
