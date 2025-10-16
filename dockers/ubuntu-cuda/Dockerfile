@@ -23,7 +23,7 @@ ARG CUDNN_VERSION="9.8.0.87"
 ARG CUDNN_FRONTEND_VERSION="1.10.0"
 ARG PYTHON_VERSION="3.12"
 ARG TORCH_VERSION="2.8.0"
-ARG TRITON_VERSION="2.4.0"
+ARG TRITON_VERSION="3.4.0"
 ARG TORCH_INSTALL="stable"
 ARG MAX_ALLOWED_NCCL=2.26.0
 
@@ -72,7 +72,7 @@ RUN \
     && \
     update-alternatives --install /usr/bin/python${PYTHON_VERSION%%.*} python${PYTHON_VERSION%%.*} /usr/bin/python${PYTHON_VERSION} 1 && \
     update-alternatives --install /usr/bin/python python /usr/bin/python${PYTHON_VERSION} 1 && \
-    RUN echo -e "[global]\nbreak-system-packages = true" > /etc/pip.conf \
+    echo -e "[global]\nbreak-system-packages = true" > /etc/pip.conf && \
     curl https://bootstrap.pypa.io/get-pip.py | python${PYTHON_VERSION} && \
     pip install numpy && \
     # Cleaning
