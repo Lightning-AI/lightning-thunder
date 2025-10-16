@@ -45,9 +45,9 @@ class InplaceIndexCopyTransform(thunder.Transform):
         target_proxies = []
 
         def recursively_collect_consumers_outputs(proxy, consumers_dict, visited, collected):
-            if proxy in visited:
+            if proxy.name in visited:
                 return
-            visited.add(proxy)
+            visited.add(proxy.name)
             static_consumers = consumers_dict.get(proxy, None)
             if not static_consumers:
                 return
