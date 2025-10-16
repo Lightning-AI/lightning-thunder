@@ -2603,7 +2603,9 @@ def is_constant_for_vjp(symbol: prims.Symbol) -> bool:
     Returns:
         bool: True if the symbol is constant, False otherwise.
     """
-    are_all_args_non_differentiable = not any(isinstance(arg, (FloatProxy, TensorProxy)) for arg in symbol.flat_args)
+    are_all_args_non_differentiable = not any(
+        (isinstance(arg, FloatProxy) or _is_differentiable(arg)) for arg in symbol.flat_args
+    )
     # Symbol's tag their output in `torch.no_grad` regions with `DETACHED_AUTOGRAD_GRAPH`.
     # These are treated as constant for VJP.
     # NOTE - `any(()) is False`
@@ -2766,6 +2768,16 @@ def augmented_forward_pass_trace(trace: Trace, /, *args, **kwargs):
     return trace, result, env
 
 
+def _is_differentiable(arg):
+    match arg:
+        case TensorProxy():
+            return dtypes.is_inexact_dtype(arg.dtype)
+        case Sequence():
+            return arg and all(isinstance(x, TensorProxy) and dtypes.is_inexact_dtype(x.dtype) for x in arg)
+        case _:
+            return False
+
+
 # TODO: Instead of using the environment dictionary, we could use the trace
 # symbols order (that should be deterministic) to retrieve the residuals needed
 # for the backward pass.
@@ -2885,15 +2897,6 @@ def backward_pass(forward_env, trace, init_cotangents):
         if not isinstance(result, tuple):
             result = (result,)
 
-        def is_differentiable(arg):
-            match arg:
-                case TensorProxy():
-                    return dtypes.is_inexact_dtype(arg.dtype)
-                case Sequence():
-                    return arg and all(isinstance(x, TensorProxy) and dtypes.is_inexact_dtype(x.dtype) for x in arg)
-                case _:
-                    return False
-
         if len(symbol.args) != (orig_res_len := len(result)):
             check(
                 orig_res_len <= len(symbol.args),
@@ -2907,14 +2910,14 @@ def backward_pass(forward_env, trace, init_cotangents):
             # environment.
 
             iter_result = iter(result)
-            n_differentiable_args = sum(bool(is_differentiable(arg)) for arg in symbol.args)
+            n_differentiable_args = sum(bool(_is_differentiable(arg)) for arg in symbol.args)
             check(
                 n_differentiable_args <= orig_res_len,
                 lambda: f"Backward for {symbol.sym.id} returned {orig_res_len} value(s), "
                 + f"but expected {n_differentiable_args}",
             )
 
-            result = tuple(next(iter_result) if is_differentiable(arg) else None for arg in symbol.args)
+            result = tuple(next(iter_result) if _is_differentiable(arg) else None for arg in symbol.args)
 
         # See "Backward impl for ops of the type Sequence[TensorProxy], ... -> ... results in None grads."
         # This is a temporary workaround.
