@@ -462,9 +462,10 @@ class InferenceBenchmark:
 
         for _ in tqdm(range(self.config.warmup_iterations), disable=LOCAL_RANK != 0):
             past_key_values.reset()
-            # Use for max_new_tokens=3 to warm up sufficiently as we run decode step for `range(max_new_tokens - 1)`.
-            # This should compile thunder/inductor for decode shapes.
-            _ = self.measure_inference_step(input_ids, past_key_values, max_new_tokens=3)
+            # Use output_length to warm up sufficiently. Otherwise, Thunder's
+            # first-run latency is terribly slow due to lack of dynamic shape
+            # support.
+            _ = self.measure_inference_step(input_ids, past_key_values, self.config.output_length)
 
         print(f"\nRunning {self.config.num_iterations} benchmark iterations...")
         all_metrics = []
