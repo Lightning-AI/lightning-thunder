@@ -528,6 +528,7 @@ def test_softmax_stacklevel():
 
 
 def test_div_exact():
+    # Test that division with integer inputs and requires_grad tensor output works correctly
     def fn(a, b, c):
         indices = torch.div(a, b, rounding_mode="trunc")
         # this would throw an error if indices are not ints
@@ -536,9 +537,13 @@ def test_div_exact():
     jfn = thunder.jit(fn)
     a = torch.randint(1, 5, (5,))
     b = torch.ones(5, dtype=torch.int32)
-    c = torch.randn(5, 5)
-    assert_close(fn(a, b, c), jfn(a, b, c))
+    c = torch.randn(5, 5, requires_grad=True)
+    result_eager = fn(a, b, c)
+    result_jit = jfn(a, b, c)
+    assert_close(result_eager, result_jit)
+    # Ensure the division primitive is used (no div_exact)
     trc = thunder.last_traces(jfn)[-1]
     for bsym in trc.bound_symbols:
         if bsym.sym.id == "div":
-            assert "div_exact" in [ssym.sym.name for ssym in bsym.subsymbols[0].subsymbols]
+            # Verify that prims.div is used, not a separate div_exact primitive
+            assert "div" in [ssym.sym.name for ssym in bsym.subsymbols[0].subsymbols]

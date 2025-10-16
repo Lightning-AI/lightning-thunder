@@ -1135,14 +1135,12 @@ def _add_prim_grad(a: Number | TensorProxy, b: Number | TensorProxy, /) -> Numbe
 register_grad(pids.ADD, _add_prim_grad)
 
 
-# NOTE The following grad definition relies on the fact that only inexact dtypes are differentiable,
-#   and torch's true division operator and the division primitive agree on those types
 def _div_prim_grad(a: Number | TensorProxy, b: Number | TensorProxy, /) -> Number | TensorProxy:
-    fwd = a / b
+    fwd = prims.div(a, b)
 
     g = get_grad(fwd)
-    a_grad = g / b
-    b_grad = -g * ((a / b) / b)
+    a_grad = prims.div(g, b)
+    b_grad = -g * prims.div(prims.div(a, b), b)
     put_grads((a, b), (a_grad, b_grad))
 
     return fwd
@@ -2590,7 +2588,6 @@ nondifferentiable_vjp_symbols: set[prims.PrimIDs] = {
     prims.PrimIDs.FULL,
     prims.PrimIDs.FLOOR,
     prims.PrimIDs.CEIL,
-    prims.PrimIDs.DIV_EXACT,
 }
 
 
