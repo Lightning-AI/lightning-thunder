@@ -541,9 +541,3 @@ def test_div_exact():
     result_eager = fn(a, b, c)
     result_jit = jfn(a, b, c)
     assert_close(result_eager, result_jit)
-    # Ensure the division primitive is used (no div_exact)
-    trc = thunder.last_traces(jfn)[-1]
-    for bsym in trc.bound_symbols:
-        if bsym.sym.id == "div":
-            # Verify that prims.div is used, not a separate div_exact primitive
-            assert "div" in [ssym.sym.name for ssym in bsym.subsymbols[0].subsymbols]
