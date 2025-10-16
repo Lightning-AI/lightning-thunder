@@ -166,6 +166,10 @@ class Recipe:
 
         if self.interpreter == Interpreter.THUNDER_JIT:
             from thunder import jit
+            from thunder.transforms.cudagraph import CUDAGraphTransform
+
+            cgtransform = CUDAGraphTransform()
+            self.transforms.append(cgtransform)
 
             thunder_model = jit(model, transforms=self.transforms, executors=self.executors, **self.config)
 
