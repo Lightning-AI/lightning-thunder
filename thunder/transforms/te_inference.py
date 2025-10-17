@@ -180,6 +180,9 @@ class TEInference8BitTransform(Transform):
             if isinstance(submodule, torch.nn.Linear) or submodule.__class__.__name__ == "GroupedLinear":
                 convert_linear_submodule(model, n)
 
+    def get_executor(self):
+        return get_te_inference_executor()
+
     def transform_state_dict_for_submodule(self, model: thunder.ThunderModule, submodule_name: str, state_dict: dict):
         # note that state dict entries do not include the submodule name as prefix
         if submodule_name not in self.quantized_submodule_names:
