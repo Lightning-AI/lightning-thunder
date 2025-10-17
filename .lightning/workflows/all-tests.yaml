@@ -49,7 +49,7 @@ run: |
   chmod +x codecov
 
   # install this package
-  python setup.py develop
+  pip install -e .
 
   bash scripts/sanity-check.sh
 
