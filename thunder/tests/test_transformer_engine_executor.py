@@ -715,3 +715,37 @@ def test_te_activation_checkpointing_correctness(fp8_recipe: recipe.Recipe, comp
         # check that amax history is the same as TE
         for te_amax, th_amax in zip(te_amax_hist, th_amax_hist):
             te_assert_close(te_amax[:, :-1], th_amax)
+
+
+@requiresCUDA
+def test_te_inference_8bit():
+    with torch.device("cuda"):
+        m = torch.nn.Sequential(
+            torch.nn.Linear(1024, 2048),
+            torch.nn.ReLU(),
+            torch.nn.Linear(2048, 1024),
+        ).requires_grad_(False)
+        m2 = torch.nn.Sequential(
+            torch.nn.Linear(1024, 2048),
+            torch.nn.ReLU(),
+            torch.nn.Linear(2048, 1024),
+        ).requires_grad_(False)
+        a = torch.randn(16, 1024, device="cuda")
+
+    quant_transform = TEInference8BitTransform()
+    quant_transform2 = TEInference8BitTransform()
+    jm = thunder.jit(
+        m, transforms=[quant_transform], executors=(te_inference_executor, *thunder.get_default_executors())
+    )
+    jm2 = thunder.jit(
+        m2, transforms=[quant_transform2], executors=(te_inference_executor, *thunder.get_default_executors())
+    )
+
+    actual = jm(a)
+    expected = m(a)
+    torch.testing.assert_close(actual, expected, atol=1e-1, rtol=1e-2)
+
+    jm2.load_original_state_dict(m.state_dict())
+
+    actual2 = jm2(a)
+    torch.testing.assert_close(actual, actual2)
