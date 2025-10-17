@@ -153,6 +153,7 @@ class InferenceBenchmarkConfig:
     enable_nv_linear: bool
     mode: str
     disable_moe_replacement: bool
+    attn_implementation: str | None
 
 
 @dataclass
@@ -314,7 +315,7 @@ class InferenceBenchmark:
         self.hf_config = config
 
         with torch.device("meta"):
-            model = AutoModelForCausalLM.from_config(config, torch_dtype=torch.bfloat16)
+            model = AutoModelForCausalLM.from_config(config, torch_dtype=torch.bfloat16, attn_implementation=self.config.attn_implementation)
 
         return model
 
@@ -665,6 +666,7 @@ Examples:
 
     parser.add_argument("--save-results", action="store_true", help="Save results to JSON file")
     parser.add_argument("--output-dir", type=str, default="./results", help="Directory to save results")
+    parser.add_argument("--attn-implementation", type=str, default=None, help="Attention implementation")
 
     args = parser.parse_args()
     return args
@@ -697,6 +699,7 @@ def main():
         fx_report_folder=args.fx_report_folder,
         enable_nv_linear=args.enable_nv_linear,
         disable_moe_replacement=args.disable_moe_replacement,
+        attn_implementation=args.attn_implementation,
     )
     benchmark = InferenceBenchmark(config)
 
