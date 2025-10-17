@@ -22,6 +22,7 @@ import time
 import warnings
 from typing import Any
 from collections.abc import Callable
+from looseversion import LooseVersion
 
 import torch
 import torch.nn as nn
@@ -29,8 +30,9 @@ from torch.distributed.device_mesh import init_device_mesh
 from torch.distributed.distributed_c10d import destroy_process_group
 from torch.distributed.tensor.parallel import parallelize_module, RowwiseParallel, ColwiseParallel
 from tqdm import tqdm
+import transformers
 from transformers import AutoConfig, AutoModelForCausalLM
-from transformers.cache_utils import HybridChunkedCache
+from transformers.cache_utils import HybridChunkedCache, StaticCache
 from transformers.models.llama4.modeling_llama4 import Llama4TextMoe
 from torch.distributed.tensor.placement_types import Shard
 from torch.distributed.tensor import DTensor
@@ -151,6 +153,7 @@ class InferenceBenchmarkConfig:
     enable_nv_linear: bool
     mode: str
     disable_moe_replacement: bool
+    profile: bool
 
 
 @dataclass
@@ -322,7 +325,7 @@ class InferenceBenchmark:
         input_length = self.config.input_length
 
         input_ids = torch.randint(0, self.vocab_size, (batch_size, input_length), device=DEVICE)
-        if self.config.mode == "thunderjit":
+        if LooseVersion(transformers.__version__) >= LooseVersion("4.55"):
             # Transformers deprecated HybridChunkedCache in favour of static in 4.55.x
             past_key_values = StaticCache(
                 config=self.hf_config,
@@ -343,10 +346,15 @@ class InferenceBenchmark:
 
         return input_ids, past_key_values
 
-    def get_next_token(self, input_ids: torch.Tensor, past_key_values: HybridChunkedCache) -> torch.Tensor:
+    def get_next_token(
+        self, input_ids: torch.Tensor, past_key_values: HybridChunkedCache | StaticCache
+    ) -> torch.Tensor:
         start_pos = past_key_values.get_seq_length()
         cache_position = start_pos + torch.arange(0, input_ids.shape[1], device=start_pos.device, dtype=start_pos.dtype)
-        outputs = self.model(input_ids, cache_position=cache_position, past_key_values=past_key_values, use_cache=True)
+        with torch.no_grad():
+            outputs = self.model(
+                input_ids, cache_position=cache_position, past_key_values=past_key_values, use_cache=True
+            )
         logits = outputs.logits  # [B, seq_len, vocab_size]
         next_token_logits = logits[:, -1, :]
         next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
@@ -455,14 +463,26 @@ class InferenceBenchmark:
 
         for _ in tqdm(range(self.config.warmup_iterations), disable=LOCAL_RANK != 0):
             past_key_values.reset()
-            _ = self.measure_inference_step(input_ids, past_key_values, max_new_tokens=1)
+            # Use output_length to warm up sufficiently. Otherwise, Thunder's
+            # first-run latency is terribly slow due to lack of dynamic shape
+            # support.
+            _ = self.measure_inference_step(input_ids, past_key_values, self.config.output_length)
 
         print(f"\nRunning {self.config.num_iterations} benchmark iterations...")
         all_metrics = []
 
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats()
+
         for _ in tqdm(range(self.config.num_iterations), disable=LOCAL_RANK != 0):
             past_key_values.reset()
+
+            if self.config.profile:
+                torch.cuda.cudart().cudaProfilerStart()
             iter_metrics = self.measure_inference_step(input_ids, past_key_values, self.config.output_length)
+            if self.config.profile:
+                torch.cuda.cudart().cudaProfilerStop()
+
             all_metrics.append(iter_metrics)
 
             # Track metrics
@@ -649,6 +669,11 @@ Examples:
         action="store_true",
         help="let nvfuser take care of linear and matmul, note that this might fail with distributed run. See: https://github.com/NVIDIA/Fuser/issues/4507",
     )
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="Wrap each non-warmup iteration with cudaProfilerStart() and cudaProfilerStop(). This allows us to run `nsys profile --capture-range=cudaProfilerApi --capture-range-end=repeat:<N> ... --profile` to record only the non-warmup iterations.",
+    )
 
     parser.add_argument("--save-results", action="store_true", help="Save results to JSON file")
     parser.add_argument("--output-dir", type=str, default="./results", help="Directory to save results")
@@ -684,6 +709,7 @@ def main():
         fx_report_folder=args.fx_report_folder,
         enable_nv_linear=args.enable_nv_linear,
         disable_moe_replacement=args.disable_moe_replacement,
+        profile=args.profile,
     )
     benchmark = InferenceBenchmark(config)
 
