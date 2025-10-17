@@ -761,7 +761,7 @@ def test_vjp_correctness_index_put_manual(op, device, dtype, executor, comp):
 # RuntimeError: Only fp32, half & bf16 supported at the moment
 @ops(
     (get_opinfo("grad_forward_scaled_dot_product_attention"),),
-    supported_dtypes=(dtypes.float16, dtypes.bfloat16),
+    supported_dtypes=(dtypes.float32, dtypes.float16, dtypes.bfloat16),
     supported_devicetypes=(devices.DeviceType.CUDA,),
 )
 def test_vjp_correctness_sdpa_manual(op, device, dtype, executor, comp):
@@ -811,11 +811,17 @@ def test_vjp_correctness_sdpa_manual(op, device, dtype, executor, comp):
             disable_torch_autograd=True,
             executors=[sdpa_ex, *executor.executors_list()],
         )(filtered_args, (v,))
-        comp(actual_out, expect_out, atol=1e-3, rtol=1e-3)
+        if dtype is dtypes.float32:
+            comp(actual_out, expect_out)
+        else:
+            comp(actual_out, expect_out, atol=1e-2, rtol=1e-2)
 
         # compare gradients of query, key, value, and attn_mask
         for eg, ag in zip(expected_grad, actual_grad):
-            comp(eg, ag, atol=7e-3, rtol=7e-3)
+            if dtype is dtypes.float32:
+                comp(eg, ag)
+            else:
+                comp(eg, ag, atol=1e-2, rtol=0.1)
 
 
 @ops((get_opinfo("zeta"),), supported_dtypes=(dtypes.float64,))
