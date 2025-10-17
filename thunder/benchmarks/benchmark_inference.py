@@ -153,7 +153,7 @@ class InferenceBenchmarkConfig:
     enable_nv_linear: bool
     mode: str
     disable_moe_replacement: bool
-
+    cache: str | None
 
 @dataclass
 class InferenceMetrics:
@@ -286,6 +286,8 @@ class InferenceBenchmark:
                 self._mask_transform = SDPAMaskTransform()
             res["transforms"] = [self._mask_transform]
             res["executors"] = [self._mask_transform.get_executor(), *thunder.get_default_executors()]
+        if self.config.cache:
+            res["cache"] = self.config.cache
         return res
 
     def _compile_model(self, model):
@@ -665,6 +667,7 @@ Examples:
 
     parser.add_argument("--save-results", action="store_true", help="Save results to JSON file")
     parser.add_argument("--output-dir", type=str, default="./results", help="Directory to save results")
+    parser.add_argument("--cache", type=str, default=None, help="Cache option: no caching, same input, constant values, symbolic values")
 
     args = parser.parse_args()
     return args
@@ -697,6 +700,7 @@ def main():
         fx_report_folder=args.fx_report_folder,
         enable_nv_linear=args.enable_nv_linear,
         disable_moe_replacement=args.disable_moe_replacement,
+        cache=args.cache,
     )
     benchmark = InferenceBenchmark(config)
 
