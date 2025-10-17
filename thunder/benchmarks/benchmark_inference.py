@@ -316,7 +316,9 @@ class InferenceBenchmark:
         self.hf_config = config
 
         with torch.device("meta"):
-            model = AutoModelForCausalLM.from_config(config, torch_dtype=torch.bfloat16, attn_implementation=self.config.attn_implementation)
+            model = AutoModelForCausalLM.from_config(
+                config, torch_dtype=torch.bfloat16, attn_implementation=self.config.attn_implementation
+            )
 
         return model
 
