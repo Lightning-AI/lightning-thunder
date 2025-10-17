@@ -652,11 +652,6 @@ Examples:
         help="Specify the folder for thunderfx_benchmark_report.",
     )
 
-    parser.add_argument(
-        "--dtensor-single-gpu",
-        action="store_true",
-        help="Use DTensor for single GPU",
-    )
     parser.add_argument("--enable-nvfp4", action="store_true", help="Enable NVFP4 quantization for linear layers")
     parser.add_argument(
         "--enable-nv-linear",
