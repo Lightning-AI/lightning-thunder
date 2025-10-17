@@ -742,26 +742,16 @@ def jit(
         if cd.cache_option is CACHE_OPTIONS.SAME_INPUT:
             if len(cs.interpreter_cache):
                 cache_entry = cs.interpreter_cache[0]
-                (
-                    pro,
-                    pro_traces,
-                    comp,
-                    comp_traces,
-                    epilogue,
-                    epilogue_traces,
-                    backward_fn,
-                    backward_traces,
-                ) = cache_entry
 
-                inps, pro_to_epi = pro(*args, **kwargs)
+                inps, pro_to_epi = cache_entry.prologue_fn(*args, **kwargs)
 
                 # Updates cache statistics
                 cs.cache_hits += 1
-                cs.last_traces = comp_traces
+                cs.last_traces = cache_entry.computation_traces
                 cs.last_interpreted_instructions = None
                 cs.last_interpreter_log = None
-                cs.last_prologue_traces = pro_traces
-                cs.last_prologue = pro
+                cs.last_prologue_traces = cache_entry.prologue_traces
+                cs.last_prologue = cache_entry.prologue_fn
 
                 return cache_entry, inps, pro_to_epi
 

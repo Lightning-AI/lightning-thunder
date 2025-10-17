@@ -246,10 +246,11 @@ class JitCtx:
                 # NOTE: Even with SYMBOLIC_VALUES, we want to strictly constraint the device as
                 # the computation trace may utilize device specific executors.
                 self.add_constraint((clang.check_literal_like, p, uvalue))
-            elif co in (CACHE_OPTIONS.SAME_INPUT,):
-                raise NotImplementedError(f"Unsupported cache option {co}")
-            else:  # co is CACHE_OPTIONS.NO_CACHING
+            elif co in (CACHE_OPTIONS.SAME_INPUT, CACHE_OPTIONS.NO_CACHING):
+                # For SAME_INPUT and NO_CACHING, skip constraint generation
                 pass
+            else:
+                raise NotImplementedError(f"Unsupported cache option {co}")
         elif isinstance(uvalue, torch.Tensor):
             # we always want to proxy torch.Tensor, even const
 
@@ -2135,7 +2136,12 @@ def thunder_general_jit(
         )
 
     co: CACHE_OPTIONS = get_cache_option()
-    if co not in {CACHE_OPTIONS.CONSTANT_VALUES, CACHE_OPTIONS.NO_CACHING, CACHE_OPTIONS.SYMBOLIC_VALUES}:
+    if co not in {
+        CACHE_OPTIONS.CONSTANT_VALUES,
+        CACHE_OPTIONS.NO_CACHING,
+        CACHE_OPTIONS.SYMBOLIC_VALUES,
+        CACHE_OPTIONS.SAME_INPUT,
+    }:
         raise NotImplementedError(f"cache option {co.name} is not supported")
 
     prologue_trace: TraceCtx = TraceCtx(fn)

@@ -274,6 +274,8 @@ class InferenceBenchmark:
 
     @property
     def _thunder_jit_options(self) -> dict[str, Any]:
+        from thunder.core.options import CACHE_OPTIONS
+
         # `nv_enable_linear=True` might fail with distributed run
         # ref: https://github.com/NVIDIA/Fuser/issues/4507
         res = {}
@@ -286,6 +288,8 @@ class InferenceBenchmark:
                 self._mask_transform = SDPAMaskTransform()
             res["transforms"] = [self._mask_transform]
             res["executors"] = [self._mask_transform.get_executor(), *thunder.get_default_executors()]
+        # NOTE: Following Jingyue's observation https://nvidia.slack.com/archives/C090KBA8MTP/p1760685646544799
+        res["cache"] = CACHE_OPTIONS.SAME_INPUT
         return res
 
     def _compile_model(self, model):
