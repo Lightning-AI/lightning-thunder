@@ -62,6 +62,7 @@ def test_recipe_basic_bert():
 
     # cleanup after test
     deregister_executor("inplace_index_copy_ex")
+    deregister_executor("sdpa_mask_transform_ex")
 
 
 @pytest.mark.skipif(not cudnn_available(), reason="cuDNN is not available")
@@ -84,6 +85,7 @@ def test_recipe_basic_bert_fx():
 
     # cleanup after test
     deregister_executor("inplace_index_copy_ex")
+    deregister_executor("sdpa_mask_transform_ex")
 
 
 @pytest.mark.skipif(not cudnn_available(), reason="cuDNN is not available")
@@ -124,7 +126,10 @@ def test_recipe_model_with_cache(model_cls, config_cls):
     actual = thunder_model.generate(**inp, max_new_tokens=10, do_sample=False, cache_implementation="static")
 
     assert_close(actual, expected)
+    assert isinstance(thunder_model._model._cache.layers[0].dtype, torch.dtype)
+
     deregister_executor("inplace_index_copy_ex")
+    deregister_executor("sdpa_mask_transform_ex")
 
 
 @pytest.mark.skipif(not nvfuser_available(), reason="nvFuser is not available")
@@ -180,6 +185,7 @@ def test_recipe_errors():
 
     # cleanup after test
     deregister_executor("inplace_index_copy_ex")
+    deregister_executor("sdpa_mask_transform_ex")
 
 
 @pytest.mark.skipif(not cudnn_available(), reason="cuDNN is not available")
