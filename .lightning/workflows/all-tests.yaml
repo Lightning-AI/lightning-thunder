@@ -9,16 +9,16 @@ interruptible: False
 parametrize:
   matrix:
     image:
-      - "pytorchlightning/lightning-thunder:ubuntu24.04-cuda12.6.3-cudnn-fe1.10.0-py3.10-pt_2.8.0-dev"
-      - "pytorchlightning/lightning-thunder:ubuntu24.04-cuda12.6.3-cudnn-fe1.10.0-py3.10-pt_main-dev"
+      - "pytorchlightning/lightning-thunder:ubuntu24.04-cuda12.8.1-cudnn-fe1.15.0-py3.12-pt_2.8.0-dev"
+      - "pytorchlightning/lightning-thunder:ubuntu24.04-cuda12.8.1-cudnn-fe1.15.0-py3.12-pt_main-dev"
     testing: ["main", "ops", "grads"]
     machine: ["L4"]
   exclude: []
   include:
-    - image: "pytorchlightning/lightning-thunder:ubuntu24.04-cuda12.6.3-cudnn-fe1.10.0-py3.10-pt_2.8.0-dev"
+    - image: "pytorchlightning/lightning-thunder:ubuntu24.04-cuda12.8.1-cudnn-fe1.15.0-py3.12-pt_2.8.0-dev"
       testing: "distributed"
       machine: "L4_X_2"
-    - image: "pytorchlightning/lightning-thunder:ubuntu24.04-cuda12.6.3-cudnn-fe1.10.0-py3.10-pt_main-dev"
+    - image: "pytorchlightning/lightning-thunder:ubuntu24.04-cuda12.8.1-cudnn-fe1.15.0-py3.12-pt_main-dev"
       testing: "distributed"
       machine: "L4_X_2"
 
@@ -26,7 +26,7 @@ env:
   CI: "true" # skip some tests with CI
   NCCL_DEBUG: "INFO"
   NCCL_IGNORE_DISABLED_P2P: "1"
-  TORCH_VERSION: "2.7.1"
+  TORCH_VERSION: "2.8.0"
   CUDA_LAUNCH_BLOCKING: "1" # for debugging purposes, to get better stack traces
 
 run: |
@@ -49,7 +49,7 @@ run: |
   chmod +x codecov
 
   # install this package
-  python setup.py develop
+  pip install -e .
 
   bash scripts/sanity-check.sh
 
