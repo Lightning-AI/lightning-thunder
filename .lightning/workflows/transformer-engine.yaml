@@ -20,7 +20,7 @@ run: |
   pip list
   set -ex
 
-  apt install python3-wheel-whl
+  pip install wheel
   # conda install -c conda-forge libstdcxx-ng
   # sudo apt install libstdc++6 libstdc++-*-dev
   pip install . -U -q -r requirements/test.txt
