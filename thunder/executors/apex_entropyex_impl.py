@@ -144,7 +144,7 @@ def _cross_entropy_checker(
         "use_apex_cross_entropy", "Whether to enable `cross_entropy` from `apex_ex`. Defaults to `True`."
     )
     # We explicitly check for `False` as if the value is unspecified by user, `get_compile_option` returns `None` and `not None` is equal to True.
-    if use_apex_cross_entropy == False:  # User explicitly disabled this.
+    if not use_apex_cross_entropy:  # User explicitly disabled this.
         return False
 
     if to_device(a.device).devicetype != DeviceType.CUDA and to_device(target.device).devicetype != DeviceType.CUDA:
