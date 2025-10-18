@@ -95,8 +95,8 @@ dtensor_supported_opinfos = (
         torch_reference=torch.exp,
         supports_grad=True,
         sample_inputs=get_opinfo("exp").sample_inputs,
-        # Ref:https://github.com/NVIDIA/Fuser/pull/5124
-        skip_noncontiguous_for_executor=("nvfuser",),
+        # Ref: https://github.com/Lightning-AI/lightning-thunder/issues/2670
+        skip_for_executor=("nvfuser",),
     ),
     DTensorOpInfo(
         name="neg",

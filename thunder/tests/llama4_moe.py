@@ -61,12 +61,12 @@ def grouped_mm(a: torch.Tensor, b: torch.Tensor, tokens_per_expert_or_offsets: t
 class GroupedLinear(nn.Module):
     def __init__(self, groups: int, in_features: int, out_features: int, dtype: torch.dtype, device: str):
         super().__init__()
-        self.weight = nn.Parameter(torch.empty(groups, in_features, out_features, dtype=dtype, device=device))
+        self.weight = nn.Parameter(torch.empty(groups, out_features, in_features, dtype=dtype, device=device))
         # Initialize the weight in the same way as nn.Linear
         nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
 
     def forward(self, hidden_states: torch.Tensor, tokens_per_expert_or_offsets: torch.Tensor) -> torch.Tensor:
-        return grouped_mm(hidden_states, self.weight, tokens_per_expert_or_offsets)
+        return grouped_mm(hidden_states, self.weight.transpose(-1, -2), tokens_per_expert_or_offsets)
 
 
 class GroupedSwiGLU(nn.Module):

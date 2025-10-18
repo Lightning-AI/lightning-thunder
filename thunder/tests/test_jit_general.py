@@ -1750,3 +1750,26 @@ def test_dataclass_dict():
         return Foo(musthave=1)
 
     assert fn() == thunder.jit(fn)()
+
+
+def test_replace_device():
+    from dataclasses import dataclass
+
+    @dataclass
+    class Foo(dict):
+        pass
+
+    class MyModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.foo = Foo()
+
+        def forward(self, x):
+            self.foo.device = x.device
+            return 2 * x
+
+    jm = thunder.jit(MyModel())
+    a = torch.randn(2, 2)
+    jm(a)
+
+    assert isinstance(jm._model.foo.device, torch.device)

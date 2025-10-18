@@ -1377,6 +1377,7 @@ def transpose(a: TensorProxy, /, permutation: Sequence[int], *, fd: FusionDefini
 
 
 register_supported(PrimIDs.TRANSPOSE, transpose, _transpose_check)
+register_supported(DTensorPrimIDs.TRANSPOSE, transpose, _transpose_check)
 
 #
 # Elementwise unary operations
@@ -1861,7 +1862,6 @@ def div(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinitio
 
 
 register_supported(PrimIDs.DIV, div, _elementwise_binary_check)
-register_supported(PrimIDs.DIV_EXACT, div, _elementwise_binary_check)
 
 
 def eq(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:

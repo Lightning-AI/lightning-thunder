@@ -42,6 +42,7 @@ class DTensorPrimIDs(Enum):
     ADD = auto()
     MUL = auto()
     RESHAPE = auto()
+    TRANSPOSE = auto()
     CONVERT_ELEMENT_TYPE = auto()
     BROADCAST_IN_DIM = auto()
     _GROUPED_MM = auto()
@@ -162,6 +163,49 @@ register_grad(dtensor_reshape_prim, _dtensor_reshape_prim_grad)
 @dtensor_torchsymbol(torch.reshape, id="dtensor.torch.reshape")
 def dtensor_reshape(a: TensorLike, shape: tuple[int, ...]) -> TensorLike:
     return dtensor_reshape_prim(a, shape)
+
+
+def dtensor_transpose_meta(a, permutation):
+    output = run_with_fake_tensor(torch.permute, a, permutation)
+    local_tensor_proxy = TensorProxy(
+        like=a.local_tensor, shape=output._local_tensor.shape, dtype=dtypes.to_dtype(output._local_tensor.dtype)
+    )
+    spec = output._spec
+    spec_proxy = AnyProxy(spec, history=a.history)
+    return create_dtensor_proxy_from_proxies(local_tensor_proxy, spec_proxy, False)
+
+
+dtensor_transpose_prim = make_prim(DTensorPrimIDs.TRANSPOSE, "dtensor_transpose_prim", meta=dtensor_transpose_meta)
+
+dtensor_transpose_prim_impl = pytorchex.register_operator(
+    "dtensor_transpose_prim", like=dtensor_transpose_prim, fn=torch.permute
+)
+
+pytorchex.register_implementation(dtensor_transpose_prim, dtensor_transpose_prim_impl)
+
+
+def _dtensor_transpose_prim_grad(a: TensorLike, permutation) -> TensorLike:
+    fwd = dtensor_transpose_prim(a, permutation)
+
+    g = get_grad(fwd)
+    undo = sorted(range(len(permutation)), key=permutation.__getitem__)
+    a_grad = dtensor_transpose_prim(g, undo)
+    put_grads((a,), (a_grad,))
+
+    return fwd
+
+
+register_grad(dtensor_transpose_prim, _dtensor_transpose_prim_grad)
+
+
+@dtensor_torchsymbol(torch.transpose, id="dtensor.torch.transpose")
+def dtensor_transpose(a: TensorLike, dim0: int, dim1: int) -> TensorLike:
+    dim0, dim1 = utils.canonicalize_dims(a.ndim, (dim0, dim1))
+
+    permutation = list(range(a.ndim))
+    permutation[dim0] = dim1
+    permutation[dim1] = dim0
+    return dtensor_transpose_prim(a, permutation)
 
 
 def dtensor_convert_element_type_meta(a, dtype):
@@ -561,6 +605,7 @@ def register_dtensor_torch_and_prims():
     register_function_for_dtensor(torch.add, ltorch.add, dtensor_add, is_method=True)
     register_function_for_dtensor(torch.mul, ltorch.mul, dtensor_mul, is_method=True)
     register_function_for_dtensor(torch.reshape, ltorch.reshape, dtensor_reshape, is_method=True)
+    register_function_for_dtensor(torch.transpose, ltorch.transpose, dtensor_transpose, is_method=True)
     register_function_for_dtensor(torch.nn.functional.linear, ltorch.linear, dtensor_linear, is_method=False)
     register_function_for_dtensor(torch.exp, ltorch.exp, dtensor_exp, is_method=True)
     register_function_for_dtensor(torch.neg, ltorch.neg, dtensor_neg, is_method=True)

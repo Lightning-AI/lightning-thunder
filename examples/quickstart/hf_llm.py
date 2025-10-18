@@ -32,7 +32,7 @@ def main():
         print(tokenizer.decode(out[0].tolist()))
 
     print("\nGenerating with PyTorch eager:")
-    eager_time = benchmark_n(2, generate, model, inp, device=device)
+    eager_time = benchmark_n(2, generate, model, inp, cache="static", device=device)
 
     thunder_model = thunder.compile(
         model,

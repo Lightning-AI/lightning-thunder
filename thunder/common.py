@@ -19,6 +19,7 @@ from thunder.core.langctxs import set_langctx, reset_langctx, LanguageContext, r
 from thunder.core.codeutils import get_siginfo
 from thunder.core.trace import (
     TraceCtx,
+    from_trace,
     get_tracectx,
     set_tracectx,
     reset_tracectx,
@@ -708,8 +709,10 @@ def _execute_trace(
 #   a helper to convert torch tensors to NumPy arrays on output?
 
 
-def transform_to_torch_types(trace: TraceCtx):
+def transform_to_torch_types(trace: TraceCtx, translate_all: bool = False):
     # convert the thunder types to torch types if any
+    new_trace = from_trace(trace)
+
     def map_to_torch(x: Any) -> Any:
         if isinstance(x, thunder.dtypes.dtype):
             return thunder.dtypes.to_torch_dtype(x)
@@ -717,9 +720,13 @@ def transform_to_torch_types(trace: TraceCtx):
             return thunder.devices.to_torch_device(x)
         return x
 
-    last = trace.bound_symbols[-1]
-    assert last.sym.id == prims.PrimIDs.RETURN
-    new_args = tree_map(map_to_torch, last.args)
-    new_bsym = prims.python_return.bind(*new_args, output=None)
-    trace.bound_symbols[-1] = new_bsym
-    return trace
+    if not translate_all:
+        last = trace.bound_symbols[-1]
+        assert last.sym.id == prims.PrimIDs.RETURN
+        new_args = tree_map(map_to_torch, last.args)
+        new_return_bsym = prims.python_return.bind(*new_args, output=None)
+        new_trace.bound_symbols = [*trace.bound_symbols[:-1], new_return_bsym]
+    else:
+        for bsym in trace.bound_symbols:
+            new_trace.bound_symbols.append(bsym.from_bsym(args=tree_map(map_to_torch, bsym.args)))
+    return new_trace
