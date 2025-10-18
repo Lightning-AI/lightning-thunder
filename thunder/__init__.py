@@ -723,9 +723,6 @@ def jit(
                     try:
                         inps, pro_to_epi = pro(*args, **kwargs)
                     except Exception:
-                        import traceback
-
-                        print(traceback.format_exc())
                         continue
 
                     # Updates cache statistics
