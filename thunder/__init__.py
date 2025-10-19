@@ -1,5 +1,6 @@
 from collections import defaultdict, namedtuple
 from collections.abc import Callable, Sequence
+from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import wraps
 from typing import Any
@@ -307,6 +308,15 @@ def compile(
         recipe.add_plugins(plugins)
 
     return recipe.apply(fn)
+
+
+@contextmanager
+def _trace_cache_lookup_time(cs):
+    cs.last_trace_cache_start = time.perf_counter_ns()
+    try:
+        yield
+    finally:
+        cs.last_trace_cache_stop = time.perf_counter_ns()
 
 
 # TODO RC1 Consider renaming compile_options to additional_compile_options
@@ -705,10 +715,43 @@ def jit(
 
         # TODO RC1 Add module and function checks to prologue (make it a compile option)
         # Checks cache
-        cs.last_trace_cache_start = time.perf_counter_ns()
-        if (cd.cache_option is CACHE_OPTIONS.CONSTANT_VALUES) or (cd.cache_option is CACHE_OPTIONS.SYMBOLIC_VALUES):
-            for cache_entry in reversed(cs.interpreter_cache):
-                with compile_data_and_stats(cd, cs):
+        with _trace_cache_lookup_time(cs):
+            if (cd.cache_option is CACHE_OPTIONS.CONSTANT_VALUES) or (cd.cache_option is CACHE_OPTIONS.SYMBOLIC_VALUES):
+                for cache_entry in reversed(cs.interpreter_cache):
+                    with compile_data_and_stats(cd, cs):
+                        (
+                            pro,
+                            pro_traces,
+                            comp,
+                            comp_traces,
+                            epilogue,
+                            epilogue_traces,
+                            backward_fn,
+                            backward_traces,
+                            _return_none_instead_of_grads,
+                        ) = cache_entry
+                        try:
+                            inps, pro_to_epi = pro(*args, **kwargs)
+                        except Exception:
+                            continue
+
+                        # Updates cache statistics
+                        cs.cache_hits += 1
+                        cs.last_traces = comp_traces
+                        cs.last_interpreted_instructions = None
+                        cs.last_interpreter_log = None
+                        cs.last_prologue_traces = pro_traces
+                        cs.last_prologue = pro
+                        cs.last_prologue_transformation_start = 0
+                        cs.last_prologue_transformation_stop = 0
+                        cs.last_computation_transformation_start = 0
+                        cs.last_computation_transformation_stop = 0
+
+                        return cache_entry, inps, pro_to_epi
+
+            if cd.cache_option is CACHE_OPTIONS.SAME_INPUT:
+                if len(cs.interpreter_cache):
+                    cache_entry = cs.interpreter_cache[0]
                     (
                         pro,
                         pro_traces,
@@ -718,12 +761,9 @@ def jit(
                         epilogue_traces,
                         backward_fn,
                         backward_traces,
-                        _return_none_instead_of_grads,
                     ) = cache_entry
-                    try:
-                        inps, pro_to_epi = pro(*args, **kwargs)
-                    except Exception:
-                        continue
+
+                    inps, pro_to_epi = pro(*args, **kwargs)
 
                     # Updates cache statistics
                     cs.cache_hits += 1
@@ -732,41 +772,10 @@ def jit(
                     cs.last_interpreter_log = None
                     cs.last_prologue_traces = pro_traces
                     cs.last_prologue = pro
-                    cs.last_prologue_transformation_start = 0
-                    cs.last_prologue_transformation_stop = 0
-                    cs.last_computation_transformation_start = 0
-                    cs.last_computation_transformation_stop = 0
 
                     return cache_entry, inps, pro_to_epi
 
-        if cd.cache_option is CACHE_OPTIONS.SAME_INPUT:
-            if len(cs.interpreter_cache):
-                cache_entry = cs.interpreter_cache[0]
-                (
-                    pro,
-                    pro_traces,
-                    comp,
-                    comp_traces,
-                    epilogue,
-                    epilogue_traces,
-                    backward_fn,
-                    backward_traces,
-                ) = cache_entry
-
-                inps, pro_to_epi = pro(*args, **kwargs)
-
-                # Updates cache statistics
-                cs.cache_hits += 1
-                cs.last_traces = comp_traces
-                cs.last_interpreted_instructions = None
-                cs.last_interpreter_log = None
-                cs.last_prologue_traces = pro_traces
-                cs.last_prologue = pro
-
-                return cache_entry, inps, pro_to_epi
-
-        cs.cache_misses += 1
-        cs.last_trace_cache_stop = time.perf_counter_ns()
+            cs.cache_misses += 1
 
         # Resets use of compile flags
         cs.last_compile_reasons = defaultdict(list)
