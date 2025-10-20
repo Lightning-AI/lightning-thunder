@@ -71,7 +71,6 @@ class InplaceIndexCopyTransform(thunder.Transform):
         # the values passed to the compute trace
         passed_to_compute_trace = return_bsym.args[0][0]
         target_proxies_names = [proxy.name for proxy in target_proxies]
-        # import pdb;pdb.set_trace()
         static_proxy_idx = []
         for idx, passed_value in enumerate(passed_to_compute_trace):
             if passed_value.name in target_proxies_names:
