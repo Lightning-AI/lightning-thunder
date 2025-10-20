@@ -25,9 +25,9 @@ from collections.abc import Callable
 from looseversion import LooseVersion
 
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 from torch.distributed.device_mesh import init_device_mesh
-from torch.distributed.distributed_c10d import destroy_process_group
 from torch.distributed.tensor.parallel import parallelize_module, RowwiseParallel, ColwiseParallel
 from tqdm import tqdm
 import transformers
@@ -64,8 +64,10 @@ os.environ["TORCH_NCCL_ASYNC_ERROR_HANDLING"] = "1"
 DEVICE = torch.device("cuda", LOCAL_RANK)
 torch.cuda.set_device(DEVICE)
 
-if WORLD_SIZE > 1:
+if dist.is_torchelastic_launched():
     mesh = init_device_mesh("cuda", (WORLD_SIZE,), mesh_dim_names=("tp",))
+else:
+    mesh = None
 
 LLAMA4_MAVERICK_MODEL_ID: str = "meta-llama/Llama-4-Maverick-17B-128E"
 
@@ -147,12 +149,12 @@ class InferenceBenchmarkConfig:
     num_layers: int | None
     num_iterations: int
     warmup_iterations: int
-    dtensor_single_gpu: bool
     enable_nvfp4: bool  # Enable NVFP4 quantization
     fx_report_folder: str | None
     enable_nv_linear: bool
     mode: str
     disable_moe_replacement: bool
+    profile: bool
 
 
 @dataclass
@@ -240,7 +242,7 @@ class InferenceBenchmark:
                 }
             )
 
-        if self.config.dtensor_single_gpu or WORLD_SIZE > 1:
+        if mesh:
             model = parallelize_module(model, mesh, tp_plan)
 
             # Required as that doesn't understand inference mode
@@ -462,9 +464,10 @@ class InferenceBenchmark:
 
         for _ in tqdm(range(self.config.warmup_iterations), disable=LOCAL_RANK != 0):
             past_key_values.reset()
-            # Use for max_new_tokens=3 to warm up sufficiently as we run decode step for `range(max_new_tokens - 1)`.
-            # This should compile thunder/inductor for decode shapes.
-            _ = self.measure_inference_step(input_ids, past_key_values, max_new_tokens=3)
+            # Use output_length to warm up sufficiently. Otherwise, Thunder's
+            # first-run latency is terribly slow due to lack of dynamic shape
+            # support.
+            _ = self.measure_inference_step(input_ids, past_key_values, self.config.output_length)
 
         print(f"\nRunning {self.config.num_iterations} benchmark iterations...")
         all_metrics = []
@@ -474,7 +477,13 @@ class InferenceBenchmark:
 
         for _ in tqdm(range(self.config.num_iterations), disable=LOCAL_RANK != 0):
             past_key_values.reset()
+
+            if self.config.profile:
+                torch.cuda.cudart().cudaProfilerStart()
             iter_metrics = self.measure_inference_step(input_ids, past_key_values, self.config.output_length)
+            if self.config.profile:
+                torch.cuda.cudart().cudaProfilerStop()
+
             all_metrics.append(iter_metrics)
 
             # Track metrics
@@ -650,16 +659,16 @@ Examples:
         help="Specify the folder for thunderfx_benchmark_report.",
     )
 
-    parser.add_argument(
-        "--dtensor-single-gpu",
-        action="store_true",
-        help="Use DTensor for single GPU",
-    )
     parser.add_argument("--enable-nvfp4", action="store_true", help="Enable NVFP4 quantization for linear layers")
     parser.add_argument(
         "--enable-nv-linear",
         action="store_true",
         help="let nvfuser take care of linear and matmul, note that this might fail with distributed run. See: https://github.com/NVIDIA/Fuser/issues/4507",
+    )
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="Wrap each non-warmup iteration with cudaProfilerStart() and cudaProfilerStop(). This allows us to run `nsys profile --capture-range=cudaProfilerApi --capture-range-end=repeat:<N> ... --profile` to record only the non-warmup iterations.",
     )
 
     parser.add_argument("--save-results", action="store_true", help="Save results to JSON file")
@@ -691,11 +700,11 @@ def main():
         num_iterations=args.num_iterations,
         warmup_iterations=args.warmup_iterations,
         mode=args.mode,
-        dtensor_single_gpu=args.dtensor_single_gpu,
         enable_nvfp4=args.enable_nvfp4,
         fx_report_folder=args.fx_report_folder,
         enable_nv_linear=args.enable_nv_linear,
         disable_moe_replacement=args.disable_moe_replacement,
+        profile=args.profile,
     )
     benchmark = InferenceBenchmark(config)
 
@@ -719,6 +728,6 @@ if __name__ == "__main__":
     except Exception:
         raise
     finally:
-        if WORLD_SIZE > 1:
+        if mesh:
             for process_group in mesh.get_all_groups():
-                destroy_process_group(process_group)
+                dist.destroy_process_group(process_group)
