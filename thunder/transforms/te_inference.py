@@ -143,7 +143,7 @@ class TEInference8BitTransform(Transform):
         shared_names = model._get_shared_names()
         processed_names = set()
 
-        def convert_linear_submodule(tm, name):
+        def convert_linear_submodule(tm, name, *, is_grouped):
             self.quantized_submodule_names.add(name)
             weight_name = f"{name}.weight"
             processed_copies = shared_names[weight_name] & processed_names
@@ -157,13 +157,14 @@ class TEInference8BitTransform(Transform):
                 return
 
             w = tm.get_parameter(weight_name)
-            # TODO: double quant support
-
+            if is_grouped:
+                w = w.transpose(-2, -1).contiguous()
             qw, absmax, scale = self.quantize_weight(w)
             tm._overrides_parameters[weight_name] = qw
             tm._overrides_parameters[f"{weight_name}.absmax"] = absmax
             tm._overrides_parameters[f"{weight_name}.scale"] = scale
             self.quant_states[weight_name] = {
+                "needs_transpose": is_grouped,
                 "dtype": w.dtype,
                 "shape": w.shape,
                 "qweight.dtype": qw.dtype,
@@ -178,7 +179,7 @@ class TEInference8BitTransform(Transform):
 
         for n, submodule in model._model.named_modules():
             if isinstance(submodule, torch.nn.Linear) or submodule.__class__.__name__ == "GroupedLinear":
-                convert_linear_submodule(model, n)
+                convert_linear_submodule(model, n, is_grouped=(submodule.__class__.__name__ == "GroupedLinear"))
 
     def get_executor(self):
         return get_te_inference_executor()
@@ -325,8 +326,17 @@ class TEInference8BitTransform(Transform):
                 self.additional_proxies = additional_proxies
                 self.quant_states = quant_states
                 self.new_compute_inputs = new_compute_inputs
+                self.orig_producers = thunder.core.utils.producers(trace)
 
             def process_bsym(self, bsym):
+                def handle_grouped_mm(bsmym):
+                    if bsym.args[1].name in self.quantized_proxies:
+                        return bsym.args[1]
+                    pbsym = self.orig_producers[bsym.args[1]]
+                    if pbsym.sym.name == "transpose" and pbsym.args[0].name in self.quantized_proxies:
+                        return pbsym.args[0]
+                    return None
+
                 if bsym.sym == thunder.torch.linear and bsym.args[1].name in self.quantized_proxies:
                     assert len(bsym.args) == 3  # torch.linear(input, weight, bias)
                     n = self.quantized_proxies[bsym.args[1].name]
@@ -344,11 +354,12 @@ class TEInference8BitTransform(Transform):
                     )
                     self.add_processed_bsyms([mm_bsym])
                     self.set_result(bsym.output)
-                elif bsym.sym == thunder.torch._grouped_mm and bsym.args[1].name in self.quantized_proxies:
+                elif bsym.sym == thunder.torch._grouped_mm and (quantized_proxy := handle_grouped_mm(bsym)) is not None:
                     # assert len(bsym.args) == 3  # torch.linear(input, weight, bias)
-                    n = self.quantized_proxies[bsym.args[1].name]
+                    n = self.quantized_proxies[quantized_proxy.name]
                     # signature of the new symbol:
                     # te_linear_fp8(x, qweight, bias, absmax, scale)
+                    new_args = (bsym.args[0], quantized_proxy, *bsym.args[2:])
                     new_kwargs = {
                         **bsym.kwargs,
                         "b_absmax": self.additional_proxies[f"{n}.absmax"],
@@ -357,6 +368,7 @@ class TEInference8BitTransform(Transform):
                     mm_bsym = bsym.from_bsym(
                         sym=te_groupedmm_fp8,
                         subsymbols=[],
+                        args=new_args,
                         kwargs=new_kwargs,
                     )
                     self.add_processed_bsyms([mm_bsym])
