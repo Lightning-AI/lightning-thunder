@@ -5585,7 +5585,7 @@ def _match_sequence_handler(inst: dis.Instruction, /, stack: InterpreterStack, *
 
 
 # https://docs.python.org/3.14/library/dis.html#opcode-NOT_TAKEN
-@register_opcode_handler("NOT_TAKEN")
+@register_opcode_handler("NOT_TAKEN", min_ver=(3, 14))
 def _not_taken_handler(inst: dis.Instruction, /, **kwargs) -> None:
     pass
 
