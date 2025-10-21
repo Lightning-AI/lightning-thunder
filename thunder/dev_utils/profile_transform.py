@@ -29,7 +29,7 @@ class ProfileTransform(thunder.core.transform_common.Transform):
         else:
             self.match_start_idx = start_idx
             self.match_end_idx = end_idx if end_idx is not None else 1
-            
+
         self.enabled = True
         self.run_counter = 0
         self.warmup_runs = warmup_runs
@@ -113,7 +113,6 @@ class ProfileTransform(thunder.core.transform_common.Transform):
         else:
             start_idx = self.start_idx
             end_idx = self.end_idx
-        
 
         new_bound_symbols = []
 

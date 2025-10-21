@@ -17,7 +17,7 @@ def RotaryEmbedding_reset_parameters(self):
     with torch.no_grad():
         self.inv_freq.copy_(inv_freq)
 
-        
+
 def RMSNorm_reset_parameters(self):
     with torch.no_grad():
         self.weight.fill_(1)
@@ -327,11 +327,11 @@ class HFTransformers(BaseRecipe):
         # This seems to work for transformers 4.5x with Llama, Llama4 and Qwen2 at least
         for submodule in model.modules():
             cls = submodule.__class__
-            if cls.__name__.endswith('RotaryEmbedding') and not hasattr(cls, 'reset_parameters'):
+            if cls.__name__.endswith("RotaryEmbedding") and not hasattr(cls, "reset_parameters"):
                 cls.reset_parameters = RotaryEmbedding_reset_parameters
-            elif cls.__name__.endswith('RMSNorm') and not hasattr(cls, 'reset_parameters'):
+            elif cls.__name__.endswith("RMSNorm") and not hasattr(cls, "reset_parameters"):
                 cls.reset_parameters = RMSNorm_reset_parameters
-                
+
         thunder_model = super().apply(model)
 
         if getattr(thunder_model, "generate", None):
