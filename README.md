@@ -13,17 +13,31 @@
 &#160;
 
 <strong>Source-to-source compiler for PyTorch.</strong>
-Fast. Understandable. Extensible.
+Understandable. Inspectable. Extensible.
 
 </div>
 
-______________________________________________________________________
+Thunder is a source-to-source deep learning compiler for PyTorch that focuses on making it simple to optimize models for training and inference.
 
-**Thunder** makes optimizing PyTorch models easy, augmenting them with custom kernels, fusions, quantization, distributed strategies, and more.
+It provides:
 
-For **end users**, Thunder comes with plugins that provide model speed-ups out of the box, for optimal utilization of last generation hardware.
+- a simple, Pythonic IR capturing the entire computation
+- a rich system of transforms that simultaneously operate on the computation IR, the model, and the weights
+- an extensible dispatch mechanism to fusers and optimized kernel libraries
 
-For **performance experts**, Thunder is the most ergonomic framework for understanding, modifying, and optimizing AI models through composable transformations.
+With Thunder you can:
+
+- profile deep learning programs easily, map individual ops to kernels and inspect programs interactively
+- programmatically replace sequences of operations with optimized ones and see the effect on performance
+- acquire full computation graphs without graph breaks by flexibly extending the interpreter
+- modify programs to fully utilize bleeding edge kernel libraries on specific hardware
+- write models for single GPU and transform them to run distributed
+- quickly iterate on mixed precision and quantization strategies to search for combinations that minimally affect quality
+- bundle all optimizations in composable recipes, so they can be ported across model families
+
+Ultimately, you should think about Thunder as a highly efficient tool to go from “unoptimized” to “optimized”.
+
+If that is of interest for you, read on to Install Thunder and get started quickly.
 
 <div align='center'>
 
@@ -168,7 +182,7 @@ torch.testing.assert_close(y, model(x))
 
 ## Examples
 
-### Speed up LLM training
+### LLM training
 
 Install LitGPT (without updating other dependencies)
 
@@ -194,7 +208,7 @@ out = thunder_model(inp)
 out.sum().backward()
 ```
 
-### Speed up HuggingFace BERT inference
+### HuggingFace BERT inference
 
 Install Hugging Face Transformers (recommended version is `4.50.2` and above)
 
@@ -228,7 +242,7 @@ out = thunder_model(**inp)
 print(out)
 ```
 
-### Speed up HuggingFace DeepSeek R1 distill inference
+### HuggingFace DeepSeek R1 distill inference
 
 Install Hugging Face Transformers (recommended version is `4.50.2` and above)
 
@@ -264,22 +278,7 @@ out = thunder_model.generate(
 print(out)
 ```
 
-To get an idea of the speedups, just run
-
-```bash
-python examples/quickstart/hf_llm.py
-```
-
-Here what you get on a L4 machine from [Lightning Studio](https://lightning.ai):
-
-```bash
-Eager: 2273.22ms
-Thunder: 1254.39ms
-```
-
-81% faster 🏎️! Quite the speedup ⚡️
-
-### Speed up Vision Transformer inference
+### Vision Transformer inference
 
 ```python
 import thunder
@@ -300,28 +299,21 @@ thunder_model = thunder.compile(model)
 out = thunder_model(inp)
 ```
 
-### Benchmarking HF models
+### Benchmarks
 
-The script `examples/quickstart/hf_benchmarks.py` demonstrates how to benchmark a model for text generation, forward pass, forward pass with loss, and a full forward + backward computation.
+Although is Thunder a tool for optimizing models, rather than an opaque compiler that gets you speedups out of the box, here is a set of benchmarks.
 
-On an H100 with torch=2.7.0 and nvfuser-cu126-torch27, running deepseek-ai/DeepSeek-R1-Distill-Llama-1.5B, the thunder executors (NVFuser and torch.compile) achieve the following speedups:
+Perf-wise, out of the box Thunder is in the ballpark of torch compile, especially when using CUDAGraphs. Note however that Thunder is not a competitor to torch compile! It can actually use torch compile as one of its fusion executors.
+
+The script `examples/quickstart/hf_llm.py` demonstrates how to benchmark a model for text generation, forward pass, forward pass with loss, and a full forward + backward computation.
+
+On an H100 with torch=2.8.0 and nvfuser-cu128-torch28 and Transformers 4.55.4 running Llama 3.2 1B we see the following timings:
 
 ```
-Text generation:
-Thunder (nvfuser): 3.36× faster
-Thunder (torch.compile): 3.42× faster
-
-Forward pass:
-Thunder (nvfuser): 1.51× faster
-Thunder (torch.compile): 1.63× faster
-
-Forward pass + loss:
-Thunder (nvfuser): 1.55× faster
-Thunder (torch.compile): 1.64× faster
-
-Forward + backward:
-Thunder (nvfuser): 1.51× faster
-Thunder (torch.compile): 1.69× faster
+Transformers with torch.compile and CUDAGraphs (reduce-overhead mode):  521ms
+Transformers with torch.compile but no CUDAGraphs (default mode):       814ms
+Transformers without torch.compile:                                    1493ms
+Thunder with CUDAGraphs:                                                542ms
 ```
 
 ## Plugins
@@ -352,7 +344,7 @@ Thunder works in three stages:
 
 1. ⚡️ It acquires your model by interpreting Python bytecode and producing a straight-line Python program
 
-1. ️⚡️ It transforms the computation trace to make it distributed, change precision
+1. ️⚡️ It transforms the model and computation trace to make it distributed, change precision
 
 1. ⚡️ It routes parts of the trace for execution
 
