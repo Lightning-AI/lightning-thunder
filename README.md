@@ -17,6 +17,17 @@ Understandable. Inspectable. Extensible.
 
 </div>
 
+<div align='center'>
+
+<pre>
+✅ Run PyTorch 40% faster   ✅ Quantization                ✅ Kernel fusion        
+✅ Training recipes         ✅ FP4/FP6/FP8 precision       ✅ Distributed TP/PP/DP 
+✅ Inference recipes        ✅ Ready for NVIDIA Blackwell  ✅ CUDA Graphs          
+✅ LLMs, non LLMs and more  ✅ Custom Triton kernels       ✅ Compose all the above
+</pre>
+
+</div>
+
 Thunder is a source-to-source deep learning compiler for PyTorch that focuses on making it simple to optimize models for training and inference.
 
 It provides:
@@ -38,17 +49,6 @@ With Thunder you can:
 Ultimately, you should think about Thunder as a highly efficient tool to go from “unoptimized” to “optimized”.
 
 If that is of interest for you, read on to Install Thunder and get started quickly.
-
-<div align='center'>
-
-<pre>
-✅ Run PyTorch 40% faster   ✅ Quantization                ✅ Kernel fusion        
-✅ Training recipes         ✅ FP4/FP6/FP8 precision       ✅ Distributed TP/PP/DP 
-✅ Inference recipes        ✅ Ready for NVIDIA Blackwell  ✅ CUDA Graphs          
-✅ LLMs, non LLMs and more  ✅ Custom Triton kernels       ✅ Compose all the above
-</pre>
-
-</div>
 
 <div align='center'>
 
