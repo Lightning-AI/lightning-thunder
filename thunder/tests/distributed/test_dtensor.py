@@ -464,6 +464,10 @@ class DTensorTest(DistributedParallelTestCase):
         """Test that use_dtensor_execute flag is set to True for DTensor inputs."""
         import thunder.examine as examine
 
+        # This test is specific to nvfuser executor as it checks fusion properties
+        if executor != "nvfuser":
+            raise unittest.SkipTest("test_use_dtensor_execute_flag_with_dtensor: Only runs for nvfuser executor")
+
         num_devices = self.world_size
         mesh = DeviceMesh("cuda", list(range(num_devices)))
         dim_size = 16
