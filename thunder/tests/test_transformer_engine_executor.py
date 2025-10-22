@@ -720,6 +720,7 @@ def test_te_activation_checkpointing_correctness(fp8_recipe: recipe.Recipe, comp
 @requiresCUDA
 def test_te_inference_8bit():
     from thunder.transforms.te_inference import TEInference8BitTransform
+
     with torch.device("cuda"):
         m = torch.nn.Sequential(
             torch.nn.Linear(1024, 2048),
@@ -734,6 +735,7 @@ def test_te_inference_8bit():
         a = torch.randn(16, 1024, device="cuda")
 
     quant_transform = TEInference8BitTransform()
+    te_inference_executor = quant_transform.get_executor()
     quant_transform2 = TEInference8BitTransform()
     jm = thunder.jit(
         m, transforms=[quant_transform], executors=(te_inference_executor, *thunder.get_default_executors())
