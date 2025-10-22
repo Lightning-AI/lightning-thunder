@@ -11,11 +11,13 @@ from thunder.extend import deregister_executor
 from torch.testing import assert_close
 from thunder.recipes import HFTransformers
 from thunder.executors import nvfuser_available
-from thunder.executors.cudnnex import cudnn_available
 from thunder.tests.framework import IS_WINDOWS
 
 
-@pytest.mark.skipif(not cudnn_available(), reason="cuDNN is not available")
+def get_expected_executors():
+    return [ex for ex in thunder.get_default_executors() if ex.name not in {"cudnn", "sdpa"}]
+
+
 @pytest.mark.skipif(not nvfuser_available(), reason="nvFuser is not available")
 @pytest.mark.skipif(IS_WINDOWS, reason="slow on Windows")
 def test_default_recipe_basic_bert():
@@ -33,7 +35,6 @@ def test_default_recipe_basic_bert():
     assert_close(actual, expected)
 
 
-@pytest.mark.skipif(not cudnn_available(), reason="cuDNN is not available")
 @pytest.mark.skipif(not nvfuser_available(), reason="nvFuser is not available")
 @pytest.mark.skipif(IS_WINDOWS, reason="slow on Windows")
 def test_recipe_basic_bert():
@@ -65,7 +66,6 @@ def test_recipe_basic_bert():
     deregister_executor("sdpa_mask_transform_ex")
 
 
-@pytest.mark.skipif(not cudnn_available(), reason="cuDNN is not available")
 @pytest.mark.skipif(not nvfuser_available(), reason="nvFuser is not available")
 def test_recipe_basic_bert_fx():
     bert = transformers.BertForSequenceClassification(transformers.BertConfig())
@@ -186,7 +186,6 @@ def test_recipe_errors():
     deregister_executor("sdpa_mask_transform_ex")
 
 
-@pytest.mark.skipif(not cudnn_available(), reason="cuDNN is not available")
 @pytest.mark.skipif(not nvfuser_available(), reason="nvFuser is not available")
 def test_plugins_basics():
     model = torch.nn.Sequential(torch.nn.Linear(2048, 4096), torch.nn.ReLU(), torch.nn.Linear(4096, 64))
@@ -198,12 +197,11 @@ def test_plugins_basics():
     _ = thunder_model(x)
     cd = get_compile_data(thunder_model)
     assert cd is not None
-    for ex in thunder.get_default_executors():
+    for ex in get_expected_executors():
         assert ex.name in [el.name for el in cd.executors_list]
 
 
 # test skipped if nvfuser isn't available because providing plugins calls BaseRecipe
-@pytest.mark.skipif(not cudnn_available(), reason="cuDNN is not available")
 @pytest.mark.skipif(not nvfuser_available(), reason="nvFuser is not available")
 @pytest.mark.skipif(IS_WINDOWS, reason="libuv error with PT build on windows")
 def test_plugins_composition(monkeypatch):
@@ -215,13 +213,13 @@ def test_plugins_composition(monkeypatch):
         _ = thunder.compile(model, plugins="fp8")
         call_args = mock_jit.call_args
         assert "transformer_engine_v1" in [el.name for el in call_args.kwargs["executors"]]
-        for ex in thunder.get_default_executors():
+        for ex in get_expected_executors():
             assert ex.name in [el.name for el in call_args.kwargs["executors"]]
 
         _ = thunder.compile(model, plugins=["fp8"])
         call_args = mock_jit.call_args
         assert "transformer_engine_v1" in [el.name for el in call_args.kwargs["executors"]]
-        for ex in thunder.get_default_executors():
+        for ex in get_expected_executors():
             assert ex.name in [el.name for el in call_args.kwargs["executors"]]
 
         from thunder.plugins import FP8
@@ -229,7 +227,7 @@ def test_plugins_composition(monkeypatch):
         _ = thunder.compile(model, plugins=[FP8()])
         call_args = mock_jit.call_args
         assert "transformer_engine_v1" in [el.name for el in call_args.kwargs["executors"]]
-        for ex in thunder.get_default_executors():
+        for ex in get_expected_executors():
             assert ex.name in [el.name for el in call_args.kwargs["executors"]]
 
     if not torch.distributed.is_initialized():
@@ -259,7 +257,6 @@ def test_plugins_composition(monkeypatch):
         assert "transformer_engine_v1" in [el.name for el in call_args.kwargs["executors"]]
 
 
-@pytest.mark.skipif(not cudnn_available(), reason="cuDNN is not available")
 @pytest.mark.skipif(not nvfuser_available(), reason="nvFuser is not available")
 @pytest.mark.skipif(IS_WINDOWS, reason="libuv error with PT build on windows")
 def test_plugins_hybrid_ddpfsdp(monkeypatch):

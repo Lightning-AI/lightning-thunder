@@ -718,7 +718,10 @@ def test_te_activation_checkpointing_correctness(fp8_recipe: recipe.Recipe, comp
 
 
 @requiresCUDA
-@pytest.mark.skipif(LooseVersion(transformer_engine.__version__) < LooseVersion("2.9"))
+@pytest.mark.skipif(
+    LooseVersion(transformer_engine.__version__) < LooseVersion("2.9"),
+    reason="need TE >= 2.9 for quantizer location",
+)
 def test_te_inference_8bit():
     from thunder.transforms.te_inference import TEInference8BitTransform
 
