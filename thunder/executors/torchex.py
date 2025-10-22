@@ -2376,6 +2376,14 @@ shape = ex.register_operator("shape", meta=prims.shape_meta, fn=_shape_impl)
 _register_implementation(prims.shape, shape, checker=_always_executable)
 
 
+def _stride_impl(t):
+    return t.stride()
+
+
+stride = ex.register_operator("stride", meta=prims.stride_meta, fn=_stride_impl)
+_register_implementation(prims.stride, stride, checker=_always_executable)
+
+
 def _bitcast_impl(src, dtype):
     return src.view(dtypes.to_torch_dtype(dtype))
 

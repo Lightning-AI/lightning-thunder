@@ -131,6 +131,7 @@ class PrimIDs(Enum):
     PACK_SETITEM = auto()
     DATACLASS_NEW = auto()
     SHAPE = auto()
+    STRIDE = auto()
     # TODO: UNPACK_SET
     # Utility prims
     COMMENT = auto()
@@ -1390,6 +1391,17 @@ shape = make_prim(
     PrimIDs.SHAPE,
     "shape",
     meta=shape_meta,
+)
+
+
+def stride_meta(t: TensorProxy) -> Sequence[int]:
+    return t._stride
+
+
+stride = make_prim(
+    PrimIDs.STRIDE,
+    "stride",
+    meta=stride_meta,
 )
 
 
