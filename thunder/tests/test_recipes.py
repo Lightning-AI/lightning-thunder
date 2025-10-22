@@ -15,7 +15,7 @@ from thunder.tests.framework import IS_WINDOWS
 
 
 def get_expected_executors():
-    return [ex for ex in thunder.get_default_executors() if ex.name not in {"cudnn", "sdpa"}]
+    return [ex for ex in thunder.get_default_executors() if ex.name not in {"cudnn", "sdpa", "torchcompile_xentropy"}]
 
 
 @pytest.mark.skipif(not nvfuser_available(), reason="nvFuser is not available")
