@@ -6653,6 +6653,49 @@ empty_opinfo = OpInfo(
 tensor_creation_ops.append(empty_opinfo)
 
 
+def empty_strided_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    # (shape, stride) pairs
+    cases = (
+        # Contiguous strides
+        ((2, 3), (3, 1)),
+        ((4, 4), (4, 1)),
+        ((2, 3, 4), (12, 4, 1)),
+        # Non-contiguous strides (column-major)
+        ((3, 4), (1, 3)),
+        ((2, 3, 4), (1, 2, 6)),
+        # 1D tensors
+        ((10,), (1,)),
+        ((5,), (2,)),
+        # Scalar
+        ((), ()),
+    )
+
+    for shape, stride in cases:
+        yield SampleInput(shape, stride, device=device, dtype=dtype)
+
+
+# Helper function for `empty_strided` opinfo.
+# It always returns zero tensors, so that the consistency tests pass.
+def torch_empty_strided_and_zero(shape, stride, **kwargs):
+    result = ltorch.empty_strided(shape, stride, **kwargs)
+    # Use full_like to fill with zeros, which preserves the stride
+    return ltorch.full_like(result, 0)
+
+
+def torch_empty_strided_reference(shape, stride, **kwargs):
+    result = torch.empty_strided(shape, stride, **kwargs)
+    return result.fill_(0)
+
+
+empty_strided_opinfo = OpInfo(
+    name="empty_strided",
+    op=torch_empty_strided_and_zero,
+    sample_input_generator=empty_strided_sample_generator,
+    torch_reference=torch_empty_strided_reference,
+)
+tensor_creation_ops.append(empty_strided_opinfo)
+
+
 def fixed_value_tensor_creation_op_sample_generator_with_bounds(op, device, dtype, requires_grad, **kwargs):
     # shape
     cases = (
