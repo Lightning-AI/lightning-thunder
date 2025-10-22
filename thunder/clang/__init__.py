@@ -265,7 +265,17 @@ def full_like(
     device = devices.to_device(device) if device is not None else a.device
     dtype = dtype if dtype is not None else a.true_dtype
 
-    return full(a.shape, fill_value, device=device, dtype=dtype)
+    is_stride_decreasing = all(x > y for x, y in zip(a.stride(), a.stride()[1:]))
+    if is_stride_decreasing:
+        return full(a.shape, fill_value, device=device, dtype=dtype)
+
+    permutation = [None] * len(a.stride())
+    permuted_shape = [None] * len(a.stride())
+    for i, s in enumerate(sorted(a.stride(), reverse=True)):
+        permutation[a.stride().index(s)] = i
+        permuted_shape[i] = a.shape[a.stride().index(s)]
+
+    return transpose(full(permuted_shape, fill_value, device=device, dtype=dtype), permutation)
 
 
 @clangop()
