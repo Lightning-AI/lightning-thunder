@@ -88,7 +88,6 @@ def test_recipe_basic_bert_fx():
     deregister_executor("sdpa_mask_transform_ex")
 
 
-@pytest.mark.skipif(not cudnn_available(), reason="cuDNN is not available")
 @pytest.mark.skipif(not nvfuser_available(), reason="nvFuser is not available")
 @pytest.mark.parametrize(
     "model_cls, config_cls",
