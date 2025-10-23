@@ -256,7 +256,7 @@ def nvfuser_f16a_nvfp4weight_scaled_grouped_mm(
     problem_sizes: torch.Tensor,
 ) -> torch.Tensor:
     hp_weight = torch.empty(
-        (fp4_weight.size(0), fp4_weight.size(1), fp4_weight.size(2) * 2),
+        (fp4_weight.size(0), fp4_weight.size(1) * 2, fp4_weight.size(2)),
         device=activation.device,
         dtype=activation.dtype,
     )
@@ -277,7 +277,7 @@ def _(
     blockscale_offsets: torch.Tensor,
     problem_sizes: torch.Tensor,
 ) -> torch.Tensor:
-    # fp4_weight shape: (groups, in_features, out_features // 2)
+    # fp4_weight shape: (groups, in_features // 2, out_features)
     # Validate that activation has at least 1 dimension
     if activation.ndim == 0:
         raise ValueError(f"Expected activation to have at least 1 dimension, got {activation.ndim}")
@@ -285,7 +285,7 @@ def _(
     # After unpacking: (groups, in_features, out_features)
     # Output shape should match activation.shape[:-1] + (out_features,)
     # This handles both 2D (tokens, hidden) and 3D (batch, seq_len, hidden) inputs
-    out_features = fp4_weight.size(2) * 2  # Unpack from FP4
+    out_features = fp4_weight.size(2)
     output_shape = activation.shape[:-1] + (out_features,)
     return torch.empty(output_shape, device=activation.device, dtype=activation.dtype)
 
@@ -398,23 +398,24 @@ def quantize_grouped_linear_weight_to_nvfp4(
     """Quantize grouped linear's weight to nvfp4
 
     Args:
-        weight: Parameter of `GroupedLinear` of [g, n, k]
+        weight: Parameter of `GroupedLinear` of [g, k, n]
 
     Returns:
-        fp4_weight: [g, n, k // 2]
+        fp4_weight: [g, k // 2, n]
         scale_factors: [g, n, k // 16]
         global_scales: [g]
     """
     assert weight.ndim == 3, "Weight must be a 3D tensor"
 
     device: torch.device = weight.device
-    g, n, k = weight.size()
+    g, k, n = weight.size()
 
     with device:
         fp4_weight = torch.empty((g, n, k // 2), dtype=torch.float4_e2m1fn_x2)
         global_scales = torch.empty((g,), dtype=torch.float32)
         scale_factors = torch.empty((g, n, k // 16), dtype=torch.float8_e4m3fn)
 
+    weight = weight.transpose(-1, -2).contiguous()
     for i in range(g):
         cur_weight = weight[i]
         global_scales[i] = cur_weight.abs().amax()
@@ -422,7 +423,7 @@ def quantize_grouped_linear_weight_to_nvfp4(
         fp4_weight[i] = cur_fp4_weight
         scale_factors[i] = linear_to_swizzled_128_4(cur_scale_factors)
 
-    return fp4_weight, scale_factors, global_scales
+    return fp4_weight.transpose(-1, -2), scale_factors, global_scales
 
 
 class NVFP4InferenceGroupedLinear(nn.Module):
@@ -451,8 +452,8 @@ class NVFP4InferenceGroupedLinear(nn.Module):
         problem_sizes = torch.stack(
             [
                 tokens_per_group,
-                torch.full_like(tokens_per_group, hidden_states.size(1)),
                 torch.full_like(tokens_per_group, out_features),
+                torch.full_like(tokens_per_group, hidden_states.size(1)),
             ],
             dim=1,
         )
@@ -463,7 +464,7 @@ class NVFP4InferenceGroupedLinear(nn.Module):
                 torch.zeros(1, dtype=torch.int32, device=tokens_per_group.device),
                 torch.cumsum(rounded_tokens, 0, dtype=torch.int32),
             ]
-        )
+        )[0:-1]
         return blockscale_offsets, problem_sizes
 
     # TODO: Update this accordingly to the progress of nvfp4 kernel implementation.
@@ -476,14 +477,14 @@ class NVFP4InferenceGroupedLinear(nn.Module):
     ) -> torch.Tensor:
         if blockscale_offsets is None or problem_sizes is None:
             # Compute them if not provided (backward compatibility)
-            out_features = self.fp4_weight.size(2) * 2
+            out_features = self.fp4_weight.size(2)
             blockscale_offsets, problem_sizes = self.compute_auxiliary_tensors(hidden_states, offsets, out_features)
         return torch.ops.nvf_cutlass.f16a_nvfp4weight_scaled_grouped_mm(
             hidden_states,
             self.fp4_weight,
             self.weight_scaling_factor,
             self.weight_global_scale,
-            offsets,
+            offsets[:-1],
             blockscale_offsets,
             problem_sizes,
         )
@@ -529,7 +530,7 @@ class NVFP4InferenceGroupedSwiGLU(nn.Module):
 
     def forward(self, hidden_states: torch.Tensor, offsets: torch.Tensor) -> torch.Tensor:
         # Compute auxiliary tensors once for all three operations
-        intermediate_features = self.gate_proj.fp4_weight.size(2) * 2
+        intermediate_features = self.gate_proj.fp4_weight.size(2)
         blockscale_offsets_gate, problem_sizes_gate = NVFP4InferenceGroupedLinear.compute_auxiliary_tensors(
             hidden_states, offsets, intermediate_features
         )
@@ -540,7 +541,7 @@ class NVFP4InferenceGroupedSwiGLU(nn.Module):
         intermediate = torch.nn.functional.silu(gate_out) * up_out
 
         # For down_proj, we need different problem_sizes (different output features)
-        hidden_features = self.down_proj.fp4_weight.size(2) * 2
+        hidden_features = self.down_proj.fp4_weight.size(2)
         blockscale_offsets_down, problem_sizes_down = NVFP4InferenceGroupedLinear.compute_auxiliary_tensors(
             intermediate, offsets, hidden_features
         )
