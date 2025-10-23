@@ -998,7 +998,7 @@ def test_deepcopy_graph_module():
     n = gm.graph.find_nodes(op="output")
     gm.graph.erase_node(n[0])
 
-    _, subgraph_info = thunder.dynamo.splitter._splitter(gm, thunder.jit, torch._inductor.compile, [])
+    _, subgraph_info = thunder.dynamo.splitter._splitter(gm, thunder.jit)
     original_split_gm = subgraph_info.original_split_graph_module.split_graph_module
     assert original_split_gm.graph.find_nodes(op="output")
     for subm in original_split_gm.children():
