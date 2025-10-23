@@ -3814,10 +3814,12 @@ def transpose_meta(a: TensorProxy, /, permutation: tuple[int, ...]) -> TensorPro
     utils.check_valid_permutation(a.ndim, permutation)
 
     new_shape = [0] * a.ndim
+    new_stride = [0] * a.ndim
     for idx, dim in enumerate(permutation):
         new_shape[idx] = a.shape[dim]
+        new_stride[idx] = a.stride()[dim]
 
-    return TensorProxy(like=a, shape=new_shape)
+    return TensorProxy(like=a, shape=new_shape, stride=new_stride)
 
 
 transpose = make_prim(PrimIDs.TRANSPOSE, "transpose", meta=transpose_meta, tags=(OpTags.SHAPE_OP,))
