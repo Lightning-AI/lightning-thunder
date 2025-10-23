@@ -6,8 +6,7 @@ from functools import partial
 import warnings
 
 import torch
-from torch._guards import detect_fake_mode
-from torch._subclasses.fake_tensor import DynamicOutputShapeException, FakeTensorMode
+from torch._subclasses.fake_tensor import DynamicOutputShapeException
 from torch.fx.passes.split_module import split_module
 
 from thunder.core import baseutils
@@ -38,18 +37,20 @@ class LazyInductorModule(torch.nn.Module):
         self.graph_module = graph_module
         self.compiled_fn = None
 
+        # For ease of debugging, we add graph attribute so GraphModule.print_readable will print it
+        self.graph = graph_module.graph
+
     def forward(self, *args):
         if self.compiled_fn is None:
-            fake_mode = detect_fake_mode()
-            if fake_mode is None:
-                fake_mode = FakeTensorMode()
-
             sample_args = list(args)
-            for i in range(len(args)):
-                if isinstance(args[i], torch.Tensor):
-                    sample_args[i] = fake_mode.fake_tensor_converter.from_real_tensor(fake_mode, args[i])
 
-            self.compiled_fn = torch._inductor.compile(self.graph_module, sample_args)
+            try:
+                self.compiled_fn = torch._inductor.compile(self.graph_module, sample_args)
+            except DynamicOutputShapeException as e:
+                # This exception is meant to be handled by Dynamo, which is responsible for graph break
+                # TODO: Use torch.compile for fallback. Ensure its correctness.
+                warnings.warn(f"Dynamic output shape operator encountered: {e}. Falling back to eager.")
+                self.compiled_fn = self.graph_module
 
         return self.compiled_fn(*args)
 
@@ -246,20 +247,7 @@ def _splitter(
         elif node.name.startswith("submod"):  # For inductor
             graph_module = getattr(split_gm, node.name)
 
-            def fallback_eager(reason: str) -> torch.nn.Module:
-                warnings.warn(f"{reason} Falling back to eager.")
-                # TODO: Use torch.compile here. Investigate its behavior and ensure correctness.
-                return graph_module
-
-            try:
-                # torch._inductor.compile returns a function, but update_node_and_submodule expects a Module
-                jit_fn = LazyInductorModule(graph_module)
-            except DynamicOutputShapeException as e:
-                # This exception is meant to be handled by Dynamo, which is responsible for graph break
-                jit_fn = fallback_eager(f"Dynamic output shape operator encountered: {e}.")
-
-            # This is for ease of debugging. We add graph attribute so GraphModule.print_readable will print it
-            jit_fn.graph = graph_module.graph
+            jit_fn = LazyInductorModule(graph_module)
 
             # Update the node name from "submod_*" to "inductor_*" for more user-friendly names
             update_node_and_submodule(split_gm, node, node.name.replace("submod", "inductor"), jit_fn)
