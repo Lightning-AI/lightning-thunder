@@ -58,6 +58,7 @@ RUN \
 	llvm-dev \
         libnccl2 \
         libnccl-dev \
+        libzstd-dev \
         ssh \
     && \
     # Install python
