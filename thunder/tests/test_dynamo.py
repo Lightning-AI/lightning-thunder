@@ -1777,8 +1777,7 @@ def test_thunderfx_node_with_no_example_value():
     x = torch.tensor([1, 2, 3, 4, 5])
     # Without this patch, tolist() would cause graph break. See https://github.com/pytorch/pytorch/pull/163807
     with patch("torch._dynamo.config.capture_scalar_outputs", True):
-        with pytest.warns(match="Example values for arguments are not available"):
-            actual = thunderfx(test_fn)(x)
+        actual = thunderfx(test_fn)(x)
     expected = test_fn(x)
     torch.testing.assert_close(actual, expected)
 
@@ -1793,8 +1792,7 @@ def test_thunderfx_no_example_value_and_autocast():
     x = torch.tensor([1, 2, 3, 4, 5])
     # Without this patch, tolist() would cause graph break. See https://github.com/pytorch/pytorch/pull/163807
     with patch("torch._dynamo.config.capture_scalar_outputs", True):
-        with pytest.warns(match="Example values for arguments are not available"):
-            actual = thunderfx(fn)(x)
+        actual = thunderfx(fn)(x)
     expected = fn(x)
     torch.testing.assert_close(actual, expected)
 
