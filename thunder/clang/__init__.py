@@ -275,6 +275,7 @@ def full_like(
         permutation[a.stride().index(s)] = i
         permuted_shape[i] = a.shape[a.stride().index(s)]
 
+    # TODO: Return a non-view tensor. ATen implements this as empty_strided(...).fill_(...).
     return transpose(full(permuted_shape, fill_value, device=device, dtype=dtype), permutation)
 
 
