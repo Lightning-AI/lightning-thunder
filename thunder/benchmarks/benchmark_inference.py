@@ -262,7 +262,7 @@ class InferenceBenchmark:
         model.to_empty(device=DEVICE)
         assert all(p.device == DEVICE for p in model.parameters())
 
-        # Required as that doesn't understand inference mode
+        # Required as thunder doesn't understand inference mode
         # And some prims like `prims._grouped_mm` don't have grad rule defined yet.
         for p in model.parameters():
             p.requires_grad_(False)
