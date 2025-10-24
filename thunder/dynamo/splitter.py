@@ -6,6 +6,7 @@ from functools import partial
 import warnings
 
 import torch
+from torch._guards import tracing, TracingContext
 from torch._subclasses.fake_tensor import DynamicOutputShapeException
 from torch.fx.passes.split_module import split_module
 
@@ -32,20 +33,21 @@ if TYPE_CHECKING:
 
 
 class LazyInductorModule(torch.nn.Module):
-    def __init__(self, graph_module):
+    def __init__(self, graph_module, fake_mode):
         super().__init__()
         self.graph_module = graph_module
         self.compiled_fn = None
+        self.fake_mode = fake_mode
 
         # For ease of debugging, we add graph attribute so GraphModule.print_readable will print it
         self.graph = graph_module.graph
 
     def forward(self, *args):
         if self.compiled_fn is None:
-            sample_args = list(args)
-
             try:
-                self.compiled_fn = torch._inductor.compile(self.graph_module, sample_args)
+                # Inductor needs fake_mode, particularly its shape_env, to handle SymInts
+                with tracing(TracingContext(fake_mode=self.fake_mode)):
+                    self.compiled_fn = torch._inductor.compile(self.graph_module, args)
             except DynamicOutputShapeException as e:
                 # This exception is meant to be handled by Dynamo, which is responsible for graph break
                 # TODO: Use torch.compile for fallback. Ensure its correctness.
@@ -247,7 +249,8 @@ def _splitter(
         elif node.name.startswith("submod"):  # For inductor
             graph_module = getattr(split_gm, node.name)
 
-            jit_fn = LazyInductorModule(graph_module)
+            fake_mode = torch._guards.detect_fake_mode()
+            jit_fn = LazyInductorModule(graph_module, fake_mode)
 
             # Update the node name from "submod_*" to "inductor_*" for more user-friendly names
             update_node_and_submodule(split_gm, node, node.name.replace("submod", "inductor"), jit_fn)
