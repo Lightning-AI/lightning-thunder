@@ -1,4 +1,5 @@
 from __future__ import annotations
+import unittest.mock
 import operator
 from typing import TYPE_CHECKING
 import copy
@@ -44,15 +45,26 @@ class LazyInductorModule(torch.nn.Module):
 
     def forward(self, *args):
         if self.compiled_fn is None:
-            try:
-                # Inductor needs fake_mode, particularly its shape_env, to handle SymInts
+
+            def fake_increment_toplevel(*args, **kwargs):
+                # In PyTorch before 2.8.0, FXGraphCache assumes that it is run behind Dynamo and tries to update metrics_context.
+                # See https://github.com/pytorch/pytorch/pull/150423
+                metrics_context = torch._dynamo.utils.get_metrics_context()
+                assert not metrics_context.in_progress()
+                return
+
+            with unittest.mock.patch.object(
+                torch._dynamo.utils.CompileEventLogger, "increment_toplevel", fake_increment_toplevel
+            ):
                 with tracing(TracingContext(fake_mode=self.fake_mode)):
-                    self.compiled_fn = torch._inductor.compile(self.graph_module, args)
-            except DynamicOutputShapeException as e:
-                # This exception is meant to be handled by Dynamo, which is responsible for graph break
-                # TODO: Use torch.compile for fallback. Ensure its correctness.
-                warnings.warn(f"Dynamic output shape operator encountered: {e}. Falling back to eager.")
-                self.compiled_fn = self.graph_module
+                    try:
+                        # Inductor needs fake_mode, particularly its shape_env, to handle SymInts
+                        self.compiled_fn = torch._inductor.compile(self.graph_module, args)
+                    except DynamicOutputShapeException as e:
+                        # This exception is meant to be handled by Dynamo, which is responsible for graph break
+                        # TODO: Use torch.compile for fallback. Ensure its correctness.
+                        warnings.warn(f"Dynamic output shape operator encountered: {e}. Falling back to eager.")
+                        self.compiled_fn = self.graph_module
 
         return self.compiled_fn(*args)
 
