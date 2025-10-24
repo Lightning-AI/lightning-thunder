@@ -1,6 +1,7 @@
 import thunder
 import torch
 import contextlib
+import re
 
 from thunder.core import prims
 from thunder.core.symbol import Symbol
@@ -20,15 +21,22 @@ def create_boundsymbol(name: str, bsym, fn):
 
 
 class ProfileTransform(thunder.core.transform_common.Transform):
-    def __init__(self, *, warmup_runs=3, number_runs=1, start_idx=0, end_idx=-1, backward=False):
-        self.start_idx = start_idx
-        self.end_idx = end_idx
+    def __init__(self, *, warmup_runs=3, number_runs=1, start_idx=0, end_idx=None, input_match=None, backward=False):
+        self.input_match = input_match
+        if input_match is None:
+            self.start_idx = start_idx
+            self.end_idx = end_idx if end_idx is not None else -1
+        else:
+            self.match_start_idx = start_idx
+            self.match_end_idx = end_idx if end_idx is not None else 1
+
         self.enabled = True
         self.run_counter = 0
         self.warmup_runs = warmup_runs
         self.number_runs = number_runs
         self.prof = None
         self.backward = backward
+        self.computed_enabled = False
 
     def start_profile(self):
         self.run_counter += 1
@@ -94,13 +102,27 @@ class ProfileTransform(thunder.core.transform_common.Transform):
         if self.backward ^ (TraceTag.BACKWARD in computation_trace.tags):
             return computation_trace
 
+        if self.input_match is not None:
+            self.match_list = []
+            for i, bsym in enumerate(computation_trace.bound_symbols):
+                for a in bsym.args:
+                    if isinstance(a, thunder.TensorProxy) and re.match(self.input_match, a.name):
+                        self.match_list.append((i, a.name))
+            start_idx = self.match_list[self.match_start_idx][0]
+            end_idx = self.match_list[self.match_end_idx][0]
+        else:
+            start_idx = self.start_idx
+            end_idx = self.end_idx
+
         new_bound_symbols = []
 
         new_trace = thunder.core.trace.from_trace(computation_trace)
-        start_idx = self.start_idx
+
+        need_end = False
 
         for i, bsym in enumerate(computation_trace.bound_symbols[:]):
-            if i == self.end_idx or bsym.sym == prims.python_return:
+            if i == end_idx or (bsym.sym == prims.python_return and need_end):
+                need_end = False
                 new_bound_symbols.append(create_boundsymbol("end_profiling", None, self.end_profile))
             if bsym.sym in {
                 prims.unpack_trivial,
@@ -115,6 +137,7 @@ class ProfileTransform(thunder.core.transform_common.Transform):
                     start_idx += 1
                 continue
             if i == start_idx:
+                need_end = True
                 new_bound_symbols.append(create_boundsymbol("start_profiling", None, self.start_profile))
             new_bound_symbols.append(
                 create_boundsymbol(

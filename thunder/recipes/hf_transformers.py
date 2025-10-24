@@ -10,6 +10,19 @@ from thunder.recipes import BaseRecipe
 from thunder import Recipe
 
 
+# for materializing models, we need reset_parameters, which is part of the unwritten
+# spec for idiomatic PyTorch, but not implemented everywhere
+def RotaryEmbedding_reset_parameters(self):
+    inv_freq, self.attention_scaling = self.rope_init_fn(self.config, self.inv_freq.device)
+    with torch.no_grad():
+        self.inv_freq.copy_(inv_freq)
+
+
+def RMSNorm_reset_parameters(self):
+    with torch.no_grad():
+        self.weight.fill_(1)
+
+
 class InplaceIndexCopyTransform(thunder.Transform):
     def __init__(self):
         super().__init__()
@@ -71,7 +84,6 @@ class InplaceIndexCopyTransform(thunder.Transform):
         # the values passed to the compute trace
         passed_to_compute_trace = return_bsym.args[0][0]
         target_proxies_names = [proxy.name for proxy in target_proxies]
-        # import pdb;pdb.set_trace()
         static_proxy_idx = []
         for idx, passed_value in enumerate(passed_to_compute_trace):
             if passed_value.name in target_proxies_names:
@@ -309,6 +321,16 @@ class HFTransformers(BaseRecipe):
             transformers.PreTrainedModel: Thunder-compiled model ready
             for inference.
         """
+
+        # We need reset_parameters for initialization of buffers in materialization.
+        # This seems to work for transformers 4.5x with Llama, Llama4 and Qwen2 at least
+        for submodule in model.modules():
+            cls = submodule.__class__
+            if cls.__name__.endswith("RotaryEmbedding") and not hasattr(cls, "reset_parameters"):
+                cls.reset_parameters = RotaryEmbedding_reset_parameters
+            elif cls.__name__.endswith("RMSNorm") and not hasattr(cls, "reset_parameters"):
+                cls.reset_parameters = RMSNorm_reset_parameters
+
         thunder_model = super().apply(model)
 
         if getattr(thunder_model, "generate", None):
