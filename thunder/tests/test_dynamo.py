@@ -1768,7 +1768,7 @@ def test_thunderfx_with_intermediate_output_marked_as_non_differentiable():
         torch.testing.assert_close(org_m.fc.weight.grad, thunder_m.fc.weight.grad)
 
 
-def test_thunderfx_node_with_no_example_value():
+def test_thunderfx_tolist():
     def test_fn(x):
         y = x + 10
         z = y.tolist()[0]
@@ -1776,13 +1776,13 @@ def test_thunderfx_node_with_no_example_value():
 
     x = torch.tensor([1, 2, 3, 4, 5])
     # Without this patch, tolist() would cause graph break. See https://github.com/pytorch/pytorch/pull/163807
-    with patch("torch._dynamo.config.capture_scalar_outputs", True):
+    with torch._dynamo.config.patch(capture_scalar_outputs=True):
         actual = thunderfx(test_fn)(x)
     expected = test_fn(x)
     torch.testing.assert_close(actual, expected)
 
 
-def test_thunderfx_no_example_value_and_autocast():
+def test_thunderfx_tolist_autocast():
     def fn(x):
         with torch.autocast("cpu"):
             y = x + 10
@@ -1791,7 +1791,7 @@ def test_thunderfx_no_example_value_and_autocast():
 
     x = torch.tensor([1, 2, 3, 4, 5])
     # Without this patch, tolist() would cause graph break. See https://github.com/pytorch/pytorch/pull/163807
-    with patch("torch._dynamo.config.capture_scalar_outputs", True):
+    with torch._dynamo.config.patch(capture_scalar_outputs=True):
         actual = thunderfx(fn)(x)
     expected = fn(x)
     torch.testing.assert_close(actual, expected)
