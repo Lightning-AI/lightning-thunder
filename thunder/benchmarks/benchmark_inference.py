@@ -25,9 +25,9 @@ from collections.abc import Callable
 from looseversion import LooseVersion
 
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 from torch.distributed.device_mesh import init_device_mesh
-from torch.distributed.distributed_c10d import destroy_process_group
 from torch.distributed.tensor.parallel import parallelize_module, RowwiseParallel, ColwiseParallel
 from tqdm import tqdm
 import transformers
@@ -64,8 +64,10 @@ os.environ["TORCH_NCCL_ASYNC_ERROR_HANDLING"] = "1"
 DEVICE = torch.device("cuda", LOCAL_RANK)
 torch.cuda.set_device(DEVICE)
 
-if WORLD_SIZE > 1:
+if dist.is_torchelastic_launched():
     mesh = init_device_mesh("cuda", (WORLD_SIZE,), mesh_dim_names=("tp",))
+else:
+    mesh = None
 
 LLAMA4_MAVERICK_MODEL_ID: str = "meta-llama/Llama-4-Maverick-17B-128E"
 
@@ -147,7 +149,6 @@ class InferenceBenchmarkConfig:
     num_layers: int | None
     num_iterations: int
     warmup_iterations: int
-    dtensor_single_gpu: bool
     enable_nvfp4: bool  # Enable NVFP4 quantization
     fx_report_folder: str | None
     enable_nv_linear: bool
@@ -242,7 +243,7 @@ class InferenceBenchmark:
                 }
             )
 
-        if self.config.dtensor_single_gpu or WORLD_SIZE > 1:
+        if mesh:
             model = parallelize_module(model, mesh, tp_plan)
 
             # Required as that doesn't understand inference mode
@@ -661,11 +662,6 @@ Examples:
         help="Specify the folder for thunderfx_benchmark_report.",
     )
 
-    parser.add_argument(
-        "--dtensor-single-gpu",
-        action="store_true",
-        help="Use DTensor for single GPU",
-    )
     parser.add_argument("--enable-nvfp4", action="store_true", help="Enable NVFP4 quantization for linear layers")
     parser.add_argument(
         "--enable-nv-linear",
@@ -708,7 +704,6 @@ def main():
         num_iterations=args.num_iterations,
         warmup_iterations=args.warmup_iterations,
         mode=args.mode,
-        dtensor_single_gpu=args.dtensor_single_gpu,
         enable_nvfp4=args.enable_nvfp4,
         fx_report_folder=args.fx_report_folder,
         enable_nv_linear=args.enable_nv_linear,
@@ -738,6 +733,6 @@ if __name__ == "__main__":
     except Exception:
         raise
     finally:
-        if WORLD_SIZE > 1:
+        if mesh:
             for process_group in mesh.get_all_groups():
-                destroy_process_group(process_group)
+                dist.destroy_process_group(process_group)
