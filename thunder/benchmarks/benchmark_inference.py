@@ -393,18 +393,20 @@ class InferenceBenchmark:
         Generate tokens using separate prefill and decode phases.
         Returns detailed metrics for both phases.
         """
-        # Prefill phase - process the entire prompt
-        with timer() as prefill_timer:
-            first_token = self.prefill(input_ids, past_key_values)
-        prefill_time = prefill_timer()
-        generated_tokens = [first_token]
+        s = torch.cuda.Stream()
+        with torch.cuda.stream(s):
+            # Prefill phase - process the entire prompt
+            with timer() as prefill_timer:
+                first_token = self.prefill(input_ids, past_key_values)
+            prefill_time = prefill_timer()
+            generated_tokens = [first_token]
 
-        # Decode phase - generate remaining tokens one by one
-        next_token = first_token
-        with timer() as decode_timer:
-            for _ in range(max_new_tokens - 1):
-                next_token = self.decode_one_token(next_token, past_key_values)
-                generated_tokens.append(next_token)
+            # Decode phase - generate remaining tokens one by one
+            next_token = first_token
+            with timer() as decode_timer:
+                for _ in range(max_new_tokens - 1):
+                    next_token = self.decode_one_token(next_token, past_key_values)
+                    generated_tokens.append(next_token)
 
         total_decode_time = decode_timer()
 
