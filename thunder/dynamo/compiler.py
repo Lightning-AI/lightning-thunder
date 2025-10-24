@@ -147,8 +147,6 @@ class ThunderCompiler:
         split_module, subgraph_info = _splitter(
             gm,
             partial(jit, **thunder_options),
-            torch._inductor.compile,
-            sample_args,
             thunder_options,
         )
         self.subgraph_infos.append(subgraph_info)
