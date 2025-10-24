@@ -56,6 +56,7 @@ class LazyInductorModule(torch.nn.Module):
             with unittest.mock.patch.object(
                 torch._dynamo.utils.CompileEventLogger, "increment_toplevel", fake_increment_toplevel
             ):
+                # Inductor needs fake_mode, particularly its shape_env, to handle SymInts
                 with tracing(TracingContext(fake_mode=self.fake_mode)):
                     try:
                         # Inductor needs fake_mode, particularly its shape_env, to handle SymInts
