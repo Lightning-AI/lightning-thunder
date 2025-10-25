@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 from enum import auto, Enum
+import itertools
 from numbers import Number
 from typing import Any
 from collections.abc import Callable
@@ -1224,6 +1225,7 @@ class DistParallelType(Enum):
 def _infer_tensor_properties(
     like: TensorProxy | FutureTensorProxy | None = None,
     shape: ShapeLike | None = None,
+    stride: Sequence[int] | None = None,
     device: devices.Device | None = None,
     dtype: dtypes.dtype | None = None,
     requires_grad: bool | None = None,
@@ -1232,6 +1234,7 @@ def _infer_tensor_properties(
     thunder_fsdp_padding_size: int | None = None,
 ):
     _shape = None
+    _stride = None
     _device = None
     _dtype = None
     _requires_grad: None | bool = None
@@ -1242,6 +1245,7 @@ def _infer_tensor_properties(
     if like is not None:
         baseutils.check_type(like, (TensorProxy, FutureTensorProxy))
         _shape = tuple(like._shape)
+        _stride = tuple(like._stride)
         _device = like.device
         _dtype = like.true_dtype
         _requires_grad = like.requires_grad
@@ -1252,6 +1256,7 @@ def _infer_tensor_properties(
         baseutils.check_valid_shape(shape)
 
     _shape = tuple(shape) if shape is not None else _shape
+    _stride = tuple(stride) if stride is not None else _stride
     _device = device if device is not None else _device
     _dtype = dtype if dtype is not None else _dtype
     _dtype = dtypes.numbertype_to_dtype(_dtype) if dtypes.is_numbertype(_dtype) else _dtype
@@ -1269,6 +1274,8 @@ def _infer_tensor_properties(
         _shape = tuple(pyval(x) for x in _shape)
         # Computes derived properties
         _numel = reduce(operator.mul, _shape, 1)
+        if _stride is None:
+            _stride = tuple(itertools.accumulate(reversed(_shape), operator.mul, initial=1))[-2::-1]
     else:
         # deferred computation of numel
         # TODO: similar to how `shape` is handled, this should be CSE or lifted for efficiency
@@ -1299,6 +1306,7 @@ def _infer_tensor_properties(
 
     return (
         _shape,
+        _stride,
         _device,
         _dtype,
         _true_dtype,
@@ -1321,6 +1329,7 @@ class FutureTensorProxy(Proxy, TensorProxyInterface):
         *,
         like: TensorProxy | FutureTensorProxy | None = None,
         shape: ShapeLike | None = None,
+        stride: Sequence[int] | None = None,
         device: devices.Device | None = None,
         dtype: dtypes.dtype | None = None,
         prefix: None | str = None,
@@ -1332,6 +1341,7 @@ class FutureTensorProxy(Proxy, TensorProxyInterface):
         # NOTE FutureTensorProxies never require grad
         (
             self._shape,
+            self._stride,
             self._device,
             self._dtype,
             self._true_dtype,
@@ -1344,6 +1354,7 @@ class FutureTensorProxy(Proxy, TensorProxyInterface):
         ) = _infer_tensor_properties(
             like,
             shape,
+            stride,
             device,
             dtype,
             False,
@@ -1356,6 +1367,9 @@ class FutureTensorProxy(Proxy, TensorProxyInterface):
     @property
     def shape(self):
         return self._shape
+
+    def stride(self):
+        return self._stride
 
     @property
     def numel(self):
@@ -1445,6 +1459,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
         *,
         like: TensorProxy | FutureTensorProxy | None = None,
         shape: ShapeLike | None = None,
+        stride: Sequence[int] | None = None,
         device: devices.Device | None = None,
         dtype: dtypes.dtype | None = None,
         requires_grad: bool = False,
@@ -1459,6 +1474,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
 
         (
             self._shape,
+            self._stride,
             self._device,
             self._dtype,
             self._true_dtype,
@@ -1471,6 +1487,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
         ) = _infer_tensor_properties(
             like,
             shape,
+            stride,
             device,
             dtype,
             requires_grad,
@@ -1490,6 +1507,14 @@ class TensorProxy(Proxy, TensorProxyInterface):
             from thunder.core.prims import shape
 
             return shape(self)
+
+    def stride(self):
+        if not using_symbolic_values() or not is_tracing():
+            return self._stride
+        else:
+            from thunder.core.prims import stride
+
+            return stride(self)
 
     @property
     def ndim(self):
@@ -1543,6 +1568,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
         like = changes.get("like")
         (
             shape,
+            stride,
             device,
             dtype,
             true_dtype,
@@ -1555,6 +1581,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
         ) = _infer_tensor_properties(
             like,
             changes.get("shape", self._shape if like is None else None),
+            changes.get("stride", self._stride if like is None else None),
             changes.get("device", self._device if like is None else None),
             changes.get("dtype", self._dtype if like is None else None),
             changes.get("requires_grad", self._requires_grad if like is None else None),
@@ -2026,6 +2053,7 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
     return TensorProxy(
         name,
         shape=tuple(shape),
+        stride=tuple(t.stride()),
         device=device,
         dtype=dtype,
         requires_grad=t.requires_grad,
