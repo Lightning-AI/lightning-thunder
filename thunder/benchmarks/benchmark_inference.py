@@ -245,10 +245,6 @@ class InferenceBenchmark:
         if mesh:
             model = parallelize_module(model, mesh, tp_plan)
 
-            # Required as that doesn't understand inference mode
-            for p in model.parameters():
-                p.requires_grad_(False)
-
             # Sanity check
             if not self.config.disable_moe_replacement:
                 assert type(model.model.layers[1].feed_forward.shared_experts.gate_proj.weight) == DTensor
@@ -265,6 +261,13 @@ class InferenceBenchmark:
         # Materialize the model on the device (after Llama4MoE replacement and sharding)
         model.to_empty(device=DEVICE)
         assert all(p.device == DEVICE for p in model.parameters())
+
+        # Required as thunder doesn't understand inference mode
+        # And some prims like `prims._grouped_mm` don't have grad rule defined yet.
+        for p in model.parameters():
+            p.requires_grad_(False)
+
+        assert all(not p.requires_grad for p in model.parameters())
 
         # `thunderfx` seems to hide the access to vocab_size somewhere so
         # store it here before any compiler is applied.

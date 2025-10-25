@@ -78,13 +78,11 @@ class BaseRecipe(Recipe):
         self.fuser = fuser
         self.executor_names = []
 
-        if torch.cuda.is_available():
-            self.executor_names = ["cudnn", "sdpa"]
-            if self.fuser == "nvfuser":
-                self.executor_names.append("torchcompile_xentropy")
-        else:
-            print("GPU not found, nvFuser not available. Setting fusing executor to torch.compile")
-            self.fuser = "torch.compile"
+        if fuser is None:
+            if torch.cuda.is_available():
+                self.fuser = "nvfuser"
+            else:
+                self.fuser = "torch.compile"
 
         self.setup_fuser()
         self.show_progress = show_progress
