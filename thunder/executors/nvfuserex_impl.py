@@ -2492,7 +2492,6 @@ def shape(
 
 register_supported(PrimIDs.SHAPE, shape, _shape_check)
 
-
 # Registering SDPA operators for nvFuser
 # SDPA requires an execution and grad transform since the forward and backward passes are called through different implementations.
 # For both execution and grad transform, a new operator is registered with nvfuserex (ex.register_operator) and then added to the translation map (register_supported).
