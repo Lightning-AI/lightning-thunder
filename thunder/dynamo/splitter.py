@@ -1,16 +1,10 @@
 from __future__ import annotations
-from contextlib import contextmanager, nullcontext
 import operator
 from typing import TYPE_CHECKING
 import copy
 from functools import partial
-import warnings
-
-from looseversion import LooseVersion
 
 import torch
-from torch._guards import tracing, TracingContext
-from torch._subclasses.fake_tensor import DynamicOutputShapeException
 from torch.fx.passes.split_module import split_module
 
 from thunder.core import baseutils
@@ -20,6 +14,7 @@ from thunder.dynamo.utils import (
     CompilerType,
     SplitReason,
     SplitReasonType,
+    LazyInductorModule,
     is_node_supported_by_thunder,
     get_nodes_in_unsupported_ctx_regions,
     update_node_and_submodule,
@@ -33,58 +28,6 @@ from thunder.dynamo.utils import (
 if TYPE_CHECKING:
     from collections.abc import Callable
     from typing import Any
-
-
-# TODO: Remove this once we drop support for PyTorch 2.7.x
-# In PyTorch before 2.8.0, FXGraphCache assumes that it is run behind Dynamo
-# and tries to update metrics_context even when metrics_context is inactive.
-# See https://github.com/pytorch/pytorch/pull/150423
-if LooseVersion(torch.__version__) < LooseVersion("2.8.0"):
-
-    @contextmanager
-    def _patch_increment_toplevel():
-        from torch._dynamo.utils import CompileEventLogger
-
-        def fake_increment_toplevel(*args, **kwargs):
-            metrics_context = torch._dynamo.utils.get_metrics_context()
-            assert not metrics_context.in_progress()
-            return
-
-        original = CompileEventLogger.increment_toplevel
-        CompileEventLogger.increment_toplevel = fake_increment_toplevel
-        try:
-            yield
-        finally:
-            CompileEventLogger.increment_toplevel = original
-else:
-    _patch_increment_toplevel = nullcontext
-
-
-class LazyInductorModule(torch.nn.Module):
-    def __init__(self, graph_module, fake_mode):
-        super().__init__()
-        self.graph_module = graph_module
-        self.compiled_fn = None
-        self.fake_mode = fake_mode
-
-        # For ease of debugging, we add graph attribute so GraphModule.print_readable will print it
-        self.graph = graph_module.graph
-
-    def forward(self, *args):
-        if self.compiled_fn is None:
-            with _patch_increment_toplevel():
-                # Inductor needs fake_mode, particularly its shape_env, to handle SymInts
-                with tracing(TracingContext(fake_mode=self.fake_mode)):
-                    try:
-                        # Inductor needs fake_mode, particularly its shape_env, to handle SymInts
-                        self.compiled_fn = torch._inductor.compile(self.graph_module, args)
-                    except DynamicOutputShapeException as e:
-                        # This exception is meant to be handled by Dynamo, which is responsible for graph break
-                        # TODO: Use torch.compile for fallback. Ensure its correctness.
-                        warnings.warn(f"Dynamic output shape operator encountered: {e}. Falling back to eager.")
-                        self.compiled_fn = self.graph_module
-
-        return self.compiled_fn(*args)
 
 
 def _splitter(
