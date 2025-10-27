@@ -290,7 +290,7 @@ class InferenceBenchmark:
 
             if not hasattr(self, "_mask_transform"):
                 self._mask_transform = SDPAMaskTransform()
-            res["transforms"] = [self._mask_transform]
+            res["transforms"].append(self._mask_transform)
             res["executors"] = [self._mask_transform.get_executor(), *thunder.get_default_executors()]
         if self.config.enable_thunder_cudagraph:
             from thunder.transforms.cudagraph import CUDAGraphTransform
