@@ -149,6 +149,15 @@ class SubgraphInfo:
     split_reasons: list | None = None
 
 
+class _ThunderSplitGraphModule:
+    def __init__(self, split_graph_module, supported_partitions):
+        self.split_graph_module = split_graph_module
+        self.supported_indexes: set[int] = supported_partitions
+
+    def is_thunder_supported_partition(self, node: torch.fx.Node) -> bool:
+        return node.name.startswith("submod") and int(node.name.replace("submod_", "")) in self.supported_indexes
+
+
 class LazyInductorModule(torch.nn.Module):
     def __init__(self, graph_module, fake_mode):
         super().__init__()
