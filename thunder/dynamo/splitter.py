@@ -223,6 +223,8 @@ def _splitter(
             graph_module = getattr(split_gm, node.name)
 
             fake_mode = torch._guards.detect_fake_mode()
+            # Delay Inductor compilation until invocation with real tensors,
+            # because we do not know the strides of tensors that Thunder-compiled submodules return.
             jit_fn = LazyInductorModule(graph_module, fake_mode)
 
             # Update the node name from "submod_*" to "inductor_*" for more user-friendly names
