@@ -7,7 +7,7 @@ trigger:
 timeout: "30" # minutes
 machine: "L4"
 interruptible: False
-image: "pytorchlightning/lightning-thunder:ubuntu24.04-cuda12.6.3-cudnn-fe1.10.0-py3.10-pt_2.8.0-dev"
+image: "pytorchlightning/lightning-thunder:ubuntu24.04-cuda12.8.1-cudnn-fe1.15.0-py3.12-pt_2.8.0-dev"
 parametrize:
   matrix:
     test_file:
@@ -20,11 +20,12 @@ run: |
   pip list
   set -ex
 
+  pip install wheel
   # conda install -c conda-forge libstdcxx-ng
   # sudo apt install libstdc++6 libstdc++-*-dev
   pip install . -U -q -r requirements/test.txt
   # Need to explicitly point to cudnn.h as it is installed at a non-standard location
   # Ref: https://github.com/NVIDIA/TransformerEngine/issues/918#issuecomment-2187703769
-  CPLUS_INCLUDE_PATH="/usr/local/lib/python3.10/dist-packages/nvidia/cudnn/include/" pip install --no-build-isolation 'transformer_engine[pytorch]'
+  CPLUS_INCLUDE_PATH="/usr/local/lib/python3.12/dist-packages/nvidia/cudnn/include/" pip install --no-build-isolation 'transformer_engine[pytorch]'
   pip list # for debugging purposes
   pytest thunder/tests/${test_file} -v -rs
