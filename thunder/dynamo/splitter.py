@@ -1,10 +1,12 @@
 from __future__ import annotations
-import unittest.mock
+from contextlib import contextmanager, nullcontext
 import operator
 from typing import TYPE_CHECKING
 import copy
 from functools import partial
 import warnings
+
+from looseversion import LooseVersion
 
 import torch
 from torch._guards import tracing, TracingContext
@@ -33,6 +35,30 @@ if TYPE_CHECKING:
     from typing import Any
 
 
+# TODO: Remove this once we drop support for PyTorch 2.7.x
+# In PyTorch before 2.8.0, FXGraphCache assumes that it is run behind Dynamo
+# and tries to update metrics_context even when metrics_context is inactive.
+# See https://github.com/pytorch/pytorch/pull/150423
+if LooseVersion(torch.__version__) < LooseVersion("2.8.0"):
+    @contextmanager
+    def _patch_increment_toplevel():
+        from torch._dynamo.utils import CompileEventLogger
+
+        def fake_increment_toplevel(*args, **kwargs):
+            metrics_context = torch._dynamo.utils.get_metrics_context()
+            assert not metrics_context.in_progress()
+            return
+
+        original = CompileEventLogger.increment_toplevel
+        CompileEventLogger.increment_toplevel = fake_increment_toplevel
+        try:
+            yield
+        finally:
+            CompileEventLogger.increment_toplevel = original
+else:
+    _patch_increment_toplevel = nullcontext
+
+
 class LazyInductorModule(torch.nn.Module):
     def __init__(self, graph_module, fake_mode):
         super().__init__()
@@ -45,17 +71,7 @@ class LazyInductorModule(torch.nn.Module):
 
     def forward(self, *args):
         if self.compiled_fn is None:
-
-            def fake_increment_toplevel(*args, **kwargs):
-                # In PyTorch before 2.8.0, FXGraphCache assumes that it is run behind Dynamo and tries to update metrics_context.
-                # See https://github.com/pytorch/pytorch/pull/150423
-                metrics_context = torch._dynamo.utils.get_metrics_context()
-                assert not metrics_context.in_progress()
-                return
-
-            with unittest.mock.patch.object(
-                torch._dynamo.utils.CompileEventLogger, "increment_toplevel", fake_increment_toplevel
-            ):
+            with _patch_increment_toplevel():
                 # Inductor needs fake_mode, particularly its shape_env, to handle SymInts
                 with tracing(TracingContext(fake_mode=self.fake_mode)):
                     try:
