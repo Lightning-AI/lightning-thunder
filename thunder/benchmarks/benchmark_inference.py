@@ -49,6 +49,7 @@ from thunder.benchmarks.layers_for_inference_benchmark import (
 )
 from thunder.torch.custom_op import _register_custom_op
 from thunder.tests.distributed.test_moe import GroupedLinearColwiseParallel, GroupedLinearRowwiseParallel
+from thunder.transforms.cudagraph import CUDAGraphTransform
 
 if TYPE_CHECKING:
     from typing import Any
@@ -293,8 +294,6 @@ class InferenceBenchmark:
             res["transforms"] = [self._mask_transform]
             res["executors"] = [self._mask_transform.get_executor(), *thunder.get_default_executors()]
         if self.config.enable_thunder_cudagraph:
-            from thunder.transforms.cudagraph import CUDAGraphTransform
-
             res["transforms"].append(CUDAGraphTransform())
         return res
 
