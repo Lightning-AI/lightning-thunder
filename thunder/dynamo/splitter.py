@@ -40,6 +40,7 @@ if TYPE_CHECKING:
 # and tries to update metrics_context even when metrics_context is inactive.
 # See https://github.com/pytorch/pytorch/pull/150423
 if LooseVersion(torch.__version__) < LooseVersion("2.8.0"):
+
     @contextmanager
     def _patch_increment_toplevel():
         from torch._dynamo.utils import CompileEventLogger
