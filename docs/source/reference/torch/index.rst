@@ -14,6 +14,7 @@ A PyTorch dialect in thunder.
     size
     to_float
     _register_custom_op
+    _register_nvfuser_translator
 
 Under Construction
 
