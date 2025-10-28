@@ -285,7 +285,8 @@ class InferenceBenchmark:
         # ref: https://github.com/NVIDIA/Fuser/issues/4507
         res = {"transforms": []}
         if self.config.enable_nv_linear:
-            res = {"nv_enable_linear": True, "nv_enable_matmul": True}
+            res["nv_enable_linear"] = True
+            res["nv_enable_matmul"] = True
         if self.config.mode == "thunderjit":
             from thunder.recipes.hf_transformers import SDPAMaskTransform
 
@@ -295,6 +296,7 @@ class InferenceBenchmark:
             res["executors"] = [self._mask_transform.get_executor(), *thunder.get_default_executors()]
         if self.config.enable_thunder_cudagraph:
             res["transforms"].append(CUDAGraphTransform())
+
         return res
 
     def _compile_model(self, model):
