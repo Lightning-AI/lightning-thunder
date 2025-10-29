@@ -4,6 +4,7 @@ import pytest
 import thunder
 import transformers
 import torch
+import warnings
 
 from transformers.models.qwen2 import Qwen2Config, Qwen2ForCausalLM
 from transformers.models.llama import LlamaConfig, LlamaForCausalLM
@@ -30,7 +31,9 @@ def test_default_recipe_basic_bert():
     thunder_bert = thunder.compile(bert)
 
     actual = thunder_bert(inp)
-    expected = bert(inp)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=FutureWarning, message=".*encoder_attention_mask.*")
+        expected = bert(inp)
 
     assert_close(actual, expected)
 
@@ -44,7 +47,9 @@ def test_recipe_basic_bert():
 
     inp = torch.randint(1, 20, (1, 32))
 
-    expected = bert(inp)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=FutureWarning, message=".*encoder_attention_mask.*")
+        expected = bert(inp)
 
     thunder_bert = thunder.compile(bert, recipe="hf-transformers")
 
@@ -57,7 +62,9 @@ def test_recipe_basic_bert():
     thunder_bert = thunder.compile(bert, recipe=HFTransformers())
 
     actual = thunder_bert(inp)
-    expected = bert(inp)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=FutureWarning, message=".*encoder_attention_mask.*")
+        expected = bert(inp)
 
     assert_close(actual, expected)
 
@@ -78,8 +85,10 @@ def test_recipe_basic_bert_fx():
 
     thunder_bert = thunder.compile(bert, recipe=HFTransformers(interpreter="thunder.fx"))
 
-    actual = thunder_bert(inp)
-    expected = bert(inp)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=FutureWarning, message=".*encoder_attention_mask.*")
+        actual = thunder_bert(inp)
+        expected = bert(inp)
 
     assert_close(actual, expected)
 
