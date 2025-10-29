@@ -208,6 +208,12 @@ def ddp(
 ) -> torch.nn.Module:
     """Thunder's Distributed Data Parallel.
 
+    DEPRECATED: Use thunder.jit(model, transforms=[DDPTransform(...)]) instead.
+
+    This function is deprecated and will be removed in a future release.
+    Please use the transforms argument to thunder.jit directly:
+        model = thunder.jit(model, transforms=[DDPTransform(...)])
+
     This function does two things. One is to broadcast the parameters hosted on the rank specified
     by ``broadcast_from`` to all the other ranks belonging to default process_group. The other is to
     update the behavior of backward trace generation and optimization of it so that each gradient
@@ -298,6 +304,14 @@ def ddp(
             main()
 
     """
+    import warnings
+
+    warnings.warn(
+        "ddp() is deprecated and will be removed in a future release. "
+        "Use thunder.jit(..., transforms=[DDPTransform(...)]) instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
 
     utils.check(
         tdist.is_available(),
@@ -317,6 +331,8 @@ def ddp(
     transform_from_trace_to_ddp_trace = DDPTransform(
         process_group=process_group, bucket_size_in_mb=bucket_size_in_mb, broadcast_from=broadcast_from
     )
+    from thunder import jit
+
     model_new = add_transform(model, transform=transform_from_trace_to_ddp_trace)
     return model_new
 
@@ -390,6 +406,12 @@ def fsdp(
 ) -> torch.nn.Module | ThunderModule:
     """Convert ``model`` into Fully Sharded Data Parallel.
 
+    DEPRECATED: Use thunder.jit(model, transforms=[FSDPTransform(...)]) instead.
+
+    This function is deprecated and will be removed in a future release.
+    Please use the transforms argument to thunder.jit directly:
+        model = thunder.jit(model, transforms=[FSDPTransform(...)])
+
     This splits ``model``'s parameters in their first dimension into ``world_size`` chunks
     then has rank-``i`` host ``i``-th chunks of them.
     This means the implementation is different from :class:`torch.distributed.fsdp.FullyShardedDataParallel`
@@ -423,6 +445,15 @@ def fsdp(
         :class:`torch.nn.Module`
 
     """
+    import warnings
+
+    warnings.warn(
+        "fsdp() is deprecated and will be removed in a future release. "
+        "Use thunder.jit(..., transforms=[FSDPTransform(...)]) instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+
     from thunder.core.module import ThunderModule
 
     utils.check(isinstance(sharding_strategy, FSDPType), lambda: "FSDPType.ZERO2 and FSDPType.ZERO3 are supported.")
