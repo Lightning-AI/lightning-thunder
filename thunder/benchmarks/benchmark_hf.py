@@ -5,16 +5,9 @@ import transformers
 
 import thunder
 from thunder.dev_utils.benchmark import benchmark_n
-from thunder.recipes.base import BaseRecipe
+from thunder.recipes.hf_transformers import HFTransformers
 
 from torch.profiler import profile, record_function, ProfilerActivity
-
-
-class DebugRecipe(BaseRecipe):
-    def setup_config(self):
-        config = super().setup_config()
-        return config
-
 
 device = "cuda"
 model_name = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
@@ -28,8 +21,8 @@ plugins = None  # or "reduce-overhead"
 plugins_str = "" if plugins is None else plugins if isinstance(plugins, str) else "-".join(plugins)
 
 # Define recipes
-nvfuser_recipe = DebugRecipe()
-torchcompile_recipe = DebugRecipe(fuser="torch.compile")
+nvfuser_recipe = HFTransformers()
+torchcompile_recipe = HFTransformers(fuser="torch.compile")
 recipes = [nvfuser_recipe, torchcompile_recipe]
 
 
@@ -67,6 +60,8 @@ def run_and_profile(tag: str, fn, model, inp, compiled_models: dict[str, torch.n
 
             with open(profile_path, "w") as f:
                 f.write(thunder_prof.key_averages().table(sort_by="cpu_time_total"))
+
+        print(timings)
 
     with open(root / f"{tag}_timings_{plugins_str}.txt", "w") as f:
         f.write("\n".join(timings))
