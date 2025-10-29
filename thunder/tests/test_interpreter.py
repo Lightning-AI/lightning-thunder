@@ -620,7 +620,7 @@ def test_bare_except(jit):
         try:
             assert is_jitting_with_raise() == jitting
             raise ValueError(msg)
-        except:
+        except Exception:
             assert is_jitting_with_raise() == jitting
             return True
 
@@ -839,7 +839,7 @@ def test_uncaught_exception_no_leak():
 
         try:
             model(x)
-        except:
+        except Exception:
             pass
         return weakref.ref(x)
 
