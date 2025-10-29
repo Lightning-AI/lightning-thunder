@@ -1,7 +1,7 @@
 import os
 import sys
 from datetime import datetime, timezone
-from typing import Optional, List, Dict, Any
+from typing import Any
 from dataclasses import dataclass, asdict
 import json
 import httpx
@@ -44,9 +44,9 @@ class RiskScore:
 class StalenessInfo:
     days_open: int
     days_since_update: int
-    is_mergeable: Optional[bool]
+    is_mergeable: bool | None
     has_conflicts: bool
-    commits_behind_base: Optional[int]
+    commits_behind_base: int | None
 
 
 @dataclass
@@ -65,7 +65,7 @@ class PRAnalysis:
     created_at: str  # change to datetime?
     updated_at: str  # change to datetime?
     url: str
-    labels: List[str]
+    labels: list[str]
     summary: str
     risk_score: RiskScore
     priority_score: int
@@ -79,21 +79,21 @@ class PRAnalysis:
 
 
 # Define the github helpers
-def get_pr_data(pr_number: int) -> Dict[str, Any]:
+def get_pr_data(pr_number: int) -> dict[str, Any]:
     """Fetch the  main data from the PR"""
     response = github_client.get(f"/repos/{REPO_OWNER}/{REPO_NAME}/pulls/{pr_number}")
     response.raise_for_status()
     return response.json()
 
 
-def get_pr_reviews(pr_number: int) -> List[Dict[str, Any]]:
+def get_pr_reviews(pr_number: int) -> list[dict[str, Any]]:
     """Fetch the PR review states"""
     response = github_client.get(f"/repos/{REPO_OWNER}/{REPO_NAME}/pulls/{pr_number}/reviews")
     response.raise_for_status()
     return response.json()
 
 
-def get_pr_files(pr_number: int) -> List[Dict[str, Any]]:
+def get_pr_files(pr_number: int) -> list[dict[str, Any]]:
     """Fetch the PR files
     TODO this dpeends on pagination
     """
@@ -102,7 +102,7 @@ def get_pr_files(pr_number: int) -> List[Dict[str, Any]]:
     return response.json()
 
 
-def get_pr_comments(pr_number: int) -> List[Dict[str, Any]]:
+def get_pr_comments(pr_number: int) -> list[dict[str, Any]]:
     """Fetch PR comments"""
     response = github_client.get(f"/repos/{REPO_OWNER}/{REPO_NAME}/pulls/{pr_number}/comments")
     response.raise_for_status()
@@ -119,7 +119,7 @@ def get_pr_diff(pr_number: int) -> str:
     return response.text
 
 
-def get_open_prs(state="open", sort="created", direction="desc") -> List[Dict[str, Any]]:
+def get_open_prs(state="open", sort="created", direction="desc") -> list[dict[str, Any]]:
     """Fetch all the open PRs"""
     prs = []
     page = 1
@@ -135,7 +135,7 @@ def get_open_prs(state="open", sort="created", direction="desc") -> List[Dict[st
     return prs
 
 
-def compare_branches(base: str, head: str) -> Dict[str, Any]:
+def compare_branches(base: str, head: str) -> dict[str, Any]:
     response = github_client.get(f"/repos/{REPO_OWNER}/{REPO_NAME}/compare/{base}...{head}")
     response.raise_for_status()
     return response.json()
@@ -158,10 +158,10 @@ def dataclass_to_dict(obj: Any) -> Any:
 
 # Heuristic Analysis Engine
 def assess_risk(
-    pr: Dict[str, Any],
-    files: List[Dict[str, Any]],
-    comments: List[Dict[str, Any]],
-    reviews: List[Dict[str, Any]],
+    pr: dict[str, Any],
+    files: list[dict[str, Any]],
+    comments: list[dict[str, Any]],
+    reviews: list[dict[str, Any]],
     staleness: StalenessInfo,
 ) -> RiskScore:
     """Assess multi-dimensional risk for a PR."""
@@ -281,7 +281,7 @@ def _generate_urgency_reasoning(score: int, has_keywords: bool, days_open: int, 
 
 
 def generate_summary_heuristic(
-    pr: Dict[str, Any], files: List[Dict[str, Any]], comments: List[Dict[str, Any]], reviews: List[Dict[str, Any]]
+    pr: dict[str, Any], files: list[dict[str, Any]], comments: list[dict[str, Any]], reviews: list[dict[str, Any]]
 ) -> str:
     """Generate a human-readable summary of the PR based on heuristics."""
     # (This is your original generate_summary function)
@@ -301,7 +301,7 @@ def generate_summary_heuristic(
 
 
 def calculate_priority(
-    pr: Dict[str, Any], risk: RiskScore, staleness: StalenessInfo, review_status: ReviewStatus
+    pr: dict[str, Any], risk: RiskScore, staleness: StalenessInfo, review_status: ReviewStatus
 ) -> int:
     """Calculate priority score (0-100) based on multiple factors."""
     # (This is your original priority function)
@@ -347,7 +347,7 @@ def _cursor_llm_call_stub(prompt: str, pr_number: int) -> str:
     """
 
 
-def run_llm_analysis(pr_number: int, pr_title: str, pr_body: Optional[str], diff: str) -> Dict[str, str]:
+def run_llm_analysis(pr_number: int, pr_title: str, pr_body: str | None, diff: str) -> dict[str, str]:
     """Here we are running an analysis with the LLM"""
     body = pr_body or "No description provided."
 
@@ -485,7 +485,7 @@ def analyze_pr(pr_number: int) -> PRAnalysis:
 
 # FULL MCP!
 @mcp.tool()
-def list_open_prs(labels: Optional[List[str]] = None, limit: int = 50) -> str:
+def list_open_prs(labels: list[str] | None = None, limit: int = 50) -> str:
     """
     List all open PRs with basic information. (Heuristic only)
 
@@ -544,7 +544,7 @@ def analyze_single_pr(pr_number: int) -> str:
 
 
 @mcp.tool()
-def prioritize_prs(min_priority: int = 0, labels: Optional[List[str]] = None) -> str:
+def prioritize_prs(min_priority: int = 0, labels: list[str] | None = None) -> str:
     """
     Get a prioritized list of all open PRs based on *heuristic* scores.
     This is a "cheap" and "fast" analysis.
@@ -590,7 +590,7 @@ def prioritize_prs(min_priority: int = 0, labels: Optional[List[str]] = None) ->
 
 # LLM prompts
 @mcp.tool()
-def generate_llm_priority_prompt(pr_numbers: List[int]) -> str:
+def generate_llm_priority_prompt(pr_numbers: list[int]) -> str:
     """
     Analyzes a specific list of PRs and generates a single "master prompt"
     for you to paste into Cursor. This prompt will ask the LLM to provide
@@ -659,7 +659,7 @@ def generate_llm_priority_prompt(pr_numbers: List[int]) -> str:
 
 @mcp.tool()
 def llm_batch_analysis(
-    min_priority: int = 0, labels: Optional[List[str]] = None, limit: int = 20, include_diff: bool = False
+    min_priority: int = 0, labels: list[str] | None = None, limit: int = 20, include_diff: bool = False
 ) -> str:
     """
     Analyze ALL open PRs with heuristics, then generate a single
@@ -807,7 +807,7 @@ def llm_batch_analysis(
     )
 
 
-def _build_batch_analysis_prompt(analyses: List[Dict[str, Any]], include_diff: bool) -> str:
+def _build_batch_analysis_prompt(analyses: list[dict[str, Any]], include_diff: bool) -> str:
     """Build a comprehensive prompt for LLM batch analysis."""
 
     analyses_sorted = sorted(analyses, key=lambda x: x["heuristic_priority"], reverse=True)
@@ -831,35 +831,35 @@ For each PR, I'm providing:
     # append all the needed PRs we want to analyse
     for i, pr in enumerate(analyses_sorted, 1):
         prompt += f"""
-        ### PR #{pr['number']}: {pr['title']}
-        **Author:** @{pr['author']}
-        **URL:** {pr['url']}
-        **Labels:** {', '.join(pr['labels']) if pr['labels'] else 'None'}
+        ### PR #{pr["number"]}: {pr["title"]}
+        **Author:** @{pr["author"]}
+        **URL:** {pr["url"]}
+        **Labels:** {", ".join(pr["labels"]) if pr["labels"] else "None"}
 
         **Description:**
-        {pr['body_summary']}
+        {pr["body_summary"]}
 
         **Metrics:**
-        - Created: {pr['created_at'][:10]} ({pr['staleness']['days_open']} days ago)
-        - Last Updated: {pr['updated_at'][:10]} ({pr['staleness']['days_since_update']} days ago)
-        - Changes: {pr['files_changed']} files (+{pr['additions']}/-{pr['deletions']} lines)
-        - Reviews: {pr['review_status']['approved']} approved, {pr['review_status']['changes_requested']} changes requested
-        - Comments: {pr['activity']['total_comments']}
-        - Merge Status: {'✅ No conflicts' if pr['staleness']['is_mergeable'] else '⚠️ Has conflicts' if pr['staleness']['has_conflicts'] else '❓ Unknown'}
+        - Created: {pr["created_at"][:10]} ({pr["staleness"]["days_open"]} days ago)
+        - Last Updated: {pr["updated_at"][:10]} ({pr["staleness"]["days_since_update"]} days ago)
+        - Changes: {pr["files_changed"]} files (+{pr["additions"]}/-{pr["deletions"]} lines)
+        - Reviews: {pr["review_status"]["approved"]} approved, {pr["review_status"]["changes_requested"]} changes requested
+        - Comments: {pr["activity"]["total_comments"]}
+        - Merge Status: {"✅ No conflicts" if pr["staleness"]["is_mergeable"] else "⚠️ Has conflicts" if pr["staleness"]["has_conflicts"] else "❓ Unknown"}
 
         **Heuristic Analysis:**
-        - Priority Score: {pr['heuristic_priority']}/100
+        - Priority Score: {pr["heuristic_priority"]}/100
         - Risk Scores:
-        - Overall: {pr['risk']['overall']}/10
-        - Breaking Changes: {pr['risk']['breaking_changes']}/10 - {pr['risk']['reasoning']['breaking']}
-        - Security: {pr['risk']['security']}/10 - {pr['risk']['reasoning']['security']}
-        - Urgency: {pr['risk']['urgency']}/10 - {pr['risk']['reasoning']['urgency']}
+        - Overall: {pr["risk"]["overall"]}/10
+        - Breaking Changes: {pr["risk"]["breaking_changes"]}/10 - {pr["risk"]["reasoning"]["breaking"]}
+        - Security: {pr["risk"]["security"]}/10 - {pr["risk"]["reasoning"]["security"]}
+        - Urgency: {pr["risk"]["urgency"]}/10 - {pr["risk"]["reasoning"]["urgency"]}
 
 """
         if include_diff and "diff_preview" in pr:
             prompt += f"""**Code Diff Preview:**
         ```diff
-        {pr['diff_preview']}
+        {pr["diff_preview"]}
         ```
         """
 
@@ -874,8 +874,8 @@ Please provide a comprehensive analysis with the following:
     - Strategic importance to the project
     Format:
     ```
-    PR #{pr['number']}: {pr['title']}
-    Priority Score: {pr['heuristic_priority']}/100
+    PR #{pr["number"]}: {pr["title"]}
+    Priority Score: {pr["heuristic_priority"]}/100
     Max two sentences for the reasoning to explain the choices.
     ```
     """
