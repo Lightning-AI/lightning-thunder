@@ -49,6 +49,7 @@ from thunder.benchmarks.layers_for_inference_benchmark import (
 )
 from thunder.torch.custom_op import _register_custom_op
 from thunder.tests.distributed.test_moe import GroupedLinearColwiseParallel, GroupedLinearRowwiseParallel
+from thunder.transforms.cudagraph import CUDAGraphTransform
 
 if TYPE_CHECKING:
     from typing import Any
@@ -285,7 +286,8 @@ class InferenceBenchmark:
         # ref: https://github.com/NVIDIA/Fuser/issues/4507
         res = {"transforms": []}
         if self.config.enable_nv_linear:
-            res = {"nv_enable_linear": True, "nv_enable_matmul": True}
+            res["nv_enable_linear"] = True
+            res["nv_enable_matmul"] = True
         if self.config.mode == "thunderjit":
             from thunder.recipes.hf_transformers import SDPAMaskTransform
 
@@ -294,9 +296,8 @@ class InferenceBenchmark:
             res["transforms"].append(self._mask_transform)
             res["executors"] = [self._mask_transform.get_executor(), *thunder.get_default_executors()]
         if self.config.enable_thunder_cudagraph:
-            from thunder.transforms.cudagraph import CUDAGraphTransform
-
             res["transforms"].append(CUDAGraphTransform())
+
         return res
 
     def _compile_model(self, model):
