@@ -1,7 +1,7 @@
 from numbers import Number
 from collections.abc import Callable
 
-from thunder.core.langctx import langctx, Languages
+from thunder.core.langctxs import langctx, Languages
 from thunder.numpy.langctx import register_method
 
 from thunder.core.proxies import TensorProxy
