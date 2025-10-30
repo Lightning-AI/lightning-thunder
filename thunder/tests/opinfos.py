@@ -7271,6 +7271,467 @@ if LooseVersion(torch.__version__) >= "2.8":
     linear_algebra_ops.append(_grouped_mm_opinfo)
 
 
+def _quantize_to_fp8_e4m3fn(tensor: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Quantize bfloat16 tensor to fp8_e4m3fn format.
+
+    Reference: https://github.com/pytorch/pytorch/blob/b4403bfc62ca97eec554cdf815baab1fe93057d9/test/test_scaled_matmul_cuda.py
+    This function follows the quantization pattern used in PyTorch's scaled matmul tests.
+
+    Returns:
+        (quantized_tensor, scale): quantized tensor and scale factor
+    """
+    amax = tensor.abs().max().to(torch.float32)
+    fp8_max = torch.finfo(torch.float8_e4m3fn).max
+    scale = fp8_max / torch.clamp(amax, min=torch.finfo(torch.float32).tiny)
+    quantized = (tensor * scale).clamp(min=-fp8_max, max=fp8_max).to(torch.float8_e4m3fn)
+    return quantized, scale.to(torch.bfloat16)
+
+
+def _quantize_to_fp8_e5m2(tensor: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Quantize bfloat16 tensor to fp8_e5m2 format.
+
+    Reference: https://github.com/pytorch/pytorch/blob/b4403bfc62ca97eec554cdf815baab1fe93057d9/test/test_scaled_matmul_cuda.py
+    This function follows the quantization pattern used in PyTorch's scaled matmul tests.
+
+    Returns:
+        (quantized_tensor, scale): quantized tensor and scale factor
+    """
+    amax = tensor.abs().max().to(torch.float32)
+    fp8_max = torch.finfo(torch.float8_e5m2).max
+    scale = fp8_max / torch.clamp(amax, min=torch.finfo(torch.float32).tiny)
+    quantized = (tensor * scale).clamp(min=-fp8_max, max=fp8_max).to(torch.float8_e5m2)
+    return quantized, scale.to(torch.bfloat16)
+
+
+def _quantize_to_nvfp4(tensor: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Quantize bfloat16 tensor to nvfp4 (float4_e2m1fn_x2) format.
+
+    Reference: https://github.com/pytorch/pytorch/blob/b4403bfc62ca97eec554cdf815baab1fe93057d9/test/test_scaled_matmul_cuda.py
+    Uses block-wise quantization similar to pytorch_nvfp4_quantize.
+    Requires last dimension to be divisible by 16.
+
+    Returns:
+        (quantized_tensor, block_scales, global_scale): quantized tensor, block scales (fp8_e4m3fn), and global scale
+    """
+    BLOCK_SIZE = 16
+    FLOAT4_E2M1_MAX = 6.0
+    FLOAT8_E4M3_EPS = torch.finfo(torch.float8_e4m3fn).tiny
+    FLOAT8_E4M3_MAX = torch.finfo(torch.float8_e4m3fn).max
+
+    assert tensor.size(-1) % BLOCK_SIZE == 0, f"Last dimension must be divisible by {BLOCK_SIZE}"
+    assert tensor.is_contiguous(), "Tensor must be contiguous"
+
+    original_shape = tensor.shape
+    tensor_fp32 = tensor.float().reshape(original_shape[0], -1, BLOCK_SIZE)
+
+    # Find absolute maximum along blockwise dimension
+    max_abs = torch.amax(torch.abs(tensor_fp32), dim=-1)
+    block_scale_fp32 = (max_abs / FLOAT4_E2M1_MAX).float()
+
+    # Compute global scale
+    global_scale = (FLOAT8_E4M3_MAX * FLOAT4_E2M1_MAX) / tensor_fp32.abs().amax()
+
+    scaled_block_scale_fp32 = block_scale_fp32 * global_scale
+    scaled_block_scale_fp8 = torch.clamp(
+        scaled_block_scale_fp32,
+        min=FLOAT8_E4M3_EPS,
+        max=FLOAT8_E4M3_MAX,
+    ).to(torch.float8_e4m3fn)
+    scaled_block_scale_fp8_fp32 = scaled_block_scale_fp8.to(torch.float)
+    total_scale = scaled_block_scale_fp8_fp32 / global_scale
+    tensor_scaled = tensor_fp32 / total_scale.unsqueeze(-1)
+    tensor_scaled = torch.clamp(tensor_scaled, -FLOAT4_E2M1_MAX, FLOAT4_E2M1_MAX)
+    tensor_scaled = tensor_scaled.view(original_shape)
+
+    # Convert to fp4 format
+    from torch.testing._internal.common_quantized import _f32_to_floatx_unpacked
+
+    # Convert to uint4 and pack
+    tensor_uint4 = _f32_to_floatx_unpacked(tensor_scaled.flatten().float(), ebits=2, mbits=1)
+    # Pack uint4 values (2 uint4 values per uint8)
+    assert tensor_uint4.shape[-1] % 2 == 0
+    tensor_uint4 = tensor_uint4.contiguous().view(-1)
+    packed = (tensor_uint4[::2] << 4) | tensor_uint4[1::2]
+    # Reshape packed tensor - last dimension is halved
+    if len(original_shape) == 2:
+        packed = packed.view(original_shape[0], original_shape[1] // 2)
+    else:
+        # For 3D, flatten first two dims, then reshape
+        packed = packed.view(-1, original_shape[-1] // 2)
+    quantized = packed.view(torch.float4_e2m1fn_x2)
+
+    # Return block scales as-is (shape: [num_blocks])
+    block_scales = scaled_block_scale_fp8
+
+    return quantized, block_scales, global_scale.to(torch.bfloat16)
+
+
+def scaled_grouped_mm_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    """Sample generator for scaled_grouped_mm based on PyTorch test patterns.
+
+    Reference: https://github.com/pytorch/pytorch/blob/b4403bfc62ca97eec554cdf815baab1fe93057d9/test/test_scaled_matmul_cuda.py
+    This generator follows the test patterns from PyTorch's scaled_matmul_cuda test file,
+    particularly for quantizing bfloat16 tensors to fp8/nvfp4 formats.
+
+    Tests various shape combinations, scale tensor shapes, and optional parameters.
+    For fp8 and nvfp4 dtypes, creates bfloat16 tensors and quantizes them.
+    """
+    # Always create bfloat16 tensors first, then quantize if needed
+    make_bf16 = partial(make_tensor, device=device, dtype=torch.bfloat16, requires_grad=False)
+
+    # Set appropriate value ranges for bfloat16 tensors
+    input_low, input_high = -1.0, 1.0
+    scale_low, scale_high = 0.1, 1.0
+    bias_low, bias_high = -0.1, 0.1
+    comp = TorchTensorComp(atol=1e-1, rtol=1e-1)
+
+    # Test case 1: [M, K] @ [G, K, N] with offsets
+    # This is the most common case for grouped attention
+    M, K, N, G = 16, 32, 64, 2
+
+    # Create bfloat16 tensors
+    a_bf16 = make_bf16((M, K), low=input_low, high=input_high)
+    b_bf16 = make_bf16((G, K, N), low=input_low, high=input_high)
+
+    # Quantize if needed
+    if dtype == datatypes.float8_e4m3fn:
+        a, scale_a_q = _quantize_to_fp8_e4m3fn(a_bf16)
+        # Quantize each group of b separately
+        b_quantized = []
+        scale_b_q_list = []
+        for g in range(G):
+            b_g, scale_b_g = _quantize_to_fp8_e4m3fn(b_bf16[g])
+            b_quantized.append(b_g)
+            scale_b_q_list.append(scale_b_g)
+        b = torch.stack(b_quantized)
+        scale_a_1d = torch.stack([scale_a_q] * G).to(torch.bfloat16)
+        scale_b_1d = torch.stack(scale_b_q_list).to(torch.bfloat16)
+    elif dtype == datatypes.float8_e5m2:
+        a, scale_a_q = _quantize_to_fp8_e5m2(a_bf16)
+        b_quantized = []
+        scale_b_q_list = []
+        for g in range(G):
+            b_g, scale_b_g = _quantize_to_fp8_e5m2(b_bf16[g])
+            b_quantized.append(b_g)
+            scale_b_q_list.append(scale_b_g)
+        b = torch.stack(b_quantized)
+        scale_a_1d = torch.stack([scale_a_q] * G).to(torch.bfloat16)
+        scale_b_1d = torch.stack(scale_b_q_list).to(torch.bfloat16)
+    elif dtype == datatypes.float4_e2m1fn_x2:
+        # nvfp4 requires K and N to be divisible by 16
+        assert K % 16 == 0 and N % 16 == 0, "For nvfp4, K and N must be divisible by 16"
+        a, scale_a_block, scale_a_global = _quantize_to_nvfp4(a_bf16)
+        # For grouped b, quantize each group
+        b_quantized = []
+        scale_b_block_list = []
+        scale_b_global_list = []
+        for g in range(G):
+            b_g, scale_b_g_block, scale_b_g_global = _quantize_to_nvfp4(b_bf16[g])
+            b_quantized.append(b_g)
+            scale_b_block_list.append(scale_b_g_block)
+            scale_b_global_list.append(scale_b_g_global)
+        b = torch.stack(b_quantized)
+        # For nvfp4, scale_a and scale_b are the block scales reshaped appropriately
+        # For simplicity, use global scales as 1D scale tensors
+        scale_a_1d = torch.stack([scale_a_global] * G).to(torch.bfloat16)
+        scale_b_1d = torch.stack(scale_b_global_list).to(torch.bfloat16)
+    else:
+        # bfloat16: use tensors directly
+        a = a_bf16
+        b = b_bf16
+        scale_a_1d = make_bf16((G,), low=scale_low, high=scale_high)
+        scale_b_1d = make_bf16((G,), low=scale_low, high=scale_high)
+
+    # Test with scalar scale tensors (use mean of 1D scales for quantization dtypes)
+    if dtype in (datatypes.float8_e4m3fn, datatypes.float8_e5m2, datatypes.float4_e2m1fn_x2):
+        scale_a_scalar = scale_a_1d.mean().unsqueeze(0)
+        scale_b_scalar = scale_b_1d.mean().unsqueeze(0)
+    else:
+        scale_a_scalar = make_bf16((), low=scale_low, high=scale_high)
+        scale_b_scalar = make_bf16((), low=scale_low, high=scale_high)
+
+    # Offsets must be multiples of 16 for torch._grouped_mm
+    for offsets in [[0, 16], [16, 16], [0, 32]]:
+        c = torch.tensor(offsets, device=device, dtype=torch.int32)
+
+        # Basic case with 1D scales
+        si = SampleInput(a, b, scale_a_1d, scale_b_1d, offsets=c)
+        si.set_comparator(comp)
+        yield si
+
+        # With scalar scales
+        si = SampleInput(a, b, scale_a_scalar, scale_b_scalar, offsets=c)
+        si.set_comparator(comp)
+        yield si
+
+        # With scale_result (1D)
+        scale_result_1d = make_bf16((G,), low=scale_low, high=scale_high)
+        si = SampleInput(a, b, scale_a_1d, scale_b_1d, offsets=c, scale_result=scale_result_1d)
+        si.set_comparator(comp)
+        yield si
+
+        # With scale_result (scalar)
+        scale_result_scalar = make_bf16((), low=scale_low, high=scale_high)
+        si = SampleInput(a, b, scale_a_1d, scale_b_1d, offsets=c, scale_result=scale_result_scalar)
+        si.set_comparator(comp)
+        yield si
+
+        # With bias
+        bias = make_bf16((N,), low=bias_low, high=bias_high)
+        si = SampleInput(a, b, scale_a_1d, scale_b_1d, offsets=c, bias=bias)
+        si.set_comparator(comp)
+        yield si
+
+        # With all optional parameters
+        torch_dtype = to_torch_dtype(dtype)
+        si = SampleInput(
+            a, b, scale_a_1d, scale_b_1d, offsets=c, bias=bias, scale_result=scale_result_1d, out_dtype=torch_dtype
+        )
+        si.set_comparator(comp)
+        yield si
+
+    # Test case 2: [G, M, K] @ [K, N] with offsets
+    a_3d_bf16 = make_bf16((G, M, K), low=input_low, high=input_high)
+    b_2d_bf16 = make_bf16((K, N), low=input_low, high=input_high)
+
+    if dtype == datatypes.float8_e4m3fn:
+        a_3d_quantized = []
+        for g in range(G):
+            a_g, _ = _quantize_to_fp8_e4m3fn(a_3d_bf16[g])
+            a_3d_quantized.append(a_g)
+        a_3d = torch.stack(a_3d_quantized)
+        b_2d, scale_b_2d = _quantize_to_fp8_e4m3fn(b_2d_bf16)
+        scale_b_2d_scalar = scale_b_2d.unsqueeze(0)
+    elif dtype == datatypes.float8_e5m2:
+        a_3d_quantized = []
+        for g in range(G):
+            a_g, _ = _quantize_to_fp8_e5m2(a_3d_bf16[g])
+            a_3d_quantized.append(a_g)
+        a_3d = torch.stack(a_3d_quantized)
+        b_2d, scale_b_2d = _quantize_to_fp8_e5m2(b_2d_bf16)
+        scale_b_2d_scalar = scale_b_2d.unsqueeze(0)
+    elif dtype == datatypes.float4_e2m1fn_x2:
+        assert K % 16 == 0 and N % 16 == 0, "For nvfp4, K and N must be divisible by 16"
+        a_3d_quantized = []
+        for g in range(G):
+            a_g, _, _ = _quantize_to_nvfp4(a_3d_bf16[g])
+            a_3d_quantized.append(a_g)
+        a_3d = torch.stack(a_3d_quantized)
+        b_2d, _, scale_b_2d = _quantize_to_nvfp4(b_2d_bf16)
+        scale_b_2d_scalar = scale_b_2d.unsqueeze(0)
+    else:
+        a_3d = a_3d_bf16
+        b_2d = b_2d_bf16
+        scale_b_2d_scalar = scale_b_scalar
+
+    c = torch.tensor([0, 16], device=device, dtype=torch.int32)
+    si = SampleInput(a_3d, b_2d, scale_a_1d, scale_b_2d_scalar, offsets=c)
+    si.set_comparator(comp)
+    yield si
+
+    # Test case 3: [M, K] @ [K, N] without offsets (simpler case)
+    a_2d_bf16 = make_bf16((M, K), low=input_low, high=input_high)
+    b_2d_simple_bf16 = make_bf16((K, N), low=input_low, high=input_high)
+
+    if dtype == datatypes.float8_e4m3fn:
+        a_2d_simple, scale_a_2d_simple = _quantize_to_fp8_e4m3fn(a_2d_bf16)
+        b_2d_simple, scale_b_2d_simple = _quantize_to_fp8_e4m3fn(b_2d_simple_bf16)
+        scale_a_no_offset = scale_a_2d_simple.unsqueeze(0)
+        scale_b_no_offset = scale_b_2d_simple.unsqueeze(0)
+    elif dtype == datatypes.float8_e5m2:
+        a_2d_simple, scale_a_2d_simple = _quantize_to_fp8_e5m2(a_2d_bf16)
+        b_2d_simple, scale_b_2d_simple = _quantize_to_fp8_e5m2(b_2d_simple_bf16)
+        scale_a_no_offset = scale_a_2d_simple.unsqueeze(0)
+        scale_b_no_offset = scale_b_2d_simple.unsqueeze(0)
+    elif dtype == datatypes.float4_e2m1fn_x2:
+        assert K % 16 == 0 and N % 16 == 0, "For nvfp4, K and N must be divisible by 16"
+        a_2d_simple, _, scale_a_2d_simple = _quantize_to_nvfp4(a_2d_bf16)
+        b_2d_simple, _, scale_b_2d_simple = _quantize_to_nvfp4(b_2d_simple_bf16)
+        scale_a_no_offset = scale_a_2d_simple.unsqueeze(0)
+        scale_b_no_offset = scale_b_2d_simple.unsqueeze(0)
+    else:
+        a_2d_simple = a_2d_bf16
+        b_2d_simple = b_2d_simple_bf16
+        scale_a_no_offset = make_bf16((), low=scale_low, high=scale_high)
+        scale_b_no_offset = make_bf16((), low=scale_low, high=scale_high)
+
+    si = SampleInput(a_2d_simple, b_2d_simple, scale_a_no_offset, scale_b_no_offset)
+    si.set_comparator(comp)
+    yield si
+
+    # Test case 4: Different group sizes (skip for nvfp4 due to complexity)
+    if dtype != datatypes.float4_e2m1fn_x2:
+        G_large = 4
+        M_large, K_large, N_large = 32, 64, 128
+        a_large_bf16 = make_bf16((M_large, K_large), low=input_low, high=input_high)
+        b_large_bf16 = make_bf16((G_large, K_large, N_large), low=input_low, high=input_high)
+
+        if dtype == datatypes.float8_e4m3fn:
+            a_large, scale_a_large_q = _quantize_to_fp8_e4m3fn(a_large_bf16)
+            b_large_quantized = []
+            scale_b_large_list = []
+            for g in range(G_large):
+                b_g, scale_b_g = _quantize_to_fp8_e4m3fn(b_large_bf16[g])
+                b_large_quantized.append(b_g)
+                scale_b_large_list.append(scale_b_g)
+            b_large = torch.stack(b_large_quantized)
+            scale_a_large = torch.stack([scale_a_large_q] * G_large).to(torch.bfloat16)
+            scale_b_large = torch.stack(scale_b_large_list).to(torch.bfloat16)
+        elif dtype == datatypes.float8_e5m2:
+            a_large, scale_a_large_q = _quantize_to_fp8_e5m2(a_large_bf16)
+            b_large_quantized = []
+            scale_b_large_list = []
+            for g in range(G_large):
+                b_g, scale_b_g = _quantize_to_fp8_e5m2(b_large_bf16[g])
+                b_large_quantized.append(b_g)
+                scale_b_large_list.append(scale_b_g)
+            b_large = torch.stack(b_large_quantized)
+            scale_a_large = torch.stack([scale_a_large_q] * G_large).to(torch.bfloat16)
+            scale_b_large = torch.stack(scale_b_large_list).to(torch.bfloat16)
+        else:
+            a_large = a_large_bf16
+            b_large = b_large_bf16
+            scale_a_large = make_bf16((G_large,), low=scale_low, high=scale_high)
+            scale_b_large = make_bf16((G_large,), low=scale_low, high=scale_high)
+
+        offsets_large = torch.tensor([0, 16, 32, 48], device=device, dtype=torch.int32)
+        si = SampleInput(a_large, b_large, scale_a_large, scale_b_large, offsets=offsets_large)
+        si.set_comparator(comp)
+        yield si
+
+
+def scaled_grouped_mm_reference(a, b, scale_a, scale_b, offsets=None, bias=None, scale_result=None, out_dtype=None):
+    """Reference implementation for scaled_grouped_mm.
+
+    Reference: https://github.com/pytorch/pytorch/blob/b4403bfc62ca97eec554cdf815baab1fe93057d9/test/test_scaled_matmul_cuda.py
+    Uses torch.nn.functional.scaled_grouped_mm if available, otherwise falls back
+    to a manual implementation using scaled matmul.
+    """
+    if hasattr(torch.nn.functional, "scaled_grouped_mm"):
+        return torch.nn.functional.scaled_grouped_mm(
+            a, b, scale_a, scale_b, offsets=offsets, bias=bias, scale_result=scale_result, out_dtype=out_dtype
+        )
+
+    # Fallback implementation: apply scales and use grouped matmul
+    # This is a simplified reference - actual implementation may differ
+    if offsets is not None:
+        num_groups = offsets.numel()
+        group_sizes = _group_sizes_from_offsets(offsets)
+
+        if a.dim() == 2 and b.dim() == 3:
+            # [m, k] @ [g, k, n] => [m, n]
+            group_as = a.split(group_sizes, 0)
+            group_bs = b.unbind()
+            group_scale_as = scale_a.unbind() if scale_a.dim() > 0 else [scale_a] * num_groups
+            group_scale_bs = scale_b.unbind() if scale_b.dim() > 0 else [scale_b] * num_groups
+
+            out = torch.empty(a.size(0), b.size(-1), dtype=a.dtype, device=a.device)
+            group_outs = out.split(group_sizes, 0)
+
+            group_scale_results = None
+            if scale_result is not None:
+                group_scale_results = scale_result.unbind() if scale_result.dim() > 0 else [scale_result] * num_groups
+
+            for i, (group_a, group_b, group_out) in enumerate(zip(group_as, group_bs, group_outs)):
+                sa = group_scale_as[i]
+                sb = group_scale_bs[i]
+
+                # Apply scales
+                scaled_a = group_a * sa.item() if sa.numel() == 1 else group_a * sa.view(-1, 1)
+                scaled_b = group_b * sb.item() if sb.numel() == 1 else group_b * sb.view(-1, 1)
+
+                result = torch.matmul(scaled_a, scaled_b)
+
+                # Apply scale_result if provided
+                if group_scale_results is not None:
+                    sr = group_scale_results[i]
+                    result = result * sr.item() if sr.numel() == 1 else result * sr.view(-1, 1)
+
+                # Apply bias if provided
+                if bias is not None:
+                    result = result + bias
+
+                group_out.copy_(result)
+
+            if out_dtype is not None:
+                return out.to(out_dtype)
+            return out
+        else:
+            # Simplified fallback for other shape combinations
+            scaled_a = a * scale_a.item() if scale_a.numel() == 1 else a * scale_a.view(-1, 1, 1)
+            scaled_b = b * scale_b.item() if scale_b.numel() == 1 else b * scale_b.view(-1, 1, 1)
+            result = _grouped_mm_reference(scaled_a, scaled_b, offsets)
+
+            if scale_result is not None:
+                result = (
+                    result * scale_result.item() if scale_result.numel() == 1 else result * scale_result.view(-1, 1, 1)
+                )
+
+            if bias is not None:
+                result = result + bias
+
+            if out_dtype is not None:
+                return result.to(out_dtype)
+            return result
+    else:
+        # Without offsets, simpler case
+        scaled_a = a * scale_a.item() if scale_a.numel() == 1 else a * scale_a.view(-1, 1)
+        scaled_b = b * scale_b.item() if scale_b.numel() == 1 else b * scale_b.view(-1, 1, 1)
+        result = torch.matmul(scaled_a, scaled_b)
+
+        if scale_result is not None:
+            result = result * scale_result.item() if scale_result.numel() == 1 else result * scale_result.view(-1, 1)
+
+        if bias is not None:
+            result = result + bias
+
+        if out_dtype is not None:
+            return result.to(out_dtype)
+        return result
+
+
+if hasattr(ltorch, "scaled_grouped_mm"):
+    # scaled_grouped_mm supports quantization dtypes: bfloat16, fp8, and nvfp4
+    # fp8 dtypes: float8_e4m3fn and float8_e5m2 are commonly used for quantization
+    # nvfp4: float4_e2m1fn_x2 is used for 4-bit quantization
+    #
+    # Reference: https://github.com/pytorch/pytorch/blob/b4403bfc62ca97eec554cdf815baab1fe93057d9/test/test_scaled_matmul_cuda.py
+    # The quantization functions and test patterns follow PyTorch's scaled_matmul_cuda test file,
+    # which quantizes bfloat16 tensors to fp8/nvfp4 formats for testing.
+    scaled_grouped_mm_dtypes = (
+        datatypes.bfloat16,
+        datatypes.float8_e4m3fn,
+        datatypes.float8_e5m2,
+        datatypes.float4_e2m1fn_x2,
+    )
+
+    scaled_grouped_mm_opinfo = OpInfo(
+        ltorch.scaled_grouped_mm,
+        supports_grad=False,
+        sample_input_generator=scaled_grouped_mm_sample_generator,
+        torch_reference=scaled_grouped_mm_reference,
+        dtypes=scaled_grouped_mm_dtypes,
+        devicetypes=(devices.DeviceType.CUDA,),
+        test_directives=(
+            DecorateInfo(
+                pytest.mark.skip,
+                "test_core_vs_torch_consistency",
+                executors=("torch",),
+                # torch.nn.functional.scaled_grouped_mm may not support pre-Hopper.
+                active_if=(not torch.cuda.is_available() or torch.cuda.get_device_capability() < (9, 0)),
+            ),
+            # fp8 and nvfp4 require Hopper (compute capability 9.0+)
+            DecorateInfo(
+                pytest.mark.skip,
+                "test_core_vs_torch_consistency",
+                dtypes=(datatypes.float8_e4m3fn, datatypes.float8_e5m2, datatypes.float4_e2m1fn_x2),
+                active_if=(not torch.cuda.is_available() or torch.cuda.get_device_capability() < (9, 0)),
+            ),
+        ),
+    )
+    linear_algebra_ops.append(scaled_grouped_mm_opinfo)
+
+
 def einsum_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
