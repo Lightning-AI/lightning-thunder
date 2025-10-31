@@ -49,6 +49,7 @@ from thunder.benchmarks.layers_for_inference_benchmark import (
 )
 from thunder.torch.custom_op import _register_custom_op
 from thunder.tests.distributed.test_moe import GroupedLinearColwiseParallel, GroupedLinearRowwiseParallel
+from thunder.transforms.cudagraph import CUDAGraphTransform
 
 if TYPE_CHECKING:
     from typing import Any
@@ -155,6 +156,7 @@ class InferenceBenchmarkConfig:
     mode: str
     disable_moe_replacement: bool
     profile: bool
+    enable_thunder_cudagraph: bool
 
 
 @dataclass
@@ -188,9 +190,11 @@ class InferenceBenchmark:
     def __init__(self, config: InferenceBenchmarkConfig):
         self.config = config
         self.metrics = InferenceMetrics()
+        self.default_executors = None
 
         # NOTE: Model resides on meta device
         model = self._load_model()
+        print(model)
         assert all(p.device == torch.device("meta") for p in model.parameters())
 
         # NOTE: Replacement happens before model is materialized
@@ -276,6 +280,7 @@ class InferenceBenchmark:
         if self.config.enable_nvfp4:
             _quantize_llama4(model)
         self.model = self._compile_model(model)
+        self.def_model = model
 
     @property
     def _thunder_jit_options(self) -> dict[str, Any]:
@@ -298,8 +303,10 @@ class InferenceBenchmark:
             case "eager":
                 return model
             case "inductor":
-                return torch.compile(model, mode="reduce-overhead")
+                return torch.compile(model, mode="default")
             case "thunder":
+                # from thunder.executors.torch_compile import torch_compile_ex
+                # return thunderfx(model, executors='torchcompile')
                 return thunderfx(model, **self._thunder_jit_options)
             case "thunderjit":
                 return thunder.jit(model, **self._thunder_jit_options)
@@ -351,17 +358,23 @@ class InferenceBenchmark:
         return input_ids, past_key_values
 
     def get_next_token(
-        self, input_ids: torch.Tensor, past_key_values: HybridChunkedCache | StaticCache
+        self, input_ids: torch.Tensor, past_key_values: HybridChunkedCache | StaticCache, prefill = False
     ) -> torch.Tensor:
-        start_pos = past_key_values.get_seq_length()
-        cache_position = start_pos + torch.arange(0, input_ids.shape[1], device=start_pos.device, dtype=start_pos.dtype)
-        with torch.no_grad():
-            outputs = self.model(
-                input_ids, cache_position=cache_position, past_key_values=past_key_values, use_cache=True
-            )
+        model_to_use = self.def_model if prefill else self.model
+        with torch.cuda.nvtx.range("start_pos"):
+            start_pos = past_key_values.get_seq_length()
+        with torch.cuda.nvtx.range("cache_position"):
+            cache_position = start_pos + torch.arange(0, input_ids.shape[1], device=start_pos.device, dtype=start_pos.dtype)
+        with torch.cuda.nvtx.range("model_forward"):
+            with torch.no_grad():
+                outputs = model_to_use(
+                    input_ids, cache_position=cache_position, past_key_values=past_key_values, use_cache=True
+                )
         logits = outputs.logits  # [B, seq_len, vocab_size]
-        next_token_logits = logits[:, -1, :]
-        next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
+        with torch.cuda.nvtx.range("next_token_logits"):
+            next_token_logits = logits[:, -1, :]
+        with torch.cuda.nvtx.range("next_token"):
+            next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
         return next_token
 
     def prefill(self, input_ids: torch.Tensor, past_key_values: HybridChunkedCache) -> torch.Tensor:
@@ -371,7 +384,7 @@ class InferenceBenchmark:
 
         Similar to: https://github.com/pytorch-labs/gpt-fast/blob/main/generate.py#L68-L82
         """
-        return self.get_next_token(input_ids, past_key_values)
+        return self.get_next_token(input_ids, past_key_values, prefill=True)
 
     def decode_one_token(self, input_ids: torch.Tensor, past_key_values: HybridChunkedCache) -> torch.Tensor:
         """
@@ -397,17 +410,20 @@ class InferenceBenchmark:
         Returns detailed metrics for both phases.
         """
         # Prefill phase - process the entire prompt
-        with timer() as prefill_timer:
-            first_token = self.prefill(input_ids, past_key_values)
+        with torch.cuda.nvtx.range("prefill"):
+            with timer() as prefill_timer:
+                first_token = self.prefill(input_ids, past_key_values)
         prefill_time = prefill_timer()
         generated_tokens = [first_token]
 
         # Decode phase - generate remaining tokens one by one
         next_token = first_token
-        with timer() as decode_timer:
-            for _ in range(max_new_tokens - 1):
-                next_token = self.decode_one_token(next_token, past_key_values)
-                generated_tokens.append(next_token)
+        with torch.cuda.nvtx.range("decode"):
+            with timer() as decode_timer:
+                for i in range(max_new_tokens - 1):
+                    with torch.cuda.nvtx.range(f"decode_step_{i}"):
+                        next_token = self.decode_one_token(next_token, past_key_values)
+                        generated_tokens.append(next_token)
 
         total_decode_time = decode_timer()
 
@@ -422,6 +438,7 @@ class InferenceBenchmark:
         self, input_ids: torch.Tensor, past_key_values: HybridChunkedCache, max_new_tokens: int
     ) -> dict[str, float]:
         """Measure a single inference step with detailed timing using separate prefill/decode"""
+        torch.cuda.cudart().cudaProfilerStart()
         # Generate tokens with separate prefill/decode tracking
         generation_result = self.generate(input_ids, max_new_tokens, past_key_values)
         total_time = generation_result["prefill_time_ms"] + generation_result["decode_time_ms"]
@@ -676,53 +693,66 @@ Examples:
 
     parser.add_argument("--save-results", action="store_true", help="Save results to JSON file")
     parser.add_argument("--output-dir", type=str, default="./results", help="Directory to save results")
+    parser.add_argument("--enable-thunder-cudagraph", action="store_true", help="Pass CUDAGraphTransform to Thunder")
 
     args = parser.parse_args()
     return args
 
 
 def main():
-    args = parse_args()
-    if args.save_results:
-        os.makedirs(args.output_dir, exist_ok=True)
+    # Save and set CUDA_LAUNCH_BLOCKING
+    original_cuda_launch_blocking = os.environ.get("CUDA_LAUNCH_BLOCKING")
+    os.environ["CUDA_LAUNCH_BLOCKING"] = "0"
+    
+    try:
+        args = parse_args()
+        if args.save_results:
+            os.makedirs(args.output_dir, exist_ok=True)
 
-    # TODO: Override the forward with nvfuser_direct based implementation like
-    # https://github.com/Lightning-AI/lightning-thunder/blob/8b72715d/thunder/tests/test_torch_library_custom_op.py#L250-L266 does.
-    # Note that the linked code is in a draft pull request of https://github.com/Lightning-AI/lightning-thunder/pull/2481
-    # so we might want to do it more clumsily by copying the code in the pull request for now.
-    if args.enable_nvfp4:
-        sym_of_nvfp4_scaled_mm = _register_custom_op(nvfuser_f16a_nvfp4weight_scaled_mm)  # noqa: F841
-        sym_of_nvfp4_scaled_grouped_mm = _register_custom_op(nvfuser_f16a_nvfp4weight_scaled_grouped_mm)  # noqa: F841
+        # TODO: Override the forward with nvfuser_direct based implementation like
+        # https://github.com/Lightning-AI/lightning-thunder/blob/8b72715d/thunder/tests/test_torch_library_custom_op.py#L250-L266 does.
+        # Note that the linked code is in a draft pull request of https://github.com/Lightning-AI/lightning-thunder/pull/2481
+        # so we might want to do it more clumsily by copying the code in the pull request for now.
+        if args.enable_nvfp4:
+            sym_of_nvfp4_scaled_mm = _register_custom_op(nvfuser_f16a_nvfp4weight_scaled_mm)  # noqa: F841
+            sym_of_nvfp4_scaled_grouped_mm = _register_custom_op(nvfuser_f16a_nvfp4weight_scaled_grouped_mm)  # noqa: F841
 
-    config = InferenceBenchmarkConfig(
-        model_name=args.model_name,
-        batch_size=args.batch_size,
-        input_length=args.input_length,
-        output_length=args.output_length,
-        num_layers=args.num_layers,
-        num_iterations=args.num_iterations,
-        warmup_iterations=args.warmup_iterations,
-        mode=args.mode,
-        enable_nvfp4=args.enable_nvfp4,
-        fx_report_folder=args.fx_report_folder,
-        enable_nv_linear=args.enable_nv_linear,
-        disable_moe_replacement=args.disable_moe_replacement,
-        profile=args.profile,
-    )
-    benchmark = InferenceBenchmark(config)
+        config = InferenceBenchmarkConfig(
+            model_name=args.model_name,
+            batch_size=args.batch_size,
+            input_length=args.input_length,
+            output_length=args.output_length,
+            num_layers=args.num_layers,
+            num_iterations=args.num_iterations,
+            warmup_iterations=args.warmup_iterations,
+            mode=args.mode,
+            enable_nvfp4=args.enable_nvfp4,
+            fx_report_folder=args.fx_report_folder,
+            enable_nv_linear=args.enable_nv_linear,
+            disable_moe_replacement=args.disable_moe_replacement,
+            profile=args.profile,
+            enable_thunder_cudagraph=args.enable_thunder_cudagraph,
+        )
+        benchmark = InferenceBenchmark(config)
 
-    if args.enable_nvfp4:
-        msg = "NVFP4 kernels are not yet available. `--enable-nvfp4` runs only quantization but not benchmark"
-        warnings.warn(msg)
-        sys.exit(0)
+        if args.enable_nvfp4:
+            msg = "NVFP4 kernels are not yet available. `--enable-nvfp4` runs only quantization but not benchmark"
+            warnings.warn(msg)
+            sys.exit(0)
 
-    benchmark.run_benchmark()
-    benchmark.print_results()
-    if args.save_results:
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        filename = f"thunder_inference_{args.model_name.replace('/', '_')}_{timestamp}.json"
-        path = os.path.join(args.output_dir, filename)
-        benchmark.save_results(path)
+        benchmark.run_benchmark()
+        benchmark.print_results()
+        if args.save_results:
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            filename = f"thunder_inference_{args.model_name.replace('/', '_')}_{timestamp}.json"
+            path = os.path.join(args.output_dir, filename)
+            benchmark.save_results(path)
+    finally:
+        # Restore CUDA_LAUNCH_BLOCKING
+        if original_cuda_launch_blocking is None:
+            os.environ.pop("CUDA_LAUNCH_BLOCKING", None)
+        else:
+            os.environ["CUDA_LAUNCH_BLOCKING"] = original_cuda_launch_blocking
 
 
 if __name__ == "__main__":
