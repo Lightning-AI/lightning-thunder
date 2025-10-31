@@ -317,6 +317,114 @@ def is_cuda(a: TensorLike, /) -> bool:
     return a.device.devicetype is devices.DeviceType.CUDA
 
 
+# ------------------------------------------------------------
+# Complex helpers: polar and view_as_complex
+# ------------------------------------------------------------
+
+@torchsymbol(torch.polar, id="torch.polar")
+def polar(abs_: TensorLike, angle: TensorLike):
+    # Decompose polar into real/imag using Thunder ops and construct complex via mapped torch.complex
+    real = abs_ * cos(angle)
+    imag = abs_ * sin(angle)
+    complex_sym = _torch_to_thunder_function_map[torch.complex]
+    return complex_sym(real, imag)
+
+
+@register_augmented_forward("torch.polar")
+def _polar_augmented_forward(abs_: TensorLike, angle: TensorLike):
+    result = polar(abs_, angle)
+    return result, (abs_, angle)
+
+
+@register_backward("torch.polar")
+def _polar_backward(abs_: TensorLike, angle: TensorLike, g: TensorLike):
+    raise NotImplementedError("Backward pass for torch.polar is not implemented")
+
+
+@torchsymbol(torch.view_as_complex, id="torch.view_as_complex")
+def view_as_complex(a: TensorLike):
+    # Semantics: take last-dim pairs (real, imag) and form complex tensor
+    # This may allocate instead of true view, which is acceptable for compilation support
+    real = a[..., 0]
+    imag = a[..., 1]
+    complex_sym = _torch_to_thunder_function_map[torch.complex]
+    return complex_sym(real, imag)
+
+
+@register_augmented_forward("torch.view_as_complex")
+def _view_as_complex_augmented_forward(a: TensorLike):
+    result = view_as_complex(a)
+    return result, (a,)
+
+
+@register_backward("torch.view_as_complex")
+def _view_as_complex_backward(a: TensorLike, g: TensorLike):
+    raise NotImplementedError("Backward pass for torch.view_as_complex is not implemented")
+
+
+@torchsymbol(torch.view_as_real, id="torch.view_as_real")
+def view_as_real(a: TensorLike):
+    # Note: We use allocating semantics (stack of real/imag) rather than true view semantics
+    # to avoid issues with Thunder's alias tracking, which assumes aliased tensors have the same numel.
+    utils.check(
+        dtypes.is_complex_dtype(a.dtype),
+        lambda: f"view_as_real expects a complex dtype, but got {a.dtype}",
+        TypeError,
+    )
+    # Extract real and imaginary parts and stack them
+    # This allocates new memory but avoids alias tracking issues
+    r = real(a)
+    im = imag(a)
+    return stack((r, im), dim=-1)
+
+
+@register_augmented_forward("torch.view_as_real")
+def _view_as_real_augmented_forward(a: TensorLike):
+    result = view_as_real(a)
+    return result, (a,)
+
+
+@register_backward("torch.view_as_real")
+def _view_as_real_backward(a: TensorLike, g: TensorLike):
+    raise NotImplementedError("Backward pass for torch.view_as_real is not implemented")
+
+
+@torchsymbol(torch.view_as_real_copy, id="torch.view_as_real_copy")
+def view_as_real_copy(a: TensorLike):
+    # Since view_as_real already allocates, just call it directly
+    return view_as_real(a)
+
+
+@register_augmented_forward("torch.view_as_real_copy")
+def _view_as_real_copy_augmented_forward(a: TensorLike):
+    result = view_as_real_copy(a)
+    return result, (a,)
+
+
+@register_backward("torch.view_as_real_copy")
+def _view_as_real_copy_backward(a: TensorLike, g: TensorLike):
+    raise NotImplementedError("Backward pass for torch.view_as_real_copy is not implemented")
+
+
+@torchsymbol(torch.view_as_complex_copy, id="torch.view_as_complex_copy")
+def view_as_complex_copy(a: TensorLike):
+    real = a[..., 0]
+    imag = a[..., 1]
+    complex_sym = _torch_to_thunder_function_map[torch.complex]
+    return complex_sym(real, imag)
+
+
+@register_augmented_forward("torch.view_as_complex_copy")
+def _view_as_complex_copy_augmented_forward(a: TensorLike):
+    result = view_as_complex_copy(a)
+    return result, (a,)
+
+
+@register_backward("torch.view_as_complex_copy")
+def _view_as_complex_copy_backward(a: TensorLike, g: TensorLike):
+    raise NotImplementedError("Backward pass for torch.view_as_complex_copy is not implemented")
+
+
 # is nested always returns False for now:
 # https://github.com/Lightning-AI/lightning-thunder/issues/93#issuecomment-2030416883
 @torchsymbol(torch.Tensor.is_nested, is_property=True, id="torch.is_nested")

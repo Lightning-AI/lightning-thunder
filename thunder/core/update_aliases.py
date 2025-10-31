@@ -69,6 +69,10 @@ def replace_args_with_alias_map(
         arg = flat_args[indices[0]]
         for idx in filter(lambda idx: idx < len(flat_args), indices[1:]):
             arg_to_replace = flat_args[idx]
+            # Skip aliases with different numel (e.g., complex tensor and its real view)
+            # These share storage but have incompatible element counts
+            if arg.numel != arg_to_replace.numel:
+                continue
             reshaped_arg = arg
             if arg_to_replace.shape != arg.shape:
                 with tracectx(computation_trace):
