@@ -3,6 +3,6 @@
 
 ipython[all] ~=8.37.0
 numpy
-liger-kernel == 0.4.0
+liger-kernel == 0.6.3
 cuda-python >=12.6.1, <14.0.0
 litgpt == 0.5.1
