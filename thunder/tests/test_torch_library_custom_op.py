@@ -271,6 +271,14 @@ def test_custom_op_executor_cleanup():
     This is a regression test for the issue where the custom_op executor would remain in the
     default executors list after all custom ops were deregistered, causing failures in tests
     that check the expected executor list.
+    
+    The original issue manifested when running test_recipes.py after test_torch_library_custom_op.py.
+    The test_recipes tests use get_expected_executors() which filters thunder.get_default_executors(),
+    and they expect that only executors actually used by the model are present. When custom_op
+    executor wasn't properly cleaned up, it would remain in the default executors list even though
+    no custom ops were registered, causing assertions like:
+        assert ex.name in [el.name for el in cd.executors_list]
+    to fail because 'custom_op' was in get_expected_executors() but not in cd.executors_list.
     """
     import thunder
     
@@ -291,19 +299,22 @@ def test_custom_op_executor_cleanup():
     initial_executors = [ex.name for ex in thunder.get_default_executors()]
     assert "custom_op" not in initial_executors, "custom_op should not be in default executors initially"
     
-    # Register the custom op
+    # Simulate what happens in test_torch_library_custom_op tests
+    # Register the custom op (this adds custom_op_ex to default executors)
     symbol = _register_custom_op(cleanup_mul)
     executors_after_register = [ex.name for ex in thunder.get_default_executors()]
     assert "custom_op" in executors_after_register, "custom_op should be added after registration"
     
-    # Deregister the custom op
+    # Simulate the cleanup that happens in the autouse fixture
+    # Without the fix, this would NOT remove custom_op_ex from default executors
     _deregister_custom_op(cleanup_mul)
     executors_after_deregister = [ex.name for ex in thunder.get_default_executors()]
     
-    # The bug: custom_op executor was not removed, causing it to persist
+    # This is the critical assertion that would fail with the bug:
+    # After deregistration, custom_op should be removed from default executors
     assert "custom_op" not in executors_after_deregister, \
         "custom_op should be removed from default executors when no custom ops remain"
     
-    # Verify we're back to the initial state
+    # Verify we're back to the initial state, which is what test_recipes.py expects
     assert executors_after_deregister == initial_executors, \
         "Should return to initial executor state after deregistration"
