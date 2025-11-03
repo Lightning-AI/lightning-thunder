@@ -1,5 +1,6 @@
 from __future__ import annotations
 from collections.abc import Callable, Sequence
+from contextlib import contextmanager
 from enum import Enum, auto
 from typing import TYPE_CHECKING
 import dataclasses
@@ -8,12 +9,15 @@ import itertools
 from types import NoneType
 from collections import defaultdict
 from collections import namedtuple
+import warnings
+
+from looseversion import LooseVersion
 
 import torch
 from torch.nn.modules.module import _addindent
 from torch.utils.weak import TensorWeakRef
-from torch._guards import detect_fake_mode
-from torch._subclasses.fake_tensor import FakeTensorMode, FakeTensor
+from torch._guards import tracing, TracingContext
+from torch._subclasses.fake_tensor import DynamicOutputShapeException
 
 if torch.distributed.is_available():
     from torch.distributed.tensor import DTensor
@@ -152,6 +156,56 @@ class _ThunderSplitGraphModule:
 
     def is_thunder_supported_partition(self, node: torch.fx.Node) -> bool:
         return node.name.startswith("submod") and int(node.name.replace("submod_", "")) in self.supported_indexes
+
+
+class LazyInductorModule(torch.nn.Module):
+    def __init__(self, graph_module, fake_mode):
+        super().__init__()
+        self.graph_module = graph_module
+        self.compiled_fn = None
+        self.fake_mode = fake_mode
+
+        # For ease of debugging, we add graph attribute so GraphModule.print_readable will print it
+        self.graph = graph_module.graph
+
+    # TODO: Remove this once we drop support for PyTorch 2.7.x
+    @contextmanager
+    def _maybe_patch_increment_toplevel(self):
+        # In PyTorch before 2.8.0, FXGraphCache assumes that it is run behind Dynamo
+        # and tries to update metrics_context.
+        # See https://github.com/pytorch/pytorch/pull/150423
+        if LooseVersion(torch.__version__) >= LooseVersion("2.8.0"):
+            yield
+            return
+
+        from torch._dynamo.utils import CompileEventLogger
+
+        def fake_increment_toplevel(*args, **kwargs):
+            metrics_context = torch._dynamo.utils.get_metrics_context()
+            assert not metrics_context.in_progress()
+            return
+
+        original = CompileEventLogger.increment_toplevel
+        CompileEventLogger.increment_toplevel = fake_increment_toplevel
+        try:
+            yield
+        finally:
+            CompileEventLogger.increment_toplevel = original
+
+    def forward(self, *args):
+        if self.compiled_fn is None:
+            with self._maybe_patch_increment_toplevel():
+                # Inductor needs fake_mode, particularly its shape_env, to handle SymInts
+                with tracing(TracingContext(fake_mode=self.fake_mode)):
+                    try:
+                        self.compiled_fn = torch._inductor.compile(self.graph_module, args)
+                    except DynamicOutputShapeException as e:
+                        # This exception is meant to be handled by Dynamo, which is responsible for graph break
+                        # TODO: Use torch.compile for fallback. Ensure its correctness.
+                        warnings.warn(f"Dynamic output shape operator encountered: {e}. Falling back to eager.")
+                        self.compiled_fn = self.graph_module
+
+        return self.compiled_fn(*args)
 
 
 @dataclasses.dataclass()
@@ -1062,25 +1116,6 @@ def default_optimizer(gm: torch.fx.GraphModule, stats: ProfileStats) -> Callable
         err_msg = ", ".join([f"{x.name} raised exception: {x.compiled_fn}" for x in sorted_compiled_gm_to_measurement])
         raise RuntimeError(f"No compiler was able to compile the graph module, {err_msg}")
     return sorted_compiled_gm_to_measurement[0].compiled_fn
-
-
-def make_fake_arguments(gm: torch.fx.GraphModule) -> list[FakeTensor] | None:
-    fake_mode = detect_fake_mode()
-    if fake_mode is None:
-        fake_mode = FakeTensorMode()
-    args = []
-    for node in gm.graph.nodes:
-        if node.op == "placeholder":
-            meta_val = node.meta.get("example_value")
-            if meta_val is None:
-                # We observed Dynamo creating nodes without `example_value` on Tensor.tolist().
-                # This no longer happens in PyTorch 2.10 (see https://github.com/pytorch/pytorch/pull/163807).
-                return None
-            if isinstance(meta_val, torch.Tensor):
-                # Tie to the currently enabled fake mode
-                meta_val = fake_mode.fake_tensor_converter.from_real_tensor(fake_mode, meta_val)
-            args.append(meta_val)
-    return args
 
 
 def translate_dtensor_ops(gm: torch.fx.GraphModule) -> None:

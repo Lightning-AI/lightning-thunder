@@ -1107,7 +1107,7 @@ def analyze_thunder_splits(
             thunder_options[k] = v
 
     thunder_jit = partial(jit, **thunder_options, nv_save_fake_inputs=True)
-    _, subgraph_info = _splitter(gm, thunder_jit, torch._inductor.compile, _unused_sample_args=None)
+    _, subgraph_info = _splitter(gm, thunder_jit)
 
     thunder_module_names = [f"{report.graph_name}_{name}" for name in get_thunder_module_names(subgraph_info)]
     original_modules_to_thunder_modules = (
