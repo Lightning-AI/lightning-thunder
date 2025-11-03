@@ -1835,18 +1835,17 @@ def _scaled_grouped_mm_checker(
     scale_result: None | TensorProxy = None,
     out_dtype: None | dtypes.dtype = None,
 ) -> bool:
-    # Check if torch.nn.functional.scaled_grouped_mm is available
     if not hasattr(torch.nn.functional, "scaled_grouped_mm"):
         return False
 
-    # Check device capability - scaled_grouped_mm typically requires Hopper (compute capability 9.0+)
     if not torch.cuda.is_available():
         return False
 
-    # Optional: check if device supports the operation (Hopper+)
-    # You can relax this check if you want to support older GPUs
     capability = torch.cuda.get_device_capability()
     if capability < (9, 0):
+        return False
+
+    if torch.float4_e2m1fn_x2 in (a.dtype, b.dtype):
         return False
 
     return True

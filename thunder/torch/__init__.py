@@ -5737,6 +5737,12 @@ if hasattr(torch.nn.functional, "scaled_grouped_mm"):
         scale_result: None | TensorProxy = None,
         out_dtype: None | dtypeLike = None,
     ) -> TensorProxy:
+        utils.check(bias is None, lambda: "`bias` is not supported yet.")
+        utils.check(scale_result is None, lambda: "`scale_result` is not supported yet.")
+        utils.check(
+            a.ndim in (2, 3) and b.ndim(2, 3),
+            lambda: f"a and b are expected to be 2D or 3D but {a.ndim=} dims and b has {b.ndim=}",
+        )
         # Uses the primitive implementation
         out_dtype_thunder = to_dtype(out_dtype) if out_dtype is not None else None
         return prims.scaled_grouped_mm(
