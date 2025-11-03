@@ -263,3 +263,49 @@ def test_nvfuser_translator_registration(_, device: str, dtype: dtypes.dtype, di
             if bsym.sym.name == f"{_symbol.name}_backward" and bsym.sym.executor is custom_op_ex:
                 bsym_custom_ex_bsym_found = True
         assert bsym_custom_ex_bsym_found
+
+
+def test_custom_op_executor_cleanup():
+    """Test that custom_op executor is properly removed from default executors after deregistration.
+    
+    This is a regression test for the issue where the custom_op executor would remain in the
+    default executors list after all custom ops were deregistered, causing failures in tests
+    that check the expected executor list.
+    
+    See: https://github.com/Lightning-AI/lightning-thunder/issues/XXXX
+    """
+    import thunder
+    
+    # Define a test custom op
+    @torch.library.custom_op("test_cleanup::mul", mutates_args=())
+    def cleanup_mul(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+        return a * b
+
+    @torch.library.register_kernel("test_cleanup::mul", "cpu")
+    def _(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+        return a * b
+
+    @torch.library.register_fake("test_cleanup::mul")
+    def _(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+        return torch.empty_like(a)
+    
+    # Get initial state (custom_op should not be in default executors)
+    initial_executors = [ex.name for ex in thunder.get_default_executors()]
+    assert "custom_op" not in initial_executors, "custom_op should not be in default executors initially"
+    
+    # Register the custom op
+    symbol = _register_custom_op(cleanup_mul)
+    executors_after_register = [ex.name for ex in thunder.get_default_executors()]
+    assert "custom_op" in executors_after_register, "custom_op should be added after registration"
+    
+    # Deregister the custom op
+    _deregister_custom_op(cleanup_mul)
+    executors_after_deregister = [ex.name for ex in thunder.get_default_executors()]
+    
+    # The bug: custom_op executor was not removed, causing it to persist
+    assert "custom_op" not in executors_after_deregister, \
+        "custom_op should be removed from default executors when no custom ops remain"
+    
+    # Verify we're back to the initial state
+    assert executors_after_deregister == initial_executors, \
+        "Should return to initial executor state after deregistration"
