@@ -1552,6 +1552,8 @@ adaptive_avg_pool2d_backward = _register_torch_operation(
     "torch.ops.aten._adaptive_avg_pool2d_backward", like=ltorch.adaptive_avg_pool2d_backward
 )
 multi_dot = _register_torch_operation("torch.linalg.multi_dot", like=ltorch.multi_dot)
+if hasattr(torch.nn.functional, "scaled_grouped_mm"):
+    scaled_grouped_mm = _register_torch_operation("scaled_grouped_mm", module=torch.nn.functional)
 
 
 def _max_pool_with_indices_helper(
@@ -1823,6 +1825,33 @@ def _grouped_mm_checker(a: TensorProxy, b: TensorProxy, offsets: TensorProxy) ->
     return a.dtype == dtypes.bfloat16 and b.dtype == dtypes.bfloat16 and offsets.dtype == dtypes.int32
 
 
+def _scaled_grouped_mm_checker(
+    a: TensorProxy,
+    b: TensorProxy,
+    scale_a: TensorProxy,
+    scale_b: TensorProxy,
+    offsets: None | TensorProxy = None,
+    bias: None | TensorProxy = None,
+    scale_result: None | TensorProxy = None,
+    out_dtype: None | dtypes.dtype = None,
+) -> bool:
+    # Check if torch.nn.functional.scaled_grouped_mm is available
+    if not hasattr(torch.nn.functional, "scaled_grouped_mm"):
+        return False
+
+    # Check device capability - scaled_grouped_mm typically requires Hopper (compute capability 9.0+)
+    if not torch.cuda.is_available():
+        return False
+
+    # Optional: check if device supports the operation (Hopper+)
+    # You can relax this check if you want to support older GPUs
+    capability = torch.cuda.get_device_capability()
+    if capability < (9, 0):
+        return False
+
+    return True
+
+
 _register_implementation(ltorch.baddbmm, baddbmm, checker=_always_executable)
 _register_implementation(ltorch.bmm, bmm, checker=_always_executable)
 if LooseVersion(torch.__version__) >= "2.8":
@@ -1846,6 +1875,9 @@ _register_implementation(
     ltorch.log_softmax_backward, checker=_always_executable, execution_transform=_log_softmax_backward_transform
 )
 _register_implementation(ltorch.max_pool1d, max_pool1d, checker=_always_executable)
+if hasattr(torch.nn.functional, "scaled_grouped_mm"):
+    _register_implementation(prims.scaled_grouped_mm, scaled_grouped_mm, checker=_scaled_grouped_mm_checker)
+    _register_implementation(ltorch.scaled_grouped_mm, scaled_grouped_mm, checker=_scaled_grouped_mm_checker)
 
 
 def max_pool2d_bwd_wrapper(

@@ -3293,14 +3293,15 @@ def _scaled_grouped_mm_transform(
     if out_dtype is not None:
         nv_out_dtype = lcdtype_to_nvdtype(out_dtype)
 
-    # Call nvFuser's scaled_grouped_mm operation
-    # The API signature may vary, but typically includes all parameters
+    # TODO: Handle alpha, problem_sizes, block offsets...
+    # Uses fd.ops.scaled_grouped_mm for the standard nvFuser API
     return fd.ops.scaled_grouped_mm(
-        nva, nvb, nv_scale_a, nv_scale_b, nv_offsets, nv_bias, nv_scale_result, nv_out_dtype
+        nva, nvb, nv_scale_a, nv_scale_b, None, nv_problem_sizes, nv_offsets, nv_blocksf_offsets, nv_out_dtype
     )
 
 
 register_supported(prims.scaled_grouped_mm, _scaled_grouped_mm_transform, _scaled_grouped_mm_check)
+# register_supported(ltorch.scaled_grouped_mm, _scaled_grouped_mm_transform, _scaled_grouped_mm_check)
 
 
 def _cumsum_check(a: TensorProxy, dim: int, /, dtype: dtypes.dtype | None = None) -> bool:
