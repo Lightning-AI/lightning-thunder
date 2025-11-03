@@ -271,8 +271,6 @@ def test_custom_op_executor_cleanup():
     This is a regression test for the issue where the custom_op executor would remain in the
     default executors list after all custom ops were deregistered, causing failures in tests
     that check the expected executor list.
-    
-    See: https://github.com/Lightning-AI/lightning-thunder/issues/XXXX
     """
     import thunder
     
