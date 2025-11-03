@@ -155,7 +155,6 @@ class InferenceBenchmarkConfig:
     mode: str
     disable_moe_replacement: bool
     attn_implementation: str | None
-    profile: bool
 
 
 @dataclass
@@ -484,10 +483,11 @@ class InferenceBenchmark:
         for _ in tqdm(range(self.config.num_iterations), disable=LOCAL_RANK != 0):
             past_key_values.reset()
 
-            if self.config.profile:
+            is_under_nsys = bool(os.environ.get("NSYS_PROFILING_SESSION_ID"))
+            if is_under_nsys:
                 torch.cuda.cudart().cudaProfilerStart()
             iter_metrics = self.measure_inference_step(input_ids, past_key_values, self.config.output_length)
-            if self.config.profile:
+            if is_under_nsys:
                 torch.cuda.cudart().cudaProfilerStop()
 
             all_metrics.append(iter_metrics)
@@ -671,11 +671,6 @@ Examples:
         action="store_true",
         help="let nvfuser take care of linear and matmul, note that this might fail with distributed run. See: https://github.com/NVIDIA/Fuser/issues/4507",
     )
-    parser.add_argument(
-        "--profile",
-        action="store_true",
-        help="Wrap each non-warmup iteration with cudaProfilerStart() and cudaProfilerStop(). This allows us to run `nsys profile --capture-range=cudaProfilerApi --capture-range-end=repeat:<N> ... --profile` to record only the non-warmup iterations.",
-    )
 
     parser.add_argument("--save-results", action="store_true", help="Save results to JSON file")
     parser.add_argument("--output-dir", type=str, default="./results", help="Directory to save results")
@@ -712,7 +707,6 @@ def main():
         enable_nv_linear=args.enable_nv_linear,
         disable_moe_replacement=args.disable_moe_replacement,
         attn_implementation=args.attn_implementation,
-        profile=args.profile,
     )
     benchmark = InferenceBenchmark(config)
 
