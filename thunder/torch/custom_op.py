@@ -450,6 +450,13 @@ def _deregister_custom_op(custom_op: CustomOpDef) -> None:
 
     del _CUSTOM_OP_TO_TORCHFN_AND_SYMBOL[custom_op]
 
+    # Remove custom_op_ex from default executors if no custom ops remain
+    if not _CUSTOM_OP_TO_TORCHFN_AND_SYMBOL:
+        from thunder.extend import get_default_executors, remove_default_executor
+
+        if custom_op_ex in get_default_executors():
+            remove_default_executor(custom_op_ex)
+
 
 def _register_nvfuser_translator(
     symbol: Symbol,
