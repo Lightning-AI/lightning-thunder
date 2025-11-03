@@ -484,6 +484,10 @@ class InferenceBenchmark:
             past_key_values.reset()
 
             is_under_nsys = bool(os.environ.get("NSYS_PROFILING_SESSION_ID"))
+            # Wrap each non-warmup iteration with cudaProfilerStart() and
+            # cudaProfilerStop(). This allows the user to run `nsys profile
+            # --capture-range=cudaProfilerApi --capture-range-end=repeat:<N>
+            # ... --profile` to record only the non-warmup iterations.
             if is_under_nsys:
                 torch.cuda.cudart().cudaProfilerStart()
             iter_metrics = self.measure_inference_step(input_ids, past_key_values, self.config.output_length)
