@@ -279,10 +279,8 @@ torch_auto_registered_ops = {
         torch.unsqueeze_copy,
         torch.values_copy,
         torch.vdot,
-        # torch.view_as_complex, # a
-        # torch.view_as_complex_copy, # a
-        # torch.view_as_real, # a
-        # torch.view_as_real_copy, # a
+        torch.view_as_complex_copy,
+        torch.view_as_real_copy,
         torch.view_copy,
         torch.vsplit,
         torch.vstack,
@@ -701,7 +699,6 @@ _auto_registered_operators_returning_views = [
     torch.Tensor.detach,
     torch.narrow,
     torch.Tensor.narrow,
-    # torch.view_as_real, # a
     torch.nn.functional.unfold,
     torch.Tensor.hsplit,
     torch.hsplit,

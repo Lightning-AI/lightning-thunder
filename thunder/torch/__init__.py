@@ -341,14 +341,36 @@ def _polar_backward(abs_: TensorLike, angle: TensorLike, g: TensorLike):
     raise NotImplementedError("Backward pass for torch.polar is not implemented")
 
 
-@torchsymbol(torch.view_as_complex, id="torch.view_as_complex")
+@torchsymbol(torch.view_as_complex, id="torch.view_as_complex", is_prim=True)
 def view_as_complex(a: TensorLike):
-    # Semantics: take last-dim pairs (real, imag) and form complex tensor
-    # This may allocate instead of true view, which is acceptable for compilation support
-    real = a[..., 0]
-    imag = a[..., 1]
-    complex_sym = _torch_to_thunder_function_map[torch.complex]
-    return complex_sym(real, imag)
+    # Semantics: take last-dim pairs (real, imag) and form complex tensor as a view
+    # This is a primitive operation that passes through to PyTorch, preserving view semantics
+    utils.check(
+        a.shape[-1] == 2,
+        lambda: f"view_as_complex expects a tensor with last dimension size 2, but got {a.shape[-1]}",
+        ValueError,
+    )
+    utils.check(
+        not dtypes.is_complex_dtype(a.dtype),
+        lambda: f"view_as_complex expects a real dtype, but got {a.dtype}",
+        TypeError,
+    )
+    
+    # Determine the output dtype
+    if a.dtype == dtypes.float16:
+        output_dtype = dtypes.complex32
+    elif a.dtype == dtypes.float32:
+        output_dtype = dtypes.complex64
+    elif a.dtype == dtypes.float64:
+        output_dtype = dtypes.complex128
+    else:
+        raise ValueError(f"Unsupported dtype for view_as_complex: {a.dtype}")
+    
+    # Output shape is input shape with last dimension removed
+    output_shape = a.shape[:-1]
+    
+    # Execution handled by torch executor
+    return TensorProxy(like=a, shape=output_shape, dtype=output_dtype)
 
 
 @register_augmented_forward("torch.view_as_complex")
@@ -362,20 +384,32 @@ def _view_as_complex_backward(a: TensorLike, g: TensorLike):
     raise NotImplementedError("Backward pass for torch.view_as_complex is not implemented")
 
 
-@torchsymbol(torch.view_as_real, id="torch.view_as_real")
+@torchsymbol(torch.view_as_real, id="torch.view_as_real", is_prim=True)
 def view_as_real(a: TensorLike):
-    # Note: We use allocating semantics (stack of real/imag) rather than true view semantics
-    # to avoid issues with Thunder's alias tracking, which assumes aliased tensors have the same numel.
+    # Semantics: view complex tensor as real tensor with extra dimension for real/imag parts
+    # This is a primitive operation that passes through to PyTorch, preserving view semantics
     utils.check(
         dtypes.is_complex_dtype(a.dtype),
         lambda: f"view_as_real expects a complex dtype, but got {a.dtype}",
         TypeError,
     )
-    # Extract real and imaginary parts and stack them
-    # This allocates new memory but avoids alias tracking issues
-    r = real(a)
-    im = imag(a)
-    return stack((r, im), dim=-1)
+    
+    # Determine the output dtype (complex -> real)
+    if a.dtype == dtypes.complex32:
+        output_dtype = dtypes.float16
+    elif a.dtype == dtypes.complex64:
+        output_dtype = dtypes.float32
+    elif a.dtype == dtypes.complex128:
+        output_dtype = dtypes.float64
+    else:
+        raise ValueError(f"Unsupported dtype for view_as_real: {a.dtype}")
+    
+    # Output shape is input shape with an extra dimension of size 2 at the end
+    output_shape = tuple(a.shape) + (2,)
+    
+    # Return a TensorProxy with the correct metadata
+    # The actual execution will be handled by the torch executor
+    return TensorProxy(like=a, shape=output_shape, dtype=output_dtype)
 
 
 @register_augmented_forward("torch.view_as_real")
@@ -387,42 +421,6 @@ def _view_as_real_augmented_forward(a: TensorLike):
 @register_backward("torch.view_as_real")
 def _view_as_real_backward(a: TensorLike, g: TensorLike):
     raise NotImplementedError("Backward pass for torch.view_as_real is not implemented")
-
-
-@torchsymbol(torch.view_as_real_copy, id="torch.view_as_real_copy")
-def view_as_real_copy(a: TensorLike):
-    # Since view_as_real already allocates, just call it directly
-    return view_as_real(a)
-
-
-@register_augmented_forward("torch.view_as_real_copy")
-def _view_as_real_copy_augmented_forward(a: TensorLike):
-    result = view_as_real_copy(a)
-    return result, (a,)
-
-
-@register_backward("torch.view_as_real_copy")
-def _view_as_real_copy_backward(a: TensorLike, g: TensorLike):
-    raise NotImplementedError("Backward pass for torch.view_as_real_copy is not implemented")
-
-
-@torchsymbol(torch.view_as_complex_copy, id="torch.view_as_complex_copy")
-def view_as_complex_copy(a: TensorLike):
-    real = a[..., 0]
-    imag = a[..., 1]
-    complex_sym = _torch_to_thunder_function_map[torch.complex]
-    return complex_sym(real, imag)
-
-
-@register_augmented_forward("torch.view_as_complex_copy")
-def _view_as_complex_copy_augmented_forward(a: TensorLike):
-    result = view_as_complex_copy(a)
-    return result, (a,)
-
-
-@register_backward("torch.view_as_complex_copy")
-def _view_as_complex_copy_backward(a: TensorLike, g: TensorLike):
-    raise NotImplementedError("Backward pass for torch.view_as_complex_copy is not implemented")
 
 
 # is nested always returns False for now:
@@ -7000,6 +6998,8 @@ _syms_returning_views: set[Symbol] = {
     unsqueeze,
     view,
     view_as,
+    view_as_complex,
+    view_as_real,
     unbind,
     split,
     tensor_split,
