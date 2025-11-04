@@ -157,6 +157,7 @@ class InferenceBenchmarkConfig:
     disable_moe_replacement: bool
     attn_implementation: str | None
     profile: bool
+    thunder_cache: str | None
     enable_thunder_cudagraph: bool
 
 
@@ -297,6 +298,8 @@ class InferenceBenchmark:
             res["executors"] = [self._mask_transform.get_executor(), *thunder.get_default_executors()]
         if self.config.enable_thunder_cudagraph:
             res["transforms"].append(CUDAGraphTransform())
+        if self.config.thunder_cache is not None:
+            res["cache"] = self.config.thunder_cache
 
         return res
 
@@ -685,6 +688,12 @@ Examples:
 
     parser.add_argument("--save-results", action="store_true", help="Save results to JSON file")
     parser.add_argument("--output-dir", type=str, default="./results", help="Directory to save results")
+    parser.add_argument(
+        "--thunder-cache",
+        type=str,
+        default=None,
+        help="Cache option: no caching, same input, constant values, symbolic values. See `cache` argument of `thunder.jit` for more details.",
+    )
     parser.add_argument("--enable-thunder-cudagraph", action="store_true", help="Pass CUDAGraphTransform to Thunder")
     parser.add_argument("--attn-implementation", type=str, default=None, help="Attention implementation")
 
@@ -720,6 +729,7 @@ def main():
         disable_moe_replacement=args.disable_moe_replacement,
         attn_implementation=args.attn_implementation,
         profile=args.profile,
+        thunder_cache=args.thunder_cache,
         enable_thunder_cudagraph=args.enable_thunder_cudagraph,
     )
     benchmark = InferenceBenchmark(config)
