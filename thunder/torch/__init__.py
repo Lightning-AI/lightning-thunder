@@ -5740,7 +5740,7 @@ if hasattr(torch.nn.functional, "scaled_grouped_mm"):
         utils.check(bias is None, lambda: "`bias` is not supported yet.")
         utils.check(scale_result is None, lambda: "`scale_result` is not supported yet.")
         utils.check(
-            a.ndim in (2, 3) and b.ndim(2, 3),
+            a.ndim in (2, 3) and b.ndim in (2, 3),
             lambda: f"a and b are expected to be 2D or 3D but {a.ndim=} dims and b has {b.ndim=}",
         )
         # Uses the primitive implementation
