@@ -12,6 +12,8 @@ from collections import namedtuple
 import torch
 from torch.nn.modules.module import _addindent
 from torch.utils.weak import TensorWeakRef
+from torch._guards import detect_fake_mode
+from torch._subclasses.fake_tensor import FakeTensorMode, FakeTensor
 
 if torch.distributed.is_available():
     from torch.distributed.tensor import DTensor
@@ -1060,6 +1062,25 @@ def default_optimizer(gm: torch.fx.GraphModule, stats: ProfileStats) -> Callable
         err_msg = ", ".join([f"{x.name} raised exception: {x.compiled_fn}" for x in sorted_compiled_gm_to_measurement])
         raise RuntimeError(f"No compiler was able to compile the graph module, {err_msg}")
     return sorted_compiled_gm_to_measurement[0].compiled_fn
+
+
+def make_fake_arguments(gm: torch.fx.GraphModule) -> list[FakeTensor] | None:
+    fake_mode = detect_fake_mode()
+    if fake_mode is None:
+        fake_mode = FakeTensorMode()
+    args = []
+    for node in gm.graph.nodes:
+        if node.op == "placeholder":
+            meta_val = node.meta.get("example_value")
+            if meta_val is None:
+                # We observed Dynamo creating nodes without `example_value` on Tensor.tolist().
+                # This no longer happens in PyTorch 2.10 (see https://github.com/pytorch/pytorch/pull/163807).
+                return None
+            if isinstance(meta_val, torch.Tensor):
+                # Tie to the currently enabled fake mode
+                meta_val = fake_mode.fake_tensor_converter.from_real_tensor(fake_mode, meta_val)
+            args.append(meta_val)
+    return args
 
 
 def translate_dtensor_ops(gm: torch.fx.GraphModule) -> None:
