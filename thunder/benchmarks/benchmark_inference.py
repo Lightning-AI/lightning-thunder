@@ -155,6 +155,7 @@ class InferenceBenchmarkConfig:
     enable_nv_linear: bool
     mode: str
     disable_moe_replacement: bool
+    attn_implementation: str | None
     profile: bool
     enable_thunder_cudagraph: bool
 
@@ -326,7 +327,9 @@ class InferenceBenchmark:
         self.hf_config = config
 
         with torch.device("meta"):
-            model = AutoModelForCausalLM.from_config(config, torch_dtype=torch.bfloat16)
+            model = AutoModelForCausalLM.from_config(
+                config, torch_dtype=torch.bfloat16, attn_implementation=self.config.attn_implementation
+            )
 
         return model
 
@@ -693,7 +696,7 @@ Examples:
 
     parser.add_argument("--save-results", action="store_true", help="Save results to JSON file")
     parser.add_argument("--output-dir", type=str, default="./results", help="Directory to save results")
-    parser.add_argument("--enable-thunder-cudagraph", action="store_true", help="Pass CUDAGraphTransform to Thunder")
+    parser.add_argument("--attn-implementation", type=str, default=None, help="Attention implementation")
 
     args = parser.parse_args()
     return args
@@ -717,23 +720,23 @@ def main():
             sym_of_nvfp4_scaled_mm = _register_custom_op(nvfuser_f16a_nvfp4weight_scaled_mm)  # noqa: F841
             sym_of_nvfp4_scaled_grouped_mm = _register_custom_op(nvfuser_f16a_nvfp4weight_scaled_grouped_mm)  # noqa: F841
 
-        config = InferenceBenchmarkConfig(
-            model_name=args.model_name,
-            batch_size=args.batch_size,
-            input_length=args.input_length,
-            output_length=args.output_length,
-            num_layers=args.num_layers,
-            num_iterations=args.num_iterations,
-            warmup_iterations=args.warmup_iterations,
-            mode=args.mode,
-            enable_nvfp4=args.enable_nvfp4,
-            fx_report_folder=args.fx_report_folder,
-            enable_nv_linear=args.enable_nv_linear,
-            disable_moe_replacement=args.disable_moe_replacement,
-            profile=args.profile,
-            enable_thunder_cudagraph=args.enable_thunder_cudagraph,
-        )
-        benchmark = InferenceBenchmark(config)
+    config = InferenceBenchmarkConfig(
+        model_name=args.model_name,
+        batch_size=args.batch_size,
+        input_length=args.input_length,
+        output_length=args.output_length,
+        num_layers=args.num_layers,
+        num_iterations=args.num_iterations,
+        warmup_iterations=args.warmup_iterations,
+        mode=args.mode,
+        enable_nvfp4=args.enable_nvfp4,
+        fx_report_folder=args.fx_report_folder,
+        enable_nv_linear=args.enable_nv_linear,
+        disable_moe_replacement=args.disable_moe_replacement,
+        attn_implementation=args.attn_implementation,
+        profile=args.profile,
+    )
+    benchmark = InferenceBenchmark(config)
 
         if args.enable_nvfp4:
             msg = "NVFP4 kernels are not yet available. `--enable-nvfp4` runs only quantization but not benchmark"

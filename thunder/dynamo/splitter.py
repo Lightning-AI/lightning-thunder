@@ -3,10 +3,8 @@ import operator
 from typing import TYPE_CHECKING
 import copy
 from functools import partial
-import warnings
 
 import torch
-from torch._subclasses.fake_tensor import DynamicOutputShapeException
 from torch.fx.passes.split_module import split_module
 
 from thunder.core import baseutils
@@ -16,12 +14,12 @@ from thunder.dynamo.utils import (
     CompilerType,
     SplitReason,
     SplitReasonType,
+    LazyInductorModule,
     is_node_supported_by_thunder,
     get_nodes_in_unsupported_ctx_regions,
     update_node_and_submodule,
     recompile_graph,
     checkpoint_converter,
-    make_fake_arguments,
     _get_example_inputs_from_placeholder,
     _ThunderSplitGraphModule,
     translate_dtensor_ops,
@@ -35,8 +33,6 @@ if TYPE_CHECKING:
 def _splitter(
     gm: torch.fx.GraphModule,
     thunder_jit: Callable,
-    torch_inductor: Callable,
-    _unused_sample_args: list[torch.SymInt, torch.Tensor],
     thunder_options: dict[str, Any] | None = None,
 ) -> tuple[torch.fx.GraphModule, SubgraphInfo]:
     """
@@ -226,32 +222,10 @@ def _splitter(
         elif node.name.startswith("submod"):  # For inductor
             graph_module = getattr(split_gm, node.name)
 
-            class ModuleWrapper(torch.nn.Module):
-                def __init__(self, fn):
-                    super().__init__()
-                    self.fn = fn
-
-                def forward(self, *args, **kwargs):
-                    return self.fn(*args, **kwargs)
-
-            def fallback_eager(reason: str) -> torch.nn.Module:
-                warnings.warn(f"{reason} Falling back to eager.")
-                # TODO: Use torch.compile here. Investigate its behavior and ensure correctness.
-                return graph_module
-
-            fake_args = make_fake_arguments(graph_module)
-            if fake_args is None:
-                jit_fn = fallback_eager("Example values for arguments are not available.")
-            else:
-                try:
-                    # torch._inductor.compile returns a function, but update_node_and_submodule expects a Module
-                    jit_fn = ModuleWrapper(torch_inductor(graph_module, fake_args))
-                except DynamicOutputShapeException as e:
-                    # This exception is meant to be handled by Dynamo, which is responsible for graph break
-                    jit_fn = fallback_eager(f"Dynamic output shape operator encountered: {e}.")
-
-            # This is for ease of debugging. We add graph attribute so GraphModule.print_readable will print it
-            jit_fn.graph = graph_module.graph
+            fake_mode = torch._guards.detect_fake_mode()
+            # Delay Inductor compilation until invocation with real tensors,
+            # because we do not know the strides of tensors that Thunder-compiled submodules return.
+            jit_fn = LazyInductorModule(graph_module, fake_mode)
 
             # Update the node name from "submod_*" to "inductor_*" for more user-friendly names
             update_node_and_submodule(split_gm, node, node.name.replace("submod", "inductor"), jit_fn)
