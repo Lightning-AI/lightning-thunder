@@ -321,6 +321,7 @@ def is_cuda(a: TensorLike, /) -> bool:
 # Complex helpers: polar and view_as_complex
 # ------------------------------------------------------------
 
+
 @torchsymbol(torch.polar, id="torch.polar")
 def polar(abs_: TensorLike, angle: TensorLike):
     # Decompose polar into real/imag using Thunder ops and construct complex via mapped torch.complex
@@ -355,7 +356,7 @@ def view_as_complex(a: TensorLike):
         lambda: f"view_as_complex expects a real dtype, but got {a.dtype}",
         TypeError,
     )
-    
+
     # Determine the output dtype
     if a.dtype == dtypes.float16:
         output_dtype = dtypes.complex32
@@ -365,10 +366,10 @@ def view_as_complex(a: TensorLike):
         output_dtype = dtypes.complex128
     else:
         raise ValueError(f"Unsupported dtype for view_as_complex: {a.dtype}")
-    
+
     # Output shape is input shape with last dimension removed
     output_shape = a.shape[:-1]
-    
+
     # Execution handled by torch executor
     return TensorProxy(like=a, shape=output_shape, dtype=output_dtype)
 
@@ -393,7 +394,7 @@ def view_as_real(a: TensorLike):
         lambda: f"view_as_real expects a complex dtype, but got {a.dtype}",
         TypeError,
     )
-    
+
     # Determine the output dtype (complex -> real)
     if a.dtype == dtypes.complex32:
         output_dtype = dtypes.float16
@@ -403,10 +404,10 @@ def view_as_real(a: TensorLike):
         output_dtype = dtypes.float64
     else:
         raise ValueError(f"Unsupported dtype for view_as_real: {a.dtype}")
-    
+
     # Output shape is input shape with an extra dimension of size 2 at the end
     output_shape = tuple(a.shape) + (2,)
-    
+
     # Return a TensorProxy with the correct metadata
     # The actual execution will be handled by the torch executor
     return TensorProxy(like=a, shape=output_shape, dtype=output_dtype)
