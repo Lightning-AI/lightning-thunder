@@ -287,16 +287,20 @@ class InferenceBenchmark:
     def _thunder_jit_options(self) -> dict[str, Any]:
         # `nv_enable_linear=True` might fail with distributed run
         # ref: https://github.com/NVIDIA/Fuser/issues/4507
-        res = {}
+        res = {"transforms": []}
         if self.config.enable_nv_linear:
-            res = {"nv_enable_linear": True, "nv_enable_matmul": True}
+            res["nv_enable_linear"] = True
+            res["nv_enable_matmul"] = True
         if self.config.mode == "thunderjit":
             from thunder.recipes.hf_transformers import SDPAMaskTransform
 
             if not hasattr(self, "_mask_transform"):
                 self._mask_transform = SDPAMaskTransform()
-            res["transforms"] = [self._mask_transform]
+            res["transforms"].append(self._mask_transform)
             res["executors"] = [self._mask_transform.get_executor(), *thunder.get_default_executors()]
+        if self.config.enable_thunder_cudagraph:
+            res["transforms"].append(CUDAGraphTransform())
+
         return res
 
     def _compile_model(self, model):
@@ -696,6 +700,7 @@ Examples:
 
     parser.add_argument("--save-results", action="store_true", help="Save results to JSON file")
     parser.add_argument("--output-dir", type=str, default="./results", help="Directory to save results")
+    parser.add_argument("--enable-thunder-cudagraph", action="store_true", help="Pass CUDAGraphTransform to Thunder")
     parser.add_argument("--attn-implementation", type=str, default=None, help="Attention implementation")
 
     args = parser.parse_args()
@@ -735,6 +740,7 @@ def main():
         disable_moe_replacement=args.disable_moe_replacement,
         attn_implementation=args.attn_implementation,
         profile=args.profile,
+        enable_thunder_cudagraph=args.enable_thunder_cudagraph,
     )
     benchmark = InferenceBenchmark(config)
 
