@@ -6072,96 +6072,100 @@ def mse_loss(
         raise ValueError(f"Reduction argument {reduction} to mse_loss is not supported")
 
 
-@torchsymbol(torch.nn.functional.scaled_mm)
-def scaled_mm(
-    mat_a: TensorLike,
-    mat_b: TensorLike,
-    scale_a,
-    scale_recipe_a,
-    scale_b,
-    scale_recipe_b,
-    swizzle_a=None,
-    swizzle_b=None,
-    bias: TensorLike | None = None,
-    output_dtype: torch.dtype | None = torch.bfloat16,
-    contraction_dim: Sequence[int] = (),
-    use_fast_accum: bool = False,
-) -> TensorLike:
-    utils.check_type(mat_a, TensorProxy)
-    utils.check_type(mat_b, TensorProxy)
-    utils.check(
-        mat_a.ndim == 2 and mat_b.ndim == 2,
-        lambda: "torch.nn.functional.scaled_mm currently supports 2D matrices",
-        NotImplementedError,
-    )
-    utils.check(
-        mat_a.shape[1] == mat_b.shape[0],
-        lambda: (
-            f"torch.nn.functional.scaled_mm expects mat_a.shape[-1] ({mat_a.shape[1]}) "
-            f"to equal mat_b.shape[-2] ({mat_b.shape[0]})"
-        ),
-    )
-    utils.check(
-        len(contraction_dim) == 0,
-        lambda: "torch.nn.functional.scaled_mm does not yet support contraction_dim",
-        NotImplementedError,
-    )
+if hasattr(torch.nn.functional, "scaled_mm"):
 
-    def _expand(value):
-        if value is None:
-            return []
-        if isinstance(value, (list, tuple)):
-            return list(value)
-        return [value]
-
-    scale_a_list = _expand(scale_a)
-    scale_b_list = _expand(scale_b)
-
-    def _validate_enum_list(values: list[Any], scales: list[Any], name: str) -> None:
-        if not values:
-            return
+    @torchsymbol(torch.nn.functional.scaled_mm)
+    def scaled_mm(
+        mat_a: TensorLike,
+        mat_b: TensorLike,
+        scale_a,
+        scale_recipe_a,
+        scale_b,
+        scale_recipe_b,
+        swizzle_a=None,
+        swizzle_b=None,
+        bias: TensorLike | None = None,
+        output_dtype: torch.dtype | None = torch.bfloat16,
+        contraction_dim: Sequence[int] = (),
+        use_fast_accum: bool = False,
+    ) -> TensorLike:
+        utils.check_type(mat_a, TensorProxy)
+        utils.check_type(mat_b, TensorProxy)
         utils.check(
-            len(scales) > 0,
-            lambda: f"{name} was provided but the corresponding scale list is empty",
-            ValueError,
+            mat_a.ndim == 2 and mat_b.ndim == 2,
+            lambda: "torch.nn.functional.scaled_mm currently supports 2D matrices",
+            NotImplementedError,
         )
         utils.check(
-            len(values) in (1, len(scales)),
+            mat_a.shape[1] == mat_b.shape[0],
             lambda: (
-                f"{name} must either be a single value or contain {len(scales)} entries "
-                f"to match the number of associated scale tensors"
+                f"torch.nn.functional.scaled_mm expects mat_a.shape[-1] ({mat_a.shape[1]}) "
+                f"to equal mat_b.shape[-2] ({mat_b.shape[0]})"
             ),
-            ValueError,
         )
-        for enum_value in values:
-            _ = int(enum_value.value) if hasattr(enum_value, "value") else int(enum_value)
+        utils.check(
+            len(contraction_dim) == 0,
+            lambda: "torch.nn.functional.scaled_mm does not yet support contraction_dim",
+            NotImplementedError,
+        )
 
-    _validate_enum_list(_expand(scale_recipe_a), scale_a_list, "scale_recipe_a")
-    _validate_enum_list(_expand(scale_recipe_b), scale_b_list, "scale_recipe_b")
-    _validate_enum_list(_expand(swizzle_a), scale_a_list, "swizzle_a")
-    _validate_enum_list(_expand(swizzle_b), scale_b_list, "swizzle_b")
+        def _expand(value):
+            if value is None:
+                return []
+            if isinstance(value, (list, tuple)):
+                return list(value)
+            return [value]
 
-    def _tensor_proxy_args(values: Sequence[Any]) -> list[TensorProxy]:
-        return [t for t in values if isinstance(t, TensorProxy)]
+        scale_a_list = _expand(scale_a)
+        scale_b_list = _expand(scale_b)
 
-    tensor_args: list[TensorProxy] = [mat_a, mat_b]
-    tensor_args += _tensor_proxy_args(scale_a_list)
-    tensor_args += _tensor_proxy_args(scale_b_list)
-    if isinstance(bias, TensorProxy):
-        tensor_args.append(bias)
-    utils.check_same_device(*tensor_args)
+        def _validate_enum_list(values: list[Any], scales: list[Any], name: str) -> None:
+            if not values:
+                return
+            utils.check(
+                len(scales) > 0,
+                lambda: f"{name} was provided but the corresponding scale list is empty",
+                ValueError,
+            )
+            utils.check(
+                len(values) in (1, len(scales)),
+                lambda: (
+                    f"{name} must either be a single value or contain {len(scales)} entries "
+                    f"to match the number of associated scale tensors"
+                ),
+                ValueError,
+            )
+            for enum_value in values:
+                _ = int(enum_value.value) if hasattr(enum_value, "value") else int(enum_value)
 
-    result_dtype = to_dtype(output_dtype or torch.bfloat16)
-    requires_grad = mat_a.requires_grad or mat_b.requires_grad or (isinstance(bias, TensorProxy) and bias.requires_grad)
+        _validate_enum_list(_expand(scale_recipe_a), scale_a_list, "scale_recipe_a")
+        _validate_enum_list(_expand(scale_recipe_b), scale_b_list, "scale_recipe_b")
+        _validate_enum_list(_expand(swizzle_a), scale_a_list, "swizzle_a")
+        _validate_enum_list(_expand(swizzle_b), scale_b_list, "swizzle_b")
 
-    m = mat_a.shape[0]
-    n = mat_b.shape[1]
-    return TensorProxy(
-        shape=(m, n),
-        device=mat_a.device,
-        dtype=result_dtype,
-        requires_grad=requires_grad,
-    )
+        def _tensor_proxy_args(values: Sequence[Any]) -> list[TensorProxy]:
+            return [t for t in values if isinstance(t, TensorProxy)]
+
+        tensor_args: list[TensorProxy] = [mat_a, mat_b]
+        tensor_args += _tensor_proxy_args(scale_a_list)
+        tensor_args += _tensor_proxy_args(scale_b_list)
+        if isinstance(bias, TensorProxy):
+            tensor_args.append(bias)
+        utils.check_same_device(*tensor_args)
+
+        result_dtype = to_dtype(output_dtype or torch.bfloat16)
+        requires_grad = (
+            mat_a.requires_grad or mat_b.requires_grad or (isinstance(bias, TensorProxy) and bias.requires_grad)
+        )
+
+        m = mat_a.shape[0]
+        n = mat_b.shape[1]
+        return TensorProxy(
+            shape=(m, n),
+            device=mat_a.device,
+            dtype=result_dtype,
+            requires_grad=requires_grad,
+        )
 
 
 # TODO Add annotations
