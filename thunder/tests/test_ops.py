@@ -13,6 +13,7 @@ from thunder.core.pytree import tree_flatten, tree_map
 from thunder.tests.framework import assert_closer, ops, run_snippet, requiresCUDA
 from thunder.tests.opinfos import OpInfo, SampleInput, opinfos
 import thunder.tests.bf16
+from thunder.dynamo import thunderfx
 
 #
 # Generic test templates for all operators
@@ -541,3 +542,245 @@ def test_div_exact():
     result_eager = fn(a, b, c)
     result_jit = jfn(a, b, c)
     assert_close(result_eager, result_jit)
+
+def test_view_as_complex():
+    """Test that torch.view_as_complex works correctly and creates a view."""
+
+    def foo(a):
+        return torch.view_as_complex(a)
+
+    jfoo = thunder.jit(foo)
+
+    # Create input tensor with shape (..., 2) for real and imaginary parts
+    a = torch.randn((2, 3, 4, 2), device="cpu", dtype=torch.float32)
+
+    actual = jfoo(a)
+    expected = foo(a)
+
+    assert_close(actual, expected)
+
+    # Check output shape is correct (last dimension removed)
+    assert actual.shape == (2, 3, 4)
+    assert actual.dtype == torch.complex64
+
+    # Verify it's a real view by checking storage pointer
+    assert a.untyped_storage().data_ptr() == actual.untyped_storage().data_ptr(), (
+        "view_as_complex should create a view, not allocate new memory"
+    )
+
+    # Verify that the trace contains the view_as_complex operation
+    extrace = thunder.last_traces(jfoo)[-1]
+    symbol_names = {bsym.sym.name for bsym in extrace.bound_symbols}
+    assert "view_as_complex" in symbol_names, "Expected 'view_as_complex' symbol in trace"
+
+    # Test with different dtypes
+    for dtype, expected_complex_dtype in [
+        (torch.float32, torch.complex64),
+        (torch.float64, torch.complex128),
+    ]:
+        a_typed = torch.randn((2, 3, 2), device="cpu", dtype=dtype)
+        actual_typed = jfoo(a_typed)
+        expected_typed = foo(a_typed)
+
+        assert_close(actual_typed, expected_typed)
+        assert actual_typed.dtype == expected_complex_dtype
+
+
+def test_view_as_real():
+    """Test that torch.view_as_real works correctly and creates a view."""
+
+    def foo(a):
+        return torch.view_as_real(a)
+
+    jfoo = thunder.jit(foo)
+
+    # Create complex input tensor
+    a = torch.randn((2, 3, 4), device="cpu", dtype=torch.complex64)
+
+    actual = jfoo(a)
+    expected = foo(a)
+
+    assert_close(actual, expected)
+
+    # Check output shape is correct (extra dimension of size 2 added)
+    assert actual.shape == (2, 3, 4, 2)
+    assert actual.dtype == torch.float32
+
+    # Verify it's a real view by checking storage pointer
+    assert a.untyped_storage().data_ptr() == actual.untyped_storage().data_ptr(), (
+        "view_as_real should create a view, not allocate new memory"
+    )
+
+    # Verify that the trace contains the view_as_real operation
+    extrace = thunder.last_traces(jfoo)[-1]
+    symbol_names = {bsym.sym.name for bsym in extrace.bound_symbols}
+    assert "view_as_real" in symbol_names, "Expected 'view_as_real' symbol in trace"
+
+    # Test with different dtypes
+    for dtype, expected_real_dtype in [
+        (torch.complex64, torch.float32),
+        (torch.complex128, torch.float64),
+    ]:
+        a_typed = torch.randn((2, 3), device="cpu", dtype=dtype)
+        actual_typed = jfoo(a_typed)
+        expected_typed = foo(a_typed)
+
+        assert_close(actual_typed, expected_typed)
+        assert actual_typed.dtype == expected_real_dtype
+
+
+def test_view_as_complex_thunderfx_no_splits():
+    """Test that torch.view_as_complex doesn't cause graph breaks in ThunderFX."""
+
+    def func(a):
+        # Test view_as_complex in a computation graph with other operations
+        result = torch.view_as_complex(a)
+        result = result * 2.0
+        return result.real + result.imag
+
+    a = torch.randn((4, 4, 2), device="cpu", dtype=torch.float32)
+
+    cfunc = thunderfx(func)
+    actual = cfunc(a)
+    expected = func(a)
+
+    assert_close(actual, expected)
+
+    # Verify no graph splits occurred
+    backend = cfunc._backend
+    assert len(backend.subgraph_infos) == 1, "Should have exactly one subgraph (no splits)"
+
+    subgraph_info = backend.subgraph_infos[0]
+    # Verify no splits occurred
+    assert len(subgraph_info.split_reasons) == 0, (
+        f"view_as_complex caused graph splits: {subgraph_info.split_reasons}"
+    )
+    # Verify Thunder compiled it (not Inductor)
+    assert len(subgraph_info.thunder_compiled_fns) == 1, "Thunder should have compiled exactly one function"
+
+
+def test_view_as_real_thunderfx_no_splits():
+    """Test that torch.view_as_real doesn't cause graph breaks in ThunderFX."""
+
+    def func(a):
+        # Test view_as_real in a computation graph with other operations
+        result = torch.view_as_real(a)
+        result = result * 2.0
+        return result.sum()
+
+    a = torch.randn((4, 4), device="cpu", dtype=torch.complex64)
+
+    cfunc = thunderfx(func)
+    actual = cfunc(a)
+    expected = func(a)
+
+    assert_close(actual, expected)
+
+    # Verify no graph splits occurred
+    backend = cfunc._backend
+    assert len(backend.subgraph_infos) == 1, "Should have exactly one subgraph (no splits)"
+
+    subgraph_info = backend.subgraph_infos[0]
+    # Verify no splits occurred
+    assert len(subgraph_info.split_reasons) == 0, (
+        f"view_as_real caused graph splits: {subgraph_info.split_reasons}"
+    )
+    # Verify Thunder compiled it (not Inductor)
+    assert len(subgraph_info.thunder_compiled_fns) == 1, "Thunder should have compiled exactly one function"
+
+
+def test_polar():
+    """Test that torch.polar works correctly and produces correct complex tensors."""
+
+    def foo(abs_, angle):
+        return torch.polar(abs_, angle)
+
+    jfoo = thunder.jit(foo)
+
+    # Create input tensors for magnitude and angle
+    abs_ = torch.randn((2, 3, 4), device="cpu", dtype=torch.float32).abs()  # Magnitude should be non-negative
+    angle = torch.randn((2, 3, 4), device="cpu", dtype=torch.float32)
+
+    actual = jfoo(abs_, angle)
+    expected = foo(abs_, angle)
+
+    assert_close(actual, expected)
+
+    # Check output shape and dtype
+    assert actual.shape == (2, 3, 4)
+    assert actual.dtype == torch.complex64
+
+    # Verify the polar relationship: z = r * e^(i*theta) = r * (cos(theta) + i*sin(theta))
+    expected_real = abs_ * torch.cos(angle)
+    expected_imag = abs_ * torch.sin(angle)
+    assert_close(actual.real, expected_real)
+    assert_close(actual.imag, expected_imag)
+
+    # Verify that the trace contains the expected decomposed operations
+    extrace = thunder.last_traces(jfoo)[-1]
+    print(extrace)
+    symbol_names = {bsym.sym.name for bsym in extrace.bound_symbols}
+    print(symbol_names)
+    
+    # The polar operation should be decomposed into cos, sin, mul, and complex
+    assert "cos" in symbol_names, "Expected 'cos' symbol in trace for polar decomposition"
+    assert "sin" in symbol_names, "Expected 'sin' symbol in trace for polar decomposition"
+    assert "mul" in symbol_names, "Expected 'mul' symbol in trace for polar decomposition"
+    assert "complex" in symbol_names, "Expected 'complex' symbol in trace for polar decomposition"
+
+    # Test with different dtypes
+    for dtype, expected_complex_dtype in [
+        (torch.float32, torch.complex64),
+        (torch.float64, torch.complex128),
+    ]:
+        abs_typed = torch.randn((2, 3), device="cpu", dtype=dtype).abs()
+        angle_typed = torch.randn((2, 3), device="cpu", dtype=dtype)
+        actual_typed = jfoo(abs_typed, angle_typed)
+        expected_typed = foo(abs_typed, angle_typed)
+
+        assert_close(actual_typed, expected_typed)
+        assert actual_typed.dtype == expected_complex_dtype
+
+    # Test edge cases
+    # Zero magnitude
+    abs_zero = torch.zeros((2, 3), device="cpu", dtype=torch.float32)
+    angle_any = torch.randn((2, 3), device="cpu", dtype=torch.float32)
+    result_zero = jfoo(abs_zero, angle_any)
+    assert_close(result_zero, torch.zeros((2, 3), device="cpu", dtype=torch.complex64))
+
+    # Zero angle
+    abs_any = torch.randn((2, 3), device="cpu", dtype=torch.float32).abs()
+    angle_zero = torch.zeros((2, 3), device="cpu", dtype=torch.float32)
+    result_zero_angle = jfoo(abs_any, angle_zero)
+    # When angle is zero, result should be purely real (equal to magnitude)
+    assert_close(result_zero_angle.real, abs_any)
+    assert_close(result_zero_angle.imag, torch.zeros_like(abs_any))
+
+
+def test_polar_thunderfx_no_splits():
+    """Test that torch.polar doesn't cause graph breaks in ThunderFX."""
+
+    def func(abs_, angle):
+        # Test polar in a computation graph with other operations
+        result = torch.polar(abs_, angle)
+        result = result * 2.0
+        result = result + 1.0
+        return result.real + result.imag
+
+    abs_ = torch.randn((4, 4), device="cpu", dtype=torch.float32).abs()
+    angle = torch.randn((4, 4), device="cpu", dtype=torch.float32)
+
+    cfunc = thunderfx(func)
+    actual = cfunc(abs_, angle)
+    expected = func(abs_, angle)
+
+    assert_close(actual, expected)
+
+    # Verify no graph splits occurred
+    backend = cfunc._backend
+    assert len(backend.subgraph_infos) >= 1
+
+    # Verify no splits occurred
+    for subgraph_info in backend.subgraph_infos:
+        assert len(subgraph_info.split_reasons) == 0
+        assert len(subgraph_info.thunder_compiled_fns) > 0, "Thunder should have compiled at least one function"
