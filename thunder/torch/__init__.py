@@ -317,11 +317,6 @@ def is_cuda(a: TensorLike, /) -> bool:
     return a.device.devicetype is devices.DeviceType.CUDA
 
 
-# ------------------------------------------------------------
-# Complex helpers: polar and view_as_complex
-# ------------------------------------------------------------
-
-
 @torchsymbol(torch.polar, id="torch.polar")
 def polar(abs_: TensorLike, angle: TensorLike):
     # Decompose polar into real/imag using Thunder ops and construct complex via mapped torch.complex
@@ -329,17 +324,6 @@ def polar(abs_: TensorLike, angle: TensorLike):
     imag = abs_ * sin(angle)
     complex_sym = _torch_to_thunder_function_map[torch.complex]
     return complex_sym(real, imag)
-
-
-@register_augmented_forward("torch.polar")
-def _polar_augmented_forward(abs_: TensorLike, angle: TensorLike):
-    result = polar(abs_, angle)
-    return result, (abs_, angle)
-
-
-@register_backward("torch.polar")
-def _polar_backward(abs_: TensorLike, angle: TensorLike, g: TensorLike):
-    raise NotImplementedError("Backward pass for torch.polar is not implemented")
 
 
 @torchsymbol(torch.view_as_complex, id="torch.view_as_complex", is_prim=True)
@@ -369,20 +353,8 @@ def view_as_complex(a: TensorLike):
 
     # Output shape is input shape with last dimension removed
     output_shape = a.shape[:-1]
-
-    # Execution handled by torch executor
+    
     return TensorProxy(like=a, shape=output_shape, dtype=output_dtype)
-
-
-@register_augmented_forward("torch.view_as_complex")
-def _view_as_complex_augmented_forward(a: TensorLike):
-    result = view_as_complex(a)
-    return result, (a,)
-
-
-@register_backward("torch.view_as_complex")
-def _view_as_complex_backward(a: TensorLike, g: TensorLike):
-    raise NotImplementedError("Backward pass for torch.view_as_complex is not implemented")
 
 
 @torchsymbol(torch.view_as_real, id="torch.view_as_real", is_prim=True)
@@ -407,21 +379,8 @@ def view_as_real(a: TensorLike):
 
     # Output shape is input shape with an extra dimension of size 2 at the end
     output_shape = tuple(a.shape) + (2,)
-
-    # Return a TensorProxy with the correct metadata
-    # The actual execution will be handled by the torch executor
+    
     return TensorProxy(like=a, shape=output_shape, dtype=output_dtype)
-
-
-@register_augmented_forward("torch.view_as_real")
-def _view_as_real_augmented_forward(a: TensorLike):
-    result = view_as_real(a)
-    return result, (a,)
-
-
-@register_backward("torch.view_as_real")
-def _view_as_real_backward(a: TensorLike, g: TensorLike):
-    raise NotImplementedError("Backward pass for torch.view_as_real is not implemented")
 
 
 # is nested always returns False for now:
