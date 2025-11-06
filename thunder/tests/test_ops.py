@@ -1,5 +1,6 @@
 from collections.abc import Callable
 import os
+import functools
 
 import numpy as np
 import pytest
@@ -420,10 +421,57 @@ def test_exponential():
         assert_close(b, b_ref)
 
 
+def _cuda_capability(device: torch.device) -> tuple[int, int]:
+    return torch.cuda.get_device_capability(device)
+
+
+def _cuda_version_tuple() -> tuple[int, int] | None:
+    if torch.version.cuda is None:
+        return None
+    parts = torch.version.cuda.split(".")
+    try:
+        major = int(parts[0])
+        minor = int(parts[1]) if len(parts) > 1 else 0
+        return major, minor
+    except ValueError:
+        return None
+
+
+def _ensure_fp8_tensorwise(device: torch.device) -> None:
+    major, minor = _cuda_capability(device)
+    if (major, minor) < (8, 9):
+        pytest.skip("scaled_mm tensor-wise support requires SM89 or newer")
+
+
+def _require_fp8_tensorwise(fn):
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        device = torch.device("cuda")
+        _ensure_fp8_tensorwise(device)
+        return fn(*args, **kwargs)
+
+    return wrapper
+
+
+def _require_fp8_rowwise(device: torch.device) -> None:
+    _ensure_fp8_tensorwise(device)
+    major, minor = _cuda_capability(device)
+    if (major, minor) < (9, 0):
+        pytest.skip("row-wise scaled_mm requires SM90 or newer")
+    cuda_version = _cuda_version_tuple()
+    if cuda_version is not None and cuda_version < (12, 9):
+        pytest.skip("row-wise scaled_mm requires CUDA 12.9 or newer")
+
+
+def _require_fp8_blockwise(device: torch.device) -> None:
+    _require_fp8_rowwise(device)
+
+
 # Adapted from https://github.com/pytorch/pytorch/blob/b4403bfc62ca97eec554cdf815baab1fe93057d9/test/test_scaled_matmul_cuda.py#L645-L659
 @requiresCUDA
+@_require_fp8_tensorwise
 def test_scaled_mm_tensorwise_matches_torch():
-    device = "cuda:0"
+    device = torch.device("cuda")
 
     def reference_fn(mat_a, mat_b, scale_a, scale_b):
         return torch.nn.functional.scaled_mm(
@@ -458,8 +506,9 @@ def test_scaled_mm_tensorwise_matches_torch():
 
 # Adapted from https://github.com/pytorch/pytorch/blob/b4403bfc62ca97eec554cdf815baab1fe93057d9/test/test_scaled_matmul_cuda.py#L862-L910
 @requiresCUDA
+@_require_fp8_tensorwise
 def test_scaled_mm_matches_emulation():
-    device = "cuda:0"
+    device = torch.device("cuda")
     torch.manual_seed(0)
 
     def quantize_to_fp8(tensor):
@@ -513,7 +562,8 @@ def test_scaled_mm_matches_emulation():
 
 @requiresCUDA
 def test_scaled_mm_rowwise_matches_torch():
-    device = "cuda:0"
+    device = torch.device("cuda")
+    _require_fp8_rowwise(device)
 
     def reference_fn(mat_a, mat_b, scale_a, scale_b):
         return torch.nn.functional.scaled_mm(
@@ -548,8 +598,9 @@ def test_scaled_mm_rowwise_matches_torch():
 
 @requiresCUDA
 def test_scaled_mm_rowwise_matches_emulation():
-    device = "cuda:0"
+    device = torch.device("cuda")
     torch.manual_seed(1)
+    _require_fp8_rowwise(device)
 
     dtype_fp8 = torch.float8_e4m3fn
     max_val = torch.finfo(dtype_fp8).max
@@ -629,8 +680,9 @@ def _dequantize_blockwise(quant: torch.Tensor, encode: torch.Tensor, block_rows:
 @pytest.mark.parametrize("output_dtype", [torch.bfloat16])
 @pytest.mark.parametrize("lhs_block,rhs_block", [(1, 1), (128, 1), (1, 128)])
 def test_scaled_mm_blockwise_matches_torch(output_dtype, lhs_block, rhs_block):
-    device = "cuda:0"
+    device = torch.device("cuda")
     torch.manual_seed(0)
+    _require_fp8_blockwise(device)
 
     M, K, N = 256, 256, 256
     mat_a = torch.randn(M, K, device=device, dtype=output_dtype).pow(3)
@@ -684,8 +736,9 @@ def test_scaled_mm_blockwise_matches_torch(output_dtype, lhs_block, rhs_block):
 @pytest.mark.parametrize("output_dtype", [torch.bfloat16])
 @pytest.mark.parametrize("lhs_block,rhs_block", [(1, 1), (128, 1), (1, 128)])
 def test_scaled_mm_blockwise_matches_emulation(output_dtype, lhs_block, rhs_block):
-    device = "cuda:0"
+    device = torch.device("cuda")
     torch.manual_seed(123)
+    _require_fp8_blockwise(device)
 
     M, K, N = 256, 256, 256
     mat_a = torch.randn(M, K, device=device, dtype=output_dtype).pow(3)
