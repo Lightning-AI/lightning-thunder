@@ -239,23 +239,6 @@ def _splitter(
     # We update the GraphModule in `update_node_and_submodule`, so we need to recompile.
     recompile_graph(split_gm)
 
-    # Print split reasons, if any
-    # if split_reasons:
-    #     try:
-    #         num_submodules = len(submodule_to_compiled_fns)
-    #     except Exception:
-    #         num_submodules = None
-    #     header = "[thunderfx] Graph was split" + (
-    #         f" into {num_submodules} subgraphs" if num_submodules is not None else ""
-    #     )
-    #     print(header)
-    #     print("[thunderfx] Split reasons:")
-    #     for idx, reason in enumerate(split_reasons):
-    #         base = f"  [{idx}] {reason.reason_type.name}: {reason.info}"
-    #         if getattr(reason, "exception", None):
-    #             base += f" | exception={reason.exception}"
-    #         print(base)
-
     return split_gm, SubgraphInfo(
         gm,
         _ThunderSplitGraphModule(original_split_gm, supported_partitions),

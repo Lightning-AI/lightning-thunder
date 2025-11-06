@@ -151,13 +151,6 @@ class ThunderCompiler:
         )
         self.subgraph_infos.append(subgraph_info)
 
-        # Print how many subgraphs are compiled by TorchInductor for this FX graph
-        num_inductor_subgraphs = sum(
-            1
-            for compiled_fn in subgraph_info.submodule_to_compiled_functions.values()
-            if compiled_fn.compiler == CompilerType.TORCH_INDUCTOR
-        )
-        print(f"[thunderfx] Inductor subgraphs generated: {num_inductor_subgraphs}")
         return split_module
 
     def save_reproducer_to_folder(
