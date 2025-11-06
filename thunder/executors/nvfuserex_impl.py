@@ -17,7 +17,6 @@ IS_TORCH_DISTRIBUTED_AVAILABLE = torch.distributed.is_available()
 if IS_TORCH_DISTRIBUTED_AVAILABLE:
     from torch.distributed.tensor import DTensor
     from torch.distributed.tensor.placement_types import Placement, Shard
-    import torch.distributed as dist
 
 import thunder.core.dtypes as dtypes
 import thunder.torch as ltorch

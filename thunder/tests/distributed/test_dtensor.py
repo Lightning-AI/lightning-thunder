@@ -458,7 +458,6 @@ class DTensorTest(DistributedParallelTestCase):
 
         assert tested_sample_count > 0, f"test_dtensor_opinfo:No samples tested for {op.name} with {executor} executor"
 
-
     @common_utils.parametrize("executor", tuple(executors_map.keys()))
     def test_use_dtensor_execute_flag_with_dtensor(self, executor):
         """Test that use_dtensor_execute flag is set to True for DTensor inputs."""
@@ -494,9 +493,9 @@ class DTensorTest(DistributedParallelTestCase):
             fusion_name = fusion_bsym.sym.name
             fdw = call_ctx.get(fusion_name)
             assert fdw is not None, f"FusionDefinitionWrapper not found for {fusion_name}"
-            assert hasattr(
-                fdw, "use_dtensor_execute"
-            ), "FusionDefinitionWrapper should have use_dtensor_execute attribute"
+            assert hasattr(fdw, "use_dtensor_execute"), (
+                "FusionDefinitionWrapper should have use_dtensor_execute attribute"
+            )
             assert fdw.use_dtensor_execute is True, "use_dtensor_execute should be True for DTensor inputs"
 
         # Verify the result is correct
