@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 import torch
 from torch.testing import assert_close
+from torch.nn.functional import ScalingType, SwizzleType
 
 import thunder
 import thunder.core.devices as devices
@@ -417,6 +418,97 @@ def test_exponential():
 
         assert_close(a, a_ref)
         assert_close(b, b_ref)
+
+
+# Adapted from https://github.com/pytorch/pytorch/blob/b4403bfc62ca97eec554cdf815baab1fe93057d9/test/test_scaled_matmul_cuda.py#L645-L659
+@requiresCUDA
+def test_scaled_mm_tensorwise_matches_torch():
+    device = "cuda:0"
+
+    def reference_fn(mat_a, mat_b, scale_a, scale_b):
+        return torch.nn.functional.scaled_mm(
+            mat_a,
+            mat_b,
+            scale_a,
+            ScalingType.TensorWise,
+            scale_b,
+            ScalingType.TensorWise,
+            swizzle_a=SwizzleType.NO_SWIZZLE,
+            swizzle_b=SwizzleType.NO_SWIZZLE,
+            output_dtype=torch.bfloat16,
+        )
+
+    M, K, N = 16, 32, 16
+    mat_a = torch.randn(M, K, device=device, dtype=torch.float32)
+    mat_b_base = torch.randn(N, K, device=device, dtype=torch.float32)
+    mat_a_lp = mat_a.to(torch.float8_e4m3fn)
+    mat_b_lp = mat_b_base.to(torch.float8_e4m3fn).t()
+    scale_a = torch.tensor(1.0, device=device, dtype=torch.float32)
+    scale_b = torch.tensor(1.0, device=device, dtype=torch.float32)
+
+    try:
+        expected = reference_fn(mat_a_lp, mat_b_lp, scale_a, scale_b)
+    except (NotImplementedError, RuntimeError) as exc:
+        pytest.skip(str(exc))
+
+    jf = thunder.jit(reference_fn)
+    result = jf(mat_a_lp, mat_b_lp, scale_a, scale_b)
+    assert_close(result, expected)
+
+
+# Adapted from https://github.com/pytorch/pytorch/blob/b4403bfc62ca97eec554cdf815baab1fe93057d9/test/test_scaled_matmul_cuda.py#L862-L910
+@requiresCUDA
+def test_scaled_mm_matches_emulation():
+    device = "cuda:0"
+    torch.manual_seed(0)
+
+    def quantize_to_fp8(tensor):
+        dtype = torch.float8_e4m3fn
+        max_val = torch.finfo(dtype).max
+        amax = tensor.abs().max()
+        encode = (max_val / torch.clamp(amax, min=1e-12)).to(torch.float32)
+        quant = torch.clamp(tensor * encode, min=-max_val, max=max_val).to(dtype)
+        decode = encode.reciprocal()
+        return quant, decode, encode
+
+    def mm_float8_emulated(mat_a, encode_a, mat_b, encode_b, out_dtype):
+        a_fp32 = mat_a.to(torch.float32) / encode_a
+        b_fp32 = mat_b.to(torch.float32) / encode_b
+        return (a_fp32 @ b_fp32).to(out_dtype)
+
+    def scaled_mm_fp8(mat_a, mat_b, scale_a, scale_b, *, out_dtype):
+        return torch.nn.functional.scaled_mm(
+            mat_a,
+            mat_b,
+            scale_a,
+            ScalingType.TensorWise,
+            scale_b,
+            ScalingType.TensorWise,
+            swizzle_a=SwizzleType.NO_SWIZZLE,
+            swizzle_b=SwizzleType.NO_SWIZZLE,
+            output_dtype=out_dtype,
+        )
+
+    M, K, N = 32, 64, 32
+    mat_a = torch.randn(M, K, device=device, dtype=torch.float32)
+    mat_b_base = torch.randn(N, K, device=device, dtype=torch.float32)
+
+    mat_a_lp, decode_a, encode_a = quantize_to_fp8(mat_a)
+    mat_b_lp_pre, decode_b, encode_b = quantize_to_fp8(mat_b_base)
+    mat_b_lp = mat_b_lp_pre.t()
+
+    try:
+        reference = scaled_mm_fp8(mat_a_lp, mat_b_lp, decode_a, decode_b, out_dtype=torch.float32)
+    except (NotImplementedError, RuntimeError) as exc:
+        pytest.skip(str(exc))
+
+    jf = thunder.jit(lambda a, b, sa, sb: scaled_mm_fp8(a, b, sa, sb, out_dtype=torch.float32))
+    thunder_out = jf(mat_a_lp, mat_b_lp, decode_a, decode_b)
+
+    emulated = mm_float8_emulated(mat_a_lp, encode_a, mat_b_lp, encode_b, torch.float32)
+
+    assert_close(thunder_out, reference)
+    assert_close(reference, emulated, atol=2e-2, rtol=2e-2)
 
 
 # https://github.com/Lightning-AI/lightning-thunder/issues/1857
