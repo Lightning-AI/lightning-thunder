@@ -214,7 +214,6 @@ torch_auto_registered_ops = {
         torch.pixel_unshuffle,
         torch.poisson,
         torch.poisson_nll_loss,
-        # torch.polar, # a
         torch.positive,
         torch.put,
         torch.qr,
