@@ -6,7 +6,9 @@ import numpy as np
 import pytest
 import torch
 from torch.testing import assert_close
-from torch.nn.functional import ScalingType, SwizzleType
+
+if hasattr(torch.nn.functional, "scaled_mm"):
+    from torch.nn.functional import ScalingType, SwizzleType
 
 import thunder
 import thunder.core.devices as devices
