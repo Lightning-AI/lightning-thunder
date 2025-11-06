@@ -78,6 +78,42 @@ def apply_rotary_emb(
     return xq_out.type_as(xq), xk_out.type_as(xk)
 
 
+def apply_rotary_emb_with_complex_views(
+    xq: torch.Tensor, xk: torch.Tensor, freqs_cos: torch.Tensor, freqs_sin: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """RoPE implementation using view_as_complex and view_as_real.
+    
+    This is equivalent to apply_rotary_emb but uses complex view operations
+    for cleaner, simpler code.
+    """
+
+    # Reshape xq and xk to pair up elements for complex representation
+    # (batch, seq, heads, dim) -> (batch, seq, heads, dim//2, 2)
+    xq_reshaped = xq.float().reshape(*xq.shape[:-1], -1, 2)
+    xk_reshaped = xk.float().reshape(*xk.shape[:-1], -1, 2)
+    
+    # View as complex numbers
+    xq_complex = torch.view_as_complex(xq_reshaped)
+    xk_complex = torch.view_as_complex(xk_reshaped)
+    
+    # Reshape freqs for broadcasting
+    freqs_cos = freqs_cos.view(1, freqs_cos.shape[0], 1, freqs_cos.shape[1])
+    freqs_sin = freqs_sin.view(1, freqs_sin.shape[0], 1, freqs_sin.shape[1])
+    
+    # Create complex rotation: e^(i*theta) = cos(theta) + i*sin(theta)
+    freqs_complex = torch.complex(freqs_cos, freqs_sin)
+    
+    # Apply rotation in complex plane
+    xq_rotated = xq_complex * freqs_complex
+    xk_rotated = xk_complex * freqs_complex
+    
+    # Convert back to real representation
+    xq_out = torch.view_as_real(xq_rotated).flatten(3)
+    xk_out = torch.view_as_real(xk_rotated).flatten(3)
+    
+    return xq_out.type_as(xq), xk_out.type_as(xk)
+
+
 def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
     """torch.repeat_interleave(x, dim=2, repeats=n_rep)"""
     bs, slen, n_kv_heads, head_dim = x.shape
