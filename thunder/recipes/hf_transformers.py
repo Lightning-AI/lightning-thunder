@@ -10,6 +10,19 @@ from thunder.recipes import BaseRecipe
 from thunder import Recipe
 
 
+# for materializing models, we need reset_parameters, which is part of the unwritten
+# spec for idiomatic PyTorch, but not implemented everywhere
+def RotaryEmbedding_reset_parameters(self):
+    inv_freq, self.attention_scaling = self.rope_init_fn(self.config, self.inv_freq.device)
+    with torch.no_grad():
+        self.inv_freq.copy_(inv_freq)
+
+
+def RMSNorm_reset_parameters(self):
+    with torch.no_grad():
+        self.weight.fill_(1)
+
+
 class InplaceIndexCopyTransform(thunder.Transform):
     def __init__(self):
         super().__init__()
@@ -30,15 +43,57 @@ class InplaceIndexCopyTransform(thunder.Transform):
         return self.executor
 
     def transform_traces_pre_prologue(self, pro, comp, epi, **kwargs):
-        comp_new = thunder.core.trace.from_trace(comp)
-        for bsym in comp.bound_symbols:
-            if bsym.sym == thunder.torch.index_copy:
-                bsym.args[0].tags.add(thunder.core.proxies.ProxyTag.STATIC_MEMORY_LOCATION)
-                bsym = bsym.from_bsym(sym=self.inplace_index_copy)
-            else:
-                bsym = bsym.from_bsym()
-            comp_new.bound_symbols.append(bsym)
-        return pro, comp_new, epi
+        import transformers
+
+        cache_classes = (transformers.cache_utils.StaticCache,)
+        if hasattr(transformers.cache_utils, "StaticLayer"):
+            cache_classes += (transformers.cache_utils.StaticLayer,)
+        import thunder.core.utils as utils
+
+        # Identify the indices of cache-related proxies in the prologue trace.
+        # In the prologue, the cache related proxies are represented for example as:
+        # any0: "<class 'transformers.cache_utils.StaticCache'>" = kwargs['past_key_values']
+        # obj1: "Any" = any0.layers
+        # subscr2: "Any" = obj1[0]
+        # key_tensors: "cuda:0 bf16[1, 8, 108, 64]" = subscr2.keys
+        # We start from the AnyProxy whose underlying objects are of type `StaticCache` or `StaticLayer` and recursively collect the outputs of the consumers(getattr or getitem) as the target proxies
+        bsyms = pro.bound_symbols
+        consumers = utils.consumers(bsyms, _map_to_numbers=False)
+        target_proxies = []
+
+        def recursively_collect_consumers_outputs(proxy, consumers_dict, visited, collected):
+            if proxy.name in visited:
+                return
+            visited.add(proxy.name)
+            static_consumers = consumers_dict.get(proxy, None)
+            if not static_consumers:
+                return
+            for consumer in static_consumers:
+                if consumer.sym.name in ("unpack_attr", "unpack_getitem"):
+                    collected.extend(consumer.flat_proxy_outs)
+                    for out_proxy in consumer.flat_proxy_outs:
+                        recursively_collect_consumers_outputs(out_proxy, consumers_dict, visited, collected)
+
+        for bsym in bsyms:
+            for out in bsym.flat_proxy_outs:
+                if isinstance(out, thunder.core.proxies.AnyProxy) and isinstance(out._o, cache_classes):
+                    visited = set()
+                    recursively_collect_consumers_outputs(out, consumers, visited, target_proxies)
+        return_bsym = bsyms[-1]
+        assert return_bsym.sym.name == "python_return", f"Expected return symbol, got {return_bsym.sym.name}"
+        # the values passed to the compute trace
+        passed_to_compute_trace = return_bsym.args[0][0]
+        target_proxies_names = [proxy.name for proxy in target_proxies]
+        static_proxy_idx = []
+        for idx, passed_value in enumerate(passed_to_compute_trace):
+            if passed_value.name in target_proxies_names:
+                static_proxy_idx.append(idx)
+
+        for idx, arg in enumerate(comp.args):
+            if idx in static_proxy_idx:
+                arg.tags.add(thunder.core.proxies.ProxyTag.STATIC_MEMORY_LOCATION)
+
+        return pro, comp, epi
 
 
 class SDPAMaskTransform(thunder.Transform):
@@ -266,6 +321,16 @@ class HFTransformers(BaseRecipe):
             transformers.PreTrainedModel: Thunder-compiled model ready
             for inference.
         """
+
+        # We need reset_parameters for initialization of buffers in materialization.
+        # This seems to work for transformers 4.5x with Llama, Llama4 and Qwen2 at least
+        for submodule in model.modules():
+            cls = submodule.__class__
+            if cls.__name__.endswith("RotaryEmbedding") and not hasattr(cls, "reset_parameters"):
+                cls.reset_parameters = RotaryEmbedding_reset_parameters
+            elif cls.__name__.endswith("RMSNorm") and not hasattr(cls, "reset_parameters"):
+                cls.reset_parameters = RMSNorm_reset_parameters
+
         thunder_model = super().apply(model)
 
         if getattr(thunder_model, "generate", None):

@@ -48,6 +48,9 @@ class CACHE_OPTIONS(Enum):
     CONSTANT_VALUES = auto()
     SYMBOLIC_VALUES = auto()
 
+    def __repr__(self):
+        return f"{self.__class__.__module__}.{self.__class__.__name__}.{self.name}"
+
 
 _string_to_cache_option_map = {
     "no caching": CACHE_OPTIONS.NO_CACHING,
@@ -97,6 +100,9 @@ class SHARP_EDGES_OPTIONS(Enum):
     ALLOW = auto()
     WARN = auto()
     ERROR = auto()
+
+    def __repr__(self):
+        return f"{self.__class__.__module__}.{self.__class__.__name__}.{self.name}"
 
 
 _str_to_sharp_edges_options_map: dict[str, SHARP_EDGES_OPTIONS] = {

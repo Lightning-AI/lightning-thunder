@@ -10,22 +10,32 @@ from torch._library.custom_ops import CustomOpDef
 import thunder
 from thunder.core import dtypes
 from thunder.core import devices
+from thunder.torch.custom_op import _deregister_custom_op
 from thunder.torch.custom_op import _register_custom_op
+from thunder.torch.custom_op import _register_nvfuser_translator
 from thunder.executors.custom_op_ex import custom_op_ex
-from thunder.tests.framework import TorchExecutor
+from thunder.tests.framework import TorchExecutor, nvFuserExecutor
 from thunder.tests.framework import instantiate
 
 if TYPE_CHECKING:
     from thunder.core.symbol import BoundSymbol
 
 
+@pytest.fixture(autouse=True)
+def deregister_custom_op():
+    yield
+    _deregister_custom_op(mul)
+    if has_triton_op:
+        _deregister_custom_op(mul_triton)
+
+
 @torch.library.custom_op("my_custom_op::mul", mutates_args=())
-def mul(a: torch.Tensor, b: torch.Tensor, c: float | None = None, d: str = "") -> torch.Tensor:
+def mul(a: torch.Tensor, b: torch.Tensor, c: float | None = None) -> torch.Tensor:
     return a * b
 
 
 @torch.library.register_kernel("my_custom_op::mul", "cpu")
-def _(a: torch.Tensor, b: torch.Tensor, c: float | None = None, d: str = "") -> torch.Tensor:
+def _(a: torch.Tensor, b: torch.Tensor, c: float | None = None) -> torch.Tensor:
     return torch.from_numpy(
         np.multiply(
             a.numpy(force=True),
@@ -35,12 +45,12 @@ def _(a: torch.Tensor, b: torch.Tensor, c: float | None = None, d: str = "") -> 
 
 
 @torch.library.register_kernel("my_custom_op::mul", "cuda")
-def _(a: torch.Tensor, b: torch.Tensor, c: float | None = None, d: str = "") -> torch.Tensor:
+def _(a: torch.Tensor, b: torch.Tensor, c: float | None = None) -> torch.Tensor:
     return a * b
 
 
 @torch.library.register_fake("my_custom_op::mul")
-def _(a: torch.Tensor, b: torch.Tensor, c: float | None = None, d: str = "") -> torch.Tensor:
+def _(a: torch.Tensor, b: torch.Tensor, c: float | None = None) -> torch.Tensor:
     return torch.empty_like(a)
 
 
@@ -49,9 +59,9 @@ def setup_context_for_my_custom_op_mul(ctx, inputs, output) -> None:
     ctx.save_for_backward(a, b)
 
 
-def backward_of_my_custom_op_mul(ctx, grad) -> tuple[torch.Tensor, torch.Tensor, None, None]:
+def backward_of_my_custom_op_mul(ctx, grad) -> tuple[torch.Tensor, torch.Tensor, None]:
     a, b = ctx.saved_tensors
-    return torch.ops.my_custom_op.mul(grad, b), torch.ops.my_custom_op.mul(grad, a), None, None
+    return torch.ops.my_custom_op.mul(grad, b), torch.ops.my_custom_op.mul(grad, a), None
 
 
 torch.library.register_autograd(
@@ -116,7 +126,7 @@ def _run_test(module_cls, custom_op: CustomOpDef, device: torch.device, dtype: t
     _symbol = _register_custom_op(custom_op)
 
     module = module_cls().to(device=device, dtype=dtype)
-    jitted = thunder.jit(module, executors=[custom_op_ex])
+    jitted = thunder.jit(module)
     ref = module_cls().to(device=device, dtype=dtype)
     ref.load_state_dict(module.state_dict())
 
@@ -139,23 +149,24 @@ def _run_test(module_cls, custom_op: CustomOpDef, device: torch.device, dtype: t
     assert custom_ex_bsym_found
 
 
+class MyModule(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.linear = nn.Linear(2, 2, bias=False)
+
+    def forward(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        h = torch.ops.my_custom_op.mul(x, y)
+        activation = torch.relu(h)
+        out = self.linear(activation)
+        return out
+
+
 @instantiate(
     executors=(TorchExecutor,),
     devicetypes=(devices.DeviceType.CPU, devices.DeviceType.CUDA),
     dtypes=(dtypes.float32,),
 )
 def test_torch_library_custom_op(_, device: str, dtype: dtypes.dtype):
-    class MyModule(nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.linear = nn.Linear(2, 2, bias=False)
-
-        def forward(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-            h = torch.ops.my_custom_op.mul(x, y)
-            activation = torch.relu(h)
-            out = self.linear(activation)
-            return out
-
     _run_test(MyModule, mul, devices.to_torch_device(device), dtypes.to_torch_dtype(dtype))
 
 
@@ -166,7 +177,7 @@ def test_torch_library_custom_op(_, device: str, dtype: dtypes.dtype):
     dtypes=(dtypes.float32,),
 )
 def test_torch_library_triton_op(_, device: str, dtype: dtypes.dtype):
-    class MyModule(nn.Module):
+    class MyModuleTritonOp(nn.Module):
         def __init__(self):
             super().__init__()
             self.linear = nn.Linear(2, 2, bias=False)
@@ -177,4 +188,78 @@ def test_torch_library_triton_op(_, device: str, dtype: dtypes.dtype):
             out = self.linear(activation)
             return out
 
-    _run_test(MyModule, mul_triton, devices.to_torch_device(device), dtypes.to_torch_dtype(dtype))
+    _run_test(MyModuleTritonOp, mul_triton, devices.to_torch_device(device), dtypes.to_torch_dtype(dtype))
+
+
+class MyModule2(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.linear = nn.Linear(2, 2, bias=False)
+
+    def forward(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        out = torch.ops.my_custom_op.mul(self.linear(x), y)
+        return torch.relu(out)
+
+
+@instantiate(
+    executors=(nvFuserExecutor,),
+    devicetypes=(devices.DeviceType.CUDA,),
+    dtypes=(dtypes.float32,),
+    decorators=(
+        pytest.mark.parametrize(
+            "disable_torch_autograd",
+            (True, False),
+            ids=("inference", "training"),
+        ),
+    ),
+)
+def test_nvfuser_translator_registration(_, device: str, dtype: dtypes.dtype, disable_torch_autograd: bool):
+    from thunder.core.dtypes import to_dtype
+    from thunder.executors.nvfuserex_impl import lcdtype_to_nvdtype, getnv
+
+    def mul_translator(a, b, c=None, *, fd, lc_to_nv_map):
+        nva = getnv(a, fd, lc_to_nv_map)
+        nvb = getnv(b, fd, lc_to_nv_map)
+        result = fd.ops.mul(nva, nvb)
+        out = fd.ops.cast(result, lcdtype_to_nvdtype(to_dtype(a.dtype)))
+        return out
+
+    _symbol = _register_custom_op(mul)
+    _register_nvfuser_translator(_symbol, mul_translator)
+
+    SHAPE = (8, 2)
+    torch_device, torch_dtype = devices.to_torch_device(device), dtypes.to_torch_dtype(dtype)
+    module = MyModule2().to(device=torch_device, dtype=torch_dtype)
+    jitted = thunder.jit(module, disable_torch_autograd=disable_torch_autograd)
+    ref = MyModule2().to(device=torch_device, dtype=torch_dtype)
+    ref.load_state_dict(module.state_dict())
+
+    x = torch.testing.make_tensor(SHAPE, device=torch_device, dtype=torch_dtype)
+    y = torch.testing.make_tensor(SHAPE, device=torch_device, dtype=torch_dtype)
+    x_ref = x.clone().detach()
+    y_ref = y.clone().detach()
+
+    ref_out = ref(x_ref, y_ref)
+    out = jitted(x, y)
+    torch.testing.assert_close(ref_out, out)
+
+    # one nvfuser fusion definition is expected to include custom_op
+    bsym: BoundSymbol
+    fwd_extrace = thunder.last_traces(jitted)[-1]
+    nvfuser_def_for_custom_op_found: bool = False
+    for bsym in filter(
+        lambda bsym: bsym.sym.is_fusion and bsym.sym.executor.name == "nvfuser", fwd_extrace.bound_symbols
+    ):
+        if any(sub_bsym.sym.id == _symbol.id for sub_bsym in bsym.subsymbols):
+            nvfuser_def_for_custom_op_found = True
+    assert nvfuser_def_for_custom_op_found
+
+    if not disable_torch_autograd:
+        out.mean().backward()
+
+        bwd_extrace = thunder.last_backward_traces(jitted)[-1]
+        bsym_custom_ex_bsym_found: bool = False
+        for bsym in bwd_extrace.bound_symbols:
+            if bsym.sym.name == f"{_symbol.name}_backward" and bsym.sym.executor is custom_op_ex:
+                bsym_custom_ex_bsym_found = True
+        assert bsym_custom_ex_bsym_found

@@ -25,9 +25,9 @@ from collections.abc import Callable
 from looseversion import LooseVersion
 
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 from torch.distributed.device_mesh import init_device_mesh
-from torch.distributed.distributed_c10d import destroy_process_group
 from torch.distributed.tensor.parallel import parallelize_module, RowwiseParallel, ColwiseParallel
 from tqdm import tqdm
 import transformers
@@ -49,6 +49,7 @@ from thunder.benchmarks.layers_for_inference_benchmark import (
 )
 from thunder.torch.custom_op import _register_custom_op
 from thunder.tests.distributed.test_moe import GroupedLinearColwiseParallel, GroupedLinearRowwiseParallel
+from thunder.transforms.cudagraph import CUDAGraphTransform
 
 if TYPE_CHECKING:
     from typing import Any
@@ -64,8 +65,10 @@ os.environ["TORCH_NCCL_ASYNC_ERROR_HANDLING"] = "1"
 DEVICE = torch.device("cuda", LOCAL_RANK)
 torch.cuda.set_device(DEVICE)
 
-if WORLD_SIZE > 1:
+if dist.is_torchelastic_launched():
     mesh = init_device_mesh("cuda", (WORLD_SIZE,), mesh_dim_names=("tp",))
+else:
+    mesh = None
 
 LLAMA4_MAVERICK_MODEL_ID: str = "meta-llama/Llama-4-Maverick-17B-128E"
 
@@ -147,12 +150,15 @@ class InferenceBenchmarkConfig:
     num_layers: int | None
     num_iterations: int
     warmup_iterations: int
-    dtensor_single_gpu: bool
     enable_nvfp4: bool  # Enable NVFP4 quantization
     fx_report_folder: str | None
     enable_nv_linear: bool
     mode: str
     disable_moe_replacement: bool
+    attn_implementation: str | None
+    profile: bool
+    thunder_cache: str | None
+    enable_thunder_cudagraph: bool
 
 
 @dataclass
@@ -240,12 +246,8 @@ class InferenceBenchmark:
                 }
             )
 
-        if self.config.dtensor_single_gpu or WORLD_SIZE > 1:
+        if mesh:
             model = parallelize_module(model, mesh, tp_plan)
-
-            # Required as that doesn't understand inference mode
-            for p in model.parameters():
-                p.requires_grad_(False)
 
             # Sanity check
             if not self.config.disable_moe_replacement:
@@ -264,6 +266,13 @@ class InferenceBenchmark:
         model.to_empty(device=DEVICE)
         assert all(p.device == DEVICE for p in model.parameters())
 
+        # Required as thunder doesn't understand inference mode
+        # And some prims like `prims._grouped_mm` don't have grad rule defined yet.
+        for p in model.parameters():
+            p.requires_grad_(False)
+
+        assert all(not p.requires_grad for p in model.parameters())
+
         # `thunderfx` seems to hide the access to vocab_size somewhere so
         # store it here before any compiler is applied.
         self.vocab_size = model.vocab_size
@@ -276,16 +285,22 @@ class InferenceBenchmark:
     def _thunder_jit_options(self) -> dict[str, Any]:
         # `nv_enable_linear=True` might fail with distributed run
         # ref: https://github.com/NVIDIA/Fuser/issues/4507
-        res = {}
+        res = {"transforms": []}
         if self.config.enable_nv_linear:
-            res = {"nv_enable_linear": True, "nv_enable_matmul": True}
+            res["nv_enable_linear"] = True
+            res["nv_enable_matmul"] = True
         if self.config.mode == "thunderjit":
             from thunder.recipes.hf_transformers import SDPAMaskTransform
 
             if not hasattr(self, "_mask_transform"):
                 self._mask_transform = SDPAMaskTransform()
-            res["transforms"] = [self._mask_transform]
+            res["transforms"].append(self._mask_transform)
             res["executors"] = [self._mask_transform.get_executor(), *thunder.get_default_executors()]
+        if self.config.enable_thunder_cudagraph:
+            res["transforms"].append(CUDAGraphTransform())
+        if self.config.thunder_cache is not None:
+            res["cache"] = self.config.thunder_cache
+
         return res
 
     def _compile_model(self, model):
@@ -314,7 +329,9 @@ class InferenceBenchmark:
         self.hf_config = config
 
         with torch.device("meta"):
-            model = AutoModelForCausalLM.from_config(config, torch_dtype=torch.bfloat16)
+            model = AutoModelForCausalLM.from_config(
+                config, torch_dtype=torch.bfloat16, attn_implementation=self.config.attn_implementation
+            )
 
         return model
 
@@ -462,9 +479,10 @@ class InferenceBenchmark:
 
         for _ in tqdm(range(self.config.warmup_iterations), disable=LOCAL_RANK != 0):
             past_key_values.reset()
-            # Use for max_new_tokens=3 to warm up sufficiently as we run decode step for `range(max_new_tokens - 1)`.
-            # This should compile thunder/inductor for decode shapes.
-            _ = self.measure_inference_step(input_ids, past_key_values, max_new_tokens=3)
+            # Use output_length to warm up sufficiently. Otherwise, Thunder's
+            # first-run latency is terribly slow due to lack of dynamic shape
+            # support.
+            _ = self.measure_inference_step(input_ids, past_key_values, self.config.output_length)
 
         print(f"\nRunning {self.config.num_iterations} benchmark iterations...")
         all_metrics = []
@@ -474,7 +492,13 @@ class InferenceBenchmark:
 
         for _ in tqdm(range(self.config.num_iterations), disable=LOCAL_RANK != 0):
             past_key_values.reset()
+
+            if self.config.profile:
+                torch.cuda.cudart().cudaProfilerStart()
             iter_metrics = self.measure_inference_step(input_ids, past_key_values, self.config.output_length)
+            if self.config.profile:
+                torch.cuda.cudart().cudaProfilerStop()
+
             all_metrics.append(iter_metrics)
 
             # Track metrics
@@ -650,20 +674,28 @@ Examples:
         help="Specify the folder for thunderfx_benchmark_report.",
     )
 
-    parser.add_argument(
-        "--dtensor-single-gpu",
-        action="store_true",
-        help="Use DTensor for single GPU",
-    )
     parser.add_argument("--enable-nvfp4", action="store_true", help="Enable NVFP4 quantization for linear layers")
     parser.add_argument(
         "--enable-nv-linear",
         action="store_true",
         help="let nvfuser take care of linear and matmul, note that this might fail with distributed run. See: https://github.com/NVIDIA/Fuser/issues/4507",
     )
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="Wrap each non-warmup iteration with cudaProfilerStart() and cudaProfilerStop(). This allows us to run `nsys profile --capture-range=cudaProfilerApi --capture-range-end=repeat:<N> ... --profile` to record only the non-warmup iterations.",
+    )
 
     parser.add_argument("--save-results", action="store_true", help="Save results to JSON file")
     parser.add_argument("--output-dir", type=str, default="./results", help="Directory to save results")
+    parser.add_argument(
+        "--thunder-cache",
+        type=str,
+        default=None,
+        help="Cache option: no caching, same input, constant values, symbolic values. See `cache` argument of `thunder.jit` for more details.",
+    )
+    parser.add_argument("--enable-thunder-cudagraph", action="store_true", help="Pass CUDAGraphTransform to Thunder")
+    parser.add_argument("--attn-implementation", type=str, default=None, help="Attention implementation")
 
     args = parser.parse_args()
     return args
@@ -691,11 +723,14 @@ def main():
         num_iterations=args.num_iterations,
         warmup_iterations=args.warmup_iterations,
         mode=args.mode,
-        dtensor_single_gpu=args.dtensor_single_gpu,
         enable_nvfp4=args.enable_nvfp4,
         fx_report_folder=args.fx_report_folder,
         enable_nv_linear=args.enable_nv_linear,
         disable_moe_replacement=args.disable_moe_replacement,
+        attn_implementation=args.attn_implementation,
+        profile=args.profile,
+        thunder_cache=args.thunder_cache,
+        enable_thunder_cudagraph=args.enable_thunder_cudagraph,
     )
     benchmark = InferenceBenchmark(config)
 
@@ -719,6 +754,6 @@ if __name__ == "__main__":
     except Exception:
         raise
     finally:
-        if WORLD_SIZE > 1:
+        if mesh:
             for process_group in mesh.get_all_groups():
-                destroy_process_group(process_group)
+                dist.destroy_process_group(process_group)

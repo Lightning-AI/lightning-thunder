@@ -533,7 +533,7 @@ def jit(
             pro = prologue_trc.python_callable(include_decorators=False)
             pro = prologue_execution_timer(pro)
 
-            epilogue_trc = transform_to_torch_types(epilogue_trc)
+            epilogue_trc = transform_to_torch_types(epilogue_trc, translate_all=True)
             epilogue = epilogue_trc.python_callable()
 
             cs.last_prologue_transformation_stop = time.perf_counter_ns()

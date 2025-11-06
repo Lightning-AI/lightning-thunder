@@ -10,8 +10,8 @@ interruptible: False
 parametrize:
   matrix:
     image:
-      - "pytorchlightning/lightning-thunder:ubuntu24.04-cuda12.6.3-cudnn-fe1.10.0-py3.10-pt_2.8.0-dev"
-      - "pytorchlightning/lightning-thunder:ubuntu24.04-cuda12.6.3-cudnn-fe1.10.0-py3.10-pt_main-dev"
+      - "pytorchlightning/lightning-thunder:ubuntu24.04-cuda12.8.1-cudnn-fe1.15.0-py3.12-pt_2.8.0-dev"
+      - "pytorchlightning/lightning-thunder:ubuntu24.04-cuda12.8.1-cudnn-fe1.15.0-py3.12-pt_main-dev"
   exclude: []
   include: []
 
@@ -29,7 +29,7 @@ run: |
   # double check on test requirements
   pip install -q -U -r requirements/base.txt -r requirements/notebooks.txt
   # install this package
-  python setup.py develop
+  pip install -e .
 
   bash scripts/sanity-check.sh
 
