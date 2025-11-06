@@ -440,9 +440,9 @@ def test_scaled_mm_tensorwise_matches_torch():
 
     M, K, N = 16, 32, 16
     mat_a = torch.randn(M, K, device=device, dtype=torch.float32)
-    mat_b_base = torch.randn(N, K, device=device, dtype=torch.float32)
+    mat_b = torch.randn(K, N, device=device, dtype=torch.float32)
     mat_a_lp = mat_a.to(torch.float8_e4m3fn)
-    mat_b_lp = mat_b_base.to(torch.float8_e4m3fn).t()
+    mat_b_lp = mat_b.to(torch.float8_e4m3fn)
     scale_a = torch.tensor(1.0, device=device, dtype=torch.float32)
     scale_b = torch.tensor(1.0, device=device, dtype=torch.float32)
 
@@ -509,6 +509,98 @@ def test_scaled_mm_matches_emulation():
 
     assert_close(thunder_out, reference)
     assert_close(reference, emulated, atol=2e-2, rtol=2e-2)
+
+
+@requiresCUDA
+def test_scaled_mm_rowwise_matches_torch():
+    device = "cuda:0"
+
+    def reference_fn(mat_a, mat_b, scale_a, scale_b):
+        return torch.nn.functional.scaled_mm(
+            mat_a,
+            mat_b,
+            scale_a,
+            ScalingType.RowWise,
+            scale_b,
+            ScalingType.RowWise,
+            swizzle_a=SwizzleType.NO_SWIZZLE,
+            swizzle_b=SwizzleType.NO_SWIZZLE,
+            output_dtype=torch.bfloat16,
+        )
+
+    M, K, N = 16, 32, 16
+    mat_a = torch.randn(M, K, device=device, dtype=torch.float32)
+    mat_b_base = torch.randn(N, K, device=device, dtype=torch.float32)
+    mat_a_lp = mat_a.to(torch.float8_e4m3fn)
+    mat_b_lp = mat_b_base.to(torch.float8_e4m3fn).t()
+    scale_a = torch.ones((M, 1), device=device, dtype=torch.float32)
+    scale_b = torch.ones((1, N), device=device, dtype=torch.float32)
+
+    try:
+        expected = reference_fn(mat_a_lp, mat_b_lp, scale_a, scale_b)
+    except (NotImplementedError, RuntimeError) as exc:
+        pytest.skip(str(exc))
+
+    jf = thunder.jit(reference_fn)
+    result = jf(mat_a_lp, mat_b_lp, scale_a, scale_b)
+    assert_close(result, expected)
+
+
+@requiresCUDA
+def test_scaled_mm_rowwise_matches_emulation():
+    device = "cuda:0"
+    torch.manual_seed(1)
+
+    dtype_fp8 = torch.float8_e4m3fn
+    max_val = torch.finfo(dtype_fp8).max
+
+    def rowwise_quantize(tensor, *, dim):
+        amax = tensor.abs().amax(dim=dim, keepdim=True)
+        encode = (max_val / torch.clamp(amax, min=1e-12)).to(torch.float32)
+        quant = torch.clamp(tensor * encode, min=-max_val, max=max_val).to(dtype_fp8)
+        decode = encode.reciprocal()
+        return quant, decode, encode
+
+    def mm_float8_emulated(mat_a, encode_a, mat_b, encode_b, out_dtype):
+        a_fp32 = mat_a.to(torch.float32) / encode_a
+        b_fp32 = mat_b.to(torch.float32) / encode_b
+        return (a_fp32 @ b_fp32).to(out_dtype)
+
+    def scaled_mm_rowwise(mat_a, mat_b, scale_a, scale_b, *, out_dtype):
+        return torch.nn.functional.scaled_mm(
+            mat_a,
+            mat_b,
+            scale_a,
+            ScalingType.RowWise,
+            scale_b,
+            ScalingType.RowWise,
+            swizzle_a=SwizzleType.NO_SWIZZLE,
+            swizzle_b=SwizzleType.NO_SWIZZLE,
+            output_dtype=out_dtype,
+        )
+
+    M, K, N = 32, 64, 32
+    mat_a = torch.randn(M, K, device=device, dtype=torch.bfloat16)
+    mat_b = torch.randn(K, N, device=device, dtype=torch.bfloat16)
+
+    mat_a_lp, decode_a, encode_a = rowwise_quantize(mat_a.to(torch.float32), dim=1)
+    mat_b_lp, decode_b, encode_b = rowwise_quantize(mat_b.to(torch.float32), dim=0)
+
+    try:
+        reference = scaled_mm_rowwise(mat_a_lp, mat_b_lp, decode_a, decode_b, out_dtype=torch.bfloat16)
+    except (NotImplementedError, RuntimeError) as exc:
+        pytest.skip(str(exc))
+
+    jf = thunder.jit(lambda a, b, sa, sb: scaled_mm_rowwise(a, b, sa, sb, out_dtype=torch.bfloat16))
+    thunder_out = jf(mat_a_lp, mat_b_lp, decode_a, decode_b)
+
+    emulated = mm_float8_emulated(mat_a_lp, encode_a, mat_b_lp, encode_b, torch.float32)
+
+    reference_f32 = reference.to(torch.float32)
+    thunder_out_f32 = thunder_out.to(torch.float32)
+
+    assert_close(thunder_out_f32, reference_f32, atol=3e-2, rtol=3e-2)
+    assert_close(reference_f32, emulated, atol=3e-2, rtol=3e-2)
 
 
 # https://github.com/Lightning-AI/lightning-thunder/issues/1857
