@@ -603,6 +603,147 @@ def test_scaled_mm_rowwise_matches_emulation():
     assert_close(reference_f32, emulated, atol=3e-2, rtol=3e-2)
 
 
+def _blockwise_quantize(tensor: torch.Tensor, block_rows: int, block_cols: int) -> tuple[torch.Tensor, torch.Tensor]:
+    dtype_fp8 = torch.float8_e4m3fn
+    max_val = torch.finfo(dtype_fp8).max
+
+    M, K = tensor.shape
+    assert M % block_rows == 0 and K % block_cols == 0
+
+    reshaped = tensor.reshape(M // block_rows, block_rows, K // block_cols, block_cols)
+    amax = reshaped.abs().amax(dim=(1, 3), keepdim=True)
+    encode = (max_val / torch.clamp(amax, min=1e-12)).to(torch.float32)
+    quant = torch.clamp(reshaped * encode, min=-max_val, max=max_val).to(dtype_fp8)
+
+    return quant.reshape(M, K), encode.reshape(M // block_rows, K // block_cols).to(tensor.device)
+
+
+def _dequantize_blockwise(quant: torch.Tensor, encode: torch.Tensor, block_rows: int, block_cols: int) -> torch.Tensor:
+    M, K = quant.shape
+    reshaped = quant.reshape(M // block_rows, block_rows, K // block_cols, block_cols)
+    encode = encode.reshape(M // block_rows, 1, K // block_cols, 1)
+    return (reshaped.to(torch.float32) / encode).reshape(M, K)
+
+
+@requiresCUDA
+@pytest.mark.parametrize("output_dtype", [torch.bfloat16])
+@pytest.mark.parametrize("lhs_block,rhs_block", [(1, 1), (128, 1), (1, 128)])
+def test_scaled_mm_blockwise_matches_torch(output_dtype, lhs_block, rhs_block):
+    device = "cuda:0"
+    torch.manual_seed(0)
+
+    M, K, N = 256, 256, 256
+    mat_a = torch.randn(M, K, device=device, dtype=output_dtype).pow(3)
+    mat_b_rows = torch.randn(N, K, device=device, dtype=output_dtype).pow(3)
+
+    mat_a_lp, encode_a = _blockwise_quantize(mat_a.to(torch.float32), lhs_block, 128)
+    mat_b_lp_rows, encode_b = _blockwise_quantize(mat_b_rows.to(torch.float32), rhs_block, 128)
+    mat_b_lp = mat_b_lp_rows.t().contiguous()
+
+    scale_a = encode_a.reciprocal().contiguous()
+    scale_b = encode_b.reciprocal().t().contiguous()
+
+    recipe_map = {
+        1: ScalingType.BlockWise1x128,
+        128: ScalingType.BlockWise128x128,
+    }
+
+    try:
+        expected = torch.nn.functional.scaled_mm(
+            mat_a_lp,
+            mat_b_lp,
+            scale_a,
+            recipe_map[lhs_block],
+            scale_b,
+            recipe_map[rhs_block],
+            swizzle_a=SwizzleType.NO_SWIZZLE,
+            swizzle_b=SwizzleType.NO_SWIZZLE,
+            output_dtype=output_dtype,
+        )
+    except (RuntimeError, NotImplementedError, ValueError) as exc:
+        pytest.skip(str(exc))
+
+    fn = thunder.jit(
+        lambda a, b, sa, sb: torch.nn.functional.scaled_mm(
+            a,
+            b,
+            sa,
+            recipe_map[lhs_block],
+            sb,
+            recipe_map[rhs_block],
+            swizzle_a=SwizzleType.NO_SWIZZLE,
+            swizzle_b=SwizzleType.NO_SWIZZLE,
+            output_dtype=output_dtype,
+        )
+    )
+    thunder_out = fn(mat_a_lp, mat_b_lp, scale_a, scale_b)
+    assert_close(thunder_out, expected)
+
+
+@requiresCUDA
+@pytest.mark.parametrize("output_dtype", [torch.bfloat16])
+@pytest.mark.parametrize("lhs_block,rhs_block", [(1, 1), (128, 1), (1, 128)])
+def test_scaled_mm_blockwise_matches_emulation(output_dtype, lhs_block, rhs_block):
+    device = "cuda:0"
+    torch.manual_seed(123)
+
+    M, K, N = 256, 256, 256
+    mat_a = torch.randn(M, K, device=device, dtype=output_dtype).pow(3)
+    mat_b_rows = torch.randn(N, K, device=device, dtype=output_dtype).pow(3)
+
+    mat_a_lp, encode_a = _blockwise_quantize(mat_a.to(torch.float32), lhs_block, 128)
+    mat_b_lp_rows, encode_b = _blockwise_quantize(mat_b_rows.to(torch.float32), rhs_block, 128)
+    mat_b_lp = mat_b_lp_rows.t().contiguous()
+
+    scale_a = encode_a.reciprocal().contiguous()
+    scale_b = encode_b.reciprocal().t().contiguous()
+
+    recipe_map = {
+        1: ScalingType.BlockWise1x128,
+        128: ScalingType.BlockWise128x128,
+    }
+
+    try:
+        reference = torch.nn.functional.scaled_mm(
+            mat_a_lp,
+            mat_b_lp,
+            scale_a,
+            recipe_map[lhs_block],
+            scale_b,
+            recipe_map[rhs_block],
+            swizzle_a=SwizzleType.NO_SWIZZLE,
+            swizzle_b=SwizzleType.NO_SWIZZLE,
+            output_dtype=output_dtype,
+        )
+    except (RuntimeError, NotImplementedError, ValueError) as exc:
+        pytest.skip(str(exc))
+
+    fn = thunder.jit(
+        lambda a, b, sa, sb: torch.nn.functional.scaled_mm(
+            a,
+            b,
+            sa,
+            recipe_map[lhs_block],
+            sb,
+            recipe_map[rhs_block],
+            swizzle_a=SwizzleType.NO_SWIZZLE,
+            swizzle_b=SwizzleType.NO_SWIZZLE,
+            output_dtype=output_dtype,
+        )
+    )
+    thunder_out = fn(mat_a_lp, mat_b_lp, scale_a, scale_b)
+
+    a_dequant = _dequantize_blockwise(mat_a_lp, encode_a, lhs_block, 128)
+    b_dequant = _dequantize_blockwise(mat_b_lp_rows, encode_b, rhs_block, 128).t()
+    emulated = (a_dequant @ b_dequant).to(torch.float32)
+
+    reference_f32 = reference.to(torch.float32)
+    thunder_out_f32 = thunder_out.to(torch.float32)
+
+    assert_close(thunder_out_f32, reference_f32, atol=7e-1, rtol=7e-2)
+    assert_close(reference_f32, emulated, atol=7e-1, rtol=7e-2)
+
+
 # https://github.com/Lightning-AI/lightning-thunder/issues/1857
 def test_max_with_int():
     def f(x, ids):
