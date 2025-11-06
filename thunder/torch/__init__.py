@@ -353,7 +353,7 @@ def view_as_complex(a: TensorLike):
 
     # Output shape is input shape with last dimension removed
     output_shape = a.shape[:-1]
-    
+
     return TensorProxy(like=a, shape=output_shape, dtype=output_dtype)
 
 
@@ -379,7 +379,7 @@ def view_as_real(a: TensorLike):
 
     # Output shape is input shape with an extra dimension of size 2 at the end
     output_shape = tuple(a.shape) + (2,)
-    
+
     return TensorProxy(like=a, shape=output_shape, dtype=output_dtype)
 
 

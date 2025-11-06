@@ -1773,4 +1773,3 @@ def test_replace_device():
     jm(a)
 
     assert isinstance(jm._model.foo.device, torch.device)
-
