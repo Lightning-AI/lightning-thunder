@@ -6073,17 +6073,19 @@ def mse_loss(
 
 
 if hasattr(torch.nn.functional, "scaled_mm"):
+    from torch.nn.functional import ScalingType
+    from torch.nn.functional import SwizzleType
 
     @torchsymbol(torch.nn.functional.scaled_mm)
     def scaled_mm(
         mat_a: TensorLike,
         mat_b: TensorLike,
-        scale_a,
-        scale_recipe_a,
-        scale_b,
-        scale_recipe_b,
-        swizzle_a=None,
-        swizzle_b=None,
+        scale_a: TensorLike | list[TensorLike],
+        scale_recipe_a: ScalingType | list[ScalingType],
+        scale_b: TensorLike | list[TensorLike],
+        scale_recipe_b: ScalingType | list[ScalingType],
+        swizzle_a: SwizzleType | list[SwizzleType] | None = None,
+        swizzle_b: SwizzleType | list[SwizzleType] | None = None,
         bias: TensorLike | None = None,
         output_dtype: torch.dtype | None = torch.bfloat16,
         contraction_dim: Sequence[int] = (),
