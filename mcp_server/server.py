@@ -1,11 +1,15 @@
 import os
 import sys
-from datetime import datetime, timezone
 from typing import Any
-from dataclasses import dataclass, asdict
 import json
 import httpx
 from mcp.server.fastmcp import FastMCP
+from utils.github_info import (get_pr_data, get_pr_reviews, get_pr_files, get_pr_comments, get_pr_diff, get_open_prs, compare_branches)
+from utils.helper_functions import calculate_days_diff, dataclass_to_dict
+from pr_scores.scores import (StalenessInfo, ReviewStatus)
+from llm_analysis.engine import analyze_pr
+from pr_scores.heuristic import assess_risk, assess_complexity, assess_impact, calculate_priority
+from gdrive.gdrive_integration import GoogleDriveContextManager
 
 
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
@@ -21,469 +25,10 @@ HEADERS = {
 github_client = httpx.Client(base_url=BASE_URL, headers=HEADERS)
 # initialize the mcp server
 mcp = FastMCP("thunder-pr-inspector")
+# this is a gdrive integration to the current MCP for gdrive
+gdrive_context = GoogleDriveContextManager()
 
 
-# Define all the data classes for the PR judgment
-@dataclass
-class RiskReasoning:
-    breaking_changes: str
-    security: str
-    urgency: str
-
-
-@dataclass
-class RiskScore:
-    breaking_changes: int  # 0-10 range
-    security: int  # 0-10
-    urgency_if_not_merged: int  # 0-10
-    overall: int  # 0-10
-    reasoning: RiskReasoning
-
-
-@dataclass
-class StalenessInfo:
-    days_open: int
-    days_since_update: int
-    is_mergeable: bool | None
-    has_conflicts: bool
-    commits_behind_base: int | None
-
-
-@dataclass
-class ReviewStatus:
-    total_reviews: int
-    approved_reviews: int
-    changes_requested: int
-    pending_reviews: int
-
-
-@dataclass
-class PRAnalysis:
-    number: int
-    title: str
-    author: str
-    created_at: str  # change to datetime?
-    updated_at: str  # change to datetime?
-    url: str
-    labels: list[str]
-    summary: str
-    risk_score: RiskScore
-    priority_score: int
-    staleness: StalenessInfo
-    review_status: ReviewStatus
-    files_changed: int
-    additions: int
-    deletions: int
-    llm_summary: str
-    llm_risk_assessment: str
-
-
-# Define the github helpers
-def get_pr_data(pr_number: int) -> dict[str, Any]:
-    """Fetch the  main data from the PR"""
-    response = github_client.get(f"/repos/{REPO_OWNER}/{REPO_NAME}/pulls/{pr_number}")
-    response.raise_for_status()
-    return response.json()
-
-
-def get_pr_reviews(pr_number: int) -> list[dict[str, Any]]:
-    """Fetch the PR review states"""
-    response = github_client.get(f"/repos/{REPO_OWNER}/{REPO_NAME}/pulls/{pr_number}/reviews")
-    response.raise_for_status()
-    return response.json()
-
-
-def get_pr_files(pr_number: int) -> list[dict[str, Any]]:
-    """Fetch the PR files
-    TODO this dpeends on pagination
-    """
-    response = github_client.get(f"/repos/{REPO_OWNER}/{REPO_NAME}/pulls/{pr_number}/files")
-    response.raise_for_status()
-    return response.json()
-
-
-def get_pr_comments(pr_number: int) -> list[dict[str, Any]]:
-    """Fetch PR comments"""
-    response = github_client.get(f"/repos/{REPO_OWNER}/{REPO_NAME}/pulls/{pr_number}/comments")
-    response.raise_for_status()
-    return response.json()
-
-
-def get_pr_diff(pr_number: int) -> str:
-    """Fetch the unified diff for a PR."""
-    response = github_client.get(
-        f"/repos/{REPO_OWNER}/{REPO_NAME}/pulls/{pr_number}",
-        headers={**HEADERS, "Accept": "application/vnd.github.v3.diff"},
-    )
-    response.raise_for_status()
-    return response.text
-
-
-def get_open_prs(state="open", sort="created", direction="desc") -> list[dict[str, Any]]:
-    """Fetch all the open PRs"""
-    prs = []
-    page = 1
-    while True:
-        params = {"state": state, "sort": sort, "direction": direction, "page": page, "per_page": 100}
-        response = github_client.get(f"/repos/{REPO_OWNER}/{REPO_NAME}/pulls", params=params)
-        response.raise_for_status()
-        data = response.json()
-        if not data:
-            break
-        prs.extend(data)
-        page += 1
-    return prs
-
-
-def compare_branches(base: str, head: str) -> dict[str, Any]:
-    response = github_client.get(f"/repos/{REPO_OWNER}/{REPO_NAME}/compare/{base}...{head}")
-    response.raise_for_status()
-    return response.json()
-
-
-# HELPER FUNCTION
-def calculate_days_diff(date_str: str) -> int:
-    """Function to calculate the days difference between two dates"""
-    date = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
-    now = datetime.now(timezone.utc)
-    return (now - date).days
-
-
-def dataclass_to_dict(obj: Any) -> Any:
-    """Convert dataclass to dict recursively."""
-    if hasattr(obj, "__dataclass_fields__"):
-        return {k: dataclass_to_dict(v) for k, v in asdict(obj).items()}
-    return obj
-
-
-# Heuristic Analysis Engine
-def assess_risk(
-    pr: dict[str, Any],
-    files: list[dict[str, Any]],
-    comments: list[dict[str, Any]],
-    reviews: list[dict[str, Any]],
-    staleness: StalenessInfo,
-) -> RiskScore:
-    """Assess multi-dimensional risk for a PR."""
-
-    breaking_changes_score = 0
-    security_score = 0
-    urgency_score = 0
-
-    # Get PR text content
-    title_and_body = (pr["title"] + " " + (pr["body"] or "")).lower()
-    labels_lower = [label["name"].lower() for label in pr["labels"]]
-
-    # === Breaking Changes Risk ===
-    breaking_keywords = ["breaking", "deprecat", "remov", "incompatib", "major"]
-    api_files = [f for f in files if any(x in f["filename"].lower() for x in ["api", "interface", "__init__.py"])]
-
-    has_breaking_keywords = any(kw in title_and_body for kw in breaking_keywords)
-
-    if has_breaking_keywords:
-        breaking_changes_score += 5
-    if len(api_files) > 0:
-        breaking_changes_score += 2
-    if len(files) > 20:
-        breaking_changes_score += 2
-    if any("breaking" in label for label in labels_lower):
-        breaking_changes_score += 5
-
-    breaking_changes_score = min(10, breaking_changes_score)
-
-    # === Security Risk ===
-    security_keywords = ["security", "vulnerability", "cve", "exploit", "auth", "credential", "token", "password"]
-    security_files = [f for f in files if any(x in f["filename"].lower() for x in ["auth", "security", "credential"])]
-
-    has_security_keywords = any(kw in title_and_body for kw in security_keywords)
-
-    if has_security_keywords:
-        security_score += 7
-    if len(security_files) > 0:
-        security_score += 3
-    if any("security" in label for label in labels_lower):
-        security_score += 8
-
-    security_score = min(10, security_score)
-
-    # === Urgency If Not Merged ===
-    urgency_keywords = ["block", "critical", "urgent", "hotfix", "bug", "regression", "crash", "broken"]
-    has_urgency_keywords = any(kw in title_and_body for kw in urgency_keywords)
-
-    if has_urgency_keywords:
-        urgency_score += 4
-    if staleness.days_open > 90:
-        urgency_score += 3  # Old PRs might be important
-    if any(label in labels_lower for label in ["bug", "critical", "blocker"]):
-        urgency_score += 5
-    if len(comments) > 15:
-        urgency_score += 2  # High engagement
-
-    urgency_score = min(10, urgency_score)
-
-    # Overall risk
-    overall = round((breaking_changes_score + security_score + urgency_score) / 3)
-
-    # Generate reasoning
-    reasoning = RiskReasoning(
-        breaking_changes=_generate_breaking_reasoning(
-            breaking_changes_score, has_breaking_keywords, len(api_files), len(files)
-        ),
-        security=_generate_security_reasoning(security_score, has_security_keywords, len(security_files)),
-        urgency=_generate_urgency_reasoning(urgency_score, has_urgency_keywords, staleness.days_open, len(comments)),
-    )
-
-    return RiskScore(
-        breaking_changes=breaking_changes_score,
-        security=security_score,
-        urgency_if_not_merged=urgency_score,
-        overall=overall,
-        reasoning=reasoning,
-    )
-
-
-def _generate_breaking_reasoning(score: int, has_keywords: bool, api_files: int, total_files: int) -> str:
-    # (Your original helper)
-    reasons = []
-    if has_keywords:
-        reasons.append("contains breaking-related keywords")
-    if api_files > 0:
-        reasons.append(f"modifies {api_files} API/interface file(s)")
-    if total_files > 20:
-        reasons.append(f"large changeset ({total_files} files)")
-    return (
-        f"Score {score}/10: {', '.join(reasons)}"
-        if reasons
-        else f"Score {score}/10: no obvious breaking changes detected"
-    )
-
-
-def _generate_security_reasoning(score: int, has_keywords: bool, security_files: int) -> str:
-    # (Your original helper)
-    reasons = []
-    if has_keywords:
-        reasons.append("contains security-related keywords")
-    if security_files > 0:
-        reasons.append(f"modifies {security_files} security-related file(s)")
-    return f"Score {score}/10: {', '.join(reasons)}" if reasons else f"Score {score}/10: no obvious security concerns"
-
-
-def _generate_urgency_reasoning(score: int, has_keywords: bool, days_open: int, comment_count: int) -> str:
-    # (Your original helper)
-    reasons = []
-    if has_keywords:
-        reasons.append("contains urgent/critical keywords")
-    if days_open > 90:
-        reasons.append(f"open for {days_open} days")
-    if comment_count > 15:
-        reasons.append(f"high engagement ({comment_count} comments)")
-    return f"Score {score}/10: {', '.join(reasons)}" if reasons else f"Score {score}/10: no urgent indicators"
-
-
-def generate_summary_heuristic(
-    pr: dict[str, Any], files: list[dict[str, Any]], comments: list[dict[str, Any]], reviews: list[dict[str, Any]]
-) -> str:
-    """Generate a human-readable summary of the PR based on heuristics."""
-    # (This is your original generate_summary function)
-    parts = [
-        f"**{pr['title']}** by @{pr['user']['login']}",
-        f"\n\n**Changes:** {len(files)} files modified, +{pr['additions']} -{pr['deletions']} lines",
-    ]
-
-    if pr["body"]:
-        body_summary = pr["body"][:200].strip() + ("..." if len(pr["body"]) > 200 else "")
-        parts.append(f"\n\n**Description:** {body_summary}")
-
-    if comments or reviews:
-        parts.append(f"\n\n**Activity:** {len(reviews)} reviews, {len(comments)} comments")
-
-    return "".join(parts)
-
-
-def calculate_priority(
-    pr: dict[str, Any], risk: RiskScore, staleness: StalenessInfo, review_status: ReviewStatus
-) -> int:
-    """Calculate priority score (0-100) based on multiple factors."""
-    # (This is your original priority function)
-    score = 0.0
-    score += risk.security * 2
-    score += risk.urgency_if_not_merged * 1.5
-    score += risk.breaking_changes * 0.5
-    if review_status.approved_reviews > 0 and not staleness.has_conflicts:
-        score += 10
-    if staleness.days_since_update > 30:
-        score -= 5
-    if staleness.days_since_update > 60:
-        score -= 10
-    if staleness.has_conflicts:
-        score -= 15
-    if review_status.changes_requested > 0:
-        score -= 8
-    if review_status.approved_reviews > 0 and staleness.is_mergeable:
-        score += 20
-    return max(0, min(100, int(score)))
-
-
-# LLM Analysis Engine
-def _cursor_llm_call_stub(prompt: str, pr_number: int) -> str:
-    """
-    This allows us to have a human-in-the-loop interface.
-    The prompt is printed to the console, so Cursor can interact with it
-    """
-    print("\n" + "=" * 80, file=sys.stderr)
-    print(f"CURSOR PROMPT FOR PR {pr_number}:", file=sys.stderr)
-    print(prompt, file=sys.stderr)
-    print("+" * 80, file=sys.stderr)
-    return """
-    **SUMMARY:**
-    [PLACEHOLDER: Run the prompt above in Cursor to get this summary.]
-
-    ###
-
-    **Risk Assessment:**
-    -   **Breaking Changes:** [PLACEHOLDER]
-    -   **Security:** [PLACEHOLDER]
-    -   **Urgency:** [PLACEHOLDER]
-    """
-
-
-def run_llm_analysis(pr_number: int, pr_title: str, pr_body: str | None, diff: str) -> dict[str, str]:
-    """Here we are running an analysis with the LLM"""
-    body = pr_body or "No description provided."
-
-    # Truncate diff to avoid huge token counts
-    max_diff_len = 15000  # ~4k tokens, adjustable
-    if len(diff) > max_diff_len:
-        diff = diff[:max_diff_len] + "\n\n... (diff truncated) ..."
-
-    prompt = f"""
-    You are a Senior Staff Software Engineer reviewing a pull request for 'lightning-thunder', a machine learning compiler.
-    Analyze the following PR details and code diff.
-
-    PR Title: {pr_title}
-    PR Body:
-    ---
-    {body}
-    ---
-
-    Code Diff:
-    ---
-    {diff}
-    ---
-
-    Provide two sections in your response, separated by '###':
-
-    **Summary:**
-    [Provide a concise summary of *what* this PR does and *why*.]
-
-    ###
-
-    **Risk Assessment:**
-    [Provide a qualitative analysis of potential risks.]
-    -   **Breaking Changes:** [How likely is this to break existing user workflows? What's the reasoning?]
-    -   **Security:** [Does this introduce any potential security vulnerabilities (e.g., handling untrusted inputs, credentials)?]
-    -   **Urgency:** [Does this seem to fix a critical bug or blocker? Is it low priority?]
-    """
-
-    try:
-        # This function now PRINTS the prompt and returns a STUB
-        response_text = _cursor_llm_call_stub(prompt, pr_number)
-
-        summary = "Could not parse LLM summary."
-        risk = "Could not parse LLM risk assessment."
-
-        if "###" in response_text:
-            parts = response_text.split("###", 1)
-            summary = parts[0].replace("**Summary:**", "").strip()
-            risk = parts[1].replace("**Risk Assessment:**", "").strip()
-        else:
-            risk = response_text  # Fallback
-
-        return {"summary": summary, "risk_assessment": risk}
-
-    except Exception as e:
-        print(f"Error in stubbed LLM analysis: {e}", file=sys.stderr)
-        return {"summary": f"LLM Analysis failed: {e}", "risk_assessment": f"LLM Analysis failed: {e}"}
-
-
-# Now merge the two analyses
-def analyze_pr(pr_number: int) -> PRAnalysis:
-    """Analyze a PR and return a PRAnalysis object"""
-    print(f"Analyzing PR #{pr_number}...", file=sys.stderr)
-
-    # 1. Fetch all GitHub data
-    pr = get_pr_data(pr_number)
-    reviews = get_pr_reviews(pr_number)
-    comments = get_pr_comments(pr_number)
-    files = get_pr_files(pr_number)
-    diff = get_pr_diff(pr_number)
-
-    # 2. Calculate staleness
-    days_open = calculate_days_diff(pr["created_at"])
-    days_since_update = calculate_days_diff(pr["updated_at"])
-    has_conflicts = pr["mergeable"] is False
-
-    commits_behind = None
-    try:
-        comparison = compare_branches(pr["head"]["sha"], pr["base"]["ref"])
-        commits_behind = comparison["ahead_by"]
-    except Exception as e:
-        print(f"Warning: Could not get commits behind for PR #{pr_number}: {e}", file=sys.stderr)
-
-    staleness = StalenessInfo(
-        days_open=days_open,
-        days_since_update=days_since_update,
-        is_mergeable=pr["mergeable"],
-        has_conflicts=has_conflicts,
-        commits_behind_base=commits_behind,
-    )
-
-    # 3. Calculate review status
-    approved_reviews = sum(1 for r in reviews if r["state"] == "APPROVED")
-    changes_requested = sum(1 for r in reviews if r["state"] == "CHANGES_REQUESTED")
-    pending_reviews = sum(1 for r in reviews if r["state"] == "PENDING")
-
-    review_status = ReviewStatus(
-        total_reviews=len(reviews),
-        approved_reviews=approved_reviews,
-        changes_requested=changes_requested,
-        pending_reviews=pending_reviews,
-    )
-
-    # 4. Run Heuristic Analysis
-    heuristic_risk_score = assess_risk(pr, files, comments, reviews, staleness)
-    heuristic_summary = generate_summary_heuristic(pr, files, comments, reviews)
-
-    # 5. Run LLM Analysis (Stub)
-    # This will print the prompt for this PR to stderr
-    llm_results = run_llm_analysis(pr["number"], pr["title"], pr.get("body"), diff)
-
-    # 6. Calculate Final Priority (based on heuristic risk)
-    priority_score = calculate_priority(pr, heuristic_risk_score, staleness, review_status)
-
-    # 7. Combine all analysis
-    return PRAnalysis(
-        number=pr["number"],
-        title=pr["title"],
-        author=pr["user"]["login"],
-        created_at=pr["created_at"],
-        updated_at=pr["updated_at"],
-        url=pr["html_url"],
-        labels=[label["name"] for label in pr["labels"]],
-        summary=heuristic_summary,
-        risk_score=heuristic_risk_score,
-        priority_score=priority_score,
-        llm_summary=llm_results["summary"],
-        llm_risk_assessment=llm_results["risk_assessment"],
-        staleness=staleness,
-        review_status=review_status,
-        files_changed=len(files),
-        additions=pr["additions"],
-        deletions=pr["deletions"],
-    )
-
-
-# FULL MCP!
 @mcp.tool()
 def list_open_prs(labels: list[str] | None = None, limit: int = 50) -> str:
     """
@@ -501,7 +46,7 @@ def list_open_prs(labels: list[str] | None = None, limit: int = 50) -> str:
     prs = get_open_prs(sort="created", direction="desc")
 
     if labels:
-        labels_lower = [l.lower() for l in labels]
+        labels_lower = [label_name.lower() for label_name in labels]
         filtered_prs = [pr for pr in prs if any(label["name"].lower() in labels_lower for label in pr["labels"])]
     else:
         filtered_prs = prs
@@ -529,22 +74,35 @@ def list_open_prs(labels: list[str] | None = None, limit: int = 50) -> str:
 
 
 @mcp.tool()
-def analyze_single_pr(pr_number: int) -> str:
+def analyze_single_pr(pr_number: int, gdrive_files: list[str] | None = None) -> str:
     """
-    Get detailed heuristic analysis for a PR AND print its LLM prompt to the console.
+    Get detailed heuristic analysis for a single PR AND print its LLM prompt to the console.
 
     Args:
         pr_number: The PR number to analyze
+        gdrive_files: Optional list of Google Drive file names or URLs to use as context
+                     e.g., ["ThunderQ4Plan", "ThunderBestPractices"]
+                     Leave empty to analyze without Google Drive context
 
     Returns:
         JSON string with complete PR analysis (with stubbed LLM fields)
+        
+    Examples:
+        # Without context:
+        analyze_single_pr(pr_number=123)
+        
+        # With specific Google Drive files:
+        analyze_single_pr(
+            pr_number=123, 
+            gdrive_files=["ThunderQ4Plan", "ThunderBestPractices"]
+        )
     """
-    analysis = analyze_pr(pr_number)
+    analysis = analyze_pr(pr_number, gdrive_files=gdrive_files)
     return json.dumps(dataclass_to_dict(analysis), indent=2)
 
 
 @mcp.tool()
-def prioritize_prs(min_priority: int = 0, labels: list[str] | None = None) -> str:
+def prioritize_heuristic_prs(min_priority: int = 0, labels: list[str] | None = None) -> str:
     """
     Get a prioritized list of all open PRs based on *heuristic* scores.
     This is a "cheap" and "fast" analysis.
@@ -561,7 +119,7 @@ def prioritize_prs(min_priority: int = 0, labels: list[str] | None = None) -> st
     prs = get_open_prs(sort="created", direction="desc")
 
     if labels:
-        labels_lower = [l.lower() for l in labels]
+        labels_lower = [label_name.lower() for label_name in labels]
         prs = [pr for pr in prs if any(label["name"].lower() in labels_lower for label in pr["labels"])]
 
     print(f"Analyzing {len(prs)} PRs...", file=sys.stderr)
@@ -588,78 +146,81 @@ def prioritize_prs(min_priority: int = 0, labels: list[str] | None = None) -> st
     return json.dumps(result, indent=2)
 
 
-# LLM prompts
-@mcp.tool()
-def generate_llm_priority_prompt(pr_numbers: list[int]) -> str:
-    """
-    Analyzes a specific list of PRs and generates a single "master prompt"
-    for you to paste into Cursor. This prompt will ask the LLM to provide
-    a final prioritization after you paste in the individual analyses.
+# @mcp.tool()
+# def generate_llm_priority_prompt(pr_numbers: list[int]) -> str:
+#     """
+#     Analyzes a specific list of PRs and generates a single "master prompt"
+#     for you to paste into Cursor. This prompt will ask the LLM to provide
+#     a final prioritization after you paste in the individual analyses.
 
-    Args:
-        pr_numbers: A list of PR numbers to analyze and prioritize.
+#     Args:
+#         pr_numbers: A list of PR numbers to analyze and prioritize.
 
-    Returns:
-        JSON string containing the master prompt.
-    """
-    print(f"Generating master prompt for PRs: {pr_numbers}...", file=sys.stderr)
+#     Returns:
+#         JSON string containing the master prompt.
+#     """
+#     print(f"Generating master prompt for PRs: {pr_numbers}...", file=sys.stderr)
 
-    analyses = []
-    print("\n--- Running individual analyses (Prompts will appear below) ---", file=sys.stderr)
-    for num in pr_numbers:
-        try:
-            # This will print the *individual* analysis prompt for PR #{num}
-            # The user should run those prompts in Cursor *first*.
-            analysis = analyze_pr(num)
-            analyses.append(analysis)
-        except Exception as e:
-            print(f"Error analyzing PR #{num}: {e}", file=sys.stderr)
+#     analyses = []
+#     print("\n--- Running individual analyses (Prompts will appear below) ---", file=sys.stderr)
+#     for num in pr_numbers:
+#         try:
+#             # This will print the *individual* analysis prompt for PR #{num}
+#             # The user should run those prompts in Cursor *first*.
+#             analysis = analyze_pr(num)
+#             analyses.append(analysis)
+#         except Exception as e:
+#             print(f"Error analyzing PR #{num}: {e}", file=sys.stderr)
 
-    print("\n--- All individual analyses complete ---", file=sys.stderr)
+#     print("\n--- All individual analyses complete ---", file=sys.stderr)
 
-    # Now, build the master prompt
-    master_prompt = (
-        "You are a Staff Software Engineer for the 'lightning-thunder' ML compiler.\n"
-        "Your goal is to review the following set of Pull Requests and provide a final, prioritized review order.\n\n"
-        "I have already run individual analyses for each PR. I will provide my 'Heuristic Analysis' and a 'Qualitative LLM Analysis' for each.\n"
-        "Please use all this information to answer the final question.\n\n"
-    )
+#     # Now, build the master prompt
+#     master_prompt = (
+#         "You are a Staff Software Engineer for the 'lightning-thunder' ML compiler.\n"
+#         "Your goal is to review the following set of Pull Requests and provide a final, prioritized review order.\n\n"
+#         "I have already run individual analyses for each PR. I will provide my 'Heuristic Analysis' and a 'Qualitative LLM Analysis' for each.\n"
+#         "Please use all this information to answer the final question.\n\n"
+#     )
 
-    prompt_body = ""
-    for a in analyses:
-        prompt_body += f"""
-        ---
-        ### PR #{a.number}: {a.title}
+#     prompt_body = ""
+#     for a in analyses:
+#         prompt_body += f"""
+#         ---
+#         ### PR #{a.number}: {a.title}
 
-        **Heuristic Analysis:**
-        - Priority Score: {a.priority_score}/100
-        - Risk (Overall): {a.risk_score.overall}/10 (Breaking: {a.risk_score.breaking_changes}, Security: {a.risk_score.security})
-        - Urgency (if not merged): {a.risk_score.urgency_if_not_merged}/10
-        - Staleness: {a.staleness.days_since_update} days since update. Conflicts: {a.staleness.has_conflicts}.
+#         **Heuristic Analysis:**
+#         - Priority Score: {a.priority_score}/100
+#         - Risk (Overall): {a.risk_score.overall}/10 (Breaking: {a.risk_score.breaking_changes}, Security: {a.risk_score.security})
+#         - Urgency (if not merged): {a.risk_score.urgency_if_not_merged}/10
+#         - Staleness: {a.staleness.days_since_update} days since update. Conflicts: {a.staleness.has_conflicts}.
 
-        **Qualitative LLM Analysis (Paste from Cursor):**
-        [PASTE THE 'Summary' AND 'Risk Assessment' YOU GENERATED FOR PR #{a.number} HERE]
+#         **Qualitative LLM Analysis (Paste from Cursor):**
+#         [PASTE THE 'Summary' AND 'Risk Assessment' YOU GENERATED FOR PR #{a.number} HERE]
 
-        """
+#         """
 
-    final_question = (
-        "---\n\n"
-        "**Final Task:**\n"
-        "Based on *all* the information above, please provide:\n"
-        "1.  **Prioritized List:** The order in which I should review these PRs, from most urgent/important to least.\n"
-        "2.  **Brief Justification:** A one-sentence reason for each PR's position in the list.\n"
-        "3.  **Overall Triage:** Are any of these safe to merge immediately? Are any immediate blockers?"
-    )
+#     final_question = (
+#         "---\n\n"
+#         "**Final Task:**\n"
+#         "Based on *all* the information above, please provide:\n"
+#         "1.  **Prioritized List:** The order in which I should review these PRs, from most urgent/important to least.\n"
+#         "2.  **Brief Justification:** A one-sentence reason for each PR's position in the list.\n"
+#         "3.  **Overall Triage:** Are any of these safe to merge immediately? Are any immediate blockers?"
+#     )
 
-    full_prompt = master_prompt + prompt_body + final_question
+#     full_prompt = master_prompt + prompt_body + final_question
 
-    # Return this as JSON so the MCP client prints it cleanly
-    return json.dumps({"master_prompt_for_cursor": full_prompt}, indent=2)
+#     # Return this as JSON so the MCP client prints it cleanly
+#     return json.dumps({"master_prompt_for_cursor": full_prompt}, indent=2)
 
 
 @mcp.tool()
 def llm_batch_analysis(
-    min_priority: int = 0, labels: list[str] | None = None, limit: int = 20, include_diff: bool = False
+    min_priority: int = 0, 
+    labels: list[str] | None = None, 
+    limit: int = 20, 
+    include_diff: bool = False,
+    gdrive_files: list[str] | None = None
 ) -> str:
     """
     Analyze ALL open PRs with heuristics, then generate a single
@@ -670,9 +231,22 @@ def llm_batch_analysis(
         labels: Optional list of labels to filter by (e.g., ['bug', 'enhancement'])
         limit: Maximum number of PRs to analyze (default: 20, max recommended: 50)
         include_diff: Include code diffs in prompt (WARNING: uses many tokens, default: False)
+        gdrive_files: Optional list of Google Drive file names or URLs to use as context
+                     e.g., ["ThunderQ4Plan", "ThunderBestPractices"]
 
     Returns:
         JSON string containing the comprehensive LLM analysis prompt
+        
+    Examples:
+        # Without Google Drive context:
+        llm_batch_analysis(min_priority=30, limit=10)
+        
+        # With specific Google Drive files for calibration:
+        llm_batch_analysis(
+            min_priority=30,
+            limit=10,
+            gdrive_files=["ThunderQ4Plan", "ThunderBestPractices"]
+        )
     """
     print("Starting LLM batch analysis")
     print(f"Input args:\n limit: {limit}, min_priority: {min_priority}), include_diff {include_diff}", file=sys.stderr)
@@ -680,7 +254,7 @@ def llm_batch_analysis(
     prs = get_open_prs(state="open", sort="created", direction="desc")
     # Filter if we have labels
     if labels:
-        labels_lower = [l.lower() for l in labels]
+        labels_lower = [label_name.lower() for label_name in labels]
         prs = [pr for pr in prs if any(label["name"].lower() in labels_lower for label in pr.get("labels", []))]
     print(f"Fetched {len(prs)} PRs, running heuristic analysis...", file=sys.stderr)
     # At first run a heuristic analysis
@@ -724,7 +298,13 @@ def llm_batch_analysis(
 
             # Run heuristic analysis
             heuristic_risk = assess_risk(pr, files, comments, reviews, staleness)
-            priority_score = calculate_priority(pr, heuristic_risk, staleness, review_status)
+            
+            # Assess complexity and impact
+            complexity_score, complexity_reason = assess_complexity(pr, files)
+            impact_score, impact_reason = assess_impact(pr, heuristic_risk, review_status)
+            
+            # Calculate priority
+            priority_score, priority_reasoning = calculate_priority(pr, heuristic_risk, staleness, review_status, files)
 
             # Only include if meets priority threshold
             if priority_score >= min_priority:
@@ -741,6 +321,17 @@ def llm_batch_analysis(
                     "additions": pr["additions"],
                     "deletions": pr["deletions"],
                     "heuristic_priority": priority_score,
+                    "priority_reasoning": priority_reasoning,
+                    "complexity": {
+                        "score": complexity_score,
+                        "reasoning": complexity_reason,
+                        "category": "SIMPLE" if complexity_score <= 3 else "MODERATE" if complexity_score <= 6 else "COMPLEX"
+                    },
+                    "impact": {
+                        "score": impact_score,
+                        "reasoning": impact_reason,
+                        "category": "LOW" if impact_score < 4 else "MEDIUM" if impact_score < 7 else "HIGH"
+                    },
                     "risk": {
                         "overall": heuristic_risk.overall,
                         "breaking_changes": heuristic_risk.breaking_changes,
@@ -787,8 +378,8 @@ def llm_batch_analysis(
 
     print(f"Completed heuristic analysis of {len(analyses)} PRs", file=sys.stderr)
 
-    # Build the comprehensive LLM prompt
-    prompt = _build_batch_analysis_prompt(analyses, include_diff)
+    # Build the comprehensive LLM prompt with optional Google Drive context
+    prompt = _build_batch_analysis_prompt(analyses, include_diff, gdrive_files=gdrive_files)
 
     # Print prompt to stderr so user can see it
     print("\n" + "=" * 80, file=sys.stderr)
@@ -807,108 +398,6 @@ def llm_batch_analysis(
     )
 
 
-def _build_batch_analysis_prompt(analyses: list[dict[str, Any]], include_diff: bool) -> str:
-    """Build a comprehensive prompt for LLM batch analysis."""
-
-    analyses_sorted = sorted(analyses, key=lambda x: x["heuristic_priority"], reverse=True)
-
-    prompt = f"""You are a Senior Staff Software Engineer for the Lightning-Thunder ML compiler project.
-
-I need you to review and prioritize {len(analyses)} open Pull Requests. I've already performed heuristic analysis on each PR, but I need your expert judgment to provide a final assessment.
-
-For each PR, I'm providing:
-- Basic metadata (title, author, dates, labels)
-- Heuristic scores (priority, risk dimensions)
-- Activity metrics (reviews, comments, staleness)
-- Brief description
-{"- Code diff preview" if include_diff else ""}
-
----
-## PULL REQUESTS TO ANALYZE
----
-
-"""
-    # append all the needed PRs we want to analyse
-    for i, pr in enumerate(analyses_sorted, 1):
-        prompt += f"""
-        ### PR #{pr["number"]}: {pr["title"]}
-        **Author:** @{pr["author"]}
-        **URL:** {pr["url"]}
-        **Labels:** {", ".join(pr["labels"]) if pr["labels"] else "None"}
-
-        **Description:**
-        {pr["body_summary"]}
-
-        **Metrics:**
-        - Created: {pr["created_at"][:10]} ({pr["staleness"]["days_open"]} days ago)
-        - Last Updated: {pr["updated_at"][:10]} ({pr["staleness"]["days_since_update"]} days ago)
-        - Changes: {pr["files_changed"]} files (+{pr["additions"]}/-{pr["deletions"]} lines)
-        - Reviews: {pr["review_status"]["approved"]} approved, {pr["review_status"]["changes_requested"]} changes requested
-        - Comments: {pr["activity"]["total_comments"]}
-        - Merge Status: {"✅ No conflicts" if pr["staleness"]["is_mergeable"] else "⚠️ Has conflicts" if pr["staleness"]["has_conflicts"] else "❓ Unknown"}
-
-        **Heuristic Analysis:**
-        - Priority Score: {pr["heuristic_priority"]}/100
-        - Risk Scores:
-        - Overall: {pr["risk"]["overall"]}/10
-        - Breaking Changes: {pr["risk"]["breaking_changes"]}/10 - {pr["risk"]["reasoning"]["breaking"]}
-        - Security: {pr["risk"]["security"]}/10 - {pr["risk"]["reasoning"]["security"]}
-        - Urgency: {pr["risk"]["urgency"]}/10 - {pr["risk"]["reasoning"]["urgency"]}
-
-"""
-        if include_diff and "diff_preview" in pr:
-            prompt += f"""**Code Diff Preview:**
-        ```diff
-        {pr["diff_preview"]}
-        ```
-        """
-
-    prompt += f"""
-** YOUR TASK **
-Please provide a comprehensive analysis with the following:
-
-- 1. LLM priority scores (0-100 for each PR): Assign your own priority score to each PR based on:
-    - Technical complexity and risk
-    - Business impact and urgency
-    - Code quality and readiness
-    - Strategic importance to the project
-    Format:
-    ```
-    PR #{pr["number"]}: {pr["title"]}
-    Priority Score: {pr["heuristic_priority"]}/100
-    Max two sentences for the reasoning to explain the choices.
-    ```
-    """
-    prompt += """
-- 2. Prioritized review order: list PRs in the order they should be reviewed, grouped by urgency:
-    - 🔥 CRITICAL (Review Today):
-        ...
-    - 🚨 HIGH (Review This Week):
-        ...
-    - ⚠️ MEDIUM (Review When Possible):
-        ...
-    - 📝 LOW (Deprioritize):
-        ...
-    """
-    prompt += """
-- 3. Key recommendations:
-        - Which PRs are safe to merge immediately?
-        - Which PRs need changes before merging?
-        - Which PRs are blockers for other work?
-        - Which PRs should be closed/rejected and why?
-        - Any PRs that need urgent attention despite low heuristic scores?
-- 4. Overall assessment: A brief (2-3 paragraphs) summary of:
-    - The overall health of the PR queue
-    - Major themes or patterns you noticed
-    - Top 3 priorities for maintainers
-
-Please, be specific, actionable, and technical in your analysis. Consider the context of an ML compiler project
-where correctness and performance are critical."""
-
-    return prompt
-
-
-# Heuristic Analysis Tools
 @mcp.tool()
 def check_stale_prs(days_threshold: int = 30) -> str:
     """
@@ -943,7 +432,7 @@ def check_stale_prs(days_threshold: int = 30) -> str:
 
 
 @mcp.tool()
-def risk_report(min_risk_score: int = 5) -> str:
+def risk_report_heuristic(min_risk_score: int = 5) -> str:
     """
     Generate a risk report showing high-risk PRs based on heuristic scores.
 
@@ -983,6 +472,169 @@ def risk_report(min_risk_score: int = 5) -> str:
     }
 
     return json.dumps(result, indent=2)
+
+
+# ============================================================================
+# GOOGLE DRIVE MCP TOOLS
+# ============================================================================
+
+@mcp.tool()
+def gdrive_search_docs(query: str, max_results: int = 5) -> str:
+    """
+    Search Google Drive for documents relevant to PR review.
+    
+    This tool allows you to search your organization's Google Drive for
+    documents like coding standards, architecture docs, or other relevant
+    materials that can enhance PR analysis.
+    
+    Args:
+        query: Search query (e.g., "lightning-thunder coding standards")
+        max_results: Maximum number of results to return (default: 5)
+        
+    Returns:
+        JSON string with search results
+        
+    NOTE: This tool provides guidance on using the MaaS Google Drive MCP.
+    To actually search, you should use the mcp_MaaS_Google_Drive_gdrive_search
+    tool available in Cursor.
+    """
+    print(f"🔍 Searching Google Drive for: {query}", file=sys.stderr)
+    
+    return json.dumps({
+        "instruction": "To search Google Drive, use the MaaS Google Drive MCP tool:",
+        "tool_to_use": "mcp_MaaS_Google_Drive_gdrive_search",
+        "parameters": {
+            "query": query,
+            "page_size": max_results
+        },
+        "next_steps": [
+            "1. Call mcp_MaaS_Google_Drive_gdrive_search with your query",
+            "2. Review the results to find relevant documents",
+            "3. Use gdrive_add_context_file to add files to the PR analysis context",
+            "4. Or use mcp_MaaS_Google_Drive_gdrive_get_file to fetch content directly"
+        ],
+        "example": {
+            "query": query,
+            "expected_results": "List of Google Drive files with titles, URLs, and snippets"
+        }
+    }, indent=2)
+
+
+@mcp.tool()
+def gdrive_add_context_file(file_name: str, content: str) -> str:
+    """
+    Add a Google Drive file's content to the PR analysis context cache.
+    
+    This caches file content so it can be used in subsequent PR analyses
+    without re-fetching from Google Drive.
+    
+    Args:
+        file_name: Name of the file (e.g., "ThunderQ4Plan")
+        content: The file content (fetch via mcp_MaaS_Google_Drive_gdrive_get_file first)
+        
+    Returns:
+        JSON string with status
+        
+    Usage:
+        1. Search for file: mcp_MaaS_Google_Drive_gdrive_search(query="ThunderQ4Plan")
+        2. Get content: content = mcp_MaaS_Google_Drive_gdrive_get_file(file_url="...")
+        3. Cache it: gdrive_add_context_file(file_name="ThunderQ4Plan", content=content)
+        4. Analyze PRs: analyze_single_pr(123, gdrive_files=["ThunderQ4Plan"])
+    """
+    print(f"📥 Adding file to cache: {file_name}", file=sys.stderr)
+    
+    try:
+        if not content:
+            return json.dumps({
+                "status": "error",
+                "message": "Content cannot be empty",
+                "file_name": file_name
+            }, indent=2)
+        
+        # Add to cache
+        gdrive_context.add_file_to_cache(file_name, content)
+        
+        return json.dumps({
+            "status": "success",
+            "message": "File added to context cache",
+            "file_name": file_name,
+            "content_length": len(content),
+            "note": "This file will be included when you use gdrive_files=['" + file_name + "']"
+        }, indent=2)
+            
+    except Exception as e:
+        return json.dumps({
+            "status": "error",
+            "message": f"Failed to add file: {str(e)}",
+            "file_name": file_name
+        }, indent=2)
+
+
+@mcp.tool()
+def gdrive_list_context_files() -> str:
+    """
+    List all Google Drive files currently in the context cache.
+    
+    Returns:
+        JSON string with list of cached files
+    """
+    files = [
+        {
+            "file_name": file_name,
+            "content_length": len(content),
+            "preview": content[:200] + "..." if len(content) > 200 else content
+        }
+        for file_name, content in gdrive_context.cache.items()
+    ]
+    
+    return json.dumps({
+        "total_files": len(files),
+        "files": files,
+        "note": "These files will be included when specified in gdrive_files parameter"
+    }, indent=2)
+
+
+@mcp.tool()
+def gdrive_clear_context_cache() -> str:
+    """
+    Clear all Google Drive files from the context cache.
+    
+    Returns:
+        JSON string with status
+    """
+    count = len(gdrive_context.cache)
+    gdrive_context.cache.clear()
+    
+    return json.dumps({
+        "status": "success",
+        "message": f"Cleared {count} files from context cache"
+    }, indent=2)
+
+
+@mcp.tool()
+def gdrive_configure(enabled: bool = True) -> str:
+    """
+    Enable or disable Google Drive integration.
+    
+    Args:
+        enabled: Whether to enable Google Drive context fetching
+        
+    Returns:
+        JSON string with status
+    """
+    if enabled:
+        gdrive_context.gdrive_enabled = True
+        message = "Google Drive integration enabled"
+    else:
+        gdrive_context.disable()
+        message = "Google Drive integration disabled"
+    
+    return json.dumps({
+        "status": "success",
+        "message": message,
+        "enabled": gdrive_context.gdrive_enabled,
+        "cached_files": len(gdrive_context.cache)
+    }, indent=2)
 
 
 if __name__ == "__main__":
