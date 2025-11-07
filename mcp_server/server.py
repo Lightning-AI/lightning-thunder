@@ -17,6 +17,7 @@ from utils.helper_functions import calculate_days_diff, dataclass_to_dict
 from pr_scores.scores import StalenessInfo, ReviewStatus
 from llm_analysis.engine import analyze_pr
 from pr_scores.heuristic import assess_risk, assess_complexity, assess_impact, calculate_priority, assess_internal_review_status
+from strategic_goals.goals_manager import get_goals_manager, StrategicGoal
 from gdrive.gdrive_integration import GoogleDriveContextManager
 
 
@@ -245,6 +246,10 @@ def llm_batch_analysis(
             # Assess internal Thunder team review status
             internal_review = assess_internal_review_status(reviews, comments)
 
+            # Assess strategic goal alignment
+            goals_manager = get_goals_manager()
+            goal_alignment = goals_manager.assess_pr_goal_alignment(pr)
+
             # Run heuristic analysis
             heuristic_risk = assess_risk(pr, files, comments, reviews, staleness)
 
@@ -252,9 +257,9 @@ def llm_batch_analysis(
             complexity_score, complexity_reason = assess_complexity(pr, files)
             impact_score, impact_reason = assess_impact(pr, heuristic_risk, review_status)
 
-            # Calculate priority (with internal review status for external review boost)
+            # Calculate priority (with internal review status and strategic goal alignment)
             priority_score, priority_reasoning = calculate_priority(
-                pr, heuristic_risk, staleness, review_status, files, internal_review
+                pr, heuristic_risk, staleness, review_status, files, internal_review, goal_alignment
             )
 
             # Only include if meets priority threshold
@@ -842,6 +847,135 @@ def _generate_dashboard_recommendations(summary, ready_for_external, needs_inter
         })
 
     return recommendations
+
+
+@mcp.tool()
+def add_strategic_goal(
+    goal_id: str,
+    title: str,
+    priority: str,
+    description: str,
+    theme: str,
+    linked_issues: list[int] | None = None
+) -> str:
+    """
+    Add a strategic goal (e.g., Q4 priority) to track PR alignment.
+
+    Args:
+        goal_id: Unique identifier (e.g., "Q4-inference-opt")
+        title: Goal title (e.g., "Inference Optimization")
+        priority: "P0", "P1", or "P2"
+        description: Detailed description
+        theme: Theme category (e.g., "Performance", "Features")
+        linked_issues: Optional list of GitHub issue numbers
+
+    Returns:
+        JSON confirmation
+
+    Example:
+        add_strategic_goal(
+            goal_id="Q4-inference-opt",
+            title="Inference Optimization",
+            priority="P0",
+            description="Optimize inference performance for production workloads",
+            theme="Performance",
+            linked_issues=[2556, 2557]
+        )
+    """
+    goals_manager = get_goals_manager()
+
+    goal = StrategicGoal(
+        id=goal_id,
+        title=title,
+        priority=priority,
+        description=description,
+        linked_issues=linked_issues or [],
+        theme=theme
+    )
+
+    goals_manager.add_goal(goal)
+
+    return json.dumps({
+        "status": "success",
+        "message": f"Added strategic goal: {title}",
+        "goal": {
+            "id": goal_id,
+            "title": title,
+            "priority": priority,
+            "linked_issues": len(goal.linked_issues),
+            "theme": theme
+        }
+    }, indent=2)
+
+
+@mcp.tool()
+def link_issue_to_goal(issue_number: int, goal_id: str) -> str:
+    """
+    Link a GitHub issue to a strategic goal.
+
+    Args:
+        issue_number: GitHub issue number
+        goal_id: Strategic goal ID
+
+    Returns:
+        JSON confirmation
+    """
+    goals_manager = get_goals_manager()
+    goals_manager.link_issue_to_goal(issue_number, goal_id)
+
+    return json.dumps({
+        "status": "success",
+        "message": f"Linked issue #{issue_number} to goal '{goal_id}'"
+    }, indent=2)
+
+
+@mcp.tool()
+def list_strategic_goals() -> str:
+    """
+    List all configured strategic goals.
+
+    Returns:
+        JSON with all goals and their linked issues
+    """
+    goals_manager = get_goals_manager()
+
+    goals_list = []
+    for goal_id, goal in goals_manager.goals.items():
+        goals_list.append({
+            "id": goal.id,
+            "title": goal.title,
+            "priority": goal.priority,
+            "theme": goal.theme,
+            "description": goal.description,
+            "linked_issues": goal.linked_issues,
+            "issue_count": len(goal.linked_issues)
+        })
+
+    # Sort by priority (P0 first)
+    priority_order = {"P0": 0, "P1": 1, "P2": 2}
+    goals_list.sort(key=lambda g: priority_order.get(g["priority"], 999))
+
+    return json.dumps({
+        "total_goals": len(goals_list),
+        "goals": goals_list
+    }, indent=2)
+
+
+@mcp.tool()
+def clear_strategic_goals() -> str:
+    """
+    Clear all strategic goals.
+
+    Returns:
+        JSON confirmation
+    """
+    goals_manager = get_goals_manager()
+    goals_manager.clear_goals()
+
+    return json.dumps({
+        "status": "success",
+        "message": "All strategic goals cleared"
+    }, indent=2)
 
 
 if __name__ == "__main__":

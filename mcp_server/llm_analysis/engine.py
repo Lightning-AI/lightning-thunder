@@ -4,6 +4,7 @@ from utils.github_info import get_pr_data, get_pr_reviews, get_pr_comments, get_
 from utils.helper_functions import calculate_days_diff
 from pr_scores.scores import PRAnalysis, StalenessInfo, ReviewStatus
 from pr_scores.heuristic import assess_risk, assess_complexity, assess_impact, calculate_priority, assess_internal_review_status, check_definition_of_ready
+from strategic_goals.goals_manager import get_goals_manager
 from gdrive.gdrive_integration import GoogleDriveContextManager
 
 # Initialize Google Drive context manager
@@ -467,6 +468,20 @@ def analyze_pr(pr_number: int, gdrive_files: list[str] | None = None) -> PRAnaly
 
     definition_of_ready = check_definition_of_ready(pr, ci_checks)
 
+    # 3d. Assess strategic goal alignment
+    goals_manager = get_goals_manager()
+    goal_alignment_obj = goals_manager.assess_pr_goal_alignment(pr)
+
+    # Convert to simpler dataclass for PRAnalysis
+    from pr_scores.scores import GoalAlignment
+    goal_alignment = GoalAlignment(
+        is_aligned=goal_alignment_obj.is_aligned,
+        highest_priority=goal_alignment_obj.highest_priority,
+        alignment_score=goal_alignment_obj.alignment_score,
+        alignment_reasoning=goal_alignment_obj.alignment_reasoning,
+        closed_issues=goal_alignment_obj.closed_issues
+    ) if goal_alignment_obj else None
+
     # 4. Run Heuristic Analysis
     heuristic_risk_score = assess_risk(pr, files, comments, reviews, staleness)
     heuristic_summary = generate_summary_heuristic(pr, files, comments, reviews)
@@ -475,9 +490,9 @@ def analyze_pr(pr_number: int, gdrive_files: list[str] | None = None) -> PRAnaly
     complexity_score, _ = assess_complexity(pr, files)
     impact_score, _ = assess_impact(pr, heuristic_risk_score, review_status)
 
-    # 6. Calculate Final Priority (complexity + impact + staleness matrix + external review boost)
+    # 6. Calculate Final Priority (complexity + impact + staleness matrix + external review boost + strategic goals)
     priority_score, priority_reasoning = calculate_priority(
-        pr, heuristic_risk_score, staleness, review_status, files, internal_review_status
+        pr, heuristic_risk_score, staleness, review_status, files, internal_review_status, goal_alignment_obj
     )
 
     # 7. Prepare heuristic scores for LLM
@@ -526,6 +541,7 @@ def analyze_pr(pr_number: int, gdrive_files: list[str] | None = None) -> PRAnaly
         review_status=review_status,
         internal_review_status=internal_review_status,  # Include internal team review tracking
         definition_of_ready=definition_of_ready,  # Include Definition of Ready assessment
+        goal_alignment=goal_alignment,  # Include strategic goal alignment
         files_changed=len(files),
         additions=pr["additions"],
         deletions=pr["deletions"],

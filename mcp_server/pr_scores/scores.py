@@ -56,6 +56,16 @@ class DefinitionOfReadyStatus:
 
 
 @dataclass
+class GoalAlignment:
+    """Strategic goal alignment (imported from strategic_goals module)"""
+    is_aligned: bool
+    highest_priority: str | None
+    alignment_score: int
+    alignment_reasoning: str
+    closed_issues: list[int]
+
+
+@dataclass
 class PRAnalysis:
     number: int
     title: str
@@ -74,6 +84,7 @@ class PRAnalysis:
     review_status: ReviewStatus
     internal_review_status: InternalReviewStatus
     definition_of_ready: DefinitionOfReadyStatus
+    goal_alignment: GoalAlignment | None  # Strategic goal alignment
     files_changed: int
     additions: int
     deletions: int

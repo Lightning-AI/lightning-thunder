@@ -273,9 +273,10 @@ def calculate_priority(
     review_status: ReviewStatus,
     files: list[dict[str, Any]],
     internal_review_status: InternalReviewStatus | None = None,
+    goal_alignment: Any | None = None,  # GoalAlignment from strategic_goals
 ) -> tuple[int, str]:
     """
-    Calculate priority score (0-100) based on complexity, impact, staleness, and internal review status.
+    Calculate priority score (0-100) based on complexity, impact, staleness, internal review, and strategic goals.
 
     Priority Matrix:
     - Easy + High Impact → VERY HIGH (90-100)
@@ -283,8 +284,10 @@ def calculate_priority(
     - Complex + High Impact → MEDIUM-HIGH (60-79) - Needs careful review
     - Complex + Low Impact → LOW (0-59) - Deprioritize
 
-    Staleness Boost: Simple stale PRs get priority bump
-    External Review Boost: PRs ready for external review get significant boost
+    Boosts:
+    - Staleness: Simple stale PRs get priority bump
+    - External Review: PRs ready for external review get +25
+    - Strategic Goals: P0 goals get +50, P1 get +30, P2 get +15
 
     Returns:
         (priority_score, reasoning)
@@ -365,8 +368,22 @@ def calculate_priority(
         staleness_adjustment += 25
         staleness_reasons.append("✅ ready for external review (2+ team approvals)")
 
-    # Final score
-    final_score = base_score + staleness_adjustment
+    # STRATEGIC GOAL BOOST: PR aligns with Q4/strategic goals
+    # This HEAVILY weights PRs that contribute to P0/P1/P2 goals
+    strategic_boost = 0
+    if goal_alignment and goal_alignment.is_aligned:
+        if goal_alignment.highest_priority == "P0":
+            strategic_boost = 50
+            staleness_reasons.append(f"🔥 P0 STRATEGIC GOAL (closes #{', #'.join(map(str, goal_alignment.closed_issues))})")
+        elif goal_alignment.highest_priority == "P1":
+            strategic_boost = 30
+            staleness_reasons.append(f"🎯 P1 HIGH PRIORITY GOAL (closes #{', #'.join(map(str, goal_alignment.closed_issues))})")
+        elif goal_alignment.highest_priority == "P2":
+            strategic_boost = 15
+            staleness_reasons.append(f"📌 P2 MEDIUM PRIORITY GOAL (closes #{', #'.join(map(str, goal_alignment.closed_issues))})")
+
+    # Final score (strategic boost applied AFTER other adjustments for maximum impact)
+    final_score = base_score + staleness_adjustment + strategic_boost
     final_score = max(0, min(100, int(final_score)))
 
     # Build reasoning
