@@ -32,6 +32,30 @@ class ReviewStatus:
 
 
 @dataclass
+class InternalReviewStatus:
+    """Tracks internal Thunder team reviews per PR guidelines"""
+    thunder_team_approvals: int
+    thunder_team_changes_requested: int
+    thunder_team_reviewers: list[str]
+    is_ready_for_external_review: bool
+    review_guideline_status: str
+
+
+@dataclass
+class DefinitionOfReadyStatus:
+    """Tracks whether a PR meets the Definition of Ready checklist"""
+    has_linked_issue: bool
+    has_descriptive_title: bool
+    has_comprehensive_body: bool
+    ci_passing: bool
+    is_draft: bool
+    is_ready: bool  # Overall readiness (all checks pass)
+    failing_checks: list[str]  # List of checks that failed
+    readiness_score: int  # 0-100 score based on checks passed
+    readiness_summary: str  # Human-readable summary
+
+
+@dataclass
 class PRAnalysis:
     number: int
     title: str
@@ -48,6 +72,8 @@ class PRAnalysis:
     impact_score: int
     staleness: StalenessInfo
     review_status: ReviewStatus
+    internal_review_status: InternalReviewStatus
+    definition_of_ready: DefinitionOfReadyStatus
     files_changed: int
     additions: int
     deletions: int

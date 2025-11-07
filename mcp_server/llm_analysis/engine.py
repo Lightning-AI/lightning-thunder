@@ -1,9 +1,9 @@
 import sys
 from typing import Any
-from utils.github_info import get_pr_data, get_pr_reviews, get_pr_comments, get_pr_files, get_pr_diff, compare_branches
+from utils.github_info import get_pr_data, get_pr_reviews, get_pr_comments, get_pr_files, get_pr_diff, compare_branches, get_ci_check_runs
 from utils.helper_functions import calculate_days_diff
 from pr_scores.scores import PRAnalysis, StalenessInfo, ReviewStatus
-from pr_scores.heuristic import assess_risk, assess_complexity, assess_impact, calculate_priority
+from pr_scores.heuristic import assess_risk, assess_complexity, assess_impact, calculate_priority, assess_internal_review_status, check_definition_of_ready
 from gdrive.gdrive_integration import GoogleDriveContextManager
 
 # Initialize Google Drive context manager
@@ -26,7 +26,7 @@ def _cursor_llm_call_stub(prompt: str, pr_number: int) -> tuple[str, str]:
     print(f"CURSOR PROMPT FOR PR {pr_number}:", file=sys.stderr)
     print(prompt, file=sys.stderr)
     print("+" * 80, file=sys.stderr)
-    
+
     placeholder = """
     **SUMMARY:**
     [PLACEHOLDER: Run the prompt above in Cursor to get this summary.]
@@ -218,7 +218,7 @@ def run_llm_analysis(
             risk = response_text  # Fallback
 
         return {
-            "summary": summary, 
+            "summary": summary,
             "risk_assessment": risk,
             "llm_prompt": actual_prompt  # Include the prompt for easy access
         }
@@ -226,7 +226,7 @@ def run_llm_analysis(
     except Exception as e:
         print(f"Error in stubbed LLM analysis: {e}", file=sys.stderr)
         return {
-            "summary": f"LLM Analysis failed: {e}", 
+            "summary": f"LLM Analysis failed: {e}",
             "risk_assessment": f"LLM Analysis failed: {e}",
             "llm_prompt": prompt  # Still include the prompt even on error
         }
@@ -313,6 +313,12 @@ Your assessment should align with the goals, standards, and priorities outlined 
         - Reviews: {pr["review_status"]["approved"]} approved, {pr["review_status"]["changes_requested"]} changes requested
         - Comments: {pr["activity"]["total_comments"]}
         - Merge Status: {"✅ No conflicts" if pr["staleness"]["is_mergeable"] else "⚠️ Has conflicts" if pr["staleness"]["has_conflicts"] else "❓ Unknown"}
+
+        **Internal Review Status (Thunder Team):**
+        - {pr["internal_review"]["status"]}
+        - Team Approvals: {pr["internal_review"]["team_approvals"]}/2 required
+        - Team Reviewers: {", ".join(["@" + r for r in pr["internal_review"]["team_reviewers"]]) if pr["internal_review"]["team_reviewers"] else "None yet"}
+        - Ready for External Review: {"✅ Yes" if pr["internal_review"]["is_ready_for_external"] else "⏳ No"}
 
         **Heuristic Analysis:**
         - Priority Score: {pr["heuristic_priority"]}/100
@@ -449,6 +455,18 @@ def analyze_pr(pr_number: int, gdrive_files: list[str] | None = None) -> PRAnaly
         pending_reviews=pending_reviews,
     )
 
+    # 3b. Assess internal Thunder team review status
+    internal_review_status = assess_internal_review_status(reviews, comments)
+
+    # 3c. Check Definition of Ready
+    try:
+        ci_checks = get_ci_check_runs(pr["head"]["sha"])
+    except Exception as e:
+        print(f"Warning: Could not fetch CI checks for PR #{pr_number}: {e}", file=sys.stderr)
+        ci_checks = None
+
+    definition_of_ready = check_definition_of_ready(pr, ci_checks)
+
     # 4. Run Heuristic Analysis
     heuristic_risk_score = assess_risk(pr, files, comments, reviews, staleness)
     heuristic_summary = generate_summary_heuristic(pr, files, comments, reviews)
@@ -457,8 +475,10 @@ def analyze_pr(pr_number: int, gdrive_files: list[str] | None = None) -> PRAnaly
     complexity_score, _ = assess_complexity(pr, files)
     impact_score, _ = assess_impact(pr, heuristic_risk_score, review_status)
 
-    # 6. Calculate Final Priority (complexity + impact + staleness matrix)
-    priority_score, priority_reasoning = calculate_priority(pr, heuristic_risk_score, staleness, review_status, files)
+    # 6. Calculate Final Priority (complexity + impact + staleness matrix + external review boost)
+    priority_score, priority_reasoning = calculate_priority(
+        pr, heuristic_risk_score, staleness, review_status, files, internal_review_status
+    )
 
     # 7. Prepare heuristic scores for LLM
     heuristic_scores = {
@@ -474,7 +494,17 @@ def analyze_pr(pr_number: int, gdrive_files: list[str] | None = None) -> PRAnaly
         pr["number"], pr["title"], pr.get("body"), diff, gdrive_files=gdrive_files, heuristic_scores=heuristic_scores
     )
 
-    # 9. Combine all analysis
+    # 9. Apply priority penalty for PRs that don't meet Definition of Ready
+    adjusted_priority = priority_score
+    priority_adjustment_reason = ""
+
+    if not definition_of_ready.is_ready:
+        # Apply penalty based on readiness score
+        penalty = int((100 - definition_of_ready.readiness_score) / 5)  # Max penalty of 20 points
+        adjusted_priority = max(0, priority_score - penalty)
+        priority_adjustment_reason = f" (adjusted from {priority_score} due to Definition of Ready failures: {', '.join(definition_of_ready.failing_checks[:2])})"
+
+    # 10. Combine all analysis
     return PRAnalysis(
         number=pr["number"],
         title=pr["title"],
@@ -485,8 +515,8 @@ def analyze_pr(pr_number: int, gdrive_files: list[str] | None = None) -> PRAnaly
         labels=[label["name"] for label in pr["labels"]],
         summary=heuristic_summary,
         risk_score=heuristic_risk_score,
-        priority_score=priority_score,
-        priority_reasoning=priority_reasoning,
+        priority_score=adjusted_priority,
+        priority_reasoning=priority_reasoning + priority_adjustment_reason,
         complexity_score=complexity_score,
         impact_score=impact_score,
         llm_summary=llm_results["summary"],
@@ -494,6 +524,8 @@ def analyze_pr(pr_number: int, gdrive_files: list[str] | None = None) -> PRAnaly
         llm_prompt=llm_results["llm_prompt"],  # Include the prompt
         staleness=staleness,
         review_status=review_status,
+        internal_review_status=internal_review_status,  # Include internal team review tracking
+        definition_of_ready=definition_of_ready,  # Include Definition of Ready assessment
         files_changed=len(files),
         additions=pr["additions"],
         deletions=pr["deletions"],

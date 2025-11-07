@@ -4,6 +4,7 @@ import json
 import httpx
 from mcp.server.fastmcp import FastMCP
 from utils.github_info import (
+    configure_github_info,
     get_pr_data,
     get_pr_reviews,
     get_pr_files,
@@ -15,7 +16,7 @@ from utils.github_info import (
 from utils.helper_functions import calculate_days_diff, dataclass_to_dict
 from pr_scores.scores import StalenessInfo, ReviewStatus
 from llm_analysis.engine import analyze_pr
-from pr_scores.heuristic import assess_risk, assess_complexity, assess_impact, calculate_priority
+from pr_scores.heuristic import assess_risk, assess_complexity, assess_impact, calculate_priority, assess_internal_review_status
 from gdrive.gdrive_integration import GoogleDriveContextManager
 
 
@@ -28,11 +29,17 @@ HEADERS = {
     "Accept": "application/vnd.github.v3+json",
     "X-GitHub-Api-Version": "2022-11-28",
 }
-# create the github client
+
+# Create the github client (single instance, reused across all calls)
 github_client = httpx.Client(base_url=BASE_URL, headers=HEADERS)
-# initialize the mcp server
+
+# Configure the github_info module with repo details and client (one-time setup)
+configure_github_info(REPO_OWNER, REPO_NAME, github_client)
+
+# Initialize the mcp server
 mcp = FastMCP("thunder-pr-inspector")
-# this is a gdrive integration to the current MCP for gdrive
+
+# Initialize gdrive integration to the current MCP for gdrive
 gdrive_context = GoogleDriveContextManager()
 
 
@@ -235,6 +242,9 @@ def llm_batch_analysis(
                 pending_reviews=pending_reviews,
             )
 
+            # Assess internal Thunder team review status
+            internal_review = assess_internal_review_status(reviews, comments)
+
             # Run heuristic analysis
             heuristic_risk = assess_risk(pr, files, comments, reviews, staleness)
 
@@ -242,8 +252,10 @@ def llm_batch_analysis(
             complexity_score, complexity_reason = assess_complexity(pr, files)
             impact_score, impact_reason = assess_impact(pr, heuristic_risk, review_status)
 
-            # Calculate priority
-            priority_score, priority_reasoning = calculate_priority(pr, heuristic_risk, staleness, review_status, files)
+            # Calculate priority (with internal review status for external review boost)
+            priority_score, priority_reasoning = calculate_priority(
+                pr, heuristic_risk, staleness, review_status, files, internal_review
+            )
 
             # Only include if meets priority threshold
             if priority_score >= min_priority:
@@ -296,6 +308,13 @@ def llm_batch_analysis(
                         "approved": approved_reviews,
                         "changes_requested": changes_requested,
                         "total_reviews": len(reviews),
+                    },
+                    "internal_review": {
+                        "team_approvals": internal_review.thunder_team_approvals,
+                        "team_changes_requested": internal_review.thunder_team_changes_requested,
+                        "team_reviewers": internal_review.thunder_team_reviewers,
+                        "is_ready_for_external": internal_review.is_ready_for_external_review,
+                        "status": internal_review.review_guideline_status,
                     },
                     "activity": {
                         "total_comments": len(comments),
@@ -581,6 +600,248 @@ def gdrive_configure(enabled: bool = True) -> str:
         },
         indent=2,
     )
+
+
+@mcp.tool()
+def get_review_dashboard() -> str:
+    """
+    Create a review dashboard categorizing all open PRs by their stage in the review pipeline.
+
+    Categories:
+    - Not Ready for Review: Fails "Definition of Ready" checks
+    - Needs Internal Review: Ready, but has < 2 team approvals
+    - Ready for External Review: Has >= 2 team approvals, no change requests
+    - Blocked: Has open change requests from team members
+
+    Returns:
+        JSON string with categorized PRs and dashboard summary
+    """
+    print("Generating review dashboard...", file=sys.stderr)
+
+    # Get all open PRs
+    prs = get_open_prs(state="open", sort="created", direction="desc")
+    print(f"Analyzing {len(prs)} open PRs...", file=sys.stderr)
+
+    # Initialize categories
+    not_ready = []
+    needs_internal_review = []
+    ready_for_external = []
+    blocked = []
+
+    for pr_summary in prs:
+        try:
+            pr_number = pr_summary["number"]
+
+            # Run full analysis to get Definition of Ready and Internal Review Status
+            analysis = analyze_pr(pr_number)
+
+            # Build PR card data
+            pr_card = {
+                "number": analysis.number,
+                "title": analysis.title,
+                "author": analysis.author,
+                "url": analysis.url,
+                "created_at": analysis.created_at[:10],
+                "updated_at": analysis.updated_at[:10],
+                "labels": analysis.labels,
+                "priority_score": analysis.priority_score,
+                "complexity_score": analysis.complexity_score,
+                "impact_score": analysis.impact_score,
+                "definition_of_ready": {
+                    "is_ready": analysis.definition_of_ready.is_ready,
+                    "readiness_score": analysis.definition_of_ready.readiness_score,
+                    "failing_checks": analysis.definition_of_ready.failing_checks,
+                    "summary": analysis.definition_of_ready.readiness_summary,
+                },
+                "internal_review": {
+                    "team_approvals": analysis.internal_review_status.thunder_team_approvals,
+                    "team_changes_requested": analysis.internal_review_status.thunder_team_changes_requested,
+                    "team_reviewers": analysis.internal_review_status.thunder_team_reviewers,
+                    "is_ready_for_external": analysis.internal_review_status.is_ready_for_external_review,
+                    "status": analysis.internal_review_status.review_guideline_status,
+                },
+            }
+
+            # Categorize based on review pipeline stage
+            # Priority order: Blocked > Not Ready > Ready for External > Needs Internal
+
+            # 1. BLOCKED: Has change requests from team (highest priority to fix)
+            if analysis.internal_review_status.thunder_team_changes_requested > 0:
+                pr_card["block_reason"] = f"{analysis.internal_review_status.thunder_team_changes_requested} change request(s) from team"
+                pr_card["next_action"] = "Author needs to address change requests"
+                blocked.append(pr_card)
+
+            # 2. NOT READY FOR REVIEW: Fails Definition of Ready
+            elif not analysis.definition_of_ready.is_ready:
+                pr_card["not_ready_reason"] = ", ".join(analysis.definition_of_ready.failing_checks[:3])
+                pr_card["next_action"] = f"Author needs to fix: {', '.join(analysis.definition_of_ready.failing_checks[:2])}"
+                not_ready.append(pr_card)
+
+            # 3. READY FOR EXTERNAL REVIEW: Has >= 2 team approvals
+            elif analysis.internal_review_status.is_ready_for_external_review:
+                pr_card["ready_details"] = f"{analysis.internal_review_status.thunder_team_approvals} team approvals"
+                pr_card["next_action"] = "Ping external maintainers (@lantiga, @t-vi, @KaelanDt)"
+                ready_for_external.append(pr_card)
+
+            # 4. NEEDS INTERNAL REVIEW: Ready but < 2 team approvals
+            else:
+                approvals_needed = 2 - analysis.internal_review_status.thunder_team_approvals
+                pr_card["needs_approvals"] = approvals_needed
+                pr_card["next_action"] = f"Needs {approvals_needed} more team approval(s)"
+                needs_internal_review.append(pr_card)
+
+        except Exception as e:
+            print(f"Error analyzing PR #{pr_summary['number']}: {e}", file=sys.stderr)
+
+    # Sort each category by priority score (descending)
+    not_ready.sort(key=lambda x: x["priority_score"], reverse=True)
+    needs_internal_review.sort(key=lambda x: x["priority_score"], reverse=True)
+    ready_for_external.sort(key=lambda x: x["priority_score"], reverse=True)
+    blocked.sort(key=lambda x: x["priority_score"], reverse=True)
+
+    # Build summary statistics
+    total_prs = len(prs)
+    summary = {
+        "total_open_prs": total_prs,
+        "not_ready": len(not_ready),
+        "needs_internal_review": len(needs_internal_review),
+        "ready_for_external": len(ready_for_external),
+        "blocked": len(blocked),
+        "pipeline_health": {
+            "ready_to_merge": len(ready_for_external),
+            "in_review": len(needs_internal_review),
+            "needs_attention": len(blocked) + len(not_ready),
+            "blocked_percentage": int((len(blocked) / total_prs * 100)) if total_prs > 0 else 0,
+            "ready_percentage": int((len(ready_for_external) / total_prs * 100)) if total_prs > 0 else 0,
+        }
+    }
+
+    # Build dashboard
+    dashboard = {
+        "summary": summary,
+        "categories": {
+            "blocked": {
+                "count": len(blocked),
+                "emoji": "🔄",
+                "description": "PRs with open change requests from team members",
+                "priority": "CRITICAL - Author action required",
+                "prs": blocked[:20]  # Limit to top 20 for display
+            },
+            "not_ready_for_review": {
+                "count": len(not_ready),
+                "emoji": "🚫",
+                "description": "PRs that fail Definition of Ready checks",
+                "priority": "HIGH - Author action required",
+                "prs": not_ready[:20]
+            },
+            "ready_for_external_review": {
+                "count": len(ready_for_external),
+                "emoji": "✅",
+                "description": "PRs with >= 2 team approvals, ready for external maintainers",
+                "priority": "HIGH - Ready to ping @lantiga, @t-vi, @KaelanDt",
+                "prs": ready_for_external[:20]
+            },
+            "needs_internal_review": {
+                "count": len(needs_internal_review),
+                "emoji": "⏳",
+                "description": "PRs ready for review but need more team approvals",
+                "priority": "MEDIUM - Team review needed",
+                "prs": needs_internal_review[:20]
+            },
+        },
+        "recommendations": _generate_dashboard_recommendations(summary, ready_for_external, needs_internal_review, blocked, not_ready)
+    }
+
+    # Print summary to stderr for console visibility
+    print("\n" + "=" * 80, file=sys.stderr)
+    print("📊 REVIEW DASHBOARD SUMMARY", file=sys.stderr)
+    print("=" * 80, file=sys.stderr)
+    print(f"Total Open PRs: {total_prs}", file=sys.stderr)
+    print(f"  🔄 Blocked: {len(blocked)} ({summary['pipeline_health']['blocked_percentage']}%)", file=sys.stderr)
+    print(f"  🚫 Not Ready: {len(not_ready)}", file=sys.stderr)
+    print(f"  ✅ Ready for External: {len(ready_for_external)} ({summary['pipeline_health']['ready_percentage']}%)", file=sys.stderr)
+    print(f"  ⏳ Needs Internal Review: {len(needs_internal_review)}", file=sys.stderr)
+    print("=" * 80, file=sys.stderr)
+
+    return json.dumps(dashboard, indent=2)
+
+
+def _generate_dashboard_recommendations(summary, ready_for_external, needs_internal_review, blocked, not_ready):
+    """Generate actionable recommendations based on dashboard state."""
+    recommendations = []
+
+    # Critical: Blocked PRs
+    if blocked:
+        top_blocked = blocked[:3]
+        recommendations.append({
+            "priority": "🔴 CRITICAL",
+            "action": f"Unblock {len(blocked)} PR(s) with change requests",
+            "prs": [f"#{pr['number']}: {pr['title'][:50]}" for pr in top_blocked],
+            "reason": "These PRs are blocked and need author attention",
+            "next_steps": "Authors should address feedback and request re-review"
+        })
+
+    # High Priority: Ready for external review
+    if ready_for_external:
+        top_ready = ready_for_external[:5]
+        recommendations.append({
+            "priority": "🟠 HIGH",
+            "action": f"Ping external maintainers for {len(ready_for_external)} PR(s)",
+            "prs": [f"#{pr['number']}: {pr['title'][:50]}" for pr in top_ready],
+            "reason": "These PRs have 2+ team approvals and are ready for external review",
+            "next_steps": "Request review from @lantiga, @t-vi, or @KaelanDt"
+        })
+
+    # Medium: Not ready PRs
+    if not_ready:
+        top_not_ready = not_ready[:3]
+        recommendations.append({
+            "priority": "🟡 MEDIUM",
+            "action": f"Fix {len(not_ready)} PR(s) failing Definition of Ready",
+            "prs": [f"#{pr['number']}: {pr['title'][:50]} - {pr['not_ready_reason'][:50]}" for pr in top_not_ready],
+            "reason": "These PRs need author action before they can be reviewed",
+            "next_steps": "Authors should address failing checks"
+        })
+
+    # Medium: Needs internal review
+    if needs_internal_review:
+        high_priority_review = [pr for pr in needs_internal_review if pr["priority_score"] >= 70]
+        if high_priority_review:
+            top_review = high_priority_review[:5]
+            recommendations.append({
+                "priority": "🟡 MEDIUM",
+                "action": f"Review {len(high_priority_review)} high-priority PR(s)",
+                "prs": [f"#{pr['number']}: {pr['title'][:50]} (priority: {pr['priority_score']})" for pr in top_review],
+                "reason": "High-priority PRs waiting for internal review",
+                "next_steps": "Team members should review and approve"
+            })
+
+    # Overall health assessments
+    if summary["pipeline_health"]["blocked_percentage"] > 30:
+        recommendations.append({
+            "priority": "🔴 ALERT",
+            "action": "Pipeline bottleneck: High blocked rate",
+            "reason": f"{summary['pipeline_health']['blocked_percentage']}% of PRs are blocked",
+            "next_steps": "Consider a focused sprint to clear change requests"
+        })
+
+    if summary["pipeline_health"]["ready_to_merge"] > 10:
+        recommendations.append({
+            "priority": "🟠 ALERT",
+            "action": "External review bottleneck detected",
+            "reason": f"{summary['pipeline_health']['ready_to_merge']} PRs are ready but waiting for external maintainers",
+            "next_steps": "Batch ping maintainers or schedule dedicated review time"
+        })
+
+    if summary["needs_attention"] > summary["in_review"] * 2:
+        recommendations.append({
+            "priority": "🟡 INFO",
+            "action": "Many PRs need author attention",
+            "reason": f"{summary['needs_attention']} PRs are blocked or not ready",
+            "next_steps": "Consider a PR cleanup sprint or author check-in"
+        })
+
+    return recommendations
 
 
 if __name__ == "__main__":

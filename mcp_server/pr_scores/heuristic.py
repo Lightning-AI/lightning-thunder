@@ -1,5 +1,6 @@
 from typing import Any
-from pr_scores.scores import RiskScore, StalenessInfo, ReviewStatus
+import re
+from pr_scores.scores import RiskScore, StalenessInfo, ReviewStatus, InternalReviewStatus, DefinitionOfReadyStatus
 
 
 # Heuristic Analysis Engine
@@ -271,9 +272,10 @@ def calculate_priority(
     staleness: StalenessInfo,
     review_status: ReviewStatus,
     files: list[dict[str, Any]],
+    internal_review_status: InternalReviewStatus | None = None,
 ) -> tuple[int, str]:
     """
-    Calculate priority score (0-100) based on complexity, impact, and staleness.
+    Calculate priority score (0-100) based on complexity, impact, staleness, and internal review status.
 
     Priority Matrix:
     - Easy + High Impact → VERY HIGH (90-100)
@@ -282,6 +284,7 @@ def calculate_priority(
     - Complex + Low Impact → LOW (0-59) - Deprioritize
 
     Staleness Boost: Simple stale PRs get priority bump
+    External Review Boost: PRs ready for external review get significant boost
 
     Returns:
         (priority_score, reasoning)
@@ -356,6 +359,12 @@ def calculate_priority(
         staleness_adjustment += 15
         staleness_reasons.append("approved and mergeable")
 
+    # SIGNIFICANT BOOST: PR is ready for external review (2+ team approvals)
+    # This ensures PRs that have passed internal review are actioned quickly
+    if internal_review_status and internal_review_status.is_ready_for_external_review:
+        staleness_adjustment += 25
+        staleness_reasons.append("✅ ready for external review (2+ team approvals)")
+
     # Final score
     final_score = base_score + staleness_adjustment
     final_score = max(0, min(100, int(final_score)))
@@ -373,3 +382,224 @@ def calculate_priority(
     reasoning = "\n".join(reasoning_parts)
 
     return final_score, reasoning
+
+
+def assess_internal_review_status(
+    reviews: list[dict[str, Any]],
+    comments: list[dict[str, Any]],
+) -> InternalReviewStatus:
+    """
+    Assess internal Thunder team review status according to PR guidelines.
+
+    Per Thunder Team PR Guidelines:
+    - PRs should get 2 internal team approvals before pinging external maintainers
+    - Team members: crcrpar, kshitij12345, kiya00, riccardofelluga, beverlylytle, mattteochen, shino16
+
+    Args:
+        reviews: List of PR reviews from GitHub
+        comments: List of PR comments from GitHub
+
+    Returns:
+        InternalReviewStatus with team approval tracking
+    """
+    # Thunder team member GitHub handles
+    THUNDER_TEAM = {
+        "crcrpar",
+        "kshitij12345",
+        "kiya00",
+        "riccardofelluga",
+        "beverlylytle",
+        "mattteochen",
+        "shino16"
+    }
+
+    # Track team reviews
+    team_approvals = 0
+    team_changes_requested = 0
+    team_reviewers = set()
+
+    # Process all reviews
+    for review in reviews:
+        reviewer = review["user"]["login"]
+        state = review["state"]
+
+        if reviewer in THUNDER_TEAM:
+            team_reviewers.add(reviewer)
+            if state == "APPROVED":
+                team_approvals += 1
+            elif state == "CHANGES_REQUESTED":
+                team_changes_requested += 1
+
+    # Determine if ready for external review per guidelines
+    is_ready = team_approvals >= 2 and team_changes_requested == 0
+
+    # Build status message
+    if team_approvals >= 2 and team_changes_requested == 0:
+        status_msg = "✅ Ready - Can ping external maintainers (@lantiga, @t-vi, @KaelanDt)"
+    elif team_approvals == 1 and team_changes_requested == 0:
+        status_msg = f"⏳ Needs 1 more team approval (has {team_approvals}/2)"
+    elif team_approvals == 0:
+        status_msg = "⏳ Needs 2 team approvals (has 0/2)"
+    elif team_changes_requested > 0:
+        status_msg = f"🔄 Has {team_changes_requested} change request(s) from team - needs resolution"
+    else:
+        status_msg = f"⏳ Has {team_approvals}/2 approvals, {team_changes_requested} change requests"
+
+    return InternalReviewStatus(
+        thunder_team_approvals=team_approvals,
+        thunder_team_changes_requested=team_changes_requested,
+        thunder_team_reviewers=sorted(list(team_reviewers)),
+        is_ready_for_external_review=is_ready,
+        review_guideline_status=status_msg
+    )
+
+
+def check_definition_of_ready(
+    pr: dict[str, Any],
+    ci_checks: list[dict[str, Any]] | None = None
+) -> DefinitionOfReadyStatus:
+    """
+    Assess whether a PR meets the Definition of Ready checklist per Thunder Team guidelines.
+
+    Checks:
+    - Atomic & Focused: Inferred from file count and changes
+    - Descriptive Title: Length >= 20 chars, starts with capital letter
+    - Comprehensive Body: Length >= 100 chars, includes issue link or explanation
+    - Linked Issue: Contains "closes #", "fixes #", "resolves #", etc.
+    - CI Passing: All CI checks are passing (or at least not failing)
+    - Not Draft: PR is not marked as draft
+
+    Args:
+        pr: PR data from GitHub API
+        ci_checks: Optional list of CI check runs for the PR's head commit
+
+    Returns:
+        DefinitionOfReadyStatus with readiness assessment
+    """
+    failing_checks = []
+
+    # 1. Check if PR is a draft
+    is_draft = pr.get("draft", False)
+    if is_draft:
+        failing_checks.append("PR is marked as draft")
+
+    # 2. Check for descriptive title
+    title = pr.get("title", "")
+    has_descriptive_title = True
+
+    if len(title) < 20:
+        has_descriptive_title = False
+        failing_checks.append(f"Title too short ({len(title)} chars, need >= 20)")
+    elif not title[0].isupper():
+        has_descriptive_title = False
+        failing_checks.append("Title should start with capital letter")
+
+    # 3. Check for comprehensive body
+    body = pr.get("body") or ""
+    has_comprehensive_body = True
+
+    if len(body.strip()) < 100:
+        has_comprehensive_body = False
+        failing_checks.append(f"Body too short ({len(body.strip())} chars, need >= 100)")
+    elif body.strip().lower() == title.lower():
+        has_comprehensive_body = False
+        failing_checks.append("Body just repeats the title - needs explanation")
+    elif "per the title" in body.lower() or "see title" in body.lower():
+        has_comprehensive_body = False
+        failing_checks.append("Body references title instead of being self-contained")
+
+    # 4. Check for linked issue
+    has_linked_issue = False
+    issue_link_patterns = [
+        r'closes\s+#\d+',
+        r'fixes\s+#\d+',
+        r'resolves\s+#\d+',
+        r'fix\s+#\d+',
+        r'close\s+#\d+',
+        r'resolve\s+#\d+',
+    ]
+
+    body_lower = body.lower()
+    for pattern in issue_link_patterns:
+        if re.search(pattern, body_lower):
+            has_linked_issue = True
+            break
+
+    # Note: Not having a linked issue is not always a failure (e.g., for small fixes)
+    # So we track it but don't always penalize
+    if not has_linked_issue:
+        # Check if it's explained as a small fix or improvement
+        small_fix_indicators = ["typo", "small fix", "minor", "quick fix", "formatting"]
+        is_explained_small_fix = any(indicator in body_lower for indicator in small_fix_indicators)
+
+        if not is_explained_small_fix and len(body.strip()) > 0:
+            # Only fail if it's not obviously a small fix
+            failing_checks.append("No linked issue (closes #, fixes #, resolves #)")
+
+    # 5. Check CI status
+    ci_passing = True
+    if ci_checks is not None:
+        # If we have CI check data, analyze it
+        if len(ci_checks) == 0:
+            # No CI checks configured - consider it passing
+            ci_passing = True
+        else:
+            # Check if all required checks are passing
+            failing_ci = []
+            pending_ci = []
+
+            for check in ci_checks:
+                status = check.get("status")  # "queued", "in_progress", "completed"
+                conclusion = check.get("conclusion")  # "success", "failure", "neutral", "cancelled", etc.
+
+                if status == "completed":
+                    if conclusion not in ["success", "neutral", "skipped"]:
+                        failing_ci.append(check.get("name", "unknown"))
+                elif status in ["queued", "in_progress"]:
+                    pending_ci.append(check.get("name", "unknown"))
+
+            if failing_ci:
+                ci_passing = False
+                failing_checks.append(f"CI checks failing: {', '.join(failing_ci[:3])}")
+            elif pending_ci:
+                # Pending CI is not a hard failure, but worth noting
+                ci_passing = True  # Don't block on pending
+    else:
+        # No CI check data provided - check mergeable_state as fallback
+        mergeable_state = pr.get("mergeable_state", "unknown")
+        if mergeable_state in ["dirty", "blocked"]:
+            ci_passing = False
+            failing_checks.append(f"PR mergeable state: {mergeable_state}")
+
+    # Calculate overall readiness
+    checks_passed = sum([
+        not is_draft,
+        has_descriptive_title,
+        has_comprehensive_body,
+        has_linked_issue or "no linked issue" not in [c.lower() for c in failing_checks],
+        ci_passing
+    ])
+    total_checks = 5
+    readiness_score = int((checks_passed / total_checks) * 100)
+
+    is_ready = len(failing_checks) == 0 and not is_draft
+
+    # Build summary message
+    if is_ready:
+        readiness_summary = f"✅ Ready for review ({checks_passed}/{total_checks} checks passed)"
+    elif is_draft:
+        readiness_summary = "🚧 Draft PR - not ready for review"
+    else:
+        readiness_summary = f"⚠️ Not ready - {len(failing_checks)} check(s) failing"
+
+    return DefinitionOfReadyStatus(
+        has_linked_issue=has_linked_issue,
+        has_descriptive_title=has_descriptive_title,
+        has_comprehensive_body=has_comprehensive_body,
+        ci_passing=ci_passing,
+        is_draft=is_draft,
+        is_ready=is_ready,
+        failing_checks=failing_checks,
+        readiness_score=readiness_score,
+        readiness_summary=readiness_summary
+    )
