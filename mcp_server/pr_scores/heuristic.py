@@ -1,6 +1,13 @@
 from typing import Any
 import re
-from pr_scores.scores import (RiskScore, StalenessInfo, ReviewStatus, InternalReviewStatus, DefinitionOfReadyStatus, RiskReasoning)
+from pr_scores.scores import (
+    RiskScore,
+    StalenessInfo,
+    ReviewStatus,
+    InternalReviewStatus,
+    DefinitionOfReadyStatus,
+    RiskReasoning,
+)
 
 
 # Heuristic Analysis Engine
