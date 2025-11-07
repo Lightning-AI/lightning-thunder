@@ -221,7 +221,7 @@ def run_llm_analysis(
         return {
             "summary": summary,
             "risk_assessment": risk,
-            "llm_prompt": actual_prompt  # Include the prompt for easy access
+            "llm_prompt": actual_prompt,  # Include the prompt for easy access
         }
 
     except Exception as e:
@@ -229,7 +229,7 @@ def run_llm_analysis(
         return {
             "summary": f"LLM Analysis failed: {e}",
             "risk_assessment": f"LLM Analysis failed: {e}",
-            "llm_prompt": prompt  # Still include the prompt even on error
+            "llm_prompt": prompt,  # Still include the prompt even on error
         }
 
 
