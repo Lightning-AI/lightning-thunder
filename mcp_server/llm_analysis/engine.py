@@ -26,7 +26,7 @@ def _cursor_llm_call_stub(prompt: str, pr_number: int) -> tuple[str, str]:
     print(f"CURSOR PROMPT FOR PR {pr_number}:", file=sys.stderr)
     print(prompt, file=sys.stderr)
     print("+" * 80, file=sys.stderr)
-    
+
     placeholder = """
     **SUMMARY:**
     [PLACEHOLDER: Run the prompt above in Cursor to get this summary.]
@@ -218,17 +218,17 @@ def run_llm_analysis(
             risk = response_text  # Fallback
 
         return {
-            "summary": summary, 
+            "summary": summary,
             "risk_assessment": risk,
-            "llm_prompt": actual_prompt  # Include the prompt for easy access
+            "llm_prompt": actual_prompt,  # Include the prompt for easy access
         }
 
     except Exception as e:
         print(f"Error in stubbed LLM analysis: {e}", file=sys.stderr)
         return {
-            "summary": f"LLM Analysis failed: {e}", 
+            "summary": f"LLM Analysis failed: {e}",
             "risk_assessment": f"LLM Analysis failed: {e}",
-            "llm_prompt": prompt  # Still include the prompt even on error
+            "llm_prompt": prompt,  # Still include the prompt even on error
         }
 
 
