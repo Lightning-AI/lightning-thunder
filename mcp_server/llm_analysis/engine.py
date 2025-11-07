@@ -1,9 +1,24 @@
 import sys
 from typing import Any
-from utils.github_info import get_pr_data, get_pr_reviews, get_pr_comments, get_pr_files, get_pr_diff, compare_branches, get_ci_check_runs
+from utils.github_info import (
+    get_pr_data,
+    get_pr_reviews,
+    get_pr_comments,
+    get_pr_files,
+    get_pr_diff,
+    compare_branches,
+    get_ci_check_runs,
+)
 from utils.helper_functions import calculate_days_diff
 from pr_scores.scores import PRAnalysis, StalenessInfo, ReviewStatus
-from pr_scores.heuristic import assess_risk, assess_complexity, assess_impact, calculate_priority, assess_internal_review_status, check_definition_of_ready
+from pr_scores.heuristic import (
+    assess_risk,
+    assess_complexity,
+    assess_impact,
+    calculate_priority,
+    assess_internal_review_status,
+    check_definition_of_ready,
+)
 from strategic_goals.goals_manager import get_goals_manager
 from gdrive.gdrive_integration import GoogleDriveContextManager
 
@@ -474,13 +489,18 @@ def analyze_pr(pr_number: int, gdrive_files: list[str] | None = None) -> PRAnaly
 
     # Convert to simpler dataclass for PRAnalysis
     from pr_scores.scores import GoalAlignment
-    goal_alignment = GoalAlignment(
-        is_aligned=goal_alignment_obj.is_aligned,
-        highest_priority=goal_alignment_obj.highest_priority,
-        alignment_score=goal_alignment_obj.alignment_score,
-        alignment_reasoning=goal_alignment_obj.alignment_reasoning,
-        closed_issues=goal_alignment_obj.closed_issues
-    ) if goal_alignment_obj else None
+
+    goal_alignment = (
+        GoalAlignment(
+            is_aligned=goal_alignment_obj.is_aligned,
+            highest_priority=goal_alignment_obj.highest_priority,
+            alignment_score=goal_alignment_obj.alignment_score,
+            alignment_reasoning=goal_alignment_obj.alignment_reasoning,
+            closed_issues=goal_alignment_obj.closed_issues,
+        )
+        if goal_alignment_obj
+        else None
+    )
 
     # 4. Run Heuristic Analysis
     heuristic_risk_score = assess_risk(pr, files, comments, reviews, staleness)

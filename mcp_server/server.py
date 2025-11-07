@@ -16,7 +16,13 @@ from utils.github_info import (
 from utils.helper_functions import calculate_days_diff, dataclass_to_dict
 from pr_scores.scores import StalenessInfo, ReviewStatus
 from llm_analysis.engine import analyze_pr
-from pr_scores.heuristic import assess_risk, assess_complexity, assess_impact, calculate_priority, assess_internal_review_status
+from pr_scores.heuristic import (
+    assess_risk,
+    assess_complexity,
+    assess_impact,
+    calculate_priority,
+    assess_internal_review_status,
+)
 from strategic_goals.goals_manager import get_goals_manager, StrategicGoal
 from gdrive.gdrive_integration import GoogleDriveContextManager
 
@@ -672,14 +678,18 @@ def get_review_dashboard() -> str:
 
             # 1. BLOCKED: Has change requests from team (highest priority to fix)
             if analysis.internal_review_status.thunder_team_changes_requested > 0:
-                pr_card["block_reason"] = f"{analysis.internal_review_status.thunder_team_changes_requested} change request(s) from team"
+                pr_card["block_reason"] = (
+                    f"{analysis.internal_review_status.thunder_team_changes_requested} change request(s) from team"
+                )
                 pr_card["next_action"] = "Author needs to address change requests"
                 blocked.append(pr_card)
 
             # 2. NOT READY FOR REVIEW: Fails Definition of Ready
             elif not analysis.definition_of_ready.is_ready:
                 pr_card["not_ready_reason"] = ", ".join(analysis.definition_of_ready.failing_checks[:3])
-                pr_card["next_action"] = f"Author needs to fix: {', '.join(analysis.definition_of_ready.failing_checks[:2])}"
+                pr_card["next_action"] = (
+                    f"Author needs to fix: {', '.join(analysis.definition_of_ready.failing_checks[:2])}"
+                )
                 not_ready.append(pr_card)
 
             # 3. READY FOR EXTERNAL REVIEW: Has >= 2 team approvals
@@ -716,9 +726,9 @@ def get_review_dashboard() -> str:
             "ready_to_merge": len(ready_for_external),
             "in_review": len(needs_internal_review),
             "needs_attention": len(blocked) + len(not_ready),
-            "blocked_percentage": int((len(blocked) / total_prs * 100)) if total_prs > 0 else 0,
-            "ready_percentage": int((len(ready_for_external) / total_prs * 100)) if total_prs > 0 else 0,
-        }
+            "blocked_percentage": int(len(blocked) / total_prs * 100) if total_prs > 0 else 0,
+            "ready_percentage": int(len(ready_for_external) / total_prs * 100) if total_prs > 0 else 0,
+        },
     }
 
     # Build dashboard
@@ -730,31 +740,33 @@ def get_review_dashboard() -> str:
                 "emoji": "🔄",
                 "description": "PRs with open change requests from team members",
                 "priority": "CRITICAL - Author action required",
-                "prs": blocked[:20]  # Limit to top 20 for display
+                "prs": blocked[:20],  # Limit to top 20 for display
             },
             "not_ready_for_review": {
                 "count": len(not_ready),
                 "emoji": "🚫",
                 "description": "PRs that fail Definition of Ready checks",
                 "priority": "HIGH - Author action required",
-                "prs": not_ready[:20]
+                "prs": not_ready[:20],
             },
             "ready_for_external_review": {
                 "count": len(ready_for_external),
                 "emoji": "✅",
                 "description": "PRs with >= 2 team approvals, ready for external maintainers",
                 "priority": "HIGH - Ready to ping @lantiga, @t-vi, @KaelanDt",
-                "prs": ready_for_external[:20]
+                "prs": ready_for_external[:20],
             },
             "needs_internal_review": {
                 "count": len(needs_internal_review),
                 "emoji": "⏳",
                 "description": "PRs ready for review but need more team approvals",
                 "priority": "MEDIUM - Team review needed",
-                "prs": needs_internal_review[:20]
+                "prs": needs_internal_review[:20],
             },
         },
-        "recommendations": _generate_dashboard_recommendations(summary, ready_for_external, needs_internal_review, blocked, not_ready)
+        "recommendations": _generate_dashboard_recommendations(
+            summary, ready_for_external, needs_internal_review, blocked, not_ready
+        ),
     }
 
     # Print summary to stderr for console visibility
@@ -764,7 +776,10 @@ def get_review_dashboard() -> str:
     print(f"Total Open PRs: {total_prs}", file=sys.stderr)
     print(f"  🔄 Blocked: {len(blocked)} ({summary['pipeline_health']['blocked_percentage']}%)", file=sys.stderr)
     print(f"  🚫 Not Ready: {len(not_ready)}", file=sys.stderr)
-    print(f"  ✅ Ready for External: {len(ready_for_external)} ({summary['pipeline_health']['ready_percentage']}%)", file=sys.stderr)
+    print(
+        f"  ✅ Ready for External: {len(ready_for_external)} ({summary['pipeline_health']['ready_percentage']}%)",
+        file=sys.stderr,
+    )
     print(f"  ⏳ Needs Internal Review: {len(needs_internal_review)}", file=sys.stderr)
     print("=" * 80, file=sys.stderr)
 
@@ -778,85 +793,96 @@ def _generate_dashboard_recommendations(summary, ready_for_external, needs_inter
     # Critical: Blocked PRs
     if blocked:
         top_blocked = blocked[:3]
-        recommendations.append({
-            "priority": "🔴 CRITICAL",
-            "action": f"Unblock {len(blocked)} PR(s) with change requests",
-            "prs": [f"#{pr['number']}: {pr['title'][:50]}" for pr in top_blocked],
-            "reason": "These PRs are blocked and need author attention",
-            "next_steps": "Authors should address feedback and request re-review"
-        })
+        recommendations.append(
+            {
+                "priority": "🔴 CRITICAL",
+                "action": f"Unblock {len(blocked)} PR(s) with change requests",
+                "prs": [f"#{pr['number']}: {pr['title'][:50]}" for pr in top_blocked],
+                "reason": "These PRs are blocked and need author attention",
+                "next_steps": "Authors should address feedback and request re-review",
+            }
+        )
 
     # High Priority: Ready for external review
     if ready_for_external:
         top_ready = ready_for_external[:5]
-        recommendations.append({
-            "priority": "🟠 HIGH",
-            "action": f"Ping external maintainers for {len(ready_for_external)} PR(s)",
-            "prs": [f"#{pr['number']}: {pr['title'][:50]}" for pr in top_ready],
-            "reason": "These PRs have 2+ team approvals and are ready for external review",
-            "next_steps": "Request review from @lantiga, @t-vi, or @KaelanDt"
-        })
+        recommendations.append(
+            {
+                "priority": "🟠 HIGH",
+                "action": f"Ping external maintainers for {len(ready_for_external)} PR(s)",
+                "prs": [f"#{pr['number']}: {pr['title'][:50]}" for pr in top_ready],
+                "reason": "These PRs have 2+ team approvals and are ready for external review",
+                "next_steps": "Request review from @lantiga, @t-vi, or @KaelanDt",
+            }
+        )
 
     # Medium: Not ready PRs
     if not_ready:
         top_not_ready = not_ready[:3]
-        recommendations.append({
-            "priority": "🟡 MEDIUM",
-            "action": f"Fix {len(not_ready)} PR(s) failing Definition of Ready",
-            "prs": [f"#{pr['number']}: {pr['title'][:50]} - {pr['not_ready_reason'][:50]}" for pr in top_not_ready],
-            "reason": "These PRs need author action before they can be reviewed",
-            "next_steps": "Authors should address failing checks"
-        })
+        recommendations.append(
+            {
+                "priority": "🟡 MEDIUM",
+                "action": f"Fix {len(not_ready)} PR(s) failing Definition of Ready",
+                "prs": [f"#{pr['number']}: {pr['title'][:50]} - {pr['not_ready_reason'][:50]}" for pr in top_not_ready],
+                "reason": "These PRs need author action before they can be reviewed",
+                "next_steps": "Authors should address failing checks",
+            }
+        )
 
     # Medium: Needs internal review
     if needs_internal_review:
         high_priority_review = [pr for pr in needs_internal_review if pr["priority_score"] >= 70]
         if high_priority_review:
             top_review = high_priority_review[:5]
-            recommendations.append({
-                "priority": "🟡 MEDIUM",
-                "action": f"Review {len(high_priority_review)} high-priority PR(s)",
-                "prs": [f"#{pr['number']}: {pr['title'][:50]} (priority: {pr['priority_score']})" for pr in top_review],
-                "reason": "High-priority PRs waiting for internal review",
-                "next_steps": "Team members should review and approve"
-            })
+            recommendations.append(
+                {
+                    "priority": "🟡 MEDIUM",
+                    "action": f"Review {len(high_priority_review)} high-priority PR(s)",
+                    "prs": [
+                        f"#{pr['number']}: {pr['title'][:50]} (priority: {pr['priority_score']})" for pr in top_review
+                    ],
+                    "reason": "High-priority PRs waiting for internal review",
+                    "next_steps": "Team members should review and approve",
+                }
+            )
 
     # Overall health assessments
     if summary["pipeline_health"]["blocked_percentage"] > 30:
-        recommendations.append({
-            "priority": "🔴 ALERT",
-            "action": "Pipeline bottleneck: High blocked rate",
-            "reason": f"{summary['pipeline_health']['blocked_percentage']}% of PRs are blocked",
-            "next_steps": "Consider a focused sprint to clear change requests"
-        })
+        recommendations.append(
+            {
+                "priority": "🔴 ALERT",
+                "action": "Pipeline bottleneck: High blocked rate",
+                "reason": f"{summary['pipeline_health']['blocked_percentage']}% of PRs are blocked",
+                "next_steps": "Consider a focused sprint to clear change requests",
+            }
+        )
 
     if summary["pipeline_health"]["ready_to_merge"] > 10:
-        recommendations.append({
-            "priority": "🟠 ALERT",
-            "action": "External review bottleneck detected",
-            "reason": f"{summary['pipeline_health']['ready_to_merge']} PRs are ready but waiting for external maintainers",
-            "next_steps": "Batch ping maintainers or schedule dedicated review time"
-        })
+        recommendations.append(
+            {
+                "priority": "🟠 ALERT",
+                "action": "External review bottleneck detected",
+                "reason": f"{summary['pipeline_health']['ready_to_merge']} PRs are ready but waiting for external maintainers",
+                "next_steps": "Batch ping maintainers or schedule dedicated review time",
+            }
+        )
 
     if summary["needs_attention"] > summary["in_review"] * 2:
-        recommendations.append({
-            "priority": "🟡 INFO",
-            "action": "Many PRs need author attention",
-            "reason": f"{summary['needs_attention']} PRs are blocked or not ready",
-            "next_steps": "Consider a PR cleanup sprint or author check-in"
-        })
+        recommendations.append(
+            {
+                "priority": "🟡 INFO",
+                "action": "Many PRs need author attention",
+                "reason": f"{summary['needs_attention']} PRs are blocked or not ready",
+                "next_steps": "Consider a PR cleanup sprint or author check-in",
+            }
+        )
 
     return recommendations
 
 
 @mcp.tool()
 def add_strategic_goal(
-    goal_id: str,
-    title: str,
-    priority: str,
-    description: str,
-    theme: str,
-    linked_issues: list[int] | None = None
+    goal_id: str, title: str, priority: str, description: str, theme: str, linked_issues: list[int] | None = None
 ) -> str:
     """
     Add a strategic goal (e.g., Q4 priority) to track PR alignment.
@@ -890,22 +916,25 @@ def add_strategic_goal(
         priority=priority,
         description=description,
         linked_issues=linked_issues or [],
-        theme=theme
+        theme=theme,
     )
 
     goals_manager.add_goal(goal)
 
-    return json.dumps({
-        "status": "success",
-        "message": f"Added strategic goal: {title}",
-        "goal": {
-            "id": goal_id,
-            "title": title,
-            "priority": priority,
-            "linked_issues": len(goal.linked_issues),
-            "theme": theme
-        }
-    }, indent=2)
+    return json.dumps(
+        {
+            "status": "success",
+            "message": f"Added strategic goal: {title}",
+            "goal": {
+                "id": goal_id,
+                "title": title,
+                "priority": priority,
+                "linked_issues": len(goal.linked_issues),
+                "theme": theme,
+            },
+        },
+        indent=2,
+    )
 
 
 @mcp.tool()
@@ -923,10 +952,7 @@ def link_issue_to_goal(issue_number: int, goal_id: str) -> str:
     goals_manager = get_goals_manager()
     goals_manager.link_issue_to_goal(issue_number, goal_id)
 
-    return json.dumps({
-        "status": "success",
-        "message": f"Linked issue #{issue_number} to goal '{goal_id}'"
-    }, indent=2)
+    return json.dumps({"status": "success", "message": f"Linked issue #{issue_number} to goal '{goal_id}'"}, indent=2)
 
 
 @mcp.tool()
@@ -941,24 +967,23 @@ def list_strategic_goals() -> str:
 
     goals_list = []
     for goal_id, goal in goals_manager.goals.items():
-        goals_list.append({
-            "id": goal.id,
-            "title": goal.title,
-            "priority": goal.priority,
-            "theme": goal.theme,
-            "description": goal.description,
-            "linked_issues": goal.linked_issues,
-            "issue_count": len(goal.linked_issues)
-        })
+        goals_list.append(
+            {
+                "id": goal.id,
+                "title": goal.title,
+                "priority": goal.priority,
+                "theme": goal.theme,
+                "description": goal.description,
+                "linked_issues": goal.linked_issues,
+                "issue_count": len(goal.linked_issues),
+            }
+        )
 
     # Sort by priority (P0 first)
     priority_order = {"P0": 0, "P1": 1, "P2": 2}
     goals_list.sort(key=lambda g: priority_order.get(g["priority"], 999))
 
-    return json.dumps({
-        "total_goals": len(goals_list),
-        "goals": goals_list
-    }, indent=2)
+    return json.dumps({"total_goals": len(goals_list), "goals": goals_list}, indent=2)
 
 
 @mcp.tool()
@@ -972,10 +997,7 @@ def clear_strategic_goals() -> str:
     goals_manager = get_goals_manager()
     goals_manager.clear_goals()
 
-    return json.dumps({
-        "status": "success",
-        "message": "All strategic goals cleared"
-    }, indent=2)
+    return json.dumps({"status": "success", "message": "All strategic goals cleared"}, indent=2)
 
 
 if __name__ == "__main__":

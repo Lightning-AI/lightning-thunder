@@ -109,7 +109,9 @@ def get_pr_diff(pr_number: int, github_client: httpx.Client | None = None) -> st
     return response.text
 
 
-def get_open_prs(state="open", sort="created", direction="desc", github_client: httpx.Client | None = None) -> list[dict[str, Any]]:
+def get_open_prs(
+    state="open", sort="created", direction="desc", github_client: httpx.Client | None = None
+) -> list[dict[str, Any]]:
     """Fetch all the open PRs
 
     Args:
@@ -167,7 +169,7 @@ def get_ci_check_runs(commit_sha: str, github_client: httpx.Client | None = None
     try:
         response = client.get(
             f"/repos/{REPO_OWNER}/{REPO_NAME}/commits/{commit_sha}/check-runs",
-            headers={"Accept": "application/vnd.github.v3+json"}
+            headers={"Accept": "application/vnd.github.v3+json"},
         )
         response.raise_for_status()
         data = response.json()

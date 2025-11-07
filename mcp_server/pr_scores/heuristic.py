@@ -374,13 +374,19 @@ def calculate_priority(
     if goal_alignment and goal_alignment.is_aligned:
         if goal_alignment.highest_priority == "P0":
             strategic_boost = 50
-            staleness_reasons.append(f"🔥 P0 STRATEGIC GOAL (closes #{', #'.join(map(str, goal_alignment.closed_issues))})")
+            staleness_reasons.append(
+                f"🔥 P0 STRATEGIC GOAL (closes #{', #'.join(map(str, goal_alignment.closed_issues))})"
+            )
         elif goal_alignment.highest_priority == "P1":
             strategic_boost = 30
-            staleness_reasons.append(f"🎯 P1 HIGH PRIORITY GOAL (closes #{', #'.join(map(str, goal_alignment.closed_issues))})")
+            staleness_reasons.append(
+                f"🎯 P1 HIGH PRIORITY GOAL (closes #{', #'.join(map(str, goal_alignment.closed_issues))})"
+            )
         elif goal_alignment.highest_priority == "P2":
             strategic_boost = 15
-            staleness_reasons.append(f"📌 P2 MEDIUM PRIORITY GOAL (closes #{', #'.join(map(str, goal_alignment.closed_issues))})")
+            staleness_reasons.append(
+                f"📌 P2 MEDIUM PRIORITY GOAL (closes #{', #'.join(map(str, goal_alignment.closed_issues))})"
+            )
 
     # Final score (strategic boost applied AFTER other adjustments for maximum impact)
     final_score = base_score + staleness_adjustment + strategic_boost
@@ -420,15 +426,7 @@ def assess_internal_review_status(
         InternalReviewStatus with team approval tracking
     """
     # Thunder team member GitHub handles
-    THUNDER_TEAM = {
-        "crcrpar",
-        "kshitij12345",
-        "kiya00",
-        "riccardofelluga",
-        "beverlylytle",
-        "mattteochen",
-        "shino16"
-    }
+    THUNDER_TEAM = {"crcrpar", "kshitij12345", "kiya00", "riccardofelluga", "beverlylytle", "mattteochen", "shino16"}
 
     # Track team reviews
     team_approvals = 0
@@ -467,13 +465,12 @@ def assess_internal_review_status(
         thunder_team_changes_requested=team_changes_requested,
         thunder_team_reviewers=sorted(list(team_reviewers)),
         is_ready_for_external_review=is_ready,
-        review_guideline_status=status_msg
+        review_guideline_status=status_msg,
     )
 
 
 def check_definition_of_ready(
-    pr: dict[str, Any],
-    ci_checks: list[dict[str, Any]] | None = None
+    pr: dict[str, Any], ci_checks: list[dict[str, Any]] | None = None
 ) -> DefinitionOfReadyStatus:
     """
     Assess whether a PR meets the Definition of Ready checklist per Thunder Team guidelines.
@@ -528,12 +525,12 @@ def check_definition_of_ready(
     # 4. Check for linked issue
     has_linked_issue = False
     issue_link_patterns = [
-        r'closes\s+#\d+',
-        r'fixes\s+#\d+',
-        r'resolves\s+#\d+',
-        r'fix\s+#\d+',
-        r'close\s+#\d+',
-        r'resolve\s+#\d+',
+        r"closes\s+#\d+",
+        r"fixes\s+#\d+",
+        r"resolves\s+#\d+",
+        r"fix\s+#\d+",
+        r"close\s+#\d+",
+        r"resolve\s+#\d+",
     ]
 
     body_lower = body.lower()
@@ -589,13 +586,15 @@ def check_definition_of_ready(
             failing_checks.append(f"PR mergeable state: {mergeable_state}")
 
     # Calculate overall readiness
-    checks_passed = sum([
-        not is_draft,
-        has_descriptive_title,
-        has_comprehensive_body,
-        has_linked_issue or "no linked issue" not in [c.lower() for c in failing_checks],
-        ci_passing
-    ])
+    checks_passed = sum(
+        [
+            not is_draft,
+            has_descriptive_title,
+            has_comprehensive_body,
+            has_linked_issue or "no linked issue" not in [c.lower() for c in failing_checks],
+            ci_passing,
+        ]
+    )
     total_checks = 5
     readiness_score = int((checks_passed / total_checks) * 100)
 
@@ -618,5 +617,5 @@ def check_definition_of_ready(
         is_ready=is_ready,
         failing_checks=failing_checks,
         readiness_score=readiness_score,
-        readiness_summary=readiness_summary
+        readiness_summary=readiness_summary,
     )
