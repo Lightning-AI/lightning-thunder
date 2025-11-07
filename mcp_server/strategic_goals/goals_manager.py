@@ -6,6 +6,7 @@ from typing import Any
 @dataclass
 class StrategicGoal:
     """Represents a strategic goal (e.g., Q4 priority)"""
+
     id: str  # e.g., "Q4-inference-optimization"
     title: str  # e.g., "Inference Optimization"
     priority: str  # "P0", "P1", "P2"
@@ -17,6 +18,7 @@ class StrategicGoal:
 @dataclass
 class GoalAlignment:
     """Represents how a PR aligns with strategic goals"""
+
     is_aligned: bool
     linked_goals: list[StrategicGoal]
     highest_priority: str | None  # "P0", "P1", "P2"
@@ -74,12 +76,12 @@ class StrategicGoalsManager:
             return []
 
         patterns = [
-            r'closes\s+#(\d+)',
-            r'close\s+#(\d+)',
-            r'fixes\s+#(\d+)',
-            r'fix\s+#(\d+)',
-            r'resolves\s+#(\d+)',
-            r'resolve\s+#(\d+)',
+            r"closes\s+#(\d+)",
+            r"close\s+#(\d+)",
+            r"fixes\s+#(\d+)",
+            r"fix\s+#(\d+)",
+            r"resolves\s+#(\d+)",
+            r"resolve\s+#(\d+)",
         ]
 
         closed_issues = set()
@@ -149,7 +151,9 @@ class StrategicGoalsManager:
 
             # List specific goals
             for goal in linked_goals:
-                reasoning_parts.append(f"  - {goal.priority}: {goal.title} (closes #{', #'.join(map(str, [i for i in closed_issues if i in goal.linked_issues]))})")
+                reasoning_parts.append(
+                    f"  - {goal.priority}: {goal.title} (closes #{', #'.join(map(str, [i for i in closed_issues if i in goal.linked_issues]))})"
+                )
 
         reasoning = "\n".join(reasoning_parts) if reasoning_parts else "No strategic alignment"
 
@@ -159,7 +163,7 @@ class StrategicGoalsManager:
             highest_priority=highest_priority,
             closed_issues=closed_issues,
             alignment_score=alignment_score,
-            alignment_reasoning=reasoning
+            alignment_reasoning=reasoning,
         )
 
     def calculate_strategic_priority_boost(self, alignment: GoalAlignment) -> tuple[int, str]:

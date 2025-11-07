@@ -34,6 +34,7 @@ class ReviewStatus:
 @dataclass
 class InternalReviewStatus:
     """Tracks internal Thunder team reviews per PR guidelines"""
+
     thunder_team_approvals: int
     thunder_team_changes_requested: int
     thunder_team_reviewers: list[str]
@@ -44,6 +45,7 @@ class InternalReviewStatus:
 @dataclass
 class DefinitionOfReadyStatus:
     """Tracks whether a PR meets the Definition of Ready checklist"""
+
     has_linked_issue: bool
     has_descriptive_title: bool
     has_comprehensive_body: bool
@@ -58,6 +60,7 @@ class DefinitionOfReadyStatus:
 @dataclass
 class GoalAlignment:
     """Strategic goal alignment (imported from strategic_goals module)"""
+
     is_aligned: bool
     highest_priority: str | None
     alignment_score: int
