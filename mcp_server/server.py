@@ -4,7 +4,6 @@ import json
 import httpx
 from mcp.server.fastmcp import FastMCP
 from utils.github_info import (
-    configure_github_info,
     get_pr_data,
     get_pr_reviews,
     get_pr_files,
@@ -14,6 +13,7 @@ from utils.github_info import (
     compare_branches,
 )
 from utils.helper_functions import calculate_days_diff, dataclass_to_dict
+from utils.constants import GITHUB_TOKEN, REPO_OWNER, REPO_NAME, BASE_URL, HEADERS
 from pr_scores.scores import StalenessInfo, ReviewStatus
 from llm_analysis.engine import analyze_pr
 from pr_scores.heuristic import (
@@ -27,21 +27,8 @@ from strategic_goals.goals_manager import get_goals_manager, StrategicGoal
 from gdrive.gdrive_integration import GoogleDriveContextManager
 
 
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-REPO_OWNER = "Lightning-AI"
-REPO_NAME = "lightning-thunder"
-BASE_URL = "https://api.github.com"
-HEADERS = {
-    "Authorization": f"token {GITHUB_TOKEN}",
-    "Accept": "application/vnd.github.v3+json",
-    "X-GitHub-Api-Version": "2022-11-28",
-}
-
 # Create the github client (single instance, reused across all calls)
 github_client = httpx.Client(base_url=BASE_URL, headers=HEADERS)
-
-# Configure the github_info module with repo details and client (one-time setup)
-configure_github_info(REPO_OWNER, REPO_NAME, github_client)
 
 # Initialize the mcp server
 mcp = FastMCP("thunder-pr-inspector")
@@ -64,7 +51,7 @@ def list_open_prs(labels: list[str] | None = None, limit: int = 50) -> str:
     """
     print(f"Fetching open PRs (limit: {limit})...", file=sys.stderr)
 
-    prs = get_open_prs(sort="created", direction="desc")
+    prs = get_open_prs(sort="created", direction="desc", github_client=github_client)
 
     if labels:
         labels_lower = [label_name.lower() for label_name in labels]
@@ -118,7 +105,7 @@ def analyze_single_pr(pr_number: int, gdrive_files: list[str] | None = None) -> 
             gdrive_files=["ThunderQ4Plan", "ThunderBestPractices"]
         )
     """
-    analysis = analyze_pr(pr_number, gdrive_files=gdrive_files)
+    analysis = analyze_pr(pr_number, gdrive_files=gdrive_files, github_client=github_client)
     return json.dumps(dataclass_to_dict(analysis), indent=2)
 
 

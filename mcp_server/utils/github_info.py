@@ -1,29 +1,7 @@
 import sys
 import httpx
 from typing import Any
-
-# Module-level configuration
-# These should be set once by calling configure_github_info()
-REPO_OWNER: str | None = None
-REPO_NAME: str | None = None
-_github_client: httpx.Client | None = None
-
-
-def configure_github_info(repo_owner: str, repo_name: str, github_client: httpx.Client | None = None):
-    """
-    Configure the module with repository information and optionally set a default github client.
-    Should be called once at startup by the importing module.
-
-    Args:
-        repo_owner: GitHub repository owner
-        repo_name: GitHub repository name
-        github_client: Optional GitHub client to use as default for wrapper functions
-    """
-    global REPO_OWNER, REPO_NAME, _github_client
-    REPO_OWNER = repo_owner
-    REPO_NAME = repo_name
-    if github_client:
-        _github_client = github_client
+from utils.constants import REPO_OWNER, REPO_NAME, BASE_URL, HEADERS
 
 
 def get_pr_data(pr_number: int, github_client: httpx.Client | None = None) -> dict[str, Any]:
@@ -36,8 +14,7 @@ def get_pr_data(pr_number: int, github_client: httpx.Client | None = None) -> di
     Returns:
         The PR data
     """
-    client = github_client or _github_client
-    response = client.get(f"/repos/{REPO_OWNER}/{REPO_NAME}/pulls/{pr_number}")
+    response = github_client.get(f"/repos/{REPO_OWNER}/{REPO_NAME}/pulls/{pr_number}")
     response.raise_for_status()
     return response.json()
 
@@ -52,8 +29,7 @@ def get_pr_reviews(pr_number: int, github_client: httpx.Client | None = None) ->
     Returns:
         The PR reviews
     """
-    client = github_client or _github_client
-    response = client.get(f"/repos/{REPO_OWNER}/{REPO_NAME}/pulls/{pr_number}/reviews")
+    response = github_client.get(f"/repos/{REPO_OWNER}/{REPO_NAME}/pulls/{pr_number}/reviews")
     response.raise_for_status()
     return response.json()
 
@@ -68,8 +44,7 @@ def get_pr_files(pr_number: int, github_client: httpx.Client | None = None) -> l
     Returns:
         The PR files
     """
-    client = github_client or _github_client
-    response = client.get(f"/repos/{REPO_OWNER}/{REPO_NAME}/pulls/{pr_number}/files")
+    response = github_client.get(f"/repos/{REPO_OWNER}/{REPO_NAME}/pulls/{pr_number}/files")
     response.raise_for_status()
     return response.json()
 
@@ -84,8 +59,7 @@ def get_pr_comments(pr_number: int, github_client: httpx.Client | None = None) -
     Returns:
         The PR comments
     """
-    client = github_client or _github_client
-    response = client.get(f"/repos/{REPO_OWNER}/{REPO_NAME}/pulls/{pr_number}/comments")
+    response = github_client.get(f"/repos/{REPO_OWNER}/{REPO_NAME}/pulls/{pr_number}/comments")
     response.raise_for_status()
     return response.json()
 
@@ -100,8 +74,7 @@ def get_pr_diff(pr_number: int, github_client: httpx.Client | None = None) -> st
     Returns:
         The PR diff
     """
-    client = github_client or _github_client
-    response = client.get(
+    response = github_client.get(
         f"/repos/{REPO_OWNER}/{REPO_NAME}/pulls/{pr_number}",
         headers={"Accept": "application/vnd.github.v3.diff"},
     )
@@ -123,12 +96,11 @@ def get_open_prs(
     Returns:
         The open PRs
     """
-    client = github_client or _github_client
     prs = []
     page = 1
     while True:
         params = {"state": state, "sort": sort, "direction": direction, "page": page, "per_page": 100}
-        response = client.get(f"/repos/{REPO_OWNER}/{REPO_NAME}/pulls", params=params)
+        response = github_client.get(f"/repos/{REPO_OWNER}/{REPO_NAME}/pulls", params=params)
         response.raise_for_status()
         data = response.json()
         if not data:
@@ -149,8 +121,7 @@ def compare_branches(base: str, head: str, github_client: httpx.Client | None = 
     Returns:
         The comparison data
     """
-    client = github_client or _github_client
-    response = client.get(f"/repos/{REPO_OWNER}/{REPO_NAME}/compare/{base}...{head}")
+    response = github_client.get(f"/repos/{REPO_OWNER}/{REPO_NAME}/compare/{base}...{head}")
     response.raise_for_status()
     return response.json()
 
@@ -165,9 +136,8 @@ def get_ci_check_runs(commit_sha: str, github_client: httpx.Client | None = None
     Returns:
         List of check runs for the commit
     """
-    client = github_client or _github_client
     try:
-        response = client.get(
+        response = github_client.get(
             f"/repos/{REPO_OWNER}/{REPO_NAME}/commits/{commit_sha}/check-runs",
             headers={"Accept": "application/vnd.github.v3+json"},
         )

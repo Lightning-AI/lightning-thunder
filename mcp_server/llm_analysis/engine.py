@@ -1,4 +1,5 @@
 import sys
+import httpx
 from typing import Any
 from utils.github_info import (
     get_pr_data,
@@ -18,6 +19,7 @@ from pr_scores.heuristic import (
     calculate_priority,
     assess_internal_review_status,
     check_definition_of_ready,
+    generate_summary_heuristic,
 )
 from strategic_goals.goals_manager import get_goals_manager
 from gdrive.gdrive_integration import GoogleDriveContextManager
@@ -419,7 +421,7 @@ but don't be afraid to disagree if you see something the heuristics missed."""
 
 
 # Now merge the two analyses
-def analyze_pr(pr_number: int, gdrive_files: list[str] | None = None) -> PRAnalysis:
+def analyze_pr(pr_number: int, gdrive_files: list[str] | None = None, github_client: httpx.Client | None = None) -> PRAnalysis:
     """
     Analyze a PR and return a PRAnalysis object.
 
@@ -433,11 +435,11 @@ def analyze_pr(pr_number: int, gdrive_files: list[str] | None = None) -> PRAnaly
         print(f"Using Google Drive files: {gdrive_files}", file=sys.stderr)
 
     # 1. Fetch all GitHub data
-    pr = get_pr_data(pr_number)
-    reviews = get_pr_reviews(pr_number)
-    comments = get_pr_comments(pr_number)
-    files = get_pr_files(pr_number)
-    diff = get_pr_diff(pr_number)
+    pr = get_pr_data(pr_number, github_client=github_client)
+    reviews = get_pr_reviews(pr_number, github_client=github_client)
+    comments = get_pr_comments(pr_number, github_client=github_client)
+    files = get_pr_files(pr_number, github_client=github_client)
+    diff = get_pr_diff(pr_number, github_client=github_client)
 
     # 2. Calculate staleness
     days_open = calculate_days_diff(pr["created_at"])
@@ -446,7 +448,7 @@ def analyze_pr(pr_number: int, gdrive_files: list[str] | None = None) -> PRAnaly
 
     commits_behind = None
     try:
-        comparison = compare_branches(pr["head"]["sha"], pr["base"]["ref"])
+        comparison = compare_branches(pr["head"]["sha"], pr["base"]["ref"], github_client=github_client)
         commits_behind = comparison["ahead_by"]
     except Exception as e:
         print(f"Warning: Could not get commits behind for PR #{pr_number}: {e}", file=sys.stderr)
@@ -476,7 +478,7 @@ def analyze_pr(pr_number: int, gdrive_files: list[str] | None = None) -> PRAnaly
 
     # 3c. Check Definition of Ready
     try:
-        ci_checks = get_ci_check_runs(pr["head"]["sha"])
+        ci_checks = get_ci_check_runs(pr["head"]["sha"], github_client=github_client)
     except Exception as e:
         print(f"Warning: Could not fetch CI checks for PR #{pr_number}: {e}", file=sys.stderr)
         ci_checks = None
