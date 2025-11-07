@@ -97,3 +97,4 @@ class PRAnalysis:
     llm_summary: str
     llm_risk_assessment: str
     llm_prompt: str  # The full LLM prompt for easy re-processing
+    formatted_display: str | None = None  # Optional pre-formatted markdown display
