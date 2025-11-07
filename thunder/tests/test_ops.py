@@ -439,6 +439,11 @@ def _cuda_version_tuple() -> tuple[int, int] | None:
         return None
 
 
+def _require_scaled_mm():
+    if not hasattr(torch.nn.functional, "scaled_mm"):
+        pytest.skip("torch.nn.functional.scaled_mm is not found in this PyTorch")
+
+
 def _ensure_fp8_tensorwise(device: torch.device) -> None:
     major, minor = _cuda_capability(device)
     if (major, minor) < (8, 9):
@@ -472,9 +477,8 @@ def _require_fp8_blockwise(device: torch.device) -> None:
 # Adapted from https://github.com/pytorch/pytorch/blob/b4403bfc62ca97eec554cdf815baab1fe93057d9/test/test_scaled_matmul_cuda.py#L645-L659
 @requiresCUDA
 @_require_fp8_tensorwise
+@_require_scaled_mm
 def test_scaled_mm_tensorwise_matches_torch():
-    if not hasattr(torch.nn.functional, "scaled_mm"):
-        pytest.skip("torch.nn.functional.scaled_mm is not available in this PyTorch build")
     device = torch.device("cuda")
 
     def reference_fn(mat_a, mat_b, scale_a, scale_b):
@@ -511,11 +515,9 @@ def test_scaled_mm_tensorwise_matches_torch():
 # Adapted from https://github.com/pytorch/pytorch/blob/b4403bfc62ca97eec554cdf815baab1fe93057d9/test/test_scaled_matmul_cuda.py#L862-L910
 @requiresCUDA
 @_require_fp8_tensorwise
+@_require_scaled_mm
 def test_scaled_mm_matches_emulation():
-    if not hasattr(torch.nn.functional, "scaled_mm"):
-        pytest.skip("torch.nn.functional.scaled_mm is not available in this PyTorch build")
     device = torch.device("cuda")
-    torch.manual_seed(0)
 
     def quantize_to_fp8(tensor):
         dtype = torch.float8_e4m3fn
@@ -567,9 +569,8 @@ def test_scaled_mm_matches_emulation():
 
 
 @requiresCUDA
+@_require_scaled_mm
 def test_scaled_mm_rowwise_matches_torch():
-    if not hasattr(torch.nn.functional, "scaled_mm"):
-        pytest.skip("torch.nn.functional.scaled_mm is not available in this PyTorch build")
     device = torch.device("cuda")
     _require_fp8_rowwise(device)
 
@@ -605,11 +606,9 @@ def test_scaled_mm_rowwise_matches_torch():
 
 
 @requiresCUDA
+@_require_scaled_mm
 def test_scaled_mm_rowwise_matches_emulation():
-    if not hasattr(torch.nn.functional, "scaled_mm"):
-        pytest.skip("torch.nn.functional.scaled_mm is not available in this PyTorch build")
     device = torch.device("cuda")
-    torch.manual_seed(1)
     _require_fp8_rowwise(device)
 
     dtype_fp8 = torch.float8_e4m3fn
@@ -687,13 +686,11 @@ def _dequantize_blockwise(quant: torch.Tensor, encode: torch.Tensor, block_rows:
 
 
 @requiresCUDA
+@_require_scaled_mm
 @pytest.mark.parametrize("output_dtype", [torch.bfloat16])
 @pytest.mark.parametrize("lhs_block,rhs_block", [(1, 1), (128, 1), (1, 128)])
 def test_scaled_mm_blockwise_matches_torch(output_dtype, lhs_block, rhs_block):
-    if not hasattr(torch.nn.functional, "scaled_mm"):
-        pytest.skip("torch.nn.functional.scaled_mm is not available in this PyTorch build")
     device = torch.device("cuda")
-    torch.manual_seed(0)
     _require_fp8_blockwise(device)
 
     M, K, N = 256, 256, 256
@@ -745,13 +742,11 @@ def test_scaled_mm_blockwise_matches_torch(output_dtype, lhs_block, rhs_block):
 
 
 @requiresCUDA
+@_require_scaled_mm
 @pytest.mark.parametrize("output_dtype", [torch.bfloat16])
 @pytest.mark.parametrize("lhs_block,rhs_block", [(1, 1), (128, 1), (1, 128)])
 def test_scaled_mm_blockwise_matches_emulation(output_dtype, lhs_block, rhs_block):
-    if not hasattr(torch.nn.functional, "scaled_mm"):
-        pytest.skip("torch.nn.functional.scaled_mm is not available in this PyTorch build")
     device = torch.device("cuda")
-    torch.manual_seed(123)
     _require_fp8_blockwise(device)
 
     M, K, N = 256, 256, 256
