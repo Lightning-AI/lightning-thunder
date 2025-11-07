@@ -3,7 +3,7 @@ import httpx
 
 def get_pr_data(github_client: httpx.Client, pr_number: int) -> dict[str, Any]:
     """Fetch the  main data from the PR
-    
+
     Args:
         github_client: The github client
         pr_number: The PR number
@@ -18,7 +18,7 @@ def get_pr_data(github_client: httpx.Client, pr_number: int) -> dict[str, Any]:
 
 def get_pr_reviews(github_client: httpx.Client, pr_number: int) -> list[dict[str, Any]]:
     """Fetch the PR review states
-    
+
     Args:
         github_client: The github client
         pr_number: The PR number
@@ -61,14 +61,14 @@ def get_pr_comments(github_client: httpx.Client, pr_number: int) -> list[dict[st
 
 def get_pr_diff(github_client: httpx.Client, pr_number: int) -> str:
     """Fetch the unified diff for a PR
-    
+
     Args:
         github_client: The github client
         pr_number: The PR number
 
     Returns:
         The PR diff
-     """
+    """
     response = github_client.get(
         f"/repos/{REPO_OWNER}/{REPO_NAME}/pulls/{pr_number}",
         headers={**HEADERS, "Accept": "application/vnd.github.v3.diff"},
@@ -79,7 +79,7 @@ def get_pr_diff(github_client: httpx.Client, pr_number: int) -> str:
 
 def get_open_prs(github_client: httpx.Client, state="open", sort="created", direction="desc") -> list[dict[str, Any]]:
     """Fetch all the open PRs
-    
+
     Args:
         github_client: The github client
         state: The state of the PR
@@ -105,7 +105,7 @@ def get_open_prs(github_client: httpx.Client, state="open", sort="created", dire
 
 def compare_branches(github_client: httpx.Client, base: str, head: str) -> dict[str, Any]:
     """Compare two branches
-    
+
     Args:
         github_client: The github client
         base: The base branch

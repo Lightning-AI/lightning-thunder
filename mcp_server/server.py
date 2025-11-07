@@ -1,12 +1,19 @@
 import os
 import sys
-from typing import Any
 import json
 import httpx
 from mcp.server.fastmcp import FastMCP
-from utils.github_info import (get_pr_data, get_pr_reviews, get_pr_files, get_pr_comments, get_pr_diff, get_open_prs, compare_branches)
+from utils.github_info import (
+    get_pr_data,
+    get_pr_reviews,
+    get_pr_files,
+    get_pr_comments,
+    get_pr_diff,
+    get_open_prs,
+    compare_branches,
+)
 from utils.helper_functions import calculate_days_diff, dataclass_to_dict
-from pr_scores.scores import (StalenessInfo, ReviewStatus)
+from pr_scores.scores import StalenessInfo, ReviewStatus
 from llm_analysis.engine import analyze_pr
 from pr_scores.heuristic import assess_risk, assess_complexity, assess_impact, calculate_priority
 from gdrive.gdrive_integration import GoogleDriveContextManager
@@ -86,14 +93,14 @@ def analyze_single_pr(pr_number: int, gdrive_files: list[str] | None = None) -> 
 
     Returns:
         JSON string with complete PR analysis (with stubbed LLM fields)
-        
+
     Examples:
         # Without context:
         analyze_single_pr(pr_number=123)
-        
+
         # With specific Google Drive files:
         analyze_single_pr(
-            pr_number=123, 
+            pr_number=123,
             gdrive_files=["ThunderQ4Plan", "ThunderBestPractices"]
         )
     """
@@ -216,11 +223,11 @@ def prioritize_heuristic_prs(min_priority: int = 0, labels: list[str] | None = N
 
 @mcp.tool()
 def llm_batch_analysis(
-    min_priority: int = 0, 
-    labels: list[str] | None = None, 
-    limit: int = 20, 
+    min_priority: int = 0,
+    labels: list[str] | None = None,
+    limit: int = 20,
     include_diff: bool = False,
-    gdrive_files: list[str] | None = None
+    gdrive_files: list[str] | None = None,
 ) -> str:
     """
     Analyze ALL open PRs with heuristics, then generate a single
@@ -236,11 +243,11 @@ def llm_batch_analysis(
 
     Returns:
         JSON string containing the comprehensive LLM analysis prompt
-        
+
     Examples:
         # Without Google Drive context:
         llm_batch_analysis(min_priority=30, limit=10)
-        
+
         # With specific Google Drive files for calibration:
         llm_batch_analysis(
             min_priority=30,
@@ -298,11 +305,11 @@ def llm_batch_analysis(
 
             # Run heuristic analysis
             heuristic_risk = assess_risk(pr, files, comments, reviews, staleness)
-            
+
             # Assess complexity and impact
             complexity_score, complexity_reason = assess_complexity(pr, files)
             impact_score, impact_reason = assess_impact(pr, heuristic_risk, review_status)
-            
+
             # Calculate priority
             priority_score, priority_reasoning = calculate_priority(pr, heuristic_risk, staleness, review_status, files)
 
@@ -325,12 +332,16 @@ def llm_batch_analysis(
                     "complexity": {
                         "score": complexity_score,
                         "reasoning": complexity_reason,
-                        "category": "SIMPLE" if complexity_score <= 3 else "MODERATE" if complexity_score <= 6 else "COMPLEX"
+                        "category": "SIMPLE"
+                        if complexity_score <= 3
+                        else "MODERATE"
+                        if complexity_score <= 6
+                        else "COMPLEX",
                     },
                     "impact": {
                         "score": impact_score,
                         "reasoning": impact_reason,
-                        "category": "LOW" if impact_score < 4 else "MEDIUM" if impact_score < 7 else "HIGH"
+                        "category": "LOW" if impact_score < 4 else "MEDIUM" if impact_score < 7 else "HIGH",
                     },
                     "risk": {
                         "overall": heuristic_risk.overall,
@@ -478,63 +489,64 @@ def risk_report_heuristic(min_risk_score: int = 5) -> str:
 # GOOGLE DRIVE MCP TOOLS
 # ============================================================================
 
+
 @mcp.tool()
 def gdrive_search_docs(query: str, max_results: int = 5) -> str:
     """
     Search Google Drive for documents relevant to PR review.
-    
+
     This tool allows you to search your organization's Google Drive for
     documents like coding standards, architecture docs, or other relevant
     materials that can enhance PR analysis.
-    
+
     Args:
         query: Search query (e.g., "lightning-thunder coding standards")
         max_results: Maximum number of results to return (default: 5)
-        
+
     Returns:
         JSON string with search results
-        
+
     NOTE: This tool provides guidance on using the MaaS Google Drive MCP.
     To actually search, you should use the mcp_MaaS_Google_Drive_gdrive_search
     tool available in Cursor.
     """
     print(f"🔍 Searching Google Drive for: {query}", file=sys.stderr)
-    
-    return json.dumps({
-        "instruction": "To search Google Drive, use the MaaS Google Drive MCP tool:",
-        "tool_to_use": "mcp_MaaS_Google_Drive_gdrive_search",
-        "parameters": {
-            "query": query,
-            "page_size": max_results
+
+    return json.dumps(
+        {
+            "instruction": "To search Google Drive, use the MaaS Google Drive MCP tool:",
+            "tool_to_use": "mcp_MaaS_Google_Drive_gdrive_search",
+            "parameters": {"query": query, "page_size": max_results},
+            "next_steps": [
+                "1. Call mcp_MaaS_Google_Drive_gdrive_search with your query",
+                "2. Review the results to find relevant documents",
+                "3. Use gdrive_add_context_file to add files to the PR analysis context",
+                "4. Or use mcp_MaaS_Google_Drive_gdrive_get_file to fetch content directly",
+            ],
+            "example": {
+                "query": query,
+                "expected_results": "List of Google Drive files with titles, URLs, and snippets",
+            },
         },
-        "next_steps": [
-            "1. Call mcp_MaaS_Google_Drive_gdrive_search with your query",
-            "2. Review the results to find relevant documents",
-            "3. Use gdrive_add_context_file to add files to the PR analysis context",
-            "4. Or use mcp_MaaS_Google_Drive_gdrive_get_file to fetch content directly"
-        ],
-        "example": {
-            "query": query,
-            "expected_results": "List of Google Drive files with titles, URLs, and snippets"
-        }
-    }, indent=2)
+        indent=2,
+    )
 
 
 @mcp.tool()
 def gdrive_add_context_file(file_name: str, content: str) -> str:
     """
     Add a Google Drive file's content to the PR analysis context cache.
-    
+
     This caches file content so it can be used in subsequent PR analyses
     without re-fetching from Google Drive.
-    
+
     Args:
         file_name: Name of the file (e.g., "ThunderQ4Plan")
         content: The file content (fetch via mcp_MaaS_Google_Drive_gdrive_get_file first)
-        
+
     Returns:
         JSON string with status
-        
+
     Usage:
         1. Search for file: mcp_MaaS_Google_Drive_gdrive_search(query="ThunderQ4Plan")
         2. Get content: content = mcp_MaaS_Google_Drive_gdrive_get_file(file_url="...")
@@ -542,39 +554,38 @@ def gdrive_add_context_file(file_name: str, content: str) -> str:
         4. Analyze PRs: analyze_single_pr(123, gdrive_files=["ThunderQ4Plan"])
     """
     print(f"📥 Adding file to cache: {file_name}", file=sys.stderr)
-    
+
     try:
         if not content:
-            return json.dumps({
-                "status": "error",
-                "message": "Content cannot be empty",
-                "file_name": file_name
-            }, indent=2)
-        
+            return json.dumps(
+                {"status": "error", "message": "Content cannot be empty", "file_name": file_name}, indent=2
+            )
+
         # Add to cache
         gdrive_context.add_file_to_cache(file_name, content)
-        
-        return json.dumps({
-            "status": "success",
-            "message": "File added to context cache",
-            "file_name": file_name,
-            "content_length": len(content),
-            "note": "This file will be included when you use gdrive_files=['" + file_name + "']"
-        }, indent=2)
-            
+
+        return json.dumps(
+            {
+                "status": "success",
+                "message": "File added to context cache",
+                "file_name": file_name,
+                "content_length": len(content),
+                "note": "This file will be included when you use gdrive_files=['" + file_name + "']",
+            },
+            indent=2,
+        )
+
     except Exception as e:
-        return json.dumps({
-            "status": "error",
-            "message": f"Failed to add file: {str(e)}",
-            "file_name": file_name
-        }, indent=2)
+        return json.dumps(
+            {"status": "error", "message": f"Failed to add file: {str(e)}", "file_name": file_name}, indent=2
+        )
 
 
 @mcp.tool()
 def gdrive_list_context_files() -> str:
     """
     List all Google Drive files currently in the context cache.
-    
+
     Returns:
         JSON string with list of cached files
     """
@@ -582,43 +593,43 @@ def gdrive_list_context_files() -> str:
         {
             "file_name": file_name,
             "content_length": len(content),
-            "preview": content[:200] + "..." if len(content) > 200 else content
+            "preview": content[:200] + "..." if len(content) > 200 else content,
         }
         for file_name, content in gdrive_context.cache.items()
     ]
-    
-    return json.dumps({
-        "total_files": len(files),
-        "files": files,
-        "note": "These files will be included when specified in gdrive_files parameter"
-    }, indent=2)
+
+    return json.dumps(
+        {
+            "total_files": len(files),
+            "files": files,
+            "note": "These files will be included when specified in gdrive_files parameter",
+        },
+        indent=2,
+    )
 
 
 @mcp.tool()
 def gdrive_clear_context_cache() -> str:
     """
     Clear all Google Drive files from the context cache.
-    
+
     Returns:
         JSON string with status
     """
     count = len(gdrive_context.cache)
     gdrive_context.cache.clear()
-    
-    return json.dumps({
-        "status": "success",
-        "message": f"Cleared {count} files from context cache"
-    }, indent=2)
+
+    return json.dumps({"status": "success", "message": f"Cleared {count} files from context cache"}, indent=2)
 
 
 @mcp.tool()
 def gdrive_configure(enabled: bool = True) -> str:
     """
     Enable or disable Google Drive integration.
-    
+
     Args:
         enabled: Whether to enable Google Drive context fetching
-        
+
     Returns:
         JSON string with status
     """
@@ -628,13 +639,16 @@ def gdrive_configure(enabled: bool = True) -> str:
     else:
         gdrive_context.disable()
         message = "Google Drive integration disabled"
-    
-    return json.dumps({
-        "status": "success",
-        "message": message,
-        "enabled": gdrive_context.gdrive_enabled,
-        "cached_files": len(gdrive_context.cache)
-    }, indent=2)
+
+    return json.dumps(
+        {
+            "status": "success",
+            "message": message,
+            "enabled": gdrive_context.gdrive_enabled,
+            "cached_files": len(gdrive_context.cache),
+        },
+        indent=2,
+    )
 
 
 if __name__ == "__main__":

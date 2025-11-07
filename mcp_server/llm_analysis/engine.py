@@ -36,16 +36,16 @@ def _cursor_llm_call_stub(prompt: str, pr_number: int) -> str:
 
 
 def run_llm_analysis(
-    pr_number: int, 
-    pr_title: str, 
-    pr_body: str | None, 
-    diff: str, 
+    pr_number: int,
+    pr_title: str,
+    pr_body: str | None,
+    diff: str,
     gdrive_files: list[str] | None = None,
-    heuristic_scores: dict[str, Any] | None = None
+    heuristic_scores: dict[str, Any] | None = None,
 ) -> dict[str, str]:
     """
     Run LLM analysis on a single PR with optional Google Drive context and heuristic scores.
-    
+
     Args:
         pr_number: PR number
         pr_title: PR title
@@ -54,7 +54,7 @@ def run_llm_analysis(
         gdrive_files: List of Google Drive file names or URLs to use as context
                      e.g., ["ThunderQ4Plan", "ThunderBestPractices"]
         heuristic_scores: Dictionary with complexity, impact, priority scores and reasoning
-        
+
     Returns:
         Dictionary with 'summary' and 'risk_assessment' keys
     """
@@ -71,7 +71,10 @@ def run_llm_analysis(
         try:
             additional_context = gdrive_context.build_context_from_files(gdrive_files)
             if additional_context:
-                print(f"✓ Added Google Drive context to PR #{pr_number} analysis ({len(gdrive_files)} files)", file=sys.stderr)
+                print(
+                    f"✓ Added Google Drive context to PR #{pr_number} analysis ({len(gdrive_files)} files)",
+                    file=sys.stderr,
+                )
         except Exception as e:
             print(f"Warning: Failed to fetch Google Drive context: {e}", file=sys.stderr)
 
@@ -90,14 +93,14 @@ def run_llm_analysis(
     {diff}
     ---
     """
-    
+
     # Add heuristic analysis context if provided
     if heuristic_scores:
         complexity = heuristic_scores.get("complexity", 0)
         impact = heuristic_scores.get("impact", 0)
         priority = heuristic_scores.get("priority", 0)
         priority_reasoning = heuristic_scores.get("priority_reasoning", "")
-        
+
         # Determine complexity category
         if complexity <= 3:
             complexity_cat = "SIMPLE"
@@ -107,8 +110,10 @@ def run_llm_analysis(
             review_guidance = "This is a moderately complex change. Check for edge cases and integration issues."
         else:
             complexity_cat = "COMPLEX"
-            review_guidance = "This is a complex change. Pay special attention to architecture, testing, and potential side effects."
-        
+            review_guidance = (
+                "This is a complex change. Pay special attention to architecture, testing, and potential side effects."
+            )
+
         # Determine impact category
         if impact >= 7:
             impact_cat = "HIGH IMPACT"
@@ -116,31 +121,31 @@ def run_llm_analysis(
             impact_cat = "MEDIUM IMPACT"
         else:
             impact_cat = "LOW IMPACT"
-        
+
         prompt += f"""
-    
+
     ## HEURISTIC ANALYSIS
-    
+
     Our automated system has analyzed this PR:
-    
+
     **Complexity Score:** {complexity}/10 ({complexity_cat})
     **Impact Score:** {impact}/10 ({impact_cat})
     **Priority Score:** {priority}/100
-    
+
     **Priority Reasoning:**
     {priority_reasoning}
-    
+
     **Review Guidance:** {review_guidance}
-    
+
     ---
     """
-    
+
     # Add reference documentation if provided
     if additional_context:
         prompt += f"""
-    
+
     {additional_context}
-    
+
     Please use the above documentation to calibrate your assessment of this PR.
     Your analysis should align with the goals, standards, and priorities outlined in these documents.
     ---
@@ -213,22 +218,23 @@ def run_llm_analysis(
         return {"summary": f"LLM Analysis failed: {e}", "risk_assessment": f"LLM Analysis failed: {e}"}
 
 
-
-def _build_batch_analysis_prompt(analyses: list[dict[str, Any]], include_diff: bool, gdrive_files: list[str] | None = None) -> str:
+def _build_batch_analysis_prompt(
+    analyses: list[dict[str, Any]], include_diff: bool, gdrive_files: list[str] | None = None
+) -> str:
     """
     Build a comprehensive prompt for LLM batch analysis with optional Google Drive context.
-    
+
     Args:
         analyses: List of PR analysis data
         include_diff: Whether to include code diffs
         gdrive_files: Optional list of Google Drive file names or URLs to use as context
-        
+
     Returns:
         Formatted prompt string
     """
 
     analyses_sorted = sorted(analyses, key=lambda x: x["heuristic_priority"], reverse=True)
-    
+
     # Fetch specified files from Google Drive
     project_context = ""
     if gdrive_files:
@@ -276,7 +282,7 @@ Your assessment should align with the goals, standards, and priorities outlined 
         # Get complexity/impact categories for visual indicators
         complexity_emoji = "🟢" if pr["complexity"]["score"] <= 3 else "🟡" if pr["complexity"]["score"] <= 6 else "🔴"
         impact_emoji = "🔵" if pr["impact"]["score"] < 4 else "🟠" if pr["impact"]["score"] < 7 else "🔴"
-        
+
         prompt += f"""
         ### PR #{pr["number"]}: {pr["title"]}
         **Author:** @{pr["author"]}
@@ -300,7 +306,7 @@ Your assessment should align with the goals, standards, and priorities outlined 
         - {impact_emoji} Impact: {pr["impact"]["score"]}/10 ({pr["impact"]["category"]}) - {pr["impact"]["reasoning"]}
         - Priority Reasoning:
           {pr["priority_reasoning"]}
-        
+
         - Risk Scores:
           - Overall: {pr["risk"]["overall"]}/10
           - Breaking Changes: {pr["risk"]["breaking_changes"]}/10 - {pr["risk"]["reasoning"]["breaking"]}
@@ -317,24 +323,24 @@ Your assessment should align with the goals, standards, and priorities outlined 
 
     prompt += """
 ** YOUR TASK **
-You've been given heuristic scores (complexity, impact, priority) for each PR. 
+You've been given heuristic scores (complexity, impact, priority) for each PR.
 Use these as a STARTING POINT, but apply your expert judgment to provide final recommendations.
 
 Please provide a comprehensive analysis with the following:
 
 **1. Enhanced Priority Assessment (for each PR):**
 For each PR, considering its complexity and impact:
-   
+
    For SIMPLE PRs (🟢 Complexity ≤ 3):
    - Quick review checklist: What to verify?
    - Estimated review time
    - Can it be merged quickly?
-   
+
    For MODERATE PRs (🟡 Complexity 4-6):
    - Key areas to focus on
    - Integration concerns
    - Testing recommendations
-   
+
    For COMPLEX PRs (🔴 Complexity ≥ 7):
    - Detailed review strategy
    - What could go wrong? (potential issues)
@@ -375,11 +381,12 @@ but don't be afraid to disagree if you see something the heuristics missed."""
 
     return prompt
 
+
 # Now merge the two analyses
 def analyze_pr(pr_number: int, gdrive_files: list[str] | None = None) -> PRAnalysis:
     """
     Analyze a PR and return a PRAnalysis object.
-    
+
     Args:
         pr_number: PR number to analyze
         gdrive_files: Optional list of Google Drive file names or URLs to use as context
@@ -437,27 +444,20 @@ def analyze_pr(pr_number: int, gdrive_files: list[str] | None = None) -> PRAnaly
     impact_score, _ = assess_impact(pr, heuristic_risk_score, review_status)
 
     # 6. Calculate Final Priority (complexity + impact + staleness matrix)
-    priority_score, priority_reasoning = calculate_priority(
-        pr, heuristic_risk_score, staleness, review_status, files
-    )
+    priority_score, priority_reasoning = calculate_priority(pr, heuristic_risk_score, staleness, review_status, files)
 
     # 7. Prepare heuristic scores for LLM
     heuristic_scores = {
         "complexity": complexity_score,
         "impact": impact_score,
         "priority": priority_score,
-        "priority_reasoning": priority_reasoning
+        "priority_reasoning": priority_reasoning,
     }
 
     # 8. Run LLM Analysis - with heuristic scores and optional Google Drive context
     # This will print the prompt for this PR to stderr
     llm_results = run_llm_analysis(
-        pr["number"], 
-        pr["title"], 
-        pr.get("body"), 
-        diff,
-        gdrive_files=gdrive_files,
-        heuristic_scores=heuristic_scores
+        pr["number"], pr["title"], pr.get("body"), diff, gdrive_files=gdrive_files, heuristic_scores=heuristic_scores
     )
 
     # 9. Combine all analysis
