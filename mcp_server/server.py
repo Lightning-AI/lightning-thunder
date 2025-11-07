@@ -1,4 +1,3 @@
-import os
 import sys
 import json
 import httpx
@@ -13,7 +12,7 @@ from utils.github_info import (
     compare_branches,
 )
 from utils.helper_functions import calculate_days_diff, dataclass_to_dict
-from utils.constants import GITHUB_TOKEN, REPO_OWNER, REPO_NAME, BASE_URL, HEADERS
+from utils.constants import BASE_URL, HEADERS
 from pr_scores.scores import StalenessInfo, ReviewStatus
 from llm_analysis.engine import analyze_pr
 from pr_scores.heuristic import (

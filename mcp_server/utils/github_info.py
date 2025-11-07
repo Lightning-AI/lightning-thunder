@@ -1,7 +1,7 @@
 import sys
 import httpx
 from typing import Any
-from utils.constants import REPO_OWNER, REPO_NAME, BASE_URL, HEADERS
+from utils.constants import REPO_OWNER, REPO_NAME
 
 
 def get_pr_data(pr_number: int, github_client: httpx.Client | None = None) -> dict[str, Any]:

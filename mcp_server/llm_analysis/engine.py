@@ -421,7 +421,9 @@ but don't be afraid to disagree if you see something the heuristics missed."""
 
 
 # Now merge the two analyses
-def analyze_pr(pr_number: int, gdrive_files: list[str] | None = None, github_client: httpx.Client | None = None) -> PRAnalysis:
+def analyze_pr(
+    pr_number: int, gdrive_files: list[str] | None = None, github_client: httpx.Client | None = None
+) -> PRAnalysis:
     """
     Analyze a PR and return a PRAnalysis object.
 
