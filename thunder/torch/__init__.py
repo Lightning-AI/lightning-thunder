@@ -6145,12 +6145,12 @@ if hasattr(torch.nn.functional, "scaled_mm"):
         _validate_enum_list(_expand(swizzle_a), scale_a_list, "swizzle_a")
         _validate_enum_list(_expand(swizzle_b), scale_b_list, "swizzle_b")
 
-        def _tensor_proxy_args(values: Sequence[Any]) -> list[TensorProxy]:
+        def _collect_tensor_proxy_args(values: Sequence[Any]) -> list[TensorProxy]:
             return [t for t in values if isinstance(t, TensorProxy)]
 
         tensor_args: list[TensorProxy] = [mat_a, mat_b]
-        tensor_args += _tensor_proxy_args(scale_a_list)
-        tensor_args += _tensor_proxy_args(scale_b_list)
+        tensor_args += _collect_tensor_proxy_args(scale_a_list)
+        tensor_args += _collect_tensor_proxy_args(scale_b_list)
         if isinstance(bias, TensorProxy):
             tensor_args.append(bias)
         utils.check_same_device(*tensor_args)
