@@ -55,7 +55,7 @@ Impact 9/10: high urgency, performance label, high-impact label
 Staleness: aging 65 days
 Final: 75/100
 
-**Review Guidance:** This is a complex change. Pay special attention to 
+**Review Guidance:** This is a complex change. Pay special attention to
 architecture, testing, and potential side effects.
 ```
 
@@ -64,8 +64,8 @@ architecture, testing, and potential side effects.
 For complex PRs (complexity ≥ 7), the LLM provides **THREE sections**:
 
 1. **Summary** - What and why
-2. **Risk Assessment** - Breaking changes, security, urgency
-3. **Review Checklist & Debugging Guide** - NEW! ✨
+1. **Risk Assessment** - Breaking changes, security, urgency
+1. **Review Checklist & Debugging Guide** - NEW! ✨
    - Key areas to review
    - Potential issues
    - Testing strategy
@@ -77,7 +77,7 @@ For complex PRs (complexity ≥ 7), the LLM provides **THREE sections**:
 For simple/moderate PRs (complexity < 7), the LLM provides **TWO sections**:
 
 1. **Summary** - What and why
-2. **Risk Assessment** - Breaking changes, security, urgency
+1. **Risk Assessment** - Breaking changes, security, urgency
 
 ## Example: Complex PR
 
@@ -101,6 +101,7 @@ Priority: 75/100 (🎯 IMPORTANT)
 ### LLM Sees This + Code
 
 The LLM gets:
+
 - All heuristic scores above
 - PR description
 - Code diff
@@ -115,7 +116,7 @@ This PR refactors the core execution engine to improve performance by 40%...
 ###
 
 **Risk Assessment:**
-- Breaking Changes: Medium risk - API signatures remain the same but 
+- Breaking Changes: Medium risk - API signatures remain the same but
   internal behavior changes significantly...
 - Security: Low risk - no new attack surfaces...
 - Urgency: High - blocking Q4 performance goals...
@@ -177,16 +178,19 @@ This PR refactors the core execution engine to improve performance by 40%...
 The LLM is asked to:
 
 **For SIMPLE PRs (🟢):**
+
 - Quick review checklist
 - Estimated review time
 - Can it be merged quickly?
 
 **For MODERATE PRs (🟡):**
+
 - Key areas to focus on
 - Integration concerns
 - Testing recommendations
 
 **For COMPLEX PRs (🔴):**
+
 - Detailed review strategy
 - What could go wrong?
 - Debug checklist
@@ -237,22 +241,22 @@ PR #123 (COMPLEX):
 
 ### ✅ Context-Aware Guidance
 
-**Simple PR:** "Quick review - check spelling, verify rendering, merge"  
+**Simple PR:** "Quick review - check spelling, verify rendering, merge"
 **Complex PR:** "Deep review needed - here's a 5-point debug checklist"
 
 ### ✅ Leverages Both Strengths
 
-**Heuristics:** Fast, consistent, measurable (complexity/impact scores)  
+**Heuristics:** Fast, consistent, measurable (complexity/impact scores)
 **LLM:** Nuanced understanding, contextual reasoning, specific guidance
 
 ### ✅ Actionable for Reviewers
 
-Instead of: "This is complex"  
+Instead of: "This is complex"
 You get: "This is complex BECAUSE of X, Y, Z. Watch out for A, B, C. Test P, Q, R."
 
 ### ✅ Prevents Analysis Paralysis
 
-**For complex PRs:** LLM breaks down what to check  
+**For complex PRs:** LLM breaks down what to check
 **For simple PRs:** LLM confirms it's simple and safe to merge
 
 ## Usage
@@ -261,10 +265,7 @@ You get: "This is complex BECAUSE of X, Y, Z. Watch out for A, B, C. Test P, Q, 
 
 ```python
 # Analyze with heuristic integration
-analyze_single_pr(
-    pr_number=123,
-    gdrive_files=["ThunderBestPractices"]  # Optional
-)
+analyze_single_pr(pr_number=123, gdrive_files=["ThunderBestPractices"])  # Optional
 
 # If complexity ≥ 7, you'll get detailed debugging guidance
 # If complexity < 7, you'll get standard analysis
@@ -275,9 +276,7 @@ analyze_single_pr(
 ```python
 # Batch analyze with heuristic integration
 llm_batch_analysis(
-    min_priority=50,
-    limit=10,
-    gdrive_files=["ThunderQ4Plan"]  # Optional
+    min_priority=50, limit=10, gdrive_files=["ThunderQ4Plan"]  # Optional
 )
 
 # LLM will provide tailored guidance for each PR
@@ -364,8 +363,8 @@ This PR refactors the distributed training coordinator. Here's your review plan:
 The heuristic + LLM integration creates a **smart review assistant** that:
 
 1. **Measures** complexity and impact objectively (heuristics)
-2. **Understands** the code contextually (LLM)
-3. **Guides** reviewers with specific actionable advice (LLM + heuristics)
-4. **Adapts** guidance based on PR complexity (simple vs complex)
+1. **Understands** the code contextually (LLM)
+1. **Guides** reviewers with specific actionable advice (LLM + heuristics)
+1. **Adapts** guidance based on PR complexity (simple vs complex)
 
 You get the **best of both worlds**: fast, consistent scoring + nuanced, contextual guidance! 🎉

@@ -18,7 +18,7 @@ def calculate_days_diff(date_str: str) -> int:
 
 def dataclass_to_dict(obj: Any) -> Any:
     """Convert dataclass to dict recursively.
-    
+
     Args:
         obj: The object to convert
 
