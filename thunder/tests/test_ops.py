@@ -557,6 +557,7 @@ def test_scaled_mm_matches_emulation():
 
     mat_a_lp, decode_a, encode_a = quantize_to_fp8(mat_a)
     mat_b_lp_pre, decode_b, encode_b = quantize_to_fp8(mat_b_base)
+    # To use cublaslt, the second matrix needs to be column-major.
     mat_b_lp = mat_b_lp_pre.t()
 
     try:
@@ -596,6 +597,7 @@ def test_scaled_mm_rowwise_matches_torch():
     mat_a = torch.randn(M, K, device=device, dtype=torch.float32)
     mat_b_base = torch.randn(N, K, device=device, dtype=torch.float32)
     mat_a_lp = mat_a.to(torch.float8_e4m3fn)
+    # To use cublaslt, the second matrix needs to be column-major.
     mat_b_lp = mat_b_base.to(torch.float8_e4m3fn).t()
     scale_a = torch.ones((M, 1), device=device, dtype=torch.float32)
     scale_b = torch.ones((1, N), device=device, dtype=torch.float32)
