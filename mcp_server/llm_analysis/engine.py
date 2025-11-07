@@ -74,7 +74,7 @@ def format_analysis_for_display(analysis: PRAnalysis) -> str:
 - Files Changed: {analysis.files_changed}
 - Additions: +{analysis.additions}
 - Deletions: -{analysis.deletions}
-- Labels: {', '.join(analysis.labels) if analysis.labels else 'None'}
+- Labels: {", ".join(analysis.labels) if analysis.labels else "None"}
 
 ## Definition of Ready
 **Readiness Score:** {analysis.definition_of_ready.readiness_score}/100
@@ -95,7 +95,7 @@ def format_analysis_for_display(analysis: PRAnalysis) -> str:
 
 - Team Approvals: {analysis.internal_review_status.thunder_team_approvals}/2
 - Changes Requested: {analysis.internal_review_status.thunder_team_changes_requested}
-- Ready for External Review: {'Yes ✅' if analysis.internal_review_status.is_ready_for_external_review else 'No ⏳'}
+- Ready for External Review: {"Yes ✅" if analysis.internal_review_status.is_ready_for_external_review else "No ⏳"}
 """
 
     if analysis.internal_review_status.thunder_team_reviewers:
@@ -114,7 +114,7 @@ def format_analysis_for_display(analysis: PRAnalysis) -> str:
     if analysis.goal_alignment:
         output += f"""
 ## Strategic Goal Alignment
-**Aligned:** {'Yes ✅' if analysis.goal_alignment.is_aligned else 'No ⚠️'}
+**Aligned:** {"Yes ✅" if analysis.goal_alignment.is_aligned else "No ⚠️"}
 **Alignment Score:** {analysis.goal_alignment.alignment_score}/100
 
 {analysis.goal_alignment.alignment_reasoning}
@@ -123,7 +123,11 @@ def format_analysis_for_display(analysis: PRAnalysis) -> str:
             output += f"\n**Highest Priority Goal:** {analysis.goal_alignment.highest_priority}\n"
 
         if analysis.goal_alignment.closed_issues:
-            output += "\n**Closed Issues:** " + ', '.join(f'#{issue}' for issue in analysis.goal_alignment.closed_issues) + "\n"
+            output += (
+                "\n**Closed Issues:** "
+                + ", ".join(f"#{issue}" for issue in analysis.goal_alignment.closed_issues)
+                + "\n"
+            )
 
     # Risk assessment
     output += f"""
