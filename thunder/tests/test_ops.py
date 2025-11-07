@@ -439,9 +439,14 @@ def _cuda_version_tuple() -> tuple[int, int] | None:
         return None
 
 
-def _require_scaled_mm():
-    if not hasattr(torch.nn.functional, "scaled_mm"):
-        pytest.skip("torch.nn.functional.scaled_mm is not found in this PyTorch")
+def _require_scaled_mm(fn):
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        if not hasattr(torch.nn.functional, "scaled_mm"):
+            pytest.skip("torch.nn.functional.scaled_mm is not found in this PyTorch")
+        return fn(*args, **kwargs)
+
+    return wrapper
 
 
 def _ensure_fp8_tensorwise(device: torch.device) -> None:
