@@ -53,3 +53,4 @@ class PRAnalysis:
     deletions: int
     llm_summary: str
     llm_risk_assessment: str
+    llm_prompt: str  # The full LLM prompt for easy re-processing

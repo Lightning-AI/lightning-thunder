@@ -4,9 +4,13 @@ from utils.github_info import get_pr_data, get_pr_reviews, get_pr_comments, get_
 from utils.helper_functions import calculate_days_diff
 from pr_scores.scores import PRAnalysis, StalenessInfo, ReviewStatus
 from pr_scores.heuristic import assess_risk, assess_complexity, assess_impact, calculate_priority
+from gdrive.gdrive_integration import GoogleDriveContextManager
+
+# Initialize Google Drive context manager
+gdrive_context = GoogleDriveContextManager()
 
 
-def _cursor_llm_call_stub(prompt: str, pr_number: int) -> str:
+def _cursor_llm_call_stub(prompt: str, pr_number: int) -> tuple[str, str]:
     """
     This allows us to have a human-in-the-loop interface.
     The prompt is printed to the console, so Cursor can interact with it
@@ -16,13 +20,14 @@ def _cursor_llm_call_stub(prompt: str, pr_number: int) -> str:
         pr_number: The PR number
 
     Returns:
-        The response from the LLM
+        Tuple of (placeholder_response, actual_prompt)
     """
     print("\n" + "=" * 80, file=sys.stderr)
     print(f"CURSOR PROMPT FOR PR {pr_number}:", file=sys.stderr)
     print(prompt, file=sys.stderr)
     print("+" * 80, file=sys.stderr)
-    return """
+    
+    placeholder = """
     **SUMMARY:**
     [PLACEHOLDER: Run the prompt above in Cursor to get this summary.]
 
@@ -33,6 +38,7 @@ def _cursor_llm_call_stub(prompt: str, pr_number: int) -> str:
     -   **Security:** [PLACEHOLDER]
     -   **Urgency:** [PLACEHOLDER]
     """
+    return placeholder, prompt
 
 
 def run_llm_analysis(
@@ -193,8 +199,8 @@ def run_llm_analysis(
     """
 
     try:
-        # This function now PRINTS the prompt and returns a STUB
-        response_text = _cursor_llm_call_stub(prompt, pr_number)
+        # This function now PRINTS the prompt and returns a STUB + the actual prompt
+        response_text, actual_prompt = _cursor_llm_call_stub(prompt, pr_number)
 
         summary = "Could not parse LLM summary."
         risk = "Could not parse LLM risk assessment."
@@ -206,11 +212,19 @@ def run_llm_analysis(
         else:
             risk = response_text  # Fallback
 
-        return {"summary": summary, "risk_assessment": risk}
+        return {
+            "summary": summary, 
+            "risk_assessment": risk,
+            "llm_prompt": actual_prompt  # Include the prompt for easy access
+        }
 
     except Exception as e:
         print(f"Error in stubbed LLM analysis: {e}", file=sys.stderr)
-        return {"summary": f"LLM Analysis failed: {e}", "risk_assessment": f"LLM Analysis failed: {e}"}
+        return {
+            "summary": f"LLM Analysis failed: {e}", 
+            "risk_assessment": f"LLM Analysis failed: {e}",
+            "llm_prompt": prompt  # Still include the prompt even on error
+        }
 
 
 
@@ -477,6 +491,7 @@ def analyze_pr(pr_number: int, gdrive_files: list[str] | None = None) -> PRAnaly
         impact_score=impact_score,
         llm_summary=llm_results["summary"],
         llm_risk_assessment=llm_results["risk_assessment"],
+        llm_prompt=llm_results["llm_prompt"],  # Include the prompt
         staleness=staleness,
         review_status=review_status,
         files_changed=len(files),
