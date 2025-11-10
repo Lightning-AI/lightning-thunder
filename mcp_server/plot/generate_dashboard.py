@@ -254,12 +254,12 @@ def generate_dashboard_recommendations(summary, ready_for_external, needs_intern
             }
         )
 
-    if summary["needs_attention"] > summary["in_review"] * 2:
+    if summary["pipeline_health"]["needs_attention"] > summary["pipeline_health"]["in_review"] * 2:
         recommendations.append(
             {
                 "priority": "🟡 INFO",
                 "action": "Many PRs need author attention",
-                "reason": f"{summary['needs_attention']} PRs are blocked or not ready",
+                "reason": f"{summary['pipeline_health']['needs_attention']} PRs are blocked or not ready",
                 "next_steps": "Consider a PR cleanup sprint or author check-in",
             }
         )
