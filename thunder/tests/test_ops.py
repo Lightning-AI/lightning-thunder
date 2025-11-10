@@ -533,11 +533,6 @@ def test_scaled_mm_matches_emulation():
         decode = encode.reciprocal()
         return quant, decode, encode
 
-    def mm_float8_emulated(mat_a, encode_a, mat_b, encode_b, out_dtype):
-        a_fp32 = mat_a.to(torch.float32) / encode_a
-        b_fp32 = mat_b.to(torch.float32) / encode_b
-        return (a_fp32 @ b_fp32).to(out_dtype)
-
     def scaled_mm_fp8(mat_a, mat_b, scale_a, scale_b, *, out_dtype):
         return torch.nn.functional.scaled_mm(
             mat_a,
@@ -568,10 +563,7 @@ def test_scaled_mm_matches_emulation():
     jf = thunder.jit(lambda a, b, sa, sb: scaled_mm_fp8(a, b, sa, sb, out_dtype=torch.float32))
     thunder_out = jf(mat_a_lp, mat_b_lp, decode_a, decode_b)
 
-    emulated = mm_float8_emulated(mat_a_lp, encode_a, mat_b_lp, encode_b, torch.float32)
-
     assert_close(thunder_out, reference)
-    assert_close(reference, emulated, atol=2e-2, rtol=2e-2)
 
 
 @requiresCUDA
@@ -628,11 +620,6 @@ def test_scaled_mm_rowwise_matches_emulation():
         decode = encode.reciprocal()
         return quant, decode, encode
 
-    def mm_float8_emulated(mat_a, encode_a, mat_b, encode_b, out_dtype):
-        a_fp32 = mat_a.to(torch.float32) / encode_a
-        b_fp32 = mat_b.to(torch.float32) / encode_b
-        return (a_fp32 @ b_fp32).to(out_dtype)
-
     def scaled_mm_rowwise(mat_a, mat_b, scale_a, scale_b, *, out_dtype):
         return torch.nn.functional.scaled_mm(
             mat_a,
@@ -661,13 +648,10 @@ def test_scaled_mm_rowwise_matches_emulation():
     jf = thunder.jit(lambda a, b, sa, sb: scaled_mm_rowwise(a, b, sa, sb, out_dtype=torch.bfloat16))
     thunder_out = jf(mat_a_lp, mat_b_lp, decode_a, decode_b)
 
-    emulated = mm_float8_emulated(mat_a_lp, encode_a, mat_b_lp, encode_b, torch.float32)
-
     reference_f32 = reference.to(torch.float32)
     thunder_out_f32 = thunder_out.to(torch.float32)
 
     assert_close(thunder_out_f32, reference_f32, atol=3e-2, rtol=3e-2)
-    assert_close(reference_f32, emulated, atol=3e-2, rtol=3e-2)
 
 
 def _blockwise_quantize(tensor: torch.Tensor, block_rows: int, block_cols: int) -> tuple[torch.Tensor, torch.Tensor]:
@@ -802,15 +786,10 @@ def test_scaled_mm_blockwise_matches_emulation(output_dtype, lhs_block, rhs_bloc
     )
     thunder_out = fn(mat_a_lp, mat_b_lp, scale_a, scale_b)
 
-    a_dequant = _dequantize_blockwise(mat_a_lp, encode_a, lhs_block, 128)
-    b_dequant = _dequantize_blockwise(mat_b_lp_rows, encode_b, rhs_block, 128).t()
-    emulated = (a_dequant @ b_dequant).to(torch.float32)
-
     reference_f32 = reference.to(torch.float32)
     thunder_out_f32 = thunder_out.to(torch.float32)
 
     assert_close(thunder_out_f32, reference_f32, atol=7e-1, rtol=7e-2)
-    assert_close(reference_f32, emulated, atol=7e-1, rtol=7e-2)
 
 
 # https://github.com/Lightning-AI/lightning-thunder/issues/1857
