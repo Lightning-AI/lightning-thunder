@@ -14,7 +14,7 @@ from utils.github_info import (
 from utils.helper_functions import calculate_days_diff, dataclass_to_dict
 from utils.constants import BASE_URL, HEADERS
 from pr_scores.scores import StalenessInfo, ReviewStatus
-from llm_analysis.engine import analyze_pr
+from llm_analysis.engine import analyze_pr, build_batch_analysis_prompt
 from pr_scores.heuristic import (
     assess_risk,
     assess_complexity,
@@ -22,6 +22,7 @@ from pr_scores.heuristic import (
     calculate_priority,
     assess_internal_review_status,
 )
+from plot.generate_dashboard import generate_dashboard_html, generate_dashboard_recommendations
 from strategic_goals.goals_manager import get_goals_manager, StrategicGoal
 from gdrive.gdrive_integration import GoogleDriveContextManager
 
@@ -106,51 +107,6 @@ def analyze_single_pr(pr_number: int, gdrive_files: list[str] | None = None) -> 
     """
     analysis = analyze_pr(pr_number, gdrive_files=gdrive_files, github_client=github_client)
     return json.dumps(dataclass_to_dict(analysis), indent=2)
-
-
-@mcp.tool()
-def prioritize_heuristic_prs(min_priority: int = 0, labels: list[str] | None = None) -> str:
-    """
-    Get a prioritized list of all open PRs based on *heuristic* scores.
-    This is a "cheap" and "fast" analysis.
-
-    Args:
-        min_priority: Minimum priority score to include (0-100, default: 0)
-        labels: Optional list of labels to filter by
-
-    Returns:
-        JSON string with prioritized PR list
-    """
-    print("Fetching open PRs for HEURISTIC prioritization...", file=sys.stderr)
-
-    prs = get_open_prs(sort="created", direction="desc")
-
-    if labels:
-        labels_lower = [label_name.lower() for label_name in labels]
-        prs = [pr for pr in prs if any(label["name"].lower() in labels_lower for label in pr["labels"])]
-
-    print(f"Analyzing {len(prs)} PRs...", file=sys.stderr)
-
-    analyses = []
-    for pr_summary in prs:
-        try:
-            # We call analyze_pr, which will print N prompts to the console.
-            # This is noisy but necessary for the function to work.
-            analysis = analyze_pr(pr_summary["number"])
-            if analysis.priority_score >= min_priority:
-                analyses.append(analysis)
-        except Exception as e:
-            print(f"Error analyzing PR #{pr_summary['number']}: {e}", file=sys.stderr)
-
-    analyses.sort(key=lambda x: x.priority_score, reverse=True)
-
-    result = {
-        "total_analyzed": len(prs),
-        "meeting_criteria": len(analyses),
-        "prs": [dataclass_to_dict(a) for a in analyses],
-    }
-
-    return json.dumps(result, indent=2)
 
 
 @mcp.tool()
@@ -338,7 +294,7 @@ def llm_batch_analysis(
     print(f"Completed heuristic analysis of {len(analyses)} PRs", file=sys.stderr)
 
     # Build the comprehensive LLM prompt with optional Google Drive context
-    prompt = _build_batch_analysis_prompt(analyses, include_diff, gdrive_files=gdrive_files)
+    prompt = build_batch_analysis_prompt(analyses, include_diff, gdrive_files=gdrive_files)
 
     # Print prompt to stderr so user can see it
     print("\n" + "=" * 80, file=sys.stderr)
@@ -599,8 +555,9 @@ def gdrive_configure(enabled: bool = True) -> str:
     )
 
 
+# DASHBOARD TOOL
 @mcp.tool()
-def get_review_dashboard() -> str:
+def get_review_dashboard(generate_html: bool = False) -> str:
     """
     Create a review dashboard categorizing all open PRs by their stage in the review pipeline.
 
@@ -610,8 +567,11 @@ def get_review_dashboard() -> str:
     - Ready for External Review: Has >= 2 team approvals, no change requests
     - Blocked: Has open change requests from team members
 
+    Args:
+        generate_html: If True, generates an interactive HTML dashboard with quadrant visualization
+
     Returns:
-        JSON string with categorized PRs and dashboard summary
+        JSON string with categorized PRs and dashboard summary (includes html_path if generate_html=True)
     """
     print("Generating review dashboard...", file=sys.stderr)
 
@@ -750,7 +710,7 @@ def get_review_dashboard() -> str:
                 "prs": needs_internal_review[:20],
             },
         },
-        "recommendations": _generate_dashboard_recommendations(
+        "recommendations": generate_dashboard_recommendations(
             summary, ready_for_external, needs_internal_review, blocked, not_ready
         ),
     }
@@ -769,101 +729,23 @@ def get_review_dashboard() -> str:
     print(f"  ⏳ Needs Internal Review: {len(needs_internal_review)}", file=sys.stderr)
     print("=" * 80, file=sys.stderr)
 
-    return json.dumps(dashboard, indent=2)
-
-
-def _generate_dashboard_recommendations(summary, ready_for_external, needs_internal_review, blocked, not_ready):
-    """Generate actionable recommendations based on dashboard state."""
-    recommendations = []
-
-    # Critical: Blocked PRs
-    if blocked:
-        top_blocked = blocked[:3]
-        recommendations.append(
-            {
-                "priority": "🔴 CRITICAL",
-                "action": f"Unblock {len(blocked)} PR(s) with change requests",
-                "prs": [f"#{pr['number']}: {pr['title'][:50]}" for pr in top_blocked],
-                "reason": "These PRs are blocked and need author attention",
-                "next_steps": "Authors should address feedback and request re-review",
-            }
-        )
-
-    # High Priority: Ready for external review
-    if ready_for_external:
-        top_ready = ready_for_external[:5]
-        recommendations.append(
-            {
-                "priority": "🟠 HIGH",
-                "action": f"Ping external maintainers for {len(ready_for_external)} PR(s)",
-                "prs": [f"#{pr['number']}: {pr['title'][:50]}" for pr in top_ready],
-                "reason": "These PRs have 2+ team approvals and are ready for external review",
-                "next_steps": "Request review from @lantiga, @t-vi, or @KaelanDt",
-            }
-        )
-
-    # Medium: Not ready PRs
-    if not_ready:
-        top_not_ready = not_ready[:3]
-        recommendations.append(
-            {
-                "priority": "🟡 MEDIUM",
-                "action": f"Fix {len(not_ready)} PR(s) failing Definition of Ready",
-                "prs": [f"#{pr['number']}: {pr['title'][:50]} - {pr['not_ready_reason'][:50]}" for pr in top_not_ready],
-                "reason": "These PRs need author action before they can be reviewed",
-                "next_steps": "Authors should address failing checks",
-            }
-        )
-
-    # Medium: Needs internal review
-    if needs_internal_review:
-        high_priority_review = [pr for pr in needs_internal_review if pr["priority_score"] >= 70]
-        if high_priority_review:
-            top_review = high_priority_review[:5]
-            recommendations.append(
-                {
-                    "priority": "🟡 MEDIUM",
-                    "action": f"Review {len(high_priority_review)} high-priority PR(s)",
-                    "prs": [
-                        f"#{pr['number']}: {pr['title'][:50]} (priority: {pr['priority_score']})" for pr in top_review
-                    ],
-                    "reason": "High-priority PRs waiting for internal review",
-                    "next_steps": "Team members should review and approve",
-                }
+    # Generate HTML dashboard if requested
+    if generate_html:
+        try:
+            html_path = generate_dashboard_html(
+                blocked=blocked,
+                not_ready=not_ready,
+                needs_internal_review=needs_internal_review,
+                ready_for_external=ready_for_external,
+                summary=summary,
             )
+            dashboard["html_dashboard_path"] = html_path
+            print(f"✅ HTML dashboard generated: {html_path}", file=sys.stderr)
+        except Exception as e:
+            print(f"⚠️  Failed to generate HTML dashboard: {e}", file=sys.stderr)
+            dashboard["html_generation_error"] = str(e)
 
-    # Overall health assessments
-    if summary["pipeline_health"]["blocked_percentage"] > 30:
-        recommendations.append(
-            {
-                "priority": "🔴 ALERT",
-                "action": "Pipeline bottleneck: High blocked rate",
-                "reason": f"{summary['pipeline_health']['blocked_percentage']}% of PRs are blocked",
-                "next_steps": "Consider a focused sprint to clear change requests",
-            }
-        )
-
-    if summary["pipeline_health"]["ready_to_merge"] > 10:
-        recommendations.append(
-            {
-                "priority": "🟠 ALERT",
-                "action": "External review bottleneck detected",
-                "reason": f"{summary['pipeline_health']['ready_to_merge']} PRs are ready but waiting for external maintainers",
-                "next_steps": "Batch ping maintainers or schedule dedicated review time",
-            }
-        )
-
-    if summary["needs_attention"] > summary["in_review"] * 2:
-        recommendations.append(
-            {
-                "priority": "🟡 INFO",
-                "action": "Many PRs need author attention",
-                "reason": f"{summary['needs_attention']} PRs are blocked or not ready",
-                "next_steps": "Consider a PR cleanup sprint or author check-in",
-            }
-        )
-
-    return recommendations
+    return json.dumps(dashboard, indent=2)
 
 
 @mcp.tool()
@@ -871,7 +753,7 @@ def add_strategic_goal(
     goal_id: str, title: str, priority: str, description: str, theme: str, linked_issues: list[int] | None = None
 ) -> str:
     """
-    Add a strategic goal (e.g., Q4 priority) to track PR alignment.
+    Add a strategic goal (e.g., Q4 priority) to track PR alignment in the final priority score.
 
     Args:
         goal_id: Unique identifier (e.g., "Q4-inference-opt")
@@ -970,20 +852,6 @@ def list_strategic_goals() -> str:
     goals_list.sort(key=lambda g: priority_order.get(g["priority"], 999))
 
     return json.dumps({"total_goals": len(goals_list), "goals": goals_list}, indent=2)
-
-
-@mcp.tool()
-def clear_strategic_goals() -> str:
-    """
-    Clear all strategic goals.
-
-    Returns:
-        JSON confirmation
-    """
-    goals_manager = get_goals_manager()
-    goals_manager.clear_goals()
-
-    return json.dumps({"status": "success", "message": "All strategic goals cleared"}, indent=2)
 
 
 if __name__ == "__main__":
