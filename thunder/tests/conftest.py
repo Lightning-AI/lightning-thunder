@@ -82,8 +82,13 @@ def pytest_addoption(parser):
 
 
 @pytest.fixture(autouse=True)
-def turn_off_tf32_and_set_seed(monkeypatch):
+def turn_off_tf32(monkeypatch):
     monkeypatch.setenv("NVIDIA_TF32_OVERRIDE", "0")
+    yield
+
+
+@pytest.fixture
+def set_seed():
     torch.manual_seed(42)
     yield
     torch.seed()
