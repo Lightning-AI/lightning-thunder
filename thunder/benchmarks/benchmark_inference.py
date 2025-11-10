@@ -685,9 +685,6 @@ Examples:
         action="store_true",
         help="Wrap each non-warmup iteration with cudaProfilerStart() and cudaProfilerStop(). This allows us to run `nsys profile --capture-range=cudaProfilerApi --capture-range-end=repeat:<N> ... --profile` to record only the non-warmup iterations.",
     )
-    parser.add_argument(
-        "--cache", type=str, default=None, help="Cache option: no caching, same input, constant values, symbolic values"
-    )
 
     parser.add_argument("--save-results", action="store_true", help="Save results to JSON file")
     parser.add_argument("--output-dir", type=str, default="./results", help="Directory to save results")
