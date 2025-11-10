@@ -291,10 +291,20 @@ def calculate_priority(
     - Complex + High Impact → MEDIUM-HIGH (60-79) - Needs careful review
     - Complex + Low Impact → LOW (0-59) - Deprioritize
 
-    Boosts:
-    - Staleness: Simple stale PRs get priority bump
-    - External Review: PRs ready for external review get +25
-    - Strategic Goals: P0 goals get +50, P1 get +30, P2 get +15
+    Score components:
+    - Base Score (50%): Complexity × Impact
+    - Strategic Alignment (30%): P0/P1/P2 goals alignment
+    - Review Status (15%): Internal/external review state
+    - Staleness (5%): PR age and activity
+
+    Args:
+        pr: PR data from GitHub API
+        risk: RiskScore object
+        staleness: StalenessInfo object
+        review_status: ReviewStatus object
+        files: list of files in the PR
+        internal_review_status: InternalReviewStatus object
+        goal_alignment: GoalAlignment object
 
     Returns:
         (priority_score, reasoning)
@@ -310,94 +320,96 @@ def calculate_priority(
     # Base score from matrix
     if is_simple and is_high_impact:
         # Easy + Huge Impact → VERY HIGH PRIORITY
-        base_score = 90
+        base_score = 50
         category = "🔥 CRITICAL (Simple + High Impact)"
     elif is_simple and not is_high_impact:
         # Easy + Small Impact → HIGH PRIORITY (Quick wins)
-        base_score = 75
+        base_score = 40
         category = "⚡ QUICK WIN (Simple + Low Impact)"
     elif not is_simple and is_high_impact:
         # Complex + Huge Impact → MEDIUM-HIGH (Needs careful review)
-        base_score = 65
+        base_score = 35
         category = "🎯 IMPORTANT (Complex + High Impact)"
     else:
         # Complex + Small Impact → LOW PRIORITY
-        base_score = 40
+        base_score = 20
         category = "📝 LOW (Complex + Low Impact)"
 
-    # Staleness adjustments
-    staleness_adjustment = 0
+    # Startegic alignment
+    strategic_score = 0
+    strategic_reasons = []
+
+    if goal_alignment and goal_alignment.is_aligned:
+        if goal_alignment.highest_priority == "P0":
+            strategic_score = 30
+            strategic_reasons.append(
+                f"🔥 P0 STRATEGIC GOAL (closes #{', #'.join(map(str, goal_alignment.closed_issues))})"
+            )
+        elif goal_alignment.highest_priority == "P1":
+            strategic_score = 20
+            strategic_reasons.append(
+                f"🎯 P1 HIGH PRIORITY GOAL (closes #{', #'.join(map(str, goal_alignment.closed_issues))})"
+            )
+        elif goal_alignment.highest_priority == "P2":
+            strategic_score = 10
+            strategic_reasons.append(
+                f"📌 P2 MEDIUM PRIORITY GOAL (closes #{', #'.join(map(str, goal_alignment.closed_issues))})"
+            )
+
+    # Review status
+    review_score = 0
+    review_reasons = []
+    # Ready for external review (big boost)
+    if internal_review_status and internal_review_status.is_ready_for_external_review:
+        review_score += 15
+        review_reasons.append("✅ ready for external review (2+ team approvals)")
+    # Approved and mergeable (alternative boost)
+    elif review_status.approved_reviews > 0 and staleness.is_mergeable:
+        review_score += 10
+        review_reasons.append("approved and mergeable")
+
+    # Penalties
+    if review_status.changes_requested > 0:
+        review_score -= 5
+        review_reasons.append("changes requested")
+
+    if staleness.has_conflicts:
+        review_score -= 10
+        review_reasons.append("has conflicts")
+    # Clamp to [0, 15]
+    review_score = max(0, min(15, review_score))
+
+    # Staleness score
+    staleness_score = 0
     staleness_reasons = []
 
     if staleness.days_open > 90:
         if is_simple:
-            # Simple stale PR → BIG BOOST (get it done!)
-            staleness_adjustment += 15
-            staleness_reasons.append(f"stale {staleness.days_open} days (simple PR boost)")
+            staleness_score += 5
+            staleness_reasons.append(f"stale {staleness.days_open} days (simple PR)")
         else:
-            # Complex stale PR → smaller boost
-            staleness_adjustment += 5
+            staleness_score += 2
             staleness_reasons.append(f"stale {staleness.days_open} days")
     elif staleness.days_open > 60:
         if is_simple:
-            staleness_adjustment += 10
-            staleness_reasons.append(f"aging {staleness.days_open} days (simple PR boost)")
-        else:
-            staleness_adjustment += 3
+            staleness_score += 3
             staleness_reasons.append(f"aging {staleness.days_open} days")
+        else:
+            staleness_score += 1
     elif staleness.days_open > 30:
         if is_simple:
-            staleness_adjustment += 5
+            staleness_score += 2
             staleness_reasons.append(f"waiting {staleness.days_open} days")
 
-    # Penalties
-    if staleness.has_conflicts:
-        staleness_adjustment -= 20
-        staleness_reasons.append("has conflicts")
-
-    if review_status.changes_requested > 0:
-        staleness_adjustment -= 10
-        staleness_reasons.append("changes requested")
-
     if staleness.days_since_update > 30 and not is_simple:
-        # Complex PR with no recent activity → deprioritize
-        staleness_adjustment -= 10
+        staleness_score -= 2
         staleness_reasons.append("no recent activity")
+    # Clamp to [0, 5]
+    staleness_score = max(0, min(5, staleness_score))
 
-    # Bonuses
-    if review_status.approved_reviews > 0 and staleness.is_mergeable:
-        staleness_adjustment += 15
-        staleness_reasons.append("approved and mergeable")
-
-    # SIGNIFICANT BOOST: PR is ready for external review (2+ team approvals)
-    # This ensures PRs that have passed internal review are actioned quickly
-    if internal_review_status and internal_review_status.is_ready_for_external_review:
-        staleness_adjustment += 25
-        staleness_reasons.append("✅ ready for external review (2+ team approvals)")
-
-    # STRATEGIC GOAL BOOST: PR aligns with Q4/strategic goals
-    # This HEAVILY weights PRs that contribute to P0/P1/P2 goals
-    strategic_boost = 0
-    if goal_alignment and goal_alignment.is_aligned:
-        if goal_alignment.highest_priority == "P0":
-            strategic_boost = 50
-            staleness_reasons.append(
-                f"🔥 P0 STRATEGIC GOAL (closes #{', #'.join(map(str, goal_alignment.closed_issues))})"
-            )
-        elif goal_alignment.highest_priority == "P1":
-            strategic_boost = 30
-            staleness_reasons.append(
-                f"🎯 P1 HIGH PRIORITY GOAL (closes #{', #'.join(map(str, goal_alignment.closed_issues))})"
-            )
-        elif goal_alignment.highest_priority == "P2":
-            strategic_boost = 15
-            staleness_reasons.append(
-                f"📌 P2 MEDIUM PRIORITY GOAL (closes #{', #'.join(map(str, goal_alignment.closed_issues))})"
-            )
-
-    # Final score (strategic boost applied AFTER other adjustments for maximum impact)
-    final_score = base_score + staleness_adjustment + strategic_boost
-    final_score = max(0, min(100, int(final_score)))
+    # Final score
+    final_score = base_score + strategic_score + review_score + staleness_score
+    # No capping needed! Maximum possible: 50 + 30 + 15 + 5 = 100
 
     # Build reasoning
     reasoning_parts = [
@@ -405,9 +417,19 @@ def calculate_priority(
         complexity_reason,
         impact_reason,
     ]
+
+    if strategic_reasons:
+        reasoning_parts.append(f"Strategic: {', '.join(strategic_reasons)} (+{strategic_score}pts)")
+
+    if review_reasons:
+        reasoning_parts.append(f"Review: {', '.join(review_reasons)} ({review_score:+d}pts)")
+
     if staleness_reasons:
-        reasoning_parts.append(f"Staleness: {', '.join(staleness_reasons)}")
-    reasoning_parts.append(f"Final: {final_score}/100")
+        reasoning_parts.append(f"Staleness: {', '.join(staleness_reasons)} ({staleness_score:+d}pts)")
+
+    reasoning_parts.append(
+        f"Final: {final_score}/100 (Base:{base_score} + Strategic:{strategic_score} + Review:{review_score} + Staleness:{staleness_score})"
+    )
 
     reasoning = "\n".join(reasoning_parts)
 
