@@ -146,7 +146,7 @@ def llm_batch_analysis(
     print("Starting LLM batch analysis")
     print(f"Input args:\n limit: {limit}, min_priority: {min_priority}), include_diff {include_diff}", file=sys.stderr)
     # Get PRs
-    prs = get_open_prs(state="open", sort="created", direction="desc")
+    prs = get_open_prs(state="open", sort="created", direction="desc", github_client=github_client)
     # Filter if we have labels
     if labels:
         labels_lower = [label_name.lower() for label_name in labels]
@@ -156,10 +156,10 @@ def llm_batch_analysis(
     analyses = []
     for pr_summary in prs[:limit]:
         try:
-            pr = get_pr_data(pr_summary["number"])
-            reviews = get_pr_reviews(pr_summary["number"])
-            comments = get_pr_comments(pr_summary["number"])
-            files = get_pr_files(pr_summary["number"])
+            pr = get_pr_data(pr_summary["number"], github_client=github_client)
+            reviews = get_pr_reviews(pr_summary["number"], github_client=github_client)
+            comments = get_pr_comments(pr_summary["number"], github_client=github_client)
+            files = get_pr_files(pr_summary["number"], github_client=github_client)
 
             days_open = calculate_days_diff(pr["created_at"])
             days_since_update = calculate_days_diff(pr["updated_at"])
@@ -167,7 +167,7 @@ def llm_batch_analysis(
 
             commits_behind = None
             try:
-                comparison = compare_branches(pr["head"]["sha"], pr["base"]["ref"])
+                comparison = compare_branches(pr["head"]["sha"], pr["base"]["ref"], github_client=github_client)
                 commits_behind = comparison.get("ahead_by")
             except Exception:
                 pass
@@ -278,7 +278,7 @@ def llm_batch_analysis(
                 # Optionally include diff (WARNING: token-heavy)
                 if include_diff:
                     try:
-                        diff = get_pr_diff(pr["number"])
+                        diff = get_pr_diff(pr["number"], github_client=github_client)
                         # Truncate to reasonable size
                         analysis_data["diff_preview"] = diff[:5000] + (
                             "\n\n... (truncated)" if len(diff) > 5000 else ""
@@ -326,14 +326,14 @@ def risk_report_heuristic(min_risk_score: int = 5) -> str:
     """
     print(f"Generating risk report (min score: {min_risk_score})...", file=sys.stderr)
 
-    prs = get_open_prs(sort="created", direction="desc")
+    prs = get_open_prs(sort="created", direction="desc", github_client=github_client)
 
     print(f"Analyzing {len(prs)} PRs...", file=sys.stderr)
 
     analyses = []
     for pr_summary in prs:
         try:
-            analysis = analyze_pr(pr_summary["number"])
+            analysis = analyze_pr(pr_summary["number"], github_client=github_client)
             if analysis.risk_score.overall >= min_risk_score:
                 analyses.append(analysis)
         except Exception as e:
@@ -543,7 +543,7 @@ def get_review_dashboard(generate_html: bool = False) -> str:
     print("Generating review dashboard...", file=sys.stderr)
 
     # Get all open PRs
-    prs = get_open_prs(state="open", sort="created", direction="desc")
+    prs = get_open_prs(state="open", sort="created", direction="desc", github_client=github_client)
     print(f"Analyzing {len(prs)} open PRs...", file=sys.stderr)
 
     # Initialize categories
@@ -557,7 +557,7 @@ def get_review_dashboard(generate_html: bool = False) -> str:
             pr_number = pr_summary["number"]
 
             # Run full analysis to get Definition of Ready and Internal Review Status
-            analysis = analyze_pr(pr_number)
+            analysis = analyze_pr(pr_number, github_client=github_client)
 
             # Build PR card data
             pr_card = {

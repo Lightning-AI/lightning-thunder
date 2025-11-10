@@ -189,7 +189,7 @@ def _cursor_llm_call_stub(prompt: str, pr_number: int) -> tuple[str, str]:
     **SUMMARY:**
     [PLACEHOLDER: Run the prompt above in Cursor to get this summary.]
 
-    ###
+    +++
 
     **Risk Assessment:**
     -   **Breaking Changes:** [PLACEHOLDER]
@@ -320,12 +320,12 @@ def run_llm_analysis(
         # Complex PR - ask for detailed debugging guidance
         prompt += """
 
-    Provide THREE sections in your response, separated by '###':
+    Provide THREE sections in your response, separated by '+++':
 
     **Summary:**
     [Provide a concise summary of *what* this PR does and *why*.]
 
-    ###
+    +++
 
     **Risk Assessment:**
     [Provide a qualitative analysis of potential risks.]
@@ -333,7 +333,7 @@ def run_llm_analysis(
     -   **Security:** [Does this introduce any potential security vulnerabilities (e.g., handling untrusted inputs, credentials)?]
     -   **Urgency:** [Does this seem to fix a critical bug or blocker? Is it low priority?]
 
-    ###
+    +++
 
     **Review Checklist & Debugging Guide:**
     [Since this is a COMPLEX PR, provide specific guidance:]
@@ -449,6 +449,15 @@ Your assessment should align with the goals, standards, and priorities outlined 
 ---
 
 """
+    # Create a list of all PR numbers for tracking
+    pr_numbers_list = ", ".join([f"#{pr['number']}" for pr in analyses_sorted])
+    prompt += f"""
+**YOU MUST ANALYZE ALL {len(analyses_sorted)} PRs LISTED BELOW:**
+{pr_numbers_list}
+
+---
+
+"""
     # append all the needed PRs we want to analyse
     for i, pr in enumerate(analyses_sorted, 1):
         # Get complexity/impact categories for visual indicators
@@ -456,58 +465,72 @@ Your assessment should align with the goals, standards, and priorities outlined 
         impact_emoji = "🔵" if pr["impact"]["score"] < 4 else "🟠" if pr["impact"]["score"] < 7 else "🔴"
 
         prompt += f"""
-        ### PR #{pr["number"]}: {pr["title"]}
-        **Author:** @{pr["author"]}
-        **URL:** {pr["url"]}
-        **Labels:** {", ".join(pr["labels"]) if pr["labels"] else "None"}
+### PR #{pr["number"]}: {pr["title"]}
+**Author:** @{pr["author"]}
+**URL:** {pr["url"]}
+**Labels:** {", ".join(pr["labels"]) if pr["labels"] else "None"}
 
-        **Description:**
-        {pr["body_summary"]}
+**Description:**
+{pr["body_summary"]}
 
-        **Metrics:**
-        - Created: {pr["created_at"][:10]} ({pr["staleness"]["days_open"]} days ago)
-        - Last Updated: {pr["updated_at"][:10]} ({pr["staleness"]["days_since_update"]} days ago)
-        - Changes: {pr["files_changed"]} files (+{pr["additions"]}/-{pr["deletions"]} lines)
-        - Reviews: {pr["review_status"]["approved"]} approved, {pr["review_status"]["changes_requested"]} changes requested
-        - Comments: {pr["activity"]["total_comments"]}
-        - Merge Status: {"✅ No conflicts" if pr["staleness"]["is_mergeable"] else "⚠️ Has conflicts" if pr["staleness"]["has_conflicts"] else "❓ Unknown"}
+**Metrics:**
+- Created: {pr["created_at"][:10]} ({pr["staleness"]["days_open"]} days ago)
+- Last Updated: {pr["updated_at"][:10]} ({pr["staleness"]["days_since_update"]} days ago)
+- Changes: {pr["files_changed"]} files (+{pr["additions"]}/-{pr["deletions"]} lines)
+- Reviews: {pr["review_status"]["approved"]} approved, {pr["review_status"]["changes_requested"]} changes requested
+- Comments: {pr["activity"]["total_comments"]}
+- Merge Status: {"✅ No conflicts" if pr["staleness"]["is_mergeable"] else "⚠️ Has conflicts" if pr["staleness"]["has_conflicts"] else "❓ Unknown"}
 
-        **Internal Review Status (Thunder Team):**
-        - {pr["internal_review"]["status"]}
-        - Team Approvals: {pr["internal_review"]["team_approvals"]}/2 required
-        - Team Reviewers: {", ".join(["@" + r for r in pr["internal_review"]["team_reviewers"]]) if pr["internal_review"]["team_reviewers"] else "None yet"}
-        - Ready for External Review: {"✅ Yes" if pr["internal_review"]["is_ready_for_external"] else "⏳ No"}
+**Internal Review Status (Thunder Team):**
+- {pr["internal_review"]["status"]}
+- Team Approvals: {pr["internal_review"]["team_approvals"]}/2 required
+- Team Reviewers: {", ".join(["@" + r for r in pr["internal_review"]["team_reviewers"]]) if pr["internal_review"]["team_reviewers"] else "None yet"}
+- Ready for External Review: {"✅ Yes" if pr["internal_review"]["is_ready_for_external"] else "⏳ No"}
 
-        **Heuristic Analysis:**
-        - Priority Score: {pr["heuristic_priority"]}/100
-        - {complexity_emoji} Complexity: {pr["complexity"]["score"]}/10 ({pr["complexity"]["category"]}) - {pr["complexity"]["reasoning"]}
-        - {impact_emoji} Impact: {pr["impact"]["score"]}/10 ({pr["impact"]["category"]}) - {pr["impact"]["reasoning"]}
-        - Priority Reasoning:
-          {pr["priority_reasoning"]}
+**Heuristic Analysis:**
+- Priority Score: {pr["heuristic_priority"]}/100
+- {complexity_emoji} Complexity: {pr["complexity"]["score"]}/10 ({pr["complexity"]["category"]}) - {pr["complexity"]["reasoning"]}
+- {impact_emoji} Impact: {pr["impact"]["score"]}/10 ({pr["impact"]["category"]}) - {pr["impact"]["reasoning"]}
+- Priority Reasoning:
+  {pr["priority_reasoning"]}
 
-        - Risk Scores:
-          - Overall: {pr["risk"]["overall"]}/10
-          - Breaking Changes: {pr["risk"]["breaking_changes"]}/10 - {pr["risk"]["reasoning"]["breaking"]}
-          - Security: {pr["risk"]["security"]}/10 - {pr["risk"]["reasoning"]["security"]}
-          - Urgency: {pr["risk"]["urgency"]}/10 - {pr["risk"]["reasoning"]["urgency"]}
+- Risk Scores:
+  - Overall: {pr["risk"]["overall"]}/10
+  - Breaking Changes: {pr["risk"]["breaking_changes"]}/10 - {pr["risk"]["reasoning"]["breaking"]}
+  - Security: {pr["risk"]["security"]}/10 - {pr["risk"]["reasoning"]["security"]}
+  - Urgency: {pr["risk"]["urgency"]}/10 - {pr["risk"]["reasoning"]["urgency"]}
+
+---
 
 """
         if include_diff and "diff_preview" in pr:
             prompt += f"""**Code Diff Preview:**
-        ```diff
-        {pr["diff_preview"]}
-        ```
-        """
+```diff
+{pr["diff_preview"]}
+```
 
-    prompt += """
+---
+
+"""
+
+    # Add the PR list reminder at the end of the PRs section
+    prompt += f"""
+---
+## END OF PR LISTINGS - Total: {len(analyses_sorted)} PRs
+---
+
 ** YOUR TASK **
+
+IMPORTANT: You MUST analyze ALL {len(analyses_sorted)} PRs listed above. Do not skip any PRs.
+The PRs to cover are: {pr_numbers_list}
+
 You've been given heuristic scores (complexity, impact, priority) for each PR.
 Use these as a STARTING POINT, but apply your expert judgment to provide final recommendations.
 
 Please provide a comprehensive analysis with the following:
 
-**1. Enhanced Priority Assessment (for each PR):**
-For each PR, considering its complexity and impact:
+**1. Enhanced Priority Assessment (for EVERY PR listed above):**
+For each of the {len(analyses_sorted)} PRs, considering its complexity and impact:
 
    For SIMPLE PRs (🟢 Complexity ≤ 3):
    - Quick review checklist: What to verify?
@@ -526,14 +549,14 @@ For each PR, considering its complexity and impact:
    - Recommendation: Should this be broken into smaller PRs?
 
 **2. Prioritized Review Order:**
-Group PRs by urgency, considering complexity × impact:
+Group ALL {len(analyses_sorted)} PRs by urgency, considering complexity × impact:
    - 🔥 CRITICAL (Review Today): Simple + High Impact, or Critical issues
    - ⚡ QUICK WINS (Review This Week): Simple + Any Impact (easy to clear)
    - 🎯 IMPORTANT (Schedule Deep Review): Complex + High Impact (needs time)
    - 📝 LOW (Deprioritize): Complex + Low Impact
 
 **3. Complexity-Specific Guidance:**
-   For each COMPLEX PR (🔴):
+   For each COMPLEX PR (🔴) in the list:
    - Break down: What makes it complex?
    - Risk areas: Where should reviewers be extra careful?
    - Testing strategy: What must be tested?
@@ -552,6 +575,9 @@ Group PRs by urgency, considering complexity × impact:
    - Balance of simple vs complex PRs
    - Major themes or patterns you noticed
    - Top 3 priorities for maintainers
+
+**VERIFICATION CHECKLIST:**
+Before submitting your response, verify that you have addressed ALL {len(analyses_sorted)} PRs: {pr_numbers_list}
 
 Please be specific, actionable, and technical. Consider the context of an ML compiler project
 where correctness and performance are critical. Use the heuristic scores to guide your analysis,
