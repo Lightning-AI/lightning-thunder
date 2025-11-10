@@ -686,8 +686,12 @@ def test_view_as_real_thunderfx_no_splits():
     assert len(subgraph_info.thunder_compiled_fns) == 1, "Thunder should have compiled exactly one function"
 
 
-def test_polar():
-    """Test that torch.polar works correctly and produces correct complex tensors."""
+def test_polar_decomposition():
+    """Test that torch.polar decomposes into expected operations in the trace.
+    
+    Note: Basic correctness testing is handled by the OpInfo infrastructure.
+    This test specifically verifies trace decomposition.
+    """
 
     def foo(abs_, angle):
         return torch.polar(abs_, angle)
@@ -695,17 +699,13 @@ def test_polar():
     jfoo = thunder.jit(foo)
 
     # Create input tensors for magnitude and angle
-    abs_ = torch.randn((2, 3, 4), device="cpu", dtype=torch.float32).abs()  # Magnitude should be non-negative
+    abs_ = torch.randn((2, 3, 4), device="cpu", dtype=torch.float32).abs()
     angle = torch.randn((2, 3, 4), device="cpu", dtype=torch.float32)
 
     actual = jfoo(abs_, angle)
     expected = foo(abs_, angle)
 
     assert_close(actual, expected)
-
-    # Check output shape and dtype
-    assert actual.shape == (2, 3, 4)
-    assert actual.dtype == torch.complex64
 
     # Verify the polar relationship: z = r * e^(i*theta) = r * (cos(theta) + i*sin(theta))
     expected_real = abs_ * torch.cos(angle)
@@ -715,43 +715,13 @@ def test_polar():
 
     # Verify that the trace contains the expected decomposed operations
     extrace = thunder.last_traces(jfoo)[-1]
-    print(extrace)
     symbol_names = {bsym.sym.name for bsym in extrace.bound_symbols}
-    print(symbol_names)
-
+    
     # The polar operation should be decomposed into cos, sin, mul, and complex
     assert "cos" in symbol_names, "Expected 'cos' symbol in trace for polar decomposition"
     assert "sin" in symbol_names, "Expected 'sin' symbol in trace for polar decomposition"
     assert "mul" in symbol_names, "Expected 'mul' symbol in trace for polar decomposition"
     assert "complex" in symbol_names, "Expected 'complex' symbol in trace for polar decomposition"
-
-    # Test with different dtypes
-    for dtype, expected_complex_dtype in [
-        (torch.float32, torch.complex64),
-        (torch.float64, torch.complex128),
-    ]:
-        abs_typed = torch.randn((2, 3), device="cpu", dtype=dtype).abs()
-        angle_typed = torch.randn((2, 3), device="cpu", dtype=dtype)
-        actual_typed = jfoo(abs_typed, angle_typed)
-        expected_typed = foo(abs_typed, angle_typed)
-
-        assert_close(actual_typed, expected_typed)
-        assert actual_typed.dtype == expected_complex_dtype
-
-    # Test edge cases
-    # Zero magnitude
-    abs_zero = torch.zeros((2, 3), device="cpu", dtype=torch.float32)
-    angle_any = torch.randn((2, 3), device="cpu", dtype=torch.float32)
-    result_zero = jfoo(abs_zero, angle_any)
-    assert_close(result_zero, torch.zeros((2, 3), device="cpu", dtype=torch.complex64))
-
-    # Zero angle
-    abs_any = torch.randn((2, 3), device="cpu", dtype=torch.float32).abs()
-    angle_zero = torch.zeros((2, 3), device="cpu", dtype=torch.float32)
-    result_zero_angle = jfoo(abs_any, angle_zero)
-    # When angle is zero, result should be purely real (equal to magnitude)
-    assert_close(result_zero_angle.real, abs_any)
-    assert_close(result_zero_angle.imag, torch.zeros_like(abs_any))
 
 
 def test_view_as_complex_with_original_tensor_aliasing():
