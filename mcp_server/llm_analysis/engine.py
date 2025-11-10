@@ -23,6 +23,8 @@ from pr_scores.heuristic import (
 )
 from strategic_goals.goals_manager import get_goals_manager
 from gdrive.gdrive_integration import GoogleDriveContextManager
+from pr_scores.scores import GoalAlignment
+
 
 # Initialize Google Drive context manager
 gdrive_context = GoogleDriveContextManager()
@@ -345,7 +347,7 @@ def run_llm_analysis(
         # Simple/Moderate PR - standard analysis
         prompt += """
 
-    Provide two sections in your response, separated by '###':
+    Provide two sections in your response, separated by '\n':
 
     **Summary:**
     [Provide a concise summary of *what* this PR does and *why*.]
@@ -628,9 +630,6 @@ def analyze_pr(
     # 3d. Assess strategic goal alignment
     goals_manager = get_goals_manager()
     goal_alignment_obj = goals_manager.assess_pr_goal_alignment(pr)
-
-    # Convert to simpler dataclass for PRAnalysis
-    from pr_scores.scores import GoalAlignment
 
     goal_alignment = (
         GoalAlignment(

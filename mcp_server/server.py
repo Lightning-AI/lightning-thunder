@@ -314,39 +314,6 @@ def llm_batch_analysis(
 
 
 @mcp.tool()
-def check_stale_prs(days_threshold: int = 30) -> str:
-    """
-    Find PRs that haven't been updated recently or have merge conflicts.
-
-    Args:
-        days_threshold: Consider PRs stale if not updated in this many days (default: 30)
-
-    Returns:
-        JSON string with stale PR list
-    """
-    print(f"Checking for stale PRs (threshold: {days_threshold} days)...", file=sys.stderr)
-
-    prs = get_open_prs(sort="created", direction="desc")
-
-    print(f"Analyzing {len(prs)} PRs...", file=sys.stderr)
-
-    analyses = []
-    for pr_summary in prs:
-        try:
-            analysis = analyze_pr(pr_summary["number"])
-            if analysis.staleness.days_since_update >= days_threshold or analysis.staleness.has_conflicts:
-                analyses.append(analysis)
-        except Exception as e:
-            print(f"Error analyzing PR #{pr_summary['number']}: {e}", file=sys.stderr)
-
-    analyses.sort(key=lambda x: x.staleness.days_since_update, reverse=True)
-
-    result = {"total_stale": len(analyses), "prs": [dataclass_to_dict(a) for a in analyses]}
-
-    return json.dumps(result, indent=2)
-
-
-@mcp.tool()
 def risk_report_heuristic(min_risk_score: int = 5) -> str:
     """
     Generate a risk report showing high-risk PRs based on heuristic scores.
