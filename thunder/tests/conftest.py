@@ -1,6 +1,7 @@
 import importlib
 import importlib.util
 
+import os
 import pytest
 import pytest_benchmark
 from thunder.dynamo.compiler_graph_benchmark import GRAPH_BY_GRAPH_BENCHMARK_PARAMS_KEYS
@@ -81,7 +82,12 @@ def pytest_addoption(parser):
     parser.addoption("--gpu-mem-limit", type=float)
 
 
-@pytest.fixture(autouse=True, scope="session")
-def turn_off_tf32(monkeypatch):
-    monkeypatch.setenv("NVIDIA_TF32_OVERRIDE", "0")
+@pytest.fixture(scope="session", autouse=True)
+def turn_off_tf32():
+    old = os.environ.get("NVIDIA_TF32_OVERRIDE")
+    os.environ["NVIDIA_TF32_OVERRIDE"] = "0"
     yield
+    if old is not None:
+        os.environ["NVIDIA_TF32_OVERRIDE"] = old
+    else:
+        os.environ.pop("NVIDIA_TF32_OVERRIDE", None)
