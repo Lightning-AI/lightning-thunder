@@ -342,9 +342,7 @@ def view_as_complex(a: TensorLike):
     )
 
     # Determine the output dtype
-    if a.dtype == dtypes.float16:
-        output_dtype = dtypes.complex32
-    elif a.dtype == dtypes.float32:
+    if a.dtype == dtypes.float32:
         output_dtype = dtypes.complex64
     elif a.dtype == dtypes.float64:
         output_dtype = dtypes.complex128
