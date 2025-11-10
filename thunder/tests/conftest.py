@@ -81,14 +81,7 @@ def pytest_addoption(parser):
     parser.addoption("--gpu-mem-limit", type=float)
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture(autouse=True, scope="session")
 def turn_off_tf32(monkeypatch):
     monkeypatch.setenv("NVIDIA_TF32_OVERRIDE", "0")
     yield
-
-
-@pytest.fixture
-def set_seed():
-    torch.manual_seed(42)
-    yield
-    torch.seed()
