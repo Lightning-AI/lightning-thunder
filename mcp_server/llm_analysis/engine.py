@@ -352,7 +352,7 @@ def run_llm_analysis(
     **Summary:**
     [Provide a concise summary of *what* this PR does and *why*.]
 
-    ###
+    +++
 
     **Risk Assessment:**
     [Provide a qualitative analysis of potential risks.]
@@ -368,8 +368,8 @@ def run_llm_analysis(
         summary = "Could not parse LLM summary."
         risk = "Could not parse LLM risk assessment."
 
-        if "###" in response_text:
-            parts = response_text.split("###", 1)
+        if "+++" in response_text:
+            parts = response_text.split("+++", 1)
             summary = parts[0].replace("**Summary:**", "").strip()
             risk = parts[1].replace("**Risk Assessment:**", "").strip()
         else:
