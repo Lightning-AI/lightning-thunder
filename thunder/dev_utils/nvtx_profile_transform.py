@@ -40,6 +40,20 @@ nvtx_pop = nvtx_profiler_ex.register_operator("nvtx_range_pop", meta=lambda: Non
 
 
 class NvtxProfileTransform(thunder.core.transforms.Transform):
+    """A trace transform that adds NVTX profiling markers around computation operations.
+
+    This transform wraps each computation operation in the trace with NVTX range push/pop calls,
+    enabling fine-grained profiling of individual operations in tools like NVIDIA Nsight Systems.
+
+    Warning:
+        When the model is complex and the trace has a lot of symbols (for example, when fusion
+        executors are not being used), this transform might slow down the overall execution as
+        host-side latency will be increased.
+
+        This transform is intended for debug purposes; use it to debug execution and avoid
+        enabling it for production or performance benchmarking runs.
+    """
+
     def transform_trace_post_optimization(self, trace: Trace, **kwargs) -> Trace:
         with Timer() as timer:
             profile_trace = from_trace(trace)
