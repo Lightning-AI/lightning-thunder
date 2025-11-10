@@ -63,7 +63,7 @@ def test_nanogpt_complete(executor, device, dtype, recwarn, turn_off_tf32_and_se
 # this file.
 # See issue "Add half precision dtype tests to test_networks.py"
 @instantiate(dtypes=(thunder.float32,))  # ), executors=all_test_executors_and_dynamo)
-def test_nanogpt_complete_autograd(executor, device, dtype):
+def test_nanogpt_complete_autograd(executor, device, dtype, turn_off_tf32_and_set_seed):
     tdtype = ttorch.to_torch_dtype(dtype)
 
     # Creates a nanoGPT model with a smaller size than any of the default options for testing
@@ -92,7 +92,7 @@ def _there_is_cudagraph_sym(trace):
 
 @instantiate(dtypes=(thunder.float32,), devicetypes=(thunder.devices.DeviceType.CUDA,))
 @requiresCUDA
-def test_nanogpt_complete_cudagraphs(executor, device, dtype):
+def test_nanogpt_complete_cudagraphs(executor, device, dtype, turn_off_tf32_and_set_seed):
     tdtype = ttorch.to_torch_dtype(dtype)
     make = partial(make_tensor, dtype=torch.int64, device=device)
 
@@ -125,7 +125,7 @@ def test_nanogpt_complete_cudagraphs(executor, device, dtype):
     dtypes=(thunder.float32,),
     devicetypes=(thunder.devices.DeviceType.CUDA,),
 )
-def test_nanogpt_complete_cudagraphs_autograd(executor, device, dtype):
+def test_nanogpt_complete_cudagraphs_autograd(executor, device, dtype, turn_off_tf32_and_set_seed):
     tdtype = ttorch.to_torch_dtype(dtype)
 
     # Creates a nanoGPT model with a smaller size than any of the default options for testing
@@ -187,7 +187,7 @@ def test_nanogpt_csa(executor, device, dtype):
 
 
 @instantiate(dtypes=(thunder.float32,), executors=all_test_executors_and_dynamo)
-def test_nanogpt_block(executor, device, dtype):
+def test_nanogpt_block(executor, device, dtype, turn_off_tf32_and_set_seed):
     tdtype = ttorch.to_torch_dtype(dtype)
     make = partial(make_tensor, dtype=tdtype, device=device)
 
