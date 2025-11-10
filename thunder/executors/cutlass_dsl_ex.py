@@ -373,7 +373,7 @@ if find_spec("quack") is not None:
     ) -> bool:
         if (
             a.dtype not in {dtypes.float16, dtypes.bfloat16, dtypes.float32}
-            or weight.ndim != 1
+            or (weight is None or weight.ndim != 1)
             or a.shape[-1] != weight.shape[0]
             or weight.dtype not in {dtypes.float32}
         ):
@@ -463,7 +463,7 @@ if find_spec("quack") is not None:
         eps: float | None = None,
     ) -> bool:
         if (
-            weight.ndim != 1
+            (weight is None or weight.ndim != 1)
             or a.shape[-1] != weight.shape[0]
             or a.dtype not in {dtypes.float16, dtypes.bfloat16, dtypes.float32}
             or weight.dtype not in {dtypes.float16, dtypes.bfloat16, dtypes.float32}
