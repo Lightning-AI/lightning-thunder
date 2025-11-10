@@ -156,13 +156,14 @@ def proxify_dtensor(x, name: str | None = None, history: None | tuple = None) ->
     if isinstance(x, DTensor):
         spec_proxy = AnyProxy(x._spec, history=history)
         t = x._local_tensor
-        shape = x.shape
+        # shape = x.shape
         device = devices.to_device(x.device)
         dtype = dtypes.to_dtype(x.dtype)
         grad = None
         distparallel_type = None
         _thunder_fsdp_padding_size = None
         local_tensor_proxy = proxy(t, history=history)
+        shape = local_tensor_proxy.shape
         return DTensorProxy(
             name,
             local_tensor=local_tensor_proxy,
