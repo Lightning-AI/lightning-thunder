@@ -134,7 +134,6 @@ class TensorParallelTest(DistributedParallelTestCase):
     # Note: When running with TF32 enabled on CUDA, the maximum absolute difference between outputs
     # can be on the order of 1e-3, which exceeds the default tolerances for torch.testing.assert_close.
     # This is expected due to the reduced precision of TF32 matrix multiplications.
-    @pytest.mark.usefixtures("turn_off_tf32_and_set_seed")
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="")
     @common_utils.parametrize("bias", (True, False))
     def test_both_column_and_row(self, bias):
