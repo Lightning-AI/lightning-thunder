@@ -446,8 +446,7 @@ def _require_scaled_mm(fn):
 
 
 def _ensure_fp8_tensorwise(device: torch.device) -> None:
-    major, minor = torch.cuda.get_device_capability(device)
-    if (major, minor) < (8, 9):
+    if torch.cuda.get_device_capability(device) < (8, 9):
         pytest.skip("scaled_mm tensor-wise support requires SM89 or newer")
 
 
@@ -463,8 +462,7 @@ def _require_fp8_tensorwise(fn):
 
 def _require_fp8_rowwise(device: torch.device) -> None:
     _ensure_fp8_tensorwise(device)
-    major, minor = torch.cuda.get_device_capability(device)
-    if (major, minor) < (9, 0):
+    if torch.cuda.get_device_capability(device) < (9, 0):
         pytest.skip("row-wise scaled_mm requires SM90 or newer")
     cuda_version = _cuda_version_tuple()
     if cuda_version is not None and cuda_version < (12, 9):
