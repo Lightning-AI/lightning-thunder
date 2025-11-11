@@ -59,6 +59,8 @@ __all__ = [
     "is_available",
     "_register_custom_op",
     "_register_nvfuser_translator",
+    "complex_dtype_conversion_map",
+    "real_dtype_conversion_map",
 ]
 
 # NOTE torch is a requirement
@@ -79,6 +81,20 @@ _torch_noinline_functions = {
     torch.nn.modules.utils._pair,
     torch.nn.modules.utils._triple,
     torch.nn.modules.utils._quadruple,
+}
+
+# Map real dtypes to complex dtypes
+complex_dtype_conversion_map = {
+    # float16 not supported: https://docs.pytorch.org/docs/stable/generated/torch.view_as_complex.html
+    dtypes.float32: dtypes.complex64,
+    dtypes.float64: dtypes.complex128,
+}
+
+# Map complex dtypes to real dtypes
+real_dtype_conversion_map = {
+    dtypes.complex32: dtypes.float16,
+    dtypes.complex64: dtypes.float32,
+    dtypes.complex128: dtypes.float64,
 }
 
 # Maps torch functions, like torch.foo, to their corresponding thunder.torch functions
@@ -342,10 +358,8 @@ def view_as_complex(a: TensorLike):
     )
 
     # Determine the output dtype
-    if a.dtype == dtypes.float32:
-        output_dtype = dtypes.complex64
-    elif a.dtype == dtypes.float64:
-        output_dtype = dtypes.complex128
+    if a.dtype in complex_dtype_conversion_map:
+        output_dtype = complex_dtype_conversion_map[a.dtype]
     else:
         raise ValueError(f"Unsupported dtype for view_as_complex: {a.dtype}")
 
@@ -366,12 +380,8 @@ def view_as_real(a: TensorLike):
     )
 
     # Determine the output dtype (complex -> real)
-    if a.dtype == dtypes.complex32:
-        output_dtype = dtypes.float16
-    elif a.dtype == dtypes.complex64:
-        output_dtype = dtypes.float32
-    elif a.dtype == dtypes.complex128:
-        output_dtype = dtypes.float64
+    if a.dtype in real_dtype_conversion_map:
+        output_dtype = real_dtype_conversion_map[a.dtype]
     else:
         raise ValueError(f"Unsupported dtype for view_as_real: {a.dtype}")
 

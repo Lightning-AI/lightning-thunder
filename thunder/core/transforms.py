@@ -2390,6 +2390,53 @@ def polar_backward(abs_, angle, abs_shape, angle_shape, g):
     return grad_abs, grad_angle
 
 
+@register_augmented_forward("torch.view_as_complex")
+def view_as_complex_aug_fwd(input: Proxy) -> VJPDual:
+    """Augmented forward for torch.view_as_complex.
+    
+    Converts a real tensor with last dimension 2 to a complex tensor.
+    Input shape: (..., 2) -> Output shape: (...)
+    """
+    primal = ltorch.view_as_complex(input)
+    residuals = tuple()
+    return VJPDual(primal, residuals)
+
+
+@register_backward("torch.view_as_complex")
+def view_as_complex_backward(g):
+    """Backward for torch.view_as_complex.
+    
+    Gradient flows from complex output back to real input with last dim 2.
+    grad_input[..., 0] = grad_output.real
+    grad_input[..., 1] = grad_output.imag
+    """
+    grad_input = ltorch.view_as_real(g)
+    return grad_input
+
+
+@register_augmented_forward("torch.view_as_real")
+def view_as_real_aug_fwd(input: Proxy) -> VJPDual:
+    """Augmented forward for torch.view_as_real.
+    
+    Converts a complex tensor to a real tensor with extra dimension.
+    Input shape: (...) -> Output shape: (..., 2)
+    """
+    primal = ltorch.view_as_real(input)
+    residuals = tuple()
+    return VJPDual(primal, residuals)
+
+
+@register_backward("torch.view_as_real")
+def view_as_real_backward(g):
+    """Backward for torch.view_as_real.
+    
+    Gradient flows from real output with last dim 2 back to complex input.
+    grad_input = grad_output[..., 0] + i * grad_output[..., 1]
+    """
+    grad_input = ltorch.view_as_complex(g)
+    return grad_input
+
+
 def iter_bound_symbols(bound_symbols):
     """Iterate over bound symbols, skipping symbols that are not supported by
     the transforms infrastructure.
