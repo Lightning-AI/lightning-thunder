@@ -13,7 +13,6 @@ from thunder.core.pytree import tree_flatten, tree_map
 from thunder.tests.framework import assert_closer, ops, run_snippet, requiresCUDA
 from thunder.tests.opinfos import OpInfo, SampleInput, opinfos
 import thunder.tests.bf16
-from thunder.dynamo import thunderfx
 
 #
 # Generic test templates for all operators

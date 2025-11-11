@@ -2889,20 +2889,20 @@ elementwise_binary_ops.append(bitwise_right_shift_opinfo)
 def polar_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
     cases = (
-        ((4, 4), (4, 4)),          # basic 2D tensors
-        ((2, 3, 4), (2, 3, 4)),    # 3D tensors
-        ((1, 4), (4, 4)),          # broadcasting: magnitude smaller
-        ((4, 4), (4, 1)),          # broadcasting: angle smaller
-        ((3, 1), (1, 4)),          # broadcasting: both inputs broadcast to (3, 4)
-        ((), (4, 4)),              # scalar magnitude
-        ((4, 4), ()),              # scalar angle
+        ((4, 4), (4, 4)),  # basic 2D tensors
+        ((2, 3, 4), (2, 3, 4)),  # 3D tensors
+        ((1, 4), (4, 4)),  # broadcasting: magnitude smaller
+        ((4, 4), (4, 1)),  # broadcasting: angle smaller
+        ((3, 1), (1, 4)),  # broadcasting: both inputs broadcast to (3, 4)
+        ((), (4, 4)),  # scalar magnitude
+        ((4, 4), ()),  # scalar angle
     )
 
     for abs_shape, angle_shape in cases:
         abs_sample = make(abs_shape, **kwargs, low=0, high=10)  # magnitude must be non-negative
         angle_sample = make(angle_shape, **kwargs, low=-np.pi, high=np.pi)
         yield SampleInput(abs_sample, angle_sample)
-    
+
 
 polar_opinfo = OpInfo(
     ltorch.polar,
@@ -3534,23 +3534,27 @@ data_movement_ops.append(view_with_dtype_opinfo)
 
 def view_as_complex_sample_generator(op, device, dtype, requires_grad, **kwargs):
     """Generate samples for view_as_complex testing.
-    
+
     Input must have last dimension = 2 (real and imaginary parts).
     Converts real tensor to complex tensor.
     """
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
-    
+
     # Various shapes with last dim = 2
-    yield SampleInput(make(2,))           # 1D: (2,) → scalar complex
-    yield SampleInput(make(3, 2))         # 2D: (3, 2) → (3,) complex
-    yield SampleInput(make(4, 5, 2))      # 3D: (4, 5, 2) → (4, 5) complex
-    yield SampleInput(make(2, 3, 4, 2))   # 4D: (2, 3, 4, 2) → (2, 3, 4) complex
+    yield SampleInput(
+        make(
+            2,
+        )
+    )  # 1D: (2,) → scalar complex
+    yield SampleInput(make(3, 2))  # 2D: (3, 2) → (3,) complex
+    yield SampleInput(make(4, 5, 2))  # 3D: (4, 5, 2) → (4, 5) complex
+    yield SampleInput(make(2, 3, 4, 2))  # 4D: (2, 3, 4, 2) → (2, 3, 4) complex
 
 
 def view_as_complex_error_generator(op, device, **kwargs):
     """Generate error cases for view_as_complex."""
     make = partial(make_tensor, device=device, dtype=torch.float32, requires_grad=False)
-    
+
     # Wrong last dimension size (must be 2)
     yield SampleInput(make(3, 3)), ValueError, "view_as_complex expects a tensor with last dimension size 2"
 
@@ -3586,27 +3590,31 @@ data_movement_ops.append(view_as_complex_opinfo)
 
 def view_as_real_sample_generator(op, device, dtype, requires_grad, **kwargs):
     """Generate samples for view_as_real testing.
-    
+
     Converts complex tensor to real tensor with extra dimension for real/imag parts.
     """
     # Map real dtype to corresponding complex dtype
     complex_dtype = ltorch.complex_dtype_conversion_map.get(dtype, None)
     if complex_dtype is None:
         return
-    
+
     make = partial(make_tensor, device=device, dtype=complex_dtype, requires_grad=requires_grad)
-    
+
     # Complex inputs of various shapes
-    yield SampleInput(make(()))            # scalar → (2,)
-    yield SampleInput(make(3,))            # (3,) → (3, 2)
-    yield SampleInput(make(4, 5))          # (4, 5) → (4, 5, 2)
-    yield SampleInput(make(2, 3, 4))       # (2, 3, 4) → (2, 3, 4, 2)
+    yield SampleInput(make(()))  # scalar → (2,)
+    yield SampleInput(
+        make(
+            3,
+        )
+    )  # (3,) → (3, 2)
+    yield SampleInput(make(4, 5))  # (4, 5) → (4, 5, 2)
+    yield SampleInput(make(2, 3, 4))  # (2, 3, 4) → (2, 3, 4, 2)
 
 
 def view_as_real_error_generator(op, device, **kwargs):
     """Generate error cases for view_as_real."""
     make = partial(make_tensor, device=device, dtype=torch.float32, requires_grad=False)
-    
+
     # Real input (not allowed - needs complex)
     yield SampleInput(make(3, 3)), TypeError, "view_as_real expects a complex dtype"
 

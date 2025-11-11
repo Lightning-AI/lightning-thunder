@@ -4,7 +4,7 @@ from itertools import chain
 from functools import lru_cache, partial, wraps
 import math
 from numbers import Number
-from typing import Any, TYPE_CHECKING, Tuple
+from typing import Any, TYPE_CHECKING
 from collections.abc import Callable
 from collections.abc import Sequence
 import copy
@@ -2373,10 +2373,12 @@ def polar_aug_fwd(abs_: Proxy, angle: Proxy) -> VJPDual:
 
 
 @register_backward("torch.polar")
-def polar_backward(abs_: Proxy, angle: Proxy, abs_shape: Tuple[int], angle_shape: Tuple[int], g: Proxy) -> Tuple[Proxy, Proxy]:
+def polar_backward(
+    abs_: Proxy, angle: Proxy, abs_shape: tuple[int], angle_shape: tuple[int], g: Proxy
+) -> tuple[Proxy, Proxy]:
     """
     Backward for torch.polar.
-    
+
     For z = polar(abs_, angle) = abs_ * exp(i * angle), the gradients are:
     - grad_abs = sign(abs_) * (grad_output.real * cos(angle) + grad_output.imag * sin(angle))
     - grad_angle = abs_ * (grad_output.imag * cos(angle) - grad_output.real * sin(angle))
@@ -2390,32 +2392,32 @@ def polar_backward(abs_: Proxy, angle: Proxy, abs_shape: Tuple[int], angle_shape
 
     Returns:
         Tuple[Proxy, Proxy]: The gradients of the magnitude and phase tensors.
-    
+
     Note: sign(abs_) handles PyTorch's convention of allowing negative magnitudes.
     """
-    
+
     cos_angle = ltorch.cos(angle)
     sin_angle = ltorch.sin(angle)
-    
+
     # Gradient w.r.t. abs_ (with sign to handle negative magnitudes)
     # For non-negative magnitudes (which OpInfo generates), sign(abs_) should be 1
     grad_abs_unsigned = g.real * cos_angle + g.imag * sin_angle
     grad_abs = ltorch.sign(abs_) * grad_abs_unsigned
-    
+
     # Gradient w.r.t. angle
     grad_angle = abs_ * (g.imag * cos_angle - g.real * sin_angle)
-    
+
     # Handle broadcasting: reduce gradients back to original input shapes
     grad_abs = sum_to(grad_abs, abs_shape)
     grad_angle = sum_to(grad_angle, angle_shape)
-    
+
     return grad_abs, grad_angle
 
 
 @register_augmented_forward("torch.view_as_complex")
 def view_as_complex_aug_fwd(input: Proxy) -> VJPDual:
     """Augmented forward for torch.view_as_complex.
-    
+
     Converts a real tensor with last dimension 2 to a complex tensor.
     Input shape: (..., 2) -> Output shape: (...)
 
@@ -2433,7 +2435,7 @@ def view_as_complex_aug_fwd(input: Proxy) -> VJPDual:
 @register_backward("torch.view_as_complex")
 def view_as_complex_backward(g: Proxy) -> Proxy:
     """Backward for torch.view_as_complex.
-    
+
     Gradient flows from complex output back to real input with last dim 2.
     grad_input[..., 0] = grad_output.real
     grad_input[..., 1] = grad_output.imag
@@ -2451,7 +2453,7 @@ def view_as_complex_backward(g: Proxy) -> Proxy:
 @register_augmented_forward("torch.view_as_real")
 def view_as_real_aug_fwd(input: Proxy) -> VJPDual:
     """Augmented forward for torch.view_as_real.
-    
+
     Converts a complex tensor to a real tensor with extra dimension.
     Input shape: (...) -> Output shape: (..., 2)
 
@@ -2469,7 +2471,7 @@ def view_as_real_aug_fwd(input: Proxy) -> VJPDual:
 @register_backward("torch.view_as_real")
 def view_as_real_backward(g: Proxy) -> Proxy:
     """Backward for torch.view_as_real.
-    
+
     Gradient flows from real output with last dim 2 back to complex input.
     grad_input = grad_output[..., 0] + i * grad_output[..., 1]
 

@@ -321,7 +321,7 @@ def _tensor_dot(x, y):
         x = x.cuda()
     elif is_cpu_scalar_tensor(y) and x.is_cuda:
         y = y.cuda()
-    
+
     x_flat = x.ravel()
     y_flat = y.ravel()
 
