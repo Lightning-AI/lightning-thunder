@@ -229,8 +229,6 @@ class InferenceBenchmarkConfig:
     num_layers: int | None
     num_iterations: int
     warmup_iterations: int
-    enable_nvfp4: bool  # Enable NVFP4 quantization
-    dtensor_single_gpu: bool
     enable_nvfp4: bool  # Enable NVFP4 registration and quantize GroupedSwiGLU in MoE
     quantize_linear: bool  # [Experimental] Quantize nn.Linear to NVFP4 (nvfuser translator not implemented)
     fx_report_folder: str | None
@@ -756,12 +754,6 @@ Examples:
         help="Specify the folder for thunderfx_benchmark_report.",
     )
 
-    parser.add_argument("--enable-nvfp4", action="store_true", help="Enable NVFP4 quantization for linear layers")
-    parser.add_argument(
-        "--dtensor-single-gpu",
-        action="store_true",
-        help="Use DTensor for single GPU",
-    )
     parser.add_argument(
         "--enable-nvfp4",
         action="store_true",
