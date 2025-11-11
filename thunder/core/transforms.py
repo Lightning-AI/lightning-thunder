@@ -2363,22 +2363,22 @@ def _polar_grad(abs_: Proxy, angle: Proxy) -> Proxy:
         Proxy: The forward result (complex tensor).
     """
     fwd = ltorch.polar(abs_, angle)
-    
+
     g = get_grad(fwd)
-    
+
     cos_angle = ltorch.cos(angle)
     sin_angle = ltorch.sin(angle)
-    
+
     # Gradient w.r.t. abs_
-    grad_abs = (g.real * cos_angle + g.imag * sin_angle)
+    grad_abs = g.real * cos_angle + g.imag * sin_angle
     grad_abs = sum_to(grad_abs, abs_.shape)
     put_grad(abs_, grad_abs)
-    
+
     # Gradient w.r.t. angle
     grad_angle = abs_ * (g.imag * cos_angle - g.real * sin_angle)
     grad_angle = sum_to(grad_angle, angle.shape)
     put_grad(angle, grad_angle)
-    
+
     return fwd
 
 
@@ -2387,10 +2387,10 @@ register_grad("torch.polar", _polar_grad)
 
 def _view_as_complex_grad(input: Proxy) -> Proxy:
     """Grad transform for torch.view_as_complex.
-    
+
     Converts a real tensor with last dimension 2 to a complex tensor.
     Input shape: (..., 2) -> Output shape: (...)
-    
+
     Gradient flows from complex output back to real input with last dim 2.
     grad_input[..., 0] = grad_output.real
     grad_input[..., 1] = grad_output.imag
@@ -2402,11 +2402,11 @@ def _view_as_complex_grad(input: Proxy) -> Proxy:
         Proxy: The forward result (complex tensor).
     """
     fwd = ltorch.view_as_complex(input)
-    
+
     g = get_grad(fwd)
     grad_input = ltorch.view_as_real(g)
     put_grad(input, grad_input)
-    
+
     return fwd
 
 
@@ -2415,10 +2415,10 @@ register_grad("torch.view_as_complex", _view_as_complex_grad)
 
 def _view_as_real_grad(input: Proxy) -> Proxy:
     """Grad transform for torch.view_as_real.
-    
+
     Converts a complex tensor to a real tensor with extra dimension.
     Input shape: (...) -> Output shape: (..., 2)
-    
+
     Gradient flows from real output with last dim 2 back to complex input.
     grad_input = grad_output[..., 0] + i * grad_output[..., 1]
 
@@ -2429,11 +2429,11 @@ def _view_as_real_grad(input: Proxy) -> Proxy:
         Proxy: The forward result (real tensor with last dim 2).
     """
     fwd = ltorch.view_as_real(input)
-    
+
     g = get_grad(fwd)
     grad_input = ltorch.view_as_complex(g)
     put_grad(input, grad_input)
-    
+
     return fwd
 
 
