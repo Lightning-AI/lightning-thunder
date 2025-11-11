@@ -36,7 +36,7 @@ all_test_executors_and_dynamo = _all_test_executors() + [DynamoThunderExecutor]
 
 # see https://docs.pytest.org/en/stable/how-to/capture-warnings.html#recwarn for the recwarn fixture
 @instantiate(dtypes=(thunder.float32,), executors=all_test_executors_and_dynamo)
-def test_nanogpt_complete(executor, device, dtype, recwarn, turn_off_tf32_and_set_seed):
+def test_nanogpt_complete(executor, device, dtype, recwarn):
     tdtype = ttorch.to_torch_dtype(dtype)
     make = partial(make_tensor, dtype=torch.int64, device=device)
 
