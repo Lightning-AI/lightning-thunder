@@ -319,6 +319,7 @@ def thunderfx(fn: Callable, /, **kwargs) -> ThunderFXCompiledObject:
 
     torch_compile_kwargs = get_torch_compile_kwargs(**kwargs)
     thunder_jit_kwargs = {k: v for k, v in kwargs.items() if k not in torch_compile_kwargs}
+    thunder_jit_kwargs["cache"] = "symbolic values"
 
     backend = ThunderCompiler(**thunder_jit_kwargs)
     compiled = torch.compile(fn, backend=backend, **torch_compile_kwargs)
