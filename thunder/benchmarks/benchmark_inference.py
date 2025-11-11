@@ -49,6 +49,7 @@ from thunder.benchmarks.layers_for_inference_benchmark import (
 )
 from thunder.torch.custom_op import _register_custom_op
 from thunder.tests.distributed.test_moe import GroupedLinearColwiseParallel, GroupedLinearRowwiseParallel
+from thunder.transforms.cudagraph import CUDAGraphTransform
 
 if TYPE_CHECKING:
     from typing import Any
@@ -154,7 +155,10 @@ class InferenceBenchmarkConfig:
     enable_nv_linear: bool
     mode: str
     disable_moe_replacement: bool
+    attn_implementation: str | None
     profile: bool
+    thunder_cache: str | None
+    enable_thunder_cudagraph: bool
 
 
 @dataclass
@@ -245,10 +249,6 @@ class InferenceBenchmark:
         if mesh:
             model = parallelize_module(model, mesh, tp_plan)
 
-            # Required as that doesn't understand inference mode
-            for p in model.parameters():
-                p.requires_grad_(False)
-
             # Sanity check
             if not self.config.disable_moe_replacement:
                 assert type(model.model.layers[1].feed_forward.shared_experts.gate_proj.weight) == DTensor
@@ -266,6 +266,13 @@ class InferenceBenchmark:
         model.to_empty(device=DEVICE)
         assert all(p.device == DEVICE for p in model.parameters())
 
+        # Required as thunder doesn't understand inference mode
+        # And some prims like `prims._grouped_mm` don't have grad rule defined yet.
+        for p in model.parameters():
+            p.requires_grad_(False)
+
+        assert all(not p.requires_grad for p in model.parameters())
+
         # `thunderfx` seems to hide the access to vocab_size somewhere so
         # store it here before any compiler is applied.
         self.vocab_size = model.vocab_size
@@ -278,16 +285,22 @@ class InferenceBenchmark:
     def _thunder_jit_options(self) -> dict[str, Any]:
         # `nv_enable_linear=True` might fail with distributed run
         # ref: https://github.com/NVIDIA/Fuser/issues/4507
-        res = {}
+        res = {"transforms": []}
         if self.config.enable_nv_linear:
-            res = {"nv_enable_linear": True, "nv_enable_matmul": True}
+            res["nv_enable_linear"] = True
+            res["nv_enable_matmul"] = True
         if self.config.mode == "thunderjit":
             from thunder.recipes.hf_transformers import SDPAMaskTransform
 
             if not hasattr(self, "_mask_transform"):
                 self._mask_transform = SDPAMaskTransform()
-            res["transforms"] = [self._mask_transform]
+            res["transforms"].append(self._mask_transform)
             res["executors"] = [self._mask_transform.get_executor(), *thunder.get_default_executors()]
+        if self.config.enable_thunder_cudagraph:
+            res["transforms"].append(CUDAGraphTransform())
+        if self.config.thunder_cache is not None:
+            res["cache"] = self.config.thunder_cache
+
         return res
 
     def _compile_model(self, model):
@@ -316,7 +329,9 @@ class InferenceBenchmark:
         self.hf_config = config
 
         with torch.device("meta"):
-            model = AutoModelForCausalLM.from_config(config, torch_dtype=torch.bfloat16)
+            model = AutoModelForCausalLM.from_config(
+                config, torch_dtype=torch.bfloat16, attn_implementation=self.config.attn_implementation
+            )
 
         return model
 
@@ -673,6 +688,14 @@ Examples:
 
     parser.add_argument("--save-results", action="store_true", help="Save results to JSON file")
     parser.add_argument("--output-dir", type=str, default="./results", help="Directory to save results")
+    parser.add_argument(
+        "--thunder-cache",
+        type=str,
+        default=None,
+        help="Cache option: no caching, same input, constant values, symbolic values. See `cache` argument of `thunder.jit` for more details.",
+    )
+    parser.add_argument("--enable-thunder-cudagraph", action="store_true", help="Pass CUDAGraphTransform to Thunder")
+    parser.add_argument("--attn-implementation", type=str, default=None, help="Attention implementation")
 
     args = parser.parse_args()
     return args
@@ -704,7 +727,10 @@ def main():
         fx_report_folder=args.fx_report_folder,
         enable_nv_linear=args.enable_nv_linear,
         disable_moe_replacement=args.disable_moe_replacement,
+        attn_implementation=args.attn_implementation,
         profile=args.profile,
+        thunder_cache=args.thunder_cache,
+        enable_thunder_cudagraph=args.enable_thunder_cudagraph,
     )
     benchmark = InferenceBenchmark(config)
 

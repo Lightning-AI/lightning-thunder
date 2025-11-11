@@ -585,7 +585,7 @@ class BoundSymbol(BoundSymbolInterface):
     def _hash(self) -> int:
         try:
             return hash((self.sym, self._var_args, self._var_output, len(self.kwargs)))
-        except:
+        except Exception:
             # Since args / output may contain unhashable types
             return id(self)
 

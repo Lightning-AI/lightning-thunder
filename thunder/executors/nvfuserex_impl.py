@@ -74,13 +74,20 @@ DIRECT_BINDINGS_SUPPORTED_VERSION = LooseVersion("0.2.34")
 DTENSOR_SUPPORTED_VERSION = LooseVersion("0.2.28")
 if nvfuser_version() >= DIRECT_BINDINGS_SUPPORTED_VERSION:
     import nvfuser_direct as nvfuser
-    from nvfuser_direct import DataType, FusionDefinition, multidevice, ParallelType, execute_with_dtensors
+    from nvfuser_direct import (
+        DataType,
+        FusionDefinition,
+        multidevice,
+        ParallelType,
+        execute_with_dtensors,
+        compute_tensor_descriptor as nv_compute_td,
+    )
 else:
     if nvfuser_version() >= DTENSOR_SUPPORTED_VERSION:
         from nvfuser_direct import FusionDefinition as DirectFusionDefinition
         from nvfuser_direct import multidevice, ParallelType, execute_with_dtensors
     import nvfuser
-    from nvfuser import DataType, FusionDefinition
+    from nvfuser import DataType, FusionDefinition, compute_tensor_descriptor as nv_compute_td
 
 #
 # Helper functions
@@ -483,8 +490,6 @@ def compute_contiguity(
     Returns:
         Tuple[Tuple[bool, ...], Tuple[int, ...]]: The contiguity and stride_order
     """
-    from nvfuser import compute_tensor_descriptor as nv_compute_td
-
     return tuple(tuple(x) for x in nv_compute_td(shape, stride))
 
 
@@ -2486,7 +2491,6 @@ def shape(
 
 
 register_supported(PrimIDs.SHAPE, shape, _shape_check)
-
 
 # Registering SDPA operators for nvFuser
 # SDPA requires an execution and grad transform since the forward and backward passes are called through different implementations.
