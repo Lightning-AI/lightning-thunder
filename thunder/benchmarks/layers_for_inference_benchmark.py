@@ -355,7 +355,7 @@ else:
 
 
 def grouped_mm(a: torch.Tensor, b: torch.Tensor, offsets: torch.Tensor) -> torch.Tensor:
-    if _grouped_mm:
+    if _grouped_mm is not None:
         return _grouped_mm(a, b, offsets)
 
     group_sizes = _group_sizes_from_offsets(offsets)
