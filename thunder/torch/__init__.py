@@ -52,11 +52,13 @@ from thunder.core.prims import get_grad, put_grad
 import thunder
 from thunder.torch.default_torch_ops import _auto_registered_operators_returning_views
 from thunder.torch.custom_op import _register_custom_op
+from thunder.torch.custom_op import _register_nvfuser_translator
 
 
 __all__ = [
     "is_available",
     "_register_custom_op",
+    "_register_nvfuser_translator",
 ]
 
 # NOTE torch is a requirement
@@ -1471,7 +1473,7 @@ def tensor_split(a: TensorLike, /, indices_or_sections, dim=0):
 def transpose(a: TensorLike, /, dim0: int, dim1: int) -> TensorLike:
     dim0, dim1 = utils.canonicalize_dims(a.ndim, (dim0, dim1))
 
-    permutation = list(range(0, a.ndim))
+    permutation = list(range(a.ndim))
     permutation[dim0] = dim1
     permutation[dim1] = dim0
     return clang.transpose(a, permutation)
