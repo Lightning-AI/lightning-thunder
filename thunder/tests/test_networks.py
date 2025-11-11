@@ -357,6 +357,9 @@ def test_quantization():
         assert_close(v, sd2[k])
 
 
+@pytest.mark.skip(
+    reason="incompatible with transformers >= 4.55.4, see https://github.com/Lightning-AI/lightning-thunder/issues/2726"
+)
 @thunder.tests.framework.requiresCUDA
 def test_thunderfx_mistral_nemo_small():
     """
@@ -421,6 +424,9 @@ def _get_model_config_pairs():
     return [(phi3), (qwen2)]
 
 
+@pytest.mark.skip(
+    reason="incompatible with transformers >= 4.55.4, see https://github.com/Lightning-AI/lightning-thunder/issues/2726"
+)
 @thunder.tests.framework.requiresCUDA
 @pytest.mark.parametrize("model_fn", _get_model_config_pairs())
 def test_hf_for_nemo(model_fn):
@@ -515,6 +521,9 @@ LLAMA_3_2_1B_CFG = {
 # Default - 697805312
 # eager - 698067456
 @requiresCUDA
+@pytest.mark.skip(
+    reason="incompatible with transformers >= 4.55.4, see https://github.com/Lightning-AI/lightning-thunder/issues/2726"
+)
 @requiresDeviceMemory(required_memory_bytes=int(0.7 * 1024 * 1024 * 1024))
 @pytest.mark.parametrize(
     "attn_implementation",
@@ -655,6 +664,9 @@ def test_checkpointing_thunderfx():
     assert_close(grads_res, grads_ref, atol=1e-3, rtol=1e-3)
 
 
+@pytest.mark.skip(
+    reason="incompatible with transformers >= 4.55.4, see https://github.com/Lightning-AI/lightning-thunder/issues/2726"
+)
 @requiresCUDA
 @pytest.mark.skipif(os.getenv("SKIP_WITH_GPT_CI"), reason="Skipping this test on litGPT CI")
 def test_hf_kvcache():
