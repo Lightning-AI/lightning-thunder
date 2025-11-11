@@ -145,7 +145,7 @@ def parallelize_moe_model(model: llama4_moe.Llama4MoE, device_mesh: torch.distri
 
 class TestLlama4MoEDistributed(DistributedParallelTestCase):
     def test_llama4_moe_distributed(self):
-        if "multidevice" in os.environ["NVFUSER_DISABLE"]:
+        if "multidevice" in os.environ.get("NVFUSER_DISABLE", ""):
             raise unittest.SkipTest("test_dtensor_grouped_mm: nvfuser multidevice is disabled")
 
         # Get world size

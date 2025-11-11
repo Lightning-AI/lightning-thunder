@@ -342,7 +342,7 @@ class DTensorTest(DistributedParallelTestCase):
         ],
     )
     def test_dtensor_grouped_mm(self, executor, input_shardings):
-        if executor == "nvfuser" and "multidevice" in os.environ["NVFUSER_DISABLE"]:
+        if executor == "nvfuser" and "multidevice" in os.environ.get("NVFUSER_DISABLE", ""):
             raise unittest.SkipTest("test_dtensor_grouped_mm: nvfuser multidevice is disabled")
 
         if LooseVersion(torch.__version__) < "2.8":
