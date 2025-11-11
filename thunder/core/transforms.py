@@ -4,7 +4,7 @@ from itertools import chain
 from functools import lru_cache, partial, wraps
 import math
 from numbers import Number
-from typing import Any, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, Tuple
 from collections.abc import Callable
 from collections.abc import Sequence
 import copy
@@ -2354,6 +2354,18 @@ def softmax_backward(primal, dim, input_dtype, g):
 
 @register_augmented_forward("torch.polar")
 def polar_aug_fwd(abs_: Proxy, angle: Proxy) -> VJPDual:
+    """Augmented forward for torch.polar.
+
+    For z = polar(abs_, angle) = abs_ * exp(i * angle), this function computes the primal output
+    and returns VJPDual(primal, residuals) where residuals are saved for the backward computation.
+
+    Args:
+        abs_ (Proxy): The magnitude tensor.
+        angle (Proxy): The phase tensor.
+
+    Returns:
+        VJPDual: Object containing the primal output and residuals needed for backward.
+    """
     primal = ltorch.polar(abs_, angle)
     # Save original shapes for handling broadcasting in backward
     residuals = (abs_, angle, abs_.shape, angle.shape)
@@ -2361,13 +2373,23 @@ def polar_aug_fwd(abs_: Proxy, angle: Proxy) -> VJPDual:
 
 
 @register_backward("torch.polar")
-def polar_backward(abs_, angle, abs_shape, angle_shape, g):
+def polar_backward(abs_: Proxy, angle: Proxy, abs_shape: Tuple[int], angle_shape: Tuple[int], g: Proxy) -> Tuple[Proxy, Proxy]:
     """
     Backward for torch.polar.
     
     For z = polar(abs_, angle) = abs_ * exp(i * angle), the gradients are:
     - grad_abs = sign(abs_) * (grad_output.real * cos(angle) + grad_output.imag * sin(angle))
     - grad_angle = abs_ * (grad_output.imag * cos(angle) - grad_output.real * sin(angle))
+
+    Args:
+        abs_ (Proxy): The magnitude tensor.
+        angle (Proxy): The phase tensor.
+        abs_shape (Tuple[int]): The shape of the magnitude tensor.
+        angle_shape (Tuple[int]): The shape of the phase tensor.
+        g (Proxy): The gradient tensor.
+
+    Returns:
+        Tuple[Proxy, Proxy]: The gradients of the magnitude and phase tensors.
     
     Note: sign(abs_) handles PyTorch's convention of allowing negative magnitudes.
     """
@@ -2396,6 +2418,12 @@ def view_as_complex_aug_fwd(input: Proxy) -> VJPDual:
     
     Converts a real tensor with last dimension 2 to a complex tensor.
     Input shape: (..., 2) -> Output shape: (...)
+
+    Args:
+        input (Proxy): The real tensor to convert to a complex tensor.
+
+    Returns:
+        VJPDual: Object containing the primal output and residuals needed for backward.
     """
     primal = ltorch.view_as_complex(input)
     residuals = tuple()
@@ -2403,12 +2431,18 @@ def view_as_complex_aug_fwd(input: Proxy) -> VJPDual:
 
 
 @register_backward("torch.view_as_complex")
-def view_as_complex_backward(g):
+def view_as_complex_backward(g: Proxy) -> Proxy:
     """Backward for torch.view_as_complex.
     
     Gradient flows from complex output back to real input with last dim 2.
     grad_input[..., 0] = grad_output.real
     grad_input[..., 1] = grad_output.imag
+
+    Args:
+        g (Proxy): The gradient tensor.
+
+    Returns:
+        Proxy: The gradient of the real tensor.
     """
     grad_input = ltorch.view_as_real(g)
     return grad_input
@@ -2420,6 +2454,12 @@ def view_as_real_aug_fwd(input: Proxy) -> VJPDual:
     
     Converts a complex tensor to a real tensor with extra dimension.
     Input shape: (...) -> Output shape: (..., 2)
+
+    Args:
+        input (Proxy): The complex tensor to convert to a real tensor.
+
+    Returns:
+        VJPDual: Object containing the primal output and residuals needed for backward.
     """
     primal = ltorch.view_as_real(input)
     residuals = tuple()
@@ -2427,11 +2467,17 @@ def view_as_real_aug_fwd(input: Proxy) -> VJPDual:
 
 
 @register_backward("torch.view_as_real")
-def view_as_real_backward(g):
+def view_as_real_backward(g: Proxy) -> Proxy:
     """Backward for torch.view_as_real.
     
     Gradient flows from real output with last dim 2 back to complex input.
     grad_input = grad_output[..., 0] + i * grad_output[..., 1]
+
+    Args:
+        g (Proxy): The gradient tensor.
+
+    Returns:
+        Proxy: The gradient of the complex tensor.
     """
     grad_input = ltorch.view_as_complex(g)
     return grad_input
