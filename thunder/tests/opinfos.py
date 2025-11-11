@@ -2885,6 +2885,52 @@ bitwise_right_shift_opinfo = OpInfo(
 )
 elementwise_binary_ops.append(bitwise_right_shift_opinfo)
 
+
+def polar_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    cases = (
+        ((4, 4), (4, 4)),          # basic 2D tensors
+        ((2, 3, 4), (2, 3, 4)),    # 3D tensors
+        ((1, 4), (4, 4)),          # broadcasting: magnitude smaller
+        ((4, 4), (4, 1)),          # broadcasting: angle smaller
+        ((3, 1), (1, 4)),          # broadcasting: both inputs broadcast to (3, 4)
+        ((), (4, 4)),              # scalar magnitude
+        ((4, 4), ()),              # scalar angle
+    )
+
+    for abs_shape, angle_shape in cases:
+        abs_sample = make(abs_shape, **kwargs, low=0, high=10)  # magnitude must be non-negative
+        angle_sample = make(angle_shape, **kwargs, low=-np.pi, high=np.pi)
+        yield SampleInput(abs_sample, angle_sample)
+    
+
+polar_opinfo = OpInfo(
+    ltorch.polar,
+    dtypes=(datatypes.floating,),
+    sample_input_generator=polar_sample_generator,
+    supports_grad=True,
+    torch_reference=torch.polar,
+    test_directives=(
+        # NOTE: Torch doesn't support float16 or bfloat16 polar on any device
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16, datatypes.bfloat16),
+        ),
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_vjp_correctness",
+            dtypes=(datatypes.float16, datatypes.bfloat16),
+        ),
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_phantom_grad_vs_torch_consistency",
+            dtypes=(datatypes.float16, datatypes.bfloat16),
+        ),
+    ),
+)
+elementwise_binary_ops.append(polar_opinfo)
+
 # Puts all opinfos into the "opinfos" list
 opinfos.extend(elementwise_binary_ops)
 

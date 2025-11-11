@@ -2352,6 +2352,44 @@ def softmax_backward(primal, dim, input_dtype, g):
     return grad.to(input_dtype) if grad.dtype != input_dtype else grad
 
 
+@register_augmented_forward("torch.polar")
+def polar_aug_fwd(abs_: Proxy, angle: Proxy) -> VJPDual:
+    primal = ltorch.polar(abs_, angle)
+    # Save original shapes for handling broadcasting in backward
+    residuals = (abs_, angle, abs_.shape, angle.shape)
+    return VJPDual(primal, residuals)
+
+
+@register_backward("torch.polar")
+def polar_backward(abs_, angle, abs_shape, angle_shape, g):
+    """
+    Backward for torch.polar.
+    
+    For z = polar(abs_, angle) = abs_ * exp(i * angle), the gradients are:
+    - grad_abs = sign(abs_) * (grad_output.real * cos(angle) + grad_output.imag * sin(angle))
+    - grad_angle = abs_ * (grad_output.imag * cos(angle) - grad_output.real * sin(angle))
+    
+    Note: sign(abs_) handles PyTorch's convention of allowing negative magnitudes.
+    """
+    
+    cos_angle = ltorch.cos(angle)
+    sin_angle = ltorch.sin(angle)
+    
+    # Gradient w.r.t. abs_ (with sign to handle negative magnitudes)
+    # For non-negative magnitudes (which OpInfo generates), sign(abs_) should be 1
+    grad_abs_unsigned = g.real * cos_angle + g.imag * sin_angle
+    grad_abs = ltorch.sign(abs_) * grad_abs_unsigned
+    
+    # Gradient w.r.t. angle
+    grad_angle = abs_ * (g.imag * cos_angle - g.real * sin_angle)
+    
+    # Handle broadcasting: reduce gradients back to original input shapes
+    grad_abs = sum_to(grad_abs, abs_shape)
+    grad_angle = sum_to(grad_angle, angle_shape)
+    
+    return grad_abs, grad_angle
+
+
 def iter_bound_symbols(bound_symbols):
     """Iterate over bound symbols, skipping symbols that are not supported by
     the transforms infrastructure.
