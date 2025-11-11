@@ -150,7 +150,6 @@ class ThunderCompiler:
             thunder_options,
         )
         self.subgraph_infos.append(subgraph_info)
-
         return split_module
 
     def save_reproducer_to_folder(
