@@ -159,7 +159,7 @@ def proxify_dtensor(x, name: str | None = None, history: None | tuple = None) ->
     if isinstance(x, DTensor):
         spec_proxy = AnyProxy(x._spec, history=history)
         t = x._local_tensor
-        shape = x.shape
+        # shape = x.shape
         device = devices.to_device(x.device)
         dtype = dtypes.to_dtype(x.dtype)
         grad = None
@@ -177,11 +177,11 @@ def proxify_dtensor(x, name: str | None = None, history: None | tuple = None) ->
                     history=ProvenanceRecord(PseudoInst.BINARY_SUBSCR, inputs=[shape_attr, wrap_const(idx).provenance]),
                     constraint=CONSTRAINT.CONSTRAINABLE,
                 )
-                for idx, s in enumerate[int](t.shape)
+                for idx, s in enumerate[int](x.shape)
             )
         else:
             # NOTE Without tuple(t.shape) then the shape would be a torch.Size object
-            shape = tuple[int, ...](t.shape)
+            shape = tuple[int, ...](x.shape)
 
         return DTensorProxy(
             name,
