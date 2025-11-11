@@ -423,10 +423,6 @@ def test_exponential():
         assert_close(b, b_ref)
 
 
-def _cuda_capability(device: torch.device) -> tuple[int, int]:
-    return torch.cuda.get_device_capability(device)
-
-
 def _cuda_version_tuple() -> tuple[int, int] | None:
     if torch.version.cuda is None:
         return None
@@ -450,7 +446,7 @@ def _require_scaled_mm(fn):
 
 
 def _ensure_fp8_tensorwise(device: torch.device) -> None:
-    major, minor = _cuda_capability(device)
+    major, minor = torch.cuda.get_device_capability(device)
     if (major, minor) < (8, 9):
         pytest.skip("scaled_mm tensor-wise support requires SM89 or newer")
 
@@ -467,7 +463,7 @@ def _require_fp8_tensorwise(fn):
 
 def _require_fp8_rowwise(device: torch.device) -> None:
     _ensure_fp8_tensorwise(device)
-    major, minor = _cuda_capability(device)
+    major, minor = torch.cuda.get_device_capability(device)
     if (major, minor) < (9, 0):
         pytest.skip("row-wise scaled_mm requires SM90 or newer")
     cuda_version = _cuda_version_tuple()
