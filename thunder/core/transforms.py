@@ -2352,137 +2352,92 @@ def softmax_backward(primal, dim, input_dtype, g):
     return grad.to(input_dtype) if grad.dtype != input_dtype else grad
 
 
-@register_augmented_forward("torch.polar")
-def polar_aug_fwd(abs_: Proxy, angle: Proxy) -> VJPDual:
-    """Augmented forward for torch.polar.
-
-    For z = polar(abs_, angle) = abs_ * exp(i * angle), this function computes the primal output
-    and returns VJPDual(primal, residuals) where residuals are saved for the backward computation.
+def _polar_grad(abs_: Proxy, angle: Proxy) -> Proxy:
+    """Grad transform for torch.polar.
 
     Args:
         abs_ (Proxy): The magnitude tensor.
         angle (Proxy): The phase tensor.
 
     Returns:
-        VJPDual: Object containing the primal output and residuals needed for backward.
+        Proxy: The forward result (complex tensor).
     """
-    primal = ltorch.polar(abs_, angle)
-    # Save original shapes for handling broadcasting in backward
-    residuals = (abs_, angle, abs_.shape, angle.shape)
-    return VJPDual(primal, residuals)
-
-
-@register_backward("torch.polar")
-def polar_backward(
-    abs_: Proxy, angle: Proxy, abs_shape: tuple[int], angle_shape: tuple[int], g: Proxy
-) -> tuple[Proxy, Proxy]:
-    """
-    Backward for torch.polar.
-
-    For z = polar(abs_, angle) = abs_ * exp(i * angle), the gradients are:
-    - grad_abs = sign(abs_) * (grad_output.real * cos(angle) + grad_output.imag * sin(angle))
-    - grad_angle = abs_ * (grad_output.imag * cos(angle) - grad_output.real * sin(angle))
-
-    Args:
-        abs_ (Proxy): The magnitude tensor.
-        angle (Proxy): The phase tensor.
-        abs_shape (Tuple[int]): The shape of the magnitude tensor.
-        angle_shape (Tuple[int]): The shape of the phase tensor.
-        g (Proxy): The gradient tensor.
-
-    Returns:
-        Tuple[Proxy, Proxy]: The gradients of the magnitude and phase tensors.
-
-    Note: sign(abs_) handles PyTorch's convention of allowing negative magnitudes.
-    """
-
+    fwd = ltorch.polar(abs_, angle)
+    
+    g = get_grad(fwd)
+    
     cos_angle = ltorch.cos(angle)
     sin_angle = ltorch.sin(angle)
-
-    # Gradient w.r.t. abs_ (with sign to handle negative magnitudes)
-    # For non-negative magnitudes (which OpInfo generates), sign(abs_) should be 1
-    grad_abs_unsigned = g.real * cos_angle + g.imag * sin_angle
-    grad_abs = ltorch.sign(abs_) * grad_abs_unsigned
-
+    
+    # Gradient w.r.t. abs_
+    grad_abs = (g.real * cos_angle + g.imag * sin_angle)
+    grad_abs = sum_to(grad_abs, abs_.shape)
+    put_grad(abs_, grad_abs)
+    
     # Gradient w.r.t. angle
     grad_angle = abs_ * (g.imag * cos_angle - g.real * sin_angle)
-
-    # Handle broadcasting: reduce gradients back to original input shapes
-    grad_abs = sum_to(grad_abs, abs_shape)
-    grad_angle = sum_to(grad_angle, angle_shape)
-
-    return grad_abs, grad_angle
+    grad_angle = sum_to(grad_angle, angle.shape)
+    put_grad(angle, grad_angle)
+    
+    return fwd
 
 
-@register_augmented_forward("torch.view_as_complex")
-def view_as_complex_aug_fwd(input: Proxy) -> VJPDual:
-    """Augmented forward for torch.view_as_complex.
+register_grad("torch.polar", _polar_grad)
 
+
+def _view_as_complex_grad(input: Proxy) -> Proxy:
+    """Grad transform for torch.view_as_complex.
+    
     Converts a real tensor with last dimension 2 to a complex tensor.
     Input shape: (..., 2) -> Output shape: (...)
-
-    Args:
-        input (Proxy): The real tensor to convert to a complex tensor.
-
-    Returns:
-        VJPDual: Object containing the primal output and residuals needed for backward.
-    """
-    primal = ltorch.view_as_complex(input)
-    residuals = tuple()
-    return VJPDual(primal, residuals)
-
-
-@register_backward("torch.view_as_complex")
-def view_as_complex_backward(g: Proxy) -> Proxy:
-    """Backward for torch.view_as_complex.
-
+    
     Gradient flows from complex output back to real input with last dim 2.
     grad_input[..., 0] = grad_output.real
     grad_input[..., 1] = grad_output.imag
 
     Args:
-        g (Proxy): The gradient tensor.
+        input (Proxy): The real tensor to convert to a complex tensor.
 
     Returns:
-        Proxy: The gradient of the real tensor.
+        Proxy: The forward result (complex tensor).
     """
+    fwd = ltorch.view_as_complex(input)
+    
+    g = get_grad(fwd)
     grad_input = ltorch.view_as_real(g)
-    return grad_input
+    put_grad(input, grad_input)
+    
+    return fwd
 
 
-@register_augmented_forward("torch.view_as_real")
-def view_as_real_aug_fwd(input: Proxy) -> VJPDual:
-    """Augmented forward for torch.view_as_real.
+register_grad("torch.view_as_complex", _view_as_complex_grad)
 
+
+def _view_as_real_grad(input: Proxy) -> Proxy:
+    """Grad transform for torch.view_as_real.
+    
     Converts a complex tensor to a real tensor with extra dimension.
     Input shape: (...) -> Output shape: (..., 2)
+    
+    Gradient flows from real output with last dim 2 back to complex input.
+    grad_input = grad_output[..., 0] + i * grad_output[..., 1]
 
     Args:
         input (Proxy): The complex tensor to convert to a real tensor.
 
     Returns:
-        VJPDual: Object containing the primal output and residuals needed for backward.
+        Proxy: The forward result (real tensor with last dim 2).
     """
-    primal = ltorch.view_as_real(input)
-    residuals = tuple()
-    return VJPDual(primal, residuals)
-
-
-@register_backward("torch.view_as_real")
-def view_as_real_backward(g: Proxy) -> Proxy:
-    """Backward for torch.view_as_real.
-
-    Gradient flows from real output with last dim 2 back to complex input.
-    grad_input = grad_output[..., 0] + i * grad_output[..., 1]
-
-    Args:
-        g (Proxy): The gradient tensor.
-
-    Returns:
-        Proxy: The gradient of the complex tensor.
-    """
+    fwd = ltorch.view_as_real(input)
+    
+    g = get_grad(fwd)
     grad_input = ltorch.view_as_complex(g)
-    return grad_input
+    put_grad(input, grad_input)
+    
+    return fwd
+
+
+register_grad("torch.view_as_real", _view_as_real_grad)
 
 
 def iter_bound_symbols(bound_symbols):
