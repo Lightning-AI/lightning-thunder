@@ -17,9 +17,7 @@ import argparse
 import json
 import os
 import statistics
-import sys
 import time
-import warnings
 from looseversion import LooseVersion
 
 import torch
@@ -292,7 +290,7 @@ class InferenceBenchmark:
                     use_triton_kernel=True,
                     use_dynamic_per_tensor_scale=True,
                 )
-                quantize_(m_nvfp4, config=config)
+                quantize_(model, config=config)
         self.model = self._compile_model(model)
 
     @property
@@ -750,10 +748,10 @@ def main():
     )
     benchmark = InferenceBenchmark(config)
 
-    if args.enable_nvfp4:
-        msg = "NVFP4 kernels are not yet available. `--enable-nvfp4` runs only quantization but not benchmark"
-        warnings.warn(msg)
-        sys.exit(0)
+    # if args.enable_nvfp4:
+    #     msg = "NVFP4 kernels are not yet available. `--enable-nvfp4` runs only quantization but not benchmark"
+    #     warnings.warn(msg)
+    #     sys.exit(0)
 
     benchmark.run_benchmark()
     benchmark.print_results()
