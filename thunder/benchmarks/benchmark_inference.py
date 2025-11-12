@@ -765,6 +765,11 @@ Examples:
         help="[Experimental] Quantize nn.Linear to NVFP4. Note: nvfuser has not yet implemented nvfp4_matmul translator",
     )
     parser.add_argument(
+        "--quantize-linear",
+        action="store_true",
+        help="[Experimental] Quantize nn.Linear to NVFP4. Note: nvfuser has not yet implemented nvfp4_matmul translator",
+    )
+    parser.add_argument(
         "--enable-nv-linear",
         action="store_true",
         help="let nvfuser take care of linear and matmul, note that this might fail with distributed run. See: https://github.com/NVIDIA/Fuser/issues/4507",
