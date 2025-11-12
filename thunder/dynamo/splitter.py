@@ -30,7 +30,6 @@ from thunder.dynamo._trace_structured import _log_to_torch_trace
 if TYPE_CHECKING:
     from typing import Any
     from collections.abc import Callable
-    from typing import Any
 
 
 def _splitter(
