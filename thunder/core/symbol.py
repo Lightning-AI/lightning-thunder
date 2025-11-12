@@ -323,6 +323,11 @@ class Symbol:
 
             result = tree_unflatten(flat_results, spec)
 
+            # When using symbolic values, there may be duplicate prims.eq and prims.shape subsymbols that can be removed.
+            from thunder.core.transform_common import dce
+
+            subsymbols = dce(subsymbols, output=result)
+
             trace.pop_scope()
 
         cd = get_compile_data()
@@ -340,7 +345,6 @@ class Symbol:
                 return proxy
 
             result = tree_map(tag_tensorproxy_output_as_detached, result)
-
         bsym = self.bind(*args, **kwargs, output=result, subsymbols=subsymbols)
         symbols_list = trace.peek_scope()
 
