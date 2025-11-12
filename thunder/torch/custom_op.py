@@ -607,4 +607,4 @@ def _register_nvfuser_translator(
     from thunder.executors.torchex import _always_executable
 
     register_supported(symbol, translator_for_nvfuser, checker or _always_executable)
-    #register_supported(symbol.id, translator_for_nvfuser, checker or _always_executable)
+    # register_supported(symbol.id, translator_for_nvfuser, checker or _always_executable)
