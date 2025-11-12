@@ -586,7 +586,8 @@ def test_disable_params_and_buffer_check():
     assert len(check_bsyms) == 1  # We only have the check for input.
 
 
-def test_disable_params_check_thunderfx():
+@pytest.mark.parametrize("dynamic", (False, True))
+def test_disable_params_check_thunderfx(dynamic: bool):
     from thunder.dynamo import thunderfx
 
     class Model(torch.nn.Module):
@@ -607,7 +608,7 @@ def test_disable_params_check_thunderfx():
     model = Model()
     x = torch.randn(16, 16)
     # NOTE: The `ExtractionOnlyPrologueTransform` transform is applied by default on `thunderfx` path.
-    cmodel = thunderfx(model)
+    cmodel = thunderfx(model, dynamic=dynamic)
     _ = cmodel(x)
     tfn = cmodel._backend.subgraph_infos[0].thunder_compiled_fns[0]
     prologue_trc = thunder.last_prologue_traces(tfn)[-1]
@@ -622,7 +623,8 @@ def test_disable_params_check_thunderfx():
     # Currently we don't detect buffers on thunderfx path and hence don't remove
     # the corresponding checks from prologue.
     # This will fails when we detect buffers and remove their checks from prologue.
-    assert len(check_bsyms) == 2  # 1 check for input and 1 for buffer (and 0 for parameters)
+    # NOTE(crcrpar): The model above is free from `torch.SymInt` so all the tensor check are removed even dynamic=True
+    assert not check_bsyms
 
 
 def test_buffer_dtype_casting():
@@ -881,3 +883,30 @@ def test_cache_symbolic_values_grad_unsqueeze():
     expected.sum().backward()
     assert_close(actual, expected)
     assert_close(a.grad, a_ref.grad)
+
+
+@requiresCUDA
+def test_profile_transform():
+    from thunder.dev_utils.profile_transform import ProfileTransform
+
+    with torch.device("cuda"):
+        m = torch.nn.Sequential(
+            torch.nn.Linear(32, 128),
+            torch.nn.ReLU(),
+            torch.nn.Linear(128, 32),
+        )
+        inp = torch.randn(8, 32)
+
+    ptransform_fw = ProfileTransform(backward=False)
+    ptransform_bw = ProfileTransform(backward=True)
+    jm = thunder.jit(m, transforms=(ptransform_fw, ptransform_bw))
+    for _ in range(5):
+        jm(inp).sum().backward()
+
+    prof_fw = ptransform_fw.get_profile()
+    assert "aten::addmm" in prof_fw.key_averages().table(sort_by="self_device_time_total")
+    assert "torch.matmul" not in prof_fw.key_averages().table(sort_by="self_device_time_total")
+
+    prof_bw = ptransform_bw.get_profile()
+    assert "torch.matmul" in prof_bw.key_averages().table(sort_by="self_device_time_total")
+    assert "aten::addmm" not in prof_bw.key_averages().table(sort_by="self_device_time_total")

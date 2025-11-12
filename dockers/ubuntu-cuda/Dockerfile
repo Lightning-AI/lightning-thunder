@@ -13,7 +13,7 @@
 # limitations under the License.
 
 ARG UBUNTU_VERSION="24.04"
-ARG CUDA_VERSION="12.6.3"
+ARG CUDA_VERSION="12.8.1"
 # select devel | runtime
 ARG IMAGE_TYPE="devel"
 
@@ -21,11 +21,10 @@ FROM nvidia/cuda:${CUDA_VERSION}-${IMAGE_TYPE}-ubuntu${UBUNTU_VERSION}
 
 ARG CUDNN_VERSION="9.8.0.87"
 ARG CUDNN_FRONTEND_VERSION="1.10.0"
-ARG PYTHON_VERSION="3.10"
-ARG TORCH_VERSION="2.2.1"
-ARG TRITON_VERSION="2.2.0"
+ARG PYTHON_VERSION="3.12"
+ARG TORCH_VERSION="2.8.0"
+ARG TRITON_VERSION="3.4.0"
 ARG TORCH_INSTALL="stable"
-ARG MAX_ALLOWED_NCCL=2.26.0
 
 SHELL ["/bin/bash", "-c"]
 # https://techoverflow.net/2019/05/18/how-to-fix-configuring-tzdata-interactive-input-when-building-docker-images/
@@ -41,10 +40,6 @@ ENV \
 RUN \
     apt-get update -qq --fix-missing && \
     CUDA_VERSION_MM=${CUDA_VERSION%.*} && \
-    NCCL_VER=$(dpkg -s libnccl2 | grep '^Version:' | awk -F ' ' '{print $2}' | awk -F '-' '{print $1}' | grep -ve '^\s*$') && \
-    echo "NCCL version found: $NCCL_VER" && \
-    TO_INSTALL_NCCL=$(echo -e "$MAX_ALLOWED_NCCL\n$NCCL_VER" | sort -V | head -n1)-1+cuda${CUDA_VERSION_MM} && \
-    echo "NCCL version to install: $TO_INSTALL_NCCL" && \
     apt-get install -y --no-install-recommends --allow-downgrades --allow-change-held-packages \
         build-essential \
         ca-certificates \
@@ -60,21 +55,23 @@ RUN \
         liblapack-dev \
         openmpi-bin \
         graphviz \
-        libnccl2=$TO_INSTALL_NCCL \
-        libnccl-dev=$TO_INSTALL_NCCL \
+	llvm-dev \
+        libnccl2 \
+        libnccl-dev \
+        libzstd-dev \
         ssh \
     && \
     # Install python
     add-apt-repository ppa:deadsnakes/ppa && \
     apt-get install -y \
         python${PYTHON_VERSION} \
-        python${PYTHON_VERSION}-distutils \
         python${PYTHON_VERSION}-dev \
     && \
     update-alternatives --install /usr/bin/python${PYTHON_VERSION%%.*} python${PYTHON_VERSION%%.*} /usr/bin/python${PYTHON_VERSION} 1 && \
     update-alternatives --install /usr/bin/python python /usr/bin/python${PYTHON_VERSION} 1 && \
+    echo -e "[global]\nbreak-system-packages = true" > /etc/pip.conf && \
     curl https://bootstrap.pypa.io/get-pip.py | python${PYTHON_VERSION} && \
-    pip install "numpy >=1.23.0,<2" && \
+    pip install numpy && \
     # Cleaning
     apt-get autoremove -y && \
     apt-get clean && \

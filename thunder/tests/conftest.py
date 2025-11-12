@@ -1,13 +1,16 @@
+import importlib
+import importlib.util
+
+import os
 import pytest
 import pytest_benchmark
 from thunder.dynamo.compiler_graph_benchmark import GRAPH_BY_GRAPH_BENCHMARK_PARAMS_KEYS
 
 import torch
 
-try:
-    import nvfuser
-except ImportError:
-    nvfuser = None
+nvfuser = None
+if importlib.util.find_spec("nvfuser_direct") is None and importlib.util.find_spec("nvfuser") is not None:
+    nvfuser = importlib.import_module("nvfuser")
 
 
 @pytest.fixture(autouse=True)
@@ -77,3 +80,14 @@ def pytest_collection_modifyitems(items):
 
 def pytest_addoption(parser):
     parser.addoption("--gpu-mem-limit", type=float)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def turn_off_tf32():
+    old = os.environ.get("NVIDIA_TF32_OVERRIDE")
+    os.environ["NVIDIA_TF32_OVERRIDE"] = "0"
+    yield
+    if old is not None:
+        os.environ["NVIDIA_TF32_OVERRIDE"] = old
+    else:
+        os.environ.pop("NVIDIA_TF32_OVERRIDE", None)

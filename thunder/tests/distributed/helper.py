@@ -2,6 +2,7 @@ from __future__ import annotations
 from functools import partial
 from functools import wraps
 from typing import ClassVar, TYPE_CHECKING
+import importlib
 import math
 import os
 import sys
@@ -13,10 +14,7 @@ from thunder.core import devices
 from thunder.tests.framework import TorchExecutor, nvFuserExecutor
 from thunder.tests.make_tensor import make_tensor
 
-try:
-    import expecttest
-    import hypothesis
-except ImportError:
+if importlib.util.find_spec("expecttest") is None or importlib.util.find_spec("hypothesis") is None:
     raise ImportError(
         "Required packages of `expecttest` and/or `hypothesis` are missing. "
         "Install them with `pip install expecttest hypothesis`"
@@ -189,7 +187,13 @@ if torch.distributed.is_available():
 
             local_rank = self.rank % torch.cuda.device_count()
             torch.cuda.set_device(local_rank)
+
+            # nvFuser Multi-GPU expects these environment variables to be set
             os.environ["LOCAL_RANK"] = str(local_rank)
+            # We only have single node tests, so `LOCAL_WORLD_SIZE` is the same as `WORLD_SIZE`
+            os.environ["LOCAL_WORLD_SIZE"] = str(self.world_size)
+            os.environ["RANK"] = str(self.rank)
+            os.environ["WORLD_SIZE"] = str(self.world_size)
 
             torch.distributed.barrier()
             try:

@@ -525,3 +525,19 @@ def test_softmax_stacklevel():
     jfn = thunder.jit(fn)
     a = torch.randn(5, 5, requires_grad=True)  # trigger grad transform
     assert_close(fn(a), jfn(a))
+
+
+def test_div_exact():
+    # Test that division with integer inputs and requires_grad tensor output works correctly
+    def fn(a, b, c):
+        indices = torch.div(a, b, rounding_mode="trunc")
+        # this would throw an error if indices are not ints
+        return c[indices]
+
+    jfn = thunder.jit(fn)
+    a = torch.randint(1, 5, (5,))
+    b = torch.ones(5, dtype=torch.int32)
+    c = torch.randn(5, 5, requires_grad=True)
+    result_eager = fn(a, b, c)
+    result_jit = jfn(a, b, c)
+    assert_close(result_eager, result_jit)

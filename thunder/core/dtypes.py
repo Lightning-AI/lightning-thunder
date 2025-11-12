@@ -48,6 +48,8 @@ from thunder.core.baseutils import NumberProxyInterface, TensorProxyInterface
 
 _abstract_classes = set()
 
+all_dtypes = set()
+
 
 # TODO consider bytes per element to better identify low precision dtypes
 class dtype:
@@ -66,6 +68,7 @@ class dtype:
         self._shortname = shortname
         self._bytes = bytes
         self._is_weak = is_weak
+        all_dtypes.add(self)
 
     # NOTE: these are properties so they appear as read-only
     @property
@@ -77,17 +80,19 @@ class dtype:
         return self._bytes
 
     @property
+    def bits(self):
+        return int(8 * self._bytes)
+
+    @property
     def is_weak(self):
         return self._is_weak
 
     def shortname(self):
-        return f"{self._shortname}{8 * self._bytes}{f'_{self._variant}' if self._variant else ''}"
+        return f"{self._shortname}{self.bits}{f'_{self._variant}' if self._variant else ''}"
 
     @property
     def full_name(self):
-        return (
-            f"{self._name}{8 * self._bytes}{f'_{self._variant}' if self._variant else ''}{'_' if self._is_weak else ''}"
-        )
+        return f"{self._name}{self.bits}{f'_{self._variant}' if self._variant else ''}{'_' if self._is_weak else ''}"
 
     # TODO Fix name printing
     def __repr__(self):
@@ -147,6 +152,10 @@ uint8_ = unsignedinteger("uint", "ui", bytes=1, is_weak=True)
 uint64 = unsignedinteger("uint", "ui", bytes=8, is_weak=False)
 uint64_ = unsignedinteger("uint", "ui", bytes=8, is_weak=True)
 
+# TODO: Update _elementwise_exact_promotion_table to handle uint64 and uint64_
+all_dtypes.discard(uint64)
+all_dtypes.discard(uint64_)
+
 
 class bool_(exact):
     """Base class for the boolean dtype: bool8."""
@@ -179,6 +188,8 @@ class floating(inexact):
 
 bfloat16 = floating("bfloat", "bf", bytes=2, is_weak=False)
 bfloat16_ = floating("bfloat", "bf", bytes=2, is_weak=True)
+float4_e2m1fn_x2 = floating("float", "f", bytes=0.5, is_weak=False, variant="e2m1fn_x2")
+float4_e2m1fn_x2_ = floating("float", "f", bytes=0.5, is_weak=True, variant="e2m1fn_x2")
 float8_e5m2 = floating("float", "f", bytes=1, is_weak=False, variant="e5m2")
 float8_e5m2_ = floating("float", "f", bytes=1, is_weak=True, variant="e5m2")
 float8_e5m2fnuz = floating("float", "f", bytes=1, is_weak=False, variant="e5m2fnuz")
@@ -214,44 +225,6 @@ complex128_ = complexfloating("complex", "c", bytes=16, is_weak=True)
 
 _abstract_classes.update((dtype, exact, inexact))
 
-all_dtypes = {
-    bool8,
-    bool8_,
-    uint8,
-    uint8_,
-    int8,
-    int8_,
-    int16,
-    int16_,
-    int32,
-    int32_,
-    int64,
-    int64_,
-    bfloat16,
-    bfloat16_,
-    float8_e5m2,
-    float8_e5m2_,
-    float8_e5m2fnuz,
-    float8_e5m2fnuz_,
-    float8_e4m3fn,
-    float8_e4m3fn_,
-    float8_e4m3fnuz,
-    float8_e4m3fnuz_,
-    float8_e8m0fnu,
-    float8_e8m0fnu_,
-    float16,
-    float16_,
-    float32,
-    float32_,
-    float64,
-    float64_,
-    complex32,
-    complex32_,
-    complex64,
-    complex64_,
-    complex128,
-    complex128_,
-}
 
 all_numbertypes = {bool, int, float, complex}
 
@@ -266,7 +239,7 @@ _numbertype_to_dtype_map = {
 
 boolean_dtypes = {bool8, bool8_, bool}
 
-integer_dtypes = {d for d in all_dtypes if isinstance(d, exact)} | {bool, int}
+integer_dtypes = {d for d in all_dtypes if isinstance(d, exact)} | {bool, int} | {uint64, uint64_}
 
 nonboolean_integer_dtypes = {d for d in integer_dtypes if (not isinstance(d, bool_) and d is not bool)}
 
@@ -291,7 +264,7 @@ inexact_dtypes = float_dtypes | complex_dtypes
 
 weak_dtypes = {d for d in all_dtypes if d.is_weak} | all_numbertypes
 
-strong_dtypes = {d for d in all_dtypes if not d.is_weak}
+strong_dtypes = {d for d in all_dtypes if not d.is_weak} | {uint64}
 
 
 def is_weak_dtype(dtype):
@@ -410,27 +383,12 @@ def corresponding_complex_dtype(dtype):
     return _real_to_complex_dtype_map[dtype]
 
 
+_name_to_dtype_map = {dtype.full_name: dtype for dtype in all_dtypes}
+_name_to_dtype_map.update({uint64.full_name: uint64, uint64_.full_name: uint64_})
 _strong_dtype_to_weak_dtype_map = {
-    bool8: bool8_,
-    uint8: uint8_,
-    uint64: uint64_,
-    int8: int8_,
-    int16: int16_,
-    int32: int32_,
-    int64: int64_,
-    bfloat16: bfloat16_,
-    float8_e5m2: float8_e5m2_,
-    float8_e5m2fnuz: float8_e5m2fnuz_,
-    float8_e4m3fn: float8_e4m3fn_,
-    float8_e4m3fnuz: float8_e4m3fnuz_,
-    float8_e8m0fnu: float8_e8m0fnu_,
-    float16: float16_,
-    float32: float32_,
-    float64: float64_,
-    complex32: complex32_,
-    complex64: complex64_,
-    complex128: complex128_,
+    dtype: _name_to_dtype_map[f"{dtype.full_name}_"] for dtype in all_dtypes if not dtype.is_weak
 }
+_strong_dtype_to_weak_dtype_map.update({uint64: uint64_})
 
 _weak_dtype_to_strong_dtype_map = {v: k for k, v in _strong_dtype_to_weak_dtype_map.items()}
 _weak_dtype_to_strong_dtype_map.update(
@@ -439,6 +397,7 @@ _weak_dtype_to_strong_dtype_map.update(
         int: int64,
         float: float32,
         complex: complex64,
+        uint64_: uint64,
     }
 )
 
@@ -559,41 +518,21 @@ _thunder_to_torch_dtype_map = {
     complex: torch.complex64,
     bool8_: torch.bool,
     bool8: torch.bool,
-    uint8_: torch.uint8,
-    uint8: torch.uint8,
-    int8_: torch.int8,
-    int8: torch.int8,
-    int16_: torch.int16,
-    int16: torch.int16,
-    int32_: torch.int32,
-    int32: torch.int32,
-    int64_: torch.int64,
-    int64: torch.int64,
-    bfloat16_: torch.bfloat16,
-    bfloat16: torch.bfloat16,
-    float8_e5m2: torch.float8_e5m2,
-    float8_e5m2_: torch.float8_e5m2,
-    float8_e5m2fnuz: torch.float8_e5m2fnuz,
-    float8_e5m2fnuz_: torch.float8_e5m2fnuz,
-    float8_e4m3fn: torch.float8_e4m3fn,
-    float8_e4m3fn_: torch.float8_e4m3fn,
-    float8_e4m3fnuz: torch.float8_e4m3fnuz,
-    float8_e4m3fnuz_: torch.float8_e4m3fnuz,
-    float8_e8m0fnu: torch.float8_e8m0fnu,
-    float8_e8m0fnu_: torch.float8_e8m0fnu,
-    float16_: torch.float16,
-    float16: torch.float16,
-    float32_: torch.float32,
-    float32: torch.float32,
-    float64_: torch.float64,
-    float64: torch.float64,
-    complex32_: torch.complex32,
-    complex32: torch.complex32,
-    complex64_: torch.complex64,
-    complex64: torch.complex64,
-    complex128_: torch.complex128,
-    complex128: torch.complex128,
 }
+
+_thunder_to_torch_dtype_map.update(
+    {
+        dtype: getattr(torch, dtype.full_name.rstrip("_"))
+        for dtype in all_dtypes
+        if hasattr(torch, dtype.full_name.rstrip("_"))
+    }
+)
+_thunder_to_torch_dtype_map.update(
+    {
+        uint64: torch.uint64,
+        uint64_: torch.uint64,
+    }
+)
 
 _torch_to_thunder_dtype_map = {
     v: k

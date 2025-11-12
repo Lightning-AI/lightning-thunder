@@ -64,7 +64,7 @@ def _class_indices_forward(
     BUFFER_DTYPE: tl.constexpr,
     BLOCK: tl.constexpr,
 ):
-    buffer_dtype = _DTYPE2TRITON[BUFFER_DTYPE.value]
+    buffer_dtype = BUFFER_DTYPE
     row = tl.program_id(0)
     cols = tl.arange(0, BLOCK)
     logit_start_ptrs = LOGITS + row * N
@@ -168,7 +168,7 @@ def _class_probs_forward(
     BUFFER_DTYPE: tl.constexpr,
     BLOCK: tl.constexpr,
 ):
-    buffer_dtype = _DTYPE2TRITON[BUFFER_DTYPE.value]
+    buffer_dtype = BUFFER_DTYPE
     row = tl.program_id(0)
     cols = tl.arange(0, BLOCK)
     logit_start_ptrs = LOGITS + row * N
@@ -353,7 +353,7 @@ def _backward(
     BUFFER_DTYPE: tl.constexpr,
     BLOCK: tl.constexpr,
 ):
-    buffer_dtype = _DTYPE2TRITON[BUFFER_DTYPE.value]
+    buffer_dtype = BUFFER_DTYPE
     row = tl.program_id(0)
     start_n = tl.program_id(1)
     cols = tl.arange(0, BLOCK)
@@ -469,7 +469,7 @@ class CrossEntropy(torch.autograd.Function):
             CLASS_INDICES=(indices.dtype == torch.int64),
             LABEL_SMOOTHING=(label_smoothing > 0.0),
             IGNORE_INDEX=ignore_index,
-            BUFFER_DTYPE=buffer_dtype_enum,
+            BUFFER_DTYPE=_DTYPE2TRITON[buffer_dtype_enum],
         )
         # save for backward
         ctx.save_for_backward(neg_logprobs, indices, weights_buffer)
@@ -532,7 +532,7 @@ class CrossEntropy(torch.autograd.Function):
             CLASS_INDICES=(indices.dtype == torch.int64),
             LABEL_SMOOTHING=(ctx.label_smoothing > 0.0),
             IGNORE_INDEX=ctx.ignore_index,
-            BUFFER_DTYPE=buffer_dtype,
+            BUFFER_DTYPE=_DTYPE2TRITON[buffer_dtype],
         )
         if ctx.reduction == "mean":
             din /= ctx.denom

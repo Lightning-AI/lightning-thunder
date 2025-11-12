@@ -471,10 +471,7 @@ def elementwise_unary_generator(
     )
 
     for shape, strides, offset in strided_cases:
-        a = make_arg(
-            500,
-        ).as_strided(shape, strides, offset)
-        a = a.detach().requires_grad_(requires_grad)
+        a = make_arg(500).as_strided(shape, strides, offset).clone().detach().requires_grad_(requires_grad)
         yield SampleInput(a)
 
 
@@ -2969,6 +2966,7 @@ addcdiv_opinfo = OpInfo(
         DecorateInfo(
             pytest.mark.xfail,
             "test_vjp_correctness",
+            devicetypes=(devices.DeviceType.CUDA,),
         ),
     ),
 )
@@ -3681,7 +3679,7 @@ def cat_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
     # Tests concatenating with a tensor broadcast along the concatenation dimension
     a = make((5,))
-    b = make((1,)).expand((5,))
+    b = make((1,)).expand((5,)).clone()
     yield SampleInput(a, b, dim=0)
 
 
@@ -3832,10 +3830,6 @@ expand_opinfo = OpInfo(
     sample_input_generator=expand_sample_generator,
     error_input_generator=expand_error_generator,
     torch_reference=torch.Tensor.expand,
-    test_directives=(
-        # vjp not yet implemented
-        DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
-    ),
 )
 shape_ops.append(expand_opinfo)
 
@@ -3880,10 +3874,6 @@ expand_as_opinfo = OpInfo(
     sample_input_generator=expand_as_sample_generator,
     error_input_generator=expand_as_error_generator,
     torch_reference=torch.Tensor.expand_as,
-    test_directives=(
-        # vjp not yet implemented
-        DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
-    ),
 )
 shape_ops.append(expand_as_opinfo)
 
@@ -4319,12 +4309,6 @@ getitem_opinfo = OpInfo(
         ),
         DecorateInfo(pytest.mark.xfail, "test_vjp_correctness", active_if=IS_WINDOWS),
         DecorateInfo(pytest.mark.xfail, "test_phantom_grad_vs_torch_consistency", active_if=IS_WINDOWS),
-        # TODO: https://github.com/Lightning-AI/lightning-thunder/issues/841
-        # check_slice_value(p0, slice(1, 3, 1)) in prologue trace fails
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_vjp_correctness",
-        ),
     ),
 )
 shape_ops.append(getitem_opinfo)
@@ -6241,6 +6225,20 @@ cumsum_opinfo = OpInfo(
             "test_core_vs_torch_consistency",
             dtypes=(datatypes.float16,),
             devicetypes=(devices.DeviceType.CPU,),
+        ),
+        # nvfuserex follows pytorch convention to run cumsum in reduced
+        # precision, this causes opinfo tests numerical mismatch for bf16/fp16
+        # NOTE: Even though both nvfuserex and torch uses reduced precision
+        # math, because the reduction order is not the same due to
+        # implementation, error would accumulate.
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=1e-1, rtol=1e-1)),
+            "test_core_vs_torch_consistency",
+            dtypes=(
+                datatypes.bfloat16,
+                datatypes.float16,
+            ),
+            executors=("nvfuser",),
         ),
     ),
 )
@@ -9529,7 +9527,6 @@ def nll_loss_sample_generator(op, device, dtype, requires_grad, **kwargs):
         if target.ndim != 0:
             # sprinkle ignore_index in the target, verify correctness, see issue 1744.
             target = torch.where(make(target_shape, low=0.0, high=1.0, requires_grad=False) > 0.3, target, ignore_index)
-
         yield SampleInput(
             a,
             target=target,
@@ -9539,13 +9536,16 @@ def nll_loss_sample_generator(op, device, dtype, requires_grad, **kwargs):
         )
 
     # Test empty input and target tensor short-circuit
-    for reduction_str, ignore_index in itertools.product(reduction_options, ignore_index_options):
-        yield SampleInput(
-            torch.tensor([], device=device, dtype=dtype),
-            torch.tensor([], device=device, dtype=torch.long),
-            ignore_index=ignore_index,
-            reduction=reduction_str,
-        )
+    # PyTorch disallows these inputs as of
+    # https://github.com/pytorch/pytorch/pull/161412
+    # so we drop this shape
+    # for reduction_str, ignore_index in itertools.product(reduction_options, ignore_index_options):
+    #     yield SampleInput(
+    #         torch.tensor([], device=device, dtype=dtype),
+    #         torch.tensor([], device=device, dtype=torch.long),
+    #         ignore_index=ignore_index,
+    #         reduction=reduction_str,
+    #     )
 
 
 def nll_loss_error_generator(op, device, dtype=torch.float32, **kwargs):
@@ -9751,9 +9751,9 @@ def interpolate_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # All possible combinations to test that dependencies between dimensions are captured correctly.
     # Since specifying size will call the scale_factor path, we do not explicitly test scale_factor
     # in the loop below.
-    for b, c, l, dim in itertools.product(batch, channels, dim_options, n_spatial_dims):
-        for size in itertools.product(dim_options[l], repeat=dim):
-            spatial_dims = (l,) * dim
+    for b, c, dim_key, dim in itertools.product(batch, channels, dim_options, n_spatial_dims):
+        for size in itertools.product(dim_options[dim_key], repeat=dim):
+            spatial_dims = (dim_key,) * dim
             a_shape = b + c + spatial_dims
 
             yield SampleInput(make(a_shape), size=size)
@@ -9761,9 +9761,9 @@ def interpolate_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
     # mode = "bilinear" supports only 4D inputs in PyTorch, so 2 spatial dimensions
     n_spatial_dims_bilinear = (2,)
-    for b, c, l, dim in itertools.product(batch, channels, dim_options, n_spatial_dims_bilinear):
-        for size in itertools.product(dim_options[l], repeat=dim):
-            spatial_dims = (l,) * dim
+    for b, c, dim_key, dim in itertools.product(batch, channels, dim_options, n_spatial_dims_bilinear):
+        for size in itertools.product(dim_options[dim_key], repeat=dim):
+            spatial_dims = (dim_key,) * dim
             a_shape = b + c + spatial_dims
 
             yield SampleInput(make(a_shape), size=size, mode="bilinear")
@@ -9850,20 +9850,6 @@ interpolate_opinfo = OpInfo(
     error_input_generator=interpolate_error_generator,
     torch_reference=torch.nn.functional.interpolate,
     dtypes=(datatypes.floating,),
-    test_directives=(
-        # PyTorch does not support CPU Half upsample used in interpolate
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_core_vs_torch_consistency",
-            dtypes=(datatypes.float16,),
-            devicetypes=(devices.DeviceType.CPU,),
-        ),
-        # This should be fixed now; TODO re-enable and test
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_vjp_correctness",
-        ),
-    ),
 )
 nn_ops.append(interpolate_opinfo)
 

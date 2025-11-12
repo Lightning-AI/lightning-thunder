@@ -16,7 +16,9 @@ from hypothesis import strategies as st
 from hypothesis import given, settings
 from hypothesis import HealthCheck
 import copy
+from functools import partial
 
+import thunder
 from thunder import dtypes
 from thunder.dynamo import thunderfx
 from thunder.dynamo.utils import CompilerType
@@ -153,6 +155,29 @@ def test_basic_splitter(executor, device: str, dtype: dtypes.dtype, dynamic: boo
     )  # Verify that we had a split because we detected an `automatic registered operator`
     targets = (node.target for node in backend.subgraph_infos[0].split_graph_module.graph.nodes)
     assert any(target.startswith("thunder_") for target in targets)  # Verify that the submodules have name `thunder_*`
+
+
+@instantiate(
+    dtypes=NOTHING,
+    decorators=(
+        pytest.mark.skipif(
+            condition=IS_WINDOWS,
+            reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
+        ),
+    ),
+)
+def test_fallback_to_inductor(executor, device, dtype):
+    x = torch.randn(3, 3, device=device, dtype=dtype)
+
+    def func(x):
+        return x.sinc().cos().sinc().sinc()
+
+    cfunc = thunderfx(func)
+    with patch("torch._inductor.compile", side_effect=torch._inductor.compile) as mock_inductor:
+        cfunc(x)
+
+    # Once for sinc() and once for sinc().sinc()
+    assert mock_inductor.call_count == 2
 
 
 @instantiate(
@@ -653,8 +678,6 @@ def test_empty_autocast():
 # It must be located in the same folder as the test file to ensure the configuration.
 @requiresCUDA
 def test_ThunderCompilerGraphBenchmarking_LitGTMLPBenchmark(benchmark):
-    import thunder
-
     backend = ThunderCompilerGraphBenchmarking(
         benchmark, executors={"thunder": thunder.jit, "inductor": torch.compile, "eager": None}
     )
@@ -687,8 +710,6 @@ def test_ThunderCompilerGraphBenchmarking_groupby(benchmark):
             x = torch.sinc(y) + torch.cos(x)
             return x
 
-    import thunder
-
     backend = ThunderCompilerGraphBenchmarking(benchmark, executors={"thunder": thunder.jit, "inductor": torch.compile})
     compiled = torch.compile(backend=backend)(f)
     x = torch.ones(2).cuda()
@@ -700,9 +721,6 @@ def test_ThunderCompilerGraphBenchmarking_groupby(benchmark):
 def test_ThunderCompilerGraphBenchmarking_post_graph(benchmark):
     def f(x):
         return torch.sin(x)
-
-    import thunder
-    from functools import partial
 
     x = torch.randn((2, 2), device="cuda").requires_grad_()
     post_gp = partial(torch.cuda.make_graphed_callables, num_warmup_iters=1, allow_unused_input=True)
@@ -841,7 +859,40 @@ def test_checkpoint_converter_submodule():
     assert submodule is not None
     for n in submodule.graph.nodes:
         if n.op == "call_function":
-            assert isinstance(n.target, Symbol)
+            assert isinstance(n.target, Symbol) or callable(n.target)
+
+
+@requiresCUDA
+@pytest.mark.parametrize("op", [torch.sin, torch.sinc])
+def test_checkpoint_memory_use(op):
+    import torch.utils.checkpoint as checkpoint
+
+    def fn(x):
+        return op(op(op(op(x))))
+
+    def checkpoint_fn(x):
+        return checkpoint.checkpoint(fn, x, use_reentrant=False)
+
+    x = torch.randn((128, 128), device="cuda", requires_grad=True)
+    jfn = thunderfx(checkpoint_fn)
+
+    # Warmup
+    jfn(x)
+
+    torch.cuda.reset_peak_memory_stats()
+    initial_mem = torch.cuda.memory_allocated()
+
+    y = jfn(x)
+    peak_mem_usage = torch.cuda.max_memory_allocated() - initial_mem
+
+    y_ref = fn(x)
+    torch.testing.assert_close(y, y_ref)
+
+    assert peak_mem_usage == y.nbytes
+    if op == torch.sinc:
+        # Make sure the checkpointed region falled back to PyTorch
+        sinfo = jfn._backend.subgraph_infos[-1]
+        assert any(n.name.startswith("inductor") for n in sinfo.split_graph_module.graph.nodes)
 
 
 @instantiate(
@@ -946,9 +997,8 @@ def test_deepcopy_graph_module():
     gm = torch.fx.symbolic_trace(m)
     n = gm.graph.find_nodes(op="output")
     gm.graph.erase_node(n[0])
-    import thunder
 
-    _, subgraph_info = thunder.dynamo.splitter._splitter(gm, thunder.jit, thunder.jit, [])
+    _, subgraph_info = thunder.dynamo.splitter._splitter(gm, thunder.jit)
     original_split_gm = subgraph_info.original_split_graph_module.split_graph_module
     assert original_split_gm.graph.find_nodes(op="output")
     for subm in original_split_gm.children():
@@ -962,18 +1012,19 @@ def test_deepcopy_graph_module():
 @instantiate(
     dtypes=NOTHING,
     executors=[DynamoThunderExecutor],
-    decorators=(pytest.mark.parametrize("use_pytest_benchmark", (True, False), ids=("benchmark", "repro")),),
+    decorators=(
+        pytest.mark.parametrize("use_pytest_benchmark", (True, False), ids=("benchmark", "repro")),
+        pytest.mark.skipif(
+            condition=IS_WINDOWS,
+            reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
+        ),
+    ),
 )
 @given(file_indices=st.lists(st.integers(min_value=0, max_value=2), min_size=2, max_size=2, unique=True))
 @settings(max_examples=1, deadline=None)
 def test_dynamo_reproducer_split(
     executor, device: str, dtype: dtypes.dtype, use_pytest_benchmark, tmp_path, file_indices
 ):
-    if IS_WINDOWS and use_pytest_benchmark:
-        pytest.skip(
-            "Skipping on Windows because this uses torch.compile (see https://github.com/Lightning-AI/lightning-thunder/issues/1326)"
-        )
-
     x = torch.ones(2, 2, device=device, dtype=dtype, requires_grad=True)
 
     def func(x):
@@ -1004,6 +1055,22 @@ def test_dynamo_reproducer_split(
 
 @requiresCUDA
 def test_thunderfx():
+    from thunder import last_prologue_traces
+    from thunder.executors.pythonex import check_tensor_shape_and_metadata
+
+    def _get_last_prologue_traces(thunderfx_output):
+        last_prologue_trcs = []
+        for sinfo in thunderfx_output._backend.subgraph_infos:
+            for th_fqn in sinfo.thunder_compiled_fns:
+                trcs = last_prologue_traces(th_fqn)
+                if trcs != []:
+                    last_prologue_trcs.append(trcs[-1])
+                del trcs
+        return last_prologue_trcs
+
+    def _has_tensor_shape_and_metadata_check(prologue_trc):
+        return any(bsym.sym is check_tensor_shape_and_metadata for bsym in prologue_trc.bound_symbols)
+
     def foo(x):
         return torch.sin(x) + torch.cos(x)
 
@@ -1013,6 +1080,9 @@ def test_thunderfx():
     thunder_compiled_fns = cfoo._backend.subgraph_infos[0].thunder_compiled_fns
     assert len(thunder_compiled_fns) == 1
     assert last_traces(thunder_compiled_fns[0])
+    assert not any(
+        _has_tensor_shape_and_metadata_check(prologue_trc) for prologue_trc in _get_last_prologue_traces(cfoo)
+    )
 
     from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform
 
@@ -1022,6 +1092,7 @@ def test_thunderfx():
     assert len(thunder_compiled_fns) == 1
     trc = last_traces(thunder_compiled_fns[-1])[-1]
     assert any(bsym.sym.id == "nvtx_range_push" for bsym in trc.bound_symbols)
+    assert any(_has_tensor_shape_and_metadata_check(prologue_trc) for prologue_trc in _get_last_prologue_traces(cfoo))
 
     def fn(x, w):
         return x @ w
@@ -1033,6 +1104,9 @@ def test_thunderfx():
     cfn(x, w)
     trc = cfn.last_traces[-1]
     assert any(bsym.sym.name == "nvFusion0" for bsym in trc.bound_symbols)
+    assert not any(
+        _has_tensor_shape_and_metadata_check(prologue_trc) for prologue_trc in _get_last_prologue_traces(cfn)
+    )
 
 
 def test_thunderfx_last_traces():
@@ -1208,6 +1282,10 @@ def test_fxreport(executor, device: str, dtype: dtypes.dtype, use_benchmark, tmp
         run_script(file, cmd)
 
 
+@pytest.mark.skipif(
+    condition=IS_WINDOWS,
+    reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
+)
 def test_leak_on_unsupported_thunder_operator():
     # This test is to check the fix for a previous leak
     # which was caused by holding onto the
@@ -1271,6 +1349,7 @@ def test_thunder_specific_reports(tmp_path, file_indices):
         run_script(file, cmd)
 
 
+@pytest.mark.skip(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2546")
 @requiresCUDA
 def test_WallTime_KernelTime():
     from nvfuser import FusionDefinition, DataType
@@ -1381,6 +1460,7 @@ def test_reports_repro(tmp_path, file_indices):
         run_script(file, cmd)
 
 
+@pytest.mark.skip(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2546")
 @requiresCUDA
 @given(file_indices=st.lists(st.integers(min_value=0, max_value=4), min_size=1, max_size=1, unique=True))
 @settings(max_examples=2, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
@@ -1596,7 +1676,7 @@ def test_aot_optimize():
         pfoo(x)
 
 
-def test_spliter_bwd():
+def test_splitter_bwd():
     def fn(x, idx, val):
         x = x.clone()
         x[idx] = val
@@ -1608,7 +1688,8 @@ def test_spliter_bwd():
     val = torch.randn(nz, dtype=torch.bfloat16, requires_grad=True)
 
     cfn = thunderfx(fn)
-    cfn(x, idx, val)
+    with pytest.warns(match="Dynamic output shape operator"):
+        cfn(x, idx, val)
     reason = cfn._backend.subgraph_infos[0].split_reasons
     assert len(reason) == 1
     assert "Failed while running meta for node with name: setitem" in reason[0].info
@@ -1687,13 +1768,77 @@ def test_thunderfx_with_intermediate_output_marked_as_non_differentiable():
         torch.testing.assert_close(org_m.fc.weight.grad, thunder_m.fc.weight.grad)
 
 
-def test_thunderfx_node_with_no_example_value():
+def test_thunderfx_tolist():
     def test_fn(x):
         y = x + 10
         z = y.tolist()[0]
         return z + 2
 
     x = torch.tensor([1, 2, 3, 4, 5])
-    actual = thunderfx(test_fn)(x)
+    # Without this patch, tolist() would cause graph break. See https://github.com/pytorch/pytorch/pull/163807
+    with torch._dynamo.config.patch(capture_scalar_outputs=True):
+        actual = thunderfx(test_fn)(x)
     expected = test_fn(x)
     torch.testing.assert_close(actual, expected)
+
+
+def test_thunderfx_tolist_autocast():
+    def fn(x):
+        with torch.autocast("cpu"):
+            y = x + 10
+            z = y.tolist()[0]
+            return z + 2
+
+    x = torch.tensor([1, 2, 3, 4, 5])
+    # Without this patch, tolist() would cause graph break. See https://github.com/pytorch/pytorch/pull/163807
+    with torch._dynamo.config.patch(capture_scalar_outputs=True):
+        actual = thunderfx(fn)(x)
+    expected = fn(x)
+    torch.testing.assert_close(actual, expected)
+
+
+# This test addresses the bug reported in https://github.com/Lightning-AI/lightning-thunder/issues/2398
+@pytest.mark.skipif(
+    condition=IS_WINDOWS,
+    reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
+)
+def test_no_grad_region_split():
+    def fn(x):
+        # Thunder supports enclosing torch.set_grad_enabled(False/True)
+        with torch.no_grad():
+            # but does not support Tensor.sinc, causing graph splits
+            sinc = x.sinc()
+        return x + 1 + sinc
+
+    x = torch.randn(10, requires_grad=True)
+    x_ref = x.detach().clone().requires_grad_(True)
+
+    y = thunderfx(fn)(x)
+    y_ref = fn(x_ref)
+    torch.testing.assert_close(y, y_ref)
+    y.sum().backward()
+    y_ref.sum().backward()
+    torch.testing.assert_close(x.grad, x_ref.grad)
+
+
+# Ref: https://github.com/Lightning-AI/lightning-thunder/issues/2420
+def test_splitter_with_symint_node():
+    class GraphModule(torch.nn.Module):
+        def forward(self, L_self_cumulative_length_1_: "Sym(s27)"):
+            l_self_cumulative_length_1_ = L_self_cumulative_length_1_
+
+            add: "Sym(s27 + 1)" = l_self_cumulative_length_1_ + 1
+            l_self_cumulative_length_1_ = None
+            return (add,)
+
+    module = GraphModule()
+    ref_inputs = (100,)
+    reference = module(*ref_inputs)
+
+    jitted = thunderfx(GraphModule(), dynamic=True)
+    inputs = (100,)
+    actual = jitted(*inputs)
+    assert reference == actual
+
+    for subgraph in jitted._backend.subgraph_infos:
+        assert not subgraph.split_reasons

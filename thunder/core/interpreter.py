@@ -193,8 +193,8 @@ class WrappedValue:
 # Note: Use these with care!
 #       In some situations - in particular *args/**kwargs, Python creates tuples and dicts for us,
 #       these functions are intended to do the appropriate wrapping for them.
-def wrap_args_from_list(l):  # returns a new list!
-    res = [_interpret_call(lambda l, i: l[i], l, wrap_const(i)) for i in range(len(unwrap(l)))]
+def wrap_args_from_list(lst):  # returns a new list!
+    res = [_interpret_call(lambda seq, i: seq[i], lst, wrap_const(i)) for i in range(len(unwrap(lst)))]
     return res
 
 
@@ -202,12 +202,12 @@ def wrap_kwargs_from_dict(d):  # returns a new dict
     return {k: _interpret_call(lambda d, k: d[k], d, wrap_const(k)) for k in unwrap(d)}
 
 
-def wrapped_build_tuple(l: Sequence[WrappedValue]) -> WrappedValue:
-    assert all(isinstance(v, WrappedValue) for v in l)
-    if l:
-        pr = ProvenanceRecord(PseudoInst.BUILD_TUPLE, inputs=[v.provenance for v in l][::-1])  # other inst?
-        out = wrap(tuple(v.value for v in l), provenance=pr)
-        out.item_wrappers = list(l)
+def wrapped_build_tuple(seq: Sequence[WrappedValue]) -> WrappedValue:
+    assert all(isinstance(v, WrappedValue) for v in seq)
+    if seq:
+        pr = ProvenanceRecord(PseudoInst.BUILD_TUPLE, inputs=[v.provenance for v in seq][::-1])  # other inst?
+        out = wrap(tuple(v.value for v in seq), provenance=pr)
+        out.item_wrappers = list(seq)
     else:
         # Note: if we revisit returning const here instead of an empty tuple from BUILD_TUPLE, we need to add this to wrap_aergs
         out = wrap_const(())
@@ -336,36 +336,36 @@ def wrap_binary_subscr(uvalue, obj, key):
     return wrap(uvalue, provenance=ProvenanceRecord(PseudoInst.BINARY_SUBSCR, inputs=[obj.provenance, key.provenance]))
 
 
-def populate_item_wrappers(l):
+def populate_item_wrappers(obj):
     ctx: InterpreterCompileCtx = get_interpretercompilectx()
     if not ctx._with_provenance_tracking:
         return
 
-    assert isinstance(l, WrappedValue)
+    assert isinstance(obj, WrappedValue)
     # to do: generalize
-    if wrapped_isinstance(l, (list, tuple)):
-        if l.item_wrappers is None:
-            l.item_wrappers = [None for _ in range(len(l.value))]
-        assert isinstance(l.item_wrappers, list)
-        assert len(l.value) == len(l.item_wrappers), f"{len(l.value)=} {len(l.item_wrappers)=}"
+    if wrapped_isinstance(obj, (list, tuple)):
+        if obj.item_wrappers is None:
+            obj.item_wrappers = [None for _ in range(len(obj.value))]
+        assert isinstance(obj.item_wrappers, list)
+        assert len(obj.value) == len(obj.item_wrappers), f"{len(obj.value)=} {len(obj.item_wrappers)=}"
 
-        for i, v in enumerate(l.value):
-            if l.item_wrappers[i] is None:
-                wv = wrap_binary_subscr(v, l, i)
-                l.item_wrappers[i] = wv
+        for i, v in enumerate(obj.value):
+            if obj.item_wrappers[i] is None:
+                wv = wrap_binary_subscr(v, obj, i)
+                obj.item_wrappers[i] = wv
         return
 
-    if wrapped_isinstance(l, dict):
-        assert isinstance(l.item_wrappers, dict)
-        for k, v in l.value.items():
-            if k not in l.item_wrappers:
+    if wrapped_isinstance(obj, dict):
+        assert isinstance(obj.item_wrappers, dict)
+        for k, v in obj.value.items():
+            if k not in obj.item_wrappers:
                 wk = wrap_const(k)
-                wv = wrap_binary_subscr(v, l, wk)
-                l.item_wrappers[k] = wv
-                l.key_wrappers[k] = wk  # or have those from an iteration of the input?
+                wv = wrap_binary_subscr(v, obj, wk)
+                obj.item_wrappers[k] = wv
+                obj.key_wrappers[k] = wk  # or have those from an iteration of the input?
         return
 
-    raise NotImplementedError(f"populate item wrappers for {type(l.value)}")
+    raise NotImplementedError(f"populate item wrappers for {type(obj.value)}")
 
 
 #
@@ -883,15 +883,15 @@ class PythonFrameWrapper:
 
     def format_with_source(self):
         assert self.positions is not None, self
-        l = []
-        l.append(f"  in {self.qualname} in file: {self.code.co_filename}, line {self.positions.lineno}:")
+        lst = []
+        lst.append(f"  in {self.qualname} in file: {self.code.co_filename}, line {self.positions.lineno}:")
         if self.code.co_filename:
             ls = linecache.getlines(self.code.co_filename)
             lineno = self.positions.lineno
             if lineno is None:
                 lineno = self.code.co_firstlineno
-            l.append("  " + ls[max(lineno - 1, 0)].rstrip())
-        return os.linesep.join(l)
+            lst.append("  " + ls[max(lineno - 1, 0)].rstrip())
+        return os.linesep.join(lst)
 
     def get_or_make_python_frame(self) -> FrameType:
         return self.frame
@@ -980,10 +980,10 @@ class ProvenanceRecord:
             inputs = [recurse_str(i) for i in self.inputs]
             inputs_str = ", ".join(inputs)
             counter += 1
-            l = f"  i{counter} = {self.inst}({inputs_str})"
+            out_item = f"  i{counter} = {self.inst}({inputs_str})"
             if self.output_idx != 0 or self.output_key is not None:
-                l += "# with output spec"
-            out.append(l)
+                out_item += "# with output spec"
+            out.append(out_item)
             res = f"i{counter}"
             known[self] = res
             return res
@@ -1034,11 +1034,11 @@ class InterpreterStack:
             return wrapped_value
         # key=None is pop
         if isinstance(key, slice):
-            l = len(self._stack)
+            length = len(self._stack)
             if key.start is not None:
                 start = key.start
             else:
-                start = -l
+                start = -length
             assert start < 0
             if key.step is not None:
                 step = key.step
@@ -1143,7 +1143,7 @@ class InterpreterFrame:
         if (3, 9) <= sys.version_info < (3, 11):
             if inst.starts_line is not None:
                 self.positions = Positions(inst.starts_line, inst.starts_line, 0, 999)
-        elif (3, 11) <= sys.version_info < (3, 14):
+        elif (3, 11) <= sys.version_info < (3, 15):
             if inst.positions is not None:
                 self.positions = inst.positions
         else:
@@ -1156,18 +1156,18 @@ class InterpreterFrame:
     def format_with_source(self) -> str:
         # todo: multiple lines in positions, underline, indent
         assert self.positions is not None, self
-        l = []
-        l.append(f"  in {self.qualname} in file: {self.code.co_filename}, line {self.positions.lineno}:")
+        lines = []
+        lines.append(f"  in {self.qualname} in file: {self.code.co_filename}, line {self.positions.lineno}:")
         if self.code.co_filename:
             ls = linecache.getlines(self.code.co_filename)
             if ls:
                 lineno = self.positions.lineno
                 if lineno is None:
                     lineno = self.code.co_firstlineno
-                l.append("  " + ls[max(lineno - 1, 0)].rstrip())
+                lines.append("  " + ls[max(lineno - 1, 0)].rstrip())
             else:
-                l.append("  <unavailable>")
-        return os.linesep.join(l)
+                lines.append("  <unavailable>")
+        return os.linesep.join(lines)
 
     def get_localsplus_name(self, idx: int) -> str:
         if sys.version_info < (3, 11):
@@ -1194,7 +1194,7 @@ class InterpreterFrame:
         name = self.code.co_name
         qualname = self.qualname
 
-        def get_frame(l, rel_lineno, filename, firstlineno, name, qualname):
+        def get_frame(container, rel_lineno, filename, firstlineno, name, qualname):
             def fn():
                 pass
 
@@ -1219,7 +1219,7 @@ class InterpreterFrame:
             assert tb is not None
             while tb.tb_next is not None:
                 tb = tb.tb_next
-            l.append(tb.tb_frame)
+            container.append(tb.tb_frame)
 
         # we run the getting of the frame in a separate thread because
         # we want to avoid having f_back pointing to the function
@@ -1597,11 +1597,10 @@ def _object_getattribute_lookaside(obj: Any, name: str):
     #   2)  If `obj` has a metaclass, the dunder methods might be dynamic.
     # So for now we just fall back to the builtin `getattr` for these bedrock lookups.
     if DUNDER_PATTERN.match(name) or isinstance(uobj, (type, super)):
-        return (
-            do_raise(AttributeError(f"'{type(uobj).__name__}' object has no attribute '{name}'"))
-            if (result := getattr(uobj, name, null)) is null
-            else result
-        )
+        result = getattr(uobj, name, null)
+        if result is null:
+            return do_raise(AttributeError(f"'{type(uobj).__name__}' object has no attribute '{name}'"))
+        return result
 
     def lookup_descriptor_field(field_name):
         # Bypass the C portions of `property` so we don't break the `_interpret_call` chain
@@ -1776,14 +1775,14 @@ def _getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
     # `__getattr__` is only triggered if `__getattribute__` fails.
     # TODO: this should be `_interpret_call_with_unwrapping(getattr, obj, "__getattr__", null := object())`, but that would require multiple current exceptions.
     null = object()
-    obj_getattr = getattr(unwrap(obj), "__getattr__", null)
+    obj_getattr = getattr(type(unwrap(obj)), "__getattr__", null)
 
     if obj_getattr is not null:
         ctx.curexc = None
         assert callable(obj_getattr)
         if compilectx._with_provenance_tracking:
             obj_getattr = wrap_attribute(obj_getattr, obj, wrap_const("__getattr__"))
-        result = _interpret_call(obj_getattr, name)
+        result = _interpret_call(obj_getattr, obj, name)
         # which provenances to cache here?
         # result = wrap_attribute(unwrap(result), obj, name)
 
@@ -2133,15 +2132,15 @@ class SequenceWrapperMethods(WrappedValue):
     def __init__(self, iterable=(), /):
         if iterable == ():
             iterable = wrap_const(())
-        l = wrap_const([])
-        assert l.item_wrappers is not None
+        wrapped_list = wrap_const([])
+        assert wrapped_list.item_wrappers is not None
 
-        res = _interpret_call(list.extend, l, iterable)
+        res = _interpret_call(list.extend, wrapped_list, iterable)
         if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
             return res
         assert type(self.value) is self.python_typ
-        self.value[:] = l.value[:]
-        self.item_wrappers = l.item_wrappers[:]
+        self.value[:] = wrapped_list.value[:]
+        self.item_wrappers = wrapped_list.item_wrappers[:]
         return wrap_const(None)
 
     def __getitem__(self, idx, /):
@@ -2195,10 +2194,10 @@ class SequenceWrapperMethods(WrappedValue):
         self.track_items()
 
         def impl(self, n):
-            l = []
+            seq = []
             for _ in range(n):
-                l.extend(self)
-            return type(self)(l)
+                seq.extend(self)
+            return type(self)(seq)
 
         return _interpret_call(impl, self, n)
 
@@ -2336,9 +2335,9 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
 
         if not isinstance(iterable.value, (tuple, list)):
 
-            def impl(l, iterable):
+            def impl(seq, iterable):
                 for i in iterable:
-                    l.append(i)
+                    seq.append(i)
 
             res = _interpret_call(impl, self, iterable)
             assert len(self.value) == len(self.item_wrappers)
@@ -2392,7 +2391,7 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
         if uindex < -len(uself) or uindex >= len(uself):
             return do_raise(IndexError("pop index out of range"))
 
-        res = _interpret_call(lambda l, i: l[i], self, index)
+        res = _interpret_call(lambda seq, i: seq[i], self, index)
 
         assert res is not INTERPRETER_SIGNALS.EXCEPTION_RAISED
 
@@ -2513,7 +2512,8 @@ class MappingItemsWrapper(ThunderInterpreterObject):
 
 class MutMappingWrapperMethods(WrappedValue):
     def __new__(cls, /, *args, **kwds):
-        uvalue = unwrap(cls)()
+        ucls = unwrap(cls)
+        uvalue = ucls.__new__(ucls)
         # todo: for subclasses, better record the call to the constructor
         return wrap(uvalue, provenance=ProvenanceRecord(PseudoInst.NEW, inputs=[cls.provenance]))
 
@@ -2872,7 +2872,7 @@ def _tuple_new_provenance_tracking_lookaside(cls, iterable=(), /):
         item_wrappers = []
         # TODO: investigate why just taking the wrappers will break test_interpreter.py::test_module_hooks
         for i in range(len(iterable.value)):
-            item_wrappers.append(_interpret_call(lambda l, i: l[i], iterable, wrap_const(i)))
+            item_wrappers.append(_interpret_call(lambda seq, i: seq[i], iterable, wrap_const(i)))
     else:
         iterator = _interpret_call(iter, iterable)
         if iterator is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
@@ -3263,7 +3263,7 @@ def _async_gen_wrap_handler(inst: dis.Instruction, /, stack: InterpreterStack, *
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BEFORE_ASYNC_WITH
-@register_opcode_handler("BEFORE_ASYNC_WITH")
+@register_opcode_handler("BEFORE_ASYNC_WITH", max_ver=(3, 13))
 def _before_async_with_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, **kwargs
 ) -> None | INTERPRETER_SIGNALS:
@@ -3294,7 +3294,7 @@ def _before_async_with_handler(
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-BEFORE_WITH
-@register_opcode_handler("BEFORE_WITH", min_ver=(3, 11))
+@register_opcode_handler("BEFORE_WITH", min_ver=(3, 11), max_ver=(3, 13))
 def _before_with_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     mgr = stack.pop()
 
@@ -3349,6 +3349,7 @@ class BINARY_OP(enum.Enum):
     ISUB = 23
     ITRUEDIV = 24
     IXOR = 25
+    SUBSCR = 26
 
 
 def _binary_op(stack: InterpreterStack, op: BINARY_OP, a, b):
@@ -3383,6 +3384,9 @@ def _binary_op(stack: InterpreterStack, op: BINARY_OP, a, b):
 
     assert type(op) is BINARY_OP
     idx: int = op.value
+
+    if idx == BINARY_OP.SUBSCR.value:
+        return _binary_subscr(stack, a, b)
 
     res = Py_NULL()
     binop_name, *_ = ops[idx]
@@ -3631,11 +3635,15 @@ def _binary_slice_handler(inst: dis.Instruction, /, stack: InterpreterStack, **k
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BINARY_SUBSCR
-@register_opcode_handler("BINARY_SUBSCR")
+@register_opcode_handler("BINARY_SUBSCR", max_ver=(3, 13))
 def _binary_subscr_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     tos = stack.pop_wrapped()
     tos1 = stack.pop_wrapped()
 
+    return _binary_subscr(stack, tos1, tos)
+
+
+def _binary_subscr(stack, tos1, tos):
     def class_getitem_impl(cls, index):
         return cls.__class_getitem__(index)
 
@@ -3654,7 +3662,7 @@ def _binary_subscr_handler(inst: dis.Instruction, /, stack: InterpreterStack, **
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BUILD_CONST_KEY_MAP
-@register_opcode_handler("BUILD_CONST_KEY_MAP")
+@register_opcode_handler("BUILD_CONST_KEY_MAP", max_ver=(3, 13))
 def _build_const_key_map_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None:
     assert type(inst.arg) is int
     count: int = inst.arg
@@ -3832,8 +3840,15 @@ def _call_function_handler(inst: dis.Instruction, /, stack: InterpreterStack, **
 def _call_function_ex_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, **kwargs
 ) -> None | INTERPRETER_SIGNALS:
-    assert type(inst.arg) is int
-    kwargs = stack.pop_wrapped() if inst.arg & 0x01 else {}
+    if sys.version_info < (3, 14):
+        inst_arg = inst.arg
+    else:
+        inst_arg = 1
+    assert type(inst_arg) is int
+    kwargs = stack.pop_wrapped() if inst_arg & 0x01 else {}
+    if sys.version_info >= (3, 14) and wrapped_isinstance(kwargs, Py_NULL):
+        kwargs = {}
+
     assert wrapped_isinstance(kwargs, Mapping)
     args = stack.pop_wrapped()
     assert wrapped_isinstance(args, Iterable)
@@ -4314,7 +4329,9 @@ def _end_async_for_handler_3_11(
     **kwargs,
 ) -> None | INTERPRETER_SIGNALS:
     runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
-    assert inst.arg is None
+    if sys.version_info < (3, 14):
+        # 3.14+ has an (unused) int arg pointing to the END_SEND
+        assert inst.arg is None
 
     val = stack.pop()
     assert isinstance(val, BaseException)
@@ -4817,14 +4834,14 @@ def _list_append_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kw
 
     # NOTE Doesn't pop the list that's extended
     tos = stack.pop_wrapped()
-    l: list = stack.getitem_wrapped(-i)
+    lst: list = stack.getitem_wrapped(-i)
 
-    assert wrapped_isinstance(l, list)
+    assert wrapped_isinstance(lst, list)
 
-    def impl(l, tos):
-        l.append(tos)
+    def impl(lst, tos):
+        lst.append(tos)
 
-    res = _interpret_call(impl, l, tos)
+    res = _interpret_call(impl, lst, tos)
     if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return res
 
@@ -4837,11 +4854,11 @@ def _list_extend_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kw
 
     # NOTE Doesn't pop the list that's extended
     tos = stack.pop_wrapped()
-    l: list = stack.getitem_wrapped(-i)
+    lst: list = stack.getitem_wrapped(-i)
 
     # NOTE tos does not have to be a list
-    assert wrapped_isinstance(l, list)
-    res = _interpret_call(lambda l1, l2: l1.extend(l2), l, tos)
+    assert wrapped_isinstance(lst, list)
+    res = _interpret_call(lambda l1, l2: l1.extend(l2), lst, tos)
 
     if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return res
@@ -4855,7 +4872,7 @@ def _list_to_tuple_handler(inst: dis.Instruction, /, stack: InterpreterStack, **
 
 
 # https://docs.python.org/3.13/library/dis.html#opcode-LOAD_ASSERTION_ERROR
-@register_opcode_handler("LOAD_ASSERTION_ERROR")
+@register_opcode_handler("LOAD_ASSERTION_ERROR", max_ver=(3, 13))
 def _load_assertion_error_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None:
     stack.append(wrap_const(AssertionError))
 
@@ -4889,7 +4906,35 @@ def _load_attr_handler_3_12(
         return load_method_helper(obj, name, stack)
 
 
-# https://docs.python.org/3.12/library/dis.html#opcode-LOAD_ATTR
+# https://docs.python.org/3.14/library/dis.html#opcode-LOAD_SPECIAL
+@register_opcode_handler("LOAD_SPECIAL", min_ver=(3, 14))
+def _load_special_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
+    arg = inst.arg
+    mgr = stack.pop_wrapped()
+
+    type_name = type(unwrap(mgr)).__name__
+    special_methods = [
+        ("__enter__", f"'{type_name}' object does not support the context manager protocol (missed __enter__ method)"),
+        ("__exit__", f"'{type_name}' object does not support the context manager protocol (missed __exit__ method)"),
+        (
+            "__aenter__",
+            f"'{type_name}' object does not support the asynchronous context manager protocol (missed __aenter__ method)",
+        ),
+        (
+            "__aexit__",
+            f"'{type_name}' object does not support the asynchronous context manager protocol (missed __aexit__ method)",
+        ),
+    ]
+    name, error_msg = special_methods[arg]
+    res = load_method_helper(mgr, wrap_const(name), stack)
+    if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+        # clear previous error?
+        return do_raise(error_msg)
+
+    return res
+
+
+# https://docs.python.org/3.12/library/dis.html#opcode-LOAD_SUPER_ATTR
 @register_opcode_handler("LOAD_SUPER_ATTR", min_ver=(3, 12))
 def _load_super_attr_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, **kwargs
@@ -4944,6 +4989,23 @@ def _load_closure_handler(
     stack.append(val)
 
 
+# https://docs.python.org/3.14/library/dis.html#opcode-LOAD_COMMON_CONSTANT
+@register_opcode_handler("LOAD_COMMON_CONSTANT", min_ver=(3, 14))
+def _load_common_constant_handler(inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, **kwargs) -> None:
+    assert type(inst.arg) is int
+
+    common_consts = [
+        AssertionError,
+        NotImplementedError,
+        tuple,
+        all,
+        any,
+    ]
+    constant = wrap_const(common_consts[inst.arg])
+    constant = const_callback(constant)
+    stack.append(constant)
+
+
 # https://docs.python.org/3.10/library/dis.html#opcode-LOAD_CONST
 @register_opcode_handler("LOAD_CONST")
 def _load_const_handler(inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, **kwargs) -> None:
@@ -4951,6 +5013,16 @@ def _load_const_handler(inst: dis.Instruction, /, stack: InterpreterStack, co: C
 
     constant = co.co_consts[inst.arg]
     constant = wrap_const(constant)
+    constant = const_callback(constant)
+    stack.append(constant)
+
+
+# https://docs.python.org/3.14/library/dis.html#opcode-LOAD_SMALL_INT
+@register_opcode_handler("LOAD_SMALL_INT", min_ver=(3, 14))
+def _load_small_int_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None:
+    assert type(inst.arg) is int
+
+    constant = wrap_const(inst.arg)
     constant = const_callback(constant)
     stack.append(constant)
 
@@ -4993,9 +5065,10 @@ def _load_deref_handler(
 # https://docs.python.org/3.10/library/dis.html#opcode-LOAD_FAST
 # https://docs.python.org/3.12/library/dis.html#opcode-LOAD_FAST_CHECK
 # LOAD_FAST for Python <3.12 is LOAD_FAST_CHECK
+@register_opcode_handler("LOAD_FAST_BORROW", min_ver=(3, 14))
 @register_opcode_handler("LOAD_FAST_CHECK", min_ver=(3, 12))
 @register_opcode_handler("LOAD_FAST")
-def _load_fast_check_handler(
+def _load_fast_check_load_fast_borrow_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, frame: InterpreterFrame, **kwargs
 ) -> None | INTERPRETER_SIGNALS:
     assert isinstance(inst.arg, int)
@@ -5019,8 +5092,9 @@ def _load_fast_check_handler(
 
 
 # https://docs.python.org/3.13/library/dis.html#opcode-LOAD_FAST_LOAD_FAST
+@register_opcode_handler("LOAD_FAST_BORROW_LOAD_FAST_BORROW", min_ver=(3, 14))
 @register_opcode_handler("LOAD_FAST_LOAD_FAST", min_ver=(3, 13))
-def _load_fast_load_fast_handler(
+def _load_fast_load_fast_load_fast_borrow_load_fast_borrow_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, frame: InterpreterFrame, **kwargs
 ) -> None | INTERPRETER_SIGNALS:
     assert isinstance(inst.arg, int)
@@ -5126,7 +5200,7 @@ def _load_global_handler(
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-LOAD_METHOD
-@register_opcode_handler("LOAD_METHOD")
+@register_opcode_handler("LOAD_METHOD", max_ver=(3, 13))
 def _load_method_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, **kwargs
 ) -> None | INTERPRETER_SIGNALS:
@@ -5360,6 +5434,13 @@ def _set_function_attribute_handler(
         stack.append(fn)
         return
 
+    if flag == 0x10:
+        annotate = stack.pop()
+        assert annotate is None or callable(annotate)
+        fn.__annotate__ = annotate
+        stack.append(fn)
+        return
+
     assert False, f"Flag value 0x{flag:x} unexpected in SET_FUNCTION_ATTRIBUTE"
 
 
@@ -5501,6 +5582,12 @@ def _match_sequence_handler(inst: dis.Instruction, /, stack: InterpreterStack, *
     # See the comment on MATCH_MAPPING.
     supported_sequence: bool = isinstance(stack[-1], Sequence) and not isinstance(stack[-1], (str, bytes, bytearray))
     stack.push(supported_sequence)
+
+
+# https://docs.python.org/3.14/library/dis.html#opcode-NOT_TAKEN
+@register_opcode_handler("NOT_TAKEN", min_ver=(3, 14))
+def _not_taken_handler(inst: dis.Instruction, /, **kwargs) -> None:
+    pass
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-NOP
@@ -5777,6 +5864,12 @@ def _pop_top_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs
     stack.pop_wrapped()
 
 
+# https://docs.python.org/3.14/library/dis.html#opcode-POP_ITER
+@register_opcode_handler("POP_ITER", min_ver=(3, 14))
+def _pop_iter_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None:
+    stack.pop_wrapped()
+
+
 # Returns either
 def do_raise(exc: Any = Py_NULL(), cause: Any = Py_NULL()) -> Literal[INTERPRETER_SIGNALS.EXCEPTION_RAISED]:
     # Get the type and exception being raised
@@ -5944,7 +6037,7 @@ def _reraise_handler_3_11(
 
 
 # https://docs.python.org/3.12/library/dis.html#opcode-RETURN_CONST
-@register_opcode_handler("RETURN_CONST", min_ver=(3, 12))
+@register_opcode_handler("RETURN_CONST", min_ver=(3, 12), max_ver=(3, 13))
 def _return_const_handler(
     inst: dis.Instruction, /, co: CodeType, stack: InterpreterStack, **kwargs
 ) -> int | None | INTERPRETER_SIGNALS:
@@ -6576,7 +6669,7 @@ def _with_except_start_handler_3_10(
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-WITH_EXCEPT_START
-@register_opcode_handler("WITH_EXCEPT_START", min_ver=(3, 11))
+@register_opcode_handler("WITH_EXCEPT_START", min_ver=(3, 11), max_ver=(3, 13))
 def _with_except_start_handler_3_11(
     inst: dis.Instruction, *, inst_ptr: int, stack: InterpreterStack, try_stack: list[PyTryBlock], **kwargs
 ) -> None | INTERPRETER_SIGNALS:
@@ -6588,6 +6681,27 @@ def _with_except_start_handler_3_11(
     assert isinstance(stack[-3], int)
     exit_func = stack[-4]
     return check_and_append(stack, _interpret_call_with_unwrapping(exit_func, exc, val, tb))
+
+
+# https://docs.python.org/3.14/library/dis.html#opcode-WITH_EXCEPT_START
+@register_opcode_handler("WITH_EXCEPT_START", min_ver=(3, 14))
+def _with_except_start_handler_3_11(
+    inst: dis.Instruction, *, inst_ptr: int, stack: InterpreterStack, try_stack: list[PyTryBlock], **kwargs
+) -> None | INTERPRETER_SIGNALS:
+    # in 3.11 the exception representation changed to only val
+    val = stack[-1]
+    exc = type(val)
+    tb = val.__traceback__
+
+    assert isinstance(stack[-3], int)
+    exit_meth_or_func = stack[-5]
+    exit_meth_self_or_null = stack[-4]
+    if isinstance(exit_meth_self_or_null, Py_NULL):
+        return check_and_append(stack, _interpret_call_with_unwrapping(exit_meth_or_func, exc, val, tb))
+    else:
+        return check_and_append(
+            stack, _interpret_call_with_unwrapping(exit_meth_or_func, exit_meth_self_or_null, exc, val, tb)
+        )
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-YIELD_FROM
@@ -7157,7 +7271,7 @@ def _setup_frame_and_run_python_function(
         for i, (name, value) in enumerate(zip(code.co_freevars, closure)):
             local = freevar_callback(name, value, fn=wrapped_fn, idx=i)
             localsplus.append(local)
-    elif (3, 11) <= sys.version_info < (3, 14):
+    elif (3, 11) <= sys.version_info < (3, 15):
         assert len(code.co_varnames) == code.co_nlocals
         for n in code.co_varnames:
             local = locals_dict.get(n, Py_NULL())

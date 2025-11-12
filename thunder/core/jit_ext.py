@@ -12,7 +12,6 @@ import sys
 import time
 import warnings
 from types import (
-    BuiltinFunctionType,
     BuiltinMethodType,
     CellType,
     FunctionType,
@@ -1132,7 +1131,7 @@ def _general_custom_op_def_call_lookaside(wrapped_opoverload_packet, *args, **kw
         symbol is not None,
         lambda: (
             f"{opoverload_packet} is not registered. Register its `custom_op` output with `thunder.torch.register_custom_op` "
-            "`custom_op(name)(fn)` output, not `{opoverload_packet}` itself"
+            f"`custom_op(name)(fn)` output, not `{opoverload_packet}` itself"
         ),
     )
 
@@ -1843,11 +1842,11 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
         return p
 
     with tracectx(prologue_trace):
-        for n, l in (("args", len(args)), ("kwargs", len(kwargs))):
+        for n, length in (("args", len(args)), ("kwargs", len(kwargs))):
             output = Proxy(name=n)
             bsym = prims.unpack_trivial.bind(output, output=output, name=n)
             prologue_trace.bound_symbols.append(bsym)
-            bsym = prims.check_len.bind(output, l, output=None)
+            bsym = prims.check_len.bind(output, length, output=None)
             prologue_trace.bound_symbols.append(bsym)
             if n == "args":
                 pro_args_proxy = output

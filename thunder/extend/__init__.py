@@ -529,18 +529,19 @@ def register_executor(ex: Executor) -> Executor:
 
 def get_all_executors() -> tuple[Executor, ...]:
     # manually import all native executors to let them register themselves
-    from thunder.executors import (
+    from thunder.executors import (  # noqa: F401
         apexex,
         cudnn_layernormex,
         cudnnex,
+        custom_op_ex,
         nvfuserex,
         pythonex,
         sdpaex,
         fa3ex,
         torch_compile,
         torchex,
+        transformer_engine_v1ex,
         transformer_engineex,
-        transformer_engine_v2ex,
         triton_crossentropy,
     )
 

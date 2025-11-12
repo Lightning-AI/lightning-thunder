@@ -649,6 +649,9 @@ def test_nanogpt():
     assert_close(result, module(*args, **kwargs))
 
 
+# Note: When running with TF32 enabled on CUDA, the maximum absolute difference between outputs
+# can be on the order of 1e-3, which exceeds the default tolerances for torch.testing.assert_close.
+# This is expected due to the reduced precision of TF32 matrix multiplications.
 @skipif_not_pytorch_2_1
 @pytest.mark.parametrize(
     "name",
@@ -704,6 +707,9 @@ def test_litgpt_variants(name, device):
         torch.testing.assert_close(param1.grad, param2.grad, rtol=1e-2, atol=1e-2)
 
 
+# Note: When running with TF32 enabled on CUDA, the maximum absolute difference between outputs
+# can be on the order of 1e-3, which exceeds the default tolerances for torch.testing.assert_close.
+# This is expected due to the reduced precision of TF32 matrix multiplications.
 @skipif_not_pytorch_2_1
 @pytest.mark.parametrize(
     "name",
@@ -1730,3 +1736,40 @@ def test_jit_nn_module_cycle_leak():
     ref = _allocate_and_call_model_in_function()
     assert ref() is None
     assert torch.cuda.memory_allocated() == memory_start
+
+
+def test_dataclass_dict():
+    # diffusers model outputs are like this
+    from dataclasses import dataclass
+
+    @dataclass
+    class Foo(dict):
+        musthave: int
+
+    def fn():
+        return Foo(musthave=1)
+
+    assert fn() == thunder.jit(fn)()
+
+
+def test_replace_device():
+    from dataclasses import dataclass
+
+    @dataclass
+    class Foo(dict):
+        pass
+
+    class MyModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.foo = Foo()
+
+        def forward(self, x):
+            self.foo.device = x.device
+            return 2 * x
+
+    jm = thunder.jit(MyModel())
+    a = torch.randn(2, 2)
+    jm(a)
+
+    assert isinstance(jm._model.foo.device, torch.device)

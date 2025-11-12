@@ -5,7 +5,6 @@ from functools import partial, reduce
 import dataclasses
 import re
 import weakref
-import itertools
 
 import pytest
 import torch
@@ -35,6 +34,8 @@ import thunder.core.dtypes as dtypes
 import thunder.core.prims as prims
 from thunder.core.trace import TraceCtx, set_tracectx, reset_tracectx, tracectx
 from thunder.core.symbol import BoundSymbol
+
+from looseversion import LooseVersion
 
 
 #
@@ -1436,16 +1437,16 @@ def test_torch_call_recording(executor, device: str, _):
 
 
 # Asserts that all the elements of a collection are equal to each other.
-def all_eq(l):
-    for e1 in l:
-        for e2 in l:
+def all_eq(arr):
+    for e1 in arr:
+        for e2 in arr:
             assert e1 == e2
 
 
 # Asserts that all the elements of a collection are not equal to each other,
 # and that elements are equal to themselves.
-def all_neq(l):
-    el = enumerate(l)
+def all_neq(arr):
+    el = enumerate(arr)
     for i, e1 in el:
         for j, e2 in el:
             assert e1 == e2 if i == j else e1 != e2
@@ -1617,6 +1618,19 @@ def test_nested_trace_no_name_collision(executor, device, _):
     b = make_tensor((2, 2), device=device, dtype=torch.float32)
 
     thunder.trace()(bar, a, b)
+
+
+# Tests if Thunder can trace a function without a valid signature
+@instantiate(dtypes=NOTHING)
+def test_no_signature(executor, device, _):
+    a = make_tensor((2, 3), device=device, dtype=torch.float32)
+
+    fn_trace = thunder.trace()(getattr, a, "mT")
+
+    jfn = executor.make_callable(fn_trace)
+    actual = jfn(a, "mT")
+    expected = getattr(a, "mT")
+    assert_close(actual, expected)
 
 
 @instantiate(dtypes=NOTHING)
@@ -2586,12 +2600,15 @@ def test_set_grad_enabled(global_grad_enabled, n_flips, next_enable, starts_with
     torch.set_grad_enabled(global_grad_enabled)
     jfn = thunder.jit(fn)
     y = jfn(x)
+    is_grad_enabled = torch.is_grad_enabled()
 
     torch.set_grad_enabled(global_grad_enabled)
     y_ref = fn(x_ref)
+    is_grad_enabled_ref = torch.is_grad_enabled()
 
     torch.testing.assert_close(y, y_ref)
     assert (y.grad_fn is None) == (y_ref.grad_fn is None)
+    assert is_grad_enabled == is_grad_enabled_ref
     if y.grad_fn is not None:
         with torch.enable_grad():
             y.sum().backward()
@@ -2602,9 +2619,9 @@ def test_set_grad_enabled(global_grad_enabled, n_flips, next_enable, starts_with
 def test_serialize_trace():
     import dill as pickle
 
-    def fn(a, b, l):
+    def fn(a, b, arr):
         res = a + b
-        for t in l:
+        for t in arr:
             res = res + t
         return res
 
@@ -3235,6 +3252,18 @@ def test_apply_autograd_memory(thunderfx_disable_split_autograd):
     assert not any(wr() for wr in foo())
 
 
+@pytest.mark.skipif(LooseVersion(torch.__version__) < LooseVersion("2.9.0"), reason="Requires torch 2.9.0 or later")
+def test_float4_e2m1fn_x2():
+    x = torch.ones(2, 2, dtype=torch.uint8).view(torch.float4_e2m1fn_x2)
+
+    @thunder.jit
+    def f(x):
+        return x
+
+    y = f(x)
+    assert y.dtype == torch.float4_e2m1fn_x2
+
+
 def test_thunder_jit_parts():
     m = torch.nn.Sequential(
         torch.nn.Linear(64, 128),
@@ -3277,8 +3306,8 @@ def test_prims_pack_list():
     with tracectx(trace):
         x = prims.unpack_trivial(a, name="x")
         y = prims.unpack_trivial(b, name="y")
-        l = prims.pack_list(x, y)
-        prims.python_return(l)
+        packed_list = prims.pack_list(x, y)
+        prims.python_return(packed_list)
 
     func = trace.python_callable()
     actual = func()

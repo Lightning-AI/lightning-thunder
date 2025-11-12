@@ -1,10 +1,26 @@
 from distutils.version import LooseVersion
 from functools import partial
 import warnings
+from collections.abc import Callable
+
+import torch
 
 import thunder
 from thunder.recipes import BaseRecipe
 from thunder import Recipe
+
+
+# for materializing models, we need reset_parameters, which is part of the unwritten
+# spec for idiomatic PyTorch, but not implemented everywhere
+def RotaryEmbedding_reset_parameters(self):
+    inv_freq, self.attention_scaling = self.rope_init_fn(self.config, self.inv_freq.device)
+    with torch.no_grad():
+        self.inv_freq.copy_(inv_freq)
+
+
+def RMSNorm_reset_parameters(self):
+    with torch.no_grad():
+        self.weight.fill_(1)
 
 
 class InplaceIndexCopyTransform(thunder.Transform):
@@ -27,18 +43,150 @@ class InplaceIndexCopyTransform(thunder.Transform):
         return self.executor
 
     def transform_traces_pre_prologue(self, pro, comp, epi, **kwargs):
-        comp_new = thunder.core.trace.from_trace(comp)
-        for bsym in comp.bound_symbols:
-            if bsym.sym == thunder.torch.index_copy:
-                bsym.args[0].tags.add(thunder.core.proxies.ProxyTag.STATIC_MEMORY_LOCATION)
-                bsym = bsym.from_bsym(sym=self.inplace_index_copy)
-            else:
-                bsym = bsym.from_bsym()
-            comp_new.bound_symbols.append(bsym)
-        return pro, comp_new, epi
+        import transformers
+
+        cache_classes = (transformers.cache_utils.StaticCache,)
+        if hasattr(transformers.cache_utils, "StaticLayer"):
+            cache_classes += (transformers.cache_utils.StaticLayer,)
+        import thunder.core.utils as utils
+
+        # Identify the indices of cache-related proxies in the prologue trace.
+        # In the prologue, the cache related proxies are represented for example as:
+        # any0: "<class 'transformers.cache_utils.StaticCache'>" = kwargs['past_key_values']
+        # obj1: "Any" = any0.layers
+        # subscr2: "Any" = obj1[0]
+        # key_tensors: "cuda:0 bf16[1, 8, 108, 64]" = subscr2.keys
+        # We start from the AnyProxy whose underlying objects are of type `StaticCache` or `StaticLayer` and recursively collect the outputs of the consumers(getattr or getitem) as the target proxies
+        bsyms = pro.bound_symbols
+        consumers = utils.consumers(bsyms, _map_to_numbers=False)
+        target_proxies = []
+
+        def recursively_collect_consumers_outputs(proxy, consumers_dict, visited, collected):
+            if proxy.name in visited:
+                return
+            visited.add(proxy.name)
+            static_consumers = consumers_dict.get(proxy, None)
+            if not static_consumers:
+                return
+            for consumer in static_consumers:
+                if consumer.sym.name in ("unpack_attr", "unpack_getitem"):
+                    collected.extend(consumer.flat_proxy_outs)
+                    for out_proxy in consumer.flat_proxy_outs:
+                        recursively_collect_consumers_outputs(out_proxy, consumers_dict, visited, collected)
+
+        for bsym in bsyms:
+            for out in bsym.flat_proxy_outs:
+                if isinstance(out, thunder.core.proxies.AnyProxy) and isinstance(out._o, cache_classes):
+                    visited = set()
+                    recursively_collect_consumers_outputs(out, consumers, visited, target_proxies)
+        return_bsym = bsyms[-1]
+        assert return_bsym.sym.name == "python_return", f"Expected return symbol, got {return_bsym.sym.name}"
+        # the values passed to the compute trace
+        passed_to_compute_trace = return_bsym.args[0][0]
+        target_proxies_names = [proxy.name for proxy in target_proxies]
+        static_proxy_idx = []
+        for idx, passed_value in enumerate(passed_to_compute_trace):
+            if passed_value.name in target_proxies_names:
+                static_proxy_idx.append(idx)
+
+        for idx, arg in enumerate(comp.args):
+            if idx in static_proxy_idx:
+                arg.tags.add(thunder.core.proxies.ProxyTag.STATIC_MEMORY_LOCATION)
+
+        return pro, comp, epi
 
 
-@Recipe.register("transformers")
+class SDPAMaskTransform(thunder.Transform):
+    def __init__(self):
+        self._MASK_FUNCTIONS = {}
+        self.executor = thunder.extend.OperatorExecutor("sdpa_mask_transform_ex")
+        thunder.extend.register_executor(self.executor)  # needed if you want to pickle traces
+        import transformers
+
+        if LooseVersion(transformers.__version__) < LooseVersion("4.55"):
+            return
+        import transformers.masking_utils
+
+        def transformers_masking_utils_sdpa_mask_recent_torch_meta(
+            batch_size: int,
+            cache_position: thunder.TensorProxy,
+            kv_length: int,
+            kv_offset: int = 0,
+            attention_mask: thunder.TensorProxy | None = None,
+            local_size: int | None = None,
+            allow_is_causal_skip: bool = True,
+            mask_function: str | None = None,
+        ):
+            # batch, num_attention_heads, seq_len, kvcache_len
+            return thunder.TensorProxy(
+                shape=(batch_size, 1, cache_position.shape[0], kv_length),
+                dtype=thunder.dtypes.bool8,
+                device=cache_position.device,
+            )
+
+        def transformers_masking_utils_sdpa_mask_recent_torch_impl(
+            batch_size: int,
+            cache_position: torch.Tensor,
+            kv_length: int,
+            kv_offset: int = 0,
+            attention_mask: torch.Tensor | None = None,
+            local_size: int | None = None,
+            allow_is_causal_skip: bool = True,
+            mask_function: str | None = None,
+        ):
+            import transformers
+
+            return transformers.masking_utils.sdpa_mask_recent_torch(
+                batch_size,
+                cache_position,
+                kv_length,
+                kv_offset=kv_offset,
+                attention_mask=attention_mask,
+                local_size=local_size,
+                allow_is_causal_skip=allow_is_causal_skip,
+                mask_function=self._MASK_FUNCTIONS[mask_function],
+            )
+
+        self.transformers_masking_utils_sdpa_mask_recent_torch_sym = self.executor.register_operator(
+            "transformers_masking_utils_sdpa_mask_recent_torch",
+            meta=transformers_masking_utils_sdpa_mask_recent_torch_meta,
+            fn=transformers_masking_utils_sdpa_mask_recent_torch_impl,
+        )
+
+        def transformers_masking_utils_sdpa_mask_recent_torch_lookaside(
+            batch_size: int,
+            cache_position: torch.Tensor | thunder.TensorProxy,
+            kv_length: int,
+            kv_offset: int = 0,
+            mask_function: Callable = transformers.masking_utils.causal_mask_function,
+            attention_mask: torch.Tensor | thunder.TensorProxy | None = None,
+            local_size: int | None = None,
+            allow_is_causal_skip: bool = True,
+            **kwargs,
+        ):
+            assert set(kwargs.keys()) == {"config", "dtype"}  # ignore
+            mask_name = mask_function.__name__
+            self._MASK_FUNCTIONS[mask_name] = mask_function
+            return self.transformers_masking_utils_sdpa_mask_recent_torch_sym(
+                batch_size,
+                cache_position,
+                kv_length,
+                kv_offset=kv_offset,
+                attention_mask=attention_mask,
+                local_size=local_size,
+                allow_is_causal_skip=allow_is_causal_skip,
+                mask_function=mask_name,
+            )
+
+        self.executor._lookasides[transformers.masking_utils.sdpa_mask_recent_torch] = (
+            transformers_masking_utils_sdpa_mask_recent_torch_lookaside
+        )
+
+    def get_executor(self):
+        return self.executor
+
+
+@Recipe.register("hf-transformers")
 class HFTransformers(BaseRecipe):
     """
     Recipe tuned for Hugging Face ``transformers`` models.
@@ -59,7 +207,9 @@ class HFTransformers(BaseRecipe):
 
         # for kv-cache inplace ops
         self.inplace_index_copy_transform = InplaceIndexCopyTransform()
+        self.sdpa_mask_transform = SDPAMaskTransform()
         self.executor_names.append(self.inplace_index_copy_transform.executor.name)
+        self.executor_names.append(self.sdpa_mask_transform.executor.name)
 
     @classmethod
     def validate(cls, model):
@@ -77,7 +227,7 @@ class HFTransformers(BaseRecipe):
 
         version = LooseVersion(transformers.__version__)
         min_version = LooseVersion("4.46.0")
-        max_version = LooseVersion("5.0.0")
+        max_version = LooseVersion("4.55.4")
 
         if version < min_version or version > max_version:
             warnings.warn(
@@ -171,6 +321,16 @@ class HFTransformers(BaseRecipe):
             transformers.PreTrainedModel: Thunder-compiled model ready
             for inference.
         """
+
+        # We need reset_parameters for initialization of buffers in materialization.
+        # This seems to work for transformers 4.5x with Llama, Llama4 and Qwen2 at least
+        for submodule in model.modules():
+            cls = submodule.__class__
+            if cls.__name__.endswith("RotaryEmbedding") and not hasattr(cls, "reset_parameters"):
+                cls.reset_parameters = RotaryEmbedding_reset_parameters
+            elif cls.__name__.endswith("RMSNorm") and not hasattr(cls, "reset_parameters"):
+                cls.reset_parameters = RMSNorm_reset_parameters
+
         thunder_model = super().apply(model)
 
         if getattr(thunder_model, "generate", None):
@@ -178,5 +338,8 @@ class HFTransformers(BaseRecipe):
 
         if getattr(thunder_model, "_sample", None):
             thunder_model._sample = partial(thunder_model._sample.__func__, thunder_model)
+
+        if getattr(thunder_model, "_valid_auto_compile_criteria", None):
+            thunder_model._valid_auto_compile_criteria = lambda *args, **kwargs: False
 
         return thunder_model

@@ -4,6 +4,7 @@ import pytest
 import thunder
 import transformers
 import torch
+import warnings
 
 from transformers.models.qwen2 import Qwen2Config, Qwen2ForCausalLM
 from transformers.models.llama import LlamaConfig, LlamaForCausalLM
@@ -11,11 +12,17 @@ from thunder.extend import deregister_executor
 from torch.testing import assert_close
 from thunder.recipes import HFTransformers
 from thunder.executors import nvfuser_available
-from thunder.executors.cudnnex import cudnn_available
-from thunder.tests.framework import version_between, IS_WINDOWS
+from thunder.tests.framework import IS_WINDOWS
 
 
-@pytest.mark.skipif(not cudnn_available(), reason="cuDNN is not available")
+def get_expected_executors():
+    return [
+        ex
+        for ex in thunder.get_default_executors()
+        if ex.name not in {"cudnn", "sdpa", "torchcompile_xentropy", "custom_op"}
+    ]
+
+
 @pytest.mark.skipif(not nvfuser_available(), reason="nvFuser is not available")
 @pytest.mark.skipif(IS_WINDOWS, reason="slow on Windows")
 def test_default_recipe_basic_bert():
@@ -28,12 +35,13 @@ def test_default_recipe_basic_bert():
     thunder_bert = thunder.compile(bert)
 
     actual = thunder_bert(inp)
-    expected = bert(inp)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=FutureWarning, message=".*encoder_attention_mask.*")
+        expected = bert(inp)
 
     assert_close(actual, expected)
 
 
-@pytest.mark.skipif(not cudnn_available(), reason="cuDNN is not available")
 @pytest.mark.skipif(not nvfuser_available(), reason="nvFuser is not available")
 @pytest.mark.skipif(IS_WINDOWS, reason="slow on Windows")
 def test_recipe_basic_bert():
@@ -43,7 +51,9 @@ def test_recipe_basic_bert():
 
     inp = torch.randint(1, 20, (1, 32))
 
-    expected = bert(inp)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=FutureWarning, message=".*encoder_attention_mask.*")
+        expected = bert(inp)
 
     thunder_bert = thunder.compile(bert, recipe="hf-transformers")
 
@@ -56,15 +66,17 @@ def test_recipe_basic_bert():
     thunder_bert = thunder.compile(bert, recipe=HFTransformers())
 
     actual = thunder_bert(inp)
-    expected = bert(inp)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=FutureWarning, message=".*encoder_attention_mask.*")
+        expected = bert(inp)
 
     assert_close(actual, expected)
 
     # cleanup after test
     deregister_executor("inplace_index_copy_ex")
+    deregister_executor("sdpa_mask_transform_ex")
 
 
-@pytest.mark.skipif(not cudnn_available(), reason="cuDNN is not available")
 @pytest.mark.skipif(not nvfuser_available(), reason="nvFuser is not available")
 def test_recipe_basic_bert_fx():
     bert = transformers.BertForSequenceClassification(transformers.BertConfig())
@@ -77,16 +89,18 @@ def test_recipe_basic_bert_fx():
 
     thunder_bert = thunder.compile(bert, recipe=HFTransformers(interpreter="thunder.fx"))
 
-    actual = thunder_bert(inp)
-    expected = bert(inp)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=FutureWarning, message=".*encoder_attention_mask.*")
+        actual = thunder_bert(inp)
+        expected = bert(inp)
 
     assert_close(actual, expected)
 
     # cleanup after test
     deregister_executor("inplace_index_copy_ex")
+    deregister_executor("sdpa_mask_transform_ex")
 
 
-@pytest.mark.skipif(not cudnn_available(), reason="cuDNN is not available")
 @pytest.mark.skipif(not nvfuser_available(), reason="nvFuser is not available")
 @pytest.mark.parametrize(
     "model_cls, config_cls",
@@ -125,6 +139,7 @@ def test_recipe_model_with_cache(model_cls, config_cls):
 
     assert_close(actual, expected)
     deregister_executor("inplace_index_copy_ex")
+    deregister_executor("sdpa_mask_transform_ex")
 
 
 @pytest.mark.skipif(not nvfuser_available(), reason="nvFuser is not available")
@@ -180,9 +195,9 @@ def test_recipe_errors():
 
     # cleanup after test
     deregister_executor("inplace_index_copy_ex")
+    deregister_executor("sdpa_mask_transform_ex")
 
 
-@pytest.mark.skipif(not cudnn_available(), reason="cuDNN is not available")
 @pytest.mark.skipif(not nvfuser_available(), reason="nvFuser is not available")
 def test_plugins_basics():
     model = torch.nn.Sequential(torch.nn.Linear(2048, 4096), torch.nn.ReLU(), torch.nn.Linear(4096, 64))
@@ -194,12 +209,11 @@ def test_plugins_basics():
     _ = thunder_model(x)
     cd = get_compile_data(thunder_model)
     assert cd is not None
-    for ex in thunder.get_default_executors():
+    for ex in get_expected_executors():
         assert ex.name in [el.name for el in cd.executors_list]
 
 
 # test skipped if nvfuser isn't available because providing plugins calls BaseRecipe
-@pytest.mark.skipif(not cudnn_available(), reason="cuDNN is not available")
 @pytest.mark.skipif(not nvfuser_available(), reason="nvFuser is not available")
 @pytest.mark.skipif(IS_WINDOWS, reason="libuv error with PT build on windows")
 def test_plugins_composition(monkeypatch):
@@ -210,22 +224,22 @@ def test_plugins_composition(monkeypatch):
     with patch("thunder.jit") as mock_jit:
         _ = thunder.compile(model, plugins="fp8")
         call_args = mock_jit.call_args
-        assert "transformer_engine" in [el.name for el in call_args.kwargs["executors"]]
-        for ex in thunder.get_default_executors():
+        assert "transformer_engine_v1" in [el.name for el in call_args.kwargs["executors"]]
+        for ex in get_expected_executors():
             assert ex.name in [el.name for el in call_args.kwargs["executors"]]
 
         _ = thunder.compile(model, plugins=["fp8"])
         call_args = mock_jit.call_args
-        assert "transformer_engine" in [el.name for el in call_args.kwargs["executors"]]
-        for ex in thunder.get_default_executors():
+        assert "transformer_engine_v1" in [el.name for el in call_args.kwargs["executors"]]
+        for ex in get_expected_executors():
             assert ex.name in [el.name for el in call_args.kwargs["executors"]]
 
         from thunder.plugins import FP8
 
         _ = thunder.compile(model, plugins=[FP8()])
         call_args = mock_jit.call_args
-        assert "transformer_engine" in [el.name for el in call_args.kwargs["executors"]]
-        for ex in thunder.get_default_executors():
+        assert "transformer_engine_v1" in [el.name for el in call_args.kwargs["executors"]]
+        for ex in get_expected_executors():
             assert ex.name in [el.name for el in call_args.kwargs["executors"]]
 
     if not torch.distributed.is_initialized():
@@ -252,10 +266,9 @@ def test_plugins_composition(monkeypatch):
         transforms = call_args.kwargs["transforms"]
         for expected in expected_transforms:
             assert any(isinstance(el, expected) for el in transforms)
-        assert "transformer_engine" in [el.name for el in call_args.kwargs["executors"]]
+        assert "transformer_engine_v1" in [el.name for el in call_args.kwargs["executors"]]
 
 
-@pytest.mark.skipif(not cudnn_available(), reason="cuDNN is not available")
 @pytest.mark.skipif(not nvfuser_available(), reason="nvFuser is not available")
 @pytest.mark.skipif(IS_WINDOWS, reason="libuv error with PT build on windows")
 def test_plugins_hybrid_ddpfsdp(monkeypatch):

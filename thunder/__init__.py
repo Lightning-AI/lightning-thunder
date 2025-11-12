@@ -80,7 +80,26 @@ _PROJECT_ROOT = os.path.dirname(_PACKAGE_ROOT)
 
 # TODO RC1 Review exposed names
 __all__ = [
+    # module aliases
+    "clang",
+    "dtypes",
+    "devices",
     "transforms",
+    # function aliases
+    "get_compile_data",
+    "trace",
+    # class aliases
+    "Proxy",
+    "TensorProxy",
+    "NumberProxy",
+    "StringProxy",
+    "IntegerProxy",
+    "FloatProxy",
+    "ComplexProxy",
+    "TupleProxy",
+    "ListProxy",
+    "DictProxy",
+    "AnyProxy",
     # dtype aliases
     "bool8",
     "uint8",
@@ -182,9 +201,11 @@ torchcompile_xentropy_executor: None | extend.Executor = extend.get_executor("to
 apex_executor: None | extend.Executor = extend.get_executor("apex")
 nvfuser_executor: None | extend.Executor = extend.get_executor("nvfuser")
 pytorch_executor: None | extend.Executor = extend.get_executor("torch")
+custom_op_executor: None | extend.Executor = extend.get_executor("custom_op")
 
-# Default executor list is [cudnn -> sdpa -> torchcompile_cat -> torchcompile_xentropy -> nvfuser -> torch -> python]
+# Default executor list is [cudnn -> sdpa -> torchcompile_cat -> torchcompile_xentropy -> nvfuser -> custom_op -> torch -> python]
 # Note that add_default_executor inserts executor at start of list, hence the reverse order below.
+add_default_executor(custom_op_executor)
 if nvfuser_executor:
     add_default_executor(nvfuser_executor)
 
@@ -529,7 +550,7 @@ def jit(
             pro = prologue_trc.python_callable(include_decorators=False)
             pro = prologue_execution_timer(pro)
 
-            epilogue_trc = transform_to_torch_types(epilogue_trc)
+            epilogue_trc = transform_to_torch_types(epilogue_trc, translate_all=True)
             epilogue = epilogue_trc.python_callable()
 
             cs.last_prologue_transformation_stop = time.perf_counter_ns()
@@ -558,6 +579,7 @@ def jit(
                     computation_trc,
                     compile_id=compile_options.get("torch_compile_compile_id", None),
                 )
+                computation_traces.append(computation_trc)
 
             from thunder.executors.passes import _transform_for_operator_executor_execution
             from thunder.distributed.utils import maybe_sort_waits
@@ -579,8 +601,8 @@ def jit(
             if requires_grad:
                 from thunder.transforms.autodiff import split_into_forward_and_backward
 
-                if "transformer_engine_v2" in {ex.name for ex in cd.executors_list}:
-                    from thunder.executors.transformer_engine_v2ex import _te_activation_checkpointing_transform
+                if "transformer_engine" in {ex.name for ex in cd.executors_list}:
+                    from thunder.executors.transformer_engineex import _te_activation_checkpointing_transform
 
                     computation_trc = _te_activation_checkpointing_transform(computation_trc)
 
@@ -897,6 +919,8 @@ def jit(
     @update_call_statistics
     def fn_(*args, **kwargs) -> Any:
         # NOTE: Don't capture cd or cs in the closure, otherwise it will create a cycle
+        cd = weakref_cd()
+        assert cd is not None, "cd has been cleared."
         cs = weakref_cs()
         assert cs is not None, "cs has been cleared."
         if is_tracing():
@@ -908,6 +932,9 @@ def jit(
         result = cache_entry.computation_fn(*inps)
         result = maybe_connect_to_autograd(cache_entry, result)
         result = call_epilogue(cache_entry, result, pro_to_epi)
+
+        # Reflect the state of is_grad_enabled, as its changes were tracked only inside Thunder
+        pytorch.set_grad_enabled(cd.is_grad_enabled)
 
         cs.last_computation = cache_entry.computation_fn
         return result
