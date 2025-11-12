@@ -357,9 +357,6 @@ def test_quantization():
         assert_close(v, sd2[k])
 
 
-@pytest.mark.skip(
-    reason="incompatible with transformers >= 4.55.4, see https://github.com/Lightning-AI/lightning-thunder/issues/2726"
-)
 @thunder.tests.framework.requiresCUDA
 def test_thunderfx_mistral_nemo_small():
     """
@@ -424,9 +421,6 @@ def _get_model_config_pairs():
     return [(phi3), (qwen2)]
 
 
-@pytest.mark.skip(
-    reason="incompatible with transformers >= 4.55.4, see https://github.com/Lightning-AI/lightning-thunder/issues/2726"
-)
 @thunder.tests.framework.requiresCUDA
 @pytest.mark.parametrize("model_fn", _get_model_config_pairs())
 def test_hf_for_nemo(model_fn):
@@ -523,6 +517,7 @@ LLAMA_3_2_1B_CFG = {
 @requiresCUDA
 @pytest.mark.skip(
     reason="incompatible with transformers >= 4.55.4, see https://github.com/Lightning-AI/lightning-thunder/issues/2726"
+    "Error Message: 'DynamicCache' object has no attribute 'get_usable_length'. Did you mean: 'get_seq_length'?"
 )
 @requiresDeviceMemory(required_memory_bytes=int(0.7 * 1024 * 1024 * 1024))
 @pytest.mark.parametrize(
