@@ -131,9 +131,7 @@ def remove_duplicate_number_proxies(bsyms: Sequence[BoundSymbol]) -> list[BoundS
         if all(map(lambda x: isinstance(x, NumberProxyInterface) and x.name in seen, bsym.flat_outs)):
             continue
         output = tree_map(keep_or_swap, bsym.output)
-        subsymbols = dce(bsym.subsymbols, output=bsym.output)
-        new_bsym = bsym.from_bsym(output=output, subsymbols=subsymbols)
-        new_bsyms.append(new_bsym)
+        new_bsyms.append(bsym.from_bsym(output=output))
     return new_bsyms
 
 
