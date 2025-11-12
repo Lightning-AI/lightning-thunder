@@ -1,6 +1,7 @@
 from thunder.plugins.distributed import DDP, FSDP
 from thunder.plugins.quantization import QuantizeInt4
 from thunder.plugins.fp8 import FP8
+from thunder.plugins.profile import Profile as Profile
 from thunder.plugins.reduce_overhead import ReduceOverhead
 
 names_to_plugins = {

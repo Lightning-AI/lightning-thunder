@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 import ast
 import inspect
+import warnings
 
 from torch import TensorType, ListType
 
@@ -28,11 +29,13 @@ if TYPE_CHECKING:
 
 __all__ = [
     "_register_custom_op",
+    "_register_nvfuser_translator",
 ]
 
 
 _BACKWARD_FN: str = "_backward_fn"
 _SETUP_CONTEXT_FN: str = "_setup_context_fn"
+_CUSTOM_OP_TO_TORCHFN_AND_SYMBOL: dict[CustomOpDef, tuple[tuple[OpOverload, OpOverloadPacket], Symbol]] = {}
 
 
 @dataclass(frozen=True)
@@ -308,7 +311,7 @@ def define_backward_for(
 
 
 def _register_custom_op(custom_op: CustomOpDef) -> Symbol:
-    """Register :func:`~torch.library.custom_op`'ed function to Thunder.
+    """Register :func:`~torch.library.custom_op`'ed or :func:`~torch.library.triton_op`'ed function to Thunder.
 
     :func:`torch.library.custom_op` operators always have schema as per https://docs.google.com/document/d/1_W62p8WJOQQUzPsJYa7s701JXt0qf2OfLub2sbkHOaU/edit?tab=t.0#heading=h.aotf6sastysc saying
     "Use torch.library.custom_op to decorate a function to turn it into a custom operator.
@@ -316,6 +319,7 @@ def _register_custom_op(custom_op: CustomOpDef) -> Symbol:
     An example schema is ``my_lib::foo(Tensor a, Tensor b, float? c=None, str d="") -> Tensor``.
 
     This function does three things:
+
     1. Register ``custom_op`` as a new :class:`~thunder.core.symbol.Symbol` whose ``fn`` is ``custom_op._opoverload`` and ``meta`` is based on ``custom_op._abstract_fn``
     2. When ``_setup_context_fn`` and ``_backward_fn`` are defined, register augmented forward and backward through :func:`thunder.core.transforms.register_augmented_forward` and :func:`thunder.core.transforms.register_backward`.
 
@@ -324,10 +328,14 @@ def _register_custom_op(custom_op: CustomOpDef) -> Symbol:
 
     Returns:
         :class:`~thunder.core.symbol.Symbol`: A symbol representing the input ``custom_op``.
+
+    .. note::
+        This feature is experimental and subject to change.
     """
     from thunder.executors.torchex import _always_executable
     from thunder.executors.custom_op_ex import custom_op_ex
     from thunder.torch import register_function
+    from thunder.torch import _torch_to_thunder_function_map
 
     # `custom_op` is `custom_op(name)(my_func)`,
     # `torch.ops.namespace.name` is `OpOverloadPacket.`
@@ -371,6 +379,11 @@ def _register_custom_op(custom_op: CustomOpDef) -> Symbol:
         tags = (OpTags.TORCH_COMPILE_COMPLIANT_CUSTOM_OP,)
     else:
         tags = ()
+    # NOTE: [Why `is_prim=True`?]
+    # It might sound nuanced, but prim ops are always there.
+    # non-prim ops need to be decomposable to be there.
+    # otherwise, i.e., they don't have subsymbols, they're treated as no-op.
+    # Rel: https://github.com/Lightning-AI/lightning-thunder/issues/2361.
     symbol = Symbol(
         name=fn_name,
         meta=meta_fn,
@@ -379,8 +392,9 @@ def _register_custom_op(custom_op: CustomOpDef) -> Symbol:
         tags=tags,
     )
     # Register both `torch.ops.my_lib.foo` and `torch.ops.my_lib.foo.default`.
-    register_function(torch_opoverload_packet, symbol)
-    register_function(torch_opoverload, symbol)
+    for torch_op in (torch_opoverload_packet, torch_opoverload):
+        baseutils.check(torch_op not in _torch_to_thunder_function_map, lambda: f"{torch_op=} already registered")
+        register_function(torch_op, symbol)
 
     op: Symbol = custom_op_ex.register_operator(fn_name, meta=meta_fn, fn=torch_opoverload)
     custom_op_ex.register_implementation(symbol, op, checker=_always_executable)
@@ -395,4 +409,192 @@ def _register_custom_op(custom_op: CustomOpDef) -> Symbol:
         backward_op = custom_op_ex.register_operator(bwd_fn_name, meta=backward_meta, fn=backward_impl)
         register_backward(symbol.id)(backward_op)
 
+    _CUSTOM_OP_TO_TORCHFN_AND_SYMBOL[custom_op] = ((torch_opoverload, torch_opoverload_packet), symbol)
+
     return symbol
+
+
+def _deregister_custom_op(custom_op: CustomOpDef) -> None:
+    """Deregister ``custom_op`` and related things from Thunder, helper function for test."""
+    from thunder.executors.custom_op_ex import custom_op_ex
+    from thunder.executors.nvfuserex import nvfuser_available
+    from thunder.torch import _torch_to_thunder_function_map
+
+    if custom_op not in _CUSTOM_OP_TO_TORCHFN_AND_SYMBOL:
+        msg = f"{custom_op} is not registered"
+        warnings.warn(msg)
+        return
+    (torch_op_tuple, symbol) = _CUSTOM_OP_TO_TORCHFN_AND_SYMBOL[custom_op]
+    for torch_op in torch_op_tuple:
+        if torch_op in _torch_to_thunder_function_map:
+            del _torch_to_thunder_function_map[torch_op]
+    if symbol.id in custom_op_ex._implmap:
+        del custom_op_ex._implmap[symbol.id]
+
+    if nvfuser_available():
+        from thunder.executors.nvfuserex_impl import ex as nvfuser_ex
+        from thunder.executors.nvfuserex_impl import _translation_map
+
+        if symbol.id in _translation_map:
+            del _translation_map[symbol.id]
+            del nvfuser_ex._implmap[symbol.id]
+
+    del _CUSTOM_OP_TO_TORCHFN_AND_SYMBOL[custom_op]
+
+
+def _register_nvfuser_translator(
+    symbol: Symbol,
+    translator_for_nvfuser: Callable[[Any], Any],
+    checker: Callable[[Any], bool] | None = None,
+) -> None:
+    """Register a translator for nvfuser executor for ``symbol``.
+
+    Args:
+        symbol: This should be the symbol from :func:`thunder.torch.custom_op._register_custom_op`.
+        translator_for_nvfuser: A function that takes :class:`~thunder.core.proxies.Proxy` objects
+            and Python built-in types as args and kwargs of ``fd``, :class:`nvfuser.FusionDefinition` and
+            ``lc_to_nv_map``, a dictionary of :class:`~thunder.core.proxies.TensorProxy` to actual values.
+        checker: A function that takes arguments of ``symbol`` and returns :obj:`True` if the nvfuser
+            definition supports those arguments. By default, A function that always returs :obj:`True` is used.
+
+    .. note::
+
+        Currently backward is not supported.
+
+    Example:
+
+        .. code-block:: python
+
+            import torch
+            import torch.nn as nn
+
+            import thunder
+            from thunder.core.dtypes import to_dtype
+            from thunder.executors.nvfuserex_impl import getnv
+            from thunder.executors.nvfuserex_impl import lcdtype_to_nvdtype
+            from thunder.torch.custom_op import _register_custom_op
+            from thunder.torch.custom_op import _register_nvfuser_translator
+
+            @torch.library.custom_op("my_custom_op::mul", mutates_args=())
+            def mul(a: torch.Tensor, b: torch.Tensor, c: float | None = None) -> torch.Tensor:
+                return a * b
+
+            @torch.library.register_fake("my_custom_op::mul")
+            def _(a: torch.Tensor, b: torch.Tensor, c: float | None = None) -> torch.Tensor:
+                return torch.empty_like(a)
+
+            def setup_context_for_my_custom_op_mul(ctx, inputs, output) -> None:
+                a, b, *_ = inputs
+                ctx.save_for_backward(a, b)
+
+            def backward_of_my_custom_op_mul(ctx, grad) -> tuple[torch.Tensor, torch.Tensor, None]:
+                a, b = ctx.saved_tensors
+                return torch.ops.my_custom_op.mul(grad, b), torch.ops.my_custom_op.mul(grad, a), None
+
+            torch.library.register_autograd(
+                "my_custom_op::mul",
+                backward_of_my_custom_op_mul,
+                setup_context=setup_context_for_my_custom_op_mul,
+            )
+
+            class MyModule(nn.Module):
+                def __init__(self):
+                    super().__init__()
+                    self.linear = nn.Linear(2, 2, bias=False)
+
+                def forward(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+                    out = torch.ops.my_custom_op.mul(self.linear(x), y)
+                    return torch.relu(out)
+
+            # Custom nvfuser definition.
+            def mul_translator(a, b, c=None, *, fd, lc_to_nv_map):
+                nva = getnv(a, fd, lc_to_nv_map)
+                nvb = getnv(b, fd, lc_to_nv_map)
+                result = fd.ops.mul(nva, nvb)
+                out = fd.ops.cast(result, lcdtype_to_nvdtype(to_dtype(a.dtype)))
+                return out
+
+            DEVICE = torch.device("cuda")
+            DTYPE = torch.bfloat16
+            SHAPE = (8, 2)
+
+            if __name__ == "__main__":
+                # Register the custom_op of `mul` with :func:`thunder.torch._register_custom_op`
+                _symbol = _register_custom_op(mul)
+                # Register custom nvfuser definition for the already registered custom_op of mul
+                _register_nvfuser_translator(_symbol, mul_translator)
+
+                model = MyModule().to(device=DEVICE, dtype=DTYPE)
+                with DEVICE:
+                    x = torch.randn(SHAPE, dtype=DTYPE)
+                    y = torch.randn(SHAPE, dtype=DTYPE)
+
+                jitted = thunder.jit(model)
+                out = jitted(x, y)
+                fwd_extrace = thunder.last_traces(jitted)[-1]
+                print(fwd_extrace)
+                # def computation(x, y, t_linear_weight):
+                #   # x: "cuda:0 bf16[8, 2]"
+                #   # y: "cuda:0 bf16[8, 2]"
+                #   # t_linear_weight: "cuda:0 bf16[2, 2]"
+                #
+                #   # /path/to/torch/nn/modules/linear.py:134:                return F.linear(input, self.weight, self.bias)
+                #   t28 = torch.nn.functional.linear(x, t_linear_weight, None)  # t28: "cuda:0 bf16[8, 2]"
+                #     # t28 = ltorch.linear(x, t_linear_weight, None)  # t28: "cuda:0 bf16[8, 2]"
+                #       # t28 = prims.linear(x, t_linear_weight, None)  # t28: "cuda:0 bf16[8, 2]"
+                #   [t21, t22] = nvFusion0(t28, y)
+                #     # t17 = ltorch.my_custom_op_mul(t28, y)  # t17: "cuda:0 bf16[8, 2]"
+                #     # t21 = prims.gt(t17, 0.0)  # t21: "cuda:0 b8[8, 2]"
+                #     # t22 = prims.where(t21, t17, 0.0)  # t22: "cuda:0 bf16[8, 2]"
+                #   return {'output': (t22,), 'flat_args': [x, y, t_linear_weight], 'flat_output': (t22,)}, ((t21, t28, y, x), ())
+
+                out.mean().backward()
+                # The backward uses the original implementation.
+                print(thunder.last_backward_traces(jitted)[-1])
+                # def backward_fn(saved_for_backward, cotangents):
+                #   # saved_for_backward: "Collection"
+                #   # cotangents: "Collection"
+                #   C0, C1, = saved_for_backward
+                #   # C0: "Collection"
+                #   # C1: "Collection"
+                #   clear_mutable_collection(saved_for_backward)
+                #   clear_mutable_collection(C1)
+                #   del C1, saved_for_backward
+                #   t23, = cotangents
+                #   # t23: "cuda:0 bf16[8, 2]"
+                #   clear_mutable_collection(cotangents)
+                #   del cotangents
+                #   t21, t28, y, x, = C0
+                #   # t21: "cuda:0 b8[8, 2]"
+                #   # t28: "cuda:0 bf16[8, 2]"
+                #   # y: "cuda:0 bf16[8, 2]"
+                #   # x: "cuda:0 bf16[8, 2]"
+                #   clear_mutable_collection(C0)
+                #   del C0
+                #   [t24] = nvFusion1(t21, t23)
+                #     # t24 = prims.where(t21, t23, 0.0)  # t24: "cuda:0 bf16[8, 2]"
+                #   del t21, t23
+                #   [t19, t20] = my_custom_op_mul_backward(t28, y, t24)
+                #   del t20, t28, y, t24
+                #   t30 = torch.reshape(t19, (-1, 2))  # t30: "cuda:0 bf16[8, 2]"
+                #     # t30 = ltorch.reshape(t19, (-1, 2))  # t30: "cuda:0 bf16[8, 2]"
+                #       # t30 = prims.reshape(t19, (8, 2))  # t30: "cuda:0 bf16[8, 2]"
+                #   del t19
+                #   t31 = torch.permute(t30, (1, 0))  # t31: "cuda:0 bf16[2, 8]"
+                #     # t31 = ltorch.permute(t30, (1, 0))  # t31: "cuda:0 bf16[2, 8]"
+                #       # t31 = prims.transpose(t30, (1, 0))  # t31: "cuda:0 bf16[2, 8]"
+                #   del t30
+                #   t32 = torch.reshape(x, (-1, 2))  # t32: "cuda:0 bf16[8, 2]"
+                #     # t32 = ltorch.reshape(x, (-1, 2))  # t32: "cuda:0 bf16[8, 2]"
+                #       # t32 = prims.reshape(x, (8, 2))  # t32: "cuda:0 bf16[8, 2]"
+                #   del x
+                #   t29 = torch.matmul(t31, t32)  # t29: "cuda:0 bf16[2, 2]"
+                #     # t29 = ltorch.matmul(t31, t32)  # t29: "cuda:0 bf16[2, 2]"
+                #       # t29 = prims.matmul(t31, t32)  # t29: "cuda:0 bf16[2, 2]"
+                #   del t31, t32
+                #   return (None, None, t29)
+    """
+    from thunder.executors.nvfuserex_impl import register_supported
+    from thunder.executors.torchex import _always_executable
+
+    register_supported(symbol, translator_for_nvfuser, checker or _always_executable)

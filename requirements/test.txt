@@ -9,7 +9,7 @@ pytest-timestamper ==0.0.10
 graphviz ==0.21
 fdm ==0.5.0
 expecttest ==0.3.0  # for test_ddp.py
-hypothesis ~=6.136.6  # for test_ddp.py
+hypothesis ~=6.142.5  # for test_ddp.py
 numpy
 einops  # for test_einops.py
 litgpt==0.5.0  # for the model definition in tests and benchmarks  # todo: need update to latest
@@ -19,7 +19,7 @@ xlsxwriter # thunder/benchmarks/test_benchmark_litgpt.py
 jsonargparse # thunder/benchmarks/benchmark_litgpt.py
 bitsandbytes==0.48.0; 'arm' not in platform_machine and 'aarch' not in platform_machine
 bitsandbytes>=0.42,<0.43; 'arm' in platform_machine or 'aarch' in platform_machine
-transformers==4.52.4 # for test_networks.py
+transformers==4.55.4 # for test_networks.py
 diffusers==0.35.1 # for test_networks.py
 accelerate # for test_networks.py
 
