@@ -1473,7 +1473,7 @@ def tensor_split(a: TensorLike, /, indices_or_sections, dim=0):
 def transpose(a: TensorLike, /, dim0: int, dim1: int) -> TensorLike:
     dim0, dim1 = utils.canonicalize_dims(a.ndim, (dim0, dim1))
 
-    permutation = list(range(0, a.ndim))
+    permutation = list(range(a.ndim))
     permutation[dim0] = dim1
     permutation[dim1] = dim0
     return clang.transpose(a, permutation)

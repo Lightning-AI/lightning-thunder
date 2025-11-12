@@ -1,4 +1,5 @@
 from __future__ import annotations
+import operator
 from typing import TYPE_CHECKING
 import copy
 from functools import partial
@@ -6,12 +7,14 @@ from functools import partial
 import torch
 from torch.fx.passes.split_module import split_module
 
+from thunder.core import baseutils
 from thunder.dynamo.utils import (
     SubgraphInfo,
     CompiledFunction,
     CompilerType,
     SplitReason,
     SplitReasonType,
+    LazyInductorModule,
     is_node_supported_by_thunder,
     get_nodes_in_unsupported_ctx_regions,
     update_node_and_submodule,
@@ -30,8 +33,6 @@ if TYPE_CHECKING:
 def _splitter(
     gm: torch.fx.GraphModule,
     thunder_jit: Callable,
-    torch_inductor: Callable,
-    _unused_sample_args: list[torch.SymInt, torch.Tensor],
     thunder_options: dict[str, Any] | None = None,
 ) -> tuple[torch.fx.GraphModule, SubgraphInfo]:
     """
@@ -99,12 +100,13 @@ def _splitter(
     partition_cnt = 0
     supported_partitions: set[int] = set()
     split_reasons: list[SplitReason] = []
+    unsupported_collection_users: set[torch.fx.Node] = set()
 
     nodes_in_unsupported_ctx_regions = get_nodes_in_unsupported_ctx_regions(gm)
     translate_dtensor_ops(gm)
 
     def callback(node) -> int:
-        nonlocal prev_value, partition_cnt, split_reasons, supported_partitions
+        nonlocal prev_value, partition_cnt, split_reasons, supported_partitions, unsupported_collection_users
 
         assert node.op not in (
             "placeholder",
@@ -122,6 +124,10 @@ def _splitter(
                 info=f"node with name: {node.name} and target: {node.target} is not supported probably because it is in unsupported context.",
             )
             split_reasons.append(split_reason)
+        elif node in unsupported_collection_users:
+            # split_reason has been specified when node was added to unsupported_collection_users
+            is_thunder_supported = False
+            split_reason = None
         else:
             # To support dynamo generated prims for `parallelize_module`.
             # `translate_dtensor_ops` will mark the target as thunder supported if it is a DTensor operation.
@@ -131,6 +137,14 @@ def _splitter(
                 is_thunder_supported, split_reason = is_node_supported_by_thunder(node, thunder_options or {})
                 if split_reason is not None:
                     split_reasons.append(split_reason)
+
+        if not is_thunder_supported and baseutils.is_collection(node.meta.get("example_value", None)):
+            # When a node returning a tuple is split out, we must extract its elements within the same submodule.
+            # Inductor assumes the output node of a GraphModule to look like `return (t0, ..., tN)` or `return t0`,
+            # not like `return some_tuple`. See https://github.com/Lightning-AI/lightning-thunder/pull/2600
+            for user in node.users:
+                assert user.target is operator.getitem
+                unsupported_collection_users.add(user)
 
         if prev_value == is_thunder_supported:  # We are in the same region.
             return partition_cnt
@@ -207,7 +221,12 @@ def _splitter(
             )
         elif node.name.startswith("submod"):  # For inductor
             graph_module = getattr(split_gm, node.name)
-            jit_fn = torch_inductor(graph_module)
+
+            fake_mode = torch._guards.detect_fake_mode()
+            # Delay Inductor compilation until invocation with real tensors,
+            # because we do not know the strides of tensors that Thunder-compiled submodules return.
+            jit_fn = LazyInductorModule(graph_module, fake_mode)
+
             # Update the node name from "submod_*" to "inductor_*" for more user-friendly names
             update_node_and_submodule(split_gm, node, node.name.replace("submod", "inductor"), jit_fn)
             submodule_to_compiled_fns[getattr(original_split_gm, node_name)] = CompiledFunction(
