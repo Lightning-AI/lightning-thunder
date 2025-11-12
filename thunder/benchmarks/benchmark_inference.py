@@ -20,8 +20,6 @@ import statistics
 import sys
 import time
 import warnings
-from typing import Any
-from collections.abc import Callable
 from looseversion import LooseVersion
 
 import torch
@@ -52,6 +50,7 @@ from thunder.tests.distributed.test_moe import GroupedLinearColwiseParallel, Gro
 from thunder.transforms.cudagraph import CUDAGraphTransform
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from typing import Any
 
 
@@ -151,6 +150,7 @@ class InferenceBenchmarkConfig:
     num_iterations: int
     warmup_iterations: int
     enable_nvfp4: bool  # Enable NVFP4 quantization
+    use_torchao_nvfp4: bool
     fx_report_folder: str | None
     enable_nv_linear: bool
     mode: str
@@ -278,7 +278,21 @@ class InferenceBenchmark:
         self.vocab_size = model.vocab_size
 
         if self.config.enable_nvfp4:
-            _quantize_llama4(model)
+            if not self.config.use_torchao_nvfp4:
+                _quantize_llama4(model)
+            else:
+                from torchao.quantization import quantize_
+                from torchao.prototype.mx_formats.inference_workflow import (
+                    NVFP4InferenceConfig,
+                    NVFP4MMConfig,
+                )
+
+                config = NVFP4InferenceConfig(
+                    mm_config=NVFP4MMConfig.DYNAMIC,
+                    use_triton_kernel=True,
+                    use_dynamic_per_tensor_scale=True,
+                )
+                quantize_(m_nvfp4, config=config)
         self.model = self._compile_model(model)
 
     @property
@@ -675,6 +689,7 @@ Examples:
     )
 
     parser.add_argument("--enable-nvfp4", action="store_true", help="Enable NVFP4 quantization for linear layers")
+    parser.add_argument("--use-torchao-nvfp4", action="store_true", help="Use TorchAO for NVFP4")
     parser.add_argument(
         "--enable-nv-linear",
         action="store_true",
@@ -724,6 +739,7 @@ def main():
         warmup_iterations=args.warmup_iterations,
         mode=args.mode,
         enable_nvfp4=args.enable_nvfp4,
+        use_torchao_nvfp4=args.use_torchao_nvfp4,
         fx_report_folder=args.fx_report_folder,
         enable_nv_linear=args.enable_nv_linear,
         disable_moe_replacement=args.disable_moe_replacement,
