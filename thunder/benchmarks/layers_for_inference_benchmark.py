@@ -669,7 +669,7 @@ class Llama4MoE(nn.Module):
                 torch.zeros(1, dtype=torch.int32, device=tokens_per_expert.device),
                 torch.cumsum(tokens_per_expert, 0, dtype=torch.int32),
             ]
-        )  # [n+1]
+        )[:-1]  # [n]
         outs_sorted_by_expert_id = self.routed_experts(tokens_sorted_by_expert_id, offsets)  # [s, h]
 
         token_ids_sorted_by_expert_inverse_id = torch.argsort(token_ids_sorted_by_expert_id)
