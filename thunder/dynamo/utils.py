@@ -402,9 +402,15 @@ def get_nodes_in_unsupported_ctx_regions(gm: torch.fx.GraphModule) -> set[torch.
     ctx_stack = []  # Unsupported context.__enter__ we have seen till now.
 
     CTX_ENTER_EXIT_MAP = {
-        torch._functorch.predispatch._vmap_increment_nesting: torch._functorch.predispatch._vmap_decrement_nesting,
         torch._C._functorch._vmap_increment_nesting: torch._C._functorch._vmap_decrement_nesting,
     }
+
+    # Older version of PyTorch may not have `torch._functorch.predispatch`
+    if hasattr(torch._functorch, "predispatch"):
+        CTX_ENTER_EXIT_MAP[torch._functorch.predispatch._vmap_increment_nesting] = (
+            torch._functorch.predispatch._vmap_decrement_nesting
+        )
+
     UNSUPPORTED_THUNDER_CTX_ENTER = tuple(CTX_ENTER_EXIT_MAP.keys())
     UNSUPPORTED_THUNDER_CTX_EXIT = tuple(CTX_ENTER_EXIT_MAP.values())
 
