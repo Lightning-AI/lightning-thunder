@@ -399,7 +399,11 @@ def test_thunderfx_mistral_nemo_small():
     input_ids = torch.randint(0, config.vocab_size, iid_size, device=device)
     attention_mask = torch.ones_like(input_ids)
 
-    output = mdl(input_ids=input_ids, attention_mask=attention_mask, labels=input_ids)
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore", category=FutureWarning, message=r".*`isinstance\(treespec, LeafSpec\)` is deprecated.*"
+        )
+        output = mdl(input_ids=input_ids, attention_mask=attention_mask, labels=input_ids)
     logits = output.logits
     grad_logits = torch.randn_like(logits)
     logits.backward(grad_logits)
@@ -454,7 +458,11 @@ def test_hf_for_nemo(model_fn):
     ref_output = model(input_ids=input_ids, labels=input_ids)
     ref_loss = ref_output.loss
 
-    compiled_output = compiled_model(input_ids=input_ids, labels=input_ids)
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore", category=FutureWarning, message=r".*`isinstance\(treespec, LeafSpec\)` is deprecated.*"
+        )
+        compiled_output = compiled_model(input_ids=input_ids, labels=input_ids)
     compiled_loss = compiled_output.loss
 
     # Less strict tolerance probably due to different type promotion order for bfloat16
