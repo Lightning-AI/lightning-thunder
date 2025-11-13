@@ -387,9 +387,10 @@ class GroupedLinear(nn.Module):
         self.weight = nn.Parameter(torch.empty(groups, out_features, in_features, dtype=dtype, device=device))
         # Initialize the weight in the same way as nn.Linear
         nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+        self.weight.data = self.weight.transpose(-1, -2)
 
     def forward(self, hidden_states: torch.Tensor, offsets: torch.Tensor) -> torch.Tensor:
-        return grouped_mm(hidden_states, self.weight.transpose(-1, -2), offsets)
+        return grouped_mm(hidden_states, self.weight, offsets)
 
 
 @torch.inference_mode()
@@ -631,13 +632,13 @@ class Llama4MoE(nn.Module):
         # Split into gate and up projections
         gate_proj_w, up_proj_w = moe.experts.gate_up_proj.chunk(2, dim=2)
 
-        new_moe.routed_experts.gate_proj.weight.data.copy_(gate_proj_w.transpose(-1, -2))
-        new_moe.routed_experts.up_proj.weight.data.copy_(up_proj_w.transpose(-1, -2))
+        new_moe.routed_experts.gate_proj.weight.data.copy_(gate_proj_w)
+        new_moe.routed_experts.up_proj.weight.data.copy_(up_proj_w)
 
         # Handle down_proj
         # HF format: (groups, intermediate_size, hidden_size)
         # Our format: (groups, hidden, intermediate_size)
-        new_moe.routed_experts.down_proj.weight.data.copy_(moe.experts.down_proj.transpose(-1, -2))
+        new_moe.routed_experts.down_proj.weight.data.copy_(moe.experts.down_proj)
 
         return new_moe
 
