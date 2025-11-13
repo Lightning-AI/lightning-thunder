@@ -418,12 +418,13 @@ def get_nodes_in_unsupported_ctx_regions(gm: torch.fx.GraphModule) -> set[torch.
     for node in gm.graph.nodes:
         if node.op == "call_function" and node.target in UNSUPPORTED_THUNDER_CTX_ENTER:
             ctx_stack.append(node.target)
+            nodes_in_unsupported_ctx_regions.add(node)
         elif node.op == "call_function" and node.target in UNSUPPORTED_THUNDER_CTX_EXIT:
             enter_fn = ctx_stack.pop()
             assert CTX_ENTER_EXIT_MAP[enter_fn] == node.target, "Mismatched ctx enter-exit"
-        else:
-            if len(ctx_stack) > 0:
-                nodes_in_unsupported_ctx_regions.add(node)
+            nodes_in_unsupported_ctx_regions.add(node)
+        elif len(ctx_stack) > 0:
+            nodes_in_unsupported_ctx_regions.add(node)
 
     return nodes_in_unsupported_ctx_regions
 
