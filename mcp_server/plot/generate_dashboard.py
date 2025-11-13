@@ -156,8 +156,103 @@ def generate_dashboard_html(blocked, not_ready, needs_internal_review, ready_for
     os.makedirs(output_dir, exist_ok=True)
     html_path = os.path.join(output_dir, f"pr_dashboard_{timestamp}.html")
 
-    # Save the figure
-    fig.write_html(html_path)
+    # Save the figure with custom JavaScript for sticky tooltips
+    # This allows users to hover over the tooltip and click links
+    custom_js = """
+    <script>
+    // Make tooltips sticky and clickable
+    (function() {
+        let hoverTimeout = null;
+        let currentHoverElement = null;
+
+        // Wait for plotly to load
+        setTimeout(function() {
+            const plotDiv = document.querySelector('.plotly');
+            if (!plotDiv) return;
+
+            // Add click handler to open GitHub PR
+            plotDiv.on('plotly_click', function(data) {
+                if (data.points && data.points.length > 0) {
+                    const point = data.points[0];
+                    const hovertext = point.hovertext || point.text;
+                    // Extract URL from hovertext
+                    const urlMatch = hovertext.match(/href='([^']+)'/);
+                    if (urlMatch && urlMatch[1]) {
+                        window.open(urlMatch[1], '_blank');
+                    }
+                }
+            });
+
+            // Make hover labels clickable and sticky
+            plotDiv.on('plotly_hover', function(data) {
+                clearTimeout(hoverTimeout);
+
+                // Add event listeners to hover labels to keep them visible
+                setTimeout(function() {
+                    const hoverLabels = document.querySelectorAll('.hoverlayer .hovertext');
+                    hoverLabels.forEach(function(label) {
+                        if (label !== currentHoverElement) {
+                            currentHoverElement = label;
+
+                            // Make links clickable
+                            const links = label.querySelectorAll('a');
+                            links.forEach(function(link) {
+                                link.style.pointerEvents = 'auto';
+                                link.style.cursor = 'pointer';
+                                link.style.color = '#3B82F6';
+                                link.style.textDecoration = 'underline';
+                            });
+
+                            // Keep tooltip visible when hovering over it
+                            label.addEventListener('mouseenter', function() {
+                                clearTimeout(hoverTimeout);
+                            });
+
+                            label.addEventListener('mouseleave', function() {
+                                hoverTimeout = setTimeout(function() {
+                                    Plotly.Fx.unhover(plotDiv);
+                                }, 500);
+                            });
+                        }
+                    });
+                }, 50);
+            });
+
+            // Add delay before hiding tooltip when leaving a point
+            plotDiv.on('plotly_unhover', function(data) {
+                hoverTimeout = setTimeout(function() {
+                    const hoverLabels = document.querySelectorAll('.hoverlayer .hovertext');
+                    if (hoverLabels.length > 0) {
+                        // Check if mouse is over any hover label
+                        let mouseOverLabel = false;
+                        hoverLabels.forEach(function(label) {
+                            const rect = label.getBoundingClientRect();
+                            if (rect.width > 0) {
+                                mouseOverLabel = true;
+                            }
+                        });
+                        if (!mouseOverLabel) {
+                            Plotly.Fx.unhover(plotDiv);
+                        }
+                    }
+                }, 300);
+            });
+        }, 100);
+    })();
+    </script>
+    """
+
+    fig.write_html(html_path, include_plotlyjs="cdn")
+
+    # Add custom JavaScript to the HTML file
+    with open(html_path) as f:
+        html_content = f.read()
+
+    # Insert the custom JS before the closing body tag
+    html_content = html_content.replace("</body>", custom_js + "</body>")
+
+    with open(html_path, "w") as f:
+        f.write(html_content)
 
     return html_path
 
