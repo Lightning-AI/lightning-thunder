@@ -159,18 +159,40 @@ def generate_dashboard_html(blocked, not_ready, needs_internal_review, ready_for
     # Save the figure with custom JavaScript for sticky tooltips
     # This allows users to hover over the tooltip and click links
     custom_js = """
+    <style>
+    /* Make hover labels stay visible and interactive */
+    .hoverlayer {
+        pointer-events: auto !important;
+    }
+    .hovertext {
+        pointer-events: auto !important;
+    }
+    .hovertext path {
+        pointer-events: auto !important;
+    }
+    .hovertext text {
+        pointer-events: auto !important;
+    }
+    /* Style links in tooltips */
+    .hovertext a {
+        color: #3B82F6!important;
+        text-decoration: underline !important;
+        cursor: pointer !important;
+        pointer-events: auto !important;
+    }
+    </style>
     <script>
     // Make tooltips sticky and clickable
     (function() {
-        let hoverTimeout = null;
-        let currentHoverElement = null;
+        let keepTooltipVisible = false;
+        let hideTimeout = null;
 
         // Wait for plotly to load
         setTimeout(function() {
             const plotDiv = document.querySelector('.plotly');
             if (!plotDiv) return;
 
-            // Add click handler to open GitHub PR
+            // Add click handler to open GitHub PR directly from point
             plotDiv.on('plotly_click', function(data) {
                 if (data.points && data.points.length > 0) {
                     const point = data.points[0];
@@ -183,59 +205,91 @@ def generate_dashboard_html(blocked, not_ready, needs_internal_review, ready_for
                 }
             });
 
-            // Make hover labels clickable and sticky
-            plotDiv.on('plotly_hover', function(data) {
-                clearTimeout(hoverTimeout);
+            // Monitor when mouse enters hover layer
+            document.addEventListener('mouseover', function(e) {
+                const hoverLayer = e.target.closest('.hoverlayer');
+                const hoverText = e.target.closest('.hovertext');
 
-                // Add event listeners to hover labels to keep them visible
+                if (hoverLayer || hoverText) {
+                    keepTooltipVisible = true;
+                    clearTimeout(hideTimeout);
+
+                    // Make all links in tooltips clickable
+                    const links = document.querySelectorAll('.hovertext a');
+                    links.forEach(function(link) {
+                        link.style.pointerEvents = 'auto';
+                        link.style.cursor = 'pointer';
+                        link.style.color = '#3B82F6';
+                        link.style.textDecoration = 'underline';
+
+                        // Ensure link click works
+                        link.onclick = function(event) {
+                            event.stopPropagation();
+                            event.preventDefault();
+                            const href = link.getAttribute('href');
+                            if (href) {
+                                window.open(href, '_blank');
+                            }
+                        };
+                    });
+                }
+            });
+
+            // Monitor when mouse leaves hover layer
+            document.addEventListener('mouseout', function(e) {
+                const hoverLayer = e.target.closest('.hoverlayer');
+                const hoverText = e.target.closest('.hovertext');
+
+                if (hoverLayer || hoverText) {
+                    const relatedTarget = e.relatedTarget;
+                    const stillInHoverArea = relatedTarget &&
+                        (relatedTarget.closest('.hoverlayer') || relatedTarget.closest('.hovertext'));
+
+                    if (!stillInHoverArea) {
+                        keepTooltipVisible = false;
+                        // Give user time to move mouse to tooltip
+                        hideTimeout = setTimeout(function() {
+                            if (!keepTooltipVisible) {
+                                Plotly.Fx.unhover(plotDiv);
+                            }
+                        }, 200);
+                    }
+                }
+            });
+
+            // Prevent Plotly from immediately hiding tooltip on unhover
+            plotDiv.on('plotly_unhover', function(data) {
+                if (keepTooltipVisible) {
+                    // Re-trigger hover to keep tooltip visible
+                    setTimeout(function() {
+                        if (keepTooltipVisible) {
+                            const lastHoverData = plotDiv._fullLayout._lastHoverEvent;
+                            if (lastHoverData) {
+                                Plotly.Fx.hover(plotDiv, lastHoverData);
+                            }
+                        }
+                    }, 10);
+                }
+            });
+
+            // Store hover event for re-triggering
+            plotDiv.on('plotly_hover', function(data) {
+                plotDiv._fullLayout._lastHoverEvent = data.event;
+
+                // Add small delay to allow mouse to move to tooltip
                 setTimeout(function() {
                     const hoverLabels = document.querySelectorAll('.hoverlayer .hovertext');
                     hoverLabels.forEach(function(label) {
-                        if (label !== currentHoverElement) {
-                            currentHoverElement = label;
+                        // Ensure the tooltip stays interactive
+                        label.style.pointerEvents = 'auto';
 
-                            // Make links clickable
-                            const links = label.querySelectorAll('a');
-                            links.forEach(function(link) {
-                                link.style.pointerEvents = 'auto';
-                                link.style.cursor = 'pointer';
-                                link.style.color = '#3B82F6';
-                                link.style.textDecoration = 'underline';
-                            });
-
-                            // Keep tooltip visible when hovering over it
-                            label.addEventListener('mouseenter', function() {
-                                clearTimeout(hoverTimeout);
-                            });
-
-                            label.addEventListener('mouseleave', function() {
-                                hoverTimeout = setTimeout(function() {
-                                    Plotly.Fx.unhover(plotDiv);
-                                }, 500);
-                            });
-                        }
+                        const links = label.querySelectorAll('a');
+                        links.forEach(function(link) {
+                            link.style.pointerEvents = 'auto';
+                            link.style.cursor = 'pointer';
+                        });
                     });
                 }, 50);
-            });
-
-            // Add delay before hiding tooltip when leaving a point
-            plotDiv.on('plotly_unhover', function(data) {
-                hoverTimeout = setTimeout(function() {
-                    const hoverLabels = document.querySelectorAll('.hoverlayer .hovertext');
-                    if (hoverLabels.length > 0) {
-                        // Check if mouse is over any hover label
-                        let mouseOverLabel = false;
-                        hoverLabels.forEach(function(label) {
-                            const rect = label.getBoundingClientRect();
-                            if (rect.width > 0) {
-                                mouseOverLabel = true;
-                            }
-                        });
-                        if (!mouseOverLabel) {
-                            Plotly.Fx.unhover(plotDiv);
-                        }
-                    }
-                }, 300);
             });
         }, 100);
     })();
