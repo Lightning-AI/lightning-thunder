@@ -256,11 +256,12 @@ def nvfuser_f16a_nvfp4weight_scaled_grouped_mm(
     problem_sizes: torch.Tensor,
 ) -> torch.Tensor:
     hp_weight = torch.empty(
-        (fp4_weight.size(0), fp4_weight.size(1), fp4_weight.size(2) * 2),
+        (fp4_weight.size(0), fp4_weight.size(1) * 2, fp4_weight.size(2)),
         device=activation.device,
         dtype=activation.dtype,
     )
     for i in range(fp4_weight.size(0)):
+        # NOTE: dequantize here doesn't look right, since we have (g, k, n)
         hp_weight[i] = dequantize_to_dtype(
             fp4_weight[i], weight_scaling_factor[i], weight_global_scale[i], activation.dtype, fp4_weight.device, 16
         )
@@ -277,7 +278,7 @@ def _(
     blockscale_offsets: torch.Tensor,
     problem_sizes: torch.Tensor,
 ) -> torch.Tensor:
-    # fp4_weight shape: (groups, in_features, out_features // 2)
+    # fp4_weight shape: (groups, in_features // 2, out_features)
     # Validate that activation has at least 1 dimension
     if activation.ndim == 0:
         raise ValueError(f"Expected activation to have at least 1 dimension, got {activation.ndim}")
@@ -285,9 +286,9 @@ def _(
     # After unpacking: (groups, in_features, out_features)
     # Output shape should match activation.shape[:-1] + (out_features,)
     # This handles both 2D (tokens, hidden) and 3D (batch, seq_len, hidden) inputs
-    out_features = fp4_weight.size(2) * 2
+    out_features = fp4_weight.size(2)
     output_shape = activation.shape[:-1] + (out_features,)
-    return torch.empty(output_shape, device=activation.device, dtype=activation.dtype)
+    return torch.empty(output_shape, device=activation.device, dtype=torch.bfloat16)
 
 
 class NVFP4InferenceLinear(nn.Module):
@@ -401,7 +402,7 @@ def quantize_grouped_linear_weight_to_nvfp4(
         weight: Parameter of `GroupedLinear` of [g, k, n]
 
     Returns:
-        fp4_weight: [g, n, k // 2]
+        fp4_weight: [g, k // 2, n]
         scale_factors: [g, n, k // 16]
         global_scales: [g]
     """
@@ -423,7 +424,7 @@ def quantize_grouped_linear_weight_to_nvfp4(
         fp4_weight[i] = cur_fp4_weight
         scale_factors[i] = linear_to_swizzled_128_4(cur_scale_factors)
 
-    return fp4_weight, scale_factors, global_scales
+    return fp4_weight.transpose(-1, -2), scale_factors, global_scales
 
 
 class NVFP4InferenceGroupedLinear(nn.Module):
@@ -440,11 +441,11 @@ class NVFP4InferenceGroupedLinear(nn.Module):
 
     @property
     def out_features(self) -> int:
-        return self.fp4_weight.size(2) * 2
+        return self.fp4_weight.size(2)
 
     @property
     def in_features(self) -> int:
-        return self.fp4_weight.size(1)
+        return self.fp4_weight.size(1) * 2
 
     @staticmethod
     def compute_auxiliary_tensors(
