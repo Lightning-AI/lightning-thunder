@@ -366,9 +366,7 @@ class InferenceBenchmark:
         self, input_ids: torch.Tensor, past_key_values: HybridChunkedCache | StaticCache
     ) -> torch.Tensor:
         with torch.no_grad():
-            outputs = self.model(
-                input_ids, past_key_values=past_key_values, use_cache=True
-            )
+            outputs = self.model(input_ids, past_key_values=past_key_values, use_cache=True)
         logits = outputs.logits  # [B, seq_len, vocab_size]
         next_token_logits = logits[:, -1, :]
         next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
