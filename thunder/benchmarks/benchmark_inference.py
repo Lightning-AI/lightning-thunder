@@ -22,7 +22,6 @@ import time
 import warnings
 from typing import Any
 from collections.abc import Callable
-from looseversion import LooseVersion
 
 import torch
 import torch.distributed as dist
@@ -30,7 +29,6 @@ import torch.nn as nn
 from torch.distributed.device_mesh import init_device_mesh
 from torch.distributed.tensor.parallel import parallelize_module, RowwiseParallel, ColwiseParallel
 from tqdm import tqdm
-import transformers
 from transformers import AutoConfig, AutoModelForCausalLM
 from transformers.cache_utils import StaticCache
 from transformers.models.llama4.modeling_llama4 import Llama4TextMoe
@@ -348,9 +346,7 @@ class InferenceBenchmark:
 
         return input_ids, past_key_values
 
-    def get_next_token(
-        self, input_ids: torch.Tensor, past_key_values: StaticCache
-    ) -> torch.Tensor:
+    def get_next_token(self, input_ids: torch.Tensor, past_key_values: StaticCache) -> torch.Tensor:
         start_pos = past_key_values.get_seq_length()
         cache_position = start_pos + torch.arange(0, input_ids.shape[1], device=start_pos.device, dtype=start_pos.dtype)
         with torch.no_grad():
@@ -387,9 +383,7 @@ class InferenceBenchmark:
     # [rank1]:                                 ~^^^^^
     # [rank1]: RuntimeError: Cannot set version_counter for inference tensor
     # @torch.inference_mode()
-    def generate(
-        self, input_ids: torch.Tensor, max_new_tokens: int, past_key_values: StaticCache
-    ) -> dict[str, Any]:
+    def generate(self, input_ids: torch.Tensor, max_new_tokens: int, past_key_values: StaticCache) -> dict[str, Any]:
         """
         Generate tokens using separate prefill and decode phases.
         Returns detailed metrics for both phases.
