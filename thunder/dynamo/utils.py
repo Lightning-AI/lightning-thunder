@@ -416,6 +416,7 @@ def get_nodes_in_unsupported_ctx_regions(gm: torch.fx.GraphModule) -> set[torch.
 
     gm.print_readable()
     for node in gm.graph.nodes:
+        # All the cases when `node` should be marked as in unsupported ctx region.
         if node.op == "call_function" and node.target in UNSUPPORTED_THUNDER_CTX_ENTER:
             ctx_stack.append(node.target)
             nodes_in_unsupported_ctx_regions.add(node)
