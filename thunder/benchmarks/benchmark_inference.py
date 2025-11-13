@@ -343,10 +343,7 @@ class InferenceBenchmark:
         input_ids = torch.randint(0, self.vocab_size, (batch_size, input_length), device=DEVICE)
         past_key_values = StaticCache(
             config=self.hf_config,
-            max_batch_size=input_ids.shape[0],
             max_cache_len=input_ids.shape[1] + self.config.output_length,
-            device=DEVICE,
-            dtype=torch.bfloat16,
         )
 
         return input_ids, past_key_values
