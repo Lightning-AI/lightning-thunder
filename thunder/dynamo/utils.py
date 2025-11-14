@@ -401,17 +401,32 @@ def get_nodes_in_unsupported_ctx_regions(gm: torch.fx.GraphModule) -> set[torch.
     # NOTE - Currently doesn't ban any ctx (previously used for `no_grad` and `autocast`).
 
     nodes_in_unsupported_ctx_regions: set[torch.fx.Node] = set()
-    ctx_cnt = 0  # Count of  we have seen till now
+    ctx_stack = []  # Unsupported context.__enter__ we have seen till now.
 
-    UNSUPPORTED_THUNDER_CTX = (torch._C._functorch._vmap_increment_nesting, torch._C._functorch._vmap_decrement_nesting)
+    CTX_ENTER_EXIT_MAP = {
+        torch._C._functorch._vmap_increment_nesting: torch._C._functorch._vmap_decrement_nesting,
+    }
+
+    # Older version of PyTorch may not have `torch._functorch.predispatch`
+    if hasattr(torch._functorch, "predispatch"):
+        CTX_ENTER_EXIT_MAP[torch._functorch.predispatch._vmap_increment_nesting] = (
+            torch._functorch.predispatch._vmap_decrement_nesting
+        )
+
+    UNSUPPORTED_THUNDER_CTX_ENTER = tuple(CTX_ENTER_EXIT_MAP.keys())
+    UNSUPPORTED_THUNDER_CTX_EXIT = tuple(CTX_ENTER_EXIT_MAP.values())
+
     for node in gm.graph.nodes:
-        if node.op == "call_function" and node.target in UNSUPPORTED_THUNDER_CTX:
-            ctx_cnt += 1
-        elif node.op == "call_function" and node.target in UNSUPPORTED_THUNDER_CTX:
-            ctx_cnt -= 1
-        else:
-            if ctx_cnt > 0:
-                nodes_in_unsupported_ctx_regions.add(node)
+        # All the cases when `node` should be marked as in unsupported ctx region.
+        if node.op == "call_function" and node.target in UNSUPPORTED_THUNDER_CTX_ENTER:
+            ctx_stack.append(node.target)
+            nodes_in_unsupported_ctx_regions.add(node)
+        elif node.op == "call_function" and node.target in UNSUPPORTED_THUNDER_CTX_EXIT:
+            enter_fn = ctx_stack.pop()
+            assert CTX_ENTER_EXIT_MAP[enter_fn] == node.target, "Mismatched ctx enter-exit"
+            nodes_in_unsupported_ctx_regions.add(node)
+        elif len(ctx_stack) > 0:
+            nodes_in_unsupported_ctx_regions.add(node)
 
     return nodes_in_unsupported_ctx_regions
 
