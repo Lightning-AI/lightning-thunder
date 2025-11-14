@@ -706,14 +706,11 @@ class nvFuserExecutor(FusionExecutor):
         return False
 
     def _dce_bsyms(self, input_list, output, bsyms: list[BoundSymbol]) -> list[BoundSymbol]:
-        trace = TraceCtx(None)
-        trace.bound_symbols = bsyms
-        bsyms.append(prims.python_return.bind(output, output=None))
         needed_proxies: set[Variable] = set()
-        trace = dce(trace, needed_proxies)
+        bsyms = dce(bsyms, needed_proxies, output)
         # update the input_list by removing the unused inputs
         input_list[:] = [x for x in input_list if variableify(x) in needed_proxies]
-        return list(filter(lambda x: x.sym != prims.python_return, trace.bound_symbols))
+        return bsyms
 
     def fuse(self, region: Region, fusion_counter: int) -> BoundSymbol:
         sorted_unique_inputs: list[Proxy] = [unvariableify(x) for x in region.inputs]
