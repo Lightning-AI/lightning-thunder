@@ -7,6 +7,7 @@ from pathlib import Path
 import copy
 
 import torch
+from torch._logging._internal import trace_structured_artifact
 from torch._guards import CompileContext as TorchCompileContext
 from torch.utils import _pytree as torch_pytree
 
@@ -24,6 +25,7 @@ from thunder.dynamo.utils import (
 )
 from thunder.dynamo.splitter import _splitter
 from thunder.dynamo.benchmark_utils import ThunderCompileSpecification
+from thunder.dynamo._trace_structured import _log_to_torch_trace
 from thunder.transforms.extraction_only_prologue_transform import ExtractionOnlyPrologueTransform
 
 if TYPE_CHECKING:
@@ -130,6 +132,10 @@ class ThunderCompiler:
         self.thunder_options = thunder_options
 
     def __call__(self, gm: torch.fx.GraphModule, sample_args: list[torch.SymInt, torch.Tensor]):
+        torch_compile_compile_id = torch._guards.CompileContext.current_compile_id()
+        thunder_options = {"torch_compile_compile_id": torch_compile_compile_id, **self.thunder_options}
+
+        _log_to_torch_trace("thunder_original_graph", gm)
         from thunder import jit
 
         remove_empty_autocast(gm)
@@ -150,6 +156,19 @@ class ThunderCompiler:
             thunder_options,
         )
         self.subgraph_infos.append(subgraph_info)
+
+        _log_to_torch_trace("thunder_split_graph", split_module)
+
+        if subgraph_info.split_reasons:
+            trace_structured_artifact(
+                name="thunder_split_reasons",
+                encoding="json",
+                payload_fn=lambda: [
+                    {"reason_type": reason.reason_type.name, "info": reason.info, "exception": reason.exception}
+                    for reason in subgraph_info.split_reasons
+                ],
+            )
+
         return split_module
 
     def save_reproducer_to_folder(
