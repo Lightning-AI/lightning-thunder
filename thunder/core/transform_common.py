@@ -143,8 +143,21 @@ def remove_duplicate_number_proxies(bsyms: Sequence[BoundSymbol]) -> list[BoundS
 # NOTE needed_proxies is an in/out argument, it takes an initial set of Variables you want to keep, and return
 #   all the needed proxies of the input trace
 def dce(
-    trace_or_bsyms: Trace | list[BoundSymbolInterface], needed_proxies: None | set[Variable] = None, output=None
+    trace_or_bsyms: Trace | list[BoundSymbolInterface],
+    needed_proxies: None | set[Variable] = None,
+    output: Any = None,
 ) -> Trace | list[BoundSymbolInterface]:
+    """Runs a Dead Code Elimination (DCE) pass
+
+    Args:
+        trace_or_bsyms: The trace or list of bound symbols to run the DCE pass on.
+        needed_proxies: The set of variables to keep.
+        output: The output of the list of bound symbols.  This is only used if the input is a list of bound
+            symbols, and is required in that case
+
+    Returns:
+        The trace (if the input is a trace) or list of bound symbols (if the input is a list of bound symbols) after the DCE pass.
+    """
     start_time_ns = time.perf_counter_ns()
 
     producer_map: ProxyDict = producers(trace_or_bsyms)
@@ -154,7 +167,6 @@ def dce(
         output = trace_or_bsyms.output
     else:
         bound_symbols = trace_or_bsyms
-        output = output
 
     flat_trace_outputs, _ = tree_flatten(output)
     if needed_proxies is None:
