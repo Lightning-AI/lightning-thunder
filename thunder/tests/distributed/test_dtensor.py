@@ -2,6 +2,7 @@ import unittest
 from itertools import product
 from collections.abc import Sequence
 from looseversion import LooseVersion
+import os
 
 import pytest
 import torch
@@ -341,6 +342,9 @@ class DTensorTest(DistributedParallelTestCase):
         ],
     )
     def test_dtensor_grouped_mm(self, executor, input_shardings):
+        if executor == "nvfuser" and "multidevice" in os.environ.get("NVFUSER_DISABLE", ""):
+            raise unittest.SkipTest("test_dtensor_grouped_mm: nvfuser multidevice is disabled")
+
         if LooseVersion(torch.__version__) < "2.8":
             raise unittest.SkipTest("test_dtensor_grouped_mm: torch._grouped_mm is not available in torch < 2.8")
 
