@@ -729,6 +729,7 @@ def jit(
 
                     # Updates cache statistics
                     cs.cache_hits += 1
+                    cs.last_trace_cache_stop = time.perf_counter_ns()
                     cs.last_traces = comp_traces
                     cs.last_interpreted_instructions = None
                     cs.last_interpreter_log = None
@@ -759,6 +760,7 @@ def jit(
 
                 # Updates cache statistics
                 cs.cache_hits += 1
+                cs.last_trace_cache_stop = time.perf_counter_ns()
                 cs.last_traces = comp_traces
                 cs.last_interpreted_instructions = None
                 cs.last_interpreter_log = None
