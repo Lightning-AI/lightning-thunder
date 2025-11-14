@@ -541,3 +541,128 @@ def test_div_exact():
     result_eager = fn(a, b, c)
     result_jit = jfn(a, b, c)
     assert_close(result_eager, result_jit)
+
+
+def test_view_as_complex_with_original_tensor_aliasing():
+    """Test that using both original tensor and its complex view with inplace ops works correctly.
+
+    This test specifically exercises the numel check in update_aliases.py:replace_args_with_alias_map.
+
+    When a function has inplace operations AND receives aliased tensors as arguments, Thunder's
+    insert_alias_updates() is called, which in turn calls replace_args_with_alias_map().
+
+    The numel check (if arg.numel != arg_to_replace.numel: continue) prevents Thunder from
+    incorrectly trying to replace tensors that share storage but have different element counts,
+    such as a real tensor (48 elements) and its complex view (24 elements).
+
+    Without this check, Thunder would attempt to replace one with a reshaped version of the other,
+    causing shape mismatch errors.
+    """
+
+    def func_with_inplace(real_tensor, complex_tensor):
+        real_tensor.add_(1.0)
+        real_result = real_tensor.sum()
+        complex_result = complex_tensor.abs().sum()
+        return real_result + complex_result
+
+    real_tensor = torch.randn((4, 6, 2), device="cpu", dtype=torch.float32)
+
+    jfunc = thunder.jit(func_with_inplace)
+
+    # Clone inputs for comparison (since inplace modifies them)
+    real_tensor_test = real_tensor.clone()
+    complex_tensor_test = torch.view_as_complex(real_tensor_test)
+    real_tensor_expected = real_tensor.clone()
+    complex_tensor_expected = torch.view_as_complex(real_tensor_expected)
+
+    result = jfunc(real_tensor_test, complex_tensor_test)
+    expected = func_with_inplace(real_tensor_expected, complex_tensor_expected)
+
+    assert_close(result, expected)
+
+
+def test_view_as_real_with_original_tensor_aliasing():
+    """Test that using both original complex tensor and its real view with inplace ops works correctly.
+
+    This tests the opposite case from test_view_as_complex_with_original_tensor_aliasing.
+    """
+
+    def func_with_inplace(complex_tensor, real_tensor):
+        complex_tensor.add_(1.0 + 0.5j)
+        complex_result = complex_tensor.real.sum()
+        real_result = real_tensor.sum()
+        return complex_result + real_result
+
+    complex_tensor = torch.randn((4, 6), device="cpu", dtype=torch.complex64)
+
+    jfunc = thunder.jit(func_with_inplace)
+
+    # Clone inputs for comparison (since inplace modifies them)
+    complex_tensor_test = complex_tensor.clone()
+    real_tensor_test = torch.view_as_real(complex_tensor_test)
+    complex_tensor_expected = complex_tensor.clone()
+    real_tensor_expected = torch.view_as_real(complex_tensor_expected)
+
+    result = jfunc(complex_tensor_test, real_tensor_test)
+    expected = func_with_inplace(complex_tensor_expected, real_tensor_expected)
+
+    assert_close(result, expected)
+
+
+def test_rope_complex_vs_real_implementations():
+    """Compare RoPE implementations: real arithmetic vs complex views.
+
+    Tests that apply_rotary_emb (real arithmetic) and apply_rotary_emb_complex (complex views)
+    produce identical results. This validates that view_as_complex/view_as_real work correctly.
+    """
+    from thunder.tests.llama2_model import apply_rotary_emb, apply_rotary_emb_with_complex_views
+
+    # Model dimensions
+    batch_size = 2
+    seq_len = 8
+    n_heads = 4
+    head_dim = 16
+
+    # Create query and key tensors
+    xq = torch.randn(batch_size, seq_len, n_heads, head_dim, dtype=torch.float32)
+    xk = torch.randn(batch_size, seq_len, n_heads, head_dim, dtype=torch.float32)
+
+    # Create frequency tensors matching precompute_freqs_cis format
+    # freqs_cos and freqs_sin should have shape (seq_len, head_dim//2)
+    freqs = 1.0 / (10000.0 ** (torch.arange(0, head_dim, 2).float() / head_dim))
+    positions = torch.arange(seq_len, dtype=torch.float32)
+    angles = torch.outer(positions, freqs)  # (seq_len, head_dim//2)
+    freqs_cos = torch.cos(angles)
+    freqs_sin = torch.sin(angles)
+
+    # Run both implementations
+    xq_real, xk_real = apply_rotary_emb(xq.clone(), xk.clone(), freqs_cos, freqs_sin)
+    xq_complex, xk_complex = apply_rotary_emb_with_complex_views(xq.clone(), xk.clone(), freqs_cos, freqs_sin)
+
+    # Verify they produce identical results
+    assert_close(xq_real, xq_complex)
+    assert_close(xk_real, xk_complex)
+
+    # Now test with Thunder JIT
+    jit_apply_real = thunder.jit(apply_rotary_emb)
+    jit_apply_complex = thunder.jit(apply_rotary_emb_with_complex_views)
+
+    xq_thunder_real, xk_thunder_real = jit_apply_real(xq.clone(), xk.clone(), freqs_cos, freqs_sin)
+    xq_thunder_complex, xk_thunder_complex = jit_apply_complex(xq.clone(), xk.clone(), freqs_cos, freqs_sin)
+
+    # Verify Thunder results match PyTorch
+    assert_close(xq_thunder_real, xq_real)
+    assert_close(xk_thunder_real, xk_real)
+    assert_close(xq_thunder_complex, xq_complex)
+    assert_close(xk_thunder_complex, xk_complex)
+
+    # Verify Thunder results match each other
+    assert_close(xq_thunder_real, xq_thunder_complex)
+    assert_close(xk_thunder_real, xk_thunder_complex)
+
+    # Verify the complex version uses view_as_complex and view_as_real
+    traces = thunder.last_traces(jit_apply_complex)
+    extrace = traces[-1]
+    symbol_names = {bsym.sym.name for bsym in extrace.bound_symbols}
+    assert "view_as_complex" in symbol_names, "Complex RoPE should use view_as_complex"
+    assert "view_as_real" in symbol_names, "Complex RoPE should use view_as_real"
