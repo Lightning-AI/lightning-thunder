@@ -1040,3 +1040,40 @@ def test_scatter(executor, device: str, dtype: dtypes.dtype):
         assert len(fusion_bsyms) == 1
         outside_fusion_syms = ["unpack_trivial", "python_return"]
         assert {el.sym.name for el in fw_trace.bound_symbols if not el.sym.is_fusion} == set(outside_fusion_syms)
+
+
+@instantiate(
+    executors=(nvFuserExecutor,),
+    dtypes=(thunder.float32,),
+)
+def test_use_dtensor_execute_flag(executor, device: str, dtype: dtypes.dtype):
+    """Test that use_dtensor_execute flag is set correctly at trace construction time."""
+    torch_dtype = ltorch.to_torch_dtype(dtype)
+    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
+    b = make_tensor((2, 2), device=device, dtype=torch_dtype)
+
+    def foo(a, b):
+        return a + b
+
+    cfoo = thunder.jit(foo)
+    result = cfoo(a, b)
+
+    traces = thunder.last_traces(cfoo)
+    extrace = traces[-1]
+    fusions = examine.get_fusion_symbols(extrace)
+
+    # Verify there is at least one fusion
+    assert len(fusions) > 0
+
+    # Check that use_dtensor_execute is False for regular tensors
+    for fusion_bsym in fusions:
+        _, call_ctx, _ = fusion_bsym.gather_ctxs()
+        fusion_name = fusion_bsym.sym.name
+        fdw = call_ctx.get(fusion_name)
+        assert fdw is not None, f"FusionDefinitionWrapper not found for {fusion_name}"
+        assert hasattr(fdw, "use_dtensor_execute"), "FusionDefinitionWrapper should have use_dtensor_execute attribute"
+        assert fdw.use_dtensor_execute is False, "use_dtensor_execute should be False for regular tensors"
+
+    # Verify the result is correct
+    expected = a + b
+    torch.testing.assert_close(result, expected)

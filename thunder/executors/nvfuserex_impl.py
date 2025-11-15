@@ -17,7 +17,6 @@ IS_TORCH_DISTRIBUTED_AVAILABLE = torch.distributed.is_available()
 if IS_TORCH_DISTRIBUTED_AVAILABLE:
     from torch.distributed.tensor import DTensor
     from torch.distributed.tensor.placement_types import Placement, Shard
-    import torch.distributed as dist
 
 import thunder.core.dtypes as dtypes
 import thunder.torch as ltorch
@@ -539,6 +538,7 @@ class FusionDefinitionWrapper:
     save_fake_inputs: bool = False
     enable_options: None | list[str] = None
     disable_options: None | list[str] = None
+    use_dtensor_execute: bool = False
 
     @annotate_for_profile("FusionDefinitionWrapper.__call__")
     def __call__(self, *args):
@@ -549,7 +549,7 @@ class FusionDefinitionWrapper:
         if self.store_inputs:
             self.last_inputs = args
 
-        if dist.is_available():
+        if IS_TORCH_DISTRIBUTED_AVAILABLE:
             # When using DTensor, argument can be AsyncCollectiveTensor.
             # Eg. https://github.com/pytorch/pytorch/blob/0ab075a69e4577a60c4dcbff7bcc2ecd0a15ce46/torch/distributed/tensor/parallel/style.py#L142-L145
             args = tuple(
@@ -557,7 +557,7 @@ class FusionDefinitionWrapper:
                 for arg in args
             )
 
-        if dist.is_available() and any(isinstance(t, torch.distributed.tensor.DTensor) for t in args):
+        if self.use_dtensor_execute:
             with annotate_for_profile(self.name):
                 output = execute_with_dtensors(fd, args)
                 return output
@@ -623,6 +623,9 @@ def create_fusion_definition_wrapper(
         # A closure over local trace and region
         return create_fd(bsyms, input_descriptors, sorted_unique_inputs, sorted_unique_outputs)
 
+    # Determine if DTensor execution should be used based on the proxy types at trace construction time
+    use_dtensor_execute = any(isinstance(t, DTensorProxy) for t in sorted_unique_inputs)
+
     fdw = FusionDefinitionWrapper(
         get_fd,
         to_runtime_descriptors,
@@ -634,6 +637,7 @@ def create_fusion_definition_wrapper(
         save_fake_inputs=save_fake_inputs,
         enable_options=enable_options,
         disable_options=disable_options,
+        use_dtensor_execute=use_dtensor_execute,
     )
     return fdw
 
