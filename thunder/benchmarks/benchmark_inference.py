@@ -42,9 +42,7 @@ from thunder.benchmarks.layers_for_inference_benchmark import (
     GroupedSwiGLU,
     Llama4MoE,
     NVFP4InferenceGroupedSwiGLU,
-    NVFP4InferenceLinear,
     nvfuser_f16a_nvfp4weight_scaled_grouped_mm,
-    nvfuser_f16a_nvfp4weight_scaled_mm,
     FLOAT4_E2M1_MAX,
     FLOAT8_E4M3_EPS,
     FLOAT8_E4M3_MAX,
@@ -75,13 +73,10 @@ else:
 LLAMA4_MAVERICK_MODEL_ID: str = "meta-llama/Llama-4-Maverick-17B-128E"
 
 
+# TODO: Add mm quantization once nvfuser implements nvfp4 gemm
 # Register nvfp4 custom ops with Thunder and nvFuser
 def _register_nvfp4_ops():
     """Register nvfp4 custom operations with Thunder."""
-    # Register f16a_nvfp4weight_scaled_mm (without nvfuser translator - not yet implemented)
-    _nvfp4_mm_symbol = _register_custom_op(nvfuser_f16a_nvfp4weight_scaled_mm)
-    # Note: nvfuser translator is not provided as nvfuser has not implemented nvfp4_matmul yet
-
     # Register f16a_nvfp4weight_scaled_grouped_mm with nvfuser translator
     _nvfp4_grouped_mm_symbol = _register_custom_op(nvfuser_f16a_nvfp4weight_scaled_grouped_mm)
 
@@ -186,21 +181,14 @@ def _replace_llama4_moe(model: nn.Module) -> None:
     )
 
 
-def _quantize_llama4(model: nn.Module, quantize_linear: bool = False) -> None:
+def _quantize_llama4(model: nn.Module) -> None:
     """Replace linear and/or MoE with nvfp4 inference version.
 
     Args:
         model: The model to quantize
-        quantize_linear: Whether to quantize regular nn.Linear layers (experimental, nvfuser translator not implemented)
 
     Note: GroupedSwiGLU is always quantized when this function is called.
     """
-    if quantize_linear:
-        _replace_with_custom_fn_if_matches_filter_with_name(
-            model,
-            NVFP4InferenceLinear.from_linear,
-            lambda model, cur_fqn: isinstance(model, nn.Linear),
-        )
     # Always quantize GroupedSwiGLU when this function is called
     _replace_with_custom_fn_if_matches_filter_with_name(
         model,
@@ -230,7 +218,6 @@ class InferenceBenchmarkConfig:
     num_iterations: int
     warmup_iterations: int
     enable_nvfp4: bool  # Enable NVFP4 registration and quantize GroupedSwiGLU in MoE
-    quantize_linear: bool  # [Experimental] Quantize nn.Linear to NVFP4 (nvfuser translator not implemented)
     fx_report_folder: str | None
     enable_nv_linear: bool
     mode: str
@@ -358,7 +345,7 @@ class InferenceBenchmark:
         self.vocab_size = model.vocab_size
 
         if self.config.enable_nvfp4:
-            _quantize_llama4(model, quantize_linear=self.config.quantize_linear)
+            _quantize_llama4(model)
         self.model = self._compile_model(model)
 
     @property
@@ -756,11 +743,6 @@ Examples:
         help="Enable NVFP4 quantization for MoE GroupedSwiGLU layers (has nvfuser grouped_mm support)",
     )
     parser.add_argument(
-        "--quantize-linear",
-        action="store_true",
-        help="[Experimental] Quantize nn.Linear to NVFP4. Note: nvfuser has not yet implemented nvfp4_matmul translator",
-    )
-    parser.add_argument(
         "--enable-nv-linear",
         action="store_true",
         help="let nvfuser take care of linear and matmul, note that this might fail with distributed run. See: https://github.com/NVIDIA/Fuser/issues/4507",
@@ -791,15 +773,8 @@ def main():
     if args.save_results:
         os.makedirs(args.output_dir, exist_ok=True)
 
-    # Warn if experimental flag is used
-    if args.quantize_linear:
-        warnings.warn(
-            "--quantize-linear is experimental. nvfuser has not implemented nvfp4_matmul translator yet. "
-            "The custom op is registered but fusion may not work optimally."
-        )
-
     # Register NVFP4 custom ops with nvfuser translators when enabled
-    if args.enable_nvfp4 or args.quantize_linear:
+    if args.enable_nvfp4:
         try:
             _register_nvfp4_ops()
         except Exception as e:
@@ -816,7 +791,6 @@ def main():
         warmup_iterations=args.warmup_iterations,
         mode=args.mode,
         enable_nvfp4=args.enable_nvfp4,
-        quantize_linear=args.quantize_linear,
         fx_report_folder=args.fx_report_folder,
         enable_nv_linear=args.enable_nv_linear,
         disable_moe_replacement=args.disable_moe_replacement,
