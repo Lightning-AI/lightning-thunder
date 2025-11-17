@@ -719,66 +719,6 @@ def test_scaled_mm_blockwise_matches_torch(output_dtype, lhs_block, rhs_block):
     assert_close(thunder_out, expected)
 
 
-@requiresCUDA
-@_require_scaled_mm
-@pytest.mark.parametrize("output_dtype", [torch.bfloat16])
-@pytest.mark.parametrize("lhs_block,rhs_block", [(1, 1), (128, 1), (1, 128)])
-def test_scaled_mm_blockwise_matches_emulation(output_dtype, lhs_block, rhs_block):
-    device = torch.device("cuda")
-    _require_fp8_blockwise(device)
-
-    M, K, N = 256, 256, 256
-    mat_a = torch.randn(M, K, device=device, dtype=output_dtype).pow(3)
-    mat_b_rows = torch.randn(N, K, device=device, dtype=output_dtype).pow(3)
-
-    mat_a_lp, encode_a = _blockwise_quantize(mat_a.to(torch.float32), lhs_block, 128)
-    mat_b_lp_rows, encode_b = _blockwise_quantize(mat_b_rows.to(torch.float32), rhs_block, 128)
-    mat_b_lp = mat_b_lp_rows.t().contiguous()
-
-    scale_a = encode_a.reciprocal().contiguous()
-    scale_b = encode_b.reciprocal().t().contiguous()
-
-    recipe_map = {
-        1: ScalingType.BlockWise1x128,
-        128: ScalingType.BlockWise128x128,
-    }
-
-    try:
-        reference = torch.nn.functional.scaled_mm(
-            mat_a_lp,
-            mat_b_lp,
-            scale_a,
-            recipe_map[lhs_block],
-            scale_b,
-            recipe_map[rhs_block],
-            swizzle_a=SwizzleType.NO_SWIZZLE,
-            swizzle_b=SwizzleType.NO_SWIZZLE,
-            output_dtype=output_dtype,
-        )
-    except (RuntimeError, NotImplementedError, ValueError) as exc:
-        pytest.skip(str(exc))
-
-    fn = thunder.jit(
-        lambda a, b, sa, sb: torch.nn.functional.scaled_mm(
-            a,
-            b,
-            sa,
-            recipe_map[lhs_block],
-            sb,
-            recipe_map[rhs_block],
-            swizzle_a=SwizzleType.NO_SWIZZLE,
-            swizzle_b=SwizzleType.NO_SWIZZLE,
-            output_dtype=output_dtype,
-        )
-    )
-    thunder_out = fn(mat_a_lp, mat_b_lp, scale_a, scale_b)
-
-    reference_f32 = reference.to(torch.float32)
-    thunder_out_f32 = thunder_out.to(torch.float32)
-
-    assert_close(thunder_out_f32, reference_f32, atol=7e-1, rtol=7e-2)
-
-
 # https://github.com/Lightning-AI/lightning-thunder/issues/1857
 def test_max_with_int():
     def f(x, ids):
