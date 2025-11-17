@@ -515,7 +515,7 @@ def test_scaled_mm_tensorwise_matches_torch():
 @requiresCUDA
 @_require_fp8_tensorwise
 @_require_scaled_mm
-def test_scaled_mm_matches_emulation():
+def test_scaled_mm_matches_scaled_data():
     device = torch.device("cuda")
 
     def quantize_to_fp8(tensor):
@@ -600,7 +600,7 @@ def test_scaled_mm_rowwise_matches_torch():
 
 @requiresCUDA
 @_require_scaled_mm
-def test_scaled_mm_rowwise_matches_emulation():
+def test_scaled_mm_rowwise_matches_scaled_data():
     device = torch.device("cuda")
     _require_fp8_rowwise(device)
 
