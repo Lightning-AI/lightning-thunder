@@ -51,6 +51,7 @@ from thunder.core.trace import (
 from thunder.core.transform_common import (
     Transform,
     dce,
+    ensure_symbolic_shape_bindings,
     remove_context_manager_prims_from_trace,
     unwrap_return_value,
     wrap_return_value_together_with_arguments,
@@ -543,6 +544,10 @@ def jit(
 
             computation_trc = dce(computation_trc)
             computation_traces.append(computation_trc)
+
+            if thunder.core.compile_data.using_symbolic_values():
+                computation_trc = ensure_symbolic_shape_bindings(computation_trc)
+                computation_traces.append(computation_trc)
 
             if not cd.disable_torch_autograd_support:
                 tensor_cls = (pytorch.Tensor, TensorProxy)
