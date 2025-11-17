@@ -411,6 +411,12 @@ class NVFP4InferenceGroupedLinear(nn.Module):
 
     @staticmethod
     def from_grouped_linear(grouped_linear: GroupedLinear, fqn: str | None = None) -> NVFP4InferenceGroupedLinear:
+        """Create an NVFP4InferenceGroupedLinear from a GroupedLinear.
+
+        Args:
+            grouped_linear (GroupedLinear): The source GroupedLinear.
+            fqn (str or None): Fully qualified name. Currently unused; reserved for future use or compatibility.
+        """
         weight = grouped_linear.weight
         fp4_weight, weight_scaling_factor, weight_global_scale = quantize_grouped_linear_weight_to_nvfp4(weight)
         return NVFP4InferenceGroupedLinear(
@@ -470,7 +476,12 @@ class NVFP4InferenceGroupedSwiGLU(nn.Module):
 
     @staticmethod
     def from_grouped_swiglu(grouped_swiglu: GroupedSwiGLU, fqn: str | None = None) -> NVFP4InferenceGroupedSwiGLU:
-        """Convert a GroupedSwiGLU to NVFP4InferenceGroupedSwiGLU."""
+        """Create an NVFP4InferenceGroupedSwiGLU from a GroupedSwiGLU.
+
+        Args:
+            grouped_swiglu (GroupedSwiGLU): The source GroupedSwiGLU.
+            fqn (str or None): Fully qualified name. Currently unused; reserved for future use or compatibility.
+        """
         gate_proj = NVFP4InferenceGroupedLinear.from_grouped_linear(grouped_swiglu.gate_proj)
         up_proj = NVFP4InferenceGroupedLinear.from_grouped_linear(grouped_swiglu.up_proj)
         down_proj = NVFP4InferenceGroupedLinear.from_grouped_linear(grouped_swiglu.down_proj)
