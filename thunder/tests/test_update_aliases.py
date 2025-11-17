@@ -88,7 +88,7 @@ for op in opinfos:
     decorators=(pytest.mark.parametrize("train", (False, True)),),
 )
 @requiresCUDA
-def test_parse_resnet18(executor, device, dtype, turn_off_tf32_and_set_seed, train: bool):
+def test_parse_resnet18(executor, device, dtype, train: bool):
     torchvision = pytest.importorskip("torchvision")
 
     tdtype = thunder.torch.to_torch_dtype(dtype)

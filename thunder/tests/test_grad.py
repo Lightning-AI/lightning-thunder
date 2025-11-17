@@ -1704,7 +1704,7 @@ def test_populate_grads_block(executor, device, dtype):
 # can be on the order of 1e-3, which exceeds the default tolerances for torch.testing.assert_close.
 # This is expected due to the reduced precision of TF32 matrix multiplications.
 @instantiate(dtypes=(thunder.float32,))
-def test_populate_grads_nanogpt(executor, device, dtype, turn_off_tf32_and_set_seed):
+def test_populate_grads_nanogpt(executor, device, dtype):
     import sys
 
     if sys.platform == "win32":

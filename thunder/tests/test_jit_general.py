@@ -671,7 +671,7 @@ def test_nanogpt():
     "device",
     ("cpu", "cuda", "meta"),
 )
-def test_litgpt_variants(name, device, turn_off_tf32_and_set_seed):
+def test_litgpt_variants(name, device):
     from thunder.tests.litgpt_model import Config
     from litgpt.model import GPT
 
@@ -730,7 +730,7 @@ def test_litgpt_variants(name, device, turn_off_tf32_and_set_seed):
     "device",
     ("cpu", "cuda"),
 )
-def test_litgpt_variants_kvcache(name, device, turn_off_tf32_and_set_seed):
+def test_litgpt_variants_kvcache(name, device):
     from thunder.tests.litgpt_model import Config
     from litgpt.model import GPT
     import torch._dynamo  # this monkeypatches torch.manual_seed

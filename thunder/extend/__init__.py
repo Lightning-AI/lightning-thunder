@@ -534,6 +534,7 @@ def get_all_executors() -> tuple[Executor, ...]:
         cudnn_layernormex,
         cudnnex,
         cutlass_dsl_ex,
+        custom_op_ex,
         nvfuserex,
         pythonex,
         sdpaex,
