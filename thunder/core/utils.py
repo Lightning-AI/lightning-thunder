@@ -1033,20 +1033,8 @@ def producers(trace_or_bsyms: TraceCtx | list[BoundSymbolInterface], *, _map_to_
 
             vout = variableify(out)
 
-            # Checks if the proxy was also an input (in which case this is not its producers)
-            is_input: bool = False
-            for vin in bsym.flat_variableified_proxy_args:
-                if vin == vout:
-                    is_input = True
-                    break
-
-            if is_input:
-                continue
-
-            if _map_to_numbers:
-                producers[out] = idx
-            else:
-                producers[out] = bsym
+            if vout not in bsym.flat_variableified_proxy_args:
+                producers[out] = idx if _map_to_numbers else bsym
 
     return producers
 
