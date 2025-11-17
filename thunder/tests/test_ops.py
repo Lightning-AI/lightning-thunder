@@ -663,13 +663,6 @@ def _blockwise_quantize(tensor: torch.Tensor, block_rows: int, block_cols: int) 
     return quant.reshape(M, K), encode.reshape(M // block_rows, K // block_cols).to(tensor.device)
 
 
-def _dequantize_blockwise(quant: torch.Tensor, encode: torch.Tensor, block_rows: int, block_cols: int) -> torch.Tensor:
-    M, K = quant.shape
-    reshaped = quant.reshape(M // block_rows, block_rows, K // block_cols, block_cols)
-    encode = encode.reshape(M // block_rows, 1, K // block_cols, 1)
-    return (reshaped.to(torch.float32) / encode).reshape(M, K)
-
-
 @requiresCUDA
 @_require_scaled_mm
 @pytest.mark.parametrize("output_dtype", [torch.bfloat16])
