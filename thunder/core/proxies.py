@@ -2010,12 +2010,22 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
     distparallel_type = getattr(t, "distparallel_type", None)
     _thunder_fsdp_padding_size = getattr(t, "_thunder_fsdp_padding_size", None)
     if using_symbolic_values():
-        shape_attr = ProvenanceRecord(PseudoInst.LOAD_ATTR, inputs=[copy.copy(history), wrap_const("shape").provenance])
+        shape_attr = None
+        if history is not None:
+            shape_attr = ProvenanceRecord(
+                PseudoInst.LOAD_ATTR, inputs=[copy.copy(history), wrap_const("shape").provenance]
+            )
+
+        def _dim_history(idx: int) -> ProvenanceRecord | None:
+            if shape_attr is None:
+                return None
+            return ProvenanceRecord(PseudoInst.BINARY_SUBSCR, inputs=[shape_attr, wrap_const(idx).provenance])
+
         shape = tuple(
             IntegerProxy(
                 None,
                 s,
-                history=ProvenanceRecord(PseudoInst.BINARY_SUBSCR, inputs=[shape_attr, wrap_const(idx).provenance]),
+                history=_dim_history(idx),
                 constraint=CONSTRAINT.CONSTRAINABLE,
             )
             for idx, s in enumerate(t.shape)
