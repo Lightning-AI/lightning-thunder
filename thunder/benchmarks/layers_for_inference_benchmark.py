@@ -32,9 +32,7 @@ __all__ = [
     "Llama4MoE",
     "NVFP4InferenceGroupedLinear",
     "NVFP4InferenceGroupedSwiGLU",
-    "NVFP4InferenceLinear",
     "nvfuser_f16a_nvfp4weight_scaled_grouped_mm",
-    "nvfuser_f16a_nvfp4weight_scaled_mm",
 ]
 
 
@@ -203,48 +201,6 @@ def dequantize_to_dtype(tensor_fp4, tensor_sf, global_scale, dtype, device, bloc
 
 # NOTE: This custom op is registered with nvfuser translator in benchmark_inference.py
 # using _register_nvfuser_translator. See benchmark_inference._register_nvfp4_ops().
-@torch.library.custom_op("nvf_cutlass::f16a_nvfp4weight_scaled_mm", mutates_args=())
-def nvfuser_f16a_nvfp4weight_scaled_mm(
-    activation: torch.Tensor,
-    fp4_weight: torch.Tensor,
-    weight_scaling_factor: torch.Tensor,
-    weight_global_scale: torch.Tensor,
-    bias: torch.Tensor | None,
-) -> torch.Tensor:
-    # fp4_weight shape: (out_features, in_features // 2) - stored like nn.Linear weight
-    hp_weight = dequantize_to_dtype(
-        fp4_weight, weight_scaling_factor, weight_global_scale, activation.dtype, fp4_weight.device, 16
-    )
-    # hp_weight shape after unpack: (out_features, in_features)
-    # Need to transpose to match nn.Linear: activation @ weight.T
-    result = activation @ hp_weight.T
-    if bias is not None:
-        result = result + bias
-    return result
-
-
-@torch.library.register_fake("nvf_cutlass::f16a_nvfp4weight_scaled_mm")
-def _(
-    activation: torch.Tensor,
-    fp4_weight: torch.Tensor,
-    weight_scaling_factor: torch.Tensor,
-    weight_global_scale: torch.Tensor,
-    bias: torch.Tensor | None,
-) -> torch.Tensor:
-    # fp4_weight shape: (out_features, in_features // 2)
-    # Validate that activation has at least 1 dimension
-    if activation.ndim == 0:
-        raise ValueError(f"Expected activation to have at least 1 dimension, got {activation.ndim}")
-
-    # Output shape should match activation.shape[:-1] + (out_features,)
-    # This handles both 2D (tokens, hidden) and 3D (batch, seq_len, hidden) inputs
-    out_features = fp4_weight.size(0)
-    output_shape = activation.shape[:-1] + (out_features,)
-    return torch.empty(output_shape, device=activation.device, dtype=activation.dtype)
-
-
-# NOTE: This custom op is registered with nvfuser translator in benchmark_inference.py
-# using _register_nvfuser_translator. See benchmark_inference._register_nvfp4_ops().
 @torch.library.custom_op("nvf_cutlass::f16a_nvfp4weight_scaled_grouped_mm", mutates_args=())
 def nvfuser_f16a_nvfp4weight_scaled_grouped_mm(
     activation: torch.Tensor,
@@ -289,52 +245,6 @@ def _(
     out_features = fp4_weight.size(2)
     output_shape = activation.shape[:-1] + (out_features,)
     return torch.empty(output_shape, device=activation.device, dtype=torch.bfloat16)
-
-
-class NVFP4InferenceLinear(nn.Module):
-    """NVFP4 Linear layer for Inference.
-
-    Weight, its scaling factor, its global scale, and bias are registered as a buffer, not a parameter.
-    """
-
-    def __init__(
-        self,
-        in_features: int,
-        out_features: int,
-        *,
-        fp4_weight: torch.Tensor | nn.Parameter,
-        weight_scaling_factor: torch.Tensor | nn.Parameter,
-        weight_global_scale: torch.Tensor | nn.Parameter | None,
-        bias: torch.Tensor | nn.Parameter | None,
-    ) -> None:
-        super().__init__()
-        self.in_features = in_features
-        self.out_features = out_features
-
-        self.register_buffer("fp4_weight", fp4_weight)
-        self.register_buffer("weight_scaling_factor", weight_scaling_factor)
-        self.register_buffer("weight_global_scale", weight_global_scale)
-        self.register_buffer("bias", bias)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return torch.ops.nvf_cutlass.f16a_nvfp4weight_scaled_mm(
-            x, self.fp4_weight, self.weight_scaling_factor, self.weight_global_scale, self.bias
-        )
-
-    @staticmethod
-    def from_linear(linear: nn.Linear, fqn: str | None = None) -> NVFP4InferenceLinear:
-        weight = linear.weight
-        bias = linear.bias
-        out_features, in_features = weight.size()
-        fp4_weight, weight_scaling_factor, weight_global_scale = quantize_linear_weight_to_nvfp4(weight)
-        return NVFP4InferenceLinear(
-            in_features,
-            out_features,
-            fp4_weight=fp4_weight,
-            weight_scaling_factor=weight_scaling_factor,
-            weight_global_scale=weight_global_scale,
-            bias=bias,
-        )
 
 
 class SwiGLU(nn.Module):
