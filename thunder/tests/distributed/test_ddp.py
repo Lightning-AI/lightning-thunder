@@ -165,7 +165,7 @@ class DDPTest(DistributedParallelTestCase):
             m = ToyModel().to(device)
             jitted_m = thunder.jit(
                 m,
-                cache_mode=CACHE_OPTIONS.CONSTANT_VALUES,
+                cache=CACHE_OPTIONS.CONSTANT_VALUES,
                 executors=executors_map[executor].executors_list(),
             )
             jitted_ddp_m = ddp(jitted_m, bucket_size_in_mb=bucket_size_in_mb)
