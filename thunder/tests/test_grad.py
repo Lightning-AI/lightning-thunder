@@ -321,7 +321,25 @@ def _tensor_dot(x, y):
         x = x.cuda()
     elif is_cpu_scalar_tensor(y) and x.is_cuda:
         y = y.cuda()
-    return torch.dot(x.ravel().type(torch.float64), y.ravel().type(torch.float64))
+
+    x_flat = x.ravel()
+    y_flat = y.ravel()
+
+    # This function is used in VJP/JVP tests, and ensures correct handling when
+    # inputs are complex. For ℝ → ℂ-valued functions, the correct identity is
+    #   Re(⟨J·u, v⟩) = ⟨u, J*·v⟩
+    # so we use torch.vdot and take the real part when both arguments are complex.
+    if x_flat.is_complex() or y_flat.is_complex():
+        x_flat = x_flat.type(torch.complex128)
+        y_flat = y_flat.type(torch.complex128)
+        result = torch.vdot(x_flat, y_flat)
+        # When both inputs are complex (J·u and v), we need the real part
+        if x.is_complex() and y.is_complex():
+            return result.real
+        # Otherwise, it's handled by vdot returning real
+        return result
+    else:
+        return torch.dot(x_flat.type(torch.float64), y_flat.type(torch.float64))
 
 
 def _dot(x, y):
