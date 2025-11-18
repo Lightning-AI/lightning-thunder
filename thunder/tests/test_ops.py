@@ -439,29 +439,30 @@ if HAS_SCALED_GROUPED_MM:
     MXFP8_GROUPED_MSG = "MXFP8 grouped GEMM is only supported when PyTorch is built with USE_FBGEMM_GENAI=1 on SM100+"
 
     @requiresCUDA
-    def test_scaled_grouped_mm_2d2d_tensorwise():
+    def test_scaled_grouped_mm_3d2d_rowwise():
         if not bool(PLATFORM_SUPPORTS_FP8_GROUPED_GEMM):
             pytest.skip(F8_GROUPED_MSG)
         device = "cuda"
-        group_sizes = [8, 12]
-        m = 6
-        n = 10
-        k = sum(group_sizes)
+        group_sizes = [16, 16]
+        groups = len(group_sizes)
+        total_rows = sum(group_sizes)
+        k = 16
+        n = 16
 
-        mat_a = torch.randn(m, k, device=device, dtype=torch.float16)
-        mat_b = torch.randn(k, n, device=device, dtype=torch.float16)
-        offs = torch.tensor(group_sizes, device=device, dtype=torch.int32).cumsum(0)
-        scale_a = torch.ones(1, device=device, dtype=torch.float32)
-        scale_b = torch.ones(1, device=device, dtype=torch.float32)
+        mat_a = torch.randn(total_rows, k, device=device, dtype=torch.bfloat16).to(torch.float8_e4m3fn)
+        mat_b = torch.randn(groups, n, k, device=device, dtype=torch.bfloat16).to(torch.float8_e4m3fn)
+        offs = torch.tensor(group_sizes, device=device, dtype=torch.int32).cumsum(0, dtype=torch.int32)
+        scale_a = torch.ones(total_rows, device=device, dtype=torch.float32)
+        scale_b = torch.ones(groups, n, device=device, dtype=torch.float32)
 
         def fn(a, b, scale_a, scale_b, offs):
             return torch.nn.functional.scaled_grouped_mm(
                 a,
-                b,
+                b.transpose(-2, -1),
                 scale_a,
-                ScalingType.TensorWise,
+                ScalingType.RowWise,
                 scale_b,
-                ScalingType.TensorWise,
+                ScalingType.RowWise,
                 offs=offs,
                 output_dtype=torch.bfloat16,
             )
@@ -474,30 +475,30 @@ if HAS_SCALED_GROUPED_MM:
         assert_consistency_of_compiletime_and_runtime(jitted, result)
 
     @requiresCUDA
-    def test_scaled_grouped_mm_2d3d_tensorwise():
+    def test_scaled_grouped_mm_2d3d_rowwise():
         if not bool(PLATFORM_SUPPORTS_FP8_GROUPED_GEMM):
             pytest.skip(F8_GROUPED_MSG)
         device = "cuda"
-        group_sizes = [5, 7]
+        group_sizes = [8, 8]
         groups = len(group_sizes)
         total_rows = sum(group_sizes)
         k = 16
-        n = 9
+        n = 16
 
-        mat_a = torch.randn(total_rows, k, device=device, dtype=torch.float16)
-        mat_b = torch.randn(groups, k, n, device=device, dtype=torch.float16)
-        offs = torch.tensor(group_sizes, device=device, dtype=torch.int32).cumsum(0)
-        scale_a = torch.ones(1, device=device, dtype=torch.float32)
-        scale_b = torch.ones(1, device=device, dtype=torch.float32)
+        mat_a = torch.randn(total_rows, k, device=device, dtype=torch.bfloat16).to(torch.float8_e4m3fn)
+        mat_b = torch.randn(groups, n, k, device=device, dtype=torch.bfloat16).to(torch.float8_e4m3fn)
+        offs = torch.tensor(group_sizes, device=device, dtype=torch.int32).cumsum(0, dtype=torch.int32)
+        scale_a = torch.ones(total_rows, device=device, dtype=torch.float32)
+        scale_b = torch.ones(groups, n, device=device, dtype=torch.float32)
 
         def fn(a, b, scale_a, scale_b, offs):
             return torch.nn.functional.scaled_grouped_mm(
                 a,
-                b,
+                b.transpose(-2, -1),
                 scale_a,
-                ScalingType.TensorWise,
+                ScalingType.RowWise,
                 scale_b,
-                ScalingType.TensorWise,
+                ScalingType.RowWise,
                 offs=offs,
                 output_dtype=torch.bfloat16,
             )
