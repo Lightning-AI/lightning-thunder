@@ -1264,3 +1264,6 @@ def log_trace_or_graphmodule_to_torch_trace(
         payload_fn=payload_fn,
         compile_id=compile_id,
     )
+
+
+TORCH_COMPILE_COMPILE_ID_KEY: str = "torch_compile_compile_id_key"
