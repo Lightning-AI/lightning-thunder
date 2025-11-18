@@ -5879,9 +5879,10 @@ if hasattr(torch.nn.functional, "scaled_grouped_mm"):
             utils.check(False, lambda: f"Unexpected shape combination: {mat_a.shape} and {mat_b.shape}")
 
         utils.check_same_dtype(mat_a, mat_b)
+        allowed_input_dtypes = dtypes.float_math_dtypes | dtypes.float_8bit_dtypes
         utils.check(
-            mat_a.dtype in dtypes.float_math_dtypes,
-            lambda: f"`mat_a` must be 16-bit float or higher, got {mat_a.dtype}",
+            mat_a.dtype in allowed_input_dtypes,
+            lambda: f"`mat_a` must be a floating dtype, got {mat_a.dtype}",
         )
         utils.check(
             utils.is_integer_dtype(offs.dtype),
