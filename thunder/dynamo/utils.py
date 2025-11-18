@@ -1245,7 +1245,6 @@ def log_trace_or_graphmodule_to_torch_trace(
     encoding: str | None = None,
 ) -> None:
     if payload_fn is None:
-        check(encoding is not None, lambda: "`encoding` needs to be set")
         if isinstance(m, GraphModule):
             payload_fn = lambda graph_module=m: graph_module.print_readable(
                 print_output=False,
@@ -1256,6 +1255,8 @@ def log_trace_or_graphmodule_to_torch_trace(
             # includes m being TraceCtx
             payload_fn = lambda mod=m: f"{mod}\n"
         encoding = "string"
+    else:
+        check(encoding is not None, lambda: "`encoding` needs to be set")
 
     wrapped_trace_structured_artifact(
         name=name,
