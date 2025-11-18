@@ -17,6 +17,7 @@ from hypothesis import given, settings
 from hypothesis import HealthCheck
 import copy
 from functools import partial
+import tempfile
 
 import thunder
 from thunder import dtypes
@@ -89,9 +90,6 @@ def run_script(file_name, cmd):
     ),
 )
 def test_basic(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None, run_with_torch_trace: bool):
-    import tempfile
-    from unittest.mock import patch
-
     # Set up TORCH_TRACE environment variable if needed using mock.patch
     if run_with_torch_trace:
         tmp_path = tempfile.mkdtemp()
