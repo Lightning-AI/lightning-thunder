@@ -146,7 +146,7 @@ class ThunderCompiler:
             is_torch_compile_without_dynamic=is_in_torch_compile() and (not is_dynamic_inputs(sample_args)),
         )
         torch_compile_compile_id = torch._guards.CompileContext.current_compile_id()
-        thunder_options = {**self.thunder_options, TORCH_COMPILE_COMPILE_ID_KEY: torch_compile_compile_id}
+        thunder_options = {**thunder_options, TORCH_COMPILE_COMPILE_ID_KEY: torch_compile_compile_id}
         split_module, subgraph_info = _splitter(
             gm,
             partial(jit, **thunder_options),
@@ -166,6 +166,7 @@ class ThunderCompiler:
                     for reason in subgraph_info.split_reasons
                 ],
                 encoding="json",
+                compile_id=torch_compile_compile_id,
             )
         self.subgraph_infos.append(subgraph_info)
         return split_module

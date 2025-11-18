@@ -1263,7 +1263,7 @@ def log_trace_or_graphmodule_to_torch_trace(
     name: str,
     m: TraceCtx | GraphModule | None = None,
     compile_id: CompileId | None = None,
-    payload_fn: Callable[[None], str] | None = None,
+    payload_fn: Callable[[], str] | None = None,
     encoding: str | None = None,
 ) -> None:
     if payload_fn is None:
