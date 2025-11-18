@@ -434,7 +434,7 @@ if HAS_SCALED_GROUPED_MM:
     # They validate that the Thunder tracing mirrors eager execution for representative 2D/2D
     # and 2D/3D grouped matmul shapes that correspond to the accepted combinations in
     # thunder.core.prims._grouped_mm_meta. These scenarios mirror the small tensor smoke tests
-    # in PyTorch's scaled matmul CUDA suite ([pytorch/test_scaled_matmul_cuda.py](https://github.com/pytorch/pytorch/blob/main/test/test_scaled_matmul_cuda.py)).
+    # in PyTorch's scaled matmul CUDA suite ([pytorch/test_scaled_matmul_cuda.py](https://github.com/pytorch/pytorch/blob/2f023bf7/test/test_scaled_matmul_cuda.py)).
     F8_GROUPED_MSG = "FP8 grouped is only supported on SM90 and MI300+ devices"
     MXFP8_GROUPED_MSG = "MXFP8 grouped GEMM is only supported when PyTorch is built with USE_FBGEMM_GENAI=1 on SM100+"
 
