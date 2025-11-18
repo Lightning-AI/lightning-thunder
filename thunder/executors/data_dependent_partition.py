@@ -95,6 +95,11 @@ class Graph:
 
         producers = utils.producers(trace, _map_to_numbers=True)
         consumers = utils.consumers(trace, _map_to_numbers=True)
+        trace_input_vars = set()
+        flat_inputs, _ = utils.tree_flatten((trace.args, trace.kwargs))
+        for obj in flat_inputs:
+            if isinstance(obj, Proxy):
+                trace_input_vars.add(variableify(obj))
 
         # Note, even though BoundSymbolInterface is hashable, it's hash is very slow
         # as it appears to be far off from being universal.
@@ -117,6 +122,12 @@ class Graph:
                 if not isinstance(inp, Proxy):
                     continue
 
+                producer_id = producers.get(inp, None)
+                if producer_id is None and variableify(inp) in trace_input_vars:
+                    # TODO: This should not happen
+                    # I observed (i23,) = prims.shape(l_cache_position_) hits this branch
+                    # check(False, "Unpacked trace input consumed")
+                    continue
                 producer_id = producers[inp]
                 parent = bsym_id_to_node_map[producer_id]
                 node.parents.add(parent)
