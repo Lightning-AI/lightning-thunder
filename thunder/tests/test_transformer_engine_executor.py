@@ -59,10 +59,10 @@ def te_assert_close(actual, expected, recipe=None, **kwargs):
 
     if recipe is not None:
         if is_nvfp4_available and recipe.nvfp4():
-            # Tolerances for NVFP4
+            # Tolerances for NVFP4 Float4 E2M1
             tolerances = dict(rtol=0.25, atol=0.125)
         else:
-            # Tolerances for all FP8 recipes
+            # Tolerances for all FP8 recipes Float8 E4M3
             tolerances = dict(rtol=0.125, atol=0.0675)
 
     kwargs.update(tolerances)
