@@ -5857,7 +5857,7 @@ if hasattr(torch.nn.functional, "scaled_grouped_mm"):
             out_shape = (offs.shape[0], mat_a.shape[0], mat_b.shape[1])
         elif mat_a.ndim == 3 and mat_b.ndim == 2:
             utils.check(
-                mat_a.shape[2] == mat_b.shape[1],
+                mat_a.shape[2] == mat_b.shape[0],
                 lambda: f"Inner dimension mismatch: {mat_a.shape} vs {mat_b.shape}",
             )
             utils.check(
