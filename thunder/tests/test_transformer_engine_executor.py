@@ -55,15 +55,18 @@ if is_nvfp4_available:
 # Returns the estimated numerical error for a given TE recipe based on:
 # https://github.com/NVIDIA/TransformerEngine/blob/7e593c3be96b3eebc384da1a2ab307727065c9ab/tests/pytorch/utils.py#L68-L118
 def te_assert_close(actual, expected, recipe=None, **kwargs):
+    tolerances = {}
+
     if recipe is not None:
         if is_nvfp4_available and recipe.nvfp4():
             # Tolerances for NVFP4
-            return torch.testing.assert_close(actual, expected, rtol=0.25, atol=0.125)
+            tolerances = dict(rtol=0.25, atol=0.125)
         else:
             # Tolerances for all FP8 recipes
-            return torch.testing.assert_close(actual, expected, rtol=0.125, atol=0.0675)
+            tolerances = dict(rtol=0.125, atol=0.0675)
 
-    assert_close(actual, expected, **kwargs)
+    kwargs.update(tolerances)
+    return torch.testing.assert_close(actual, expected, **kwargs)
 
 
 @requiresCUDA
