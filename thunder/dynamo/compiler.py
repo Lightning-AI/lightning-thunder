@@ -154,7 +154,9 @@ class ThunderCompiler:
             **compile_options,
         )
         log_trace_or_graphmodule_to_torch_trace(
-            name="graphmodule_after_splitter", m=split_module, compile_id=compile_id
+            name="graphmodule_after_splitter",
+            m=split_module,
+            compile_id=torch_compile_compile_id,
         )
         if subgraph_info.split_reasons:
             log_trace_or_graphmodule_to_torch_trace(
