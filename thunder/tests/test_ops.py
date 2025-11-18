@@ -4,6 +4,7 @@ import os
 import numpy as np
 import pytest
 import torch
+from torch.testing import assert_close
 
 HAS_SCALED_GROUPED_MM = hasattr(torch.nn.functional, "scaled_grouped_mm")
 
