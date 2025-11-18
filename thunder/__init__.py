@@ -836,6 +836,19 @@ def jit(
         with compile_data_and_stats(cd, cs):
             inps, pro_to_epi = cache_entry.prologue_fn(*args, **kwargs)
 
+        log_trace_or_graphmodule_to_torch_trace(
+            name="compile_data",
+            payload_fn=lambda compile_data=cd: {
+                "cache_option": str(compile_data.cache_option),
+                "sharp_edges": str(compile_data.sharp_edges),
+                "disable_torch_autograd_support": compile_data.disable_torch_autograd_support,
+                "executors_list": [str(ex) for ex in compile_data.executors_list],
+                "compile_options": {k: str(v) for k, v in compile_options.items()},
+            },
+            encoding="json",
+            compile_id=compile_options.get(TORCH_COMPILE_COMPILE_ID_KEY, None),
+        )
+
         return cache_entry, inps, pro_to_epi
 
     def host_execution_timer(fn):
