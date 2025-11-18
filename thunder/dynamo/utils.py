@@ -46,7 +46,7 @@ if TYPE_CHECKING:
 auto_register_ops = set(itertools.chain(*torch_auto_registered_ops.values()))
 
 
-if "compile_id" in inspect.signature(trace_structured_artifact):
+if "compile_id" in inspect.signature(trace_structured_artifact).parameters:
     wrapped_trace_structured_artifact = trace_structured_artifact
 else:
 
