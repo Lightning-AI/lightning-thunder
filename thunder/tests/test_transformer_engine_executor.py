@@ -2,7 +2,6 @@ from functools import partial
 
 import pytest
 import torch
-from torch.testing import assert_close
 from looseversion import LooseVersion
 
 import thunder
@@ -53,21 +52,17 @@ if is_nvfp4_available:
     recipe_ids += ["nvfp4_e2m1"]
 
 
-# Returns the estimated numerical error for a given dtype as per TE spec here:
-# https://github.com/NVIDIA/TransformerEngine/blob/7ad130efd52c3aa4a386d25f1d42b28d5aa20090/tests/pytorch/test_numerics.py#L155-L167
-def te_assert_close(actual, expected, **kwargs):
-    tolerances = {}
+# Returns the estimated numerical error for a given TE recipe based on:
+# https://github.com/NVIDIA/TransformerEngine/blob/7e593c3be96b3eebc384da1a2ab307727065c9ab/tests/pytorch/utils.py#L68-L118
+def te_assert_close(actual, expected, recipe=None, **kwargs):
 
-    if not isinstance(actual, torch.Tensor) and isinstance(actual, float):
-        tolerances = dict(rtol=1.3e-6, atol=1e-5)
-    elif actual.dtype == torch.float32:
-        tolerances = dict(rtol=1.3e-6, atol=1e-5)
-    elif actual.dtype == torch.float16:
-        tolerances = dict(rtol=1e-3, atol=1e-5)
-    elif actual.dtype == torch.bfloat16:
-        tolerances = dict(rtol=1.6e-2, atol=1e-5)
-
-    kwargs.update(tolerances)
+    if recipe is not None:
+        if is_nvfp4_available and recipe.nvfp4():
+            # Tolerances for NVFP4
+            return torch.testing.assert_close(actual, expected, rtol=0.25, atol=0.125)
+        else:
+            # Tolerances for all FP8 recipes
+            return torch.testing.assert_close(actual, expected, rtol=0.125, atol=0.0675)
 
     assert_close(actual, expected, **kwargs)
 
@@ -120,15 +115,15 @@ def test_te_linear_forward_backward(fp8_recipe: recipe.Recipe):
         te_result = te_linear2(inter_result + x_te)
 
     # Verifies the result is close to TE
-    te_assert_close(thunder_result, te_result)
+    te_assert_close(thunder_result, te_result, recipe=fp8_recipe)
 
     grad_output = torch.randn_like(te_result)
     te_result.backward(grad_output)
     thunder_result.backward(grad_output)
 
-    te_assert_close(x.grad, x_te.grad)
-    te_assert_close(w1.grad, te_linear1.weight.grad)
-    te_assert_close(w2.grad, te_linear2.weight.grad)
+    te_assert_close(x.grad, x_te.grad, recipe=fp8_recipe)
+    te_assert_close(w1.grad, te_linear1.weight.grad, recipe=fp8_recipe)
+    te_assert_close(w2.grad, te_linear2.weight.grad, recipe=fp8_recipe)
 
     # Verifies te_linear was called
     forward_trace = thunder.last_traces(cfn)
@@ -221,10 +216,10 @@ def test_te_linear_forward_backward_multiple_iteration(fp8_recipe: recipe.Recipe
     train_model(thunder_model, thunder_sgd_optimizer)
 
     # Verify that the weights and biases converge to same value after few iterations.
-    te_assert_close(w1, te_linear1.weight)
-    te_assert_close(w2, te_linear2.weight)
-    te_assert_close(b1, te_linear1.bias)
-    te_assert_close(b2, te_linear2.bias)
+    te_assert_close(w1, te_linear1.weight, recipe=fp8_recipe)
+    te_assert_close(w2, te_linear2.weight, recipe=fp8_recipe)
+    te_assert_close(b1, te_linear1.bias, recipe=fp8_recipe)
+    te_assert_close(b2, te_linear2.bias, recipe=fp8_recipe)
 
 
 @requiresCUDA
@@ -300,10 +295,10 @@ def test_te_linear_forward_backward_multiple_iteration_multiple_recipes():
     train_model(thunder_model, thunder_sgd_optimizer)
 
     # Verify that the weights and biases converge to same value after few iterations.
-    te_assert_close(w1, te_linear1.weight)
-    te_assert_close(w2, te_linear2.weight)
-    te_assert_close(b1, te_linear1.bias)
-    te_assert_close(b2, te_linear2.bias)
+    te_assert_close(w1, te_linear1.weight, recipe=recipes[0])
+    te_assert_close(w2, te_linear2.weight, recipe=recipes[0])
+    te_assert_close(b1, te_linear1.bias, recipe=recipes[0])
+    te_assert_close(b2, te_linear2.bias, recipe=recipes[0])
 
 
 @requiresCUDA
@@ -671,12 +666,12 @@ def test_te_activation_checkpointing_correctness(fp8_recipe: recipe.Recipe, comp
     train_model(thunder_model, thunder_sgd_optimizer, thunder_loss_hist)
 
     for loss, te_loss in zip(thunder_loss_hist, te_loss_hist):
-        te_assert_close(loss, te_loss)
+        te_assert_close(loss, te_loss, recipe=fp8_recipe)
 
-    te_assert_close(w1, te_linear1.weight)
-    te_assert_close(w2, te_linear2.weight)
-    te_assert_close(b1, te_linear1.bias)
-    te_assert_close(b2, te_linear2.bias)
+    te_assert_close(w1, te_linear1.weight, recipe=fp8_recipe)
+    te_assert_close(w2, te_linear2.weight, recipe=fp8_recipe)
+    te_assert_close(b1, te_linear1.bias, recipe=fp8_recipe)
+    te_assert_close(b2, te_linear2.bias, recipe=fp8_recipe)
 
     # TE does not expose the scales for MXFP8
     if fp8_recipe.delayed():
@@ -710,11 +705,11 @@ def test_te_activation_checkpointing_correctness(fp8_recipe: recipe.Recipe, comp
 
         # check the scales are the same but for last dimension which is always on in TE
         for te_scale, th_scale in zip(te_scales, th_scales):
-            te_assert_close(te_scale[:-1], th_scale)
+            te_assert_close(te_scale[:-1], th_scale, recipe=fp8_recipe)
 
         # check that amax history is the same as TE
         for te_amax, th_amax in zip(te_amax_hist, th_amax_hist):
-            te_assert_close(te_amax[:, :-1], th_amax)
+            te_assert_close(te_amax[:, :-1], th_amax, recipe=fp8_recipe)
 
 
 @requiresCUDA
