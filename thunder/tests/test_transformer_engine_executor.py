@@ -55,7 +55,6 @@ if is_nvfp4_available:
 # Returns the estimated numerical error for a given TE recipe based on:
 # https://github.com/NVIDIA/TransformerEngine/blob/7e593c3be96b3eebc384da1a2ab307727065c9ab/tests/pytorch/utils.py#L68-L118
 def te_assert_close(actual, expected, recipe=None, **kwargs):
-
     if recipe is not None:
         if is_nvfp4_available and recipe.nvfp4():
             # Tolerances for NVFP4
