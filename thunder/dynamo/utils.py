@@ -10,6 +10,7 @@ from types import NoneType
 from collections import defaultdict
 from collections import namedtuple
 import warnings
+import copy
 
 from looseversion import LooseVersion
 
@@ -192,26 +193,13 @@ class LazyInductorModule(torch.nn.Module):
         finally:
             CompileEventLogger.increment_toplevel = original
 
-    @staticmethod
-    def make_graph_module_return_element_instead_of_tuple(gm_: torch.fx.GraphModule):
-        node = torch._inductor.utils.output_node(gm_)
-        (rv,) = node.args
-        if isinstance(rv, (list, tuple)) and len(rv) == 1:
-            single_output = rv[0]
-            with gm_.graph.inserting_before(node):
-                gm_.graph.output(single_output)
-            gm_.graph.erase_node(node)
-            gm_.recompile()
-
     def forward(self, *args):
         if self.compiled_fn is None:
-            from torch._inductor import compile_fx
-
-            return_tuple = compile_fx.graph_returns_tuple(self.graph_module)
             with self._maybe_patch_increment_toplevel():
                 # Inductor needs fake_mode, particularly its shape_env, to handle SymInts
                 with tracing(TracingContext(fake_mode=self.fake_mode)):
                     try:
+                        g = copy.deepcopy(self.graph_module.graph)
                         self.compiled_fn = torch._inductor.compile(self.graph_module, args)
                     except DynamicOutputShapeException as e:
                         # This exception is meant to be handled by Dynamo, which is responsible for graph break
@@ -219,13 +207,13 @@ class LazyInductorModule(torch.nn.Module):
                         warnings.warn(f"Dynamic output shape operator encountered: {e}. Falling back to eager.")
                         # NOTE: torch._inductor.compile alters the output to always be a tuple.
                         # Restore original single-element return, if needed.
-                        if not return_tuple:
-                            LazyInductorModule.make_graph_module_return_element_instead_of_tuple(self.graph_module)
+                        self.graph_module.graph = g
+                        self.graph_module.recompile()
                         self.compiled_fn = self.graph_module
                     except Exception as e:
                         warnings.warn(f"torch._inductor.compile failed: {e}. Falling back to eager.")
-                        if not return_tuple:
-                            LazyInductorModule.make_graph_module_return_element_instead_of_tuple(self.graph_module)
+                        self.graph_module.graph = g
+                        self.graph_module.recompile()
                         self.compiled_fn = self.graph_module
 
         return self.compiled_fn(*args)
