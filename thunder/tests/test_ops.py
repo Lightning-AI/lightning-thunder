@@ -439,15 +439,20 @@ if HAS_SCALED_GROUPED_MM:
     MXFP8_GROUPED_MSG = "MXFP8 grouped GEMM is only supported when PyTorch is built with USE_FBGEMM_GENAI=1 on SM100+"
 
     @requiresCUDA
-    def test_scaled_grouped_mm_3d2d_rowwise():
+    @pytest.mark.parametrize(
+        "group_sizes,k,n",
+        [
+            ([8, 8], 16, 16),
+            ([16, 16], 16, 16),
+        ],
+    )
+    def test_scaled_grouped_mm_2d3d_rowwise(group_sizes, k, n):
+        """Test 2D x 3D grouped matmul with various dimensions."""
         if not bool(PLATFORM_SUPPORTS_FP8_GROUPED_GEMM):
             pytest.skip(F8_GROUPED_MSG)
         device = "cuda"
-        group_sizes = [16, 16]
         groups = len(group_sizes)
         total_rows = sum(group_sizes)
-        k = 16
-        n = 16
 
         mat_a = torch.randn(total_rows, k, device=device, dtype=torch.bfloat16).to(torch.float8_e4m3fn)
         mat_b = torch.randn(groups, n, k, device=device, dtype=torch.bfloat16).to(torch.float8_e4m3fn)
@@ -475,21 +480,29 @@ if HAS_SCALED_GROUPED_MM:
         assert_consistency_of_compiletime_and_runtime(jitted, result)
 
     @requiresCUDA
-    def test_scaled_grouped_mm_2d3d_rowwise():
+    @pytest.mark.parametrize(
+        "group_sizes,m,k,n",
+        [
+            ([8, 8], 16, 32, 16),  # k != n to catch the dimension check bug
+            ([8, 8], 16, 16, 16),  # k == n edge case
+        ],
+    )
+    def test_scaled_grouped_mm_3d2d_rowwise(group_sizes, m, k, n):
+        """Test 3D x 2D grouped matmul with various dimensions.
+
+        Note: k != n in first test case specifically catches the bug where
+        mat_a.shape[2] was incorrectly compared with mat_b.shape[1].
+        """
         if not bool(PLATFORM_SUPPORTS_FP8_GROUPED_GEMM):
             pytest.skip(F8_GROUPED_MSG)
         device = "cuda"
-        group_sizes = [8, 8]
         groups = len(group_sizes)
-        total_rows = sum(group_sizes)
-        k = 16
-        n = 16
 
-        mat_a = torch.randn(total_rows, k, device=device, dtype=torch.bfloat16).to(torch.float8_e4m3fn)
-        mat_b = torch.randn(groups, n, k, device=device, dtype=torch.bfloat16).to(torch.float8_e4m3fn)
+        mat_a = torch.randn(groups, m, k, device=device, dtype=torch.bfloat16).to(torch.float8_e4m3fn)
+        mat_b = torch.randn(n, k, device=device, dtype=torch.bfloat16).to(torch.float8_e4m3fn)
         offs = torch.tensor(group_sizes, device=device, dtype=torch.int32).cumsum(0, dtype=torch.int32)
-        scale_a = torch.ones(total_rows, device=device, dtype=torch.float32)
-        scale_b = torch.ones(groups, n, device=device, dtype=torch.float32)
+        scale_a = torch.ones(groups, m, device=device, dtype=torch.float32)
+        scale_b = torch.ones(n, device=device, dtype=torch.float32)
 
         def fn(a, b, scale_a, scale_b, offs):
             return torch.nn.functional.scaled_grouped_mm(
