@@ -332,9 +332,6 @@ def _register_custom_op(custom_op: CustomOpDef) -> Symbol:
     .. note::
         This feature is experimental and subject to change.
     """
-    from thunder.extend import add_executor_lists
-    from thunder.extend import get_default_executors
-    from thunder.extend import set_default_executors
     from thunder.executors.torchex import _always_executable
     from thunder.executors.custom_op_ex import custom_op_ex
     from thunder.torch import register_function
@@ -411,12 +408,6 @@ def _register_custom_op(custom_op: CustomOpDef) -> Symbol:
         backward_meta, backward_impl = define_backward_for(custom_op, num_saved_tensors, tensor_indices)
         backward_op = custom_op_ex.register_operator(bwd_fn_name, meta=backward_meta, fn=backward_impl)
         register_backward(symbol.id)(backward_op)
-
-    # NOTE: `thunder.extend.add_default_executor` basically does `lst.insert(ex, 0)`.
-    if custom_op_ex not in get_default_executors():
-        default_executors = get_default_executors()
-        new_default_executors = add_executor_lists(default_executors, [custom_op_ex])
-        set_default_executors(new_default_executors)
 
     _CUSTOM_OP_TO_TORCHFN_AND_SYMBOL[custom_op] = ((torch_opoverload, torch_opoverload_packet), symbol)
 

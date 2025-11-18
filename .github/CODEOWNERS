@@ -6,12 +6,12 @@
 # Thank you, our previous code owners for their service:
 #   @carmocca @borda
 
-* @mruberry @lantiga @t-vi @KaelanDt
+* @mruberry @lantiga @KaelanDt
 
 # CI/CD and configs
-/.azure/        @KaelanDt @lantiga @t-vi
-/.github/       @KaelanDt @lantiga @t-vi
-/.lightning/    @KaelanDt @lantiga @t-vi
-/dockers/       @KaelanDt @lantiga @t-vi
-Makefile        @KaelanDt @lantiga @t-vi
-*.yml           @KaelanDt @lantiga @t-vi
+/.azure/        @KaelanDt @lantiga
+/.github/       @KaelanDt @lantiga
+/.lightning/    @KaelanDt @lantiga
+/dockers/       @KaelanDt @lantiga
+Makefile        @KaelanDt @lantiga
+*.yml           @KaelanDt @lantiga

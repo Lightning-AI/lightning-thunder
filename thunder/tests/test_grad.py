@@ -321,7 +321,25 @@ def _tensor_dot(x, y):
         x = x.cuda()
     elif is_cpu_scalar_tensor(y) and x.is_cuda:
         y = y.cuda()
-    return torch.dot(x.ravel().type(torch.float64), y.ravel().type(torch.float64))
+
+    x_flat = x.ravel()
+    y_flat = y.ravel()
+
+    # This function is used in VJP/JVP tests, and ensures correct handling when
+    # inputs are complex. For ℝ → ℂ-valued functions, the correct identity is
+    #   Re(⟨J·u, v⟩) = ⟨u, J*·v⟩
+    # so we use torch.vdot and take the real part when both arguments are complex.
+    if x_flat.is_complex() or y_flat.is_complex():
+        x_flat = x_flat.type(torch.complex128)
+        y_flat = y_flat.type(torch.complex128)
+        result = torch.vdot(x_flat, y_flat)
+        # When both inputs are complex (J·u and v), we need the real part
+        if x.is_complex() and y.is_complex():
+            return result.real
+        # Otherwise, it's handled by vdot returning real
+        return result
+    else:
+        return torch.dot(x_flat.type(torch.float64), y_flat.type(torch.float64))
 
 
 def _dot(x, y):
@@ -1318,11 +1336,11 @@ def test_torch_autograd_module(executor, device, _):
     a = make_tensor((2, 3), device=device, dtype=torch.float32, requires_grad=True)
     g = make_tensor((2, 4), device=device, dtype=torch.float32)
 
-    for cache_mode in ("constant values", "same input"):
+    for cache_mode in ("constant values", "no caching"):
         lc = executor.make_callable(
             linear,
             disable_torch_autograd=False,
-            cache_mode=cache_mode,
+            cache=cache_mode,
         )
         lc.zero_grad()
         a.grad = None
@@ -1704,7 +1722,7 @@ def test_populate_grads_block(executor, device, dtype):
 # can be on the order of 1e-3, which exceeds the default tolerances for torch.testing.assert_close.
 # This is expected due to the reduced precision of TF32 matrix multiplications.
 @instantiate(dtypes=(thunder.float32,))
-def test_populate_grads_nanogpt(executor, device, dtype, turn_off_tf32_and_set_seed):
+def test_populate_grads_nanogpt(executor, device, dtype):
     import sys
 
     if sys.platform == "win32":

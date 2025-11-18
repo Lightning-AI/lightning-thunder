@@ -340,8 +340,10 @@ def test_call_function_ex(jit):
         assert is_jitting_with_raise() == jitting
         return foo(**kwargs)
 
-    assert any(i.opname == "CALL_FUNCTION_EX" and not i.arg & 1 for i in dis.get_instructions(argsplat))
-    assert any(i.opname == "CALL_FUNCTION_EX" and i.arg & 1 for i in dis.get_instructions(kwargsplat))
+    if sys.version_info < (3, 14):
+        # Python 3.14 has no arg in call function ex.
+        assert any(i.opname == "CALL_FUNCTION_EX" and not i.arg & 1 for i in dis.get_instructions(argsplat))
+        assert any(i.opname == "CALL_FUNCTION_EX" and i.arg & 1 for i in dis.get_instructions(kwargsplat))
 
     kwargs = {"a": 1, "b": 2}
 
@@ -357,6 +359,10 @@ def test_call_function_ex(jit):
     assert_close(res2, jres2)
 
 
+@pytest.mark.skipif(
+    sys.version_info >= (3, 14),
+    reason="Python 3.14+ do not implement BUILD_CONST_KEY_MAP",
+)
 def test_build_const_key_map(jit):
     def fn1(a, b):
         return {"a": a, "b": b}
@@ -620,7 +626,7 @@ def test_bare_except(jit):
         try:
             assert is_jitting_with_raise() == jitting
             raise ValueError(msg)
-        except:
+        except Exception:
             assert is_jitting_with_raise() == jitting
             return True
 
@@ -839,7 +845,7 @@ def test_uncaught_exception_no_leak():
 
         try:
             model(x)
-        except:
+        except Exception:
             pass
         return weakref.ref(x)
 
@@ -1074,7 +1080,7 @@ def test_reduce(jit):
 
     jfoo = jit(foo)
 
-    with pytest.raises(Exception, match=r"reduce\(\) takes no keyword arguments"):
+    with pytest.raises(Exception, match=r"reduce\(\) takes .* arguments"):  # Varies for 3.10-3.13, 3.14
         foo((1, 2, 3))
 
     with pytest.raises(Exception, match=r"got some positional-only arguments passed as keyword arguments"):

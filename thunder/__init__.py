@@ -199,9 +199,11 @@ torchcompile_xentropy_executor: None | extend.Executor = extend.get_executor("to
 apex_executor: None | extend.Executor = extend.get_executor("apex")
 nvfuser_executor: None | extend.Executor = extend.get_executor("nvfuser")
 pytorch_executor: None | extend.Executor = extend.get_executor("torch")
+custom_op_executor: None | extend.Executor = extend.get_executor("custom_op")
 
-# Default executor list is [cudnn -> sdpa -> torchcompile_cat -> torchcompile_xentropy -> nvfuser -> torch -> python]
+# Default executor list is [cudnn -> sdpa -> torchcompile_cat -> torchcompile_xentropy -> nvfuser -> custom_op -> torch -> python]
 # Note that add_default_executor inserts executor at start of list, hence the reverse order below.
+add_default_executor(custom_op_executor)
 if nvfuser_executor:
     add_default_executor(nvfuser_executor)
 
@@ -727,6 +729,7 @@ def jit(
 
                     # Updates cache statistics
                     cs.cache_hits += 1
+                    cs.last_trace_cache_stop = time.perf_counter_ns()
                     cs.last_traces = comp_traces
                     cs.last_interpreted_instructions = None
                     cs.last_interpreter_log = None
@@ -757,6 +760,7 @@ def jit(
 
                 # Updates cache statistics
                 cs.cache_hits += 1
+                cs.last_trace_cache_stop = time.perf_counter_ns()
                 cs.last_traces = comp_traces
                 cs.last_interpreted_instructions = None
                 cs.last_interpreter_log = None

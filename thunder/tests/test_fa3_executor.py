@@ -11,7 +11,7 @@ try:
     from flash_attn_interface import flash_attn_func
 
     HAS_FA3 = True
-except:
+except Exception:
     HAS_FA3 = False
 
 import math

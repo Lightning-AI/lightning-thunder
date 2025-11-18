@@ -36,7 +36,7 @@ all_test_executors_and_dynamo = _all_test_executors() + [DynamoThunderExecutor]
 
 # see https://docs.pytest.org/en/stable/how-to/capture-warnings.html#recwarn for the recwarn fixture
 @instantiate(dtypes=(thunder.float32,), executors=all_test_executors_and_dynamo)
-def test_nanogpt_complete(executor, device, dtype, recwarn, turn_off_tf32_and_set_seed):
+def test_nanogpt_complete(executor, device, dtype, recwarn):
     tdtype = ttorch.to_torch_dtype(dtype)
     make = partial(make_tensor, dtype=torch.int64, device=device)
 
@@ -266,9 +266,10 @@ def test_hf_bert():
     def dummy(*args):
         pass
 
-    # transformers accesses the old attrib and causes the future warning
+    # transformers accesses old attributes and causes the future warnings
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=FutureWarning, message=".*torch._dynamo.*.is_compiling.*")
+        warnings.filterwarnings("ignore", category=FutureWarning, message=".*encoder_attention_mask.*")
         m = transformers.BertForSequenceClassification(transformers.BertConfig())
         del m.bert.encoder.layer[2:]
         m.eval()
@@ -398,7 +399,11 @@ def test_thunderfx_mistral_nemo_small():
     input_ids = torch.randint(0, config.vocab_size, iid_size, device=device)
     attention_mask = torch.ones_like(input_ids)
 
-    output = mdl(input_ids=input_ids, attention_mask=attention_mask, labels=input_ids)
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore", category=FutureWarning, message=r".*`isinstance\(treespec, LeafSpec\)` is deprecated.*"
+        )
+        output = mdl(input_ids=input_ids, attention_mask=attention_mask, labels=input_ids)
     logits = output.logits
     grad_logits = torch.randn_like(logits)
     logits.backward(grad_logits)
@@ -453,7 +458,11 @@ def test_hf_for_nemo(model_fn):
     ref_output = model(input_ids=input_ids, labels=input_ids)
     ref_loss = ref_output.loss
 
-    compiled_output = compiled_model(input_ids=input_ids, labels=input_ids)
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore", category=FutureWarning, message=r".*`isinstance\(treespec, LeafSpec\)` is deprecated.*"
+        )
+        compiled_output = compiled_model(input_ids=input_ids, labels=input_ids)
     compiled_loss = compiled_output.loss
 
     # Less strict tolerance probably due to different type promotion order for bfloat16
@@ -514,6 +523,10 @@ LLAMA_3_2_1B_CFG = {
 # Default - 697805312
 # eager - 698067456
 @requiresCUDA
+@pytest.mark.skip(
+    reason="incompatible with transformers >= 4.55.4, see https://github.com/Lightning-AI/lightning-thunder/issues/2726"
+    "Error Message: 'DynamicCache' object has no attribute 'get_usable_length'. Did you mean: 'get_seq_length'?"
+)
 @requiresDeviceMemory(required_memory_bytes=int(0.7 * 1024 * 1024 * 1024))
 @pytest.mark.parametrize(
     "attn_implementation",
@@ -654,6 +667,9 @@ def test_checkpointing_thunderfx():
     assert_close(grads_res, grads_ref, atol=1e-3, rtol=1e-3)
 
 
+@pytest.mark.skip(
+    reason="incompatible with transformers >= 4.55.4, see https://github.com/Lightning-AI/lightning-thunder/issues/2726"
+)
 @requiresCUDA
 @pytest.mark.skipif(os.getenv("SKIP_WITH_GPT_CI"), reason="Skipping this test on litGPT CI")
 def test_hf_kvcache():
