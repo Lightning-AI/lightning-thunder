@@ -125,7 +125,7 @@ def test_basic(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None,
 
             for subgraph_info in backend.subgraph_infos:
                 assert isinstance(subgraph_info.original_graph_module, torch.fx.GraphModule)
-                assert len(subgraph_info.thunder_compiled_fns)  # There was atleast one function compiled with thunder.
+                assert len(subgraph_info.thunder_compiled_fns)  # There was at least one function compiled with thunder.
                 for thunder_fn in subgraph_info.thunder_compiled_fns:
                     assert last_traces(thunder_fn)  # Verify that we can fetch last_traces
     finally:
