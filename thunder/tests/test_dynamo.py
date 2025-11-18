@@ -1857,7 +1857,7 @@ def test_splitter_with_inductor_fallback_single_element_return():
 
     def fake_compile(*args, **kwargs):
         orig_compile(*args, **kwargs)
-        raise Exception("test")
+        raise NotImplementedError("test")
 
     # torch._inductor.compile mutates the graph module so its outputs are always a tuple.
     # this test fails if the graph module is not restored to the original output.

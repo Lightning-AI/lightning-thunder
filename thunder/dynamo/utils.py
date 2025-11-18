@@ -210,7 +210,7 @@ class LazyInductorModule(torch.nn.Module):
                         self.graph_module.graph = g
                         self.graph_module.recompile()
                         self.compiled_fn = self.graph_module
-                    except Exception as e:
+                    except (NotImplementedError, AssertionError) as e:
                         warnings.warn(f"torch._inductor.compile failed: {e}. Falling back to eager.")
                         self.graph_module.graph = g
                         self.graph_module.recompile()
@@ -490,6 +490,12 @@ def is_node_supported_by_thunder(
     target = node.target  # Target is the function to call.
     if node.op == "call_method":
         target = getattr(torch.Tensor, node.target, None)
+        if target is None and hasattr(torch.cuda.Stream, node.target):
+            split_reason = SplitReason(
+                SplitReasonType.MISSING_OP_SUPPORT,
+                lambda: f"node with name {node.name} and target {node.target} is a `torch.cuda.Stream` method which is not supported by Thunder.",
+            )
+            return False, split_reason
         assert target is not None, f"Failed to find method {node.target}"
 
     # If the operation has automatic registration, we mark it as unsupported as `inductor` might be
