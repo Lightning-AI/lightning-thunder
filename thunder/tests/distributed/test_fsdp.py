@@ -137,7 +137,7 @@ class FSDPTest(DistributedParallelTestCase):
             m = ToyModel().to(device)
             jitted_m = thunder.jit(
                 m,
-                cache_mode=CACHE_OPTIONS.CONSTANT_VALUES,
+                cache=CACHE_OPTIONS.CONSTANT_VALUES,
                 executors=executors_map[executor].executors_list(),
             )
             jitted_fsdp_m = fsdp(jitted_m, bucketing_strategy=bucketing_strategy, sharding_strategy=fsdptype)

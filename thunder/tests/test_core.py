@@ -827,7 +827,7 @@ def test_static_caching(executor, device: str, dtype: dtypes.dtype):
     def foo(a, b):
         return a + b
 
-    cfoo = thunder.jit(foo, cache_mode="constant values")
+    cfoo = thunder.jit(foo, cache="constant values")
 
     assert cache_option(cfoo) == thunder.CACHE_OPTIONS.CONSTANT_VALUES
 
@@ -894,7 +894,7 @@ def test_static_caching(executor, device: str, dtype: dtypes.dtype):
     def bar(a, b):
         return a, b
 
-    cbar = thunder.jit(bar, cache_mode="constant values")
+    cbar = thunder.jit(bar, cache="constant values")
 
     astr = "a"
     bstr = "b"
@@ -928,7 +928,7 @@ def test_static_caching(executor, device: str, dtype: dtypes.dtype):
 
     # Module tests
     m = torch.nn.Linear(5, 5, device=device, dtype=torch_dtype)
-    cm = thunder.jit(m, cache_mode="constant values")
+    cm = thunder.jit(m, cache="constant values")
 
     inp = make_tensor((5, 5), device=device, dtype=torch_dtype)
 
@@ -979,7 +979,7 @@ def test_static_caching(executor, device: str, dtype: dtypes.dtype):
             accum += x
         return accum
 
-    ccaz = thunder.jit(caz, cache_mode="constant values")
+    ccaz = thunder.jit(caz, cache="constant values")
 
     inp0 = [5, 3, 7]
     thunder_result = ccaz(inp0)
@@ -1026,7 +1026,7 @@ def test_static_caching(executor, device: str, dtype: dtypes.dtype):
     def daz(*, a, b):
         return a + b
 
-    cdaz = thunder.jit(daz, cache_mode="constant values")
+    cdaz = thunder.jit(daz, cache="constant values")
 
     inp0 = {"a": a, "b": b}
     thunder_result = cdaz(**inp0)
