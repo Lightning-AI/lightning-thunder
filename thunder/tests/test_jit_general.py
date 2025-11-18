@@ -1592,6 +1592,11 @@ def test_cache_symbolic_values_nn_parameter_static_shape():
     for bsym in exec_trc.bound_symbols:
         if bsym.sym.name == prims.PrimIDs.UNPACK_TRIVIAL and "weight" in bsym.output.name:
             assert bsym.output.shape == (2, 2)
+        elif bsym.sym.name == prims.PrimIDs.UNPACK_TRIVIAL and "bias" in bsym.output.name:
+            assert bsym.output.shape == (2,)
+        elif bsym.sym.name == prims.PrimIDs.UNPACK_TRIVIAL:  # Input TensorProxy, this should have symbolic values
+            assert isinstance(bsym.output.shape[0], thunder.core.proxies.IntegerProxy)
+            assert isinstance(bsym.output.shape[1], thunder.core.proxies.IntegerProxy)
 
 
 def test_specific_dataclass_returns():
