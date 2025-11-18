@@ -60,6 +60,7 @@ from thunder.executors.torch_autograd import connect_to_autograd
 import thunder.extend as extend
 from thunder.extend import Executor, add_default_executor
 import thunder.transforms as transforms
+from thunder.dynamo.utils import log_trace_or_graphmodule_to_torch_trace
 
 # NOTE This import is intentionally pytorch so that it thunder.torch doesn't import this
 import torch as pytorch
@@ -457,6 +458,15 @@ def jit(
             last_interpreter_log = jit_results.interpreter_log
             cs.last_interpreter_log = last_interpreter_log
             cs.last_interpreted_instructions = (i for i in last_interpreter_log if isinstance(i, dis.Instruction))
+
+            for name, trace in (
+                ("prologue", prologue_trc),
+                ("computation", computation_trc),
+                ("epilogue", epilogue_trc),
+            ):
+                log_trace_or_graphmodule_to_torch_trace(
+                    name=name, m=trace, compile_id=compile_options.get("compile_id", None)
+                )
             return prologue_trc, computation_trc, epilogue_trc
 
     def apply_transforms_and_build_cache_entry(cd, cs, cache_info, prologue_trc, computation_trc, epilogue_trc):
@@ -521,10 +531,22 @@ def jit(
                         new_computation_trc,
                         new_epilogue_trc,
                     )
+                    transform_name = type(transform).__name__
+                    list_of_name_and_trace = [
+                        (f"prologue_after_{transform_name}", prologue_trc),
+                        (f"computation_after_{transform_name}", computation_trc),
+                    ]
+
                     prologue_traces.append(prologue_trc)
                     computation_traces.append(computation_trc)
                     if epilogue_trc is not None:
                         epilogue_traces.append(epilogue_trc)
+                        list_of_name_and_trace.append((f"epilogue_after_{transform_name}", epilogue_trc))
+
+                    for name, trc in list_of_name_and_trace:
+                        log_trace_or_graphmodule_to_torch_trace(
+                            name=name, m=trc, compile_id=compile_options.get("compile_id", None)
+                        )
 
             prologue_traces += transform_for_execution(
                 prologue_trc,
@@ -583,6 +605,14 @@ def jit(
 
                 computation_trc, backward_trc = split_into_forward_and_backward(computation_trc)
 
+                for name, trc in (
+                    ("computation_after_fwd_bwd_split", computation_trc),
+                    ("initial_backward", backward_trc),
+                ):
+                    log_trace_or_graphmodule_to_torch_trace(
+                        name=name, m=trc, compile_id=compile_options.get("compile_id", None)
+                    )
+
             computation_trc = thunder.executors.passes.del_last_used(computation_trc)
             computation_traces.append(computation_trc)
             if backward_trc is not None:
@@ -594,6 +624,7 @@ def jit(
                 computation_traces.append(computation_trc)
 
             for transform in transforms:
+                transform_name = type(transform).__name__
                 # NOTE: `backward_trc` could be None.
                 new_computation_trc = transform.transform_trace_post_optimization(
                     computation_trc, executors_list=cd.executors_list
@@ -601,6 +632,11 @@ def jit(
                 if new_computation_trc is not computation_trc:
                     computation_trc = new_computation_trc
                     computation_traces.append(computation_trc)
+                    log_trace_or_graphmodule_to_torch_trace(
+                        name=f"computation_after_{transform_name}",
+                        m=computation_trc,
+                        compile_id=compile_options.get("compile_id", None),
+                    )
                 if backward_trc is not None:
                     new_backward_trc = transform.transform_trace_post_optimization(
                         backward_trc, executors_list=cd.executors_list
@@ -608,6 +644,11 @@ def jit(
                     if new_backward_trc is not backward_trc:
                         backward_trc = new_backward_trc
                         backward_traces.append(backward_trc)
+                        log_trace_or_graphmodule_to_torch_trace(
+                            name=f"backward_after_{transform_name}",
+                            m=backward_trc,
+                            compile_id=compile_options.get("compile_id", None),
+                        )
 
             if backward_trc is not None:
                 backward_fn = backward_trc.python_callable()
@@ -619,6 +660,9 @@ def jit(
 
             computation_trc = transform_to_torch_types(computation_trc)
             comp = computation_trc.python_callable()
+            log_trace_or_graphmodule_to_torch_trace(
+                name="ex_computation", m=computation_trc, compile_id=compile_options.get("compile_id", None)
+            )
 
             # TODO RC1 Update the cache
             cache_entry = CacheEntry(
