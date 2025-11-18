@@ -24,7 +24,7 @@ from thunder.dynamo.utils import (
 )
 from thunder.dynamo.splitter import _splitter
 from thunder.dynamo.benchmark_utils import ThunderCompileSpecification
-from thunder.dynamo.utils import log_trace_or_graphmodule_to_torch_trace
+from thunder.dynamo.utils import log_trace_or_graphmodule_to_torch_trace, TORCH_COMPILE_COMPILE_ID_KEY
 from thunder.transforms.extraction_only_prologue_transform import ExtractionOnlyPrologueTransform
 
 if TYPE_CHECKING:
@@ -146,7 +146,7 @@ class ThunderCompiler:
             is_torch_compile_without_dynamic=is_in_torch_compile() and (not is_dynamic_inputs(sample_args)),
         )
         torch_compile_compile_id = torch._guards.CompileContext.current_compile_id()
-        thunder_options = {**self.thunder_options, "torch_compile_compile_id": torch_compile_compile_id}
+        thunder_options = {**self.thunder_options, TORCH_COMPILE_COMPILE_ID_KEY: torch_compile_compile_id}
         split_module, subgraph_info = _splitter(
             gm,
             partial(jit, **thunder_options),

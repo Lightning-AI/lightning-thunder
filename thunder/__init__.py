@@ -60,7 +60,7 @@ from thunder.executors.torch_autograd import connect_to_autograd
 import thunder.extend as extend
 from thunder.extend import Executor, add_default_executor
 import thunder.transforms as transforms
-from thunder.dynamo.utils import log_trace_or_graphmodule_to_torch_trace
+from thunder.dynamo.utils import log_trace_or_graphmodule_to_torch_trace, TORCH_COMPILE_COMPILE_ID_KEY
 
 # NOTE This import is intentionally pytorch so that it thunder.torch doesn't import this
 import torch as pytorch
@@ -467,7 +467,7 @@ def jit(
                 ("epilogue", epilogue_trc),
             ):
                 log_trace_or_graphmodule_to_torch_trace(
-                    name=name, m=trace, compile_id=compile_options.get("compile_id", None)
+                    name=name, m=trace, compile_id=compile_options.get(TORCH_COMPILE_COMPILE_ID_KEY, None)
                 )
             return prologue_trc, computation_trc, epilogue_trc
 
@@ -547,7 +547,7 @@ def jit(
 
                     for name, trc in list_of_name_and_trace:
                         log_trace_or_graphmodule_to_torch_trace(
-                            name=name, m=trc, compile_id=compile_options.get("compile_id", None)
+                            name=name, m=trc, compile_id=compile_options.get(TORCH_COMPILE_COMPILE_ID_KEY, None)
                         )
 
             prologue_traces += transform_for_execution(
@@ -612,7 +612,7 @@ def jit(
                     ("initial_backward", backward_trc),
                 ):
                     log_trace_or_graphmodule_to_torch_trace(
-                        name=name, m=trc, compile_id=compile_options.get("compile_id", None)
+                        name=name, m=trc, compile_id=compile_options.get(TORCH_COMPILE_COMPILE_ID_KEY, None)
                     )
 
             computation_trc = thunder.executors.passes.del_last_used(computation_trc)
@@ -637,7 +637,7 @@ def jit(
                     log_trace_or_graphmodule_to_torch_trace(
                         name=f"computation_after_{transform_name}",
                         m=computation_trc,
-                        compile_id=compile_options.get("compile_id", None),
+                        compile_id=compile_options.get(TORCH_COMPILE_COMPILE_ID_KEY, None),
                     )
                 if backward_trc is not None:
                     new_backward_trc = transform.transform_trace_post_optimization(
@@ -649,11 +649,16 @@ def jit(
                         log_trace_or_graphmodule_to_torch_trace(
                             name=f"backward_after_{transform_name}",
                             m=backward_trc,
-                            compile_id=compile_options.get("compile_id", None),
+                            compile_id=compile_options.get(TORCH_COMPILE_COMPILE_ID_KEY, None),
                         )
 
             if backward_trc is not None:
                 backward_fn = backward_trc.python_callable()
+                log_trace_or_graphmodule_to_torch_trace(
+                    name="ex_backward",
+                    m=backward_trc,
+                    compile_id=compile_options.get(TORCH_COMPILE_COMPILE_ID_KEY, None),
+                )
             else:
                 backward_fn = None
                 # We do not have to return auxiliary tensors, which will only be useful in backward pass
@@ -663,7 +668,9 @@ def jit(
             computation_trc = transform_to_torch_types(computation_trc)
             comp = computation_trc.python_callable()
             log_trace_or_graphmodule_to_torch_trace(
-                name="ex_computation", m=computation_trc, compile_id=compile_options.get("compile_id", None)
+                name="ex_computation",
+                m=computation_trc,
+                compile_id=compile_options.get(TORCH_COMPILE_COMPILE_ID_KEY, None),
             )
 
             # TODO RC1 Update the cache
