@@ -28,7 +28,22 @@ from thunder.dynamo.utils import (
 if TYPE_CHECKING:
     from collections.abc import Callable
     from typing import Any
+    from torch.fx import GraphModule
 
+
+def _preprocess_cuda_stream_objects(gm: GraphModule) -> None:
+    """Preprocess the graph to handle :class:`torch.cuda.Stream` objects.
+
+    Since :class:`torch.cuda.Stream` does not have sympy expression apparently,
+    manually setting its metadata to :obj:`None` to avoid an error such as
+    ``cannot extract sympy expressions from <torch.cuda.Stream device=cuda:0 cuda_stream=0x0> <class 'torch.cuda.streams.Stream'>``
+    """
+    for node in gm.graph.nodes:
+        if hasattr(node, "meta") and "example_value" in node.meta:
+            example_value = node.meta["example_value"]
+            if isinstance(example_value, torch.cuda.Stream):
+                node.meta["example_value"] = None
+                node.meta["_original_stream_type"] = type(example_value).__name__
 
 def _splitter(
     gm: torch.fx.GraphModule,
@@ -166,6 +181,7 @@ def _splitter(
     for n in functionctx_nodes_to_del:
         gm.graph.erase_node(n)
     gm.recompile()
+    _preprocess_cuda_stream_objects(gm)
 
     # `split_module` iterates over nodes and determines the partition to place them based on the callback.
     split_gm: torch.fx.GraphModule = split_module(
