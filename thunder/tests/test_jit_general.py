@@ -1581,6 +1581,19 @@ def test_cache_symbolic_values_dict():
     assert_close(actual, expected)
 
 
+def test_cache_symbolic_values_nn_parameter_static_shape():
+    linear = torch.nn.Linear(2, 2)
+    x = torch.randn(2, 2)
+
+    jlinear = thunder_jit(linear, cache="symbolic values")
+
+    jlinear(x)
+    exec_trc = thunder.last_traces(jlinear)[-1]
+    for bsym in exec_trc.bound_symbols:
+        if bsym.sym.name == prims.PrimIDs.UNPACK_TRIVIAL and "weight" in bsym.output.name:
+            assert bsym.output.shape == (2, 2)
+
+
 def test_specific_dataclass_returns():
     import transformers
 
