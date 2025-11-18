@@ -23,6 +23,7 @@ from thunder.dynamo.utils import (
     _get_example_inputs_from_placeholder,
     _ThunderSplitGraphModule,
     translate_dtensor_ops,
+    TORCH_COMPILE_COMPILE_ID_KEY,
 )
 
 if TYPE_CHECKING:
@@ -224,9 +225,11 @@ def _splitter(
             graph_module = getattr(split_gm, node.name)
 
             fake_mode = torch._guards.detect_fake_mode()
+            # Extract compile_id from thunder_options to propagate it to inductor
+            compile_id = thunder_options.get(TORCH_COMPILE_COMPILE_ID_KEY) if thunder_options else None
             # Delay Inductor compilation until invocation with real tensors,
             # because we do not know the strides of tensors that Thunder-compiled submodules return.
-            jit_fn = LazyInductorModule(graph_module, fake_mode, **compile_options)
+            jit_fn = LazyInductorModule(graph_module, fake_mode, compile_id, **compile_options)
 
             # Update the node name from "submod_*" to "inductor_*" for more user-friendly names
             update_node_and_submodule(split_gm, node, node.name.replace("submod", "inductor"), jit_fn)

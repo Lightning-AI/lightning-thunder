@@ -18,7 +18,7 @@ import torch
 from torch.fx.graph_module import GraphModule
 from torch.nn.modules.module import _addindent
 from torch.utils.weak import TensorWeakRef
-from torch._guards import tracing, TracingContext
+from torch._guards import tracing, TracingContext, compile_context, CompileContext
 from torch._subclasses.fake_tensor import DynamicOutputShapeException
 from torch._logging._internal import trace_structured_artifact
 
@@ -174,7 +174,7 @@ class _ThunderSplitGraphModule:
 
 
 class LazyInductorModule(torch.nn.Module):
-    def __init__(self, graph_module, fake_mode, **compile_options):
+    def __init__(self, graph_module, fake_mode, compile_id=None, **compile_options):
         super().__init__()
         self.graph_module = graph_module
         self.compiled_fn = None
@@ -211,27 +211,30 @@ class LazyInductorModule(torch.nn.Module):
     def forward(self, *args):
         if self.compiled_fn is None:
             with self._maybe_patch_increment_toplevel():
-                # Inductor needs fake_mode, particularly its shape_env, to handle SymInts
-                with tracing(TracingContext(fake_mode=self.fake_mode)):
-                    try:
-                        original_graph = copy.deepcopy(self.graph_module.graph)
-                        # Extract and merge options from compile_options
-                        options = self.compile_options.get("options", {}).copy()
-                        mode = self.compile_options.get("mode")
-                        if mode:
-                            mode_options = list_mode_options().get(mode, {})
-                            options.update(mode_options)
+                # Restore the compile context so that torch._inductor.compile can log traces
+                # with the correct compile_id
+                with compile_context(CompileContext(self.compile_id) if self.compile_id is not None else None):
+                    # Inductor needs fake_mode, particularly its shape_env, to handle SymInts
+                    with tracing(TracingContext(fake_mode=self.fake_mode)):
+                        try:
+                            original_graph = copy.deepcopy(self.graph_module.graph)
+                            # Extract and merge options from compile_options
+                            options = self.compile_options.get("options", {}).copy()
+                            mode = self.compile_options.get("mode")
+                            if mode:
+                                mode_options = list_mode_options().get(mode, {})
+                                options.update(mode_options)
 
-                        self.compiled_fn = torch._inductor.compile(self.graph_module, args, options=options)
-                    except DynamicOutputShapeException as e:
-                        # This exception is meant to be handled by Dynamo, which is responsible for graph break
-                        # TODO: Use torch.compile for fallback. Ensure its correctness.
-                        warnings.warn(f"Dynamic output shape operator encountered: {e}. Falling back to eager.")
-                        # NOTE: torch._inductor.compile alters the output to always be a tuple.
-                        # Restore original single-element return, if needed.
-                        self.graph_module.graph = original_graph
-                        self.graph_module.recompile()
-                        self.compiled_fn = self.graph_module
+                            self.compiled_fn = torch._inductor.compile(self.graph_module, args, options=options)
+                        except DynamicOutputShapeException as e:
+                            # This exception is meant to be handled by Dynamo, which is responsible for graph break
+                            # TODO: Use torch.compile for fallback. Ensure its correctness.
+                            warnings.warn(f"Dynamic output shape operator encountered: {e}. Falling back to eager.")
+                            # NOTE: torch._inductor.compile alters the output to always be a tuple.
+                            # Restore original single-element return, if needed.
+                            self.graph_module.graph = original_graph
+                            self.graph_module.recompile()
+                            self.compiled_fn = self.graph_module
 
         return self.compiled_fn(*args)
 
