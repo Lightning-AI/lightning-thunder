@@ -17,7 +17,7 @@ import torch
 from torch.fx.graph_module import GraphModule
 from torch.nn.modules.module import _addindent
 from torch.utils.weak import TensorWeakRef
-from torch._guards import tracing, TracingContext
+from torch._guards import tracing, TracingContext, compile_context, CompileContext
 from torch._subclasses.fake_tensor import DynamicOutputShapeException
 from torch._logging._internal import trace_structured_artifact
 
@@ -171,11 +171,12 @@ class _ThunderSplitGraphModule:
 
 
 class LazyInductorModule(torch.nn.Module):
-    def __init__(self, graph_module, fake_mode):
+    def __init__(self, graph_module, fake_mode, compile_id=None):
         super().__init__()
         self.graph_module = graph_module
         self.compiled_fn = None
         self.fake_mode = fake_mode
+        self.compile_id = compile_id
 
         # For ease of debugging, we add graph attribute so GraphModule.print_readable will print it
         self.graph = graph_module.graph
@@ -207,15 +208,18 @@ class LazyInductorModule(torch.nn.Module):
     def forward(self, *args):
         if self.compiled_fn is None:
             with self._maybe_patch_increment_toplevel():
-                # Inductor needs fake_mode, particularly its shape_env, to handle SymInts
-                with tracing(TracingContext(fake_mode=self.fake_mode)):
-                    try:
-                        self.compiled_fn = torch._inductor.compile(self.graph_module, args)
-                    except DynamicOutputShapeException as e:
-                        # This exception is meant to be handled by Dynamo, which is responsible for graph break
-                        # TODO: Use torch.compile for fallback. Ensure its correctness.
-                        warnings.warn(f"Dynamic output shape operator encountered: {e}. Falling back to eager.")
-                        self.compiled_fn = self.graph_module
+                # Restore the compile context so that torch._inductor.compile can log traces
+                # with the correct compile_id
+                with compile_context(CompileContext(self.compile_id) if self.compile_id is not None else None):
+                    # Inductor needs fake_mode, particularly its shape_env, to handle SymInts
+                    with tracing(TracingContext(fake_mode=self.fake_mode)):
+                        try:
+                            self.compiled_fn = torch._inductor.compile(self.graph_module, args)
+                        except DynamicOutputShapeException as e:
+                            # This exception is meant to be handled by Dynamo, which is responsible for graph break
+                            # TODO: Use torch.compile for fallback. Ensure its correctness.
+                            warnings.warn(f"Dynamic output shape operator encountered: {e}. Falling back to eager.")
+                            self.compiled_fn = self.graph_module
 
         return self.compiled_fn(*args)
 
