@@ -4,13 +4,16 @@ import os
 import numpy as np
 import pytest
 import torch
-from torch.nn.functional import ScalingType, SwizzleType
-from torch.testing import assert_close
-from torch.testing._internal.common_cuda import (
-    PLATFORM_SUPPORTS_FP8_GROUPED_GEMM,
-    PLATFORM_SUPPORTS_MXFP8_GROUPED_GEMM,
-)
-from torch.testing._internal.common_quantized import to_blocked, to_mxfp
+
+HAS_SCALED_GROUPED_MM = hasattr(torch.nn.functional, "scaled_grouped_mm")
+
+if HAS_SCALED_GROUPED_MM:
+    from torch.nn.functional import ScalingType, SwizzleType
+    from torch.testing._internal.common_cuda import (
+        PLATFORM_SUPPORTS_FP8_GROUPED_GEMM,
+        PLATFORM_SUPPORTS_MXFP8_GROUPED_GEMM,
+    )
+    from torch.testing._internal.common_quantized import to_blocked, to_mxfp
 
 import thunder
 import thunder.core.devices as devices
@@ -425,154 +428,149 @@ def test_exponential():
         assert_close(b, b_ref)
 
 
-# NOTE: The following tests exercise torch.nn.functional.scaled_grouped_mm via Thunder.
-# They validate that the Thunder tracing mirrors eager execution for representative 2D/2D
-# and 2D/3D grouped matmul shapes that correspond to the accepted combinations in
-# thunder.core.prims._grouped_mm_meta. These scenarios mirror the small tensor smoke tests
-# in PyTorch's scaled matmul CUDA suite ([pytorch/test_scaled_matmul_cuda.py](https://github.com/pytorch/pytorch/blob/main/test/test_scaled_matmul_cuda.py)).
-F8_GROUPED_MSG = "FP8 grouped is only supported on SM90 and MI300+ devices"
-MXFP8_GROUPED_MSG = "MXFP8 grouped GEMM is only supported when PyTorch is built with USE_FBGEMM_GENAI=1 on SM100+"
+if HAS_SCALED_GROUPED_MM:
+    # NOTE: The following tests exercise torch.nn.functional.scaled_grouped_mm via Thunder.
+    # They validate that the Thunder tracing mirrors eager execution for representative 2D/2D
+    # and 2D/3D grouped matmul shapes that correspond to the accepted combinations in
+    # thunder.core.prims._grouped_mm_meta. These scenarios mirror the small tensor smoke tests
+    # in PyTorch's scaled matmul CUDA suite ([pytorch/test_scaled_matmul_cuda.py](https://github.com/pytorch/pytorch/blob/main/test/test_scaled_matmul_cuda.py)).
+    F8_GROUPED_MSG = "FP8 grouped is only supported on SM90 and MI300+ devices"
+    MXFP8_GROUPED_MSG = "MXFP8 grouped GEMM is only supported when PyTorch is built with USE_FBGEMM_GENAI=1 on SM100+"
 
+    @requiresCUDA
+    def test_scaled_grouped_mm_2d2d_tensorwise():
+        if not bool(PLATFORM_SUPPORTS_FP8_GROUPED_GEMM):
+            pytest.skip(F8_GROUPED_MSG)
+        device = "cuda"
+        group_sizes = [8, 12]
+        m = 6
+        n = 10
+        k = sum(group_sizes)
 
-@requiresCUDA
-def test_scaled_grouped_mm_2d2d_tensorwise():
-    if not bool(PLATFORM_SUPPORTS_FP8_GROUPED_GEMM):
-        pytest.skip(F8_GROUPED_MSG)
-    device = "cuda"
-    group_sizes = [8, 12]
-    m = 6
-    n = 10
-    k = sum(group_sizes)
+        mat_a = torch.randn(m, k, device=device, dtype=torch.float16)
+        mat_b = torch.randn(k, n, device=device, dtype=torch.float16)
+        offs = torch.tensor(group_sizes, device=device, dtype=torch.int32).cumsum(0)
+        scale_a = torch.ones(1, device=device, dtype=torch.float32)
+        scale_b = torch.ones(1, device=device, dtype=torch.float32)
 
-    mat_a = torch.randn(m, k, device=device, dtype=torch.float16)
-    mat_b = torch.randn(k, n, device=device, dtype=torch.float16)
-    offs = torch.tensor(group_sizes, device=device, dtype=torch.int32).cumsum(0)
-    scale_a = torch.ones(1, device=device, dtype=torch.float32)
-    scale_b = torch.ones(1, device=device, dtype=torch.float32)
+        def fn(a, b, scale_a, scale_b, offs):
+            return torch.nn.functional.scaled_grouped_mm(
+                a,
+                b,
+                scale_a,
+                ScalingType.TensorWise,
+                scale_b,
+                ScalingType.TensorWise,
+                offs=offs,
+                output_dtype=torch.bfloat16,
+            )
 
-    def fn(a, b, scale_a, scale_b, offs):
-        return torch.nn.functional.scaled_grouped_mm(
-            a,
-            b,
-            scale_a,
-            ScalingType.TensorWise,
-            scale_b,
-            ScalingType.TensorWise,
-            offs=offs,
-            output_dtype=torch.bfloat16,
-        )
+        eager = fn(mat_a, mat_b, scale_a, scale_b, offs)
+        jitted = thunder.jit(fn)
+        result = jitted(mat_a, mat_b, scale_a, scale_b, offs)
 
-    eager = fn(mat_a, mat_b, scale_a, scale_b, offs)
-    compiled = thunder.jit(fn)
-    result = compiled(mat_a, mat_b, scale_a, scale_b, offs)
+        torch.testing.assert_close(result, eager)
+        assert_consistency_of_compiletime_and_runtime(jitted, result)
 
-    assert_close(result, eager)
-    assert_consistency_of_compiletime_and_runtime(compiled, result)
+    @requiresCUDA
+    def test_scaled_grouped_mm_2d3d_tensorwise():
+        if not bool(PLATFORM_SUPPORTS_FP8_GROUPED_GEMM):
+            pytest.skip(F8_GROUPED_MSG)
+        device = "cuda"
+        group_sizes = [5, 7]
+        groups = len(group_sizes)
+        total_rows = sum(group_sizes)
+        k = 16
+        n = 9
 
+        mat_a = torch.randn(total_rows, k, device=device, dtype=torch.float16)
+        mat_b = torch.randn(groups, k, n, device=device, dtype=torch.float16)
+        offs = torch.tensor(group_sizes, device=device, dtype=torch.int32).cumsum(0)
+        scale_a = torch.ones(1, device=device, dtype=torch.float32)
+        scale_b = torch.ones(1, device=device, dtype=torch.float32)
 
-@requiresCUDA
-def test_scaled_grouped_mm_2d3d_tensorwise():
-    if not bool(PLATFORM_SUPPORTS_FP8_GROUPED_GEMM):
-        pytest.skip(F8_GROUPED_MSG)
-    device = "cuda"
-    group_sizes = [5, 7]
-    groups = len(group_sizes)
-    total_rows = sum(group_sizes)
-    k = 16
-    n = 9
+        def fn(a, b, scale_a, scale_b, offs):
+            return torch.nn.functional.scaled_grouped_mm(
+                a,
+                b,
+                scale_a,
+                ScalingType.TensorWise,
+                scale_b,
+                ScalingType.TensorWise,
+                offs=offs,
+                output_dtype=torch.bfloat16,
+            )
 
-    mat_a = torch.randn(total_rows, k, device=device, dtype=torch.float16)
-    mat_b = torch.randn(groups, k, n, device=device, dtype=torch.float16)
-    offs = torch.tensor(group_sizes, device=device, dtype=torch.int32).cumsum(0)
-    scale_a = torch.ones(1, device=device, dtype=torch.float32)
-    scale_b = torch.ones(1, device=device, dtype=torch.float32)
+        eager = fn(mat_a, mat_b, scale_a, scale_b, offs)
+        jitted = thunder.jit(fn)
+        result = jitted(mat_a, mat_b, scale_a, scale_b, offs)
 
-    def fn(a, b, scale_a, scale_b, offs):
-        return torch.nn.functional.scaled_grouped_mm(
-            a,
-            b,
-            scale_a,
-            ScalingType.TensorWise,
-            scale_b,
-            ScalingType.TensorWise,
-            offs=offs,
-            output_dtype=torch.bfloat16,
-        )
+        torch.testing.assert_close(result, eager)
+        assert_consistency_of_compiletime_and_runtime(jitted, result)
 
-    eager = fn(mat_a, mat_b, scale_a, scale_b, offs)
-    compiled = thunder.jit(fn)
-    result = compiled(mat_a, mat_b, scale_a, scale_b, offs)
+    @requiresCUDA
+    def test_scaled_grouped_mm_2d2d_mxfp8_blockwise():
+        if not bool(PLATFORM_SUPPORTS_MXFP8_GROUPED_GEMM):
+            pytest.skip(MXFP8_GROUPED_MSG)
 
-    assert_close(result, eager)
-    assert_consistency_of_compiletime_and_runtime(compiled, result)
+        device = "cuda"
+        torch.manual_seed(0)
 
+        group_sizes = [64, 32]
+        m = 128
+        n = 96
+        total_k = sum(group_sizes)
 
-@requiresCUDA
-def test_scaled_grouped_mm_2d2d_mxfp8_blockwise():
-    if not bool(PLATFORM_SUPPORTS_MXFP8_GROUPED_GEMM):
-        pytest.skip(MXFP8_GROUPED_MSG)
+        raw_offs = torch.tensor(group_sizes, device=device, dtype=torch.int32)
+        offs = torch.cumsum(raw_offs, dim=0, dtype=torch.int32)
 
-    # if dtypes.float8_e4m3fn not in dtypes.float_math_dtypes:
-    #     pytest.skip("Thunder float8_e4m3fn inputs are not yet supported")
+        def round_up(x: int, y: int) -> int:
+            return ((x + y - 1) // y) * y
 
-    device = "cuda"
-    torch.manual_seed(0)
+        def quantize_to_mxfp8(mat: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+            segments: list[torch.Tensor] = []
+            scale_segments: list[torch.Tensor] = []
+            start = 0
+            for end in offs.tolist():
+                segment = mat[:, start:end].contiguous()
+                scale, lowp = to_mxfp(segment, format="mxfp8")
+                scale_segments.append(to_blocked(scale))
+                segments.append(lowp)
+                start = end
+            lowp_full = torch.cat(segments, dim=1)
+            rows_rounded = round_up(mat.shape[0], 128)
+            scale_full = torch.cat(scale_segments, dim=0).reshape(rows_rounded, -1)
+            return lowp_full, scale_full
 
-    group_sizes = [64, 32]
-    m = 128
-    n = 96
-    total_k = sum(group_sizes)
+        mat_a_hp = torch.randn(m, total_k, device=device, dtype=torch.bfloat16) * 0.1
+        mat_b_hp = torch.randn(n, total_k, device=device, dtype=torch.bfloat16) * 0.01
 
-    raw_offs = torch.tensor(group_sizes, device=device, dtype=torch.int32)
-    offs = torch.cumsum(raw_offs, dim=0, dtype=torch.int32)
+        mat_a_lp, scale_a = quantize_to_mxfp8(mat_a_hp)
+        mat_b_lp_rows, scale_b = quantize_to_mxfp8(mat_b_hp)
+        mat_b_lp = mat_b_lp_rows.transpose(0, 1)
 
-    def round_up(x: int, y: int) -> int:
-        return ((x + y - 1) // y) * y
+        swizzle = SwizzleType.SWIZZLE_32_4_4 if torch.version.cuda else SwizzleType.NO_SWIZZLE
 
-    def quantize_to_mxfp8(mat: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        segments: list[torch.Tensor] = []
-        scale_segments: list[torch.Tensor] = []
-        start = 0
-        for end in offs.tolist():
-            segment = mat[:, start:end].contiguous()
-            scale, lowp = to_mxfp(segment, format="mxfp8")
-            scale_segments.append(to_blocked(scale))
-            segments.append(lowp)
-            start = end
-        lowp_full = torch.cat(segments, dim=1)
-        rows_rounded = round_up(mat.shape[0], 128)
-        scale_full = torch.cat(scale_segments, dim=0).reshape(rows_rounded, -1)
-        return lowp_full, scale_full
+        def fn(mat_a, mat_b, scale_a, scale_b, offs):
+            return torch.nn.functional.scaled_grouped_mm(
+                mat_a,
+                mat_b,
+                scale_a,
+                ScalingType.BlockWise1x32,
+                scale_b,
+                ScalingType.BlockWise1x32,
+                swizzle_a=swizzle,
+                swizzle_b=swizzle,
+                offs=offs,
+                output_dtype=torch.bfloat16,
+            )
 
-    mat_a_hp = torch.randn(m, total_k, device=device, dtype=torch.bfloat16) * 0.1
-    mat_b_hp = torch.randn(n, total_k, device=device, dtype=torch.bfloat16) * 0.01
+        eager = fn(mat_a_lp, mat_b_lp, scale_a, scale_b, offs)
+        jitted = thunder.jit(fn)
+        result = jitted(mat_a_lp, mat_b_lp, scale_a, scale_b, offs)
 
-    mat_a_lp, scale_a = quantize_to_mxfp8(mat_a_hp)
-    mat_b_lp_rows, scale_b = quantize_to_mxfp8(mat_b_hp)
-    mat_b_lp = mat_b_lp_rows.transpose(0, 1)
-
-    swizzle = SwizzleType.SWIZZLE_32_4_4 if torch.version.cuda else SwizzleType.NO_SWIZZLE
-
-    def fn(mat_a, mat_b, scale_a, scale_b, offs):
-        return torch.nn.functional.scaled_grouped_mm(
-            mat_a,
-            mat_b,
-            scale_a,
-            ScalingType.BlockWise1x32,
-            scale_b,
-            ScalingType.BlockWise1x32,
-            swizzle_a=swizzle,
-            swizzle_b=swizzle,
-            offs=offs,
-            output_dtype=torch.bfloat16,
-        )
-
-    eager = fn(mat_a_lp, mat_b_lp, scale_a, scale_b, offs)
-    jitted = thunder.jit(fn)
-    result = jitted(mat_a_lp, mat_b_lp, scale_a, scale_b, offs)
-
-    assert_close(result, eager)
-    assert_consistency_of_compiletime_and_runtime(jitted, result)
+        torch.testing.assert_close(result, eager)
+        assert_consistency_of_compiletime_and_runtime(jitted, result)
 
 
 # https://github.com/Lightning-AI/lightning-thunder/issues/1857
