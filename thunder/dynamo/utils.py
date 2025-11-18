@@ -14,6 +14,7 @@ import warnings
 from looseversion import LooseVersion
 
 import torch
+from torch.fx.graph_module import GraphModule
 from torch.nn.modules.module import _addindent
 from torch.utils.weak import TensorWeakRef
 from torch._guards import tracing, TracingContext
@@ -36,7 +37,6 @@ if TYPE_CHECKING:
     from thunder.core.symbol import Symbol
     from typing import Any
     from collections.abc import Sequence
-    from torch.fx.graph_module import GraphModule
     from torch._guards import CompileId
     from thunder.core.trace import TraceCtx
 
@@ -1230,7 +1230,7 @@ def log_trace_or_graphmodule_to_torch_trace(
 ) -> None:
     if payload_fn is None:
         if isinstance(m, GraphModule):
-            payload_fn = m.print_readable(
+            payload_fn = lambda graph_module=m: graph_module.print_readable(
                 print_output=False,
                 include_stride=True,
                 include_device=True,
