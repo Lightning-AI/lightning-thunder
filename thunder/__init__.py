@@ -351,6 +351,8 @@ def jit(
         debug_options: optional :class:`thunder.DebugOptions` instance. See the doc string of :class:`DebugOptions` for supported debug options. Default: ``None``
     """
 
+    print(f"{compile_options = }")
+
     if "executors_list" in compile_options:
         warnings.warn("outdated argument executors_list= in call, please use executors=")
         if executors is None:
