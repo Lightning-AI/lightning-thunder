@@ -1849,6 +1849,8 @@ def test_splitter_with_symint_node():
     reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
 )
 def test_splitter_with_inductor_fallback_single_element_return():
+    from torch._subclasses.fake_tensor import DynamicOutputShapeException
+
     x = torch.ones(2, 2, requires_grad=True)
 
     def func(x):
@@ -1861,7 +1863,7 @@ def test_splitter_with_inductor_fallback_single_element_return():
 
     def fake_compile(*args, **kwargs):
         orig_compile(*args, **kwargs)
-        raise NotImplementedError("test")
+        raise DynamicOutputShapeException("test")
 
     # torch._inductor.compile mutates the graph module so its outputs are always a tuple.
     # this test fails if the graph module is not restored to the original output.

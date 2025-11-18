@@ -199,7 +199,7 @@ class LazyInductorModule(torch.nn.Module):
                 # Inductor needs fake_mode, particularly its shape_env, to handle SymInts
                 with tracing(TracingContext(fake_mode=self.fake_mode)):
                     try:
-                        g = copy.deepcopy(self.graph_module.graph)
+                        original_graph = copy.deepcopy(self.graph_module.graph)
                         self.compiled_fn = torch._inductor.compile(self.graph_module, args)
                     except DynamicOutputShapeException as e:
                         # This exception is meant to be handled by Dynamo, which is responsible for graph break
@@ -207,12 +207,7 @@ class LazyInductorModule(torch.nn.Module):
                         warnings.warn(f"Dynamic output shape operator encountered: {e}. Falling back to eager.")
                         # NOTE: torch._inductor.compile alters the output to always be a tuple.
                         # Restore original single-element return, if needed.
-                        self.graph_module.graph = g
-                        self.graph_module.recompile()
-                        self.compiled_fn = self.graph_module
-                    except (NotImplementedError, AssertionError) as e:
-                        warnings.warn(f"torch._inductor.compile failed: {e}. Falling back to eager.")
-                        self.graph_module.graph = g
+                        self.graph_module.graph = original_graph
                         self.graph_module.recompile()
                         self.compiled_fn = self.graph_module
 
