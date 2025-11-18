@@ -239,8 +239,24 @@ def _(
     if activation.ndim == 0:
         raise ValueError(f"Expected activation to have at least 1 dimension, got {activation.ndim}")
 
-    if len(set(t.device for t in [activation, fp4_weight, weight_scaling_factor, weight_global_scale, offsets, blockscale_offsets, problem_sizes])) != 1:
-        raise ValueError(f"Expected all inputs to be on the same device.")
+    if (
+        len(
+            {
+                t.device
+                for t in [
+                    activation,
+                    fp4_weight,
+                    weight_scaling_factor,
+                    weight_global_scale,
+                    offsets,
+                    blockscale_offsets,
+                    problem_sizes,
+                ]
+            }
+        )
+        != 1
+    ):
+        raise ValueError("Expected all inputs to be on the same device.")
 
     # After unpacking: (groups, in_features, out_features)
     # Output shape should match activation.shape[:-1] + (out_features,)
