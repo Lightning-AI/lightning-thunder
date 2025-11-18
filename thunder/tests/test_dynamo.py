@@ -1844,6 +1844,10 @@ def test_splitter_with_symint_node():
         assert not subgraph.split_reasons
 
 
+@pytest.mark.skipif(
+    IS_WINDOWS,
+    reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
+)
 def test_splitter_with_inductor_fallback_single_element_return():
     x = torch.ones(2, 2, requires_grad=True)
 
