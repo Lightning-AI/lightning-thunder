@@ -58,7 +58,7 @@ def te_assert_close(actual, expected, te_recipe=None, **kwargs):
     tolerances = {}
 
     if te_recipe is not None:
-        te_format = te_recipe.get("fp8_format", None) | te_recipe.get("fp4_format", None)
+        te_format = getattr(te_recipe, "fp8_format", None) or getattr(te_recipe, "fp4_format", None)
         if is_nvfp4_available and te_format == recipe.Format.E2M1:
             # Tolerances for NVFP4 Float4 E2M1
             tolerances = dict(rtol=0.25, atol=0.125)
@@ -300,11 +300,12 @@ def test_te_linear_forward_backward_multiple_iteration_multiple_recipes():
 
     train_model(thunder_model, thunder_sgd_optimizer)
 
-    # Verify that the weights and biases converge to same value after few iterations.
-    te_assert_close(w1, te_linear1.weight, recipe=recipes[0])
-    te_assert_close(w2, te_linear2.weight, recipe=recipes[0])
-    te_assert_close(b1, te_linear1.bias, recipe=recipes[0])
-    te_assert_close(b2, te_linear2.bias, recipe=recipes[0])
+    # Verify that the weights and biases converge to same value after few iterations
+    # And take the first recipe to set tolerances.
+    te_assert_close(w1, te_linear1.weight, te_recipe=recipes[0])
+    te_assert_close(w2, te_linear2.weight, te_recipe=recipes[0])
+    te_assert_close(b1, te_linear1.bias, te_recipe=recipes[0])
+    te_assert_close(b2, te_linear2.bias, te_recipe=recipes[0])
 
 
 @requiresCUDA
