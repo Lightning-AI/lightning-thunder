@@ -19,6 +19,7 @@ from torch.nn.modules.module import _addindent
 from torch.utils.weak import TensorWeakRef
 from torch._guards import tracing, TracingContext
 from torch._subclasses.fake_tensor import DynamicOutputShapeException
+from torch._logging._internal import trace_structured_artifact
 
 from torch._inductor import list_mode_options
 
@@ -38,8 +39,19 @@ if TYPE_CHECKING:
     from thunder.core.symbol import Symbol
     from typing import Any
     from collections.abc import Sequence
+    from torch.fx.graph_module import GraphModule
+    from torch._guards import CompileId
+    from thunder.core.trace import TraceCtx
 
 auto_register_ops = set(itertools.chain(*torch_auto_registered_ops.values()))
+
+
+if "compile_id" in inspect.signature(trace_structured_artifact):
+    wrapped_trace_structured_artifact = trace_structured_artifact
+else:
+
+    def wrapped_trace_structured_artifact(*args, compile_id, **kwargs):
+        return trace_structured_artifact(*args, **kwargs)
 
 
 # Currently, thunder has mapping for these torch function but they
@@ -1222,3 +1234,30 @@ def translate_dtensor_ops(gm: torch.fx.GraphModule) -> None:
                 node.target = dtensor_to_local_prim_wrapper
         except Exception:
             pass
+
+
+def log_trace_or_graphmodule_to_torch_trace(
+    *,
+    name: str,
+    m: TraceCtx | GraphModule,
+    compile_id: CompileId | None = None,
+    payload_fn: Callable[[None], str] | None = None,
+    encoding: str | None = None,
+) -> None:
+    if payload_fn is None:
+        if isinstance(m, GraphModule):
+            payload_fn = m.print_readable(
+                print_output=False,
+                include_stride=True,
+                include_device=True,
+            )
+        else:
+            # includes m being TraceCtx
+            payload_fn = lambda: f"{m}\n"
+
+    wrapped_trace_structured_artifact(
+        name=name,
+        encoding=encoding,
+        payload_fn=payload_fn,
+        compile_id=compile_id,
+    )
