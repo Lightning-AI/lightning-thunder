@@ -4,6 +4,7 @@ import os
 import numpy as np
 import pytest
 import torch
+from torch.nn.functional import ScalingType
 from torch.testing import assert_close
 
 import thunder
@@ -417,6 +418,80 @@ def test_exponential():
 
         assert_close(a, a_ref)
         assert_close(b, b_ref)
+
+
+# NOTE: The following tests exercise torch.nn.functional.scaled_grouped_mm via Thunder.
+# They validate that the Thunder tracing mirrors eager execution for representative 2D/2D
+# and 2D/3D grouped matmul shapes that correspond to the accepted combinations in
+# thunder.core.prims._grouped_mm_meta. These scenarios mirror the small tensor smoke tests
+# in PyTorch's scaled matmul CUDA suite ([pytorch/test_scaled_matmul_cuda.py](https://github.com/pytorch/pytorch/blob/main/test/test_scaled_matmul_cuda.py)).
+@requiresCUDA
+def test_scaled_grouped_mm_2d2d_tensorwise():
+    device = "cuda"
+    group_sizes = [8, 12]
+    m = 6
+    n = 10
+    k = sum(group_sizes)
+
+    mat_a = torch.randn(m, k, device=device, dtype=torch.float16)
+    mat_b = torch.randn(k, n, device=device, dtype=torch.float16)
+    offs = torch.tensor(group_sizes, device=device, dtype=torch.int32).cumsum(0)
+    scale_a = torch.ones(1, device=device, dtype=torch.float32)
+    scale_b = torch.ones(1, device=device, dtype=torch.float32)
+
+    def fn(a, b, scale_a, scale_b, offs):
+        return torch.nn.functional.scaled_grouped_mm(
+            a,
+            b,
+            scale_a,
+            ScalingType.TensorWise,
+            scale_b,
+            ScalingType.TensorWise,
+            offs=offs,
+            output_dtype=torch.bfloat16,
+        )
+
+    eager = fn(mat_a, mat_b, scale_a, scale_b, offs)
+    compiled = thunder.jit(fn)
+    result = compiled(mat_a, mat_b, scale_a, scale_b, offs)
+
+    assert_close(result, eager)
+    assert_consistency_of_compiletime_and_runtime(compiled, result)
+
+
+@requiresCUDA
+def test_scaled_grouped_mm_2d3d_tensorwise():
+    device = "cuda"
+    group_sizes = [5, 7]
+    groups = len(group_sizes)
+    total_rows = sum(group_sizes)
+    k = 16
+    n = 9
+
+    mat_a = torch.randn(total_rows, k, device=device, dtype=torch.float16)
+    mat_b = torch.randn(groups, k, n, device=device, dtype=torch.float16)
+    offs = torch.tensor(group_sizes, device=device, dtype=torch.int32).cumsum(0)
+    scale_a = torch.ones(1, device=device, dtype=torch.float32)
+    scale_b = torch.ones(1, device=device, dtype=torch.float32)
+
+    def fn(a, b, scale_a, scale_b, offs):
+        return torch.nn.functional.scaled_grouped_mm(
+            a,
+            b,
+            scale_a,
+            ScalingType.TensorWise,
+            scale_b,
+            ScalingType.TensorWise,
+            offs=offs,
+            output_dtype=torch.bfloat16,
+        )
+
+    eager = fn(mat_a, mat_b, scale_a, scale_b, offs)
+    compiled = thunder.jit(fn)
+    result = compiled(mat_a, mat_b, scale_a, scale_b, offs)
+
+    assert_close(result, eager)
+    assert_consistency_of_compiletime_and_runtime(compiled, result)
 
 
 # https://github.com/Lightning-AI/lightning-thunder/issues/1857

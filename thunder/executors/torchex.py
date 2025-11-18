@@ -1531,6 +1531,8 @@ bmm = _register_torch_operation("bmm")
 baddbmm = _register_torch_operation("baddbmm")
 if LooseVersion(torch.__version__) >= "2.8":
     _grouped_mm = _register_torch_operation("_grouped_mm")
+if _scaled_grouped_mm_available := hasattr(torch.nn.functional, "scaled_grouped_mm"):
+    scaled_grouped_mm = _register_torch_operation("scaled_grouped_mm", module=torch.nn.functional)
 convolution = _register_torch_operation("convolution")
 conv1d = _register_torch_operation("conv1d", module=torch.nn.functional)
 conv2d = _register_torch_operation("conv2d", module=torch.nn.functional)
@@ -1827,11 +1829,40 @@ def _grouped_mm_checker(a: TensorProxy, b: TensorProxy, offsets: TensorProxy) ->
     return a.dtype == dtypes.bfloat16 and b.dtype == dtypes.bfloat16 and offsets.dtype == dtypes.int32
 
 
+def _scaled_grouped_mm_checker(
+    mat_a: TensorProxy,
+    mat_b: TensorProxy,
+    scale_a,
+    scale_recipe_a,
+    scale_b,
+    scale_recipe_b,
+    swizzle_a=None,
+    swizzle_b=None,
+    bias: None | TensorProxy = None,
+    offs: None | TensorProxy = None,
+    output_dtype: None | dtypeLike = None,
+    contraction_dim: Sequence[int] | tuple[int, ...] = (),
+    use_fast_accum: bool = False,
+) -> bool:
+    if offs is None:
+        return False
+    if isinstance(offs, TensorProxy):
+        return utils.is_integer_dtype(offs.dtype)
+    return True
+
+
 _register_implementation(ltorch.baddbmm, baddbmm, checker=_always_executable)
 _register_implementation(ltorch.bmm, bmm, checker=_always_executable)
 if LooseVersion(torch.__version__) >= "2.8":
     _register_implementation(prims._grouped_mm, _grouped_mm, checker=_grouped_mm_checker)
     _register_implementation(ltorch._grouped_mm, _grouped_mm, checker=_grouped_mm_checker)
+
+if _scaled_grouped_mm_available:
+    _register_implementation(
+        ltorch.scaled_grouped_mm,
+        scaled_grouped_mm,
+        checker=_scaled_grouped_mm_checker,
+    )
 _register_implementation(ltorch.convolution, checker=_always_executable, execution_transform=_convolution_transform)
 _register_implementation(ltorch.conv1d, conv1d, checker=_always_executable)
 _register_implementation(ltorch.conv2d, conv2d, checker=_always_executable)
