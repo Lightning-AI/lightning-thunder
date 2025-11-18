@@ -2,7 +2,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from contextlib import contextmanager
 from enum import Enum, auto
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, overload
 import dataclasses
 import inspect
 import itertools
@@ -1234,6 +1234,25 @@ def translate_dtensor_ops(gm: torch.fx.GraphModule) -> None:
                 node.target = dtensor_to_local_prim_wrapper
         except Exception:
             pass
+
+
+@overload
+def log_trace_or_graphmodule_to_torch_trace(
+    *,
+    name: str,
+    compile_id: CompileId | None = None,
+    payload_fn: Callable[[], str],
+    encoding: str,
+) -> None: ...
+
+
+@overload
+def log_trace_or_graphmodule_to_torch_trace(
+    *,
+    name: str,
+    m: TraceCtx | GraphModule,
+    compile_id: CompileId | None = None,
+) -> None: ...
 
 
 def log_trace_or_graphmodule_to_torch_trace(
