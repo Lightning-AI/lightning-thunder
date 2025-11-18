@@ -239,6 +239,9 @@ def _(
     if activation.ndim == 0:
         raise ValueError(f"Expected activation to have at least 1 dimension, got {activation.ndim}")
 
+    if len(set(t.device for t in [activation, fp4_weight, weight_scaling_factor, weight_global_scale, offsets, block_scale_offsets, problem_sizes])) != 1:
+        raise ValueError(f"Expected all inputs to be on the same device.")
+
     # After unpacking: (groups, in_features, out_features)
     # Output shape should match activation.shape[:-1] + (out_features,)
     # This handles both 2D (tokens, hidden) and 3D (batch, seq_len, hidden) inputs
@@ -316,6 +319,11 @@ def quantize_grouped_linear_weight_to_nvfp4(
         fp4_weight: [g, k // 2, n]
         scale_factors: [g, n, k // 16]
         global_scales: [g]
+
+    Note:
+        The reason we choose different layout of weight is to avoid performance
+        regression for bf16. See
+        https://github.com/Lightning-AI/lightning-thunder/pull/2659
     """
     assert weight.ndim == 3, "Weight must be a 3D tensor"
 
