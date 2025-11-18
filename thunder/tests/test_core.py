@@ -3346,7 +3346,6 @@ def test_prims_pack_list():
         prims.python_return(packed_list)
 
     func = trace.python_callable()
-    print(trace)
     actual = func(a, b)
     expected = [a, b]
 
