@@ -1253,7 +1253,7 @@ def log_trace_or_graphmodule_to_torch_trace(
             )
         else:
             # includes m being TraceCtx
-            payload_fn = lambda: f"{m}\n"
+            payload_fn = lambda mod=m: f"{mod}\n"
 
     wrapped_trace_structured_artifact(
         name=name,
