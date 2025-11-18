@@ -753,6 +753,11 @@ Examples:
         help="Wrap each non-warmup iteration with cudaProfilerStart() and cudaProfilerStop(). This allows us to run `nsys profile --capture-range=cudaProfilerApi --capture-range-end=repeat:<N> ... --profile` to record only the non-warmup iterations.",
     )
 
+    parser.add_argument(
+        "--thunder-trace",
+        action="store_true",
+        help="Enable debug dump of thunder trace",
+    )
     parser.add_argument("--save-results", action="store_true", help="Save results to JSON file")
     parser.add_argument("--output-dir", type=str, default="./results", help="Directory to save results")
     parser.add_argument(
@@ -803,6 +808,15 @@ def main():
 
     benchmark.run_benchmark()
     benchmark.print_results()
+
+    if args.thunder_trace and args.mode == "thunder":
+        backend = benchmark.model._backend
+        for subgraph_info in backend.subgraph_infos:
+            assert isinstance(subgraph_info.original_graph_module, torch.fx.GraphModule)
+            assert len(subgraph_info.thunder_compiled_fns)
+            for thunder_fn in subgraph_info.thunder_compiled_fns:
+                print(thunder.last_traces(thunder_fn)[-1])
+
     if args.save_results:
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         filename = f"thunder_inference_{args.model_name.replace('/', '_')}_{timestamp}.json"

@@ -297,10 +297,10 @@ class GroupedLinear(nn.Module):
         self.weight = nn.Parameter(torch.empty(groups, out_features, in_features, dtype=dtype, device=device))
         # Initialize the weight in the same way as nn.Linear
         nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
-        self.weight.data = self.weight.transpose(-1, -2)
+        # self.weight.data = self.weight.transpose(-1, -2)
 
     def forward(self, hidden_states: torch.Tensor, offsets: torch.Tensor) -> torch.Tensor:
-        return grouped_mm(hidden_states, self.weight, offsets)
+        return grouped_mm(hidden_states, self.weight.transpose(-1, -2), offsets)
 
 
 @torch.inference_mode()
@@ -310,7 +310,7 @@ def quantize_grouped_linear_weight_to_nvfp4(
     """Quantize grouped linear's weight to nvfp4
 
     Args:
-        weight: Parameter of `GroupedLinear` of [g, k, n]
+        weight: Parameter of `GroupedLinear` of [g, n, k]
 
     Returns:
         fp4_weight: [g, k // 2, n]
@@ -320,14 +320,14 @@ def quantize_grouped_linear_weight_to_nvfp4(
     assert weight.ndim == 3, "Weight must be a 3D tensor"
 
     device: torch.device = weight.device
-    g, k, n = weight.size()
+    g, n, k = weight.size()
 
     with device:
         fp4_weight = torch.empty((g, n, k // 2), dtype=torch.float4_e2m1fn_x2)
         global_scales = torch.empty((g,), dtype=torch.float32)
         scale_factors = torch.empty((g, n, k // 16), dtype=torch.float8_e4m3fn)
 
-    weight = weight.transpose(-1, -2).contiguous()
+    weight = weight.contiguous()
     for i in range(g):
         cur_weight = weight[i]
         global_scales[i] = cur_weight.abs().amax()
@@ -553,13 +553,13 @@ class Llama4MoE(nn.Module):
         # Split into gate and up projections
         gate_proj_w, up_proj_w = moe.experts.gate_up_proj.chunk(2, dim=2)
 
-        new_moe.routed_experts.gate_proj.weight.data.copy_(gate_proj_w)
-        new_moe.routed_experts.up_proj.weight.data.copy_(up_proj_w)
+        new_moe.routed_experts.gate_proj.weight.data.copy_(gate_proj_w.transpose(-1, -2))
+        new_moe.routed_experts.up_proj.weight.data.copy_(up_proj_w.transpose(-1, -2))
 
         # Handle down_proj
         # HF format: (groups, intermediate_size, hidden_size)
         # Our format: (groups, hidden, intermediate_size)
-        new_moe.routed_experts.down_proj.weight.data.copy_(moe.experts.down_proj)
+        new_moe.routed_experts.down_proj.weight.data.copy_(moe.experts.down_proj.transpose(-1, -2))
 
         return new_moe
 
