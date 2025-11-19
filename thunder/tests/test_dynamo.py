@@ -1891,3 +1891,31 @@ def test_splitter_with_symint_node():
 
     for subgraph in jitted._backend.subgraph_infos:
         assert not subgraph.split_reasons
+
+
+@pytest.mark.skipif(
+    IS_WINDOWS,
+    reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
+)
+def test_splitter_with_inductor_fallback_single_element_return():
+    from torch._subclasses.fake_tensor import DynamicOutputShapeException
+
+    x = torch.ones(2, 2, requires_grad=True)
+
+    def func(x):
+        # torch.sinc has automatic fallback registered,
+        # so that operation will be given to inductor.
+        y = torch.sinc(x) + torch.cos(x)
+        return y + 1
+
+    orig_compile = torch._inductor.compile
+
+    def fake_compile(*args, **kwargs):
+        orig_compile(*args, **kwargs)
+        raise DynamicOutputShapeException("test")
+
+    # torch._inductor.compile mutates the graph module so its outputs are always a tuple.
+    # this test fails if the graph module is not restored to the original output.
+    with patch("torch._inductor.compile", side_effect=fake_compile):
+        cfunc = thunderfx(func)
+        cfunc(x)
