@@ -202,12 +202,16 @@ class LazyInductorModule(torch.nn.Module):
                 with tracing(TracingContext(fake_mode=self.fake_mode)):
                     try:
                         # Extract and merge options from compile_options
-                        options = self.compile_options.get("options", {}).copy() if self.compile_options.get("options") else {}
+                        options = (
+                            self.compile_options.get("options", {}).copy()
+                            if self.compile_options.get("options")
+                            else {}
+                        )
                         mode = self.compile_options.get("mode")
                         if mode:
                             mode_options = list_mode_options().get(mode, {})
                             options.update(mode_options)
-                        
+
                         self.compiled_fn = torch._inductor.compile(self.graph_module, args, options=options)
                     except DynamicOutputShapeException as e:
                         # This exception is meant to be handled by Dynamo, which is responsible for graph break

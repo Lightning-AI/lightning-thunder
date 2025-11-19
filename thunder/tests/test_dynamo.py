@@ -193,9 +193,8 @@ def test_fallback_to_inductor(executor, device, dtype):
 )
 def test_kwargs_forwarding_to_inductor(executor, device, dtype, mode):
     """Test that torch.compile kwargs (like mode) are forwarded to inductor for unsupported regions."""
-    from thunder.dynamo.utils import LazyInductorModule
     from torch._inductor import list_mode_options
-    
+
     x = torch.randn(2, 2, device=device, dtype=dtype)
 
     def func(x):
@@ -204,19 +203,19 @@ def test_kwargs_forwarding_to_inductor(executor, device, dtype, mode):
         return x.sinc()
 
     cfunc = thunderfx(func, mode=mode)
-    
+
     # Mock torch._inductor.compile to verify arguments are passed correctly
     original_compile = torch._inductor.compile
-    
+
     with patch("torch._inductor.compile", side_effect=original_compile) as mock_compile:
         cfunc(x)
-        
+
         # Verify the mock was called (inductor fallback occurred)
         assert mock_compile.called
-        
+
         # Get the kwargs from the call
         _, kwargs = mock_compile.call_args
-        
+
         # Check if mode was expanded into options
         expected_options = list_mode_options().get(mode, {})
 
