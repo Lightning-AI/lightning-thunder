@@ -17,6 +17,7 @@ from hypothesis import given, settings
 from hypothesis import HealthCheck
 import copy
 from functools import partial
+import tempfile
 
 import thunder
 from thunder import dtypes
@@ -80,6 +81,7 @@ def run_script(file_name, cmd):
     dtypes=NOTHING,
     executors=[DynamoThunderExecutor],
     decorators=(
+        pytest.mark.parametrize("run_with_torch_trace", (False, True), ids=("no_torch_trace", "with_torch_trace")),
         pytest.mark.parametrize("dynamic", (True, False, None), ids=("dynamic", "static", "auto")),
         pytest.mark.skipif(
             condition=IS_WINDOWS,
@@ -87,32 +89,48 @@ def run_script(file_name, cmd):
         ),
     ),
 )
-def test_basic(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None):
-    x = torch.ones(2, dtype=dtype, device=device, requires_grad=True)
+def test_basic(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None, run_with_torch_trace: bool):
+    # Set up TORCH_TRACE environment variable if needed using mock.patch
+    if run_with_torch_trace:
+        tmp_path = tempfile.mkdtemp()
+        env_patch = {"TORCH_TRACE": tmp_path}
+    else:
+        tmp_path = None
+        env_patch = {}
 
-    def func(x):
-        x = torch.sin(x)
-        if x.sum() > 0:
-            return x + 1
-        else:
-            return x - 1
+    try:
+        with patch.dict(os.environ, env_patch):
+            x = torch.ones(2, dtype=dtype, device=device, requires_grad=True)
 
-    compiled = thunderfx(func, dynamic=dynamic)
-    out = compiled(x)
+            def func(x):
+                x = torch.sin(x)
+                if x.sum() > 0:
+                    return x + 1
+                else:
+                    return x - 1
 
-    # out should have grad_fn and its name should be ThunderFunctionBackward
-    assert out.grad_fn is not None
-    assert out.grad_fn.name() == "ThunderFunctionBackward"
+            compiled = thunderfx(func, dynamic=dynamic)
+            out = compiled(x)
 
-    # We record the GraphModules that was compiled by ThunderCompiler
-    backend = compiled._backend
-    assert len(backend.subgraph_infos) == 2  # 2 due to data-dependent flow
+            # out should have grad_fn and its name should be ThunderFunctionBackward
+            assert out.grad_fn is not None
+            assert out.grad_fn.name() == "ThunderFunctionBackward"
 
-    for subgraph_info in backend.subgraph_infos:
-        assert isinstance(subgraph_info.original_graph_module, torch.fx.GraphModule)
-        assert len(subgraph_info.thunder_compiled_fns)  # There was atleast one function compiled with thunder.
-        for thunder_fn in subgraph_info.thunder_compiled_fns:
-            assert last_traces(thunder_fn)  # Verify that we can fetch last_traces
+            # We record the GraphModules that was compiled by ThunderCompiler
+            backend = compiled._backend
+            assert len(backend.subgraph_infos) == 2  # 2 due to data-dependent flow
+
+            for subgraph_info in backend.subgraph_infos:
+                assert isinstance(subgraph_info.original_graph_module, torch.fx.GraphModule)
+                assert len(subgraph_info.thunder_compiled_fns)  # There was at least one function compiled with thunder.
+                for thunder_fn in subgraph_info.thunder_compiled_fns:
+                    assert last_traces(thunder_fn)  # Verify that we can fetch last_traces
+    finally:
+        # Clean up temporary directory
+        if tmp_path is not None:
+            import shutil
+
+            shutil.rmtree(tmp_path, ignore_errors=True)
 
 
 @instantiate(

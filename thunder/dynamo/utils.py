@@ -2,7 +2,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from contextlib import contextmanager
 from enum import Enum, auto
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, overload
 import dataclasses
 import inspect
 import itertools
@@ -14,10 +14,12 @@ import warnings
 from looseversion import LooseVersion
 
 import torch
+from torch.fx.graph_module import GraphModule
 from torch.nn.modules.module import _addindent
 from torch.utils.weak import TensorWeakRef
-from torch._guards import tracing, TracingContext
+from torch._guards import tracing, TracingContext, compile_context, CompileContext
 from torch._subclasses.fake_tensor import DynamicOutputShapeException
+from torch._logging._internal import trace_structured_artifact
 
 if torch.distributed.is_available():
     from torch.distributed.tensor import DTensor
@@ -35,8 +37,18 @@ if TYPE_CHECKING:
     from thunder.core.symbol import Symbol
     from typing import Any
     from collections.abc import Sequence
+    from torch._guards import CompileId
+    from thunder.core.trace import TraceCtx
 
 auto_register_ops = set(itertools.chain(*torch_auto_registered_ops.values()))
+
+
+if LooseVersion(torch.__version__) >= LooseVersion("2.9.0"):
+    wrapped_trace_structured_artifact = trace_structured_artifact
+else:
+
+    def wrapped_trace_structured_artifact(*args, compile_id, **kwargs):
+        return trace_structured_artifact(*args, **kwargs)
 
 
 # Currently, thunder has mapping for these torch function but they
@@ -159,11 +171,12 @@ class _ThunderSplitGraphModule:
 
 
 class LazyInductorModule(torch.nn.Module):
-    def __init__(self, graph_module, fake_mode):
+    def __init__(self, graph_module, fake_mode, compile_id=None):
         super().__init__()
         self.graph_module = graph_module
         self.compiled_fn = None
         self.fake_mode = fake_mode
+        self.compile_id = compile_id
 
         # For ease of debugging, we add graph attribute so GraphModule.print_readable will print it
         self.graph = graph_module.graph
@@ -195,15 +208,18 @@ class LazyInductorModule(torch.nn.Module):
     def forward(self, *args):
         if self.compiled_fn is None:
             with self._maybe_patch_increment_toplevel():
-                # Inductor needs fake_mode, particularly its shape_env, to handle SymInts
-                with tracing(TracingContext(fake_mode=self.fake_mode)):
-                    try:
-                        self.compiled_fn = torch._inductor.compile(self.graph_module, args)
-                    except DynamicOutputShapeException as e:
-                        # This exception is meant to be handled by Dynamo, which is responsible for graph break
-                        # TODO: Use torch.compile for fallback. Ensure its correctness.
-                        warnings.warn(f"Dynamic output shape operator encountered: {e}. Falling back to eager.")
-                        self.compiled_fn = self.graph_module
+                # Restore the compile context so that torch._inductor.compile can log traces
+                # with the correct compile_id
+                with compile_context(CompileContext(self.compile_id) if self.compile_id is not None else None):
+                    # Inductor needs fake_mode, particularly its shape_env, to handle SymInts
+                    with tracing(TracingContext(fake_mode=self.fake_mode)):
+                        try:
+                            self.compiled_fn = torch._inductor.compile(self.graph_module, args)
+                        except DynamicOutputShapeException as e:
+                            # This exception is meant to be handled by Dynamo, which is responsible for graph break
+                            # TODO: Use torch.compile for fallback. Ensure its correctness.
+                            warnings.warn(f"Dynamic output shape operator encountered: {e}. Falling back to eager.")
+                            self.compiled_fn = self.graph_module
 
         return self.compiled_fn(*args)
 
@@ -1206,3 +1222,55 @@ def translate_dtensor_ops(gm: torch.fx.GraphModule) -> None:
                 node.target = dtensor_to_local_prim_wrapper
         except Exception:
             pass
+
+
+@overload
+def log_trace_or_graphmodule_to_torch_trace(
+    *,
+    name: str,
+    compile_id: CompileId | None = None,
+    payload_fn: Callable[[], str],
+    encoding: str,
+) -> None: ...
+
+
+@overload
+def log_trace_or_graphmodule_to_torch_trace(
+    *,
+    name: str,
+    m: TraceCtx | GraphModule,
+    compile_id: CompileId | None = None,
+) -> None: ...
+
+
+def log_trace_or_graphmodule_to_torch_trace(
+    *,
+    name: str,
+    m: TraceCtx | GraphModule | None = None,
+    compile_id: CompileId | None = None,
+    payload_fn: Callable[[], str] | None = None,
+    encoding: str | None = None,
+) -> None:
+    if payload_fn is None:
+        if isinstance(m, GraphModule):
+            payload_fn = lambda graph_module=m: graph_module.print_readable(
+                print_output=False,
+                include_stride=True,
+                include_device=True,
+            )
+        else:
+            # includes m being TraceCtx
+            payload_fn = lambda mod=m: f"{mod}\n"
+        encoding = "string"
+    else:
+        check(encoding is not None, lambda: "`encoding` needs to be set")
+
+    wrapped_trace_structured_artifact(
+        name=name,
+        encoding=encoding,
+        payload_fn=payload_fn,
+        compile_id=compile_id,
+    )
+
+
+TORCH_COMPILE_COMPILE_ID_KEY: str = "torch_compile_compile_id_key"
