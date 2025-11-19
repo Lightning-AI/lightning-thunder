@@ -202,13 +202,6 @@ class LazyInductorModule(torch.nn.Module):
                 # Inductor needs fake_mode, particularly its shape_env, to handle SymInts
                 with tracing(TracingContext(fake_mode=self.fake_mode)):
                     try:
-                        # Extract and merge options from compile_options
-                        options = self.compile_options.get("options", {}).copy()
-                        mode = self.compile_options.get("mode")
-                        if mode:
-                            mode_options = list_mode_options().get(mode, {})
-                            options.update(mode_options)
-
                         original_graph = copy.deepcopy(self.graph_module.graph)
                         # Extract and merge options from compile_options
                         options = self.compile_options.get("options", {}).copy()
