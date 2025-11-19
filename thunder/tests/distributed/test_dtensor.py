@@ -462,6 +462,50 @@ class DTensorTest(DistributedParallelTestCase):
 
         assert tested_sample_count > 0, f"test_dtensor_opinfo:No samples tested for {op.name} with {executor} executor"
 
+    @common_utils.parametrize("executor", tuple(executors_map.keys()))
+    def test_use_dtensor_execute_flag_with_dtensor(self, executor):
+        """Test that use_dtensor_execute flag is set to True for DTensor inputs."""
+        import thunder.examine as examine
+
+        # This test is specific to nvfuser executor as it checks fusion properties
+        if executor != "nvfuser":
+            raise unittest.SkipTest("test_use_dtensor_execute_flag_with_dtensor: Only runs for nvfuser executor")
+
+        num_devices = self.world_size
+        mesh = DeviceMesh("cuda", list(range(num_devices)))
+        dim_size = 16
+
+        in_dtensor = distribute_tensor(torch.randn(dim_size, dim_size, requires_grad=True), mesh, [Shard(0)])
+        w_dtensor = distribute_tensor(torch.randn(dim_size, dim_size, requires_grad=True), mesh, [Shard(0)])
+
+        def fn(x, w):
+            return torch.mul(x, w)
+
+        tmodel = thunder.jit(fn, executors=executors_map[executor].executors_list())
+        result = tmodel(in_dtensor, w_dtensor)
+
+        traces = thunder.last_traces(tmodel)
+        extrace = traces[-1]
+        fusions = examine.get_fusion_symbols(extrace)
+
+        # Verify there is at least one fusion
+        assert len(fusions) > 0
+
+        # Check that use_dtensor_execute is True for DTensor inputs
+        for fusion_bsym in fusions:
+            _, call_ctx, _ = fusion_bsym.gather_ctxs()
+            fusion_name = fusion_bsym.sym.name
+            fdw = call_ctx.get(fusion_name)
+            assert fdw is not None, f"FusionDefinitionWrapper not found for {fusion_name}"
+            assert hasattr(fdw, "use_dtensor_execute"), (
+                "FusionDefinitionWrapper should have use_dtensor_execute attribute"
+            )
+            assert fdw.use_dtensor_execute is True, "use_dtensor_execute should be True for DTensor inputs"
+
+        # Verify the result is correct
+        expected = torch.mul(in_dtensor, w_dtensor)
+        torch.testing.assert_close(result, expected)
+
 
 common_utils.instantiate_parametrized_tests(DTensorTest)
 
