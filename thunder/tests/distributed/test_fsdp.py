@@ -45,7 +45,7 @@ if TE_AVAILABLE:
     )
     from transformer_engine.common.recipe import MXFP8BlockScaling
     import transformer_engine
-
+    from thunder.tests.test_transformer_engine_executor import te_assert_close
     is_fp8_supported, fp8_support_reason = check_fp8_support()
 
 from thunder.tests.distributed.helper import (
@@ -1159,8 +1159,8 @@ def _test_fsdp_transformer_engine(input_data):
         shard_size = int(dim / world_size)
         fsdp_te_params = tuple(te_model.parameters())
         try:
-            assert_close(jit_model.get_parameter("fc1.weight"), fsdp_te_params[0].view(shard_size, dim))
-            assert_close(jit_model.get_parameter("fc2.weight"), fsdp_te_params[1].view(shard_size, dim))
+            te_assert_close(jit_model.get_parameter("fc1.weight"), fsdp_te_params[0].view(shard_size, dim), te_recipe=fp8_recipe)
+            te_assert_close(jit_model.get_parameter("fc2.weight"), fsdp_te_params[1].view(shard_size, dim), te_recipe=fp8_recipe)
         except Exception as e:
             # Return exceptions only for rank==0
             if rank == 0:
