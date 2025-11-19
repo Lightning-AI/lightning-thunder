@@ -333,6 +333,11 @@ def is_cuda(a: TensorLike, /) -> bool:
     return a.device.devicetype is devices.DeviceType.CUDA
 
 
+@torchsymbol(torch.Tensor.is_cpu, is_property=True, id="torch.is_cpu")
+def is_cpu(a: TensorLike, /) -> bool:
+    return a.device.devicetype is devices.DeviceType.CPU
+
+
 @torchsymbol(torch.polar, id="torch.polar")
 def polar(abs_: TensorLike, angle: TensorLike):
     # Decompose polar into real/imag using Thunder ops and construct complex via mapped torch.complex
