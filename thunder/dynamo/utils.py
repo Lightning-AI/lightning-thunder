@@ -10,6 +10,7 @@ from types import NoneType
 from collections import defaultdict
 from collections import namedtuple
 import warnings
+import copy
 
 from looseversion import LooseVersion
 
@@ -198,11 +199,16 @@ class LazyInductorModule(torch.nn.Module):
                 # Inductor needs fake_mode, particularly its shape_env, to handle SymInts
                 with tracing(TracingContext(fake_mode=self.fake_mode)):
                     try:
+                        original_graph = copy.deepcopy(self.graph_module.graph)
                         self.compiled_fn = torch._inductor.compile(self.graph_module, args)
                     except DynamicOutputShapeException as e:
                         # This exception is meant to be handled by Dynamo, which is responsible for graph break
                         # TODO: Use torch.compile for fallback. Ensure its correctness.
                         warnings.warn(f"Dynamic output shape operator encountered: {e}. Falling back to eager.")
+                        # NOTE: torch._inductor.compile alters the output to always be a tuple.
+                        # Restore original single-element return, if needed.
+                        self.graph_module.graph = original_graph
+                        self.graph_module.recompile()
                         self.compiled_fn = self.graph_module
 
         return self.compiled_fn(*args)
