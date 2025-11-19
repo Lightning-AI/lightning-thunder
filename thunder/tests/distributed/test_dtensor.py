@@ -6,6 +6,7 @@ import os
 
 import pytest
 import torch
+from torch.distributed.tensor import DTensor
 
 if not torch.distributed.is_available():
     pytest.skip(allow_module_level=True)
@@ -461,6 +462,33 @@ class DTensorTest(DistributedParallelTestCase):
                 tested_sample_count += 1
 
         assert tested_sample_count > 0, f"test_dtensor_opinfo:No samples tested for {op.name} with {executor} executor"
+
+    def test_dtensor_from_local_symbolic_values(self):
+        num_devices = self.world_size
+        mesh = DeviceMesh("cuda", list(range(num_devices)))
+
+        dim_size = 8
+        local_tensor = torch.randn(dim_size, dim_size, device="cuda")
+
+        def fn(x):
+            return DTensor.from_local(x, mesh, [Shard(0)])
+
+        tjit = thunder.jit(fn, cache="symbolic values")
+
+        actual = tjit(local_tensor)
+        expected = DTensor.from_local(local_tensor, mesh, [Shard(0)])
+
+        torch.testing.assert_close(actual, expected)
+        assert thunder.cache_misses(tjit) == 1
+        assert thunder.cache_hits(tjit) == 0
+
+        dim_size = 16
+        local_tensor = torch.randn(dim_size, dim_size, device="cuda")
+        actual = tjit(local_tensor)
+        expected = DTensor.from_local(local_tensor, mesh, [Shard(0)])
+        torch.testing.assert_close(actual, expected)
+        assert thunder.cache_misses(tjit) == 1
+        assert thunder.cache_hits(tjit) == 1
 
 
 common_utils.instantiate_parametrized_tests(DTensorTest)
