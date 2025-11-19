@@ -93,14 +93,13 @@ def test_basic(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None,
     # Set up TORCH_TRACE environment variable if needed using mock.patch
     if run_with_torch_trace:
         tmp_path = tempfile.mkdtemp()
-        mock_env = os.environ.copy()
-        mock_env["TORCH_TRACE"] = tmp_path
+        env_patch = {"TORCH_TRACE": tmp_path}
     else:
         tmp_path = None
-        mock_env = os.environ
+        env_patch = {}
 
     try:
-        with patch.dict(os.environ, mock_env, clear=False):
+        with patch.dict(os.environ, env_patch):
             x = torch.ones(2, dtype=dtype, device=device, requires_grad=True)
 
             def func(x):
