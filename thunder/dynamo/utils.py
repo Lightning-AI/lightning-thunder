@@ -46,7 +46,7 @@ if TYPE_CHECKING:
 auto_register_ops = set(itertools.chain(*torch_auto_registered_ops.values()))
 
 
-if "compile_id" in inspect.signature(trace_structured_artifact).parameters:
+if LooseVersion(torch.__version__) >= LooseVersion("2.9.0"):
     wrapped_trace_structured_artifact = trace_structured_artifact
 else:
 
