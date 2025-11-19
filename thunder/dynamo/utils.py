@@ -162,12 +162,12 @@ class _ThunderSplitGraphModule:
 
 
 class LazyInductorModule(torch.nn.Module):
-    def __init__(self, graph_module, fake_mode, **kwargs):
+    def __init__(self, graph_module, fake_mode, **compile_options):
         super().__init__()
         self.graph_module = graph_module
         self.compiled_fn = None
         self.fake_mode = fake_mode
-        self.compile_options = kwargs
+        self.compile_options = compile_options
 
         # For ease of debugging, we add graph attribute so GraphModule.print_readable will print it
         self.graph = graph_module.graph

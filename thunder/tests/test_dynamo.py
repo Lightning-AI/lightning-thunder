@@ -214,17 +214,17 @@ def test_kwargs_forwarding_to_inductor(executor, device, dtype, mode):
         assert mock_compile.called
 
         # Get the kwargs from the call
-        _, kwargs = mock_compile.call_args
+        _, compile_options = mock_compile.call_args
 
         # Check if mode was expanded into options
         expected_options = list_mode_options().get(mode, {})
 
         # At least empty dict options should be passed
-        assert "options" in kwargs
+        assert "options" in compile_options
 
         if expected_options:
             # If the mode has options, verify they were passed
-            options = kwargs["options"]
+            options = compile_options["options"]
             for k, v in expected_options.items():
                 assert options.get(k) == v, f"Expected option {k}={v} for mode {mode}, but got {options.get(k)}"
 
