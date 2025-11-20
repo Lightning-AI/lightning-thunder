@@ -225,6 +225,11 @@ class LazyInductorModule(torch.nn.Module):
                         self.graph_module.graph = original_graph
                         self.graph_module.recompile()
                         self.compiled_fn = self.graph_module
+                    except (NotImplementedError, AssertionError) as e:
+                        warnings.warn(f"torch._inductor.compile failed: {e}. Falling back to eager.")
+                        self.graph_module.graph = original_graph
+                        self.graph_module.recompile()
+                        self.compiled_fn = self.graph_module
 
         return self.compiled_fn(*args)
 

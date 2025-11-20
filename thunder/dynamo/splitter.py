@@ -26,10 +26,6 @@ from thunder.dynamo.utils import (
     translate_dtensor_ops,
 )
 
-if hasattr(torch.fx.proxy, '_create_arg_bypass'):
-    if torch.cuda.streams.Stream not in torch.fx.proxy._create_arg_bypass:
-        torch.fx.proxy._create_arg_bypass[torch.cuda.streams.Stream] = lambda tracer, arg: arg
-
 if TYPE_CHECKING:
     from collections.abc import Callable
     from typing import Any
@@ -248,9 +244,7 @@ def _splitter(
             fake_mode = torch._guards.detect_fake_mode()
             # Delay Inductor compilation until invocation with real tensors,
             # because we do not know the strides of tensors that Thunder-compiled submodules return.
-            # jit_fn = LazyInductorModule(graph_module, fake_mode, **compile_options)
-            warnings.warn('Using inductor module directly without lazy compilation (eager execution)')
-            jit_fn = graph_module
+            jit_fn = LazyInductorModule(graph_module, fake_mode, **compile_options)
 
             # Update the node name from "submod_*" to "inductor_*" for more user-friendly names
             update_node_and_submodule(split_gm, node, node.name.replace("submod", "inductor"), jit_fn)
