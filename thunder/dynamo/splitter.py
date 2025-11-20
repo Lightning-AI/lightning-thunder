@@ -3,6 +3,7 @@ import operator
 from typing import TYPE_CHECKING
 import copy
 from functools import partial
+import warnings
 
 import torch
 from torch.fx.passes.split_module import split_module
@@ -247,7 +248,9 @@ def _splitter(
             fake_mode = torch._guards.detect_fake_mode()
             # Delay Inductor compilation until invocation with real tensors,
             # because we do not know the strides of tensors that Thunder-compiled submodules return.
-            jit_fn = LazyInductorModule(graph_module, fake_mode, **compile_options)
+            # jit_fn = LazyInductorModule(graph_module, fake_mode, **compile_options)
+            warnings.warn('Using inductor module directly without lazy compilation (eager execution)')
+            jit_fn = graph_module
 
             # Update the node name from "submod_*" to "inductor_*" for more user-friendly names
             update_node_and_submodule(split_gm, node, node.name.replace("submod", "inductor"), jit_fn)
