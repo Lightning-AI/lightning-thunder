@@ -365,12 +365,8 @@ class InferenceBenchmark:
     def get_next_token(
         self, input_ids: torch.Tensor, past_key_values: HybridChunkedCache | StaticCache
     ) -> torch.Tensor:
-        start_pos = past_key_values.get_seq_length()
-        cache_position = start_pos + torch.arange(0, input_ids.shape[1], device=start_pos.device, dtype=start_pos.dtype)
         with torch.no_grad():
-            outputs = self.model(
-                input_ids, cache_position=cache_position, past_key_values=past_key_values, use_cache=True
-            )
+            outputs = self.model(input_ids, past_key_values=past_key_values, use_cache=True)
         logits = outputs.logits  # [B, seq_len, vocab_size]
         next_token_logits = logits[:, -1, :]
         next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
