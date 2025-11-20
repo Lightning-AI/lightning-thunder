@@ -41,6 +41,7 @@ if TE_AVAILABLE:
         get_default_fp8_recipe,
     )
     from transformer_engine.common.recipe import MXFP8BlockScaling
+    from thunder.tests.test_transformer_engine_executor import te_assert_close
 
     is_fp8_supported, fp8_support_reason = check_fp8_support()
 
@@ -667,8 +668,8 @@ def _test_ddp_transformer_engine(input_data):
     # Compare weights after `n_iters`
     comparison_exceptions = []
     try:
-        assert_close(thunder_model.fc1.weight, te_model.fc1.weight)
-        assert_close(thunder_model.fc2.weight, te_model.fc2.weight)
+        te_assert_close(thunder_model.fc1.weight, te_model.fc1.weight, te_recipe=fp8_recipe)
+        te_assert_close(thunder_model.fc2.weight, te_model.fc2.weight, te_recipe=fp8_recipe)
     except Exception as e:
         # Return exceptions only for rank==0
         if rank == 0:
