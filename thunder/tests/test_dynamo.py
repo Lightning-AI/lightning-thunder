@@ -184,6 +184,55 @@ def test_fallback_to_inductor(executor, device, dtype):
     dtypes=NOTHING,
     executors=[DynamoThunderExecutor],
     decorators=(
+        pytest.mark.parametrize("mode", ("default", "reduce-overhead", "max-autotune", "max-autotune-no-cudagraphs")),
+        pytest.mark.skipif(
+            condition=IS_WINDOWS,
+            reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
+        ),
+    ),
+)
+def test_kwargs_forwarding_to_inductor(executor, device, dtype, mode):
+    """Test that torch.compile kwargs (like mode) are forwarded to inductor for unsupported regions."""
+    from torch._inductor import list_mode_options
+
+    x = torch.randn(2, 2, device=device, dtype=dtype)
+
+    def func(x):
+        # torch.sinc has automatic fallback registered,
+        # so that operation will be given to inductor.
+        return x.sinc()
+
+    cfunc = thunderfx(func, mode=mode)
+
+    # Mock torch._inductor.compile to verify arguments are passed correctly
+    original_compile = torch._inductor.compile
+
+    with patch("torch._inductor.compile", side_effect=original_compile) as mock_compile:
+        cfunc(x)
+
+        # Verify the mock was called (inductor fallback occurred)
+        assert mock_compile.called
+
+        # Get the kwargs from the call
+        _, compile_options = mock_compile.call_args
+
+        # Check if mode was expanded into options
+        expected_options = list_mode_options().get(mode, {})
+
+        # At least empty dict options should be passed
+        assert "options" in compile_options
+
+        if expected_options:
+            # If the mode has options, verify they were passed
+            options = compile_options["options"]
+            for k, v in expected_options.items():
+                assert options.get(k) == v, f"Expected option {k}={v} for mode {mode}, but got {options.get(k)}"
+
+
+@instantiate(
+    dtypes=NOTHING,
+    executors=[DynamoThunderExecutor],
+    decorators=(
         pytest.mark.parametrize("dynamic", (True, False, None), ids=("dynamic", "static", "auto")),
         pytest.mark.xfail(
             condition=IS_WINDOWS,
@@ -1842,3 +1891,31 @@ def test_splitter_with_symint_node():
 
     for subgraph in jitted._backend.subgraph_infos:
         assert not subgraph.split_reasons
+
+
+@pytest.mark.skipif(
+    IS_WINDOWS,
+    reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
+)
+def test_splitter_with_inductor_fallback_single_element_return():
+    from torch._subclasses.fake_tensor import DynamicOutputShapeException
+
+    x = torch.ones(2, 2, requires_grad=True)
+
+    def func(x):
+        # torch.sinc has automatic fallback registered,
+        # so that operation will be given to inductor.
+        y = torch.sinc(x) + torch.cos(x)
+        return y + 1
+
+    orig_compile = torch._inductor.compile
+
+    def fake_compile(*args, **kwargs):
+        orig_compile(*args, **kwargs)
+        raise DynamicOutputShapeException("test")
+
+    # torch._inductor.compile mutates the graph module so its outputs are always a tuple.
+    # this test fails if the graph module is not restored to the original output.
+    with patch("torch._inductor.compile", side_effect=fake_compile):
+        cfunc = thunderfx(func)
+        cfunc(x)
