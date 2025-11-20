@@ -28,7 +28,8 @@ is_fp8_supported: bool = False
 # This will be correctly updated below when TE Engine is installed
 # and if the current environment doesn't support FP8.
 fp8_support_reason: str = ""
-if package_available("transformer_engine"):
+TE_AVAILABLE = package_available("transformer_engine")
+if TE_AVAILABLE:
     from transformer_engine.pytorch import fp8_autocast
     from transformer_engine.pytorch import Linear as TELinear
     from transformer_engine.pytorch.fp8 import (
