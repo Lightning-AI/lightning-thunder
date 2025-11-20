@@ -1,5 +1,4 @@
 from functools import reduce, partial
-import operator
 
 from thunder.core.compile_data import using_symbolic_values
 import thunder.core.prims as prims
@@ -60,8 +59,8 @@ def _involves_viewed_args(bsym, viewed):
 def _can_be_reshaped(arg, arg_to_replace):
     # TODO: Fix this once numel for symbolic values is implemented
     if using_symbolic_values():
-        arg_numel = reduce(operator.mul, arg._shape, 1)
-        arg_to_replace_numel = reduce(operator.mul, arg_to_replace._shape, 1)
+        arg_numel = arg._numel()
+        arg_to_replace_numel = arg_to_replace._numel()
     else:
         arg_numel = arg.numel
         arg_to_replace_numel = arg_to_replace.numel
