@@ -8,6 +8,7 @@ import warnings
 
 from transformers.models.qwen2 import Qwen2Config, Qwen2ForCausalLM
 from transformers.models.llama import LlamaConfig, LlamaForCausalLM
+from lightning_utilities.core.imports import package_available
 from thunder.extend import deregister_executor
 from torch.testing import assert_close
 from thunder.recipes import HFTransformers
@@ -215,6 +216,7 @@ def test_plugins_basics():
 
 # test skipped if nvfuser isn't available because providing plugins calls BaseRecipe
 @pytest.mark.skipif(not nvfuser_available(), reason="nvFuser is not available")
+@pytest.mark.skipif(not package_available("transformer_engine"), reason="TransformerEngine is not available")
 @pytest.mark.skipif(IS_WINDOWS, reason="libuv error with PT build on windows")
 def test_plugins_composition(monkeypatch):
     model = torch.nn.Sequential(torch.nn.Linear(2048, 4096), torch.nn.ReLU(), torch.nn.Linear(4096, 64))
