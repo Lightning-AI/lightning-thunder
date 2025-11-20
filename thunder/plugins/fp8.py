@@ -5,17 +5,29 @@ class FP8(Plugin):
     """
     Plugin for enabling FP8 precision via NVIDIA Transformer Engine, enabling higher throughput of matrix operations in FP8.
 
-    See `lightning-thunder/thunder/executors/transformer_engine_v1ex.py` for implementation details.
+    See `lightning-thunder/thunder/executors/transformer_engine_ex.py` for implementation details.
     """
+
+    def setup_transforms(self):
+        """
+        Fetches the TransformerEngine transform.
+
+        Returns:
+            list[Transform]: A list containing the TransformerEngine transforms.
+        """
+
+        from thunder.executors.transformer_engineex import TransformerEngineTransform
+
+        return [TransformerEngineTransform()]
 
     def setup_executors(self):
         """
-        Imports the Transformer Engine executor.
+        Imports the TransformerEngine executor.
 
         Returns:
             list[Executor]: A list containing the Transformer Engine executor.
 
         """
-        from thunder.executors.transformer_engine_v1ex import transformer_engine_v1_ex
+        from thunder.executors.transformer_engineex import transformer_engine_ex
 
-        return [transformer_engine_v1_ex]
+        return [transformer_engine_ex]
