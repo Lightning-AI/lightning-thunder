@@ -34,4 +34,8 @@ class FP8(Plugin):
         """
         from thunder.executors.transformer_engineex import transformer_engine_ex
 
+        # When TE executor is not available, both the transform and the executor will be None.
+        if transformer_engine_ex is None:
+            return []
+
         return [transformer_engine_ex]
