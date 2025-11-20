@@ -40,7 +40,6 @@ if TE_AVAILABLE:
         FP8GlobalStateManager,
         get_default_fp8_recipe,
     )
-    from transformer_engine.common.recipe import MXFP8BlockScaling
     import transformer_engine
     from thunder.tests.test_transformer_engine_executor import te_assert_close
 
