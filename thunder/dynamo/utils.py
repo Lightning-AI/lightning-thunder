@@ -42,10 +42,15 @@ if TYPE_CHECKING:
 auto_register_ops = set(itertools.chain(*torch_auto_registered_ops.values()))
 
 
+import operator
+
 # Currently, thunder has mapping for these torch function but they
 # just raise a warning (or don't support the exact behaviour)
 # Previously used for `torch._C._set_grad_enabled` when it just raised a warning.
-UNSUPPORTED_THUNDER_FUNCTION = ()
+UNSUPPORTED_THUNDER_FUNCTION = (
+    operator.setitem,
+    torch.Tensor.__setitem__,
+)
 
 
 class CompilerType(Enum):
