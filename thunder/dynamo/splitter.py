@@ -45,6 +45,7 @@ def _preprocess_cuda_stream_objects(gm: GraphModule) -> None:
                 node.meta["example_value"] = None
                 node.meta["_original_stream_type"] = type(example_value).__name__
 
+
 def _splitter(
     gm: torch.fx.GraphModule,
     thunder_jit: Callable,
