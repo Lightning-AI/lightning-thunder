@@ -129,7 +129,7 @@ class ThunderCompiler:
         )
         self.thunder_options = thunder_options
 
-    def __call__(self, gm: torch.fx.GraphModule, sample_args: list[torch.SymInt, torch.Tensor]):
+    def __call__(self, gm: torch.fx.GraphModule, sample_args: list[torch.SymInt, torch.Tensor], **compile_options):
         from thunder import jit
 
         remove_empty_autocast(gm)
@@ -148,6 +148,7 @@ class ThunderCompiler:
             gm,
             partial(jit, **thunder_options),
             thunder_options,
+            **compile_options,
         )
         self.subgraph_infos.append(subgraph_info)
         return split_module
