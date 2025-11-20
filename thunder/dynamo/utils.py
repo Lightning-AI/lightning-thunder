@@ -495,6 +495,12 @@ def is_node_supported_by_thunder(
     target = node.target  # Target is the function to call.
     if node.op == "call_method":
         target = getattr(torch.Tensor, node.target, None)
+        if target is None and hasattr(torch.cuda.Stream, node.target):
+            split_reason = SplitReason(
+                SplitReasonType.UNSUPPORTED_NODE,
+                info=f"node with name: {node.name} and target: {node.target} is a `torch.cuda.Stream` method which is not supported by Thunder.",
+            )
+            return False, split_reason
         assert target is not None, f"Failed to find method {node.target}"
 
     # If the operation has automatic registration, we mark it as unsupported as `inductor` might be
