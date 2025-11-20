@@ -3183,6 +3183,48 @@ def test_proxy_same_name():
             TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32)
 
 
+def test_tensor_proxy_with_stride():
+    from thunder.core.proxies import TensorProxy
+    from thunder.core.trace import detached_trace
+    from thunder.core.dtypes import float32
+    from thunder.core.devices import cpu
+
+    # Test that TensorProxy can be created with custom strides
+    with detached_trace():
+        t1 = TensorProxy(shape=(2, 3, 4), device=cpu, dtype=float32)
+        assert t1.shape == (2, 3, 4)
+        assert t1.stride() == (12, 4, 1)
+
+        t2 = TensorProxy(shape=(10,), device=cpu, dtype=float32)
+        assert t2.shape == (10,)
+        assert t2.stride() == (1,)
+
+        t3 = TensorProxy(shape=(), device=cpu, dtype=float32)
+        assert t3.shape == ()
+        assert t3.stride() == ()
+
+        t4 = TensorProxy(shape=(2, 3, 4), stride=(2, 8, 1), device=cpu, dtype=float32)
+        assert t4.shape == (2, 3, 4)
+        assert t4.stride() == (2, 8, 1)
+
+
+def test_stride_tracking():
+    def fn(x):
+        result = [x.stride()]
+        x = x.transpose(0, 1)
+        result.append(x.stride())
+        x = x.permute(2, 0, 1)
+        result.append(x.stride())
+        x = x.reshape(8, 3)
+        result.append(x.stride())
+        return result
+
+    jfn = thunder.jit(fn)
+    x = torch.randn(2, 3, 4)
+
+    assert jfn(x) == fn(x)
+
+
 def test_save_trace():
     def fn(x):
         return x + 1
