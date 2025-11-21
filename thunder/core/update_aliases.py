@@ -72,7 +72,7 @@ def replace_args_with_alias_map(
     alias_tensor_indices: list[list[int]],
 ) -> tuple[Trace, list[set[VariableInterface]]]:
     if not alias_tensor_indices:
-        return computation_trace, {}
+        return computation_trace, []
     bsyms: list[BoundSymbol] = []
     flat_args, _ = tree_flatten((computation_trace.args, computation_trace.kwargs))
     swap_map_for_aliases: dict[VariableInterface, TensorProxy] = {}
@@ -82,7 +82,7 @@ def replace_args_with_alias_map(
         arg = flat_args[indices[0]]
         for idx in filter(lambda idx: idx < len(flat_args), indices[1:]):
             arg_to_replace = flat_args[idx]
-            # Skip aliases with different numel (e.g., complex tensor and its real view)
+            # Track aliases with different numel (e.g., complex tensor and its real view)
             # These share storage but have incompatible element counts
             if not _can_be_reshaped(arg, arg_to_replace):
                 view_groups.setdefault(variableify(arg), []).append(variableify(arg_to_replace))
