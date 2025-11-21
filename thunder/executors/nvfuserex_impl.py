@@ -1043,12 +1043,13 @@ def full(
     fd: FusionDefinition,
     lc_to_nv_map: dict,
 ) -> Any:
+    nv_shape = getnv(shape, fd, lc_to_nv_map, inline_number=True)
     nv_fill_value = getnv(fill_value, fd, lc_to_nv_map)
     nvdtype = lcdtype_to_nvdtype(dtype)
 
     _select_device(fd, device)
 
-    return fd.ops.full(shape, nv_fill_value, nvdtype)
+    return fd.ops.full(nv_shape, nv_fill_value, nvdtype)
 
 
 register_supported(PrimIDs.FULL, full, _full_check)
