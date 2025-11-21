@@ -2192,10 +2192,10 @@ def test_dce(executor, device, _):
     i -= 1
     trace = traces[i]
 
-    from thunder.core.transform_common import dce
+    from thunder.core.transform_common import dce, dce_bsyms
 
     dced_trace = dce(trace)
-    dced_bsyms = dce(trace.bound_symbols)
+    dced_bsyms = dce_bsyms(trace.bound_symbols, trace.output)
     assert len(dced_trace.bound_symbols) == len(trace.bound_symbols) - 1
     assert len(dced_trace.bound_symbols) == len(dced_bsyms)
 
