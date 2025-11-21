@@ -517,3 +517,25 @@ def test_higher_order_inplace_alias_update(executor, device, dtype):
     expected_grad = torch.autograd.grad(expected, c, g)
     torch.testing.assert_close(actual_grad_fx, expected_grad)
     torch.testing.assert_close(actual_grad_jit, expected_grad)
+
+
+@instantiate(
+    dtypes=(dtypes.float32,),
+)
+def test_aliasing_for_viewed_input_of_different_shapes(executor, device, dtype):
+    def f(x, y, z):
+        return x + 2, y.add_(z)
+
+    a = make_tensor((2, 3), dtype=dtypes.to_torch_dtype(dtype), device=device)
+    b = a[0, :]
+    c = a[1, :]
+    a_ = a.clone().detach()
+    b_ = a_[0, :]
+    c_ = a_[1, :]
+    jfn = executor.make_callable(f)
+    actual = jfn(a, b, c)
+    expected = f(a_, b_, c_)
+    torch.testing.assert_close(actual, expected)
+    torch.testing.assert_close(a, a_)
+    torch.testing.assert_close(b, b_)
+    torch.testing.assert_close(c, c_)
