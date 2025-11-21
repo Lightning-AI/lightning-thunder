@@ -34,6 +34,7 @@ def _splitter(
     gm: torch.fx.GraphModule,
     thunder_jit: Callable,
     thunder_options: dict[str, Any] | None = None,
+    **compile_options,
 ) -> tuple[torch.fx.GraphModule, SubgraphInfo]:
     """
     This method will split graph into multiple graph modules based on thunder supported operations.
@@ -225,7 +226,7 @@ def _splitter(
             fake_mode = torch._guards.detect_fake_mode()
             # Delay Inductor compilation until invocation with real tensors,
             # because we do not know the strides of tensors that Thunder-compiled submodules return.
-            jit_fn = LazyInductorModule(graph_module, fake_mode)
+            jit_fn = LazyInductorModule(graph_module, fake_mode, **compile_options)
 
             # Update the node name from "submod_*" to "inductor_*" for more user-friendly names
             update_node_and_submodule(split_gm, node, node.name.replace("submod", "inductor"), jit_fn)

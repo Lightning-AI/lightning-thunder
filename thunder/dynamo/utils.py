@@ -20,6 +20,8 @@ from torch.utils.weak import TensorWeakRef
 from torch._guards import tracing, TracingContext
 from torch._subclasses.fake_tensor import DynamicOutputShapeException
 
+from torch._inductor import list_mode_options
+
 if torch.distributed.is_available():
     from torch.distributed.tensor import DTensor
 else:
@@ -160,11 +162,12 @@ class _ThunderSplitGraphModule:
 
 
 class LazyInductorModule(torch.nn.Module):
-    def __init__(self, graph_module, fake_mode):
+    def __init__(self, graph_module, fake_mode, **compile_options):
         super().__init__()
         self.graph_module = graph_module
         self.compiled_fn = None
         self.fake_mode = fake_mode
+        self.compile_options = compile_options
 
         # For ease of debugging, we add graph attribute so GraphModule.print_readable will print it
         self.graph = graph_module.graph
@@ -200,7 +203,14 @@ class LazyInductorModule(torch.nn.Module):
                 with tracing(TracingContext(fake_mode=self.fake_mode)):
                     try:
                         original_graph = copy.deepcopy(self.graph_module.graph)
-                        self.compiled_fn = torch._inductor.compile(self.graph_module, args)
+                        # Extract and merge options from compile_options
+                        options = self.compile_options.get("options", {}).copy()
+                        mode = self.compile_options.get("mode")
+                        if mode:
+                            mode_options = list_mode_options().get(mode, {})
+                            options.update(mode_options)
+
+                        self.compiled_fn = torch._inductor.compile(self.graph_module, args, options=options)
                     except DynamicOutputShapeException as e:
                         # This exception is meant to be handled by Dynamo, which is responsible for graph break
                         # TODO: Use torch.compile for fallback. Ensure its correctness.
