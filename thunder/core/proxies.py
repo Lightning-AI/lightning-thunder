@@ -2009,7 +2009,7 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
     # See Note [DistributedDataParallel and distparallel_type]
     distparallel_type = getattr(t, "distparallel_type", None)
     _thunder_fsdp_padding_size = getattr(t, "_thunder_fsdp_padding_size", None)
-    if using_symbolic_values():
+    if using_symbolic_values() and not isinstance(t, torch.nn.Parameter):
         shape_attr = None
         if history is not None:
             shape_attr = ProvenanceRecord(

@@ -1336,11 +1336,11 @@ def test_torch_autograd_module(executor, device, _):
     a = make_tensor((2, 3), device=device, dtype=torch.float32, requires_grad=True)
     g = make_tensor((2, 4), device=device, dtype=torch.float32)
 
-    for cache_mode in ("constant values", "same input"):
+    for cache_mode in ("constant values", "no caching"):
         lc = executor.make_callable(
             linear,
             disable_torch_autograd=False,
-            cache_mode=cache_mode,
+            cache=cache_mode,
         )
         lc.zero_grad()
         a.grad = None
