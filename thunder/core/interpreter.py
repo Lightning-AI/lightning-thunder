@@ -7041,7 +7041,7 @@ def _call_dispatch(
                 if (
                     unbound_fn_candidate is not None
                     and isinstance(unbound_fn_candidate, (WrapperDescriptorType, MethodDescriptorType))
-                    and unbound_fn_candidate.__get__(slf) == fn
+                    and unbound_fn_candidate.__get__(slf, type(slf)) == fn
                 ):
                     unbound_fn = unbound_fn_candidate
                     break
