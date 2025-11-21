@@ -240,6 +240,118 @@ class ThunderCompiler:
                     extra_comment_str=split_reason_str,
                 )
 
+    def print_split_report(self, verbose: bool = True, output_file: str | PathLike | None = None):
+        """
+        Print information about graph splits and the reasons for splitting.
+        
+        This method displays details about how Thunder split the original FX graphs,
+        including which subgraphs are executed by Thunder vs other backends, and
+        why splits occurred.
+        
+        Args:
+            verbose: If True, prints detailed information including the split module structure.
+                    If False, prints a summary only.
+            output_file: Optional file path to write the report to. If None, prints to console.
+                        If provided, writes the report to the specified file.
+        
+        Example:
+            >>> import torch
+            >>> from thunder.dynamo import ThunderCompiler
+            >>> 
+            >>> backend = ThunderCompiler()
+            >>> compiled_fn = torch.compile(backend=backend)(my_function)
+            >>> result = compiled_fn(x)  # Execute first
+            >>> backend.print_split_report()  # Print to console
+            >>> backend.print_split_report(output_file="split_report.txt")  # Write to file
+        """
+        import sys
+        
+        if not self.subgraph_infos:
+            msg = "No graph information available. The compiler has not been invoked yet."
+            if output_file:
+                with open(output_file, 'w') as f:
+                    f.write(msg + "\n")
+            else:
+                print(msg)
+            return
+        
+        # Determine output stream
+        if output_file:
+            file_handle = open(output_file, 'w')
+            out = file_handle
+        else:
+            out = sys.stdout
+            file_handle = None
+        
+        try:
+            out.write("=" * 80 + "\n")
+            out.write("ThunderFX Graph Split Report\n")
+            out.write("=" * 80 + "\n")
+            out.write(f"Total Dynamo graphs processed: {len(self.subgraph_infos)}\n")
+            out.write("\n")
+            
+            for graph_idx, subgraph_info in enumerate(self.subgraph_infos):
+                out.write("=" * 80 + "\n")
+                out.write(f"Graph {graph_idx}\n")
+                out.write("=" * 80 + "\n")
+                
+                # Get split statistics
+                num_submodules = len(subgraph_info.submodule_to_compiled_functions)
+                num_thunder_submodules = len(subgraph_info.thunder_compiled_fns) if subgraph_info.thunder_compiled_fns else 0
+                num_inductor_submodules = num_submodules - num_thunder_submodules
+                
+                out.write(f"Total subgraphs: {num_submodules}\n")
+                out.write(f"  - Thunder subgraphs: {num_thunder_submodules}\n")
+                out.write(f"  - Inductor subgraphs: {num_inductor_submodules}\n")
+                out.write("\n")
+                
+                # Print split reasons
+                if subgraph_info.split_reasons:
+                    out.write(f"Split Reasons ({len(subgraph_info.split_reasons)} reasons):\n")
+                    out.write("-" * 80 + "\n")
+                    for split_idx, split_reason in enumerate(subgraph_info.split_reasons):
+                        reason_type = split_reason.reason_type.name if hasattr(split_reason.reason_type, 'name') else str(split_reason.reason_type)
+                        out.write(f"\n  [{split_idx}] {reason_type}\n")
+                        if split_reason.info:
+                            # Indent the info text
+                            info_lines = split_reason.info.split('\n')
+                            for line in info_lines:
+                                out.write(f"      {line}\n")
+                        if split_reason.exception and verbose:
+                            out.write(f"      Exception: {split_reason.exception}\n")
+                    out.write("\n")
+                else:
+                    out.write("✓ No splits required - entire graph executed by Thunder\n")
+                    out.write("\n")
+                
+                # Print module structure if verbose
+                if verbose and subgraph_info.split_graph_module:
+                    out.write("Split Module Structure:\n")
+                    out.write("-" * 80 + "\n")
+                    # Print the graph structure with indentation
+                    module_str = str(subgraph_info.split_graph_module)
+                    for line in module_str.split('\n'):
+                        out.write(f"  {line}\n")
+                    out.write("\n")
+                
+                # Print submodule details
+                if verbose and num_submodules > 1:
+                    out.write("Submodule Details:\n")
+                    out.write("-" * 80 + "\n")
+                    for idx, (submodule, compiled_fn) in enumerate(subgraph_info.submodule_to_compiled_functions.items()):
+                        compiler_type = compiled_fn.compiler.name if hasattr(compiled_fn.compiler, 'name') else str(compiled_fn.compiler)
+                        out.write(f"  Submodule {idx}: {compiler_type}\n")
+                        # Show a few nodes from the submodule
+                        if hasattr(submodule, 'graph'):
+                            node_count = len(list(submodule.graph.nodes))
+                            out.write(f"    Nodes: {node_count}\n")
+                    out.write("\n")
+            
+            out.write("=" * 80 + "\n")
+        finally:
+            if file_handle:
+                file_handle.close()
+
 
 # We return this object instead of just the raw `compiled` Callable so that
 # we have a place to hang the `last_*traces` properties.
@@ -303,6 +415,29 @@ class ThunderFXCompiledObject:
                 if trcs_bw != []:
                     rv.append(trcs_bw[-1])
         return rv
+
+    def print_split_report(self, verbose: bool = True, output_file: str | PathLike | None = None):
+        """
+        Print information about graph splits and the reasons for splitting.
+        
+        This is a convenience method that delegates to the backend's print_split_report method.
+        
+        Args:
+            verbose: If True, prints detailed information including the split module structure.
+                    If False, prints a summary only.
+            output_file: Optional file path to write the report to. If None, prints to console.
+                        If provided, writes the report to the specified file.
+        
+        Example:
+            >>> import torch
+            >>> from thunder.dynamo import thunderfx
+            >>> 
+            >>> compiled_fn = thunderfx(my_function)
+            >>> result = compiled_fn(x)  # Execute first
+            >>> compiled_fn.print_split_report()  # Print to console
+            >>> compiled_fn.print_split_report(output_file="report.txt")  # Write to file
+        """
+        self._backend.print_split_report(verbose=verbose, output_file=output_file)
 
 
 def thunderfx(fn: Callable, /, **kwargs) -> ThunderFXCompiledObject:
