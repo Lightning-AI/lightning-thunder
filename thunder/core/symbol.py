@@ -340,6 +340,7 @@ class Symbol:
                 return proxy
 
             result = tree_map(tag_tensorproxy_output_as_detached, result)
+
         bsym = self.bind(*args, **kwargs, output=result, subsymbols=subsymbols)
         symbols_list = trace.peek_scope()
 
@@ -350,9 +351,9 @@ class Symbol:
         )
 
         # When using symbolic values, there may be duplicate prims.eq and prims.shape subsymbols that can be removed.
-        from thunder.core.transform_common import dce
+        from thunder.core.transform_common import dce_bsyms
 
-        subsymbols = dce(subsymbols, output=result)
+        subsymbols = dce_bsyms(subsymbols, result)
         bsym = bsym.from_bsym(subsymbols=subsymbols)
 
         symbols_list.append(bsym)
