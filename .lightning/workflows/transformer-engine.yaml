@@ -12,7 +12,6 @@ parametrize:
   matrix:
     test_file:
       - test_transformer_engine_executor.py
-      - test_transformer_engine_v1_executor.py
 
 run: |
   whereis nvidia

@@ -686,11 +686,6 @@ class Benchmark_litGPT:
 
                 executors.insert(0, torch_compile_ex)
 
-            if "transformerengine_v1" in self.compile:
-                from thunder.executors.transformer_engine_v1ex import transformer_engine_v1_ex
-
-                executors.insert(0, transformer_engine_v1_ex)
-
             elif "transformerengine" in self.compile:
                 from thunder.executors.transformer_engineex import (
                     transformer_engine_ex,

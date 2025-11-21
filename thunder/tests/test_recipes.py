@@ -8,6 +8,7 @@ import warnings
 
 from transformers.models.qwen2 import Qwen2Config, Qwen2ForCausalLM
 from transformers.models.llama import LlamaConfig, LlamaForCausalLM
+from lightning_utilities.core.imports import package_available
 from thunder.extend import deregister_executor
 from torch.testing import assert_close
 from thunder.recipes import HFTransformers
@@ -215,6 +216,7 @@ def test_plugins_basics():
 
 # test skipped if nvfuser isn't available because providing plugins calls BaseRecipe
 @pytest.mark.skipif(not nvfuser_available(), reason="nvFuser is not available")
+@pytest.mark.skipif(not package_available("transformer_engine"), reason="TransformerEngine is not available")
 @pytest.mark.skipif(IS_WINDOWS, reason="libuv error with PT build on windows")
 def test_plugins_composition(monkeypatch):
     model = torch.nn.Sequential(torch.nn.Linear(2048, 4096), torch.nn.ReLU(), torch.nn.Linear(4096, 64))
@@ -224,13 +226,13 @@ def test_plugins_composition(monkeypatch):
     with patch("thunder.jit") as mock_jit:
         _ = thunder.compile(model, plugins="fp8")
         call_args = mock_jit.call_args
-        assert "transformer_engine_v1" in [el.name for el in call_args.kwargs["executors"]]
+        assert "transformer_engine" in [el.name for el in call_args.kwargs["executors"]]
         for ex in get_expected_executors():
             assert ex.name in [el.name for el in call_args.kwargs["executors"]]
 
         _ = thunder.compile(model, plugins=["fp8"])
         call_args = mock_jit.call_args
-        assert "transformer_engine_v1" in [el.name for el in call_args.kwargs["executors"]]
+        assert "transformer_engine" in [el.name for el in call_args.kwargs["executors"]]
         for ex in get_expected_executors():
             assert ex.name in [el.name for el in call_args.kwargs["executors"]]
 
@@ -238,7 +240,7 @@ def test_plugins_composition(monkeypatch):
 
         _ = thunder.compile(model, plugins=[FP8()])
         call_args = mock_jit.call_args
-        assert "transformer_engine_v1" in [el.name for el in call_args.kwargs["executors"]]
+        assert "transformer_engine" in [el.name for el in call_args.kwargs["executors"]]
         for ex in get_expected_executors():
             assert ex.name in [el.name for el in call_args.kwargs["executors"]]
 
@@ -266,7 +268,7 @@ def test_plugins_composition(monkeypatch):
         transforms = call_args.kwargs["transforms"]
         for expected in expected_transforms:
             assert any(isinstance(el, expected) for el in transforms)
-        assert "transformer_engine_v1" in [el.name for el in call_args.kwargs["executors"]]
+        assert "transformer_engine" in [el.name for el in call_args.kwargs["executors"]]
 
 
 @pytest.mark.skipif(not nvfuser_available(), reason="nvFuser is not available")
