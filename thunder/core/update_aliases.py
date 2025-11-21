@@ -55,6 +55,11 @@ def _involves_viewed_args(bsym, viewed):
     return any(isinstance(p, TensorProxy) and variableify(p) in viewed for p in bsym.flat_proxy_args)
 
 
+def _static_numel(tensor: TensorProxy) -> int | None:
+    numel = getattr(tensor, "_numel", None)
+    return numel if isinstance(numel, int) else None
+
+
 def replace_args_with_alias_map(
     computation_trace: Trace,
     alias_tensor_indices: list[list[int]],
@@ -69,9 +74,11 @@ def replace_args_with_alias_map(
         arg = flat_args[indices[0]]
         for idx in filter(lambda idx: idx < len(flat_args), indices[1:]):
             arg_to_replace = flat_args[idx]
-            # Skip aliases with different numel (e.g., complex tensor and its real view)
+            # Skip aliases with different statically-known numel (e.g., complex tensor and its real view)
             # These share storage but have incompatible element counts
-            if arg.numel != arg_to_replace.numel:
+            arg_numel = _static_numel(arg)
+            arg_to_replace_numel = _static_numel(arg_to_replace)
+            if arg_numel is not None and arg_to_replace_numel is not None and arg_numel != arg_to_replace_numel:
                 continue
             reshaped_arg = arg
             if arg_to_replace.shape != arg.shape:

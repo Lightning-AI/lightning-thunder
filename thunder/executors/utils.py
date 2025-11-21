@@ -50,9 +50,13 @@ class Region:
         for bsym in self.bound_symbols:
             flatouts = bsym.flat_outs
 
-            produces.update(
-                variableify(x) for x in flatouts if isinstance(x, Proxy) and producers[x] in self.bound_symbols
-            )
+            for x in flatouts:
+                if not isinstance(x, Proxy):
+                    continue
+                producer_bsym = producers.get(x, None)
+                # TODO: x should have a producer
+                if producer_bsym in self.bound_symbols:
+                    produces.add(variableify(x))
 
             # Short-circuits if the symbol is a comment, because comments don't consume anything
             #   Note that comments may produce things
@@ -69,7 +73,9 @@ class Region:
         for x in consumes:
             x = unvariableify(x)
 
-            if producers[x] not in self.bound_symbols:
+            # TODO: x should have a producer
+            producer_bsym = producers.get(x, None)
+            if producer_bsym not in self.bound_symbols:
                 inputs.add(variableify(x))
 
         # Outputs are things this produces that are consumed after it

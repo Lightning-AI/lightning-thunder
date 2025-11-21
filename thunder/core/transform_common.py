@@ -1,4 +1,5 @@
 from __future__ import annotations
+from collections import defaultdict
 import time
 from typing import TYPE_CHECKING
 from abc import ABC
@@ -10,7 +11,7 @@ from functools import partial
 import thunder
 import thunder.core.prims as prims
 from thunder.core.baseutils import BoundSymbolInterface, NumberProxyInterface
-from thunder.core.proxies import Proxy, variableify, Variable
+from thunder.core.proxies import Proxy, TensorProxy, variableify, Variable
 from thunder.core.pytree import tree_flatten, tree_iter, tree_map
 from thunder.core.symbol import BoundSymbol, BoundSymbolRHS, has_tags
 from thunder.core.trace import from_trace, TraceProvenance, TraceCtx as Trace
@@ -515,4 +516,43 @@ def remove_context_manager_prims_from_trace(trace: Trace) -> Trace:
     new_trace = from_trace(trace)
     new_trace.bound_symbols = filtered_bsyms
     new_trace.set_provenance(TraceProvenance("Remove context manager prims"))
+    return new_trace
+
+
+def ensure_symbolic_shape_bindings(trace: Trace) -> Trace:
+    """Insert prims.shape bound symbols for dynamically shaped tensors whose shape dims lack producers."""
+    tensor_map: dict[str, TensorProxy] = {}
+
+    def record_if_tensor(obj) -> None:
+        if isinstance(obj, TensorProxy):
+            tensor_map[obj.name] = obj
+
+    tree_map(record_if_tensor, (trace.args, trace.kwargs))
+
+    for bsym in trace.bound_symbols:
+        tree_map(record_if_tensor, bsym.output)
+
+    producer_map = producers(trace)
+    pending: dict[BoundSymbol, list[TensorProxy]] = defaultdict(list)
+    new_bsyms = []
+
+    for tensor in tensor_map.values():
+        needs_materialization = any(
+            isinstance(dim, Proxy) and producer_map.get(dim, None) is None for dim in tensor._shape
+        )
+        if needs_materialization:
+            tensor_producer = producer_map.get(tensor, None)
+            if tensor_producer is not None:
+                pending[tensor_producer].append(tensor)
+            else:
+                new_bsyms.append(prims.shape.bind(tensor, output=tensor._shape))
+
+    for bsym in trace.bound_symbols:
+        new_bsyms.append(bsym)
+        for tensor in pending.get(bsym, []):
+            new_bsyms.append(prims.shape.bind(tensor, output=tensor._shape))
+
+    new_trace = from_trace(trace)
+    new_trace.bound_symbols = new_bsyms
+    new_trace.set_provenance(TraceProvenance("Inserted prims.shape for symbolic dims"))
     return new_trace
