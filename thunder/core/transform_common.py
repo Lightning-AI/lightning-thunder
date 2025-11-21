@@ -202,10 +202,10 @@ def dce_bsyms(
     return dced_bound_symbols
 
 
-def dce(trace: Trace, needed_proxies: set[Variable]) -> Trace:
+def dce(trace: Trace, needed_proxies: set[Variable] = None) -> Trace:
     start_time_ns = time.perf_counter_ns()
 
-    bsyms = trace.bound_symbol
+    bsyms = trace.bound_symbols
     dced_bsyms = dce_bsyms(bsyms, trace.output, needed_proxies)
     result = from_trace(trace)
     result.bound_symbols = dced_bsyms
