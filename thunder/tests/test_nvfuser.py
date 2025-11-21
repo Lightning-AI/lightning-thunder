@@ -946,6 +946,25 @@ def test_embedding(
     executors=(nvFuserExecutor,),
     dtypes=NOTHING,
 )
+def test_full_symbolic_values(executor, device: str, dtype: dtypes.dtype):
+    def foo(a):
+        return torch.full(a.shape, 0, device="cuda", dtype=dtype)
+
+    jfoo = thunder.jit(foo, cache="symbolic values")
+
+    for shape in ((2, 3), (3, 2)):
+        a = torch.randn(shape, device=device)
+        actual = jfoo(a)
+        expected = foo(a)
+        torch.testing.assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 1
+
+
+@instantiate(
+    executors=(nvFuserExecutor,),
+    dtypes=NOTHING,
+)
 def test_slice_dynamic_extent(executor, device: str, dtype: dtypes.dtype):
     def foo(b):
         # TODO: 'device=device' doesn't work for "symbolic values" cache policy
