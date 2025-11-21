@@ -948,6 +948,8 @@ def test_embedding(
 )
 def test_full_symbolic_values(executor, device: str, dtype: dtypes.dtype):
     def foo(a):
+        # TODO: 'device=device' doesn't work for "symbolic values" cache policy
+        # See issue: https://github.com/Lightning-AI/lightning-thunder/issues/1710
         return torch.full(a.shape, 0, device="cuda", dtype=dtype)
 
     jfoo = thunder.jit(foo, cache="symbolic values")
