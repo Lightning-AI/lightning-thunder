@@ -503,7 +503,7 @@ def is_node_supported_by_thunder(
         if target is None and hasattr(torch.cuda.Stream, node.target):
             split_reason = SplitReason(
                 SplitReasonType.MISSING_OP_SUPPORT,
-                lambda: f"node with name {node.name} and target {node.target} is a `torch.cuda.Stream` method which is not supported by Thunder.",
+                f"node with name {node.name} and target {node.target} is a `torch.cuda.Stream` method which is not supported by Thunder.",
             )
             return False, split_reason
         assert target is not None, f"Failed to find method {node.target}"
