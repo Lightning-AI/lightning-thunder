@@ -96,8 +96,33 @@ class Region:
         return s
 
 
-# Helper to use torch.autograd.Function as an implementation for a symbol.
 class Context:
+    """Helper to use torch.autograd.Function as an implementation for a symbol.
+
+    This class provides a minimal interface for saving and retrieving tensors between
+    forward and backward passes, compatible with torch.autograd.Function implementations.
+
+    Usage Pattern:
+        Forward Pass:
+            1. Create Context() instance
+            2. Pass to autograd function which calls ctx.save_for_backward(...)
+            3. Extract tensors with ctx.pop_saved_tensors()
+
+        Backward Pass:
+            1. Restore tensors using set_saved_tensors(ctx, saved_tensors) context manager
+            2. Call backward function which accesses ctx.saved_tensors
+
+    Example:
+        # Forward
+        ctx = Context()
+        out = CustomFunction.forward(ctx, x, weight)
+        saved = ctx.pop_saved_tensors()
+
+        # Backward
+        with set_saved_tensors(ctx, saved):
+            grads = CustomFunction.backward(ctx, grad_out)
+    """
+
     def __init__(self):
         self.saved_tensors = ()
 
