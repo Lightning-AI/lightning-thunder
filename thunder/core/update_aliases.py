@@ -66,6 +66,62 @@ def _can_be_reshaped(arg, arg_to_replace):
         arg_to_replace_numel = arg_to_replace.numel
     return arg_numel == arg_to_replace_numel
 
+def _merge_overlapping_groups(groups: list[set]) -> list[set]:
+    """
+    Merge overlapping sets in a list of sets.
+    
+    When tensors share storage transitively (e.g., a→b→c), the initial grouping
+    may create overlapping sets like [{a,b}, {b,c}]. This function merges them
+    into [{a,b,c}] to preserve transitive relationships.
+    
+    Args:
+        groups: List of sets, potentially with overlaps
+        
+    Returns:
+        List of sets with all overlapping groups merged
+        
+    Example:
+        >>> _merge_overlapping_groups([{1, 2}, {2, 3}, {4, 5}])
+        [{1, 2, 3}, {4, 5}]
+    """
+    if not groups:
+        return []
+    
+    merged = []
+    for group in groups:
+        # Check if this group overlaps with any existing merged group
+        found_overlap = False
+        for existing in merged:
+            if group.intersection(existing):
+                # Merge into existing group
+                existing.update(group)
+                found_overlap = True
+                break
+        
+        if not found_overlap:
+            # No overlap found, add as new group
+            merged.append(group.copy())
+    
+    # Keep merging until no more overlaps exist (handles transitive overlaps)
+    # Example: [{1,2}, {2,3}, {3,4}] needs multiple passes
+    changed = True
+    while changed:
+        changed = False
+        new_merged = []
+        for group in merged:
+            found_overlap = False
+            for existing in new_merged:
+                if group.intersection(existing):
+                    existing.update(group)
+                    found_overlap = True
+                    changed = True
+                    break
+            if not found_overlap:
+                new_merged.append(group)
+        merged = new_merged
+    
+    return merged
+
 
 def replace_args_with_alias_map(
     computation_trace: Trace,
@@ -158,12 +214,14 @@ def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[li
             else:
                 intermediate_view_groups.append(out_tensors.union({in_tensor}))
 
-    # filter out view groups that don't have any tensors involved in inplace ops
-    input_view_groups = [group for group in input_view_groups if len(group.intersection(inplace_inputs)) != 0]
-    intermediate_view_groups = [
-        group for group in intermediate_view_groups if len(group.intersection(inplace_inputs)) != 0
-    ]
+    # Merge overlapping groups first to handle transitive relationships
+    # (e.g., if x aliases y, and y.view() creates y2, then {x,y} and {y,y2} should merge to {x,y,y2})
     view_groups = input_view_groups + intermediate_view_groups
+    view_groups = _merge_overlapping_groups(view_groups)
+    
+    # Filter out view groups that don't have any tensors involved in inplace ops
+    # This must happen AFTER merging so we don't discard groups that are transitively related
+    view_groups = [group for group in view_groups if len(group.intersection(inplace_inputs)) != 0]
     viewed = set(reduce(set.union, view_groups, set()))
     encountered = set(reduce(set.union, input_view_groups, set()))
 
@@ -183,15 +241,37 @@ def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[li
                 bsyms.append(bsym.from_bsym_swap_proxies(swap_map, skip_output=True))
                 continue
 
-            new_aliases = _get_new_aliases(views_encountered, computation_trace)
+            # For view creation ops, just create the view with swapped inputs
+            # Don't insert update_aliases - the view output will be included in the next update_aliases
+            # (which happens before the inplace op)
+            if _is_view_creation_op(bsym):
+                new_bsym = bsym.from_bsym_swap_proxies(swap_map)
+                bsyms.append(new_bsym)
+                # Mark the output as encountered so it can be included in future update_aliases
+                encountered.update(out_tensors)
+            else:
+                # For inplace ops or ops involving viewed args, insert update_aliases before the op
+                # Filter to only include shape-compatible tensors in the same update_aliases call
+                if len(views_encountered) > 0:
+                    # Pick a reference tensor to check compatibility
+                    reference = next(iter(views_encountered))
+                    reference_proxy = unvariableify(reference)
+                    compatible_views = {v for v in views_encountered if _can_be_reshaped(reference_proxy, unvariableify(v))}
+                    views_encountered = compatible_views
+                
+                if views_encountered:
+                    new_aliases = _get_new_aliases(views_encountered, computation_trace)
 
-            update_bsym, swap_map = _get_update_bsym(views_encountered, swap_map, new_aliases)
-            new_bsym = bsym.from_bsym_swap_proxies(swap_map)
-            if has_tags(bsym, {BoundSymbolTag.BACKWARD}):
-                update_bsym.tags.add(BoundSymbolTag.BACKWARD)
-            bsyms.append(update_bsym)
-            encountered.update(out_tensors)
-            bsyms.append(new_bsym)
+                    update_bsym, swap_map = _get_update_bsym(views_encountered, swap_map, new_aliases)
+                    new_bsym = bsym.from_bsym_swap_proxies(swap_map)
+                    if has_tags(bsym, {BoundSymbolTag.BACKWARD}):
+                        update_bsym.tags.add(BoundSymbolTag.BACKWARD)
+                    bsyms.append(update_bsym)
+                    encountered.update(out_tensors)
+                    bsyms.append(new_bsym)
+                else:
+                    # No compatible views to update, just process the operation
+                    bsyms.append(bsym.from_bsym_swap_proxies(swap_map))
             if _is_inplace_op(bsym) and len(out_tensors) == 1 and len(in_tensors) == 1:
                 #  This relies on these being one element sets (ltorch.setitem_ yields no outs).
                 swap_map = _update_swap_map(swap_map, in_tensors.pop(), unvariableify(out_tensors.pop()))
