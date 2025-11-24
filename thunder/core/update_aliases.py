@@ -251,14 +251,6 @@ def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[li
                 encountered.update(out_tensors)
             else:
                 # For inplace ops or ops involving viewed args, insert update_aliases before the op
-                # Filter to only include shape-compatible tensors in the same update_aliases call
-                if len(views_encountered) > 0:
-                    # Pick a reference tensor to check compatibility
-                    reference = next(iter(views_encountered))
-                    reference_proxy = unvariableify(reference)
-                    compatible_views = {v for v in views_encountered if _can_be_reshaped(reference_proxy, unvariableify(v))}
-                    views_encountered = compatible_views
-                
                 if views_encountered:
                     new_aliases = _get_new_aliases(views_encountered, computation_trace)
 
