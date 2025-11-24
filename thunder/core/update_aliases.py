@@ -141,7 +141,7 @@ def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[li
     computation_trace, view_groups = replace_args_with_alias_map(computation_trace, alias_tensor_indices)
 
     # Second pass: identify views, their originals, and operands involved in inplace ops
-    encountered = set(reduce(set.union, view_groups, set()))
+    encountered = set().union(*view_groups)
     inplace_inputs = set()
     for bsym in computation_trace.bound_symbols:
         if _is_inplace_op(bsym) or _is_view_creation_op(bsym):
