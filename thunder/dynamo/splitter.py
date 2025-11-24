@@ -43,7 +43,6 @@ def _preprocess_cuda_stream_objects(gm: GraphModule) -> None:
             example_value = node.meta["example_value"]
             if isinstance(example_value, torch.cuda.Stream):
                 node.meta["example_value"] = None
-                node.meta["_original_stream_type"] = type(example_value).__name__
 
 
 def _splitter(
