@@ -206,7 +206,6 @@ def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[li
             out_tensors = set(map(variableify, filter(lambda p: isinstance(p, TensorProxy), bsym.flat_proxy_outs)))
             if _is_inplace_op(bsym):
                 inplace_inputs.add(in_tensor)
-                out_tensors = set()
             for group in intermediate_view_groups:
                 if in_tensor in group:
                     group.update(out_tensors)
