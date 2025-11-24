@@ -138,10 +138,10 @@ def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[li
 
     # First pass: identify inputs which are views of each other and swap them out with a default,
     # reshaping if necessary.
-    computation_trace, input_view_groups = replace_args_with_alias_map(computation_trace, alias_tensor_indices)
+    computation_trace, view_groups = replace_args_with_alias_map(computation_trace, alias_tensor_indices)
 
     # Second pass: identify views, their originals, and operands involved in inplace ops
-    intermediate_view_groups = []
+    encountered = set(reduce(set.union, view_groups, set()))
     inplace_inputs = set()
     for bsym in computation_trace.bound_symbols:
         if _is_inplace_op(bsym) or _is_view_creation_op(bsym):
@@ -151,21 +151,16 @@ def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[li
             if _is_inplace_op(bsym):
                 inplace_inputs.add(in_tensor)
                 out_tensors = set()
-            for group in intermediate_view_groups:
+            for group in view_groups:
                 if in_tensor in group:
                     group.update(out_tensors)
                     break
             else:
-                intermediate_view_groups.append(out_tensors.union({in_tensor}))
+                view_groups.append(out_tensors.union({in_tensor}))
 
     # filter out view groups that don't have any tensors involved in inplace ops
-    input_view_groups = [group for group in input_view_groups if len(group.intersection(inplace_inputs)) != 0]
-    intermediate_view_groups = [
-        group for group in intermediate_view_groups if len(group.intersection(inplace_inputs)) != 0
-    ]
-    view_groups = input_view_groups + intermediate_view_groups
+    view_groups = [group for group in view_groups if len(group.intersection(inplace_inputs)) != 0]
     viewed = set(reduce(set.union, view_groups, set()))
-    encountered = set(reduce(set.union, input_view_groups, set()))
 
     # Third pass: insert alias updates
     for bsym in computation_trace.bound_symbols:
