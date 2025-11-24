@@ -11,6 +11,7 @@ if not tdist.is_available():
 import torch.nn as nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.testing import assert_close
+from lightning_utilities.core.imports import package_available
 
 import thunder
 import thunder.executors
@@ -19,11 +20,6 @@ from thunder.core import devices
 from thunder.distributed import ddp
 from thunder.tests.framework import instantiate, TorchExecutor
 
-from thunder.executors.transformer_engine_v1ex import (
-    transformer_engine_v1_ex,
-    TE_AVAILABLE,
-    te_sync_fp8_meta_bwd,
-)
 
 from thunder.executors.transformer_engineex import transformer_engine_ex, TransformerEngineTransform
 
@@ -32,6 +28,7 @@ is_fp8_supported: bool = False
 # This will be correctly updated below when TE Engine is installed
 # and if the current environment doesn't support FP8.
 fp8_support_reason: str = ""
+TE_AVAILABLE = package_available("transformer_engine")
 if TE_AVAILABLE:
     from transformer_engine.pytorch import fp8_autocast
     from transformer_engine.pytorch import Linear as TELinear
@@ -40,7 +37,7 @@ if TE_AVAILABLE:
         FP8GlobalStateManager,
         get_default_fp8_recipe,
     )
-    from transformer_engine.common.recipe import MXFP8BlockScaling
+    from thunder.tests.test_transformer_engine_executor import te_assert_close
 
     is_fp8_supported, fp8_support_reason = check_fp8_support()
 
@@ -359,221 +356,6 @@ def _test_native_ddp_helper(input_data):
     return None
 
 
-def _test_ddp_transformer_engine_v1(input_data):
-    # Test Description: We run a dummy training loop for a simple `Linear(Relu(Linear(x)))`
-    # model with thunder (using TE executor) and with PyTorch eager + TE
-    # and verify that the weights have converged to same value and
-    # fp8 meta state is same after `n_iter`.
-    init_method, world_size, rank, executor, device, dtype, _unused_kwargs = input_data
-    devicetype = devices.device_from_string(device).devicetype
-    _unused_dtype = ltorch.to_torch_dtype(dtype)
-    init_per_process_distributed(init_method, devicetype, world_size, rank)
-
-    torch.cuda.set_device(rank)
-
-    dim = 256
-    # Running more iterations leads to `nan` for both eager and thunder
-    # with BlockScaling.
-    # Potentially because we are training on dummy data and task
-    n_iter = 5
-
-    class ThunderModel(torch.nn.Module):
-        def __init__(self) -> None:
-            super().__init__()
-            self.fc1 = torch.nn.Linear(dim, dim, bias=False)
-            self.fc2 = torch.nn.Linear(dim, dim, bias=False)
-
-        def forward(self, x):
-            return self.fc2(torch.nn.functional.relu(self.fc1(x)))
-
-    # Weights
-    fc1_weight = torch.randn(dim, dim, requires_grad=True).cuda()
-    fc2_weight = torch.randn(dim, dim, requires_grad=True).cuda()
-
-    # Inputs (different input on different rank).
-    if rank == 0:
-        x = torch.arange(dim * dim, dtype=torch.float).view(dim, dim).cuda()
-    if rank == 1:
-        x = torch.randn(dim, dim).cuda() * 100
-
-    thunder_model = ThunderModel().cuda()
-    thunder_model.fc1.weight.data = fc1_weight.clone()
-    thunder_model.fc2.weight.data = fc2_weight.clone()
-
-    jit_model = thunder.distributed.ddp(
-        thunder.jit(
-            thunder_model,
-            executors=[
-                transformer_engine_v1_ex,
-            ]
-            + executor.executors_list(),
-        )
-    )
-
-    optim = torch.optim.SGD(jit_model.parameters())
-
-    for _ in range(n_iter):
-        o = jit_model(x).sum()
-        o.backward()
-        optim.step()
-        optim.zero_grad()
-
-    # See https://github.com/NVIDIA/TransformerEngine/issues/814
-    FP8GlobalStateManager.reset()
-
-    class TEModel(torch.nn.Module):
-        def __init__(self) -> None:
-            super().__init__()
-            self.fc1 = TELinear(dim, dim, bias=False)
-            self.fc2 = TELinear(dim, dim, bias=False)
-
-        def forward(self, x):
-            return self.fc2(torch.nn.functional.relu(self.fc1(x)))
-
-    te_model = TEModel().cuda()
-    te_model.fc1.weight.data = fc1_weight.clone()
-    te_model.fc2.weight.data = fc2_weight.clone()
-
-    ddp_model = DDP(te_model)
-
-    optim = torch.optim.SGD(te_model.parameters())
-
-    for _ in range(n_iter):
-        with fp8_autocast():
-            o = ddp_model(x).sum()
-
-        o.backward()
-        optim.step()
-        optim.zero_grad()
-
-    thunder_to_te_layer_map = {"te_linear_0": te_model.fc1, "te_linear_1": te_model.fc2}
-
-    fwd_traces = thunder.last_traces(jit_model)
-
-    def is_same_across_ranks(t):
-        t_clone = t.clone()
-        torch.distributed.all_reduce(t_clone, op=torch.distributed.ReduceOp.AVG)
-        assert_close(t, t_clone)
-
-    # Compare the state of the two models.
-    comparison_exceptions = []
-    if not isinstance(
-        get_default_fp8_recipe(), MXFP8BlockScaling
-    ):  # MXFP8BlockScaling recipe doesn't have state like scale, amax_history.
-        for bound_symbol in fwd_traces[-1].bound_symbols:
-            if "te_linear" in bound_symbol.sym.name:
-                thunder_fp8_meta = bound_symbol._call_ctx[bound_symbol.sym.name].func.fp8_meta
-                te_fp8_meta = thunder_to_te_layer_map[bound_symbol.sym.name].fp8_meta
-                try:
-                    # fwd tensor history
-                    assert_close(thunder_fp8_meta["scaling_fwd"].scale, te_fp8_meta["scaling_fwd"].scale)
-                    assert_close(thunder_fp8_meta["scaling_fwd"].amax_history, te_fp8_meta["scaling_fwd"].amax_history)
-                    # bwd tensor history
-                    assert_close(thunder_fp8_meta["scaling_bwd"].scale, te_fp8_meta["scaling_bwd"].scale)
-                    assert_close(thunder_fp8_meta["scaling_bwd"].amax_history, te_fp8_meta["scaling_bwd"].amax_history)
-
-                    # This has to be on all ranks so that the computation is not blocked
-                    is_same_across_ranks(thunder_fp8_meta["scaling_fwd"].scale)
-                    # NOTE: TE forward tensor meta-data sync
-                    # Syncing of FP8 meta-data happens in two step in the forward pass.
-                    # 1. When we enter the fp8_autocast(), all the forward fp8 meta-data
-                    # in global buffer is synced.
-                    # See: https://github.com/NVIDIA/TransformerEngine/blob/6a9edc38bf9b941b7d369af5103fa8fe0b121d61/transformer_engine/pytorch/fp8.py#L409-L412
-                    # 2. Post this, in the forward pass of the module in `prepare_forward`,
-                    # we read from the global-buffer the synced meta-data.
-                    # See: https://github.com/NVIDIA/TransformerEngine/blob/6a9edc38bf9b941b7d369af5103fa8fe0b121d61/transformer_engine/pytorch/module/base.py#L539-L545
-                    # However, at the end of this forward pass, we have seen new inputs and outputs. Their amax are recorded on
-                    # 0th row of `amax_history` (which will be synced only in the next forward pass).
-                    # So, here we check that every row except for `0` is same.
-                    is_same_across_ranks(thunder_fp8_meta["scaling_fwd"].amax_history[1:])
-                    is_same_across_ranks(thunder_fp8_meta["scaling_bwd"].scale)
-                    is_same_across_ranks(thunder_fp8_meta["scaling_bwd"].amax_history)
-                except Exception as e:
-                    # Return exceptions only for rank==0
-                    if rank == 0:
-                        comparison_exceptions.append(e)
-
-    # Compare weights after `n_iters`
-    try:
-        assert_close(thunder_model.fc1.weight, te_model.fc1.weight)
-        assert_close(thunder_model.fc2.weight, te_model.fc2.weight)
-    except Exception as e:
-        # Return exceptions only for rank==0
-        if rank == 0:
-            comparison_exceptions.append(e)
-
-    return comparison_exceptions
-
-
-def _test_ddp_transformer_engine_v1_llama_sanity(input_data):
-    # Test Description: We run a dummy training loop for a Transformer Model
-    # We run a few iterations to see that TransformerEngine doesn't throw internal assertion
-    # due to reordering of forward and backward operators.
-    # (This test will fail without `_rearrange_transformer_engine_linear` in `torch_autograd.py`)
-    # For more details, see docstring for `_rearrange_transformer_engine_linear` in transformer_engine_v1_ex.py.
-    from thunder.tests.llama2_model import Transformer, ModelArgs
-
-    init_method, world_size, rank, executor, device, dtype, _unused_kwargs = input_data
-    devicetype = devices.device_from_string(device).devicetype
-    _unused_dtype = ltorch.to_torch_dtype(dtype)
-    init_per_process_distributed(init_method, devicetype, world_size, rank)
-
-    torch.cuda.set_device(rank)
-    # data
-    batch_size = 64
-    max_seq_len = 64
-    vocab_size = 64
-
-    model_args = dict(
-        dim=64,
-        n_layers=1,
-        n_heads=2,
-        n_kv_heads=2,
-        vocab_size=vocab_size,
-        multiple_of=32,
-        max_seq_len=max_seq_len,
-        dropout=0.0,
-        hidden_dim=64,
-    )
-    gptconf = ModelArgs(**model_args)
-    model = Transformer(gptconf)
-    model.to(device)
-    x = torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int64, device=device)
-    y = torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int64, device=device)
-    jit_model = thunder.distributed.ddp(
-        thunder.jit(model, executors=(transformer_engine_v1_ex,) + thunder.get_default_executors())
-    )
-
-    sanity_exceptions = []
-    try:
-        for _ in range(5):
-            out = jit_model(x, y).sum()
-            out.backward()
-
-        bwd_exec_trace = thunder.last_backward_traces(jit_model)[-1]
-
-        # Last symbol of the trace should be `return`
-        return_sym_idx = len(bwd_exec_trace.bound_symbols) - 1
-        assert thunder.core.prims.PrimIDs.RETURN == bwd_exec_trace.bound_symbols[return_sym_idx].sym.id
-
-        # Verify that the symbol to sync backward
-        # fp8 metadata is present in backward trace.
-        for idx, bsym in enumerate(bwd_exec_trace.bound_symbols):
-            if bsym.sym.id == te_sync_fp8_meta_bwd.id:
-                # Verify that `te_sync_fp8_meta_bwd` is before the last symbol of the trace
-                # which is `return`
-                assert idx < return_sym_idx
-                break
-        else:
-            raise RuntimeError("Backward sync symbol not found.")
-    except Exception as e:
-        sanity_exceptions.append(e)
-
-    if rank == 0:
-        return sanity_exceptions
-    return None
-
-
 def _test_ddp_transformer_engine(input_data):
     # Test Description: We run a dummy training loop for a simple `Linear(Relu(Linear(x)))`
     # model with thunder (using TE executor) and with PyTorch eager + TE
@@ -667,8 +449,8 @@ def _test_ddp_transformer_engine(input_data):
     # Compare weights after `n_iters`
     comparison_exceptions = []
     try:
-        assert_close(thunder_model.fc1.weight, te_model.fc1.weight)
-        assert_close(thunder_model.fc2.weight, te_model.fc2.weight)
+        te_assert_close(thunder_model.fc1.weight, te_model.fc1.weight, te_recipe=fp8_recipe)
+        te_assert_close(thunder_model.fc2.weight, te_model.fc2.weight, te_recipe=fp8_recipe)
     except Exception as e:
         # Return exceptions only for rank==0
         if rank == 0:
@@ -681,8 +463,6 @@ def _test_ddp_transformer_engine_llama_sanity(input_data):
     # Test Description: We run a dummy training loop for a Transformer Model
     # We run a few iterations to see that TransformerEngine doesn't throw internal assertion
     # due to reordering of forward and backward operators.
-    # (This test will fail without `_rearrange_transformer_engine_linear` in `torch_autograd.py`)
-    # For more details, see docstring for `_rearrange_transformer_engine_linear` in transformer_engine_v1_ex.py.
     from thunder.tests.llama2_model import Transformer, ModelArgs
     from thunder.core.proxies import variableify
 
@@ -784,51 +564,6 @@ def _test_ddp_transformer_engine_llama_sanity(input_data):
 )
 @distributed_wrapper("test_native_ddp", _test_native_ddp_helper)
 def test_native_ddp(executor, devices, dtype, bucket_size_in_mb):
-    pass
-
-
-@instantiate(
-    dtypes=(thunder.float32,),
-    num_devices=2,
-    devicetypes=(devices.DeviceType.CUDA,),
-    executors=(TorchExecutor,),
-    decorators=(
-        pytest.mark.skipif(not TE_AVAILABLE, reason="TransformerEngine is not installed."),
-        pytest.mark.skipif(not is_fp8_supported, reason=fp8_support_reason),
-        # NOTE: Setting `NVTE_TORCH_COMPILE`
-        # It is important to set this flag so that TE doesn't use
-        # `torch.compile` to fuse a few operations. This is because
-        # `torch.compile` creates a new process and that leads to
-        # the error : daemonic processes are not allowed to have children
-        # when running the tests.
-        # With the setting below, we use `torch.jit` for this test suite
-        # See: https://github.com/NVIDIA/TransformerEngine/blob/a38b291b0d1b04847e8ab1df8550df642a03a27d/transformer_engine/pytorch/jit.py#L11-L19
-        # NOTE: We don't pass `clear=True` to `unittest.mock.patch.dict` as that may clear paths
-        # from environment leading to picking up of incorrect dependencies in the spawned process.
-        unittest.mock.patch.dict(os.environ, {"NVTE_TORCH_COMPILE": "0"}),
-    ),
-)
-@distributed_wrapper("test_ddp_transformer_engine_v1", _test_ddp_transformer_engine_v1)
-def test_ddp_transformer_engine_v1(executor, devices, dtype):
-    pass
-
-
-@instantiate(
-    dtypes=(thunder.float32,),
-    num_devices=2,
-    devicetypes=(devices.DeviceType.CUDA,),
-    executors=(TorchExecutor,),
-    decorators=(
-        pytest.mark.skipif(not TE_AVAILABLE, reason="TransformerEngine is not installed."),
-        pytest.mark.skipif(not is_fp8_supported, reason=fp8_support_reason),
-        # See NOTE: Setting `NVTE_TORCH_COMPILE`
-        # NOTE: We don't pass `clear=True` to `unittest.mock.patch.dict` as that may clear paths
-        # from environment leading to picking up of incorrect dependencies in the spawned process.
-        unittest.mock.patch.dict(os.environ, {"NVTE_TORCH_COMPILE": "0"}),
-    ),
-)
-@distributed_wrapper("test_ddp_transformer_engine_v1_llama_sanity", _test_ddp_transformer_engine_v1_llama_sanity)
-def test_ddp_transformer_engine_v1_llama_sanity(executor, devices, dtype):
     pass
 
 
