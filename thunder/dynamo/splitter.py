@@ -31,6 +31,8 @@ if TYPE_CHECKING:
     from torch.fx import GraphModule
 
 
+# TODO: investigate and see if there's a cleaner way to prevent the error.
+# ``cannot extract sympy expressions from <torch.cuda.Stream device=cuda:0 cuda_stream=0x0> <class 'torch.cuda.streams.Stream'>``
 def _preprocess_cuda_stream_objects(gm: GraphModule) -> None:
     """Preprocess the graph to handle :class:`torch.cuda.Stream` objects.
 
