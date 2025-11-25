@@ -114,6 +114,13 @@ def replace_args_with_alias_map(
     return no_implicit_alias_trace, swap_map_for_aliases
 
 
+def _unswap(swap_map, alias):
+    reversed_swap_map = {variableify(v): unvariableify(k) for k, v in swap_map.items()}
+    while (valias := variableify(alias)) in reversed_swap_map:
+        alias = reversed_swap_map[valias]
+    return variableify(alias)
+
+
 def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[list[int]]) -> Trace:
     if not any(_is_inplace_op(bsym) for bsym in computation_trace.bound_symbols):
         return computation_trace
@@ -158,10 +165,12 @@ def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[li
                 in_tensors = set(in_tensors)
             out_tensors = set(map(variableify, filter(lambda p: isinstance(p, TensorProxy), bsym.flat_proxy_outs)))
             encountered.update(in_tensors)
-            group = set(reduce(set.union, filter(lambda g: any(g.intersection(in_tensors)), view_groups), set()))
+            unswapped = {_unswap(swap_map, in_tensor) for in_tensor in in_tensors}
+            group = set().union(*filter(lambda g: any(g.intersection(unswapped)), view_groups))
             if not group or not (views_encountered := group.intersection(encountered)):
                 # If group is empty, this is a view creation with operands that are not involved in any inplace ops.
                 bsyms.append(bsym.from_bsym_swap_proxies(swap_map, skip_output=True))
+                viewed = viewed.union({variableify(swap_map.get(view, view)) for view in viewed})
                 continue
 
             new_aliases = _get_new_aliases(views_encountered, computation_trace)
@@ -179,6 +188,7 @@ def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[li
 
         else:
             bsyms.append(bsym.from_bsym_swap_proxies(swap_map))
+        viewed = viewed.union({variableify(swap_map.get(view, view)) for view in viewed})
 
     alias_updated_trace = from_trace(computation_trace)
     alias_updated_trace.set_provenance(TraceProvenance("Update aliases for in-place ops"))
