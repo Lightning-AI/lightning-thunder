@@ -554,6 +554,20 @@ is_cuda_opinfo = OpInfo(
 tensor_properties.append(is_cuda_opinfo)
 
 
+def _is_cpu_torch(x: torch.Tensor) -> bool:
+    return x.is_cpu
+
+
+is_cpu_opinfo = OpInfo(
+    ltorch.is_cpu,
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=_is_cpu_torch,
+    dtypes=(datatypes.all_dtypes),
+)
+
+tensor_properties.append(is_cpu_opinfo)
+
+
 def _is_nested_torch(x: torch.Tensor) -> bool:
     return x.is_nested
 
