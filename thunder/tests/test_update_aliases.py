@@ -542,3 +542,33 @@ def test_aliasing_for_viewed_input_of_different_shapes(executor, device, dtype, 
     torch.testing.assert_close(a, a_)
     torch.testing.assert_close(b, b_)
     torch.testing.assert_close(c, c_)
+
+
+@instantiate(
+    dtypes=(dtypes.float32,),
+)
+def test_update_aliases_count(executor, device, dtype):
+    def f(x):
+        x.sin_()
+        return x * x * x * x
+
+    def g(x):
+        x.sin_()
+        x.cos_()
+        return x * x * x * x
+
+    expected_num_update_aliases = {
+        f: 1,  # before sin_
+        g: 2,  # before sin_ and cos_; latter is a hack to cause fusion break
+    }
+
+    for fn in [f, g]:
+        a = make_tensor((2, 3), dtype=dtypes.to_torch_dtype(dtype), device=device)
+        a_ = a.clone().detach()
+        jfn = executor.make_callable(fn)
+        actual = jfn(a)
+        expected = fn(a_)
+        torch.testing.assert_close(actual, expected)
+        extrace = thunder.last_traces(jfn)[-1]
+        actual_num_update_aliases = len([bsym for bsym in extrace.bound_symbols if bsym.sym.name == "update_aliases"])
+        assert actual_num_update_aliases == expected_num_update_aliases[fn]
