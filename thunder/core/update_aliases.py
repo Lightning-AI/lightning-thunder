@@ -179,9 +179,8 @@ def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[li
             views_encountered = group.intersection(encountered)
 
             if _is_inplace_op(bsym):
-                # Super-hacky workaround to insert fusion break because nvFuser doesn't support mutation on intermediates
-                # See https://github.com/Lightning-AI/lightning-thunder/issues/2768#issuecomment-3581908434
-                views_encountered = in_tensors
+                # This is a hack to insert fusion break because nvFuser doesn't support mutation on intermediates
+                views_encountered.update(in_tensors)
 
             if not views_encountered:
                 # This is a view creation with operands that are not involved in any inplace ops.
