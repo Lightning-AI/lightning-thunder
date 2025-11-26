@@ -10,6 +10,7 @@ from types import NoneType
 from collections import defaultdict
 from collections import namedtuple
 import warnings
+import copy
 
 from looseversion import LooseVersion
 
@@ -18,6 +19,8 @@ from torch.nn.modules.module import _addindent
 from torch.utils.weak import TensorWeakRef
 from torch._guards import tracing, TracingContext
 from torch._subclasses.fake_tensor import DynamicOutputShapeException
+
+from torch._inductor import list_mode_options
 
 if torch.distributed.is_available():
     from torch.distributed.tensor import DTensor
@@ -159,11 +162,12 @@ class _ThunderSplitGraphModule:
 
 
 class LazyInductorModule(torch.nn.Module):
-    def __init__(self, graph_module, fake_mode):
+    def __init__(self, graph_module, fake_mode, **compile_options):
         super().__init__()
         self.graph_module = graph_module
         self.compiled_fn = None
         self.fake_mode = fake_mode
+        self.compile_options = compile_options
 
         # For ease of debugging, we add graph attribute so GraphModule.print_readable will print it
         self.graph = graph_module.graph
@@ -198,11 +202,23 @@ class LazyInductorModule(torch.nn.Module):
                 # Inductor needs fake_mode, particularly its shape_env, to handle SymInts
                 with tracing(TracingContext(fake_mode=self.fake_mode)):
                     try:
-                        self.compiled_fn = torch._inductor.compile(self.graph_module, args)
+                        original_graph = copy.deepcopy(self.graph_module.graph)
+                        # Extract and merge options from compile_options
+                        options = self.compile_options.get("options", {}).copy()
+                        mode = self.compile_options.get("mode")
+                        if mode:
+                            mode_options = list_mode_options().get(mode, {})
+                            options.update(mode_options)
+
+                        self.compiled_fn = torch._inductor.compile(self.graph_module, args, options=options)
                     except DynamicOutputShapeException as e:
                         # This exception is meant to be handled by Dynamo, which is responsible for graph break
                         # TODO: Use torch.compile for fallback. Ensure its correctness.
                         warnings.warn(f"Dynamic output shape operator encountered: {e}. Falling back to eager.")
+                        # NOTE: torch._inductor.compile alters the output to always be a tuple.
+                        # Restore original single-element return, if needed.
+                        self.graph_module.graph = original_graph
+                        self.graph_module.recompile()
                         self.compiled_fn = self.graph_module
 
         return self.compiled_fn(*args)
@@ -399,17 +415,32 @@ def get_nodes_in_unsupported_ctx_regions(gm: torch.fx.GraphModule) -> set[torch.
     # NOTE - Currently doesn't ban any ctx (previously used for `no_grad` and `autocast`).
 
     nodes_in_unsupported_ctx_regions: set[torch.fx.Node] = set()
-    ctx_cnt = 0  # Count of  we have seen till now
+    ctx_stack = []  # Unsupported context.__enter__ we have seen till now.
 
-    UNSUPPORTED_THUNDER_CTX = (torch._C._functorch._vmap_increment_nesting, torch._C._functorch._vmap_decrement_nesting)
+    CTX_ENTER_EXIT_MAP = {
+        torch._C._functorch._vmap_increment_nesting: torch._C._functorch._vmap_decrement_nesting,
+    }
+
+    # Older version of PyTorch may not have `torch._functorch.predispatch`
+    if hasattr(torch._functorch, "predispatch"):
+        CTX_ENTER_EXIT_MAP[torch._functorch.predispatch._vmap_increment_nesting] = (
+            torch._functorch.predispatch._vmap_decrement_nesting
+        )
+
+    UNSUPPORTED_THUNDER_CTX_ENTER = tuple(CTX_ENTER_EXIT_MAP.keys())
+    UNSUPPORTED_THUNDER_CTX_EXIT = tuple(CTX_ENTER_EXIT_MAP.values())
+
     for node in gm.graph.nodes:
-        if node.op == "call_function" and node.target in UNSUPPORTED_THUNDER_CTX:
-            ctx_cnt += 1
-        elif node.op == "call_function" and node.target in UNSUPPORTED_THUNDER_CTX:
-            ctx_cnt -= 1
-        else:
-            if ctx_cnt > 0:
-                nodes_in_unsupported_ctx_regions.add(node)
+        # All the cases when `node` should be marked as in unsupported ctx region.
+        if node.op == "call_function" and node.target in UNSUPPORTED_THUNDER_CTX_ENTER:
+            ctx_stack.append(node.target)
+            nodes_in_unsupported_ctx_regions.add(node)
+        elif node.op == "call_function" and node.target in UNSUPPORTED_THUNDER_CTX_EXIT:
+            enter_fn = ctx_stack.pop()
+            assert CTX_ENTER_EXIT_MAP[enter_fn] == node.target, "Mismatched ctx enter-exit"
+            nodes_in_unsupported_ctx_regions.add(node)
+        elif len(ctx_stack) > 0:
+            nodes_in_unsupported_ctx_regions.add(node)
 
     return nodes_in_unsupported_ctx_regions
 

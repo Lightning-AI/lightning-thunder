@@ -59,6 +59,8 @@ __all__ = [
     "is_available",
     "_register_custom_op",
     "_register_nvfuser_translator",
+    "complex_dtype_conversion_map",
+    "real_dtype_conversion_map",
 ]
 
 # NOTE torch is a requirement
@@ -79,6 +81,20 @@ _torch_noinline_functions = {
     torch.nn.modules.utils._pair,
     torch.nn.modules.utils._triple,
     torch.nn.modules.utils._quadruple,
+}
+
+# Map real dtypes to complex dtypes
+complex_dtype_conversion_map = {
+    # float16 not supported: https://docs.pytorch.org/docs/stable/generated/torch.view_as_complex.html
+    dtypes.float32: dtypes.complex64,
+    dtypes.float64: dtypes.complex128,
+}
+
+# Map complex dtypes to real dtypes
+real_dtype_conversion_map = {
+    dtypes.complex32: dtypes.float16,
+    dtypes.complex64: dtypes.float32,
+    dtypes.complex128: dtypes.float64,
 }
 
 # Maps torch functions, like torch.foo, to their corresponding thunder.torch functions
@@ -315,6 +331,72 @@ register_method("is_complex", is_complex)
 @torchsymbol(torch.Tensor.is_cuda, is_property=True, id="torch.is_cuda")
 def is_cuda(a: TensorLike, /) -> bool:
     return a.device.devicetype is devices.DeviceType.CUDA
+
+
+@torchsymbol(torch.Tensor.is_cpu, is_property=True, id="torch.Tensor.is_cpu")
+def is_cpu(a: TensorLike, /) -> bool:
+    return a.device.devicetype is devices.DeviceType.CPU
+
+
+register_method("is_cpu", is_cpu)
+
+
+@torchsymbol(torch.polar, id="torch.polar")
+def polar(abs_: TensorLike, angle: TensorLike):
+    # Decompose polar into real/imag using Thunder ops and construct complex via mapped torch.complex
+    real = abs_ * cos(angle)
+    imag = abs_ * sin(angle)
+    complex_sym = _torch_to_thunder_function_map[torch.complex]
+    return complex_sym(real, imag)
+
+
+@torchsymbol(torch.view_as_complex, id="torch.view_as_complex", is_prim=True)
+def view_as_complex(a: TensorLike):
+    # Semantics: take last-dim pairs (real, imag) and form complex tensor as a view
+    # This is a primitive operation that passes through to PyTorch, preserving view semantics
+    utils.check(
+        a.shape[-1] == 2,
+        lambda: f"view_as_complex expects a tensor with last dimension size 2, but got {a.shape[-1]}",
+        ValueError,
+    )
+    utils.check(
+        not dtypes.is_complex_dtype(a.dtype),
+        lambda: f"view_as_complex expects a real dtype, but got {a.dtype}",
+        TypeError,
+    )
+
+    # Determine the output dtype
+    if a.dtype in complex_dtype_conversion_map:
+        output_dtype = complex_dtype_conversion_map[a.dtype]
+    else:
+        raise ValueError(f"Unsupported dtype for view_as_complex: {a.dtype}")
+
+    # Output shape is input shape with last dimension removed
+    output_shape = a.shape[:-1]
+
+    return TensorProxy(like=a, shape=output_shape, dtype=output_dtype)
+
+
+@torchsymbol(torch.view_as_real, id="torch.view_as_real", is_prim=True)
+def view_as_real(a: TensorLike):
+    # Semantics: view complex tensor as real tensor with extra dimension for real/imag parts
+    # This is a primitive operation that passes through to PyTorch, preserving view semantics
+    utils.check(
+        dtypes.is_complex_dtype(a.dtype),
+        lambda: f"view_as_real expects a complex dtype, but got {a.dtype}",
+        TypeError,
+    )
+
+    # Determine the output dtype (complex -> real)
+    if a.dtype in real_dtype_conversion_map:
+        output_dtype = real_dtype_conversion_map[a.dtype]
+    else:
+        raise ValueError(f"Unsupported dtype for view_as_real: {a.dtype}")
+
+    # Output shape is input shape with an extra dimension of size 2 at the end
+    output_shape = tuple(a.shape) + (2,)
+
+    return TensorProxy(like=a, shape=output_shape, dtype=output_dtype)
 
 
 # is nested always returns False for now:
@@ -6892,6 +6974,8 @@ _syms_returning_views: set[Symbol] = {
     unsqueeze,
     view,
     view_as,
+    view_as_complex,
+    view_as_real,
     unbind,
     split,
     tensor_split,
