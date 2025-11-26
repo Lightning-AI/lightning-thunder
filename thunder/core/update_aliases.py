@@ -90,21 +90,23 @@ def replace_args_with_alias_map(
             reshaped_arg = arg
             if arg_to_replace.shape != arg.shape:
                 with tracectx(computation_trace):
-                    reshaped_arg = prims.reshape.meta(arg, arg_to_replace.shape)
-                    arg_to_optional_bsyms[variableify(arg_to_replace)] = prims.reshape.bind(
-                        arg,
-                        arg_to_replace.shape,
-                        output=reshaped_arg,
-                    )
+                    shape = prims.shape.meta(arg_to_replace)
+                    reshaped_arg = prims.reshape.meta(arg, shape)
+                    reshape_bsym = prims.reshape.bind(arg, shape, output=reshaped_arg)
+                    if using_symbolic_values():
+                        shape_bsym = prims.shape.bind(arg_to_replace, output=shape)
+                        arg_to_optional_bsyms[variableify(arg_to_replace)] = (shape_bsym, reshape_bsym)
+                    else:
+                        arg_to_optional_bsyms[variableify(arg_to_replace)] = (reshape_bsym,)
             swap_map_for_aliases[variableify(arg_to_replace)] = reshaped_arg
     appended_bsyms = {}
     for bsym in computation_trace.bound_symbols:
         for arg in filter(lambda p: isinstance(p, TensorProxy), bsym.flat_args):
-            reshape_bsym = arg_to_optional_bsyms.get(variableify(arg))
-            if reshape_bsym is not None:
-                if reshape_bsym not in appended_bsyms:
-                    bsyms.append(reshape_bsym)
-                    appended_bsyms[reshape_bsym] = arg
+            reshape_bsyms = arg_to_optional_bsyms.get(variableify(arg))
+            if reshape_bsyms is not None:
+                if reshape_bsyms not in appended_bsyms:
+                    bsyms.extend(reshape_bsyms)
+                    appended_bsyms[reshape_bsyms] = arg
         if replaced_args_map := {
             x.name: swap_map_for_aliases[variableify(x)].name
             for x in filter(lambda p: isinstance(p, TensorProxy), bsym.flat_args)
