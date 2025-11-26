@@ -167,6 +167,7 @@ def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[li
     # Third pass: insert alias updates
     for bsym in computation_trace.bound_symbols:
         if _is_inplace_op(bsym) or _is_view_creation_op(bsym) or _involves_viewed_args(bsym, viewed):
+            bsym = bsym.from_bsym_swap_proxies(swap_map, skip_output=True)
             in_tensors = list(map(variableify, filter(lambda p: isinstance(p, TensorProxy), bsym.flat_proxy_args)))
             if _is_inplace_op(bsym) and in_tensors:
                 in_tensors = {in_tensors[0]}
@@ -177,7 +178,7 @@ def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[li
             group = set(reduce(set.union, filter(lambda g: any(g.intersection(in_tensors)), view_groups), set()))
             if not group or not (views_encountered := group.intersection(encountered)):
                 # If group is empty, this is a view creation with operands that are not involved in any inplace ops.
-                bsyms.append(bsym.from_bsym_swap_proxies(swap_map, skip_output=True))
+                bsyms.append(bsym)
                 continue
 
             new_aliases = _get_new_aliases(views_encountered, computation_trace)
