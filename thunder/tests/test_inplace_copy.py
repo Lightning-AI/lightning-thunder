@@ -131,7 +131,7 @@ def test_inplace_copy_sanity_check(executor, device, dtype):
         return y, o1, o2
 
     for foo in (func1, func2):
-        traced_foo = executor.make_callable(foo)
+        traced_foo = executor.make_callable(foo, skip_inplace_alias_updates=True)
 
         tdtype = ttorch.to_torch_dtype(dtype)
         a = make_tensor((4, 4), device=device, dtype=tdtype)
@@ -192,3 +192,29 @@ def test_inplace_copy_dtype_mismatch(executor, device, dtype):
     a = make_tensor((4, 4), device=device, dtype=tdtype, requires_grad=False)
     b = make_tensor((4, 4), device=device, dtype=torch.float32, requires_grad=False)
     jitted_fn(a, b)
+
+
+@instantiate(dtypes=(thunder.float32,))
+def test_inplace_on_intermediate(executor, device, dtype):
+    def f(x):
+        a = torch.randn_like(x)
+        b = torch.randn_like(x)
+        a.copy_(b)
+        b.sin_()
+        return (x,)
+
+    def g(x):
+        a = torch.randn_like(x)
+        b = torch.randn_like(x)
+        a.copy_(b)
+        b.sin_()
+        return x, a, b
+
+    tdtype = ttorch.to_torch_dtype(dtype)
+    for fn in [f, g]:
+        jitted_fn = executor.make_callable(fn)
+        a = make_tensor((4, 4), device=device, dtype=tdtype)
+        a_ref = a.clone()
+        a_out, *_ = jitted_fn(a)
+        assert_close(a, a_ref)
+        assert_close(a_out, a_ref)

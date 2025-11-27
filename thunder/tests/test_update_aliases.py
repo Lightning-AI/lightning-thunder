@@ -15,11 +15,11 @@ from thunder.tests.opinfos import opinfos, OpInfo, make_number, SampleInput
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
 from thunder.tests.framework import (
     instantiate,
+    nvFuserExecutor,
     ops,
     NOTHING,
     TorchExecutor,
     TorchCompileExecutor,
-    nvFuserExecutor,
     requiresCUDA,
 )
 from thunder.torch import _torch_to_thunder_function_map, _inplace_to_out_of_place
@@ -166,14 +166,15 @@ def test_setitem_on_view(executor, device, dtype):
 
 @instantiate(
     dtypes=NOTHING,
+    decorators=(pytest.mark.parametrize("inplace_op", [torch.Tensor.mul_, torch.Tensor.copy_]),),
 )
-def test_inplace_on_view(executor, device, dtype):
+def test_inplace_on_view(executor, device, dtype, inplace_op):
     def h(x, y):
         c = torch.exp(x)
         d = torch.tanh(y)
         e = c.view(-1)
 
-        d.div_(x)
+        inplace_op(d, x)
         e += d.flatten()
 
         return c, d, e
@@ -184,14 +185,14 @@ def test_inplace_on_view(executor, device, dtype):
         e = c.view(-1)
 
         e += d.flatten()
-        d.div_(x)
+        inplace_op(d, x)
 
         return c, d, e
 
     def j(x, _):
         a = x.view(-1)
         b = x.view(-1)
-        x.add_(1)
+        inplace_op(x, x.cos())
         aa = a + 1
         bb = b + 1
         return aa, bb
@@ -260,8 +261,10 @@ def test_inplace_on_chunk(executor, device, dtype):
 )
 def test_chained_inplace(executor, device, dtype):
     def f(x):
-        x.add_(1).sin_().mul_(5)
-        return x
+        y = x.add_(1)
+        z = y.sin_()
+        w = z.mul_(y.copy_(z.cos()))
+        return w
 
     def g(x):
         x.add_(1).sin().mul_(5)
@@ -269,6 +272,7 @@ def test_chained_inplace(executor, device, dtype):
 
     def h(x):
         x.exp_()
+        x.copy_(x.tan())
         x.sin_()
         y = x.cos()
         return y
@@ -332,14 +336,16 @@ def test_inplace(executor, device, dtype):
 )
 def test_aliased_input(executor, device, dtype, cache):
     def f(x, y, z):
-        return y.exp_().add(x) + z.exp()
+        s = y.exp_().add(x) + z.exp()
+        t = x.copy_(z.exp_().view(x.shape)) + z.cos().reshape(x.shape)
+        return s, t
 
     a = make_tensor((2, 1, 2), dtype=torch.float32, device=device)
     b = a.clone()
     c = a.view(1, 2, 2)
     a_ = a.clone().detach()
     b_ = b.clone().detach()
-    c_ = c.clone().detach()
+    c_ = a_.view(1, 2, 2)
     jfn = executor.make_callable(f, cache=cache)
     actual = jfn(a, b, c)
     expected = f(a_, b_, c_)
@@ -351,22 +357,25 @@ def test_aliased_input(executor, device, dtype, cache):
 
 @instantiate(
     dtypes=NOTHING,
-    decorators=(pytest.mark.parametrize("cache", ("constant values", "symbolic values")),),
+    decorators=(
+        pytest.mark.parametrize("cache", ("constant values", "symbolic values")),
+        pytest.mark.parametrize("inplace_op", [torch.Tensor.mul_, torch.Tensor.copy_]),
+    ),
 )
-def test_write_to_intermediate_result(executor, device, dtype, cache):
-    if executor == nvFuserExecutor:
-        pytest.xfail("nvFuser does not support writing to intermediate results")
-
-    def fn(x):
+def test_write_to_intermediate_result(executor, device, dtype, cache, inplace_op):
+    def fn(x, z):
         y = x.view(-1)
-        y.add_(1)
+        inplace_op(y, z)
         return y
 
-    a = make_tensor((2, 3), dtype=torch.float32, device=device)
+    x = make_tensor((2, 3), dtype=torch.float32, device=device)
+    x_ref = x.clone().detach()
+    z = make_tensor(6, dtype=torch.float32, device=device)
     jfn = executor.make_callable(fn, cache=cache)
-    actual = jfn(a)
-    expected = fn(a)
+    actual = jfn(x, z)
+    expected = fn(x_ref, z)
     torch.testing.assert_close(actual, expected)
+    torch.testing.assert_close(x, x_ref)
 
 
 @instantiate(
@@ -472,6 +481,58 @@ def test_inplace_to_alias_func_args(executor, device, dtype):
 @instantiate(
     dtypes=(dtypes.float32,),
 )
+def test_batch_norm_update_aliases(executor, device, dtype):
+    if executor is nvFuserExecutor:
+        pytest.xfail("update_aliases is not aware of mutation by batch_norm")
+
+    torch_dtype = dtypes.to_torch_dtype(dtype)
+    num_features = 4
+
+    def f(x, running_mean, running_var, weight, bias):
+        out = torch.nn.functional.batch_norm(
+            x,
+            running_mean,
+            running_var,
+            weight,
+            bias,
+            training=True,
+            momentum=0.1,
+            eps=1e-5,
+        )
+        return out, x, running_mean.sin(), running_var.cos()
+
+    input_tensor = make_tensor((3, num_features, 5, 5), device=device, dtype=torch_dtype)
+    running_mean = make_tensor((num_features,), device=device, dtype=torch_dtype)
+    running_var = make_tensor((num_features,), device=device, dtype=torch_dtype)
+    weight = make_tensor((num_features,), device=device, dtype=torch_dtype)
+    bias = make_tensor((num_features,), device=device, dtype=torch_dtype)
+
+    input_ref = input_tensor.clone().detach()
+    running_mean_ref = running_mean.clone().detach()
+    running_var_ref = running_var.clone().detach()
+    weight_ref = weight.clone().detach()
+    bias_ref = bias.clone().detach()
+
+    jitted_f = executor.make_callable(f)
+    out_jitted, x_jitted, running_mean_jitted, running_var_jitted = jitted_f(
+        input_tensor, running_mean, running_var, weight, bias
+    )
+    out_ref, x_ref, running_mean_ref_out, running_var_ref_out = f(
+        input_ref, running_mean_ref, running_var_ref, weight_ref, bias_ref
+    )
+
+    torch.testing.assert_close(out_jitted, out_ref)
+    torch.testing.assert_close(x_jitted, x_ref)
+    torch.testing.assert_close(running_mean_jitted, running_mean_ref_out)
+    torch.testing.assert_close(running_var_jitted, running_var_ref_out)
+    torch.testing.assert_close(input_tensor, input_ref)
+    torch.testing.assert_close(running_mean, running_mean_ref)
+    torch.testing.assert_close(running_var, running_var_ref)
+
+
+@instantiate(
+    dtypes=(dtypes.float32,),
+)
 def test_higher_order_inplace_alias_update(executor, device, dtype):
     torch_dtype = dtypes.to_torch_dtype(dtype)
 
@@ -491,7 +552,7 @@ def test_higher_order_inplace_alias_update(executor, device, dtype):
             return y
 
     def foo(x):
-        return Sin.apply(x)
+        return Sin.apply(x) * x
 
     a = torch.ones(2, device=device, dtype=torch_dtype, requires_grad=True)
     b = torch.ones(2, device=device, dtype=torch_dtype, requires_grad=True)
