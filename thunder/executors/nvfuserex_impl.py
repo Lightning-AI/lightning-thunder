@@ -769,7 +769,7 @@ class nvFuserExecutor(FusionExecutor):
             return x
 
         for bsym in trace.bound_symbols:
-            if bsym.sym.is_fusion != True:
+            if not bsym.sym.is_fusion:
                 new_bsyms[bsym] = cse_single_bsym(redundant_map, trace_rhs_to_bsym_map, bsym)
                 continue
 
