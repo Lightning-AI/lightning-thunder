@@ -51,8 +51,6 @@ def _is_view_creation_op(bsym):
 
 
 def _involves_viewed_args(bsym, viewed):
-    if bsym.sym.id == prims.PrimIDs.RETURN:
-        return False
     return any(isinstance(p, TensorProxy) and variableify(p) in viewed for p in bsym.flat_proxy_args)
 
 
