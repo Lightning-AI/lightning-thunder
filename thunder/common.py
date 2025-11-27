@@ -619,7 +619,7 @@ def trace(
             # TODO Stop calling this here and make it a separate trace in the sequence
             #   of traces
             if use_dce:
-                trace = dce(trace)
+                trace = dce(trace, keep_inplace_ops=True)
 
         finally:
             # Resets contexts

@@ -4333,7 +4333,7 @@ def copy__meta(
     return TensorProxy(like=copy_to)
 
 
-copy_ = make_prim(PrimIDs.COPY_, "copy_", meta=copy__meta, tags=(OpTags.DONT_DCE,))
+copy_ = make_prim(PrimIDs.COPY_, "copy_", meta=copy__meta, tags=(OpTags.IN_PLACE,))
 
 
 def bitcast_meta(
