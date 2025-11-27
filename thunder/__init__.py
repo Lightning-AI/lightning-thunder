@@ -553,7 +553,7 @@ def jit(
             if requires_grad:
                 from thunder.transforms.autodiff import grad_transform_on_trace
 
-                computation_trc = grad_transform_on_trace(computation_trc)
+                computation_trc = grad_transform_on_trace(computation_trc, alias_tensor_indices)
                 computation_traces.append(computation_trc)
 
             from thunder.executors.passes import _transform_for_operator_executor_execution
