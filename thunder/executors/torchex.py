@@ -2367,7 +2367,7 @@ def _copy__impl(copy_from, copy_to, grad_enabled):
 
 
 copy_ = ex.register_operator(
-    "copy_", meta=prims.copy_, tags=(prims.OpTags.DONT_DCE,), fn=_copy__impl, module=torch.Tensor
+    "copy_", meta=prims.copy_, tags=(prims.OpTags.IN_PLACE,), fn=_copy__impl, module=torch.Tensor
 )
 _register_implementation(prims.copy_, copy_, checker=_always_executable)
 
