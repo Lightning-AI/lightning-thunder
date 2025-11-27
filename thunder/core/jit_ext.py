@@ -835,6 +835,10 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
 
     from thunder.core.update_aliases import insert_alias_updates
 
+    # Copy attributes needed for TensorProxy name construction
+    trace_of_augmented_fwd.name_ctr = get_jit_ctx().computation_trace.name_ctr
+    trace_of_augmented_fwd.names = set(get_jit_ctx().computation_trace.names)
+
     alias_tensor_indices = [[i] for i in range(len(trace_of_augmented_fwd.args))]
     aliased_trace_of_augmented_fwd = insert_alias_updates(trace_of_augmented_fwd, alias_tensor_indices)
 
@@ -868,6 +872,10 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
         ctx_proxy.saved_consts + ctx_proxy.saved_tensors + grads,
     )
     bwd_trace_impl.args = tuple(ctx_proxy.saved_consts + ctx_proxy.saved_tensors + grads)
+
+    # Copy attributes needed for TensorProxy name construction
+    bwd_trace_impl.name_ctr = get_jit_ctx().computation_trace.name_ctr
+    bwd_trace_impl.names = set(get_jit_ctx().computation_trace.names)
 
     alias_tensor_indices = [[i] for i in range(len(bwd_trace_impl.args))]
     aliased_bwd_trace_impl = insert_alias_updates(bwd_trace_impl, alias_tensor_indices)
@@ -951,6 +959,10 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
 
     from thunder.core.update_aliases import insert_alias_updates
 
+    # Copy attributes needed for TensorProxy name construction
+    aug_fwd_trace.name_ctr = get_jit_ctx().computation_trace.name_ctr
+    aug_fwd_trace.names = set(get_jit_ctx().computation_trace.names)
+
     alias_tensor_indices = [[i] for i in range(len(aug_fwd_trace.args))]
     aliased_aug_fwd_trace = insert_alias_updates(aug_fwd_trace, alias_tensor_indices)
 
@@ -988,7 +1000,9 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
     ]
     bwd_trace.bound_symbols = bwd_unpack_bsyms + bwd_trace.bound_symbols
 
-    from thunder.core.update_aliases import insert_alias_updates
+    # Copy attributes needed for TensorProxy name construction
+    bwd_trace.name_ctr = get_jit_ctx().computation_trace.name_ctr
+    bwd_trace.names = set(get_jit_ctx().computation_trace.names)
 
     alias_tensor_indices = [[i] for i in range(len(bwd_trace.args))]
     aliased_bwd_trace = insert_alias_updates(bwd_trace, alias_tensor_indices)
