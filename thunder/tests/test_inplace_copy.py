@@ -42,16 +42,16 @@ def test_prim_inplace_copy_bwd(executor, device, dtype):
     def torch_foo(x, y):
         z = x * y
         z = z * x
-        x.copy_(z)
+        o = x.copy_(z)
         p = y * y
-        return p
+        return p, o
 
     def foo(x, y):
         z = x * y
         z = z * x
-        thunder.core.prims.copy_(z, x, grad_enabled=True)
+        o = thunder.core.prims.copy_(z, x, grad_enabled=True)
         p = y * y
-        return p
+        return p, o
 
     traced_nvfuser_foo = executor.make_callable(foo)
 
@@ -72,11 +72,11 @@ def test_prim_inplace_copy_bwd(executor, device, dtype):
     )
     custom_comparator(a, a1)
 
-    g = torch.ones_like(thunder_result)
-    thunder_result.backward(g)
+    g = torch.ones_like(thunder_result[0])
+    thunder_result[0].backward(g)
 
-    g1 = torch.ones_like(torch_result)
-    torch_result.backward(g1)
+    g1 = torch.ones_like(torch_result[0])
+    torch_result[0].backward(g1)
     assert_close(g, g1)
     assert_close(b.grad, b1.grad)
 
