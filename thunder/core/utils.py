@@ -1262,3 +1262,27 @@ def create_python_callable_from_bsym(bsym: BoundSymbolInterface) -> str:
         prims.python_return(bsym.output)
 
     return trace.python(include_decorators=False)
+
+
+def parse_alias_tensor_indices(alias_tensor_indices_str: str) -> list[list[int]]:
+    return [[int(i) for i in s.split(",")] for s in alias_tensor_indices_str.split("-") if s != ""]
+
+
+def encode_alias_tensor_indices(*args, **kwargs) -> str:
+    flat_args, _ = tree_flatten((args, kwargs))
+    data_ptr_to_tensor_indices = defaultdict(list)
+
+    for idx, t in enumerate(flat_args):
+        # Using type(t) is torch.Tensor as TensorSubclasses don't support calling data_ptr().
+        # Eg. RuntimeError: Attempted to access the data pointer on an invalid python storage. (data_ptr access on TensorSubclass)
+        #
+        # isinstance(t, torch.Tensor) or torch.is_tensor(t) will match all Tensor objects including subclasses.
+        if type(t) is torch.Tensor and t.layout is torch.strided:
+            data_ptr = t.untyped_storage().data_ptr()
+            data_ptr_to_tensor_indices[data_ptr].append(idx)
+
+    alias_indices = []
+    for indices in data_ptr_to_tensor_indices.values():
+        if len(indices) > 1:
+            alias_indices.append(",".join(str(idx) for idx in indices))
+    return "-".join(alias_indices)
