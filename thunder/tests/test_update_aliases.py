@@ -554,7 +554,7 @@ def test_higher_order_inplace_alias_update(executor, device, dtype, requires_gra
             return y
 
     def foo(x):
-        return Sin.apply(x) * x
+        return Sin.apply(x)
 
     a = torch.ones(2, device=device, dtype=torch_dtype, requires_grad=requires_grad)
     b = torch.ones(2, device=device, dtype=torch_dtype, requires_grad=requires_grad)
