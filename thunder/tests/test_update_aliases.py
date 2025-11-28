@@ -536,9 +536,6 @@ def test_batch_norm_update_aliases(executor, device, dtype):
     decorators=(pytest.mark.parametrize("requires_grad", (True, False)),),
 )
 def test_higher_order_inplace_alias_update(executor, device, dtype, requires_grad):
-    if not requires_grad:
-        pytest.xfail("update_aliases is not aware of mutation in higher order functions")
-
     torch_dtype = dtypes.to_torch_dtype(dtype)
 
     class Sin(torch.autograd.Function):
