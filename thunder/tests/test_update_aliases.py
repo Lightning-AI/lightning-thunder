@@ -168,7 +168,7 @@ def test_setitem_on_view(executor, device, dtype):
     dtypes=NOTHING,
     decorators=(pytest.mark.parametrize("inplace_op", [torch.Tensor.mul_, torch.Tensor.copy_]),),
 )
-def test_inplace_on_view(executor, device, dtype, inplace_op):
+def test_inplace_on_intermediate(executor, device, dtype, inplace_op):
     def h(x, y):
         c = torch.exp(x)
         d = torch.tanh(y)
@@ -189,15 +189,7 @@ def test_inplace_on_view(executor, device, dtype, inplace_op):
 
         return c, d, e
 
-    def j(x, _):
-        a = x.view(-1)
-        b = x.view(-1)
-        inplace_op(x, x.cos())
-        aa = a + 1
-        bb = b + 1
-        return aa, bb
-
-    for fn in [h, i, j]:
+    for fn in [h, i]:
         a = make_tensor((2, 3), dtype=torch.float32, device=device)
         b = make_tensor((2, 3), dtype=torch.float32, device=device)
         a_, b_ = a.clone().detach(), b.clone().detach()
@@ -363,19 +355,28 @@ def test_aliased_input(executor, device, dtype, cache):
     ),
 )
 def test_write_to_intermediate_result(executor, device, dtype, cache, inplace_op):
-    def fn(x, z):
+    def f(x, z):
         y = x.view(-1)
         inplace_op(y, z)
         return y
 
-    x = make_tensor((2, 3), dtype=torch.float32, device=device)
-    x_ref = x.clone().detach()
-    z = make_tensor(6, dtype=torch.float32, device=device)
-    jfn = executor.make_callable(fn, cache=cache)
-    actual = jfn(x, z)
-    expected = fn(x_ref, z)
-    torch.testing.assert_close(actual, expected)
-    torch.testing.assert_close(x, x_ref)
+    def g(x, z):
+        a = x.view(-1)
+        b = x.view(-1)
+        inplace_op(x, z)
+        aa = a + 1
+        bb = b + 1
+        return aa, bb
+
+    for fn in [f, g]:
+        x = make_tensor((2, 3), dtype=torch.float32, device=device)
+        x_ref = x.clone().detach()
+        z = make_tensor(6, dtype=torch.float32, device=device)
+        jfn = executor.make_callable(fn, cache=cache)
+        actual = jfn(x, z)
+        expected = fn(x_ref, z)
+        torch.testing.assert_close(actual, expected)
+        torch.testing.assert_close(x, x_ref)
 
 
 @instantiate(
