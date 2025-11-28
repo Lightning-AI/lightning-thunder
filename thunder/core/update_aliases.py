@@ -134,7 +134,7 @@ def replace_args_with_alias_map(
 
 def insert_alias_updates(computation_trace: Trace) -> Trace:
     cd = get_compile_data()
-    if cd.compile_options.get("skip_inplace_alias_updates", False):
+    if cd is not None and cd.compile_options.get("skip_inplace_alias_updates", False):
         return computation_trace
 
     if not any(_is_inplace_op(bsym) for bsym in computation_trace.bound_symbols):
