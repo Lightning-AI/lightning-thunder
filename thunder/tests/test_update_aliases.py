@@ -533,8 +533,12 @@ def test_batch_norm_update_aliases(executor, device, dtype):
 
 @instantiate(
     dtypes=(dtypes.float32,),
+    decorators=(pytest.mark.parametrize("requires_grad", (True, False)),),
 )
-def test_higher_order_inplace_alias_update(executor, device, dtype):
+def test_higher_order_inplace_alias_update(executor, device, dtype, requires_grad):
+    if not requires_grad:
+        pytest.xfail("update_aliases is not aware of mutation in higher order functions")
+
     torch_dtype = dtypes.to_torch_dtype(dtype)
 
     class Sin(torch.autograd.Function):
@@ -555,9 +559,9 @@ def test_higher_order_inplace_alias_update(executor, device, dtype):
     def foo(x):
         return Sin.apply(x) * x
 
-    a = torch.ones(2, device=device, dtype=torch_dtype, requires_grad=True)
-    b = torch.ones(2, device=device, dtype=torch_dtype, requires_grad=True)
-    c = torch.ones(2, device=device, dtype=torch_dtype, requires_grad=True)
+    a = torch.ones(2, device=device, dtype=torch_dtype, requires_grad=requires_grad)
+    b = torch.ones(2, device=device, dtype=torch_dtype, requires_grad=requires_grad)
+    c = torch.ones(2, device=device, dtype=torch_dtype, requires_grad=requires_grad)
 
     g = torch.rand_like(a)
 
@@ -575,12 +579,13 @@ def test_higher_order_inplace_alias_update(executor, device, dtype):
     torch.testing.assert_close(actual_jit, expected)
     torch.testing.assert_close(actual_fx, expected)
 
-    actual_grad_jit = torch.autograd.grad(actual_jit, a, g)
-    actual_grad_fx = torch.autograd.grad(actual_fx, b, g)
+    if requires_grad:
+        actual_grad_jit = torch.autograd.grad(actual_jit, a, g)
+        actual_grad_fx = torch.autograd.grad(actual_fx, b, g)
 
-    expected_grad = torch.autograd.grad(expected, c, g)
-    torch.testing.assert_close(actual_grad_fx, expected_grad)
-    torch.testing.assert_close(actual_grad_jit, expected_grad)
+        expected_grad = torch.autograd.grad(expected, c, g)
+        torch.testing.assert_close(actual_grad_fx, expected_grad)
+        torch.testing.assert_close(actual_grad_jit, expected_grad)
 
 
 @instantiate(
