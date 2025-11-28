@@ -357,7 +357,7 @@ def test_aliased_input(executor, device, dtype, cache):
 def test_write_to_intermediate_result(executor, device, dtype, cache, inplace_op):
     def f(x, z):
         y = x.view(-1)
-        inplace_op(y, z)
+        inplace_op(y, z.view(-1))
         return y
 
     def g(x, z):
@@ -371,7 +371,7 @@ def test_write_to_intermediate_result(executor, device, dtype, cache, inplace_op
     for fn in [f, g]:
         x = make_tensor((2, 3), dtype=torch.float32, device=device)
         x_ref = x.clone().detach()
-        z = make_tensor(6, dtype=torch.float32, device=device)
+        z = make_tensor((2, 3), dtype=torch.float32, device=device)
         jfn = executor.make_callable(fn, cache=cache)
         actual = jfn(x, z)
         expected = fn(x_ref, z)
