@@ -130,7 +130,11 @@ def replace_args_with_alias_map(
     return no_implicit_alias_trace, view_groups
 
 
-def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[list[int]]) -> Trace:
+def insert_alias_updates(computation_trace: Trace) -> Trace:
+    cd = get_compile_data()
+    if cd.compile_options.get("skip_inplace_alias_updates", False):
+        return computation_trace
+
     if not any(_is_inplace_op(bsym) for bsym in computation_trace.bound_symbols):
         return computation_trace
 

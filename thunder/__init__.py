@@ -493,11 +493,10 @@ def jit(
                 [int(i) for i in s.split(",")] for s in alias_tensor_indices_str.split("-") if s != ""
             ]
 
-            if not compile_options.get("skip_inplace_alias_updates", False):
-                aliased_trace = insert_alias_updates(computation_trc, alias_tensor_indices)
-                if aliased_trace is not computation_trc:
-                    computation_traces.append(aliased_trace)
-                    computation_trc = computation_traces[-1]
+            aliased_trace = insert_alias_updates(computation_trc, alias_tensor_indices)
+            if aliased_trace is not computation_trc:
+                computation_traces.append(aliased_trace)
+                computation_trc = computation_traces[-1]
 
             cs.last_trace_tracing_stop = time.perf_counter_ns()
 
