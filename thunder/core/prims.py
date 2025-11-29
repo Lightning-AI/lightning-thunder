@@ -232,6 +232,8 @@ class PrimIDs(Enum):
     LT = auto()
     MAXIMUM = auto()
     MINIMUM = auto()
+    PY_MAX = auto()
+    PY_MIN = auto()
     MUL = auto()
     NE = auto()
     NEXTAFTER = auto()
@@ -2694,6 +2696,20 @@ lt = _make_elementwise_binary_prim(
 maximum = _make_elementwise_binary_prim(PrimIDs.MAXIMUM, "maximum", supported_input_dtypes=comparison_dtypes)
 
 minimum = _make_elementwise_binary_prim(PrimIDs.MINIMUM, "minimum", supported_input_dtypes=comparison_dtypes)
+
+py_max = _make_elementwise_binary_prim(
+    PrimIDs.PY_MAX,
+    "py_max",
+    number_fn=builtins.max,
+    numbers_only=True,
+)
+
+py_min = _make_elementwise_binary_prim(
+    PrimIDs.PY_MIN,
+    "py_min",
+    number_fn=builtins.min,
+    numbers_only=True,
+)
 
 mul = _make_elementwise_binary_prim(
     PrimIDs.MUL,
