@@ -1743,6 +1743,24 @@ def minimum(a, b):
     return _elementwise_binary_wrapper(a, b, prim=prims.minimum)
 
 
+@clangop()
+def py_max(a: NumberLike | Number, b: NumberLike | Number):
+    utils.check(
+        isinstance(a, (Number, NumberProxy)) and isinstance(b, (Number, NumberProxy)),
+        lambda: "py_max expects number inputs",
+    )
+    return prims.py_max(a, b)
+
+
+@clangop()
+def py_min(a: NumberLike | Number, b: NumberLike | Number):
+    utils.check(
+        isinstance(a, (Number, NumberProxy)) and isinstance(b, (Number, NumberProxy)),
+        lambda: "py_min expects number inputs",
+    )
+    return prims.py_min(a, b)
+
+
 @clangop(method_name="mul")
 def mul(a, b):
     return _elementwise_binary_wrapper(a, b, prim=prims.mul)
