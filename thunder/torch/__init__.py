@@ -2596,6 +2596,24 @@ def minimum(a: TensorProxy, b: TensorProxy) -> TensorProxy:
     return clang.minimum(a, b)
 
 
+@torchsymbol(torch.sym_max, id="torch.sym_max")
+def sym_max(a: NumberLike, b: NumberLike) -> NumberLike:
+    utils.check(
+        isinstance(a, (Number, NumberProxy)) and isinstance(b, (Number, NumberProxy)),
+        lambda: "torch.sym_max currently supports only number inputs",
+    )
+    return clang.py_max(a, b)
+
+
+@torchsymbol(torch.sym_min, id="torch.sym_min")
+def sym_min(a: NumberLike, b: NumberLike) -> NumberLike:
+    utils.check(
+        isinstance(a, (Number, NumberProxy)) and isinstance(b, (Number, NumberProxy)),
+        lambda: "torch.sym_min currently supports only number inputs",
+    )
+    return clang.py_min(a, b)
+
+
 # NOTE This is just an alias for proxies to find operation defined for the modulus
 #   operator
 # TODO Review this alias
