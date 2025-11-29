@@ -864,12 +864,15 @@ def test_cache_symbolic_values_basic():
     assert thunder.cache_hits(jfoo) == 1
 
 
-def test_symbolic_values_min_max():
+@pytest.mark.parametrize("min_op,max_op", [(torch.sym_min, torch.sym_max), (min, max)], ids=("torch", "builtin"))
+def test_symbolic_values_min_max(min_op, max_op):
     def foo(seq_len, cumulative_len, max_len, sliding_window) -> int:
-        max_cache_len = torch.sym_min(max_len, seq_len + 128)
+        max_cache_len = min_op(max_len, seq_len + 128)
         offset_raw = cumulative_len - sliding_window + 1
-        kv_offset = torch.sym_max(offset_raw, 0)
+        kv_offset = max_op(offset_raw, 0)
         return max_cache_len, kv_offset
+
+    samples = torch.randint(1, 100, (4, 20))
 
     jfoo = thunder_jit(foo, cache="symbolic values")
 
