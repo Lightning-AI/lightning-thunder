@@ -864,6 +864,23 @@ def test_cache_symbolic_values_basic():
     assert thunder.cache_hits(jfoo) == 1
 
 
+def test_symbolic_values_min_max():
+    def foo(seq_len, cumulative_len, max_len, sliding_window) -> int:
+        max_cache_len = torch.sym_min(max_len, seq_len + 128)
+        offset_raw = cumulative_len - sliding_window + 1
+        kv_offset = torch.sym_max(offset_raw, 0)
+        return max_cache_len, kv_offset
+
+    jfoo = thunder_jit(foo, cache="symbolic values")
+
+    samples = torch.randint(1, 100, (20, 4))
+    for sample in samples:
+        args = [s.item() for s in sample]
+        assert jfoo(*args) == foo(*args)
+
+    assert thunder.cache_misses(jfoo) == 1
+
+
 def test_post_optimization_transform():
     def foo(a, b, c):
         return a * a + b * c
