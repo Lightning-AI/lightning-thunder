@@ -381,6 +381,24 @@ ex.register_implementation(prims.div, div, checker=_elementwise_binary_checker)
 ex.register_implementation(prims.shape, shape, checker=_always_executable)
 
 
+def _elementwise_ternary_checker(
+    a: NumberLike | TensorProxy, b: NumberLike | TensorProxy, c: NumberLike | TensorProxy
+) -> bool:
+    return (
+        isinstance(a, (Number, NumberProxy))
+        and isinstance(b, (Number, NumberProxy))
+        and isinstance(c, (Number, NumberProxy))
+    )
+
+
+def _where_prim_impl(pred, a, b):
+    return a if pred else b
+
+
+where = ex.register_operator("where", like=prims.where, fn=_where_prim_impl)
+ex.register_implementation(prims.where, where, checker=_elementwise_ternary_checker)
+
+
 def _sink(*args, **kwargs):
     return
 
