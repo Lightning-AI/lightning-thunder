@@ -2808,20 +2808,12 @@ lerp = make_prim(
 )
 
 
-# TODO Restore Number x Number x Number support
 def _where_meta(pred: Number | TensorProxy, a: Number | TensorProxy, b: Number | TensorProxy, /) -> TensorProxy:
     # Checks types
     # NOTE pred must be a bool tensor or bool (this is checked later)
     utils.check_type(pred, (TensorProxy, Number, NumberProxy))
     utils.check_type(a, (TensorProxy, Number, NumberProxy))
     utils.check_type(b, (TensorProxy, Number, NumberProxy))
-
-    if (
-        isinstance(pred, (Number, NumberProxy))
-        and isinstance(a, (Number, NumberProxy))
-        and isinstance(b, (Number, NumberProxy))
-    ):
-        raise NotImplementedError
 
     # Checks pred dtype (bool or bool tensor)
     if isinstance(pred, (Number, NumberProxy)):
@@ -2847,11 +2839,19 @@ def _where_meta(pred: Number | TensorProxy, a: Number | TensorProxy, b: Number |
     numbertype, tensordtype = utils.check_same_dtype(a, b)
     dtype = tensordtype if tensordtype is not None else numbertype
 
+    # Returns a NumberProxy for all-Number inputs
+    if (
+        isinstance(pred, (Number, NumberProxy))
+        and isinstance(a, (Number, NumberProxy))
+        and isinstance(b, (Number, NumberProxy))
+    ):
+        result_value = pyval(a) if pyval(pred) else pyval(b)
+        return numberproxy(numbertype, result_value, constraint=utils.resolve_constraints(pred, a, b))
+
     # Checks shapes
     utils.check_same_shape(pred, a, b)
 
     # Determines output shape
-    # NOTE Assumes at least one of pred, a, and b is a TensorProxy because of prior check for Number x Number x Number
     shapes = tuple(x.shape for x in (pred, a, b) if isinstance(x, TensorProxy) and not utils.is_cpu_scalar_tensor(x))
     if not shapes:
         shapes = (pred.shape,)
