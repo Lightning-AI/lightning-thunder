@@ -1,5 +1,6 @@
 from functools import partial
 import builtins
+import itertools
 import math
 import operator
 
@@ -95,13 +96,11 @@ def test_elementwise_binary_operations_on_numbers(executor, device, dtype, op, c
                 foo_a_fixed = partial(foo, a=a)
                 cfoo_a_fixed = executor.make_callable(foo_a_fixed, cache=cache_option)
                 actual = cfoo_a_fixed(b=b)
-                expected = foo_a_fixed(b=b)
                 assert_close(actual, expected)
 
                 foo_b_fixed = partial(foo, b=b)
                 cfoo_b_fixed = executor.make_callable(foo_b_fixed, cache=cache_option)
                 actual = cfoo_b_fixed(a=a)
-                expected = foo_b_fixed(a=a)
                 assert_close(actual, expected)
 
     if cache_option == "symbolic values":
@@ -168,6 +167,52 @@ def test_elementwise_dunder_operations_on_numbers(executor, device, dtype, op, c
 
     if cache_option == "symbolic values":
         assert thunder.cache_misses(cfoo) == len(allowed_types)
+
+
+@instantiate(
+    dtypes=NOTHING,
+    devicetypes=(devices.DeviceType.CPU,),
+    decorators=(pytest.mark.parametrize("cache_option", ("constant values", "symbolic values")),),
+)
+def test_where_on_numbers(executor, device, dtype, cache_option):
+    bool_inps = [False, True]
+    int_inps = [-1, 2]
+    float_inps = [-0.7, 1.1]
+
+    def foo(pred, a, b):
+        return thunder.core.prims.where(pred, a, b)
+
+    def foo_python(pred, a, b):
+        return a if pred else b
+
+    cfoo = executor.make_callable(foo, cache=cache_option)
+
+    for inps in [bool_inps, int_inps, float_inps]:
+        for pred, a, b in itertools.product(bool_inps, inps, inps):
+            print(pred, a, b)
+
+            actual = cfoo(pred, a, b)
+            expected = foo_python(pred, a, b)
+            assert_close(actual, expected)
+
+            if cache_option == "symbolic values":
+                foo_pred_fixed = partial(foo, pred=pred)
+                cfoo_pred_fixed = executor.make_callable(foo_pred_fixed, cache=cache_option)
+                actual = cfoo_pred_fixed(a=a, b=b)
+                assert_close(actual, expected)
+
+                foo_a_fixed = partial(foo, a=a)
+                cfoo_a_fixed = executor.make_callable(foo_a_fixed, cache=cache_option)
+                actual = cfoo_a_fixed(pred=pred, b=b)
+                assert_close(actual, expected)
+
+                foo_pred_b_fixed = partial(foo, pred=pred, b=b)
+                cfoo_pred_b_fixed = executor.make_callable(foo_pred_b_fixed, cache=cache_option)
+                actual = cfoo_pred_b_fixed(a=a)
+                assert_close(actual, expected)
+
+    if cache_option == "symbolic values":
+        assert thunder.cache_misses(cfoo) == 3
 
 
 # TODO: see issue "Test operator and method variants of operations using
