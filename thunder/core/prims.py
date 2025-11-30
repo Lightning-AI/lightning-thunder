@@ -1945,9 +1945,12 @@ numpy_array_to_torch_tensor = make_prim(
 #   usually produce an output with that same datatype (SAME).
 #   Sometimes, however, elementwise operations can produce an output with a different
 #   datatype than the inputs. For example, comparison operations like eq and lt always
-#   produce boolean results (ALWAYS_BOOL), math.ceil/math.floor produces integer outputs for number inputs while preserves datatype for tensor inputs, and other operations, like abs, map
-#   complex numbers to floats (COMPLEX_TO_FLOAT).
+#   produce boolean results (ALWAYS_BOOL), ceil/floor produces integer outputs for
+#   number inputs while preserves datatype for tensor inputs (INT_FOR_NUMBER), and
+#   other operations, like abs, map complex numbers to floats (COMPLEX_TO_FLOAT).
 #   The ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND enum describes these three behaviors so that
+#   operations, like abs, map complex numbers to floats (COMPLEX_TO_FLOAT).
+#   The ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND enum describes these four behaviors so that
 #   elementwise operations can rely on helper functions to implement this behavior.
 class ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND(Enum):
     SAME = auto()
@@ -2316,6 +2319,7 @@ round = _make_elementwise_unary_prim(
     "round",
     number_fn=builtins.round,
     supported_input_dtypes=fp_math_dtypes,
+    output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.INT_FOR_NUMBER,
 )
 
 rsqrt = _make_elementwise_unary_prim(
@@ -2385,12 +2389,12 @@ tanh = _make_elementwise_unary_prim(
     supported_input_dtypes=fp_math_dtypes,
 )
 
-# NOTE This trunc preserves the dtype of its input
 trunc = _make_elementwise_unary_prim(
     PrimIDs.TRUNC,
     "trunc",
     supported_input_dtypes=fp_math_dtypes,
     number_fn=math.trunc,
+    output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.INT_FOR_NUMBER,
 )
 
 
