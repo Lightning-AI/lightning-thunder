@@ -2313,9 +2313,6 @@ def tanhshrink(a: TensorLike, /) -> TensorLike:
     return a - tanh(a)
 
 
-_inplace_to_out_of_place[tanhshrink] = tanhshrink, -1
-
-
 @torchsymbol(torch.threshold, torch.nn.functional.threshold, id="torch.threshold", is_method=False)
 def threshold(a: TensorProxy, /, threshold: float, value: float, inplace: bool = False) -> TensorLike:
     out = where(a <= threshold, value, a)
