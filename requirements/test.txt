@@ -1,4 +1,4 @@
-coverage ~=7.9.1
+coverage ~=7.12.0
 pytest ==8.4.2
 pytest-benchmark ==5.1.0
 pytest-timeout ==2.4.0
