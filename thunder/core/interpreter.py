@@ -398,7 +398,7 @@ class InterpreterCompileCtx:
         self._with_provenance_tracking = with_provenance_tracking
         if with_provenance_tracking:
             assert isinstance(uncacheable_classes, (list, tuple))
-            uncacheable_classes = tuple(set(uncacheable_classes) | {NoneType, int, str, float, bool})
+            uncacheable_classes = tuple(set(uncacheable_classes) | {NoneType, int, str, float, bool, complex})
 
         self._uncacheable_classes = uncacheable_classes
 
