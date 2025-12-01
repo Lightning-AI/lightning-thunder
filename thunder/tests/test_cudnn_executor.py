@@ -90,10 +90,10 @@ def grad_scaled_dot_product_attention_reference_generator(op, device, dtype, req
 
     # Standard dimensions - should work on all GPUs (d_q <= 128, d_kv <= 128)
     standard_dims = [
-        (64, 64),    # standard small
-        (32, 32),    # divisible by 8 small
-        (96, 96),    # divisible by 8 mid
-        (120, 88),   # divisible by 8 asymmetric
+        (64, 64),  # standard small
+        (32, 32),  # divisible by 8 small
+        (96, 96),  # divisible by 8 mid
+        (120, 88),  # divisible by 8 asymmetric
     ]
     for d_q, d_kv in standard_dims:
         q = make(b, h, s_q, d_q)
