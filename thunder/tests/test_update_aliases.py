@@ -133,7 +133,7 @@ def test_update_aliases(op, device, dtype, executor, _):
     j_op = executor.make_callable(op.torch_reference)
     actual = j_op(*args, **sample.kwargs)
     expected = op.torch_reference(*args_ref, **sample.kwargs)
-    assert id(actual) != id(expected)
+    assert id(actual) == id(args[0])
     torch.testing.assert_close(actual, expected, equal_nan=True)
 
 
