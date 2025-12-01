@@ -51,6 +51,7 @@ def test_elementwise_binary_operations_on_numbers(executor, device, dtype, op, c
     bool_inps = [False, True]
     int_inps = [-1, 0, 2]
     float_inps = [-0.7, 0.0, 0.3, 1.1]
+    complex_inps = [complex(1, 0.3), complex(-4.1, 0.9)]
 
     exponent_inps = [0, 1, 2]
     shift_inps = [0, 1, 2]
@@ -59,6 +60,7 @@ def test_elementwise_binary_operations_on_numbers(executor, device, dtype, op, c
         bool: bool_inps,
         int: int_inps,
         float: float_inps,
+        complex: complex_inps,
     }
 
     def gather_inputs(allowed_types):
@@ -190,7 +192,7 @@ def test_where_on_numbers(executor, device, dtype, cache_option):
             assert_close(actual, expected)
 
     if cache_option == "symbolic values":
-        assert thunder.cache_misses(cfoo) == 3
+        assert thunder.cache_misses(cfoo) == 4
 
         fixed_pred = random.choice(bool_inps)
         foo_pred_fixed = partial(foo, pred=fixed_pred)
