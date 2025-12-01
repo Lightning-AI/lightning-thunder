@@ -28,12 +28,30 @@ from thunder.dynamo.utils import (
 if TYPE_CHECKING:
     from collections.abc import Callable
     from typing import Any
+    from torch.fx import GraphModule
+
+
+# TODO: investigate and see if there's a cleaner way to prevent the error.
+# ``cannot extract sympy expressions from <torch.cuda.Stream device=cuda:0 cuda_stream=0x0> <class 'torch.cuda.streams.Stream'>``
+def _preprocess_cuda_stream_objects(gm: GraphModule) -> None:
+    """Preprocess the graph to handle :class:`torch.cuda.Stream` objects.
+
+    Since :class:`torch.cuda.Stream` does not have sympy expression apparently,
+    manually setting its metadata to :obj:`None` to avoid an error such as
+    ``cannot extract sympy expressions from <torch.cuda.Stream device=cuda:0 cuda_stream=0x0> <class 'torch.cuda.streams.Stream'>``
+    """
+    for node in gm.graph.nodes:
+        if hasattr(node, "meta") and "example_value" in node.meta:
+            example_value = node.meta["example_value"]
+            if isinstance(example_value, torch.cuda.Stream):
+                node.meta["example_value"] = None
 
 
 def _splitter(
     gm: torch.fx.GraphModule,
     thunder_jit: Callable,
     thunder_options: dict[str, Any] | None = None,
+    **compile_options,
 ) -> tuple[torch.fx.GraphModule, SubgraphInfo]:
     """
     This method will split graph into multiple graph modules based on thunder supported operations.
@@ -165,6 +183,7 @@ def _splitter(
     for n in functionctx_nodes_to_del:
         gm.graph.erase_node(n)
     gm.recompile()
+    _preprocess_cuda_stream_objects(gm)
 
     # `split_module` iterates over nodes and determines the partition to place them based on the callback.
     split_gm: torch.fx.GraphModule = split_module(
@@ -225,7 +244,7 @@ def _splitter(
             fake_mode = torch._guards.detect_fake_mode()
             # Delay Inductor compilation until invocation with real tensors,
             # because we do not know the strides of tensors that Thunder-compiled submodules return.
-            jit_fn = LazyInductorModule(graph_module, fake_mode)
+            jit_fn = LazyInductorModule(graph_module, fake_mode, **compile_options)
 
             # Update the node name from "submod_*" to "inductor_*" for more user-friendly names
             update_node_and_submodule(split_gm, node, node.name.replace("submod", "inductor"), jit_fn)
