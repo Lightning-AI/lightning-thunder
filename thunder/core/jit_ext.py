@@ -671,12 +671,12 @@ def _general_jit_min_max_lookaside(op_name, symbol, args, kwargs):
 
 @register_general_jit_lookaside(max)
 def _general_jit_builtin_max_lookaside(*args, **kwargs):
-    return _general_jit_min_max_lookaside("max", clang.maximum, max, args, kwargs)
+    return _general_jit_min_max_lookaside("max", clang.maximum, args, kwargs)
 
 
 @register_general_jit_lookaside(min)
 def _general_jit_builtin_min_lookaside(*args, **kwargs):
-    return _general_jit_min_max_lookaside("min", clang.minimum, min, args, kwargs)
+    return _general_jit_min_max_lookaside("min", clang.minimum, args, kwargs)
 
 
 def _get_torch_nn_module_named_members_lookaside(
