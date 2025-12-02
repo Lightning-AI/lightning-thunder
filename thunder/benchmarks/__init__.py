@@ -2081,7 +2081,7 @@ class LitGPTCausalSelfAttentionBenchmark(Benchmark, metaclass=UserFacingBenchmar
         from litgpt.model import CausalSelfAttention
 
         module = (
-            CausalSelfAttention(self.config)
+            CausalSelfAttention(self.config, 0)
             .to(device=self.device, dtype=self.tdtype)
             .requires_grad_(self.requires_grad)
         )
