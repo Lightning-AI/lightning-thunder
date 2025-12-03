@@ -1355,12 +1355,8 @@ def squeeze(a: TensorProxy, /, dims: Sequence[int], *, fd: FusionDefinition, lc_
 register_supported(PrimIDs.SQUEEZE, squeeze, _squeeze_check)
 
 
-# NOTE: Currently `_advanced_indexing` seems to return a `TensorProxy` of wrong shape
-# when input is 0-size tensor, leading to a broken nvfuser definition.
-# So for now, it'd be reasonable to disallow 0-size tensors.
-# Related: https://github.com/Lightning-AI/lightning-thunder/issues/2068
 def _take_check(a: TensorProxy, /, index: TensorProxy, dim: int) -> bool:
-    return are_supported_tensors(a, index) and a.numel() > 0
+    return are_supported_tensors(a, index)
 
 
 def take(a: TensorProxy, /, index: TensorProxy, dim: int, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
