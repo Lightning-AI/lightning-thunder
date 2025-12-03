@@ -206,8 +206,8 @@ def test_where_on_numbers(executor, device, dtype, cache_option):
         foo_a_fixed = partial(foo, a=fixed_a)
         cfoo_a_fixed = executor.make_callable(foo_a_fixed, cache=cache_option)
         for pred, b in itertools.product(bool_inps, float_inps):
-            actual = cfoo_a_fixed(pred=fixed_pred, b=b)
-            expected = foo_python(fixed_pred, fixed_a, b)
+            actual = cfoo_a_fixed(pred=pred, b=b)
+            expected = foo_python(pred, fixed_a, b)
             assert_close(actual, expected)
 
         fixed_pred = random.choice(bool_inps)
