@@ -520,7 +520,7 @@ class FXGraphReport:
         code_str = f"{code_str}\n{main_code.format(graph_name=self.graph_name)}\n{comment_str}"
 
         if file_name is None:
-            file_name = f"{self.graph_name}.py"
+            file_name = f"{self.graph_name}_{compile_fn.name}_repro.py"
         with open(folder / file_name, "w") as f:
             print(code_str, file=f)
         format_python_file(folder / file_name)
@@ -633,7 +633,7 @@ class FXGraphReport:
 
         code_str = f"{code_str}\n{main_code.format(graph_name=self.graph_name)}\n{comment_str}"
         if file_name is None:
-            file_name = f"{self.graph_name}.py"
+            file_name = f"{self.graph_name}_{compile_fn.name}_{time_fn.name}_benchmark.py"
         with open(folder / file_name, "w") as f:
             print(code_str, file=f)
         format_python_file(folder / file_name)
@@ -924,7 +924,7 @@ print(measurement)
 {comment_str}
 """
         if file_name is None:
-            file_name = f"{self.name}_benchmark_nvfuser.py"
+            file_name = f"{self.name}_benchmark_nvfuser_{time_fn.name}.py"
         with open(folder / file_name, "w") as f:
             print(code_str, file=f)
         format_python_file(folder / file_name)
@@ -983,7 +983,7 @@ measurement = {time_fn.to_source("torch_compiled_callable", "inputs")}
 print(measurement)
 """
         if file_name is None:
-            file_name = f"{self.name}_benchmark_inductor.py"
+            file_name = f"{self.name}_benchmark_inductor_{time_fn.name}.py"
         with open(folder / file_name, "w") as f:
             f.write(code_str)
         format_python_file(folder / file_name)
@@ -1472,6 +1472,7 @@ def save_thunderfx_repros(
         for thunder_fxgraph_report in thunder_fxgraph_reports:
             graph_folder = folder_path / thunder_fxgraph_report.graph_name
             graph_folder.mkdir(exist_ok=True, parents=True)
+            thunder_fxgraph_report.write_inductor_repro(graph_folder)
             for split_report in thunder_fxgraph_report.subgraph_reports:
                 if check_runnability or save_trace or save_fusion:
                     try:
@@ -1484,10 +1485,21 @@ def save_thunderfx_repros(
                         continue
                     else:
                         stream.write(f"Successfully ran the {split_report.graph_name} using Thunder\n")
+
+                from torch._inductor.compile_fx import graph_returns_tuple
+
+                # torch._inductor.compile requires the output to be tuple, if not, the symbolic trace is necessary
+                skip_symbolic_trace = graph_returns_tuple(split_report.graph)
+                torchinductor = TorchInductorSpecification(skip_symbolic_trace=skip_symbolic_trace)
                 if use_benchmark:
-                    split_report.write_benchmark(graph_folder, thunderjit, WallTime)
+                    split_report.write_benchmark(graph_folder, thunderjit, WallTimeWithMemoryUsage)
+                    split_report.write_benchmark(graph_folder, thunderjit, KernelTime)
+
+                    split_report.write_benchmark(graph_folder, torchinductor, WallTimeWithMemoryUsage)
+                    split_report.write_benchmark(graph_folder, torchinductor, KernelTime)
                 else:
                     split_report.write_repro(graph_folder, thunderjit)
+                    split_report.write_repro(graph_folder, torchinductor)
                 if save_trace:
                     with open(graph_folder / f"{split_report.graph_name}_fwd_trace.py", "w") as f:
                         f.write(str(split_report.fwd_trc))
@@ -1499,7 +1511,11 @@ def save_thunderfx_repros(
                     for fusion_report in split_report.fusion_reports:
                         if use_benchmark:
                             fusion_report.write_nvfuser_benchmark(fusion_folder, WallTime)
+                            fusion_report.write_inductor_benchmark(fusion_folder, WallTime)
+                            fusion_report.write_nvfuser_benchmark(fusion_folder, KernelTime)
+                            fusion_report.write_inductor_benchmark(fusion_folder, KernelTime)
                         else:
                             fusion_report.write_nvfuser_repro(fusion_folder)
+                            fusion_report.write_inductor_repro(fusion_folder)
 
     return inner_fn
