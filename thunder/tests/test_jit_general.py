@@ -872,8 +872,6 @@ def test_symbolic_values_min_max(min_op, max_op):
         kv_offset = max_op(offset_raw, 0)
         return max_cache_len, kv_offset
 
-    samples = torch.randint(1, 100, (4, 20))
-
     jfoo = thunder_jit(foo, cache="symbolic values")
 
     samples = torch.randint(1, 100, (20, 4))
