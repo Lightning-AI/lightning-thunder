@@ -1121,8 +1121,8 @@ def test_bsym_toposort(executor: TestExecutor, device: str, dtype: dtypes.dtype)
     top_down_bsyms = toposort_bsym_dag(roots, TOPOSORT_ORDER.TOP_DOWN)
     bottom_up_bsyms = toposort_bsym_dag(leaves, TOPOSORT_ORDER.BOTTOM_UP)
 
-    top_down_reshape_bsym = top_down_bsyms[3]
-    bottom_up_reshape_bsym = bottom_up_bsyms[2]
+    top_down_reshape_bsym = top_down_bsyms[5]
+    bottom_up_reshape_bsym = bottom_up_bsyms[4]
 
     assert top_down_reshape_bsym.sym.id == "torch.reshape"
     assert bottom_up_reshape_bsym.sym.id == "torch.reshape"
