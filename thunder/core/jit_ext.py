@@ -469,6 +469,8 @@ def _general_jit_getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
 
 @register_general_jit_lookaside(isinstance)
 def _general_jit_isinstance_lookaside(obj: Any, cls: type | UnionType | tuple[type | UnionType]):
+    from thunder.core.baseutils import check
+
     uobj = unwrap(obj)
     ucls = unwrap(cls)
     if isinstance(uobj, TensorProxy):
@@ -480,6 +482,9 @@ def _general_jit_isinstance_lookaside(obj: Any, cls: type | UnionType | tuple[ty
             ucls = (ucls,)
         if torch.nn.Parameter in ucls:
             res = issubclass(obj.python_typ, ucls)
+    elif isinstance(uobj, NumberProxy):
+        check(uobj.value is not None, lambda: "isinstance does not support NumberProxy with no value")
+        res = isinstance(uobj.value, ucls)
     else:
         res = isinstance(uobj, ucls)
 
