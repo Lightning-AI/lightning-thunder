@@ -696,8 +696,6 @@ class Benchmark_litGPT:
                 transforms.insert(0, TransformerEngineTransform())
 
             if "jit" in self.compile:
-                jit_options = {}
-                jit_options["fp8_shard_intermediate_activation"] = self.fp8_shard_intermediate_activation
                 model = thunder.jit(model, executors=executors, transforms=transforms, **jit_options)
 
             else:
