@@ -621,7 +621,7 @@ def test_vjp_correctness(op, device, dtype, executor, comp):
                 comp,
                 executor,
                 set_compile_data,
-                len(sample.kwargs) != 0,
+                prologue_required=True,
             )
 
         def _torch_jvp():
