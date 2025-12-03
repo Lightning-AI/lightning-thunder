@@ -455,6 +455,9 @@ class StringProxy(Proxy, str):
             return False
         return str(self) == str(other)
 
+    def __bool__(self) -> bool:
+        return bool(self.value)
+
 
 #
 # Collection proxies
