@@ -1063,6 +1063,7 @@ def test_scatter(executor, device: str, dtype: dtypes.dtype):
         assert {el.sym.name for el in fw_trace.bound_symbols if not el.sym.is_fusion} == set(outside_fusion_syms)
 
 
+@pytest.mark.xfail(reason="nvFuser does not support symbolic values for ceil")
 @instantiate(
     executors=(nvFuserExecutor,),
     dtypes=NOTHING,
