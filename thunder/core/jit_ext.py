@@ -38,7 +38,6 @@ from thunder.core.proxies import (
     Proxy,
     ProxyInterface,
     ProxyTag,
-    StringProxy,
     TensorProxy,
     Variable,
     is_proxy_name_available,
@@ -643,7 +642,7 @@ _general_jit_lookaside_map[hasattr] = _general_jit_hasattr_lookaside
 def _general_jit_bool_lookaside(wrapped_x: Any) -> bool | INTERPRETER_SIGNALS:
     assert isinstance(wrapped_x, WrappedValue)
     # It doesn't feel right to insert constraints in bool lookaside, constraints here only applies when the bool value is used in control flow.
-    if isinstance(wrapped_x.value, (NumberProxy, StringProxy)):
+    if isinstance(wrapped_x.value, NumberProxy):
         if wrapped_x.value.is_dynamic():
             raise NotImplementedError(f"conversion to bool is not allowed on dynamic proxy={wrapped_x.value}")
         wrapped_x.value.make_static_constrained()
