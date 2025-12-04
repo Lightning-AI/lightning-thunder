@@ -1428,22 +1428,39 @@ def save_thunderfx_repros(
     Saves reproduction scripts for ThunderFX subgraphs.
 
     This function:
-    1. Creates a folder structure to organize the repros
-    .
-    └── graph0
-        ├── fusion_reports
-        │   ├── graph0_thunder_0_nvFusion0_forward_repro_nvfuser.py
-        │   ├── graph0_thunder_0_nvFusion1_forward_repro_nvfuser.py
-        │   ├── graph0_thunder_0_nvFusion2_backward_repro_nvfuser.py
-        ├── graph0_thunder_0_bwd_trace.py
-        ├── graph0_thunder_0_fwd_trace.py
-        └── graph0_thunder_0.py
+    1. Creates a folder structure to organize the repro or benchmark scripts:
+
+       If use_benchmark is True:
+       graph0/
+       ├── fusion_reports/
+       │   ├── graph0_thunder_0_nvFusion0_forward_benchmark_inductor_KernelTime.py
+       │   ├── graph0_thunder_0_nvFusion0_forward_benchmark_inductor_WallTimeWithMemoryUsage.py
+       │   ├── graph0_thunder_0_nvFusion0_forward_benchmark_nvfuser_KernelTime.py
+       │   └── graph0_thunder_0_nvFusion0_forward_benchmark_nvfuser_WallTimeWithMemoryUsage.py
+       ├── graph0_benchmark_torchcompile.py
+       ├── graph0_thunder_0_bwd_trace.py
+       ├── graph0_thunder_0_fwd_trace.py
+       ├── graph0_thunder_0_inductor_KernelTime_benchmark.py
+       ├── graph0_thunder_0_inductor_WallTimeWithMemoryUsage_benchmark.py
+       ├── graph0_thunder_0_thunder_KernelTime_benchmark.py
+       └── graph0_thunder_0_thunder_WallTimeWithMemoryUsage_benchmark.py
+
+       If use_benchmark is False:
+       graph0/
+       ├── fusion_reports/
+       │   ├── graph0_thunder_0_nvFusion0_forward_repro_inductor.py
+       │   └── graph0_thunder_0_nvFusion0_forward_repro_nvfuser.py
+       ├── graph0_repro_torchcompile.py
+       ├── graph0_thunder_0_fwd_trace.py
+       ├── graph0_thunder_0_bwd_trace.py
+       ├── graph0_thunder_0_inductor_repro.py
+       └── graph0_thunder_0_thunder_repro.py
 
     2. For each Thunder FX graph and its subgraphs:
-        - Checks runnability if requested
-        - Saves benchmark or repro scripts
-        - Saves trace information if requested
-        - Saves nvFusion repros if requested
+       - Checks runnability if requested
+       - Saves benchmark or repro scripts
+       - Saves trace information if requested
+       - Saves nvFusion repros if requested
 
     Args:
         fn: The callable to analyze
@@ -1452,7 +1469,7 @@ def save_thunderfx_repros(
         check_runnability: If True, checks if graphs can run with Thunder
         save_fusion: If True, saves nvFusion repros
         save_trace: If True, saves trace information
-        stream: Stream to write output log informationto
+        stream: Stream to write output log information to
         force_overwrite: If True, overwrites existing folder at folder_path
         **compile_kwargs: Keyword arguments for Thunder and torch.compile
 
@@ -1503,8 +1520,9 @@ def save_thunderfx_repros(
                 if save_trace:
                     with open(graph_folder / f"{split_report.graph_name}_fwd_trace.py", "w") as f:
                         f.write(str(split_report.fwd_trc))
-                    with open(graph_folder / f"{split_report.graph_name}_bwd_trace.py", "w") as f:
-                        f.write(str(split_report.bwd_trc))
+                    if split_report.bwd_trc is not None:
+                        with open(graph_folder / f"{split_report.graph_name}_bwd_trace.py", "w") as f:
+                            f.write(str(split_report.bwd_trc))
                 if save_fusion:
                     fusion_folder = graph_folder / "fusion_reports"
                     fusion_folder.mkdir(exist_ok=True, parents=True)
