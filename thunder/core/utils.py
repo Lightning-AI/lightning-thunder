@@ -1267,6 +1267,8 @@ def create_python_callable_from_bsym(bsym: BoundSymbolInterface) -> str:
 def parse_alias_tensor_indices(alias_tensor_indices_str: str) -> list[list[int]]:
     indice_groups = []
     for s in alias_tensor_indices_str.split("-"):
+        if not s:
+            continue
         indices = [int(i) for i in s.split(",")]
         indice_groups.append(indices)
     return indice_groups
