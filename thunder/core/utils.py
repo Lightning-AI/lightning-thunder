@@ -1265,7 +1265,11 @@ def create_python_callable_from_bsym(bsym: BoundSymbolInterface) -> str:
 
 
 def parse_alias_tensor_indices(alias_tensor_indices_str: str) -> list[list[int]]:
-    return [[int(i) for i in s.split(",")] for s in alias_tensor_indices_str.split("-") if s != ""]
+    indice_groups = []
+    for s in alias_tensor_indices_str.split("-"):
+        indices = [int(i) for i in s.split(",")]
+        indice_groups.append(indices)
+    return indice_groups
 
 
 def encode_alias_tensor_indices(*args, **kwargs) -> str:
@@ -1281,8 +1285,9 @@ def encode_alias_tensor_indices(*args, **kwargs) -> str:
             data_ptr = t.untyped_storage().data_ptr()
             data_ptr_to_tensor_indices[data_ptr].append(idx)
 
-    alias_indices = []
+    encoded_indice_groups = []
     for indices in data_ptr_to_tensor_indices.values():
         if len(indices) > 1:
-            alias_indices.append(",".join(str(idx) for idx in indices))
-    return "-".join(alias_indices)
+            encoded_indices = ",".join(str(idx) for idx in indices)
+            encoded_indice_groups.append(encoded_indices)
+    return "-".join(encoded_indice_groups)
