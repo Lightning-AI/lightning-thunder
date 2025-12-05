@@ -1489,7 +1489,7 @@ def save_thunderfx_repros(
         for thunder_fxgraph_report in thunder_fxgraph_reports:
             graph_folder = folder_path / thunder_fxgraph_report.graph_name
             graph_folder.mkdir(exist_ok=True, parents=True)
-            thunder_fxgraph_report.write_inductor_repro(graph_folder)
+            thunder_fxgraph_report.write_inductor_repro(graph_folder, use_benchmark=use_benchmark)
             for split_report in thunder_fxgraph_report.subgraph_reports:
                 if check_runnability or save_trace or save_fusion:
                     try:
@@ -1528,8 +1528,8 @@ def save_thunderfx_repros(
                     fusion_folder.mkdir(exist_ok=True, parents=True)
                     for fusion_report in split_report.fusion_reports:
                         if use_benchmark:
-                            fusion_report.write_nvfuser_benchmark(fusion_folder, WallTime)
-                            fusion_report.write_inductor_benchmark(fusion_folder, WallTime)
+                            fusion_report.write_nvfuser_benchmark(fusion_folder, WallTimeWithMemoryUsage)
+                            fusion_report.write_inductor_benchmark(fusion_folder, WallTimeWithMemoryUsage)
                             fusion_report.write_nvfuser_benchmark(fusion_folder, KernelTime)
                             fusion_report.write_inductor_benchmark(fusion_folder, KernelTime)
                         else:
