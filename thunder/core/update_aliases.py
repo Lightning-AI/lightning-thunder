@@ -177,11 +177,11 @@ def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[li
             encountered.update(in_tensors)
             involved_view_groups = [g for g in view_groups if g.intersection(in_tensors)]
             involved_views = set().union(*involved_view_groups)
-            views_encountered = involved_views.intersection(encountered)
+            views_encountered = tuple(involved_views.intersection(encountered))
 
             if _is_inplace_op(bsym):
                 # This is a hack to insert fusion break because nvFuser doesn't support mutation on intermediates
-                views_encountered.update(in_tensors)
+                views_encountered = tuple(in_tensors.union(views_encountered))
 
             if not views_encountered:
                 # This is a view creation with operands that are not involved in any inplace ops.
