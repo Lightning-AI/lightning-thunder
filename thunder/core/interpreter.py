@@ -39,6 +39,8 @@ from types import (
     TracebackType,
 )
 
+import torch
+
 from thunder.core.baseutils import Singleton, init_colors, extract_callable_name, is_likely_from_collections_namedtuple
 from thunder.core.codeutils import Positions
 
@@ -397,8 +399,11 @@ class InterpreterCompileCtx:
         self._callbacks: dict[INTERPRETER_CALLBACKS, Callable] = callbacks
         self._with_provenance_tracking = with_provenance_tracking
         if with_provenance_tracking:
-            assert isinstance(uncacheable_classes, (list, tuple))
-            uncacheable_classes = tuple(set(uncacheable_classes) | {NoneType, int, str, float, bool})
+            if uncacheable_classes is None:
+                uncacheable_classes = ()
+            uncacheable_classes = tuple(
+                set(uncacheable_classes) | {NoneType, int, str, float, bool, complex, torch.Tensor}
+            )
 
         self._uncacheable_classes = uncacheable_classes
 

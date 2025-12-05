@@ -1370,7 +1370,7 @@ def round(a: TensorLike | Number) -> TensorLike | Number:
     return _elementwise_unary_wrapper(
         a,
         prim=prims.round,
-        type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT,
+        type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.NUMBER_TO_INT,
     )
 
 
@@ -1453,7 +1453,7 @@ def tanh(a):
     )
 
 
-@clangop()
+@clangop(method_name="trunc")
 def trunc(a: TensorLike | Number) -> TensorLike | Number:
     # Short-circuits on unsigned inputs (which are already trivially truncated)
     if dtypes.is_exact_dtype(dtypes.to_dtype(a)):
@@ -1462,7 +1462,7 @@ def trunc(a: TensorLike | Number) -> TensorLike | Number:
     return _elementwise_unary_wrapper(
         a,
         prim=prims.trunc,
-        type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT,
+        type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.NUMBER_TO_INT,
     )
 
 
@@ -1793,7 +1793,7 @@ def zeta(a, b):
     )
 
 
-@clangop()
+@clangop(method_name="bitwise_left_shift")
 def bitwise_left_shift(a, b):
     return _elementwise_binary_wrapper(
         a,
@@ -1803,7 +1803,7 @@ def bitwise_left_shift(a, b):
     )
 
 
-@clangop()
+@clangop(method_name="bitwise_right_shift")
 def bitwise_right_shift(a, b):
     return _elementwise_binary_wrapper(
         a,
