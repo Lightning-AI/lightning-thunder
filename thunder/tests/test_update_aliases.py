@@ -533,6 +533,33 @@ def test_batch_norm_update_aliases(executor, device, dtype):
 
 @instantiate(
     dtypes=(dtypes.float32,),
+)
+def test_no_update_aliases_in_backward(executor, device, dtype):
+    torch_dtype = dtypes.to_torch_dtype(dtype)
+
+    def f(x):
+        y = x.sin()
+        y.exp_()
+        return y
+
+    x = make_tensor((2, 3), device=device, dtype=torch_dtype, requires_grad=True)
+    jf = executor.make_callable(f)
+    actual = jf(x)
+    expected = f(x)
+    torch.testing.assert_close(actual, expected)
+
+    g = torch.randn_like(actual)
+
+    actual_grad = torch.autograd.grad(actual, x, g)
+    expected_grad = torch.autograd.grad(expected, x, g)
+    torch.testing.assert_close(actual_grad, expected_grad)
+
+    backward_trace = thunder.last_backward_traces(jf)[-1]
+    assert all(bsym.sym.name != "update_aliases" for bsym in backward_trace.bound_symbols)
+
+
+@instantiate(
+    dtypes=(dtypes.float32,),
     decorators=(pytest.mark.parametrize("requires_grad", (True, False)),),
 )
 def test_higher_order_inplace_alias_update(executor, device, dtype, requires_grad):
@@ -583,6 +610,9 @@ def test_higher_order_inplace_alias_update(executor, device, dtype, requires_gra
         expected_grad = torch.autograd.grad(expected, c, g)
         torch.testing.assert_close(actual_grad_fx, expected_grad)
         torch.testing.assert_close(actual_grad_jit, expected_grad)
+
+        backward_trace = thunder.last_backward_traces(jfoo)[-1]
+        assert all(bsym.sym.name != "update_aliases" for bsym in backward_trace.bound_symbols)
 
 
 @instantiate(
