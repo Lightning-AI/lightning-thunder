@@ -366,6 +366,29 @@ def test_write_to_intermediate_result(executor, device, dtype, cache):
 
 
 @instantiate(
+    dtypes=NOTHING,
+    decorators=(
+        pytest.mark.xfail(
+            reason="Writing to viewed intermediate. See https://github.com/Lightning-AI/lightning-thunder/issues/2766"
+        ),
+        pytest.mark.parametrize("requires_grad", (False, True)),
+    ),
+)
+def test_write_to_viewed_intermediate(executor, device, dtype, requires_grad):
+    def fn(a):
+        b = a * 2
+        c = b[:]
+        c.tanh_()
+        return a * b
+
+    a = make_tensor((2, 3), dtype=torch.float32, device=device, requires_grad=requires_grad)
+    jfn = executor.make_callable(fn, fusion_type="dataflow")
+    actual = jfn(a)
+    expected = fn(a)
+    torch.testing.assert_close(actual, expected)
+
+
+@instantiate(
     dtypes=(dtypes.float32,),
 )
 def test_inplace_to_alias_func_args(executor, device, dtype):
