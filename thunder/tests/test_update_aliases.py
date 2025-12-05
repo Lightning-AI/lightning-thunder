@@ -19,7 +19,6 @@ from thunder.tests.framework import (
     NOTHING,
     TorchExecutor,
     TorchCompileExecutor,
-    nvFuserExecutor,
     requiresCUDA,
 )
 from thunder.torch import _torch_to_thunder_function_map, _inplace_to_out_of_place
@@ -354,9 +353,6 @@ def test_aliased_input(executor, device, dtype, cache):
     decorators=(pytest.mark.parametrize("cache", ("constant values", "symbolic values")),),
 )
 def test_write_to_intermediate_result(executor, device, dtype, cache):
-    if executor == nvFuserExecutor:
-        pytest.xfail("nvFuser does not support writing to intermediate results")
-
     def fn(x):
         y = x.view(-1)
         y.add_(1)
