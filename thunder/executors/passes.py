@@ -10,6 +10,7 @@ from thunder.core.pytree import tree_flatten
 from thunder.core.trace import from_trace, TraceProvenance
 from thunder.core.trace_interpreter import TraceSubstitutionProcessor
 from thunder.core.transform_common import dce
+from thunder.core.update_aliases import insert_alias_updates
 from thunder.core.utils import ProxyDict
 from thunder.executors.pythonex import clear_mutable_collection
 from thunder.extend import Executor, get_always_executors, OperatorExecutor, FusionExecutor
@@ -122,7 +123,11 @@ def transform_for_execution(trace: TraceCtx, executors_list: Sequence[Executor])
     # Step 1 Performs execution transforms
     #
     extrace = _transform_for_operator_executor_execution(trace, executors_list)
+    # Insert alias updates before DCE for bsyms exposed by decomposition
+    # Inserted prims.update_aliases will be handled in Step 3
+    extrace = insert_alias_updates(extrace)
     extrace = dce(extrace)
+
     #
     # Step 2 Fusion executors can transform the trace
     #

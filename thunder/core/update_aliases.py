@@ -1,11 +1,13 @@
 from functools import reduce, partial
 
-from thunder.core.compile_data import using_symbolic_values
+import thunder
+from thunder.core.compile_data import get_compile_data, using_symbolic_values
 import thunder.core.prims as prims
 from thunder.core.proxies import TensorProxy, variableify, unvariableify
 from thunder.core.pytree import tree_flatten
 from thunder.core.symbol import BoundSymbol, BoundSymbolTag, has_tags
 from thunder.core.trace import from_trace, tracectx, TraceCtx as Trace, TraceProvenance, VariableInterface
+from thunder.core.utils import parse_alias_tensor_indices
 
 
 def _update_swap_map(swap_map, old_alias, new_alias):
@@ -39,6 +41,7 @@ def _get_new_aliases(aliases, trace):
 
 
 def _is_inplace_op(bsym):
+    # TODO: Handle higher order bsyms containing inplace ops
     return (bsym.sym.tags and prims.OpTags.IN_PLACE in bsym.sym.tags) or (
         bsym.subsymbols and bsym.subsymbols[-1].sym.id == prims.PrimIDs.COPY_
     )
@@ -51,8 +54,6 @@ def _is_view_creation_op(bsym):
 
 
 def _involves_viewed_args(bsym, viewed):
-    if bsym.sym.id == prims.PrimIDs.RETURN:
-        return False
     return any(isinstance(p, TensorProxy) and variableify(p) in viewed for p in bsym.flat_proxy_args)
 
 
@@ -131,9 +132,16 @@ def replace_args_with_alias_map(
     return no_implicit_alias_trace, view_groups
 
 
-def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[list[int]]) -> Trace:
+def insert_alias_updates(computation_trace: Trace) -> Trace:
+    cd = get_compile_data()
+    if cd is not None and cd.compile_options.get("skip_inplace_alias_updates", False):
+        return computation_trace
+
     if not any(_is_inplace_op(bsym) for bsym in computation_trace.bound_symbols):
         return computation_trace
+
+    alias_tensor_indices_str = thunder._get_cache_info().get("alias_tensor_indices", "")
+    alias_tensor_indices = parse_alias_tensor_indices(alias_tensor_indices_str)
 
     swap_map = dict()
     bsyms = []
@@ -148,7 +156,8 @@ def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[li
     for bsym in computation_trace.bound_symbols:
         if _is_inplace_op(bsym) or _is_view_creation_op(bsym):
             # only interested in the input which is modified by the inplace op
-            in_tensor = variableify(bsym.flat_proxy_args[0])
+            mutated_or_aliased_index = 1 if bsym.sym.id == prims.PrimIDs.COPY_ else 0
+            in_tensor = variableify(bsym.flat_proxy_args[mutated_or_aliased_index])
             out_tensors = set(map(variableify, filter(lambda p: isinstance(p, TensorProxy), bsym.flat_proxy_outs)))
             if _is_inplace_op(bsym):
                 inplace_inputs.add(in_tensor)
@@ -169,7 +178,8 @@ def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[li
         if _is_inplace_op(bsym) or _is_view_creation_op(bsym) or _involves_viewed_args(bsym, viewed):
             in_tensors = list(map(variableify, filter(lambda p: isinstance(p, TensorProxy), bsym.flat_proxy_args)))
             if _is_inplace_op(bsym) and in_tensors:
-                in_tensors = {in_tensors[0]}
+                mutated_index = 1 if bsym.sym.id == prims.PrimIDs.COPY_ else 0
+                in_tensors = {in_tensors[mutated_index]}
             else:
                 in_tensors = set(in_tensors)
             out_tensors = set(map(variableify, filter(lambda p: isinstance(p, TensorProxy), bsym.flat_proxy_outs)))

@@ -14,6 +14,7 @@ from thunder.core.transforms import (
     augmented_forward_impls,
     backward_impls,
 )
+from thunder.core.update_aliases import insert_alias_updates
 import thunder.torch as ltorch
 
 
@@ -436,6 +437,9 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
     # run the trace through the processor
     joint_trace, _ = AugmentedForwardProcessor(trace)()
     joint_trace, _ = InsertRecomputationsProcessor(joint_trace)()
+
+    # Insert prims.update_aliases before DCE for bsyms exposed by decomposition
+    joint_trace = insert_alias_updates(joint_trace)
 
     # run through DCE in case some of the gradients of intermediates are not needed.
     joint_trace = dce(joint_trace)
