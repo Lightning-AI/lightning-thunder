@@ -166,6 +166,7 @@ def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[li
 
     # Third pass: insert alias updates
     for bsym in computation_trace.bound_symbols:
+        bsym = bsym.from_bsym_swap_proxies(swap_map)
         if _is_inplace_op(bsym) or _is_view_creation_op(bsym) or _involves_viewed_args(bsym, viewed):
             in_tensors = list(map(variableify, filter(lambda p: isinstance(p, TensorProxy), bsym.flat_proxy_args)))
             if _is_inplace_op(bsym) and in_tensors:
@@ -174,10 +175,17 @@ def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[li
                 in_tensors = set(in_tensors)
             out_tensors = set(map(variableify, filter(lambda p: isinstance(p, TensorProxy), bsym.flat_proxy_outs)))
             encountered.update(in_tensors)
-            group = set(reduce(set.union, filter(lambda g: any(g.intersection(in_tensors)), view_groups), set()))
-            if not group or not (views_encountered := group.intersection(encountered)):
-                # If group is empty, this is a view creation with operands that are not involved in any inplace ops.
-                bsyms.append(bsym.from_bsym_swap_proxies(swap_map, skip_output=True))
+            involved_view_groups = [g for g in view_groups if g.intersection(in_tensors)]
+            involved_views = set().union(*involved_view_groups)
+            views_encountered = tuple(involved_views.intersection(encountered))
+
+            if _is_inplace_op(bsym):
+                # This is a hack to insert fusion break because nvFuser doesn't support mutation on intermediates
+                views_encountered = tuple(in_tensors.union(views_encountered))
+
+            if not views_encountered:
+                # This is a view creation with operands that are not involved in any inplace ops.
+                bsyms.append(bsym)
                 continue
 
             new_aliases = _get_new_aliases(views_encountered, computation_trace)
@@ -187,14 +195,24 @@ def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[li
             if has_tags(bsym, {BoundSymbolTag.BACKWARD}):
                 update_bsym.tags.add(BoundSymbolTag.BACKWARD)
             bsyms.append(update_bsym)
-            encountered.update(out_tensors)
+            encountered.update(out_tensors, map(variableify, new_aliases))
             bsyms.append(new_bsym)
             if _is_inplace_op(bsym) and len(out_tensors) == 1 and len(in_tensors) == 1:
                 #  This relies on these being one element sets (ltorch.setitem_ yields no outs).
                 swap_map = _update_swap_map(swap_map, in_tensors.pop(), unvariableify(out_tensors.pop()))
 
+            # views_encountered and new_aliases refer to the same variables in the original trace,
+            # so we update view groups to use the latest variables in the new trace
+            variable_renames = {
+                alias: variableify(new_alias) for alias, new_alias in zip(views_encountered, new_aliases)
+            }
+            for i, group in enumerate(involved_view_groups):
+                new_group = {variable_renames.get(t, t) for t in group}
+                view_groups[i] = new_group
+            viewed = set().union(*view_groups)
+
         else:
-            bsyms.append(bsym.from_bsym_swap_proxies(swap_map))
+            bsyms.append(bsym)
 
     alias_updated_trace = from_trace(computation_trace)
     alias_updated_trace.set_provenance(TraceProvenance("Update aliases for in-place ops"))
