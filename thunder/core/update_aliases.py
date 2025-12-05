@@ -194,7 +194,7 @@ def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[li
             if has_tags(bsym, {BoundSymbolTag.BACKWARD}):
                 update_bsym.tags.add(BoundSymbolTag.BACKWARD)
             bsyms.append(update_bsym)
-            encountered.update(out_tensors)
+            encountered.update(out_tensors, map(variableify, new_aliases))
             bsyms.append(new_bsym)
             if _is_inplace_op(bsym) and len(out_tensors) == 1 and len(in_tensors) == 1:
                 #  This relies on these being one element sets (ltorch.setitem_ yields no outs).
