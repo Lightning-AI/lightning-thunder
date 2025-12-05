@@ -367,12 +367,7 @@ def test_write_to_intermediate_result(executor, device, dtype, cache):
 
 @instantiate(
     dtypes=NOTHING,
-    decorators=(
-        pytest.mark.xfail(
-            reason="Writing to viewed intermediate. See https://github.com/Lightning-AI/lightning-thunder/issues/2766"
-        ),
-        pytest.mark.parametrize("requires_grad", (False, True)),
-    ),
+    decorators=(pytest.mark.parametrize("requires_grad", (False, True)),),
 )
 def test_write_to_viewed_intermediate(executor, device, dtype, requires_grad):
     def fn(a):
