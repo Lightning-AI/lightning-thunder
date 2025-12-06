@@ -306,11 +306,11 @@ def test_grad_no_recompile(executor, device, dtype):
 
     b = make_tensor((3, 3), device=device, dtype=tdtype, requires_grad=True)
     cfoo(b)
-    assert thunder.cache_misses(cfoo) == 2
+    assert thunder.cache_misses(cfoo) == 1
 
     b.grad = make_tensor((3, 3), device=device, dtype=tdtype)
     cfoo(b)
-    assert thunder.cache_misses(cfoo) == 2
+    assert thunder.cache_misses(cfoo) == 1
 
 
 @instantiate(dtypes=(thunder.float32,))
