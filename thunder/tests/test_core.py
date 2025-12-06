@@ -2776,7 +2776,10 @@ def test_type_string():
     assert tr.bound_symbols[1].sym == ltorch.mul
     (pystr,) = tr.bound_symbols[1].python(0)
 
-    assert pystr == 'result = ltorch.mul(2, x)  # result: "cpu f32[2, 2]"'
+    assert (
+        pystr
+        == 'result = ltorch.mul(2, x)  # result: "cpu f32[[IntegerProxy name=i0, value=2, static=CONSTRAINT.CONSTRAINABLE], [IntegerProxy name=i1, value=2, static=CONSTRAINT.CONSTRAINABLE]]"'
+    )
 
 
 def test_dtype_in_trace():
