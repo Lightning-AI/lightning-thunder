@@ -1855,7 +1855,7 @@ def test_grad_transform_saved_for_backward_proxy():
     c = 2.0
 
     dynamic_jit = thunder.jit(foo, cache="symbolic values")
-    static_jit = thunder.jit(foo)
+    static_jit = thunder.jit(foo, cache="constant values")
 
     out = dynamic_jit(a, c)
     torch.autograd.backward(out, torch.rand_like(out), retain_graph=True)
