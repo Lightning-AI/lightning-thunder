@@ -2276,7 +2276,6 @@ def test_clone_sparse_coo():
     assert b.shape == torch.Size(shp)
 
 
-@pytest.mark.xfail(reason="we improperly use an alias")
 def test_clone_alias():
     def foo(a):
         b = a.clone()
