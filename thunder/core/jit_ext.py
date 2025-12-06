@@ -312,7 +312,9 @@ class JitCtx:
                 else:
                     self.add_constraint((clang.check_number_type_and_value, p, uvalue))
             elif co is CACHE_OPTIONS.SYMBOLIC_VALUES:
-                if p is not uvalue:
+                if isinstance(uvalue, str):
+                    self.add_constraint((clang.check_string_value, p, uvalue))
+                elif p is not uvalue:
                     self.add_constraint((clang.check_instance, p, (type(uvalue),)))
                     value.register_proxy(p)
             elif co not in (CACHE_OPTIONS.SAME_INPUT, CACHE_OPTIONS.NO_CACHING):
