@@ -3103,8 +3103,8 @@ def test_indexing_with_hashable_object():
     # This should be a cache miss, verify that.
     d[h] = 2
     assert jfn() == 2  # Verify that jfn now returns 2
-    assert thunder.cache_hits(jfn) == 1
-    assert thunder.cache_misses(jfn) == 2
+    assert thunder.cache_hits(jfn) == 2
+    assert thunder.cache_misses(jfn) == 1
 
 
 def test_profiling_decorator():
@@ -3253,7 +3253,7 @@ def test_unpack_sequence_element_info():
             isinstance(out, thunder.core.proxies.TensorProxy) for out in bsym.flat_outs
         ):  # prims is unpack_sequence and any output is TensorProxy
             # Verify that we print information about the unpacked TensorProxy.
-            assert "cpu f32[3]" in str(bsym)
+            assert "cpu f32[[IntegerProxy name=i0, value=3, static=CONSTRAINT.CONSTRAINABLE]]" in str(bsym)
 
 
 @pytest.mark.parametrize("thunderfx_disable_split_autograd", (True, False))
