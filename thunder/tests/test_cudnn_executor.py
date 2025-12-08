@@ -85,6 +85,77 @@ def grad_scaled_dot_product_attention_reference_generator(op, device, dtype, req
     v_broadcast = torch.as_strided(v, size=v.shape, stride=(0, 0, Ev, 1))
     yield SampleInput(q_broadcast, k_broadcast, v_broadcast, None, dropout_p=0.0, is_causal=True)
 
+    # Additional dimension test cases for different GPU architectures and cuDNN versions
+    b, h, s_q, s_kv = 2, 4, 64, 64
+
+    # Standard dimensions - should work on all GPUs (d_q <= 128, d_kv <= 128)
+    standard_dims = [
+        (64, 64),  # standard small
+        (32, 32),  # divisible by 8 small
+        (96, 96),  # divisible by 8 mid
+        (120, 88),  # divisible by 8 asymmetric
+    ]
+    for d_q, d_kv in standard_dims:
+        q = make(b, h, s_q, d_q)
+        k = make(b, h, s_kv, d_q)
+        v = make(b, h, s_kv, d_kv)
+        yield SampleInput(q, k, v, None, dropout_p=0.0, is_causal=True)
+
+    # Larger dimensions - only supported on Hopper (SM90) with cuDNN 9.x
+    hopper_dims = [
+        (192, 192),  # hopper 192
+        (256, 256),  # hopper max
+        (256, 128),  # hopper asymmetric
+    ]
+    for d_q, d_kv in hopper_dims:
+        q = make(b, h, s_q, d_q)
+        k = make(b, h, s_kv, d_q)
+        v = make(b, h, s_kv, d_kv)
+        yield SampleInput(q, k, v, None, dropout_p=0.0, is_causal=True)
+
+    # DeepSeek-style dimensions (d_q=192, d_kv=128) - Hopper 9.11+ or Blackwell 9.11+
+    d_q, d_kv = 192, 128
+    q = make(b, h, s_q, d_q)
+    k = make(b, h, s_kv, d_q)
+    v = make(b, h, s_kv, d_kv)
+    yield SampleInput(q, k, v, None, dropout_p=0.0, is_causal=True)
+
+
+def _should_skip_sdpa_sample(sample) -> str | None:
+    """Return a skip reason if the SDPA sample dimensions are not supported on current GPU/cuDNN, else None."""
+    q, k, v = sample.args[:3]
+    d_q = q.shape[-1]
+    d_kv = v.shape[-1]
+
+    cudnn_version = cudnn.backend_version()
+    cc_major = torch.cuda.get_device_capability()[0]
+
+    # Standard dimensions (d_q <= 128, d_kv <= 128) - should work on all GPUs
+    if d_q <= 128 and d_kv <= 128:
+        return None
+
+    # For dimensions > 128, need cuDNN 9.x
+    if cudnn_version < 90000:
+        return f"cuDNN 9.x required for dimensions > 128 (d_q={d_q}, d_kv={d_kv})"
+
+    # DeepSeek case (d_q=192, d_kv=128)
+    if d_q == 192 and d_kv == 128:
+        if cudnn_version < 91100:
+            return "cuDNN 9.11+ required for DeepSeek dimensions (d_q=192, d_kv=128)"
+        if cc_major not in (9, 10):
+            return "Hopper (SM90) or Blackwell (SM100) required for DeepSeek dimensions"
+        return None
+
+    # Larger dimensions (128 < d <= 256) - only Hopper
+    if d_q > 128 or d_kv > 128:
+        if cc_major != 9:
+            return f"Hopper GPU (SM90) required for dimensions > 128 (d_q={d_q}, d_kv={d_kv})"
+        if d_q > 256 or d_kv > 256:
+            return f"Dimensions exceed Hopper max of 256 (d_q={d_q}, d_kv={d_kv})"
+        return None
+
+    return None
+
 
 grad_sdpa_cudnn_opinfo = OpInfo(
     thunder.torch.scaled_dot_product_attention,
@@ -196,6 +267,11 @@ def test_cudnn_vs_torch_consistency(op, device, dtype, *_):
     cfn = thunder.jit(op.op, executors=[cudnn_ex, cudnn_layernorm_ex])
 
     for sample in op.reference_inputs(device, dtype, requires_grad=False):
+        # Skip SDPA samples with unsupported dimensions for current GPU/cuDNN
+        if op.name == "grad_forward_scaled_dot_product_attention":
+            if _should_skip_sdpa_sample(sample):
+                continue
+
         result = run_snippet(
             snippet_torch_consistency,
             op,
@@ -225,6 +301,10 @@ def test_vjp_correctness_cudnn_sdpa(dtype, may_cat_grad_qkv):
     _maybe_xfail()
 
     for sample in grad_sdpa_cudnn_opinfo.reference_inputs("cuda", dtype, requires_grad=True):
+        # Skip samples with unsupported dimensions for current GPU/cuDNN
+        if _should_skip_sdpa_sample(sample):
+            continue
+
         # Enforce tensor arguments are contiguous for torch reference
         contiguous_args = list(map(lambda a: a.contiguous() if isinstance(a, torch.Tensor) else a, sample.args))
 

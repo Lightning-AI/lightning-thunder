@@ -2011,12 +2011,21 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
     _thunder_fsdp_padding_size = getattr(t, "_thunder_fsdp_padding_size", None)
     # For parameters, shapes should be static.
     if using_symbolic_values() and not isinstance(t, torch.nn.Parameter):
-        shape_attr = ProvenanceRecord(PseudoInst.LOAD_ATTR, inputs=[copy.copy(history), wrap_const("shape").provenance])
+        if history is not None:
+            shape_pr = ProvenanceRecord(
+                PseudoInst.LOAD_ATTR, inputs=[copy.copy(history), wrap_const("shape").provenance]
+            )
+            dim_pr = lambda idx: ProvenanceRecord(
+                PseudoInst.BINARY_SUBSCR, inputs=[shape_pr, wrap_const(idx).provenance]
+            )
+        else:
+            dim_pr = lambda idx: None
+
         shape = tuple(
             IntegerProxy(
                 None,
                 s,
-                history=ProvenanceRecord(PseudoInst.BINARY_SUBSCR, inputs=[shape_attr, wrap_const(idx).provenance]),
+                history=dim_pr(idx),
                 constraint=CONSTRAINT.CONSTRAINABLE,
             )
             for idx, s in enumerate(t.shape)
