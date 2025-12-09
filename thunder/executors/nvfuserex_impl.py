@@ -2211,7 +2211,7 @@ def _var_mean_check(
     if not is_supported_tensor(a, allow_low_precision_floats=False):
         return False
 
-    if len(a.shape) == 0:
+    if a.ndim == 0:
         return False
 
     if dtypes.is_complex_dtype(dtypes.to_dtype(a)):
