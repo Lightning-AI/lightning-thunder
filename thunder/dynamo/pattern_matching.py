@@ -15,7 +15,7 @@ from torch._inductor.pattern_matcher import (
 from thunder.core.utils import OrderedSet
 
 SERIALIZED_PATTERN_PATH = Path(__file__).parent
-SERIALIZED_PATTERN_FILENAME = "serialized_patterns.py"
+SERIALIZED_PATTERN_FILENAME = "serialized_patterns"
 
 # TODO programmatically load all the patterns from a "serialized_patterns" folder
 #     m = importlib.import_module(
