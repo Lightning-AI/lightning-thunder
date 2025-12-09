@@ -1237,18 +1237,22 @@ def test_complex_backward_custom_autograd():
 def test_autograd_function_apply():
     # see https://github.com/Lightning-AI/lightning-thunder/issues/1248#issuecomment-2388655917
     # for why `torch.foo` instead of `torch.Tensor.foo`
-    def forward(ctx, x):
-        saved_for_backward = (x,)
-        return torch.sin(x), saved_for_backward
+    class FwdModule(torch.nn.Module):
+        @staticmethod
+        def forward(ctx, x):
+            saved_for_backward = (x,)
+            return torch.sin(x), saved_for_backward
 
-    def backward(ctx, grad_output, *saved_tensors):
-        (x,) = saved_tensors
-        return grad_output * torch.cos(x)
+    class BwdModule(torch.nn.Module):
+        @staticmethod
+        def forward(ctx, grad_output, *saved_tensors):
+            (x,) = saved_tensors
+            return grad_output * torch.cos(x)
 
     def my_sin(x):
         return torch.ops.higher_order.autograd_function_apply(
-            forward,
-            backward,
+            FwdModule(),
+            BwdModule(),
             x,
             args_tensor_mask=[True],
             non_differentiable_idx=[],
@@ -1267,14 +1271,16 @@ def test_autograd_function_apply():
     expect_grad = torch.autograd.grad(y_ref, x_ref, grad)
     torch.testing.assert_close(actual_grad, expect_grad)
 
-    def wrong_backward(ctx, grad_output, *saved_tensors):
-        (x,) = saved_tensors
-        return grad_output * x.sin()
+    class WrongBwdModule(torch.nn.Module):
+        @staticmethod
+        def forward(ctx, grad_output, *saved_tensors):
+            (x,) = saved_tensors
+            return grad_output * torch.cos(x)
 
     def my_sin_with_wrong_backward(x):
         return torch.ops.higher_order.autograd_function_apply(
-            forward,
-            wrong_backward,
+            FwdModule(),
+            WrongBwdModule(),
             x,
             args_tensor_mask=[True],
             non_differentiable_idx=[],
