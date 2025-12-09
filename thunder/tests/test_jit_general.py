@@ -1237,22 +1237,25 @@ def test_complex_backward_custom_autograd():
 def test_autograd_function_apply():
     # see https://github.com/Lightning-AI/lightning-thunder/issues/1248#issuecomment-2388655917
     # for why `torch.foo` instead of `torch.Tensor.foo`
+
     class FwdModule(torch.nn.Module):
-        @staticmethod
-        def forward(ctx, x):
+        def forward(self, ctx, x):
             saved_for_backward = (x,)
             return torch.sin(x), saved_for_backward
 
+    fwd = torch.fx.symbolic_trace(FwdModule())
+
     class BwdModule(torch.nn.Module):
-        @staticmethod
-        def forward(ctx, grad_output, *saved_tensors):
+        def forward(self, ctx, grad_output, *saved_tensors):
             (x,) = saved_tensors
             return grad_output * torch.cos(x)
 
+    bwd = torch.fx.symbolic_trace(BwdModule())
+
     def my_sin(x):
         return torch.ops.higher_order.autograd_function_apply(
-            FwdModule(),
-            BwdModule(),
+            fwd,
+            bwd,
             x,
             args_tensor_mask=[True],
             non_differentiable_idx=[],
@@ -1272,15 +1275,16 @@ def test_autograd_function_apply():
     torch.testing.assert_close(actual_grad, expect_grad)
 
     class WrongBwdModule(torch.nn.Module):
-        @staticmethod
-        def forward(ctx, grad_output, *saved_tensors):
+        def forward(self, ctx, grad_output, *saved_tensors):
             (x,) = saved_tensors
             return grad_output * torch.cos(x)
 
+    wrong_bwd = torch.fx.symbolic_trace(WrongBwdModule())
+
     def my_sin_with_wrong_backward(x):
         return torch.ops.higher_order.autograd_function_apply(
-            FwdModule(),
-            WrongBwdModule(),
+            fwd,
+            wrong_bwd,
             x,
             args_tensor_mask=[True],
             non_differentiable_idx=[],
