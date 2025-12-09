@@ -1437,7 +1437,7 @@ def save_thunderfx_repros(
        │   ├── graph0_thunder_0_nvFusion0_forward_benchmark_inductor_WallTimeWithMemoryUsage.py
        │   ├── graph0_thunder_0_nvFusion0_forward_benchmark_nvfuser_KernelTime.py
        │   └── graph0_thunder_0_nvFusion0_forward_benchmark_nvfuser_WallTimeWithMemoryUsage.py
-       ├── graph0_benchmark_torchcompile.py
+       ├── graph0_repro_torchcompile.py
        ├── graph0_thunder_0_bwd_trace.py
        ├── graph0_thunder_0_fwd_trace.py
        ├── graph0_thunder_0_inductor_KernelTime_benchmark.py
@@ -1489,7 +1489,7 @@ def save_thunderfx_repros(
         for thunder_fxgraph_report in thunder_fxgraph_reports:
             graph_folder = folder_path / thunder_fxgraph_report.graph_name
             graph_folder.mkdir(exist_ok=True, parents=True)
-            thunder_fxgraph_report.write_inductor_repro(graph_folder, use_benchmark=use_benchmark)
+            thunder_fxgraph_report.write_inductor_repro(graph_folder)
             for split_report in thunder_fxgraph_report.subgraph_reports:
                 if check_runnability or save_trace or save_fusion:
                     try:
