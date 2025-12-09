@@ -1442,26 +1442,6 @@ register_grad(pids.ARGMAX, prims.argmax)
 register_grad(pids.SHAPE, prims.shape)
 
 
-def _copy_with_setitem_grad(a: TensorProxy, index, value: Number | TensorProxy):
-    fwd = prims.copy_with_setitem(a, index, value)
-    g = get_grad(fwd)
-
-    a_grad = prims.copy_with_setitem(g, index, 0)
-    put_grad(a, a_grad)
-
-    if isinstance(value, TensorProxy):
-        value_grad = g[index]
-        # NOTE: `value` could be broadcasted.
-        if not utils.same_shape(value_grad.shape, value.shape):
-            value_grad = sum_to(value_grad, value.shape)
-        put_grad(value, value_grad)
-
-    return fwd
-
-
-register_grad(pids.COPY_WITH_SETITEM, _copy_with_setitem_grad)
-
-
 def _log_sigmoid_grad(
     a: TensorProxy,
 ) -> TensorProxy:

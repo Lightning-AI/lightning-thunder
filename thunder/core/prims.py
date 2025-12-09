@@ -266,7 +266,7 @@ class PrimIDs(Enum):
     SCATTER_ADD = auto()
     TAKE = auto()
     TAKE_ALONG_AXIS = auto()
-    COPY_WITH_SETITEM = auto()
+    SETITEM = auto()
     # Linear algebra prims (Mostly experimental)
     MATMUL = auto()
     _GROUPED_MM = auto()  # Used for grouped matmuls
@@ -3615,12 +3615,11 @@ def take_along_axis_meta(a: TensorProxy, /, index: TensorProxy, dim: int) -> Ten
 take_along_axis = make_prim(PrimIDs.TAKE_ALONG_AXIS, "take_along_axis", meta=take_along_axis_meta)
 
 
-def copy_with_setitem_meta(a: TensorProxy, index, value: TensorProxy) -> TensorProxy:
-    # TODO: port checks from clang, currently there  because of the utilities they need
+def setitem_meta(a: TensorProxy, index, value: TensorProxy | Number | NumberProxy) -> TensorProxy:
     return TensorProxy(like=a)
 
 
-copy_with_setitem = make_prim(PrimIDs.COPY_WITH_SETITEM, "copy_with_setitem", meta=copy_with_setitem_meta)
+setitem = make_prim(PrimIDs.SETITEM, "setitem", meta=setitem_meta, tags=(OpTags.DONT_DCE,))
 
 
 def gather_meta(a: TensorProxy, /, index: TensorProxy, dim: int) -> TensorProxy:
