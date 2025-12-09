@@ -7,6 +7,11 @@ import torch.fx
 import torch._inductor.pattern_matcher
 from torch._inductor.pattern_matcher import (
     _TargetExpr,
+    Arg,
+    CallFunction,
+    Ignored,
+    KeywordArg,
+    MultiOutputPattern,
     PatternExpr,
     PatternPrettyPrinter,
     fx_to_pattern,
@@ -132,3 +137,96 @@ def serialize_pattern(unique_name: str, graph_module: torch.fx.GraphModule) -> P
         f.write("\n")
 
     return pattern
+
+def pattern_to_graphmodule(pattern: PatternExpr) -> torch.fx.GraphModule:
+    """
+    Convert a PatternExpr back into an FX GraphModule.
+
+    This is essentially the inverse of `torch._inductor.pattern_matcher.fx_to_pattern`.
+    It reconstructs an executable graph from a pattern expression by traversing
+    the pattern tree and creating corresponding FX nodes.
+
+    Args:
+        pattern: The PatternExpr to convert. Can be a simple pattern or a
+            MultiOutputPattern for patterns with multiple outputs.
+
+    Returns:
+        A GraphModule representing the pattern's computation graph. The output
+        is always wrapped in a tuple for consistency with Inductor's conventions.
+
+    Note:
+        - KeywordArg patterns become named placeholders
+        - Arg/Ignored patterns become wildcard placeholders
+        - Literal values are passed through unchanged
+        - The function deduplicates nodes when the same PatternExpr instance
+          appears multiple times in the pattern tree
+    """
+    graph = torch.fx.Graph()
+    placeholders = {}
+    # Cache to deduplicate nodes: PatternExpr instance -> fx.Node
+    node_map = {}
+
+    def visit(expr):
+        # If we've already visited this specific PatternExpr object, return the existing node
+        if id(expr) in node_map:
+            return node_map[id(expr)]
+
+        node = None
+        if isinstance(expr, MultiOutputPattern):
+            # This is usually the top-level container.
+            # We recursively visit all outputs.
+            outputs = [visit(out) for out in expr.outputs if out is not None]
+            # The MultiOutputPattern itself doesn't correspond to a single node
+            # in the graph body, but rather the Output node's args.
+            # We return the list/tuple of outputs.
+            return tuple(outputs)
+
+        elif isinstance(expr, CallFunction):
+            # Extract args from flat_args_kwargs (this part depends on internal structure)
+            # We assume simple structure for the sketch
+            # In reality, you'd need to parse expr.flat_args_kwargs or expr.args/kwargs
+            # Note: PatternExpr stores args/kwargs in a specific way
+
+            # Helper to process arguments
+            def process_arg(arg):
+                if isinstance(arg, PatternExpr):
+                    return visit(arg)
+                elif isinstance(arg, (list, tuple)):
+                    return type(arg)(process_arg(x) for x in arg)
+                return arg
+
+            args = [process_arg(a) for a in expr.args]
+            kwargs = {k: process_arg(v) for k, v in expr.kwargs.items()}
+
+            node = graph.call_function(expr.fns[0], args=tuple(args), kwargs=kwargs)
+
+        elif isinstance(expr, KeywordArg):
+            if expr.name not in placeholders:
+                placeholders[expr.name] = graph.placeholder(expr.name)
+            node = placeholders[expr.name]
+
+        elif isinstance(expr, (Arg, Ignored)):
+            # Create a unique wildcard placeholder
+            name = f"wildcard_{len(placeholders)}"
+            placeholders[name] = graph.placeholder(name)
+            node = placeholders[name]
+        else:
+            # Literal value
+            return expr
+
+        # Cache the created node
+        if node is not None:
+            node_map[id(expr)] = node
+        return node
+
+    # Build the graph
+    output_value = visit(pattern)
+
+    # If the result is a tuple (from MultiOutputPattern), output it as such
+    # If it's a single node (from standard PatternExpr), output that
+    if isinstance(output_value, tuple):
+        graph.output(output_value)
+    else:
+        graph.output((output_value,))  # Inductor often expects tuple output
+
+    return torch.fx.GraphModule(torch.nn.Module(), graph)
