@@ -925,8 +925,6 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
     # does not seem to be indicated in ``args_tensor_mask`` nor ``non_differentiable_idx``.
     # Thus we optimistically iterate over ``fwd_args`` and gather non-tensor values whose index is >= `length_of_tensor_args` to ``fwd_args``.
     new_fwd_args = []
-    print("fwd", unwrap(fwd))
-    print("fwd_args", fwd_args)
     for i, v in enumerate(fwd_args):
         if i < length_of_tensor_args:
             new_fwd_args.append(v)
@@ -936,9 +934,7 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
             if not isinstance(unwrap(v), TensorProxy):
                 new_fwd_args.append(v)
     new_fwd_args = (wrap_const(None),) + tuple(new_fwd_args)
-    print("new_fwd_args", new_fwd_args)
     unwrapped_fwd_args = tree_map(lambda t: unwrap(t), new_fwd_args)
-    print("unwrapped_fwd_args", unwrapped_fwd_args)
 
     tmp_name = _generate_random_str_id()
     aug_fwd_trace, aug_fwd_provenance = _convert_pytorchfunc_to_thundertrace(

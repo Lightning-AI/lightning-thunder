@@ -6951,11 +6951,7 @@ def _call_dispatch(
     assert not isinstance(fn, WrappedValue)
 
     if compilectx._with_provenance_tracking:
-        try:
-            assert all(isinstance(a, WrappedValue) for a in args)
-        except AssertionError as e:
-            print("args", args)
-            raise e
+        assert all(isinstance(a, WrappedValue) for a in args)
         assert all(isinstance(a, WrappedValue) for a in kwargs.values())
         for a in args:
             if isinstance(a.value, list):
