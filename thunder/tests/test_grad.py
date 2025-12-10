@@ -704,13 +704,24 @@ def test_vjp_correctness_setitem_manual(op, device, dtype, executor, comp):
             op.op(cloned, idx, value)
             return cloned
 
-        args_ref = (sample.args[0].detach().clone().requires_grad_(True),) + sample.args[1:]
-        out = torch_reference(*args_ref, **sample.kwargs)
-        v = make_tensor_like(out)
-        expected = torch.autograd.grad(out, (args_ref[0], args_ref[2]), v)
+        tensor, key, value = sample.args
+        assert not sample.kwargs
 
-        # Compute vjp result using Thunder
-        flat_op, flat_args, spec = flatten_func(op_fn, sample.args, sample.kwargs)
+        tensor_ref = tensor.detach().clone().requires_grad_(True)
+        out = torch_reference(tensor_ref, key, value)
+        v = make_tensor_like(out)
+        expected = torch.autograd.grad(out, (tensor_ref, value), v)
+
+        flat_op, flat_args, spec = flatten_func(op_fn, (tensor, key, value), {})
+
+        t_key = key if isinstance(key, tuple) else (key,)
+        if any(isinstance(k, (torch.Tensor, Sequence)) and torch.tensor(k).dtype == torch.bool for k in t_key):
+            with pytest.raises(NotImplementedError):
+                executor.make_callable(flat_op, disable_torch_autograd=True)(*flat_args)
+            with pytest.raises(NotImplementedError):
+                vjp(flat_op)(flat_args, (v,))
+            continue
+
         initial_trace = thunder.trace()(vjp(flat_op), flat_args, (v,))
         jfn = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)
         actual_out, actual_grad = jfn(flat_args, (v,))
@@ -718,7 +729,7 @@ def test_vjp_correctness_setitem_manual(op, device, dtype, executor, comp):
         # With advanced indexing, an element may be assigned multiple times and the assignment order is not guaranteed.
         # comp(actual_out, out)
 
-        comp(sample.args[0], args_ref[0])
+        comp(tensor, tensor_ref)
         comp(actual_grad[0], expected[0])
         comp(actual_grad[-1], expected[1])
 

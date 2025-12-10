@@ -4474,17 +4474,38 @@ shape_ops.append(getitem_opinfo)
 
 
 def setitem_sample_generator(op, device, dtype, requires_grad, **kwargs):
-    for sample in getitem_sample_generator(op, device, dtype, requires_grad, **kwargs):
-        tensor, key = sample.args
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
-        indexed_tensor = tensor[key]
-        # getitem already has lots of cases, and doubling it is too time-consuming
-        # value = make_tensor(indexed_tensor.shape, device=device, dtype=dtype, requires_grad=requires_grad)
+    def _make_setitem_sample(tensor, key):
+        indexed_shape = tensor[key].shape
+
+        # Tests for getitem are already slow, and doubling them is too time-consuming
+        # value = make_tensor(indexed_shape, device=device, dtype=dtype, requires_grad=requires_grad)
         # yield SampleInput(tensor, key, value)
 
-        pre_broadcast_shape = tuple(random.choice((s, 1)) for s in indexed_tensor.shape)
-        value = make_tensor(pre_broadcast_shape, device=device, dtype=dtype, requires_grad=requires_grad)
-        yield SampleInput(tensor, key, value)
+        pre_broadcast_shape = tuple(random.choice((s, 1)) for s in indexed_shape)
+        pre_broadcast_value = make_tensor(pre_broadcast_shape, device=device, dtype=dtype, requires_grad=requires_grad)
+        return SampleInput(tensor, key, pre_broadcast_value)
+
+    for sample in getitem_sample_generator(op, device, dtype, requires_grad, **kwargs):
+        tensor, key = sample.args
+        yield _make_setitem_sample(tensor, key)
+
+    # Boolean mask indexing
+    boolean_mask_cases = [
+        ((6,), (torch.tensor([True, False, True, False, True, False]),)),
+        ((2, 3), (torch.tensor([[True, False, True], [False, True, False]]),)),
+        ((2, 3, 4), ([False, True], [False, True, False], slice(None))),
+        ((2, 3, 4), (torch.tensor([True, False]), [1, 1], slice(None))),
+        ((2, 3, 4), (torch.tensor([False, False]), [1, 1], slice(None))),
+        ((2, 3, 4), (1, torch.tensor([True, False, True]), slice(None))),
+        ((2, 3), (torch.tensor([True, False]), None, [0, 2])),
+        ((4, 2, 3), (Ellipsis, [False, True, False])),
+    ]
+
+    for shape, key in boolean_mask_cases:
+        tensor = make(shape)
+        yield _make_setitem_sample(tensor, key)
 
 
 setitem_opinfo = OpInfo(
