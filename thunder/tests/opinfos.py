@@ -4473,6 +4473,28 @@ getitem_opinfo = OpInfo(
 shape_ops.append(getitem_opinfo)
 
 
+def setitem_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    for sample in getitem_sample_generator(op, device, dtype, requires_grad, **kwargs):
+        tensor, key = sample.args
+
+        indexed_tensor = tensor[key]
+        value = make_tensor(indexed_tensor.shape, device=device, dtype=dtype, requires_grad=requires_grad)
+        yield SampleInput(tensor, key, value)
+
+        pre_broadcast_shape = tuple(random.choice((s, 1)) for s in indexed_tensor.shape)
+        value = make_tensor(pre_broadcast_shape, device=device, dtype=dtype, requires_grad=requires_grad)
+        yield SampleInput(tensor, key, value)
+
+
+setitem_opinfo = OpInfo(
+    operator.setitem,
+    sample_input_generator=setitem_sample_generator,
+    torch_reference=operator.setitem,
+    numpy_reference=operator.setitem,
+)
+shape_ops.append(setitem_opinfo)
+
+
 def movedim_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 

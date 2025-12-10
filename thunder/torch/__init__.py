@@ -269,6 +269,13 @@ def _copy_(a, b, /):
     return prims.copy_(b, a, grad_enabled=cd.is_grad_enabled if cd is not None else False)
 
 
+def _clone_via_copy(t: TensorProxy) -> TensorProxy:
+    """Produces a functional clone using an explicit copy instead of prims.clone."""
+    cd = get_compile_data()
+    buf = prims.empty(t.shape, device=t.device, dtype=t.dtype)
+    return prims.copy_(t, buf, grad_enabled=cd.is_grad_enabled if cd is not None else False)
+
+
 @torchsymbol(torch.Tensor.copy_, is_method=True)  # , tags=(prims.OpTags.IN_PLACE,))
 def copy_(a, b, /):
     return _copy_(a, b)
