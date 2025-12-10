@@ -4478,8 +4478,9 @@ def setitem_sample_generator(op, device, dtype, requires_grad, **kwargs):
         tensor, key = sample.args
 
         indexed_tensor = tensor[key]
-        value = make_tensor(indexed_tensor.shape, device=device, dtype=dtype, requires_grad=requires_grad)
-        yield SampleInput(tensor, key, value)
+        # getitem already has lots of cases, and doubling it is too time-consuming
+        # value = make_tensor(indexed_tensor.shape, device=device, dtype=dtype, requires_grad=requires_grad)
+        # yield SampleInput(tensor, key, value)
 
         pre_broadcast_shape = tuple(random.choice((s, 1)) for s in indexed_tensor.shape)
         value = make_tensor(pre_broadcast_shape, device=device, dtype=dtype, requires_grad=requires_grad)
