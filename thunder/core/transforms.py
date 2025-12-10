@@ -2594,6 +2594,7 @@ def setitem_backward(index, value_shape, g):
 
     value_grad = None
     if value_shape is not None:
+        # When index is a boolean tensor, g[index] raises a NotImplementedError because the result shape is unknown
         value_grad = g[index]
         # NOTE: `value` could be broadcasted.
         if not utils.same_shape(value_grad.shape, value_shape):
