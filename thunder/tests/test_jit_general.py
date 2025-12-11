@@ -1633,8 +1633,8 @@ def test_cache_symbolic_values_int_float_inputs():
     assert 'a: "int 1"' not in trc_str
     assert 'b: "float 2.0"' not in trc_str
 
-    assert 'a: "int"' in trc_str
-    assert 'b: "float"' in trc_str
+    assert 'a: "symbolic int"' in trc_str
+    assert 'b: "symbolic float"' in trc_str
 
 def test_specific_dataclass_returns():
     import transformers
