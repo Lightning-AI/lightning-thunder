@@ -13,7 +13,6 @@ from thunder.clang.utils import create_maybe_convert_to_dtype_with_prim, _elemen
 import thunder.clang.utils as clang_utils
 from thunder.core import utils
 from thunder.core.baseutils import run_once
-from thunder.core.compile_data import get_compile_data
 from thunder.core.langctxs import langctx, Languages
 import thunder.core.devices as devices
 import thunder.core.dtypes as dtypes
@@ -650,22 +649,6 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
 
 @clangop()
 def setitem(a: TensorLike, key, value: TensorLike) -> TensorLike:
-    def is_bool_index(k: Any) -> bool:
-        if isinstance(k, TensorProxy) and dtypes.to_dtype(k) == dtypes.bool8:
-            return True
-        if isinstance(k, Sequence) and any(isinstance(k_i, bool) for k_i in k):
-            return True
-        return False
-
-    key = utils.sequencify(key)
-    if any(is_bool_index(k) for k in key):
-        compile_data = get_compile_data()
-        if compile_data is not None and compile_data.is_grad_enabled and isinstance(value, TensorLike):
-            # See VJP for setitem
-            raise NotImplementedError(
-                "setitem with boolean advanced indexing is not supported when grad is enabled and value is a tensor"
-            )
-
     # TODO: do more checking here. We used to have a check
     #     lambda: f"{key=} tries to index more dimensions than {a.ndim=}",
     return prims.setitem(a, key, value)
