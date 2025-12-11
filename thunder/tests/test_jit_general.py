@@ -172,7 +172,7 @@ def test_cache_basic():
     def foo(a, b):
         return a + b
 
-    jfoo = thunder_jit(foo)
+    jfoo = thunder_jit(foo, cache="constant values")
 
     a = torch.randn((2, 2), device="cpu")
     b = torch.randn((2, 2), device="cpu")
