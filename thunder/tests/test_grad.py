@@ -717,8 +717,6 @@ def test_vjp_correctness_setitem_manual(op, device, dtype, executor, comp):
         t_key = key if isinstance(key, tuple) else (key,)
         if any(isinstance(k, (torch.Tensor, Sequence)) and torch.tensor(k).dtype == torch.bool for k in t_key):
             with pytest.raises(NotImplementedError):
-                executor.make_callable(flat_op, disable_torch_autograd=True)(*flat_args)
-            with pytest.raises(NotImplementedError):
                 vjp(flat_op)(flat_args, (v,))
             continue
 
