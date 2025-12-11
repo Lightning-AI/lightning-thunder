@@ -11,12 +11,14 @@ import pytest
 import torch
 
 import thunder
+from thunder.core import prims
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
 
 from thunder import torch as ltorch
 from thunder.core.dtypes import is_exact_dtype, to_dtype as thunder_dtype
 from thunder.core.pytree import tree_map, tree_flatten
+from thunder.core.symbol import BoundSymbol
 from thunder.core.transforms import vjp, grad, check_bsym_for_vjp
 from thunder.core.utils import flatten_func, is_cpu_scalar_tensor
 from thunder.tests.framework import (
@@ -992,6 +994,43 @@ def test_vjp_correctness_einsum_manual(op, device, dtype, executor, comp):
         comp(actual_out, out)
         assert len(expected_grads) == len(grads_out) - 1
         for torch_grad, thunder_grad in zip(expected_grads, grads_out[1:]):
+            comp(torch_grad, thunder_grad)
+
+
+@ops((get_opinfo("sin"), get_opinfo("mul")), supported_dtypes=(dtypes.float64,))
+def test_vjp_correctness_inplace(op, device, dtype, executor, comp):
+    if op.op.__name__ == "sin":
+        fn = lambda a: a.clone().sin_()
+    else:
+        fn = lambda a, b: a.clone().mul_(b)
+
+    for sample in op.sample_inputs(device, dtype, requires_grad=True):
+        assert not sample.kwargs
+
+        ref_args = (sample.args[0].clone().detach().requires_grad_(sample.args[0].requires_grad),) + sample.args[1:]
+        out = fn(*ref_args)
+        v = make_tensor_like(out)
+        expected_grads = torch.autograd.grad(out, ref_args, v)
+
+        initial_trace = thunder.trace()(vjp(fn), sample.args, (v,))
+
+        def map_prim_copy_to_ltorch_copy(bsym: BoundSymbol):
+            if bsym.sym.id == prims.PrimIDs.COPY_:
+                return bsym.from_bsym(
+                    sym=thunder.torch.copy_, args=(bsym.args[1], bsym.args[0]), kwargs={}, subsymbols=[bsym]
+                )
+            else:
+                return bsym
+
+        initial_trace.bound_symbols = list(map(map_prim_copy_to_ltorch_copy, initial_trace.bound_symbols))
+
+        actual_out, grads_out = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)(
+            sample.args, (v,)
+        )
+
+        comp(actual_out, out)
+        comp(ref_args[0], sample.args[0])
+        for torch_grad, thunder_grad in zip(expected_grads, grads_out):
             comp(torch_grad, thunder_grad)
 
 

@@ -12,6 +12,7 @@ import inspect
 import time
 import dataclasses
 
+from thunder.core.update_aliases import insert_alias_updates
 import thunder.core.utils as utils
 from thunder.core import dtypes, prims
 from thunder.core.devices import Device
@@ -3054,10 +3055,10 @@ def vjp(func):
     """
 
     def _vjp(primals, cotangents, **kwargs):
-        from thunder.core.update_aliases import insert_alias_updates
-
         flat_func, flat_args, spec = flatten_func(func, primals, kwargs)
         trace = construct_trace()(flat_func, *flat_args)
+        # Although we do not need to insert prims.update_aliases, we need insert_alias_updates for variable substitution
+        # e.g. `a.sin_(); return a` into `b = a.sin_(); return b`
         trace = insert_alias_updates(trace, [])
         result, vjp_result = vjp_call(flat_args, cotangents, trace=trace)
         # If the argument is a CPU scalar tensor, its gradient needs to be summed into a scalar tensor.
