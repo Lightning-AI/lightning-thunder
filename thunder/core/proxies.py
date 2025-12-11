@@ -1157,6 +1157,9 @@ class IntegerProxy(NumberProxy):
     def type_string(self):
         value_str = f"{self.value}" if self.value is not None else "?"
         type_str = "int" if self.python_type is int else "bool"
+        if not self.is_static_constrained():
+            # For non-static values, only show the type
+            return f"{type_str}"
         return f"{type_str} {value_str}"
 
     def __repr__(self):
@@ -1206,6 +1209,9 @@ class FloatProxy(NumberProxy):
 
     def type_string(self):
         value_str = f"{self.value}" if self.value is not None else "?"
+        if not self.is_static_constrained():
+            # For non-static values, only show the type
+            return "float"
         return f"float {value_str}"
 
     def __repr__(self):
