@@ -304,7 +304,7 @@ class JitCtx:
             assert p.history is not None, f"{p.history}, {value.provenance} {type(p)}"
 
             co: CACHE_OPTIONS = get_cache_option()
-            if co is CACHE_OPTIONS.CONSTANT_VALUES:
+            if co is CACHE_OPTIONS.CONSTANT_VALUES or isinstance(uvalue, bool):
                 if isinstance(uvalue, str):
                     self.add_constraint((clang.check_string_value, p, uvalue))
                 elif isinstance(uvalue, slice):
