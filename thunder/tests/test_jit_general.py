@@ -1238,7 +1238,7 @@ def test_autograd_function_apply():
     # see https://github.com/Lightning-AI/lightning-thunder/issues/1248#issuecomment-2388655917
     # for why `torch.foo` instead of `torch.Tensor.foo`
 
-    # since https://github.com/pytorch/pytorch/pull/169528 `torch.ops.higher_order.autograd_function_apply`
+    # Since https://github.com/pytorch/pytorch/pull/169528 `torch.ops.higher_order.autograd_function_apply`
     # no longer accepts simple callables, but rather `torch.fx.GraphModule`s.
 
     class FwdModule(torch.nn.Module):
