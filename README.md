@@ -1,6 +1,6 @@
 <div align='center'>
 
-# Give your PyTorch models superpowers ⚡
+# Give your PyTorch models superpowers! ⚡
 
 </div>
 
