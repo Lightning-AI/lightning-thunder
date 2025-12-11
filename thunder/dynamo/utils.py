@@ -1216,8 +1216,15 @@ def translate_dtensor_ops(gm: torch.fx.GraphModule) -> None:
                 dtensor_from_local_prim_wrapper.thunder_supported = True
                 node.target = dtensor_from_local_prim_wrapper
             if "redistribute" in node.target.__name__:
-                kwargs = closure_vars.nonlocals["kwargs_as_value"]
-                placements = kwargs["placements"]
+                args = closure_vars.nonlocals.get("args_as_value", ())
+                kwargs = closure_vars.nonlocals.get("kwargs_as_value", {})
+
+                # Handle positional args: redistribute(device_mesh, placements)
+                # and keyword args: redistribute(placements=...)
+                if len(args) >= 2:
+                    placements = args[1]
+                else:
+                    placements = kwargs["placements"]
 
                 def dtensor_redistribute_prim_wrapper(x, placements=placements):
                     return dtensor_redistribute_prim(x, placements=placements)
