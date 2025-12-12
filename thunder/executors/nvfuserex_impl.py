@@ -817,8 +817,13 @@ class nvFuserExecutor(FusionExecutor):
         new_symbols = [new_bsyms.get(bsym, bsym) for bsym in trace.bound_symbols]
         cse_trace.bound_symbols = list(filterfalse(lambda a: a is None, new_symbols))
 
-        return_bsym = cse_trace.bound_symbols[-1]
-        assert return_bsym.sym.id == prims.PrimIDs.RETURN
+        return_bsym = None
+        for idx, bsym in enumerate(cse_trace.bound_symbols):
+            if bsym.sym.id == prims.PrimIDs.RETURN:
+                return_bsym = cse_trace.bound_symbols.pop(idx)
+                break
+        assert return_bsym is not None
+
         trace_output = tree_map(map_redundant, return_bsym.args)
         cse_trace.bound_symbols[-1] = prims.python_return.bind(*trace_output, output=None)
 
