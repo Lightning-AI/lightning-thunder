@@ -68,7 +68,7 @@ def _can_be_reshaped(arg, arg_to_replace):
 
 def replace_args_with_alias_map(
     computation_trace: Trace,
-    alias_tensor_indices: list[list[int]],
+    alias_tensor_indices: list[list[int]] | None = None,
 ) -> tuple[Trace, list[set[VariableInterface]]]:
     if not alias_tensor_indices:
         return computation_trace, []
@@ -141,7 +141,7 @@ def _unswap(swap_map, aliases):
     return list(map(_helper, aliases))
 
 
-def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[list[int]]) -> Trace:
+def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[list[int]] | None = None) -> Trace:
     if not any(_is_inplace_op(bsym) for bsym in computation_trace.bound_symbols):
         return computation_trace
 
@@ -182,7 +182,7 @@ def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[li
         if (
             _is_inplace_op(bsym)
             or _is_view_creation_op(bsym)
-            or (bsym.sym.id != prims.PrimIDs.RETURN and _involves_viewed_args(set(unswapped_in_tensors), viewed))
+            or _involves_viewed_args(set(unswapped_in_tensors), viewed)
         ):
             if _is_inplace_op(bsym) and in_tensors:
                 mutated_index = 1 if bsym.sym.id == prims.PrimIDs.COPY_ else 0

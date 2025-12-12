@@ -105,7 +105,9 @@ def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: 
     return extrace
 
 
-def transform_for_execution(trace: TraceCtx, executors_list: Sequence[Executor]) -> TraceCtx:
+def transform_for_execution(
+    trace: TraceCtx, executors_list: Sequence[Executor], alias_tensor_indices: list[list[int]] | None = None
+) -> TraceCtx:
     import torch
 
     start_time_ns = time.perf_counter_ns()
@@ -125,7 +127,7 @@ def transform_for_execution(trace: TraceCtx, executors_list: Sequence[Executor])
     extrace = _transform_for_operator_executor_execution(trace, executors_list)
     # Insert alias updates before DCE for bsyms exposed by decomposition
     # Inserted prims.update_aliases will be handled in Step 3
-    extrace = insert_alias_updates(extrace)
+    extrace = insert_alias_updates(extrace, alias_tensor_indices)
     extrace = dce(extrace)
 
     #

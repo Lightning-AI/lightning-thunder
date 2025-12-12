@@ -644,6 +644,7 @@ def transform_for_execution(
     *,
     only_execute_prims=False,
     use_del_last_used=True,
+    alias_tensor_indices: list[list[int]] | None = None,
 ) -> list[TraceCtx]:
     traces: list[TraceCtx] = []
 
@@ -652,7 +653,7 @@ def transform_for_execution(
     # cse_trace = cse(dce_trace)
     # traces.append(cse_trace)
 
-    extrace = executors.passes.transform_for_execution(trace, executors_list)
+    extrace = executors.passes.transform_for_execution(trace, executors_list, alias_tensor_indices)
 
     traces.append(extrace)
 
