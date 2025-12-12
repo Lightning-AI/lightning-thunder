@@ -2689,9 +2689,13 @@ lt = _make_elementwise_binary_prim(
     supported_input_dtypes=comparison_dtypes,
 )
 
-maximum = _make_elementwise_binary_prim(PrimIDs.MAXIMUM, "maximum", supported_input_dtypes=comparison_dtypes)
+maximum = _make_elementwise_binary_prim(
+    PrimIDs.MAXIMUM, "maximum", supported_input_dtypes=comparison_dtypes, number_fn=builtins.max
+)
 
-minimum = _make_elementwise_binary_prim(PrimIDs.MINIMUM, "minimum", supported_input_dtypes=comparison_dtypes)
+minimum = _make_elementwise_binary_prim(
+    PrimIDs.MINIMUM, "minimum", supported_input_dtypes=comparison_dtypes, number_fn=builtins.min
+)
 
 mul = _make_elementwise_binary_prim(
     PrimIDs.MUL,
