@@ -37,6 +37,7 @@ from thunder.core.options import (
     SHARP_EDGES_OPTIONS,
 )
 from thunder.core.proxies import TensorProxy
+from thunder.core.pytree import tree_flatten
 from thunder.core.recipe import Recipe, Plugin
 from thunder.core.symbol import has_tags
 from thunder.core.trace import (
@@ -55,7 +56,6 @@ from thunder.core.transform_common import (
     wrap_return_value_together_with_arguments,
 )
 from thunder.core.update_aliases import insert_alias_updates
-from thunder.core.utils import encode_alias_tensor_indices
 from thunder.executors.torch_autograd import connect_to_autograd
 import thunder.extend as extend
 from thunder.extend import Executor, add_default_executor
@@ -405,6 +405,37 @@ def jit(
     cs = CompileStats()
     weakref_cs = weakref.ref(cs)
 
+    def _alias_tensor_of_args_kwargs_dict(*args, **kwargs) -> dict[int, list[int]]:
+        flat_args, _ = tree_flatten((args, kwargs))
+        data_ptr_to_tensor_group_index = {}
+        tensor_group_index_to_tensor_indices = defaultdict(list)
+        for idx, t in enumerate(flat_args):
+            # Using type(t) is pytorch.Tensor as TensorSubclasses don't support calling
+            # data_ptr().
+            # Eg. RuntimeError: Attempted to access the data pointer on an invalid python storage. (data_ptr access on TensorSubclass)
+            #
+            # isinstance(t, pytorch.Tensor) or pytorch.is_tensor(t) will match all Tensor objects including
+            # subclasses.
+            if type(t) is pytorch.Tensor and t.layout is pytorch.strided:
+                data_ptr = t.untyped_storage().data_ptr()
+                if data_ptr not in data_ptr_to_tensor_group_index:
+                    data_ptr_to_tensor_group_index[data_ptr] = len(data_ptr_to_tensor_group_index)
+                tgi = data_ptr_to_tensor_group_index[data_ptr]
+                tensor_group_index_to_tensor_indices[tgi].append(idx)
+        return tensor_group_index_to_tensor_indices
+
+    def _alias_tensor_of_args_kwargs(*args, **kwargs) -> str:
+        """If no aliases found, empty string, otherwise, aliases are comma separated, groups are hyphen separated."""
+
+        alias_indices = []
+        for k, v in _alias_tensor_of_args_kwargs_dict(*args, **kwargs).items():
+            if len(v) > 1:
+                s = ",".join(f"{i}" for i in v)
+                alias_indices.append(s)
+        if not alias_indices:
+            return ""
+        return "-".join(alias_indices)
+
     def acquire_initial_trace(fn, args, kwargs, cd, cs, ad_hoc_executor):
         with compile_data_and_stats(cd, cs):
             # Acquires the trace OR inlines the trace into an existing trace and
@@ -457,8 +488,13 @@ def jit(
             computation_trc = remove_context_manager_prims_from_trace(computation_trc)
             computation_traces.append(computation_trc)
 
+            alias_tensor_indices_str = cache_info.get("alias_tensor_indices", "")
+            alias_tensor_indices: list[list[int]] = [
+                [int(i) for i in s.split(",")] for s in alias_tensor_indices_str.split("-") if s != ""
+            ]
+
             if not compile_options.get("skip_inplace_alias_updates", False):
-                aliased_trace = insert_alias_updates(computation_trc)
+                aliased_trace = insert_alias_updates(computation_trc, alias_tensor_indices)
                 if aliased_trace is not computation_trc:
                     computation_traces.append(aliased_trace)
                     computation_trc = computation_traces[-1]
@@ -517,7 +553,7 @@ def jit(
             if requires_grad:
                 from thunder.transforms.autodiff import grad_transform_on_trace
 
-                computation_trc = grad_transform_on_trace(computation_trc)
+                computation_trc = grad_transform_on_trace(computation_trc, alias_tensor_indices)
                 computation_traces.append(computation_trc)
 
             from thunder.executors.passes import _transform_for_operator_executor_execution
@@ -638,7 +674,7 @@ def jit(
         # It however would require the computation trace to interact with `cache_info`,
         # which seems to break the consistency of cache_info, leading to a failure in cache_info check.
         if not compile_options.get("skip_inplace_alias_updates", False):
-            cache_info["alias_tensor_indices"] = encode_alias_tensor_indices(*args, **kwargs)
+            cache_info["alias_tensor_indices"] = _alias_tensor_of_args_kwargs(*args, **kwargs)
 
         # Store the `is_grad_enabled` state of PyTorch. This is used by vjp transform
         # to treat certain Symbols as constant.

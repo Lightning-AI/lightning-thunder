@@ -1,13 +1,11 @@
 from functools import reduce, partial
 
-import thunder
 from thunder.core.compile_data import using_symbolic_values
 import thunder.core.prims as prims
 from thunder.core.proxies import TensorProxy, variableify, unvariableify
 from thunder.core.pytree import tree_flatten
 from thunder.core.symbol import BoundSymbol, BoundSymbolTag, has_tags
 from thunder.core.trace import from_trace, tracectx, TraceCtx as Trace, TraceProvenance, VariableInterface
-from thunder.core.utils import parse_alias_tensor_indices
 
 
 def _update_swap_map(swap_map, old_alias, new_alias):
@@ -143,12 +141,9 @@ def _unswap(swap_map, aliases):
     return list(map(_helper, aliases))
 
 
-def insert_alias_updates(computation_trace: Trace) -> Trace:
+def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[list[int]]) -> Trace:
     if not any(_is_inplace_op(bsym) for bsym in computation_trace.bound_symbols):
         return computation_trace
-
-    alias_tensor_indices_str = thunder._get_cache_info().get("alias_tensor_indices", "")
-    alias_tensor_indices = parse_alias_tensor_indices(alias_tensor_indices_str)
 
     swap_map = dict()
     bsyms = []

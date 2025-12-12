@@ -1262,34 +1262,3 @@ def create_python_callable_from_bsym(bsym: BoundSymbolInterface) -> str:
         prims.python_return(bsym.output)
 
     return trace.python(include_decorators=False)
-
-
-def parse_alias_tensor_indices(alias_tensor_indices_str: str) -> list[list[int]]:
-    indice_groups = []
-    for s in alias_tensor_indices_str.split("-"):
-        if not s:
-            continue
-        indices = [int(i) for i in s.split(",")]
-        indice_groups.append(indices)
-    return indice_groups
-
-
-def encode_alias_tensor_indices(*args, **kwargs) -> str:
-    flat_args, _ = tree_flatten((args, kwargs))
-    data_ptr_to_tensor_indices = defaultdict(list)
-
-    for idx, t in enumerate(flat_args):
-        # Using type(t) is torch.Tensor as TensorSubclasses don't support calling data_ptr().
-        # Eg. RuntimeError: Attempted to access the data pointer on an invalid python storage. (data_ptr access on TensorSubclass)
-        #
-        # isinstance(t, torch.Tensor) or torch.is_tensor(t) will match all Tensor objects including subclasses.
-        if type(t) is torch.Tensor and t.layout is torch.strided:
-            data_ptr = t.untyped_storage().data_ptr()
-            data_ptr_to_tensor_indices[data_ptr].append(idx)
-
-    encoded_indice_groups = []
-    for indices in data_ptr_to_tensor_indices.values():
-        if len(indices) > 1:
-            encoded_indices = ",".join(str(idx) for idx in indices)
-            encoded_indice_groups.append(encoded_indices)
-    return "-".join(encoded_indice_groups)
