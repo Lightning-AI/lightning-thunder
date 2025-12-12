@@ -189,7 +189,19 @@ def test_inplace_on_intermediate(executor, device, dtype, inplace_op):
 
         return c, d, e
 
-    for fn in [h, i]:
+    def j(x, _):
+        a = x.view(-1)
+        b = x.view(-1)
+        x.add_(1)
+        aa = a + 1
+        bb = b + 1
+        return aa, bb
+
+    def k(x, _):
+        y = x.view(2, 3)
+        return x.exp_() * y.tanh_()
+
+    for fn in [h, i, j, k]:
         a = make_tensor((2, 3), dtype=torch.float32, device=device)
         b = make_tensor((2, 3), dtype=torch.float32, device=device)
         a_, b_ = a.clone().detach(), b.clone().detach()
