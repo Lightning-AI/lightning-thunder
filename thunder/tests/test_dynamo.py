@@ -1575,7 +1575,7 @@ def test_TorchInductorSpecification(tmp_path):
     assert len(thunder_fx_graph_report.subgraph_reports) == 1  # cos
     thunder_split_report = thunder_fx_graph_report.subgraph_reports[0]
 
-    torchinductor = TorchInductorSpecification()
+    torchinductor = TorchInductorSpecification(skip_symbolic_trace=False)
     thunder_split_report.run_benchmark(torchinductor, WallTime)
     thunder_split_report.run_repro(torchinductor)
     thunder_split_report.write_benchmark(tmp_path, torchinductor, WallTime)
@@ -1601,14 +1601,14 @@ def test_save_failing_repros(tmp_path):
     results = fx_report(foo)(x)
     with patch("thunder.dynamo.report.FXGraphReport.run_repro", side_effect=Exception("run_Repro raises exception")):
         save_failing_repros(results.fx_graph_reports, TorchCompileSpecification(), tmp_path)
-    assert os.path.exists(tmp_path / "graph0.py")
+    assert os.path.exists(tmp_path / "graph0_torchcompile_repro.py")
 
     # Tests for thunder split reports
     thunder_fxgraph_reports = get_thunder_fxgraph_reports(foo)(x)
     assert len(thunder_fxgraph_reports) == 1
     with patch("thunder.dynamo.report.FXGraphReport.run_repro", side_effect=Exception("run_Repro raises exception")):
         save_failing_repros(thunder_fxgraph_reports[0].subgraph_reports, ThunderCompileSpecification(), tmp_path)
-    assert os.path.exists(tmp_path / "graph0_thunder_0.py")
+    assert os.path.exists(tmp_path / "graph0_thunder_0_thunder_repro.py")
 
     # Tests for check_consistency
     def wrapped_fn(x):
@@ -1622,12 +1622,12 @@ def test_save_failing_repros(tmp_path):
     save_failing_repros(
         results.fx_graph_reports, _BadCompileSpecification(), tmp_path / "consistency", check_consistency=False
     )
-    assert not os.path.exists(tmp_path / "consistency" / "graph0.py")
+    assert not os.path.exists(tmp_path / "consistency" / "graph0_torcheager_repro.py")
 
     save_failing_repros(
         results.fx_graph_reports, _BadCompileSpecification(), tmp_path / "consistency", check_consistency=True
     )
-    assert os.path.exists(tmp_path / "consistency" / "graph0.py")
+    assert os.path.exists(tmp_path / "consistency" / "graph0_torcheager_repro.py")
 
 
 @requiresCUDA
