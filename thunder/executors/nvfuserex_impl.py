@@ -817,6 +817,8 @@ class nvFuserExecutor(FusionExecutor):
         new_symbols = [new_bsyms.get(bsym, bsym) for bsym in trace.bound_symbols]
         cse_trace.bound_symbols = list(filterfalse(lambda a: a is None, new_symbols))
 
+        # TODO: Remove this and assert that return_bsym is at the end of the trace
+        # This is a temporary workaround until https://github.com/Lightning-AI/lightning-thunder/issues/2776 is fixed
         return_bsym = None
         for idx, bsym in enumerate(cse_trace.bound_symbols):
             if bsym.sym.id == prims.PrimIDs.RETURN:
