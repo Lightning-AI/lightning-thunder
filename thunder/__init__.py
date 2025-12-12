@@ -457,10 +457,11 @@ def jit(
             computation_trc = remove_context_manager_prims_from_trace(computation_trc)
             computation_traces.append(computation_trc)
 
-            aliased_trace = insert_alias_updates(computation_trc)
-            if aliased_trace is not computation_trc:
-                computation_traces.append(aliased_trace)
-                computation_trc = computation_traces[-1]
+            if not compile_options.get("skip_inplace_alias_updates", False):
+                aliased_trace = insert_alias_updates(computation_trc)
+                if aliased_trace is not computation_trc:
+                    computation_traces.append(aliased_trace)
+                    computation_trc = computation_traces[-1]
 
             cs.last_trace_tracing_stop = time.perf_counter_ns()
 

@@ -1,7 +1,7 @@
 from functools import reduce, partial
 
 import thunder
-from thunder.core.compile_data import get_compile_data, using_symbolic_values
+from thunder.core.compile_data import using_symbolic_values
 import thunder.core.prims as prims
 from thunder.core.proxies import TensorProxy, variableify, unvariableify
 from thunder.core.pytree import tree_flatten
@@ -144,10 +144,6 @@ def _unswap(swap_map, aliases):
 
 
 def insert_alias_updates(computation_trace: Trace) -> Trace:
-    cd = get_compile_data()
-    if cd is not None and cd.compile_options.get("skip_inplace_alias_updates", False):
-        return computation_trace
-
     if not any(_is_inplace_op(bsym) for bsym in computation_trace.bound_symbols):
         return computation_trace
 
