@@ -1575,7 +1575,7 @@ def test_TorchInductorSpecification(tmp_path):
     assert len(thunder_fx_graph_report.subgraph_reports) == 1  # cos
     thunder_split_report = thunder_fx_graph_report.subgraph_reports[0]
 
-    torchinductor = TorchInductorSpecification()
+    torchinductor = TorchInductorSpecification(skip_symbolic_trace=False)
     thunder_split_report.run_benchmark(torchinductor, WallTime)
     thunder_split_report.run_repro(torchinductor)
     thunder_split_report.write_benchmark(tmp_path, torchinductor, WallTime)
@@ -1601,14 +1601,14 @@ def test_save_failing_repros(tmp_path):
     results = fx_report(foo)(x)
     with patch("thunder.dynamo.report.FXGraphReport.run_repro", side_effect=Exception("run_Repro raises exception")):
         save_failing_repros(results.fx_graph_reports, TorchCompileSpecification(), tmp_path)
-    assert os.path.exists(tmp_path / "graph0.py")
+    assert os.path.exists(tmp_path / "graph0_torchcompile_repro.py")
 
     # Tests for thunder split reports
     thunder_fxgraph_reports = get_thunder_fxgraph_reports(foo)(x)
     assert len(thunder_fxgraph_reports) == 1
     with patch("thunder.dynamo.report.FXGraphReport.run_repro", side_effect=Exception("run_Repro raises exception")):
         save_failing_repros(thunder_fxgraph_reports[0].subgraph_reports, ThunderCompileSpecification(), tmp_path)
-    assert os.path.exists(tmp_path / "graph0_thunder_0.py")
+    assert os.path.exists(tmp_path / "graph0_thunder_0_thunder_repro.py")
 
     # Tests for check_consistency
     def wrapped_fn(x):
@@ -1622,12 +1622,12 @@ def test_save_failing_repros(tmp_path):
     save_failing_repros(
         results.fx_graph_reports, _BadCompileSpecification(), tmp_path / "consistency", check_consistency=False
     )
-    assert not os.path.exists(tmp_path / "consistency" / "graph0.py")
+    assert not os.path.exists(tmp_path / "consistency" / "graph0_torcheager_repro.py")
 
     save_failing_repros(
         results.fx_graph_reports, _BadCompileSpecification(), tmp_path / "consistency", check_consistency=True
     )
-    assert os.path.exists(tmp_path / "consistency" / "graph0.py")
+    assert os.path.exists(tmp_path / "consistency" / "graph0_torcheager_repro.py")
 
 
 @requiresCUDA
@@ -1935,3 +1935,60 @@ def test_stream_op():
         "is a `torch.cuda.Stream` method which is not supported by Thunder" in getattr(reason, "info", "")
         for reason in split_reasons
     )
+
+
+@requiresCUDA
+@pytest.mark.parametrize("use_benchmark", (True, False), ids=("benchmark", "repro"))
+def test_save_thunderfx_repros(use_benchmark, tmp_path):
+    from thunder.dynamo.report import save_thunderfx_repros
+
+    x = torch.ones(2, 2, device="cuda", requires_grad=False)
+
+    def foo(x):
+        # torch.sinc has automatic fallback registered,
+        # so that operation will be given to inductor.
+        x = x.exp()
+        torch._dynamo.graph_break()
+        return torch.sinc(x) + torch.cos(x)
+
+    save_thunderfx_repros(
+        foo,
+        tmp_path,
+        use_benchmark=use_benchmark,
+        check_runnability=True,
+        save_fusion=True,
+        save_trace=True,
+        force_overwrite=True,
+        disable_torch_autograd=True,
+    )(x)
+
+    # Checks the scripts are generated correctly
+    subdirs = [d for d in os.listdir(tmp_path) if os.path.isdir(os.path.join(tmp_path, d))]
+    for d in subdirs:
+        assert d.startswith("graph"), f"{d} is not graph folder"
+    assert len(subdirs) == 2, f"it should be 2 graphs, but in fact {subdirs}"
+
+    num_backend = 2
+    num_traces = 1  # forward only
+    if use_benchmark:
+        num_g_files = num_backend * 2 + num_traces + 1
+        num_fusion_files = num_backend * 2
+    else:
+        num_g_files = num_backend + num_traces + 1
+        num_fusion_files = num_backend
+
+    for d in subdirs:
+        graph_dir = os.path.join(tmp_path, d)
+        # Checks if fusion_reports directory exists
+        fusion_reports_dir = os.path.join(graph_dir, "fusion_reports")
+        assert os.path.isdir(fusion_reports_dir), f"{fusion_reports_dir} doesn't exist"
+        # Checks if graph directory has the correct number of files
+        g_files = [f for f in os.listdir(graph_dir) if os.path.isfile(os.path.join(graph_dir, f))]
+        assert len(g_files) == num_g_files, f"{graph_dir} should have {num_g_files} files, but in fact {g_files}"
+        # Checks if fusion_reports directory has the correct number of files
+        fusion_files = [
+            f for f in os.listdir(fusion_reports_dir) if os.path.isfile(os.path.join(fusion_reports_dir, f))
+        ]
+        assert len(fusion_files) == num_fusion_files, (
+            f"{fusion_reports_dir} should have {num_fusion_files} files, but in fact {fusion_files}"
+        )
