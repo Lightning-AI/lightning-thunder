@@ -825,7 +825,7 @@ class nvFuserExecutor(FusionExecutor):
         assert return_bsym is not None
 
         trace_output = tree_map(map_redundant, return_bsym.args)
-        cse_trace.bound_symbols[-1] = prims.python_return.bind(*trace_output, output=None)
+        cse_trace.bound_symbols.append(prims.python_return.bind(*trace_output, output=None))
 
         end_time_ns = time.perf_counter_ns()
         elapsed_time_ns = end_time_ns - start_time_ns
