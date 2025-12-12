@@ -864,6 +864,24 @@ def test_cache_symbolic_values_basic():
     assert thunder.cache_hits(jfoo) == 1
 
 
+@pytest.mark.parametrize("min_op,max_op", [(torch.sym_min, torch.sym_max), (min, max)], ids=("torch", "builtin"))
+def test_symbolic_values_min_max(min_op, max_op):
+    def foo(seq_len, cumulative_len, max_len, sliding_window) -> int:
+        max_cache_len = min_op(max_len, seq_len + 128)
+        offset_raw = cumulative_len - sliding_window + 1
+        kv_offset = max_op(offset_raw, 0)
+        return max_cache_len, kv_offset
+
+    jfoo = thunder_jit(foo, cache="symbolic values")
+
+    samples = torch.randint(1, 100, (20, 4))
+    for sample in samples:
+        args = [s.item() for s in sample]
+        assert jfoo(*args) == foo(*args)
+
+    assert thunder.cache_misses(jfoo) == 1
+
+
 def test_post_optimization_transform():
     def foo(a, b, c):
         return a * a + b * c
@@ -1237,18 +1255,28 @@ def test_complex_backward_custom_autograd():
 def test_autograd_function_apply():
     # see https://github.com/Lightning-AI/lightning-thunder/issues/1248#issuecomment-2388655917
     # for why `torch.foo` instead of `torch.Tensor.foo`
-    def forward(ctx, x):
-        saved_for_backward = (x,)
-        return torch.sin(x), saved_for_backward
 
-    def backward(ctx, grad_output, *saved_tensors):
-        (x,) = saved_tensors
-        return grad_output * torch.cos(x)
+    # since https://github.com/pytorch/pytorch/pull/169528 `torch.ops.higher_order.autograd_function_apply`
+    # no longer accepts simple callables, but rather `torch.fx.GraphModule`s.
+
+    class FwdModule(torch.nn.Module):
+        def forward(self, ctx, x):
+            saved_for_backward = (x,)
+            return torch.sin(x), saved_for_backward
+
+    fwd = torch.fx.symbolic_trace(FwdModule())
+
+    class BwdModule(torch.nn.Module):
+        def forward(self, ctx, grad_output, *saved_tensors):
+            (x,) = saved_tensors
+            return grad_output * torch.cos(x)
+
+    bwd = torch.fx.symbolic_trace(BwdModule())
 
     def my_sin(x):
         return torch.ops.higher_order.autograd_function_apply(
-            forward,
-            backward,
+            fwd,
+            bwd,
             x,
             args_tensor_mask=[True],
             non_differentiable_idx=[],
@@ -1267,14 +1295,17 @@ def test_autograd_function_apply():
     expect_grad = torch.autograd.grad(y_ref, x_ref, grad)
     torch.testing.assert_close(actual_grad, expect_grad)
 
-    def wrong_backward(ctx, grad_output, *saved_tensors):
-        (x,) = saved_tensors
-        return grad_output * x.sin()
+    class WrongBwdModule(torch.nn.Module):
+        def forward(self, ctx, grad_output, *saved_tensors):
+            (x,) = saved_tensors
+            return grad_output * torch.cos(x)
+
+    wrong_bwd = torch.fx.symbolic_trace(WrongBwdModule())
 
     def my_sin_with_wrong_backward(x):
         return torch.ops.higher_order.autograd_function_apply(
-            forward,
-            wrong_backward,
+            fwd,
+            wrong_bwd,
             x,
             args_tensor_mask=[True],
             non_differentiable_idx=[],
