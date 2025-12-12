@@ -312,6 +312,7 @@ class JitCtx:
                     self.add_constraint((clang.check_number_type_and_value, p, uvalue))
             elif co is CACHE_OPTIONS.SYMBOLIC_VALUES:
                 if p is not uvalue:
+                    self.add_constraint((clang.check_instance, p, (type(uvalue),)))
                     value.register_proxy(p)
             elif co not in (CACHE_OPTIONS.SAME_INPUT, CACHE_OPTIONS.NO_CACHING):
                 raise NotImplementedError(f"Unsupported cache option {co}")
@@ -2164,7 +2165,6 @@ def thunder_general_jit(
         callbacks=general_jit_callbacks,
         with_provenance_tracking=True,
         unwrap_result=False,
-        uncacheable_classes=(torch.Tensor, int, float, str, NoneType),
         record_history=compile_data.debug_options.record_interpreter_history,
     )
 
