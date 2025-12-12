@@ -144,9 +144,6 @@ def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[li
     if not any(_is_inplace_op(bsym) for bsym in computation_trace.bound_symbols):
         return computation_trace
 
-    swap_map = dict()
-    bsyms = []
-
     # First pass: identify inputs which are views of each other and swap them out with a default,
     # reshaping if necessary.
     computation_trace, view_groups = replace_args_with_alias_map(computation_trace, alias_tensor_indices)
@@ -173,11 +170,15 @@ def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[li
     view_groups = [group for group in view_groups if len(group.intersection(inplace_inputs)) != 0]
     viewed = set(reduce(set.union, view_groups, set()))
 
+    swap_map = dict()
+    swap_map_by_update_aliases = dict()
+    bsyms = []
+
     # Third pass: insert alias updates
     for bsym in computation_trace.bound_symbols:
         bsym = bsym.from_bsym_swap_proxies(swap_map)
         in_tensors = list(map(variableify, filter(lambda p: isinstance(p, TensorProxy), bsym.flat_proxy_args)))
-        unswapped_in_tensors = _unswap(swap_map, in_tensors)
+        unswapped_in_tensors = _unswap(swap_map_by_update_aliases, in_tensors)
         if (
             _is_inplace_op(bsym)
             or _is_view_creation_op(bsym)
@@ -216,15 +217,8 @@ def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[li
                 #  This relies on these being one element sets (ltorch.setitem_ yields no outs).
                 swap_map = _update_swap_map(swap_map, in_tensors.pop(), unvariableify(out_tensors.pop()))
 
-            # views_encountered and new_aliases refer to the same variables in the original trace,
-            # so we update view groups to use the latest variables in the new trace
-            variable_renames = {
-                alias: variableify(new_alias) for alias, new_alias in zip(views_encountered, new_aliases)
-            }
-            for i, group in enumerate(involved_view_groups):
-                new_group = {variable_renames.get(t, t) for t in group}
-                view_groups[i] = new_group
-            viewed = set().union(*view_groups)
+            for alias, new_alias in zip(views_encountered, new_aliases):
+                _update_swap_map(swap_map_by_update_aliases, alias, new_alias)
 
         else:
             bsyms.append(bsym)

@@ -575,9 +575,15 @@ def test_update_aliases_count(executor, device, dtype):
         x.cos_()
         return x * x * x * x
 
+    def h(x):
+        y = x[:]
+        y.sin_()
+        return x * x * x * x
+
     expected_num_update_aliases = {
         f: 1,  # before sin_
         g: 2,  # before sin_ and cos_; latter is a hack to cause fusion break
+        h: 5,  # before sin_ and every mul
     }
 
     for fn in [f, g]:
