@@ -195,7 +195,11 @@ def test_inplace_on_view(executor, device, dtype):
         bb = b + 1
         return aa, bb
 
-    for fn in [h, i, j]:
+    def k(x, _):
+        y = x.view(2, 3)
+        return x.exp_() * y.tanh_()
+
+    for fn in [h, i, j, k]:
         a = make_tensor((2, 3), dtype=torch.float32, device=device)
         b = make_tensor((2, 3), dtype=torch.float32, device=device)
         a_, b_ = a.clone().detach(), b.clone().detach()

@@ -50,10 +50,8 @@ def _is_view_creation_op(bsym):
     return bsym.sym in ltorch._syms_returning_views or bsym.sym in ltorch._syms_that_may_return_views
 
 
-def _involves_viewed_args(bsym, viewed):
-    if bsym.sym.id == prims.PrimIDs.RETURN:
-        return False
-    return any(isinstance(p, TensorProxy) and variableify(p) in viewed for p in bsym.flat_proxy_args)
+def _involves_viewed_args(in_tensors, viewed):
+    return bool(in_tensors.intersection(viewed))
 
 
 def _can_be_reshaped(arg, arg_to_replace):
@@ -131,6 +129,17 @@ def replace_args_with_alias_map(
     return no_implicit_alias_trace, view_groups
 
 
+def _unswap(swap_map, aliases):
+    reversed_swap_map = {variableify(v): unvariableify(k) for k, v in swap_map.items()}
+
+    def _helper(alias):
+        while (valias := variableify(alias)) in reversed_swap_map:
+            alias = reversed_swap_map[valias]
+        return variableify(alias)
+
+    return list(map(_helper, aliases))
+
+
 def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[list[int]]) -> Trace:
     if not any(_is_inplace_op(bsym) for bsym in computation_trace.bound_symbols):
         return computation_trace
@@ -167,21 +176,27 @@ def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[li
     # Third pass: insert alias updates
     for bsym in computation_trace.bound_symbols:
         bsym = bsym.from_bsym_swap_proxies(swap_map)
-        if _is_inplace_op(bsym) or _is_view_creation_op(bsym) or _involves_viewed_args(bsym, viewed):
-            in_tensors = list(map(variableify, filter(lambda p: isinstance(p, TensorProxy), bsym.flat_proxy_args)))
+        in_tensors = list(map(variableify, filter(lambda p: isinstance(p, TensorProxy), bsym.flat_proxy_args)))
+        unswapped_in_tensors = _unswap(swap_map, in_tensors)
+        if (
+            _is_inplace_op(bsym)
+            or _is_view_creation_op(bsym)
+            or (bsym.sym.id != prims.PrimIDs.RETURN and _involves_viewed_args(set(unswapped_in_tensors), viewed))
+        ):
             if _is_inplace_op(bsym) and in_tensors:
                 in_tensors = {in_tensors[0]}
+                unswapped_in_tensors = {unswapped_in_tensors[0]}
             else:
                 in_tensors = set(in_tensors)
             out_tensors = set(map(variableify, filter(lambda p: isinstance(p, TensorProxy), bsym.flat_proxy_outs)))
             encountered.update(in_tensors)
-            involved_view_groups = [g for g in view_groups if g.intersection(in_tensors)]
+            involved_view_groups = [g for g in view_groups if g.intersection(unswapped_in_tensors)]
             involved_views = set().union(*involved_view_groups)
             views_encountered = tuple(involved_views.intersection(encountered))
 
             if _is_inplace_op(bsym):
                 # This is a hack to insert fusion break because nvFuser doesn't support mutation on intermediates
-                views_encountered = tuple(in_tensors.union(views_encountered))
+                views_encountered = tuple(unswapped_in_tensors.union(views_encountered))
 
             if not views_encountered:
                 # This is a view creation with operands that are not involved in any inplace ops.
