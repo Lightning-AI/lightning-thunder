@@ -646,7 +646,7 @@ class nvFuserExecutor(FusionExecutor):
         super().__init__("nvfuser", version=nvfuser.version())
 
         # TODO: Replace this with a query to a compile option
-        self._use_rematerialization = True
+        self._use_rematerialization = False
 
         fuel_str = os.getenv("NVFUSER_OPTIMIZATION_FUEL")
         if fuel_str:
