@@ -1,5 +1,5 @@
 from dataclasses import dataclass, replace
-from functools import partial, lru_cache
+from functools import partial, lru_cache, wraps
 from numbers import Number
 from typing import Any
 from collections.abc import Callable, Hashable, Sequence
@@ -10,6 +10,7 @@ import warnings
 from typing import cast
 
 from looseversion import LooseVersion
+from optree import tree_flatten
 import torch
 from torch import Tensor
 
@@ -971,6 +972,21 @@ register_supported(PrimIDs.CONVERT_ELEMENT_TYPE, convert_element_type, _convert_
 register_supported(DTensorPrimIDs.CONVERT_ELEMENT_TYPE, convert_element_type, _convert_element_type_check)
 
 
+# Helper decorator for primitives that should return ints for number-only inputs, e.g. floor/ceil
+def _returns_int_for_numbers(fn: Callable) -> Callable:
+    @wraps(fn)
+    def wrapper(*args, fd: FusionDefinition, lc_to_nv_map: dict, **kwargs) -> Any:
+        result = fn(*args, fd=fd, lc_to_nv_map=lc_to_nv_map, **kwargs)
+
+        if all(isinstance(arg, (Number, NumberProxy)) for arg in tree_flatten((args, kwargs))[0]):
+            nvint = lcdtype_to_nvdtype(int)
+            result = fd.ops.cast(result, nvint)
+
+        return result
+
+    return wrapper
+
+
 def _bitcast_check(src: TensorProxy, dtype: dtypes.dtype) -> bool:
     return (
         nvfuser_version() > LooseVersion("0.29.0")
@@ -1043,12 +1059,13 @@ def full(
     fd: FusionDefinition,
     lc_to_nv_map: dict,
 ) -> Any:
+    nv_shape = getnv(shape, fd, lc_to_nv_map, inline_number=True)
     nv_fill_value = getnv(fill_value, fd, lc_to_nv_map)
     nvdtype = lcdtype_to_nvdtype(dtype)
 
     _select_device(fd, device)
 
-    return fd.ops.full(shape, nv_fill_value, nvdtype)
+    return fd.ops.full(nv_shape, nv_fill_value, nvdtype)
 
 
 register_supported(PrimIDs.FULL, full, _full_check)
@@ -1471,6 +1488,7 @@ def bitwise_not(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: 
 register_supported(PrimIDs.BITWISE_NOT, bitwise_not, _elementwise_unary_check)
 
 
+@_returns_int_for_numbers
 def ceil(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
@@ -1562,6 +1580,7 @@ def expm1(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) 
 register_supported(PrimIDs.EXPM1, expm1, _elementwise_unary_check)
 
 
+@_returns_int_for_numbers
 def floor(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
@@ -1671,6 +1690,7 @@ register_dtensor_supported(DTensorPrimIDs.RECIPROCAL, reciprocal, _elementwise_u
 
 
 # NOTE nv_round to avoid a name conflict with the builtin round
+@_returns_int_for_numbers
 def nv_round(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
@@ -1752,6 +1772,7 @@ def tanh(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -
 register_supported(PrimIDs.TANH, tanh, _elementwise_unary_check)
 
 
+@_returns_int_for_numbers
 def trunc(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 

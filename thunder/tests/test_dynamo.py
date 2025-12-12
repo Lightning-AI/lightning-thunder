@@ -1919,3 +1919,19 @@ def test_splitter_with_inductor_fallback_single_element_return():
     with patch("torch._inductor.compile", side_effect=fake_compile):
         cfunc = thunderfx(func)
         cfunc(x)
+
+
+@requiresCUDA
+def test_stream_op():
+    def fn():
+        cuda = torch.device("cuda")
+        s = torch.cuda.streams.Stream()
+        s.wait_stream(torch.cuda.current_stream(cuda))
+
+    cfunc = thunderfx(fn)
+    cfunc()
+    split_reasons = cfunc._backend.subgraph_infos[0].split_reasons
+    assert any(
+        "is a `torch.cuda.Stream` method which is not supported by Thunder" in getattr(reason, "info", "")
+        for reason in split_reasons
+    )

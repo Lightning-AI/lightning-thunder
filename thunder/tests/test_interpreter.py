@@ -34,9 +34,7 @@ interpret_no_tracking = interpret
 # This wraps the jit call into a tracking one (using a wrapper function
 # rather than partial to get a nice test name).
 def interpret_tracking(*args, **kwargs):
-    return interpret(
-        *args, with_provenance_tracking=True, uncacheable_classes=(torch.Tensor, int, float, str, type(None)), **kwargs
-    )
+    return interpret(*args, with_provenance_tracking=True, **kwargs)
 
 
 # This will be called by PyTest and parametrize each test that has
