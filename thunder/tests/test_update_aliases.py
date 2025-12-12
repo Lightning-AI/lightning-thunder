@@ -196,7 +196,11 @@ def test_inplace_on_view(executor, device, dtype):
         bb = b + 1
         return aa, bb
 
-    for fn in [h, i, j]:
+    def k(x, _):
+        y = x.view(2, 3)
+        return x.exp_() * y.tanh_()
+
+    for fn in [h, i, j, k]:
         a = make_tensor((2, 3), dtype=torch.float32, device=device)
         b = make_tensor((2, 3), dtype=torch.float32, device=device)
         a_, b_ = a.clone().detach(), b.clone().detach()
@@ -328,8 +332,9 @@ def test_inplace(executor, device, dtype):
 
 @instantiate(
     dtypes=NOTHING,
+    decorators=(pytest.mark.parametrize("cache", ("constant values", "symbolic values")),),
 )
-def test_aliased_input(executor, device, dtype):
+def test_aliased_input(executor, device, dtype, cache):
     def f(x, y, z):
         return y.exp_().add(x) + z.exp()
 
@@ -339,7 +344,7 @@ def test_aliased_input(executor, device, dtype):
     a_ = a.clone().detach()
     b_ = b.clone().detach()
     c_ = c.clone().detach()
-    jfn = executor.make_callable(f)
+    jfn = executor.make_callable(f, cache=cache)
     actual = jfn(a, b, c)
     expected = f(a_, b_, c_)
     torch.testing.assert_close(actual, expected)
@@ -350,8 +355,9 @@ def test_aliased_input(executor, device, dtype):
 
 @instantiate(
     dtypes=NOTHING,
+    decorators=(pytest.mark.parametrize("cache", ("constant values", "symbolic values")),),
 )
-def test_write_to_intermediate_result(executor, device, dtype):
+def test_write_to_intermediate_result(executor, device, dtype, cache):
     if executor == nvFuserExecutor:
         pytest.xfail("nvFuser does not support writing to intermediate results")
 
@@ -361,7 +367,7 @@ def test_write_to_intermediate_result(executor, device, dtype):
         return y
 
     a = make_tensor((2, 3), dtype=torch.float32, device=device)
-    jfn = executor.make_callable(fn, skip_inplace_alias_updates=True)
+    jfn = executor.make_callable(fn, cache=cache)
     actual = jfn(a)
     expected = fn(a)
     torch.testing.assert_close(actual, expected)
@@ -517,3 +523,26 @@ def test_higher_order_inplace_alias_update(executor, device, dtype):
     expected_grad = torch.autograd.grad(expected, c, g)
     torch.testing.assert_close(actual_grad_fx, expected_grad)
     torch.testing.assert_close(actual_grad_jit, expected_grad)
+
+
+@instantiate(
+    dtypes=(dtypes.float32,),
+    decorators=(pytest.mark.parametrize("cache", ("constant values", "symbolic values")),),
+)
+def test_aliasing_for_viewed_input_of_different_shapes(executor, device, dtype, cache):
+    def f(x, y, z):
+        return x + 2, y.add_(z)
+
+    a = make_tensor((2, 3), dtype=dtypes.to_torch_dtype(dtype), device=device)
+    b = a[0, :]
+    c = a[1, :]
+    a_ = a.clone().detach()
+    b_ = a_[0, :]
+    c_ = a_[1, :]
+    jfn = executor.make_callable(f, cache=cache)
+    actual = jfn(a, b, c)
+    expected = f(a_, b_, c_)
+    torch.testing.assert_close(actual, expected)
+    torch.testing.assert_close(a, a_)
+    torch.testing.assert_close(b, b_)
+    torch.testing.assert_close(c, c_)

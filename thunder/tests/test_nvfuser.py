@@ -946,6 +946,27 @@ def test_embedding(
     executors=(nvFuserExecutor,),
     dtypes=NOTHING,
 )
+def test_full_symbolic_values(executor, device: str, dtype: dtypes.dtype):
+    def foo(a):
+        # TODO: 'device=device' doesn't work for "symbolic values" cache policy
+        # See issue: https://github.com/Lightning-AI/lightning-thunder/issues/1710
+        return torch.full(a.shape, 0, device="cuda", dtype=dtype)
+
+    jfoo = thunder.jit(foo, cache="symbolic values")
+
+    for shape in ((2, 3), (3, 2)):
+        a = torch.randn(shape, device=device)
+        actual = jfoo(a)
+        expected = foo(a)
+        torch.testing.assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 1
+
+
+@instantiate(
+    executors=(nvFuserExecutor,),
+    dtypes=NOTHING,
+)
 def test_slice_dynamic_extent(executor, device: str, dtype: dtypes.dtype):
     def foo(b):
         # TODO: 'device=device' doesn't work for "symbolic values" cache policy
@@ -1040,3 +1061,25 @@ def test_scatter(executor, device: str, dtype: dtypes.dtype):
         assert len(fusion_bsyms) == 1
         outside_fusion_syms = ["unpack_trivial", "python_return"]
         assert {el.sym.name for el in fw_trace.bound_symbols if not el.sym.is_fusion} == set(outside_fusion_syms)
+
+
+@instantiate(
+    executors=(nvFuserExecutor,),
+    dtypes=NOTHING,
+    decorators=(pytest.mark.xfail(reason="nvFuser does not support symbolic values for arange"),),
+)
+def test_arange_symbolic_values(executor, device: str, dtype: dtypes.dtype):
+    from thunder.tests.opinfos import arange_opinfo
+
+    for sample in arange_opinfo.sample_inputs(device, thunder.float32):
+        compiled_func = executor.make_callable(torch.arange, cache="symbolic values")
+        out = compiled_func(*sample.args, **sample.kwargs)
+        expected_out = torch.arange(*sample.args, **sample.kwargs)
+        torch.testing.assert_close(out, expected_out)
+
+        trace = thunder.last_traces(compiled_func)[-1]
+        computation_bsyms = [
+            bsym for bsym in trace.bound_symbols if bsym.sym not in (prims.python_return, prims.unpack_trivial)
+        ]
+        assert len(computation_bsyms) == 1
+        assert computation_bsyms[0].sym.name == "nvFusion0"

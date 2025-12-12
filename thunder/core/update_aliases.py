@@ -1,5 +1,6 @@
 from functools import reduce, partial
 
+from thunder.core.compile_data import using_symbolic_values
 import thunder.core.prims as prims
 from thunder.core.proxies import TensorProxy, variableify, unvariableify
 from thunder.core.pytree import tree_flatten
@@ -49,48 +50,61 @@ def _is_view_creation_op(bsym):
     return bsym.sym in ltorch._syms_returning_views or bsym.sym in ltorch._syms_that_may_return_views
 
 
-def _involves_viewed_args(bsym, viewed):
-    if bsym.sym.id == prims.PrimIDs.RETURN:
-        return False
-    return any(isinstance(p, TensorProxy) and variableify(p) in viewed for p in bsym.flat_proxy_args)
+def _involves_viewed_args(in_tensors, viewed):
+    return bool(in_tensors.intersection(viewed))
+
+
+def _can_be_reshaped(arg, arg_to_replace):
+    # TODO: Fix this once numel for symbolic values is implemented
+    if using_symbolic_values():
+        arg_numel = arg._numel()
+        arg_to_replace_numel = arg_to_replace._numel()
+    else:
+        arg_numel = arg.numel
+        arg_to_replace_numel = arg_to_replace.numel
+    return arg_numel == arg_to_replace_numel
 
 
 def replace_args_with_alias_map(
     computation_trace: Trace,
     alias_tensor_indices: list[list[int]],
-) -> tuple[Trace, dict[VariableInterface, TensorProxy]]:
+) -> tuple[Trace, list[set[VariableInterface]]]:
     if not alias_tensor_indices:
-        return computation_trace, {}
+        return computation_trace, []
     bsyms: list[BoundSymbol] = []
     flat_args, _ = tree_flatten((computation_trace.args, computation_trace.kwargs))
     swap_map_for_aliases: dict[VariableInterface, TensorProxy] = {}
     arg_to_optional_bsyms: dict[VariableInterface, BoundSymbol] = {}
+    view_groups = {}
     for indices in alias_tensor_indices:
         arg = flat_args[indices[0]]
         for idx in filter(lambda idx: idx < len(flat_args), indices[1:]):
             arg_to_replace = flat_args[idx]
-            # Skip aliases with different numel (e.g., complex tensor and its real view)
+            # Track aliases with different numel (e.g., complex tensor and its real view)
             # These share storage but have incompatible element counts
-            if arg.numel != arg_to_replace.numel:
+            if not _can_be_reshaped(arg, arg_to_replace):
+                view_groups.setdefault(variableify(arg), []).append(variableify(arg_to_replace))
                 continue
             reshaped_arg = arg
             if arg_to_replace.shape != arg.shape:
                 with tracectx(computation_trace):
-                    reshaped_arg = prims.reshape.meta(arg, arg_to_replace.shape)
-                    arg_to_optional_bsyms[variableify(arg_to_replace)] = prims.reshape.bind(
-                        arg,
-                        arg_to_replace.shape,
-                        output=reshaped_arg,
-                    )
+                    shape = prims.shape.meta(arg_to_replace)
+                    reshaped_arg = prims.reshape.meta(arg, shape)
+                    reshape_bsym = prims.reshape.bind(arg, shape, output=reshaped_arg)
+                    if using_symbolic_values():
+                        shape_bsym = prims.shape.bind(arg_to_replace, output=shape)
+                        arg_to_optional_bsyms[variableify(arg_to_replace)] = (shape_bsym, reshape_bsym)
+                    else:
+                        arg_to_optional_bsyms[variableify(arg_to_replace)] = (reshape_bsym,)
             swap_map_for_aliases[variableify(arg_to_replace)] = reshaped_arg
     appended_bsyms = {}
     for bsym in computation_trace.bound_symbols:
         for arg in filter(lambda p: isinstance(p, TensorProxy), bsym.flat_args):
-            reshape_bsym = arg_to_optional_bsyms.get(variableify(arg))
-            if reshape_bsym is not None:
-                if reshape_bsym not in appended_bsyms:
-                    bsyms.append(reshape_bsym)
-                    appended_bsyms[reshape_bsym] = arg
+            reshape_bsyms = arg_to_optional_bsyms.get(variableify(arg))
+            if reshape_bsyms is not None:
+                if reshape_bsyms not in appended_bsyms:
+                    bsyms.extend(reshape_bsyms)
+                    appended_bsyms[reshape_bsyms] = arg
         if replaced_args_map := {
             x.name: swap_map_for_aliases[variableify(x)].name
             for x in filter(lambda p: isinstance(p, TensorProxy), bsym.flat_args)
@@ -111,7 +125,19 @@ def replace_args_with_alias_map(
     no_implicit_alias_trace.bound_symbols = bsyms
     str_map = {unvariableify(k).name: v.name for k, v in swap_map_for_aliases.items()}
     no_implicit_alias_trace.set_provenance(TraceProvenance(f"Duplicate alias args using {str_map}"))
-    return no_implicit_alias_trace, swap_map_for_aliases
+    view_groups = [{k}.union(set(v)) for k, v in view_groups.items() if len(v) != 0]
+    return no_implicit_alias_trace, view_groups
+
+
+def _unswap(swap_map, aliases):
+    reversed_swap_map = {variableify(v): unvariableify(k) for k, v in swap_map.items()}
+
+    def _helper(alias):
+        while (valias := variableify(alias)) in reversed_swap_map:
+            alias = reversed_swap_map[valias]
+        return variableify(alias)
+
+    return list(map(_helper, aliases))
 
 
 def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[list[int]]) -> Trace:
@@ -123,10 +149,10 @@ def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[li
 
     # First pass: identify inputs which are views of each other and swap them out with a default,
     # reshaping if necessary.
-    computation_trace, _ = replace_args_with_alias_map(computation_trace, alias_tensor_indices)
+    computation_trace, view_groups = replace_args_with_alias_map(computation_trace, alias_tensor_indices)
 
     # Second pass: identify views, their originals, and operands involved in inplace ops
-    view_groups = []
+    encountered = set().union(*view_groups)
     inplace_inputs = set()
     for bsym in computation_trace.bound_symbols:
         if _is_inplace_op(bsym) or _is_view_creation_op(bsym):
@@ -146,19 +172,24 @@ def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[li
     # filter out view groups that don't have any tensors involved in inplace ops
     view_groups = [group for group in view_groups if len(group.intersection(inplace_inputs)) != 0]
     viewed = set(reduce(set.union, view_groups, set()))
-    encountered = set()
 
     # Third pass: insert alias updates
     for bsym in computation_trace.bound_symbols:
-        if _is_inplace_op(bsym) or _is_view_creation_op(bsym) or _involves_viewed_args(bsym, viewed):
-            in_tensors = list(map(variableify, filter(lambda p: isinstance(p, TensorProxy), bsym.flat_proxy_args)))
+        in_tensors = list(map(variableify, filter(lambda p: isinstance(p, TensorProxy), bsym.flat_proxy_args)))
+        unswapped_in_tensors = _unswap(swap_map, in_tensors)
+        if (
+            _is_inplace_op(bsym)
+            or _is_view_creation_op(bsym)
+            or (bsym.sym.id != prims.PrimIDs.RETURN and _involves_viewed_args(set(unswapped_in_tensors), viewed))
+        ):
             if _is_inplace_op(bsym) and in_tensors:
                 in_tensors = {in_tensors[0]}
+                unswapped_in_tensors = {unswapped_in_tensors[0]}
             else:
                 in_tensors = set(in_tensors)
             out_tensors = set(map(variableify, filter(lambda p: isinstance(p, TensorProxy), bsym.flat_proxy_outs)))
             encountered.update(in_tensors)
-            group = set(reduce(set.union, filter(lambda g: any(g.intersection(in_tensors)), view_groups), set()))
+            group = set().union(*filter(lambda g: g.intersection(unswapped_in_tensors), view_groups))
             if not group or not (views_encountered := group.intersection(encountered)):
                 # If group is empty, this is a view creation with operands that are not involved in any inplace ops.
                 bsyms.append(bsym.from_bsym_swap_proxies(swap_map, skip_output=True))
