@@ -257,6 +257,10 @@ def _clear_mutable_collection_prim_impl(a: Collection) -> None:
         a.clear()
 
 
+ceil = ex.register_operator("ceil", like=prims.ceil, module=math)
+floor = ex.register_operator("floor", like=prims.floor, module=math)
+trunc = ex.register_operator("trunc", like=prims.trunc, module=math)
+py_round = ex.register_operator("round", like=prims.round, module=builtins)
 acos = ex.register_operator("acos", like=prims.acos, module=math)
 acosh = ex.register_operator("acosh", like=prims.acosh, module=math)
 asin = ex.register_operator("asin", like=prims.asin, module=math)
@@ -273,6 +277,10 @@ clear_mutable_collection = ex.register_operator(
     "clear_mutable_collection", meta=_clear_mutable_collection_meta, fn=_clear_mutable_collection_prim_impl
 )
 
+ex.register_implementation(prims.ceil, ceil, checker=_elementwise_unary_checker)
+ex.register_implementation(prims.floor, floor, checker=_elementwise_unary_checker)
+ex.register_implementation(prims.trunc, trunc, checker=_elementwise_unary_checker)
+ex.register_implementation(prims.round, py_round, checker=_elementwise_unary_checker)
 ex.register_implementation(prims.acos, acos, checker=_elementwise_unary_checker)
 ex.register_implementation(prims.acosh, acosh, checker=_elementwise_unary_checker)
 ex.register_implementation(prims.asin, asin, checker=_elementwise_unary_checker)
@@ -287,8 +295,6 @@ ex.register_implementation(prims.imag, imag, checker=_elementwise_unary_checker)
 ex.register_implementation(prims.signbit, signbit, checker=_elementwise_unary_checker)
 
 
-# # bitwise_not = _elementwise_unary_factory("invert", operator)
-# # ceil = _elementwise_unary_factory("ceil", math)
 # # cos = _elementwise_unary_factory("cos", math)
 # # cosh = _elementwise_unary_factory("cosh", math)
 # # erf = _elementwise_unary_factory("erf", math)
@@ -298,7 +304,6 @@ ex.register_implementation(prims.signbit, signbit, checker=_elementwise_unary_ch
 # # exp = _elementwise_unary_factory("exp", math)
 # # exp2 = None
 # # expm1 = _elementwise_unary_factory("expm1", math)
-# # floor = _elementwise_unary_factory("floor", math)
 # # isfinite = _elementwise_unary_factory("isfinite", cmath)
 # # lgamma = _elementwise_unary_factory("lgamma", math)
 # # log = _elementwise_unary_factory("log", math)
@@ -307,8 +312,6 @@ ex.register_implementation(prims.signbit, signbit, checker=_elementwise_unary_ch
 # # log2 = _elementwise_unary_factory("log2", math)
 # # ndtri = None
 # # reciprocal = None
-# # # NOTE pythonex_round to avoid a name conflict with the builtin round
-# # pythonex_round = _elementwise_unary_factory("round", builtins)
 # # rsqrt = None
 # # sign = None
 # # sin = _elementwise_unary_factory("sin", math)
@@ -316,7 +319,6 @@ ex.register_implementation(prims.signbit, signbit, checker=_elementwise_unary_ch
 # # sqrt = _elementwise_unary_factory("sqrt", math)
 # # tan = _elementwise_unary_factory("tan", math)
 # # tanh = _elementwise_unary_factory("tanh", math)
-# # trunc = _elementwise_unary_factory("trunc", math)
 
 #
 # Elementwise binary primitives
@@ -332,6 +334,9 @@ atan2 = ex.register_operator("atan2", like=prims.atan2, module=math)
 bitwise_and = ex.register_operator("bitwise_and", like=prims.bitwise_and, fn=operator.and_)
 bitwise_or = ex.register_operator("bitwise_or", like=prims.bitwise_or, fn=operator.or_)
 bitwise_xor = ex.register_operator("bitwise_xor", like=prims.bitwise_xor, fn=operator.xor)
+bitwise_not = ex.register_operator("bitwise_not", like=prims.bitwise_not, fn=operator.inv)
+bitwise_left_shift = ex.register_operator("bitwise_left_shift", like=prims.bitwise_left_shift, fn=operator.lshift)
+bitwise_right_shift = ex.register_operator("bitwise_right_shift", like=prims.bitwise_right_shift, fn=operator.rshift)
 eq = ex.register_operator("eq", like=prims.eq, module=operator)
 py_floordiv = ex.register_operator("floordiv", like=prims.py_floordiv, module=operator)
 fmod = ex.register_operator("fmod", like=prims.fmod, module=math)
@@ -340,6 +345,8 @@ ge = ex.register_operator("ge", like=prims.ge, module=operator)
 gt = ex.register_operator("gt", like=prims.gt, module=operator)
 le = ex.register_operator("le", like=prims.le, module=operator)
 lt = ex.register_operator("lt", like=prims.lt, module=operator)
+maximum = ex.register_operator("max", like=prims.maximum, module=builtins)
+minimum = ex.register_operator("min", like=prims.minimum, module=builtins)
 mul = ex.register_operator("mul", like=prims.mul, module=operator)
 ne = ex.register_operator("ne", like=prims.ne, module=operator)
 # NOTE pythonex_pow to avoid a name conflict with the builtin pow
@@ -356,6 +363,9 @@ ex.register_implementation(prims.atan2, atan2, checker=_elementwise_binary_check
 ex.register_implementation(prims.bitwise_and, bitwise_and, checker=_elementwise_binary_checker)
 ex.register_implementation(prims.bitwise_or, bitwise_or, checker=_elementwise_binary_checker)
 ex.register_implementation(prims.bitwise_xor, bitwise_xor, checker=_elementwise_binary_checker)
+ex.register_implementation(prims.bitwise_not, bitwise_not, checker=_elementwise_unary_checker)
+ex.register_implementation(prims.bitwise_left_shift, bitwise_left_shift, checker=_elementwise_binary_checker)
+ex.register_implementation(prims.bitwise_right_shift, bitwise_right_shift, checker=_elementwise_binary_checker)
 ex.register_implementation(prims.eq, eq, checker=_elementwise_binary_checker)
 ex.register_implementation(prims.py_floordiv, py_floordiv, checker=_elementwise_binary_checker)
 ex.register_implementation(prims.fmod, fmod, checker=_elementwise_binary_checker)
@@ -364,6 +374,8 @@ ex.register_implementation(prims.ge, ge, checker=_elementwise_binary_checker)
 ex.register_implementation(prims.gt, gt, checker=_elementwise_binary_checker)
 ex.register_implementation(prims.le, le, checker=_elementwise_binary_checker)
 ex.register_implementation(prims.lt, lt, checker=_elementwise_binary_checker)
+ex.register_implementation(prims.maximum, maximum, checker=_elementwise_binary_checker)
+ex.register_implementation(prims.minimum, minimum, checker=_elementwise_binary_checker)
 ex.register_implementation(prims.mul, mul, checker=_elementwise_binary_checker)
 ex.register_implementation(prims.ne, ne, checker=_elementwise_binary_checker)
 # NOTE pythonex_pow to avoid a name conflict with the builtin pow
@@ -371,6 +383,24 @@ ex.register_implementation(prims.pow, pythonex_pow, checker=_elementwise_binary_
 ex.register_implementation(prims.sub, sub, checker=_elementwise_binary_checker)
 ex.register_implementation(prims.div, div, checker=_elementwise_binary_checker)
 ex.register_implementation(prims.shape, shape, checker=_always_executable)
+
+
+def _elementwise_ternary_checker(
+    a: NumberLike | TensorProxy, b: NumberLike | TensorProxy, c: NumberLike | TensorProxy
+) -> bool:
+    return (
+        isinstance(a, (Number, NumberProxy))
+        and isinstance(b, (Number, NumberProxy))
+        and isinstance(c, (Number, NumberProxy))
+    )
+
+
+def _where_prim_impl(pred, a, b):
+    return a if pred else b
+
+
+where = ex.register_operator("where", like=prims.where, fn=_where_prim_impl)
+ex.register_implementation(prims.where, where, checker=_elementwise_ternary_checker)
 
 
 def _sink(*args, **kwargs):
