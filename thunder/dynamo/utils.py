@@ -1221,10 +1221,13 @@ def translate_dtensor_ops(gm: torch.fx.GraphModule) -> None:
 
                 # Handle positional args: redistribute(device_mesh, placements)
                 # and keyword args: redistribute(placements=...)
+                # Pytorch docs says that placements can also be None or not provided at all but it will trigger Dynamo to raise an error
+                # https://docs.pytorch.org/docs/stable/distributed.tensor.html#torch.distributed.tensor.DTensor.redistribute
+                # To be coherent with the Pytorch docs, we will use None if placements is not provided
                 if len(args) >= 2:
                     placements = args[1]
                 else:
-                    placements = kwargs["placements"]
+                    placements = kwargs.get("placements", None)
 
                 def dtensor_redistribute_prim_wrapper(x, placements=placements):
                     return dtensor_redistribute_prim(x, placements=placements)
