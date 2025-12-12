@@ -691,7 +691,10 @@ class Benchmark_litGPT:
                 executors.insert(0, transformer_engine_ex)
                 transforms.insert(0, TransformerEngineTransform())
 
-            if "dynamo" in self.compile:
+            if "jit" in self.compile:
+                model = thunder.jit(model, executors=executors, transforms=transforms, **jit_options)
+
+            else:
                 if self.distributed_mode == "fsdp2":
                     print("Resetting cache size for when fsdp2 and using thunder as backend torch.compile")
                     import torch._dynamo.config as dynamo_config
@@ -704,10 +707,6 @@ class Benchmark_litGPT:
                 # using __wrapped__ to access the original torch.compile function did not work
                 # so we are using the lower level torch._dynamo.optimize function
                 model = torch._dynamo.optimize(backend=self.backend)(model)
-            else:
-                jit_options = {}
-                jit_options["fp8_shard_intermediate_activation"] = self.fp8_shard_intermediate_activation
-                model = thunder.jit(model, executors=executors, transforms=transforms, **jit_options)
         elif self.compile != "eager":
             raise ValueError(f"Invalid compile option: {self.compile}")
 
