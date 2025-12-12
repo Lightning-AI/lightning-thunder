@@ -178,6 +178,8 @@ def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[li
     for bsym in computation_trace.bound_symbols:
         bsym = bsym.from_bsym_swap_proxies(swap_map)
         in_tensors = list(map(variableify, filter(lambda p: isinstance(p, TensorProxy), bsym.flat_proxy_args)))
+        # We do not unswap out_tensor of an inplace bsym into in_tensor, because functional dependency is already
+        # captured by that reference to out_tensor
         unswapped_in_tensors = _unswap(swap_map_by_update_aliases, in_tensors)
         if (
             _is_inplace_op(bsym)
