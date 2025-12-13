@@ -246,6 +246,9 @@ class InferenceMetrics:
     prefill_time_ms: float = 0.0
     decode_time_ms: float = 0.0
 
+    # Compilation metrics
+    num_recompilations: int = 0
+
     # Per-iteration metrics for variance analysis
     iteration_times: list[float] = field(default_factory=list)
     ttft_times: list[float] = field(default_factory=list)
@@ -572,6 +575,8 @@ class InferenceBenchmark:
 
         self._calculate_aggregate_metrics(all_metrics)
 
+        self.metrics.num_recompilations = self._get_recompilation_count()
+
         if torch.cuda.is_available():
             self.metrics.memory_used_gb = torch.cuda.memory_allocated() / 1e9
             self.metrics.peak_memory_gb = torch.cuda.max_memory_allocated() / 1e9
@@ -581,6 +586,20 @@ class InferenceBenchmark:
             return
 
         return self.metrics
+
+    def _get_recompilation_count(self) -> int:
+        """Count Thunder cache misses (recompiles of the same jitted module), excluding the initial compile and Dynamo graph rebuilds."""
+        if self.config.mode == "thunder":
+            backend = self.model._backend
+            total_misses = 0
+            for subgraph_info in backend.subgraph_infos:
+                for thunder_fn in subgraph_info.thunder_compiled_fns:
+                    total_misses += thunder.cache_misses(thunder_fn) - 1
+            return total_misses
+        elif self.config.mode == "thunderjit":
+            return thunder.cache_misses(self.model) - 1
+        else:
+            return 0
 
     def _calculate_aggregate_metrics(self, all_metrics: list[dict[str, Any]]):
         """Calculate aggregate metrics from individual iterations"""
@@ -638,6 +657,13 @@ class InferenceBenchmark:
         print(f"  Current Memory: {self.metrics.memory_used_gb:.2f} GB")
         print(f"  Peak Memory: {self.metrics.peak_memory_gb:.2f} GB")
 
+        if self.config.mode in ("thunder", "thunderjit"):
+            print("\nCompilation Metrics:")
+            print(
+                "  Number of Thunder module recompilations excluding initial compile: "
+                f"{self.metrics.num_recompilations}"
+            )
+
         if len(self.metrics.iteration_times) > 1:
             print("\nVariance Analysis:")
             print(f"  Throughput Std Dev: {statistics.stdev(self.metrics.iteration_times):.2f} ms")
@@ -659,6 +685,7 @@ class InferenceBenchmark:
                 "total_time_ms": self.metrics.total_time_ms,
                 "memory_used_gb": self.metrics.memory_used_gb,
                 "peak_memory_gb": self.metrics.peak_memory_gb,
+                "num_recompilations": self.metrics.num_recompilations,
             },
             "detailed_metrics": {
                 "iteration_times": self.metrics.iteration_times,
