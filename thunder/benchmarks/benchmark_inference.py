@@ -218,6 +218,7 @@ class InferenceBenchmarkConfig:
     num_iterations: int
     warmup_iterations: int
     enable_nvfp4: bool  # Enable NVFP4 registration and quantize GroupedSwiGLU in MoE
+    use_tilegym_kernels: bool  # Prefer TileGym kernels where possible (Thunder modes)
     fx_report_folder: str | None
     enable_nv_linear: bool
     mode: str
@@ -353,6 +354,16 @@ class InferenceBenchmark:
         # `nv_enable_linear=True` might fail with distributed run
         # ref: https://github.com/NVIDIA/Fuser/issues/4507
         res = {"transforms": []}
+        if self.config.use_tilegym_kernels:
+            tilegym_ex = thunder.get_executor("tilegym")
+            if tilegym_ex is None:
+                warnings.warn(
+                    "--use-tilegym-kernels was set, but the 'tilegym' executor is not available. "
+                    "Install tilegym/cuda-tile or disable the flag."
+                )
+            else:
+                # Prepend tilegym to prefer TileGym kernels.
+                res["executors"] = [tilegym_ex, *thunder.get_default_executors()]
         if self.config.enable_nv_linear:
             res["nv_enable_linear"] = True
             res["nv_enable_matmul"] = True
@@ -362,7 +373,10 @@ class InferenceBenchmark:
             if not hasattr(self, "_mask_transform"):
                 self._mask_transform = SDPAMaskTransform()
             res["transforms"].append(self._mask_transform)
-            res["executors"] = [self._mask_transform.get_executor(), *thunder.get_default_executors()]
+            # Keep mask transform first, then tilegym (if enabled), then the defaults.
+            tilegym_ex = thunder.get_executor("tilegym") if self.config.use_tilegym_kernels else None
+            extra_executors = [tilegym_ex] if tilegym_ex is not None else []
+            res["executors"] = [self._mask_transform.get_executor(), *extra_executors, *thunder.get_default_executors()]
         if self.config.enable_thunder_cudagraph:
             res["transforms"].append(CUDAGraphTransform())
         if self.config.thunder_cache is not None:
@@ -768,6 +782,11 @@ Examples:
     )
     parser.add_argument("--enable-thunder-cudagraph", action="store_true", help="Pass CUDAGraphTransform to Thunder")
     parser.add_argument("--attn-implementation", type=str, default=None, help="Attention implementation")
+    parser.add_argument(
+        "--use-tilegym-kernels",
+        action="store_true",
+        help="Prefer TileGym kernels where possible (only affects thunder/thunderjit modes)",
+    )
 
     args = parser.parse_args()
     return args
@@ -796,6 +815,7 @@ def main():
         warmup_iterations=args.warmup_iterations,
         mode=args.mode,
         enable_nvfp4=args.enable_nvfp4,
+        use_tilegym_kernels=args.use_tilegym_kernels,
         fx_report_folder=args.fx_report_folder,
         enable_nv_linear=args.enable_nv_linear,
         disable_moe_replacement=args.disable_moe_replacement,
