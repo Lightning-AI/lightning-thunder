@@ -913,16 +913,20 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
         length = 5
         return "".join(secrets.choice(string.ascii_lowercase) for _ in range(length))
 
-    args_tensor_mask = unwrap(fwd_kwargs["args_tensor_mask"])
-    # TODO(crcrpar): Think about making use of `non_differentiable_idx`
-    # note that this key is quite new: https://github.com/pytorch/pytorch/pull/134087
-    # non_differentiable_idx = fwd_kwargs.get("non_differentiable_idx")
-    length_of_tensor_args = sum(args_tensor_mask)
+    # PyTorch uses `non_differentiable_idx` to indicate output indices for which the
+    # grad-output should be `None`.
+    # https://github.com/pytorch/pytorch/pull/166788
+    non_differentiable_idx = fwd_kwargs.get("non_differentiable_idx")
+    if non_differentiable_idx is None:
+        non_differentiable_idx = ()
+    else:
+        non_differentiable_idx = tuple(unwrap(non_differentiable_idx))
+    length_of_tensor_args = sum(isinstance(unwrap(v), TensorProxy) for v in fwd_args)
 
     # N.B.(crcrpar) When `torch.compile(..., dynamic=True)`,
     # GraphModules' forward seem to take `SymInt` and other values
     # as its argument with some probability. Though that piece of information unfortunately
-    # does not seem to be indicated in ``args_tensor_mask`` nor ``non_differentiable_idx``.
+    # does not seem to be indicated in ``non_differentiable_idx``.
     # Thus we optimistically iterate over ``fwd_args`` and gather non-tensor values whose index is >= `length_of_tensor_args` to ``fwd_args``.
     new_fwd_args = []
     for i, v in enumerate(fwd_args):
@@ -969,7 +973,13 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
     def forward(*args, **kwargs):
         return interpret_trace(trace_of_forward, *args, **kwargs)
 
-    grads = sequencify(tree_map(lambda t: TensorProxy(like=t), sequencify(output)))
+    output_seq = tuple(sequencify(output))
+    nd_set = set(non_differentiable_idx)
+    # Boundary check for `non_differentiable_idx`
+    if nd_set and (min(nd_set) < 0 or max(nd_set) >= len(output_seq)):
+        raise ValueError(f"Invalid {non_differentiable_idx=} for autograd_function_apply with {len(output_seq)=}")
+
+    grads = tuple(None if i in nd_set else TensorProxy(like=t) for i, t in enumerate(output_seq))
     bwd_tensor_args = grads + tuple(saved_values)
     bwd_args = (None,) + bwd_tensor_args
     wrapped_bwd_args = tree_map(lambda t: wrap(t, provenance=aug_fwd_provenance), bwd_args)
@@ -998,7 +1008,10 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
         from thunder.core.transforms import get_grad, put_grads
 
         primal, residuals = interpret_trace(aliased_aug_fwd_trace, *args, **kwargs)
-        grads = tree_map(lambda t: get_grad(t), sequencify(primal))
+        primal_seq = tuple(sequencify(primal))
+        grads = [get_grad(t) for t in primal_seq]
+        for i in nd_set:
+            grads[i] = None
         bwd_args = (None,) + tuple(grads) + tuple(sequencify(residuals))
         result = interpret_trace(aliased_bwd_trace, *bwd_args)
         put_grads(args[1:], result)

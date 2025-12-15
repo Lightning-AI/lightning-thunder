@@ -1250,7 +1250,6 @@ def test_autograd_function_apply():
             forward,
             backward,
             x,
-            args_tensor_mask=[True],
             non_differentiable_idx=[],
         )
 
@@ -1276,7 +1275,6 @@ def test_autograd_function_apply():
             forward,
             wrong_backward,
             x,
-            args_tensor_mask=[True],
             non_differentiable_idx=[],
         )
 
@@ -1314,7 +1312,6 @@ def test_autograd_function_apply_with_no_grad():
             forward,
             backward,
             x,
-            args_tensor_mask=[True],
             non_differentiable_idx=[],
         )
         return res
@@ -1347,7 +1344,6 @@ def test_autograd_function_apply_with_no_grad():
             forward,
             backward,
             x,
-            args_tensor_mask=[True],
             non_differentiable_idx=[],
         )
         return res
