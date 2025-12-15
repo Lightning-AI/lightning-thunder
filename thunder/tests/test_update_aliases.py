@@ -128,9 +128,11 @@ def test_update_aliases(op, device, dtype, executor, _):
     if op.name == "polygamma_":
         args[0], args[1] = args[1], args[0]
 
+    args_ref = [args[0].clone().detach()] + args[1:]
     j_op = executor.make_callable(op.torch_reference)
     actual = j_op(*args, **sample.kwargs)
-    expected = op.torch_reference(*args, **sample.kwargs)
+    expected = op.torch_reference(*args_ref, **sample.kwargs)
+    assert id(actual) == id(args[0])
     torch.testing.assert_close(actual, expected, equal_nan=True)
 
 

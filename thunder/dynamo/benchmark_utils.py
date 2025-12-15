@@ -150,7 +150,7 @@ class TorchInductorSpecification(CompileSpecificationInterface):
 
     # to_source will always use symbolic trace
     def to_source(self, fn_name):
-        return f"TorchInductorSpecification.torch_inductor({fn_name}, inputs)"
+        return f"TorchInductorSpecification.torch_inductor({fn_name}, inputs, skip_symbolic_trace={self.skip_symbolic_trace})"
 
     def import_str(self):
         return ["import torch", "from thunder.dynamo.benchmark_utils import TorchInductorSpecification"]
@@ -353,6 +353,12 @@ class TorchBenchmarkTimerSpecification(TimerInterface):
             Measurement: A benchmarking result containing execution time statistics, see :class:`torch.utils.benchmark.utils.common.Measurement`.
         """
         t = TorchBenchmarkTimer(stmt=stmt, setup=setup, globals=globals, timer=self.inner_timer)
+        # If the timer measures an extremely short execution time, adaptive_autorange may hang.
+        # To prevent this, we perform a preliminary run to check for such cases, e.g. measure kernel time on a cpu-only graph.
+        # If detected, we return the time of a single run, avoiding potential hangs.
+        pre_run = t.timeit(1)
+        if pre_run.median <= 1e-9:
+            return pre_run
         measurement = t.adaptive_autorange(
             threshold=self.threshold, min_run_time=self.min_run_time, max_run_time=self.max_run_time
         )
