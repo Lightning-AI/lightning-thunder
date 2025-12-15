@@ -2199,7 +2199,6 @@ def thunder_general_jit(
         callbacks=general_jit_callbacks,
         with_provenance_tracking=True,
         unwrap_result=False,
-        uncacheable_classes=(torch.Tensor, int, float, str, NoneType),
         record_history=compile_data.debug_options.record_interpreter_history,
     )
 

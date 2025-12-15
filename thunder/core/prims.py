@@ -1948,8 +1948,6 @@ numpy_array_to_torch_tensor = make_prim(
 #   produce boolean results (ALWAYS_BOOL), ceil/floor produces integer outputs for
 #   number inputs while preserves datatype for tensor inputs (INT_FOR_NUMBER), and
 #   other operations, like abs, map complex numbers to floats (COMPLEX_TO_FLOAT).
-#   The ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND enum describes these three behaviors so that
-#   operations, like abs, map complex numbers to floats (COMPLEX_TO_FLOAT).
 #   The ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND enum describes these four behaviors so that
 #   elementwise operations can rely on helper functions to implement this behavior.
 class ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND(Enum):
