@@ -13,7 +13,7 @@ from lightning_utilities import compare_version
 
 import thunder
 
-from thunder.tests.framework import requiresCUDA, IS_WINDOWS
+from thunder.tests.framework import requiresCUDA, IS_WINDOWS, xfail_if_args_tensor_mask_removed
 from thunder.core.options import CACHE_OPTIONS
 import thunder.core.prims as prims
 from thunder import pytorch_executor, nvfuser_executor
