@@ -589,6 +589,8 @@ if HAS_SCALED_GROUPED_MM:
 
         torch.testing.assert_close(result, eager)
         assert_consistency_of_compiletime_and_runtime(jitted, result)
+
+
 def _cuda_version_tuple() -> tuple[int, int] | None:
     if torch.version.cuda is None:
         return None
