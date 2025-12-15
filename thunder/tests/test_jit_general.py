@@ -47,6 +47,35 @@ def skipif_not_pytorch_2_1(f):
     )(f)
 
 
+# TODO This change should be handled properly in the future
+def _pytorch_removed_args_tensor_mask() -> bool:
+    """Check if PyTorch removed args_tensor_mask from autograd_function_apply.
+
+    PyTorch removed args_tensor_mask in https://github.com/pytorch/pytorch/pull/166788
+    (commit 5cf15aef144fd03379a5796e37698eee5e4575b8, Dec 12, 2025).
+
+    Returns True if args_tensor_mask is NO LONGER accepted (new PyTorch).
+    """
+    import re
+
+    version = torch.__version__
+    # Nightly versions look like: 2.6.0.dev20251212+cpu
+    match = re.search(r"\.dev(\d{8})", version)
+    if match:
+        nightly_date = int(match.group(1))
+        # args_tensor_mask removed around Dec 12, 2025
+        return nightly_date >= 20251212
+    # For stable releases, we'll need to update this when we know which version includes the change
+    # For now, assume stable releases still have args_tensor_mask
+    return False
+
+
+xfail_if_args_tensor_mask_removed = pytest.mark.xfail(
+    _pytorch_removed_args_tensor_mask(),
+    reason="PyTorch nightly >= 20251212 removed args_tensor_mask from autograd_function_apply (PR #166788)",
+)
+
+
 def test_jitting_through_opaque_torch_symbols_error():
     def no_error(x):
         # randn_like is in ltorch
@@ -1252,6 +1281,7 @@ def test_complex_backward_custom_autograd():
 
 
 @pytest.mark.filterwarnings("ignore:Please use torch.vmap")
+@xfail_if_args_tensor_mask_removed
 def test_autograd_function_apply():
     # see https://github.com/Lightning-AI/lightning-thunder/issues/1248#issuecomment-2388655917
     # for why `torch.foo` instead of `torch.Tensor.foo`
@@ -1328,6 +1358,7 @@ def test_autograd_function_apply():
         gradcheck(jitted, (x,))
 
 
+@xfail_if_args_tensor_mask_removed
 def test_autograd_function_apply_with_no_grad():
     # This case is using `torch` operations
     def forward(_, x):
