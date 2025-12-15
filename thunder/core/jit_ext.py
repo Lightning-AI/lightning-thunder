@@ -940,7 +940,15 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
         length = 5
         return "".join(secrets.choice(string.ascii_lowercase) for _ in range(length))
 
-    args_tensor_mask = unwrap(fwd_kwargs["args_tensor_mask"])
+    # NOTE: `args_tensor_mask` was removed in PyTorch PR #166788.
+    # https://github.com/pytorch/pytorch/pull/166788/
+    # For backwards compatibility with older PyTorch versions, we check if it exists.
+    # When not present, we assume all fwd_args are tensors.
+    if "args_tensor_mask" in fwd_kwargs:
+        args_tensor_mask = unwrap(fwd_kwargs["args_tensor_mask"])
+    else:
+        # For new PyTorch versions without args_tensor_mask, treat all args as potential tensors
+        args_tensor_mask = tuple(isinstance(unwrap(arg), TensorProxy) for arg in fwd_args)
     # TODO(crcrpar): Think about making use of `non_differentiable_idx`
     # note that this key is quite new: https://github.com/pytorch/pytorch/pull/134087
     # non_differentiable_idx = fwd_kwargs.get("non_differentiable_idx")
