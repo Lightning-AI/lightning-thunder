@@ -78,7 +78,6 @@ if nvfuser_version() >= DIRECT_BINDINGS_SUPPORTED_VERSION:
     from nvfuser_direct import (
         DataType,
         FusionDefinition,
-        LruFusionCache,
         multidevice,
         ParallelType,
         execute_with_dtensors,
@@ -305,7 +304,9 @@ def FusionCacheDecorator(func: callable):
     if nvfuser_version() < DIRECT_BINDINGS_SUPPORTED_VERSION:
         return func
     from nvfuser_direct import LruFusionCache
+
     return LruFusionCache(max_fusions=16384)(func)
+
 
 @FusionCacheDecorator
 def create_fd(
