@@ -95,14 +95,22 @@ def _pytorch_removed_args_tensor_mask() -> bool:
         nightly_date = int(match.group(1))
         # args_tensor_mask removed around Dec 12, 2025
         return nightly_date >= 20251212
-    # For stable releases, we'll need to update this when we know which version includes the change
-    # For now, assume stable releases still have args_tensor_mask
+
+    # Lightning AI nightly builds have version strings like: 2.10.0a0+git62c80e7
+    # We conservatively check against the base version (the portion before "+")
+    # because we do not know whether the problematic commit removing args_tensor_mask
+    # is before or after 2.10.0a0+git62c80e7. Therefore, we return True (masked as removed)
+    # if we are on version 2.10.0a0 or later.
+    base_version = packaging.version.parse(version.split("+")[0])
+    if base_version >= packaging.version.parse("2.10.0a0"):
+        return True
+
     return False
 
 
 xfail_if_args_tensor_mask_removed = pytest.mark.xfail(
     _pytorch_removed_args_tensor_mask(),
-    reason="PyTorch nightly >= 20251212 removed args_tensor_mask from autograd_function_apply (PR #166788)",
+    reason="PyTorch >= 2.10.0a0+git62c80e7 or nightly >= 20251212 removed args_tensor_mask from autograd_function_apply (PR #166788)",
 )
 
 
