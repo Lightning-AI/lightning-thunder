@@ -974,6 +974,7 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
         # SymInt and other non-tensor values (e.g., dynamic shape metadata) should not
         # be passed to the forward function as they are not part of its signature.
         new_fwd_args = [v for v in fwd_args if isinstance(unwrap(v), TensorProxy)]
+
     new_fwd_args = (wrap_const(None),) + tuple(new_fwd_args)
     unwrapped_fwd_args = tree_map(lambda t: unwrap(t), new_fwd_args)
 
