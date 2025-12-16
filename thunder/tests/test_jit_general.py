@@ -10,8 +10,34 @@ import torch
 from torch.testing import assert_close
 
 from lightning_utilities import compare_version
+import inspect
 
 import thunder
+
+
+def _autograd_function_apply_kwargs(args_tensor_mask, non_differentiable_idx=None):
+    """Create kwargs for autograd_function_apply that work with both stable and nightly PyTorch.
+
+    Stable PyTorch requires args_tensor_mask, nightly PyTorch has removed it.
+    """
+    # Check if autograd_function_apply uses args_tensor_mask by inspecting the source code
+    # of the AutogradFunctionApply.__call__ method. We can't use signature inspection because
+    # args_tensor_mask is accessed via **fwd_kwargs, not as a named parameter.
+    try:
+        from torch._functorch.autograd_function import AutogradFunctionApply
+
+        source = inspect.getsource(AutogradFunctionApply.__call__)
+        has_args_tensor_mask = "args_tensor_mask" in source
+    except (ImportError, AttributeError, OSError):
+        # Fallback: assume stable PyTorch with args_tensor_mask
+        has_args_tensor_mask = True
+
+    kwargs = {}
+    if has_args_tensor_mask:
+        kwargs["args_tensor_mask"] = args_tensor_mask
+    if non_differentiable_idx is not None:
+        kwargs["non_differentiable_idx"] = non_differentiable_idx
+    return kwargs
 
 from thunder.tests.framework import requiresCUDA, IS_WINDOWS
 from thunder.core.options import CACHE_OPTIONS
@@ -1278,8 +1304,7 @@ def test_autograd_function_apply():
             fwd,
             bwd,
             x,
-            args_tensor_mask=[True],
-            non_differentiable_idx=[],
+            **_autograd_function_apply_kwargs([True], non_differentiable_idx=[]),
         )
 
     jitted = thunder_jit(my_sin)
@@ -1307,8 +1332,7 @@ def test_autograd_function_apply():
             fwd,
             wrong_bwd,
             x,
-            args_tensor_mask=[True],
-            non_differentiable_idx=[],
+            **_autograd_function_apply_kwargs([True], non_differentiable_idx=[]),
         )
 
     jitted = thunder_jit(my_sin_with_wrong_backward)
@@ -1345,8 +1369,7 @@ def test_autograd_function_apply_with_no_grad():
             forward,
             backward,
             x,
-            args_tensor_mask=[True],
-            non_differentiable_idx=[],
+            **_autograd_function_apply_kwargs([True], non_differentiable_idx=[]),
         )
         return res
 
@@ -1378,8 +1401,7 @@ def test_autograd_function_apply_with_no_grad():
             forward,
             backward,
             x,
-            args_tensor_mask=[True],
-            non_differentiable_idx=[],
+            **_autograd_function_apply_kwargs([True], non_differentiable_idx=[]),
         )
         return res
 

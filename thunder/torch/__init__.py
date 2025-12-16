@@ -6713,7 +6713,7 @@ def autograd_function_apply(
     fwd: Callable[list[TensorProxy], TensorProxy | tuple[TensorProxy, ...]],
     bwd: Callable[list[TensorProxy], TensorProxy | tuple[TensorProxy, ...]],
     *args: Any,
-    args_tensor_mask: Sequence[bool] | None,
+    args_tensor_mask: Sequence[bool] | None = None,
     non_differentiable_idx: Sequence[int] | None = None,
 ) -> TensorProxy | tuple[TensorProxy, ...]:
     result, saved_for_backward = call_higher_order_function_and_consider_outer_autograd_setting(fwd)(None, *args)
@@ -6725,7 +6725,7 @@ def augmented_forward_autograd_function_apply(
     fwd: Callable[list[Any | TensorProxy], TensorProxy | tuple[TensorProxy, ...]],
     bwd: Callable[list[Any | TensorProxy], tuple[TensorProxy, ...]],
     *args: Any,
-    args_tensor_mask: Sequence[bool],
+    args_tensor_mask: Sequence[bool] | None = None,
     non_differentiable_idx: Sequence[int] | None = None,
 ) -> tuple[TensorProxy | tuple[TensorProxy, ...], tuple[Any, ...]]:
     result, saved_for_backward = fwd(None, *args)
@@ -6736,7 +6736,7 @@ def augmented_forward_autograd_function_apply(
 def backward_autograd_function_apply(
     saved_for_backward: tuple[Any, ...],
     bwd: Callable[list[Any | TensorProxy], tuple[TensorProxy, ...]],
-    args_tensor_mask: Sequence[bool],
+    args_tensor_mask: Sequence[bool] | None = None,
     non_differentiable_idx: Sequence[int] | None = None,
     *grad_output: Sequence[TensorProxy],
 ) -> tuple[Any, ...]:

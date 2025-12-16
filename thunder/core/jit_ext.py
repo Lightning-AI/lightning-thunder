@@ -940,11 +940,19 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
         length = 5
         return "".join(secrets.choice(string.ascii_lowercase) for _ in range(length))
 
-    args_tensor_mask = unwrap(fwd_kwargs["args_tensor_mask"])
+    # Support both stable PyTorch (with args_tensor_mask) and nightly (without it)
+    # See changelog.md for details on the args_tensor_mask removal in nightly PyTorch
+    args_tensor_mask = fwd_kwargs.get("args_tensor_mask")
+    if args_tensor_mask is not None:
+        args_tensor_mask = unwrap(args_tensor_mask)
+        length_of_tensor_args = sum(args_tensor_mask)
+    else:
+        # For nightly PyTorch without args_tensor_mask, infer tensor args from the args themselves
+        length_of_tensor_args = sum(1 for v in fwd_args if isinstance(unwrap(v), TensorProxy))
+
     # TODO(crcrpar): Think about making use of `non_differentiable_idx`
     # note that this key is quite new: https://github.com/pytorch/pytorch/pull/134087
     # non_differentiable_idx = fwd_kwargs.get("non_differentiable_idx")
-    length_of_tensor_args = sum(args_tensor_mask)
 
     # N.B.(crcrpar) When `torch.compile(..., dynamic=True)`,
     # GraphModules' forward seem to take `SymInt` and other values
