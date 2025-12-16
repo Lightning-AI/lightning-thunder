@@ -370,7 +370,7 @@ def test_splitter_autocast_ctx_with_split(executor, device: str, dtype: dtypes.d
             strict=True,
             reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
         ),
-        xfail_if_args_tensor_mask_removed,
+        # xfail_if_args_tensor_mask_removed,
     ),
 )
 def test_splitter_autograd_function(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None):
@@ -1633,7 +1633,7 @@ def test_save_failing_repros(tmp_path):
 
 
 @requiresCUDA
-@xfail_if_args_tensor_mask_removed
+# @xfail_if_args_tensor_mask_removed
 def test_autograd_function_fx_report(tmp_path):
     class Sin(torch.autograd.Function):
         @staticmethod
