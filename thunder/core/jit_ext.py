@@ -969,13 +969,13 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
                 # a proxy of tensor subclass in the near future.
                 if not isinstance(unwrap(v), TensorProxy):
                     new_fwd_args.append(v)
+        # With args_tensor_mask, the fwd_body expects ctx as first argument
+        new_fwd_args = (wrap_const(None),) + tuple(new_fwd_args)
     else:
-        # For nightly PyTorch without args_tensor_mask, include only tensor args.
-        # SymInt and other non-tensor values (e.g., dynamic shape metadata) should not
-        # be passed to the forward function as they are not part of its signature.
-        new_fwd_args = [v for v in fwd_args if isinstance(unwrap(v), TensorProxy)]
-
-    new_fwd_args = (wrap_const(None),) + tuple(new_fwd_args)
+        # For nightly PyTorch without args_tensor_mask, the ctx handling is internalized
+        # by dynamo. The fwd_body GraphModule does NOT expect a ctx argument.
+        # We pass all args as-is without prepending None.
+        new_fwd_args = tuple(fwd_args)
     unwrapped_fwd_args = tree_map(lambda t: unwrap(t), new_fwd_args)
 
     tmp_name = _generate_random_str_id()

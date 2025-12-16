@@ -1293,18 +1293,32 @@ def test_autograd_function_apply():
     # since https://github.com/pytorch/pytorch/pull/169528 `torch.ops.higher_order.autograd_function_apply`
     # no longer accepts simple callables, but rather `torch.fx.GraphModule`s.
 
-    class FwdModule(torch.nn.Module):
-        def forward(self, ctx, x):
-            saved_for_backward = (x,)
-            return torch.sin(x), saved_for_backward
+    # On stable PyTorch (with args_tensor_mask), forward/backward expect ctx as first arg.
+    # On nightly PyTorch (without args_tensor_mask), ctx handling is internalized.
+    if _HAS_ARGS_TENSOR_MASK:
+
+        class FwdModule(torch.nn.Module):
+            def forward(self, ctx, x):
+                saved_for_backward = (x,)
+                return torch.sin(x), saved_for_backward
+
+        class BwdModule(torch.nn.Module):
+            def forward(self, ctx, grad_output, *saved_tensors):
+                (x,) = saved_tensors
+                return grad_output * torch.cos(x)
+    else:
+
+        class FwdModule(torch.nn.Module):
+            def forward(self, x):
+                saved_for_backward = (x,)
+                return torch.sin(x), saved_for_backward
+
+        class BwdModule(torch.nn.Module):
+            def forward(self, grad_output, *saved_tensors):
+                (x,) = saved_tensors
+                return grad_output * torch.cos(x)
 
     fwd = torch.fx.symbolic_trace(FwdModule())
-
-    class BwdModule(torch.nn.Module):
-        def forward(self, ctx, grad_output, *saved_tensors):
-            (x,) = saved_tensors
-            return grad_output * torch.cos(x)
-
     bwd = torch.fx.symbolic_trace(BwdModule())
 
     def my_sin(x):
@@ -1328,10 +1342,18 @@ def test_autograd_function_apply():
     expect_grad = torch.autograd.grad(y_ref, x_ref, grad)
     torch.testing.assert_close(actual_grad, expect_grad)
 
-    class WrongBwdModule(torch.nn.Module):
-        def forward(self, ctx, grad_output, *saved_tensors):
-            (x,) = saved_tensors
-            return grad_output * torch.cos(x)
+    if _HAS_ARGS_TENSOR_MASK:
+
+        class WrongBwdModule(torch.nn.Module):
+            def forward(self, ctx, grad_output, *saved_tensors):
+                (x,) = saved_tensors
+                return grad_output * torch.cos(x)
+    else:
+
+        class WrongBwdModule(torch.nn.Module):
+            def forward(self, grad_output, *saved_tensors):
+                (x,) = saved_tensors
+                return grad_output * torch.cos(x)
 
     wrong_bwd = torch.fx.symbolic_trace(WrongBwdModule())
 
@@ -1363,15 +1385,30 @@ def test_autograd_function_apply():
 # @xfail_if_args_tensor_mask_removed
 def test_autograd_function_apply_with_no_grad():
     # This case is using `torch` operations
-    def forward(_, x):
-        saved_for_backward = (x,)
+    # On stable PyTorch (with args_tensor_mask), forward/backward expect ctx as first arg.
+    # On nightly PyTorch (without args_tensor_mask), ctx handling is internalized.
+    if _HAS_ARGS_TENSOR_MASK:
 
-        with torch.no_grad():
-            sin = torch.sin(x)
-        return sin, saved_for_backward
+        def forward(_, x):
+            saved_for_backward = (x,)
 
-    def backward(_, grad_output, *saved_tensors):
-        return grad_output * 2
+            with torch.no_grad():
+                sin = torch.sin(x)
+            return sin, saved_for_backward
+
+        def backward(_, grad_output, *saved_tensors):
+            return grad_output * 2
+    else:
+
+        def forward(x):
+            saved_for_backward = (x,)
+
+            with torch.no_grad():
+                sin = torch.sin(x)
+            return sin, saved_for_backward
+
+        def backward(grad_output, *saved_tensors):
+            return grad_output * 2
 
     def my_sin(x):
         res = torch.ops.higher_order.autograd_function_apply(
@@ -1394,16 +1431,30 @@ def test_autograd_function_apply_with_no_grad():
 
     # This is using `thunder` operations
     # NOTE - This takes a different codepath compared to above.
-    def forward(_, x):  # noqa: F811
-        saved_for_backward = (x,)
-        thunder.torch._set_grad_enabled_with_warning(False)
-        sin = thunder.torch.sin(x)
-        thunder.torch._set_grad_enabled_with_warning(True)
-        return sin, saved_for_backward
+    if _HAS_ARGS_TENSOR_MASK:
 
-    def backward(_, grad_output, *saved_tensors):  # noqa: F811
-        # NOTE - This is incorrect on purpose
-        return grad_output * 2
+        def forward(_, x):  # noqa: F811
+            saved_for_backward = (x,)
+            thunder.torch._set_grad_enabled_with_warning(False)
+            sin = thunder.torch.sin(x)
+            thunder.torch._set_grad_enabled_with_warning(True)
+            return sin, saved_for_backward
+
+        def backward(_, grad_output, *saved_tensors):  # noqa: F811
+            # NOTE - This is incorrect on purpose
+            return grad_output * 2
+    else:
+
+        def forward(x):  # noqa: F811
+            saved_for_backward = (x,)
+            thunder.torch._set_grad_enabled_with_warning(False)
+            sin = thunder.torch.sin(x)
+            thunder.torch._set_grad_enabled_with_warning(True)
+            return sin, saved_for_backward
+
+        def backward(grad_output, *saved_tensors):  # noqa: F811
+            # NOTE - This is incorrect on purpose
+            return grad_output * 2
 
     def fn(x):
         res = thunder.torch.autograd_function_apply(
