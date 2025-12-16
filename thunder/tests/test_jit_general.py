@@ -15,25 +15,31 @@ import inspect
 import thunder
 
 
-def _autograd_function_apply_kwargs(args_tensor_mask, non_differentiable_idx=None):
-    """Create kwargs for autograd_function_apply that work with both stable and nightly PyTorch.
+# Detect once at module load time whether PyTorch uses args_tensor_mask.
+# This must be done outside the JIT-traced function to avoid interpreter issues
+# with inspect.getsource() and tokenize internals.
+def _detect_has_args_tensor_mask():
+    """Check if autograd_function_apply uses args_tensor_mask.
 
     Stable PyTorch requires args_tensor_mask, nightly PyTorch has removed it.
     """
-    # Check if autograd_function_apply uses args_tensor_mask by inspecting the source code
-    # of the AutogradFunctionApply.__call__ method. We can't use signature inspection because
-    # args_tensor_mask is accessed via **fwd_kwargs, not as a named parameter.
     try:
         from torch._functorch.autograd_function import AutogradFunctionApply
 
         source = inspect.getsource(AutogradFunctionApply.__call__)
-        has_args_tensor_mask = "args_tensor_mask" in source
+        return "args_tensor_mask" in source
     except (ImportError, AttributeError, OSError):
         # Fallback: assume stable PyTorch with args_tensor_mask
-        has_args_tensor_mask = True
+        return True
 
+
+_HAS_ARGS_TENSOR_MASK = _detect_has_args_tensor_mask()
+
+
+def _autograd_function_apply_kwargs(args_tensor_mask, non_differentiable_idx=None):
+    """Create kwargs for autograd_function_apply that work with both stable and nightly PyTorch."""
     kwargs = {}
-    if has_args_tensor_mask:
+    if _HAS_ARGS_TENSOR_MASK:
         kwargs["args_tensor_mask"] = args_tensor_mask
     if non_differentiable_idx is not None:
         kwargs["non_differentiable_idx"] = non_differentiable_idx
