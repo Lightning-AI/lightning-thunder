@@ -1433,26 +1433,26 @@ def test_autograd_function_apply_with_no_grad():
     # NOTE - This takes a different codepath compared to above.
     if _HAS_ARGS_TENSOR_MASK:
 
-        def forward(_, x):  # noqa: F811
+        def forward(_, x):
             saved_for_backward = (x,)
             thunder.torch._set_grad_enabled_with_warning(False)
             sin = thunder.torch.sin(x)
             thunder.torch._set_grad_enabled_with_warning(True)
             return sin, saved_for_backward
 
-        def backward(_, grad_output, *saved_tensors):  # noqa: F811
+        def backward(_, grad_output, *saved_tensors):
             # NOTE - This is incorrect on purpose
             return grad_output * 2
     else:
 
-        def forward(x):  # noqa: F811
+        def forward(x):
             saved_for_backward = (x,)
             thunder.torch._set_grad_enabled_with_warning(False)
             sin = thunder.torch.sin(x)
             thunder.torch._set_grad_enabled_with_warning(True)
             return sin, saved_for_backward
 
-        def backward(grad_output, *saved_tensors):  # noqa: F811
+        def backward(grad_output, *saved_tensors):
             # NOTE - This is incorrect on purpose
             return grad_output * 2
 
