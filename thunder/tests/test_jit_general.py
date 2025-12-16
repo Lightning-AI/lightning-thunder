@@ -39,6 +39,7 @@ def _autograd_function_apply_kwargs(args_tensor_mask, non_differentiable_idx=Non
         kwargs["non_differentiable_idx"] = non_differentiable_idx
     return kwargs
 
+
 from thunder.tests.framework import requiresCUDA, IS_WINDOWS
 from thunder.core.options import CACHE_OPTIONS
 import thunder.core.prims as prims
