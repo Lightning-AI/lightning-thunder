@@ -942,32 +942,38 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
 
     # Support both stable PyTorch (with args_tensor_mask) and nightly (without it)
     # See changelog.md for details on the args_tensor_mask removal in nightly PyTorch
-    args_tensor_mask = fwd_kwargs.get("args_tensor_mask")
-    if args_tensor_mask is not None:
-        args_tensor_mask = unwrap(args_tensor_mask)
-        length_of_tensor_args = sum(args_tensor_mask)
+    # Note: Use "in" check rather than .get() to handle wrapped values correctly
+    if "args_tensor_mask" in fwd_kwargs:
+        args_tensor_mask = unwrap(fwd_kwargs["args_tensor_mask"])
     else:
-        # For nightly PyTorch without args_tensor_mask, infer tensor args from the args themselves
-        length_of_tensor_args = sum(1 for v in fwd_args if isinstance(unwrap(v), TensorProxy))
+        args_tensor_mask = None
 
     # TODO(crcrpar): Think about making use of `non_differentiable_idx`
     # note that this key is quite new: https://github.com/pytorch/pytorch/pull/134087
     # non_differentiable_idx = fwd_kwargs.get("non_differentiable_idx")
 
-    # N.B.(crcrpar) When `torch.compile(..., dynamic=True)`,
-    # GraphModules' forward seem to take `SymInt` and other values
-    # as its argument with some probability. Though that piece of information unfortunately
-    # does not seem to be indicated in ``args_tensor_mask`` nor ``non_differentiable_idx``.
-    # Thus we optimistically iterate over ``fwd_args`` and gather non-tensor values whose index is >= `length_of_tensor_args` to ``fwd_args``.
-    new_fwd_args = []
-    for i, v in enumerate(fwd_args):
-        if i < length_of_tensor_args:
-            new_fwd_args.append(v)
-        else:
-            # note(crcrpar): we might want to include `FutureTensorProxy` and
-            # a proxy of tensor subclass in the near future.
-            if not isinstance(unwrap(v), TensorProxy):
+    if args_tensor_mask is not None:
+        length_of_tensor_args = sum(args_tensor_mask)
+
+        # N.B.(crcrpar) When `torch.compile(..., dynamic=True)`,
+        # GraphModules' forward seem to take `SymInt` and other values
+        # as its argument with some probability. Though that piece of information unfortunately
+        # does not seem to be indicated in ``args_tensor_mask`` nor ``non_differentiable_idx``.
+        # Thus we optimistically iterate over ``fwd_args`` and gather non-tensor values whose index is >= `length_of_tensor_args` to ``fwd_args``.
+        new_fwd_args = []
+        for i, v in enumerate(fwd_args):
+            if i < length_of_tensor_args:
                 new_fwd_args.append(v)
+            else:
+                # note(crcrpar): we might want to include `FutureTensorProxy` and
+                # a proxy of tensor subclass in the near future.
+                if not isinstance(unwrap(v), TensorProxy):
+                    new_fwd_args.append(v)
+    else:
+        # For nightly PyTorch without args_tensor_mask, include only tensor args.
+        # SymInt and other non-tensor values (e.g., dynamic shape metadata) should not
+        # be passed to the forward function as they are not part of its signature.
+        new_fwd_args = [v for v in fwd_args if isinstance(unwrap(v), TensorProxy)]
     new_fwd_args = (wrap_const(None),) + tuple(new_fwd_args)
     unwrapped_fwd_args = tree_map(lambda t: unwrap(t), new_fwd_args)
 
