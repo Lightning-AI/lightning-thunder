@@ -78,7 +78,7 @@ BITSANDBYTES_AVAILABLE = _bitsandbytes_available()
 
 
 # TODO This change should be handled properly, this is a temporary fix to allow the CI to progress.
-# See https://github.com/Lightning-AI/lightning-thunder/issues/2807 
+# See https://github.com/Lightning-AI/lightning-thunder/issues/2807
 def _pytorch_removed_args_tensor_mask() -> bool:
     """Check if PyTorch removed args_tensor_mask from autograd_function_apply.
 
