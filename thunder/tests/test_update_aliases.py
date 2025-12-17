@@ -477,7 +477,6 @@ def test_inplace_to_alias_func_args(executor, device, dtype):
 
 @instantiate(
     dtypes=(dtypes.float32,),
-    # decorators=(xfail_if_args_tensor_mask_removed,),
 )
 def test_higher_order_inplace_alias_update(executor, device, dtype):
     torch_dtype = dtypes.to_torch_dtype(dtype)
