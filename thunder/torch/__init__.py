@@ -6750,7 +6750,6 @@ def backward_autograd_function_apply(
     non_differentiable_idx: Sequence[int] | None = None,
     *grad_output: Sequence[TensorProxy],
 ) -> tuple[Any, ...]:
-
     # Support both stable PyTorch (with args_tensor_mask) and nightly (without it)
     if args_tensor_mask is not None:
         return bwd(None, *grad_output, *saved_for_backward)
