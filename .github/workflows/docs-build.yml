@@ -26,6 +26,7 @@ jobs:
     env:
       ARTIFACT_DAYS: 0
       PYPI_LOCAL_DIR: "pypi_pkgs/"
+      TORCH_URL: "https://download.pytorch.org/whl/cpu"
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -39,7 +40,7 @@ jobs:
         run: sudo apt-get install -y pandoc
       - name: Install package & dependencies
         timeout-minutes: 20
-        run: pip install . -U -r requirements/docs.txt
+        run: pip install . -U -r requirements/docs.txt --extra-index-url=${TORCH_URL}
 
       - name: Make ${{ matrix.target }}
         working-directory: docs/
