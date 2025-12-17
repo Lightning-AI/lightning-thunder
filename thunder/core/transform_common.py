@@ -155,7 +155,7 @@ def dce_bsyms(
         output: The output of the list of bound symbols.
 
     Returns:
-        The list of bound symbols after the elimination pass.
+        The list of bound symbols after the DCE pass.
     """
     producer_map: ProxyDict = producers(bsyms)
 
