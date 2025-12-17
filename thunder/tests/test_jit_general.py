@@ -46,7 +46,7 @@ def _autograd_function_apply_kwargs(args_tensor_mask, non_differentiable_idx=Non
     return kwargs
 
 
-from thunder.tests.framework import requiresCUDA, IS_WINDOWS
+from thunder.tests.framework import requiresCUDA, IS_WINDOWS, xfail_if_args_tensor_mask_removed
 from thunder.core.options import CACHE_OPTIONS
 import thunder.core.prims as prims
 from thunder import pytorch_executor, nvfuser_executor
@@ -1285,7 +1285,6 @@ def test_complex_backward_custom_autograd():
 
 
 @pytest.mark.filterwarnings("ignore:Please use torch.vmap")
-# @xfail_if_args_tensor_mask_removed
 def test_autograd_function_apply():
     # see https://github.com/Lightning-AI/lightning-thunder/issues/1248#issuecomment-2388655917
     # for why `torch.foo` instead of `torch.Tensor.foo`
@@ -1382,33 +1381,17 @@ def test_autograd_function_apply():
         gradcheck(jitted, (x,))
 
 
-# @xfail_if_args_tensor_mask_removed
+@xfail_if_args_tensor_mask_removed
 def test_autograd_function_apply_with_no_grad():
-    # This case is using `torch` operations
-    # On stable PyTorch (with args_tensor_mask), forward/backward expect ctx as first arg.
-    # On nightly PyTorch (without args_tensor_mask), ctx handling is internalized.
-    if _HAS_ARGS_TENSOR_MASK:
+    def forward(_, x):
+        saved_for_backward = (x,)
 
-        def forward(_, x):
-            saved_for_backward = (x,)
+        with torch.no_grad():
+            sin = torch.sin(x)
+        return sin, saved_for_backward
 
-            with torch.no_grad():
-                sin = torch.sin(x)
-            return sin, saved_for_backward
-
-        def backward(_, grad_output, *saved_tensors):
-            return grad_output * 2
-    else:
-
-        def forward(x):
-            saved_for_backward = (x,)
-
-            with torch.no_grad():
-                sin = torch.sin(x)
-            return sin, saved_for_backward
-
-        def backward(grad_output, *saved_tensors):
-            return grad_output * 2
+    def backward(_, grad_output, *saved_tensors):
+        return grad_output * 2
 
     def my_sin(x):
         res = torch.ops.higher_order.autograd_function_apply(

@@ -32,6 +32,7 @@ from thunder.tests.framework import (
     DynamoThunderExecutor,
     IS_WINDOWS,
     requiresCUDA,
+    xfail_if_args_tensor_mask_removed,
 )
 from thunder.tests.make_tensor import make_tensor
 from thunder.dynamo.report import (
@@ -369,7 +370,7 @@ def test_splitter_autocast_ctx_with_split(executor, device: str, dtype: dtypes.d
             strict=True,
             reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
         ),
-        # xfail_if_args_tensor_mask_removed,
+        xfail_if_args_tensor_mask_removed,
     ),
 )
 def test_splitter_autograd_function(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None):
