@@ -232,7 +232,7 @@ def setup_fsdp2(model: torch.nn.Module) -> torch.nn.Module:
     return model
 
 
-def setup_compilation(model, backend: str):
+def setup_compilation(model, backend: str, thunder_cache: str | None = None):
     # TODO from thunder.executors.transformer_engineex import transformer_engine_ex
     """Apply compilation settings to the model."""
     if backend in ("thunder", "inductor"):
@@ -262,14 +262,15 @@ def setup_compilation(model, backend: str):
 
         if "jit" in backend:
             logger.info("Using thunder.jit")
-            model = thunder.jit(model, transforms=xforms, executors=executors)
+            model = thunder.jit(model, transforms=xforms, executors=executors, cache=thunder_cache)
         else:
             logger.info("Using ThunderFX")
             from thunder.dynamo import thunderfx
 
             # TODO get parameters out from thunderfx CompiledObject
-            compiled_object = thunderfx(model, transforms=xforms, executors=executors)
+            compiled_object = thunderfx(model, transforms=xforms, executors=executors, cache=thunder_cache)
             model = compiled_object._func
+            model._thunder_backend = compiled_object._backend
 
     return model
 
@@ -301,6 +302,12 @@ def parse_args():
         default="eager",
         type=str.lower,
         choices=["eager", "inductor", "thunder", "thunder+jit"],
+    )
+    parser.add_argument(
+        "--thunder-cache",
+        type=str,
+        default=None,
+        help="Cache option: no caching, same input, constant values, symbolic values. See `cache` argument of `thunder.jit` for more details.",
     )
     parser.add_argument("--verbose", action="store_true", help="Enable verbose output including model wrapping details")
     parser.add_argument("--trust-remote-code", action="store_true")
@@ -468,7 +475,7 @@ def main(args: argparse.Namespace):
     # Apply compilation if needed
     if args.compile != "eager":
         logger.info(f"Applying compilation: {args.compile} to model")
-        model = setup_compilation(model, args.compile)
+        model = setup_compilation(model, args.compile, thunder_cache=args.thunder_cache)
         logger.info("Compilation applied to model")
 
     # Verify only LoRA parameters are trainable
@@ -583,6 +590,21 @@ def main(args: argparse.Namespace):
 
     # Print training summary
     total_time = time.time() - start_ts
+
+    # Compute Thunder recompilations (cache misses minus initial compile) if applicable
+    num_recompilations = 0
+    if "thunder" in args.compile:
+        import thunder
+
+        if "jit" in args.compile:
+            num_recompilations = thunder.cache_misses(model) - 1
+        else:
+            total_misses = 0
+            for subgraph_info in model._thunder_backend.subgraph_infos:
+                for thunder_fn in subgraph_info.thunder_compiled_fns:
+                    total_misses += thunder.cache_misses(thunder_fn) - 1
+            num_recompilations = total_misses
+
     print_training_summary(
         args,
         total_time,
@@ -593,6 +615,7 @@ def main(args: argparse.Namespace):
         batches_processed,
         total_tokens_processed,
         WORLD_SIZE,
+        num_recompilations,
     )
 
     # Clean up distributed environment if needed
@@ -610,6 +633,7 @@ def print_training_summary(
     batches_processed: int,
     total_tokens_processed: int,
     WORLD_SIZE: int,
+    num_recompilations: int,
 ) -> None:
     """Print a comprehensive summary of the training run.
 
@@ -650,6 +674,8 @@ def print_training_summary(
     logger.info(f"Maximum allocated memory: {max_allocated_memory / 1024**3:.2f} GB")
     logger.info(f"Total tokens processed: {total_tokens:,}")
     logger.info(f"Total iterations: {args.max_steps}")
+    if "thunder" in args.compile:
+        logger.info(f"Thunder module recompilations excluding initial compile: {num_recompilations}")
 
     # Verify batch processing across all ranks
     if WORLD_SIZE > 1:
