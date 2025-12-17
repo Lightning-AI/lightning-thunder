@@ -32,7 +32,6 @@ from thunder.tests.framework import (
     DynamoThunderExecutor,
     IS_WINDOWS,
     requiresCUDA,
-    xfail_if_args_tensor_mask_removed,
 )
 from thunder.tests.make_tensor import make_tensor
 from thunder.dynamo.report import (

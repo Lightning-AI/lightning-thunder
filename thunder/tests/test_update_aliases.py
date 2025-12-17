@@ -21,7 +21,6 @@ from thunder.tests.framework import (
     TorchCompileExecutor,
     nvFuserExecutor,
     requiresCUDA,
-    xfail_if_args_tensor_mask_removed,
 )
 from thunder.torch import _torch_to_thunder_function_map, _inplace_to_out_of_place
 

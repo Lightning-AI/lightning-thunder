@@ -46,7 +46,7 @@ def _autograd_function_apply_kwargs(args_tensor_mask, non_differentiable_idx=Non
     return kwargs
 
 
-from thunder.tests.framework import requiresCUDA, IS_WINDOWS, xfail_if_args_tensor_mask_removed
+from thunder.tests.framework import requiresCUDA, IS_WINDOWS
 from thunder.core.options import CACHE_OPTIONS
 import thunder.core.prims as prims
 from thunder import pytorch_executor, nvfuser_executor
