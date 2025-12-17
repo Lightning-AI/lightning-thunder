@@ -39,6 +39,7 @@ def _get_new_aliases(aliases, trace):
 
 
 def _is_inplace_op(bsym):
+    # TODO: Handle higher order bsyms containing inplace ops
     return (bsym.sym.tags and prims.OpTags.IN_PLACE in bsym.sym.tags) or (
         bsym.subsymbols and bsym.subsymbols[-1].sym.id == prims.PrimIDs.COPY_
     )
@@ -67,7 +68,7 @@ def _can_be_reshaped(arg, arg_to_replace):
 
 def replace_args_with_alias_map(
     computation_trace: Trace,
-    alias_tensor_indices: list[list[int]],
+    alias_tensor_indices: list[list[int]] | None = None,
 ) -> tuple[Trace, list[set[VariableInterface]]]:
     if not alias_tensor_indices:
         return computation_trace, []
@@ -140,7 +141,7 @@ def _unswap(swap_map, aliases):
     return list(map(_helper, aliases))
 
 
-def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[list[int]]) -> Trace:
+def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[list[int]] | None = None) -> Trace:
     if not any(_is_inplace_op(bsym) for bsym in computation_trace.bound_symbols):
         return computation_trace
 
@@ -157,7 +158,8 @@ def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[li
     for bsym in computation_trace.bound_symbols:
         if _is_inplace_op(bsym) or _is_view_creation_op(bsym):
             # only interested in the input which is modified by the inplace op
-            in_tensor = variableify(bsym.flat_proxy_args[0])
+            mutated_or_aliased_index = 1 if bsym.sym.id == prims.PrimIDs.COPY_ else 0
+            in_tensor = variableify(bsym.flat_proxy_args[mutated_or_aliased_index])
             out_tensors = set(map(variableify, filter(lambda p: isinstance(p, TensorProxy), bsym.flat_proxy_outs)))
             if _is_inplace_op(bsym):
                 inplace_inputs.add(in_tensor)
@@ -180,10 +182,11 @@ def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[li
         if (
             _is_inplace_op(bsym)
             or _is_view_creation_op(bsym)
-            or (bsym.sym.id != prims.PrimIDs.RETURN and _involves_viewed_args(set(unswapped_in_tensors), viewed))
+            or _involves_viewed_args(set(unswapped_in_tensors), viewed)
         ):
             if _is_inplace_op(bsym) and in_tensors:
-                in_tensors = {in_tensors[0]}
+                mutated_index = 1 if bsym.sym.id == prims.PrimIDs.COPY_ else 0
+                in_tensors = {in_tensors[mutated_index]}
                 unswapped_in_tensors = {unswapped_in_tensors[0]}
             else:
                 in_tensors = set(in_tensors)

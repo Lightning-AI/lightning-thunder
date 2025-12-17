@@ -530,6 +530,7 @@ def jit(
                 prologue_trc,
                 executors_list=(pythonex,),
                 use_del_last_used=False,
+                alias_tensor_indices=alias_tensor_indices,
             )
             prologue_trc = prologue_traces[-1]
             pro = prologue_trc.python_callable(include_decorators=False)
@@ -553,7 +554,7 @@ def jit(
             if requires_grad:
                 from thunder.transforms.autodiff import grad_transform_on_trace
 
-                computation_trc = grad_transform_on_trace(computation_trc)
+                computation_trc = grad_transform_on_trace(computation_trc, alias_tensor_indices)
                 computation_traces.append(computation_trc)
 
             from thunder.executors.passes import _transform_for_operator_executor_execution
@@ -569,6 +570,7 @@ def jit(
                 computation_trc,
                 executors_list=cd.executors_list,
                 use_del_last_used=False,
+                alias_tensor_indices=alias_tensor_indices,
             )
             computation_trc = extraces[-1]
 

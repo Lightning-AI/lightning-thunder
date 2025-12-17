@@ -15,11 +15,11 @@ from thunder.tests.opinfos import opinfos, OpInfo, make_number, SampleInput
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
 from thunder.tests.framework import (
     instantiate,
+    nvFuserExecutor,
     ops,
     NOTHING,
     TorchExecutor,
     TorchCompileExecutor,
-    nvFuserExecutor,
     requiresCUDA,
     xfail_if_args_tensor_mask_removed,
 )
@@ -169,14 +169,15 @@ def test_setitem_on_view(executor, device, dtype):
 
 @instantiate(
     dtypes=NOTHING,
+    decorators=(pytest.mark.parametrize("inplace_op", [torch.Tensor.mul_, torch.Tensor.copy_]),),
 )
-def test_inplace_on_view(executor, device, dtype):
+def test_inplace_on_intermediate(executor, device, dtype, inplace_op):
     def h(x, y):
         c = torch.exp(x)
         d = torch.tanh(y)
         e = c.view(-1)
 
-        d.div_(x)
+        inplace_op(d, x)
         e += d.flatten()
 
         return c, d, e
@@ -187,7 +188,7 @@ def test_inplace_on_view(executor, device, dtype):
         e = c.view(-1)
 
         e += d.flatten()
-        d.div_(x)
+        inplace_op(d, x)
 
         return c, d, e
 
@@ -267,8 +268,10 @@ def test_inplace_on_chunk(executor, device, dtype):
 )
 def test_chained_inplace(executor, device, dtype):
     def f(x):
-        x.add_(1).sin_().mul_(5)
-        return x
+        y = x.add_(1)
+        z = y.sin_()
+        w = z.mul_(y.copy_(z.cos()))
+        return w
 
     def g(x):
         x.add_(1).sin().mul_(5)
@@ -276,6 +279,7 @@ def test_chained_inplace(executor, device, dtype):
 
     def h(x):
         x.exp_()
+        x.copy_(x.tan())
         x.sin_()
         y = x.cos()
         return y
@@ -339,14 +343,16 @@ def test_inplace(executor, device, dtype):
 )
 def test_aliased_input(executor, device, dtype, cache):
     def f(x, y, z):
-        return y.exp_().add(x) + z.exp()
+        s = y.exp_().add(x) + z.exp()
+        t = x.copy_(z.exp_().view(x.shape)) + z.cos().reshape(x.shape)
+        return s, t
 
     a = make_tensor((2, 1, 2), dtype=torch.float32, device=device)
     b = a.clone()
     c = a.view(1, 2, 2)
     a_ = a.clone().detach()
     b_ = b.clone().detach()
-    c_ = c.clone().detach()
+    c_ = a_.view(1, 2, 2)
     jfn = executor.make_callable(f, cache=cache)
     actual = jfn(a, b, c)
     expected = f(a_, b_, c_)
@@ -358,22 +364,34 @@ def test_aliased_input(executor, device, dtype, cache):
 
 @instantiate(
     dtypes=NOTHING,
-    decorators=(pytest.mark.parametrize("cache", ("constant values", "symbolic values")),),
+    decorators=(
+        pytest.mark.parametrize("cache", ("constant values", "symbolic values")),
+        pytest.mark.parametrize("inplace_op", [torch.Tensor.mul_, torch.Tensor.copy_]),
+    ),
 )
-def test_write_to_intermediate_result(executor, device, dtype, cache):
-    if executor == nvFuserExecutor:
-        pytest.xfail("nvFuser does not support writing to intermediate results")
-
-    def fn(x):
+def test_write_to_intermediate_result(executor, device, dtype, cache, inplace_op):
+    def f(x, z):
         y = x.view(-1)
-        y.add_(1)
+        inplace_op(y, z.view(-1))
         return y
 
-    a = make_tensor((2, 3), dtype=torch.float32, device=device)
-    jfn = executor.make_callable(fn, cache=cache)
-    actual = jfn(a)
-    expected = fn(a)
-    torch.testing.assert_close(actual, expected)
+    def g(x, z):
+        a = x.view(-1)
+        b = x.view(-1)
+        inplace_op(x, z)
+        aa = a + 1
+        bb = b + 1
+        return aa, bb
+
+    for fn in [f, g]:
+        x = make_tensor((2, 3), dtype=torch.float32, device=device)
+        x_ref = x.clone().detach()
+        z = make_tensor((2, 3), dtype=torch.float32, device=device)
+        jfn = executor.make_callable(fn, cache=cache)
+        actual = jfn(x, z)
+        expected = fn(x_ref, z)
+        torch.testing.assert_close(actual, expected)
+        torch.testing.assert_close(x, x_ref)
 
 
 @instantiate(
@@ -480,7 +498,87 @@ def test_inplace_to_alias_func_args(executor, device, dtype):
     dtypes=(dtypes.float32,),
     decorators=(xfail_if_args_tensor_mask_removed,),
 )
-def test_higher_order_inplace_alias_update(executor, device, dtype):
+def test_batch_norm_update_aliases(executor, device, dtype):
+    if executor is nvFuserExecutor:
+        pytest.xfail("update_aliases is not aware of mutation by batch_norm")
+
+    torch_dtype = dtypes.to_torch_dtype(dtype)
+    num_features = 4
+
+    def f(x, running_mean, running_var, weight, bias):
+        out = torch.nn.functional.batch_norm(
+            x,
+            running_mean,
+            running_var,
+            weight,
+            bias,
+            training=True,
+            momentum=0.1,
+            eps=1e-5,
+        )
+        return out, x, running_mean.sin(), running_var.cos()
+
+    input_tensor = make_tensor((3, num_features, 5, 5), device=device, dtype=torch_dtype)
+    running_mean = make_tensor((num_features,), device=device, dtype=torch_dtype)
+    running_var = make_tensor((num_features,), device=device, dtype=torch_dtype)
+    weight = make_tensor((num_features,), device=device, dtype=torch_dtype)
+    bias = make_tensor((num_features,), device=device, dtype=torch_dtype)
+
+    input_ref = input_tensor.clone().detach()
+    running_mean_ref = running_mean.clone().detach()
+    running_var_ref = running_var.clone().detach()
+    weight_ref = weight.clone().detach()
+    bias_ref = bias.clone().detach()
+
+    jitted_f = executor.make_callable(f)
+    out_jitted, x_jitted, running_mean_jitted, running_var_jitted = jitted_f(
+        input_tensor, running_mean, running_var, weight, bias
+    )
+    out_ref, x_ref, running_mean_ref_out, running_var_ref_out = f(
+        input_ref, running_mean_ref, running_var_ref, weight_ref, bias_ref
+    )
+
+    torch.testing.assert_close(out_jitted, out_ref)
+    torch.testing.assert_close(x_jitted, x_ref)
+    torch.testing.assert_close(running_mean_jitted, running_mean_ref_out)
+    torch.testing.assert_close(running_var_jitted, running_var_ref_out)
+    torch.testing.assert_close(input_tensor, input_ref)
+    torch.testing.assert_close(running_mean, running_mean_ref)
+    torch.testing.assert_close(running_var, running_var_ref)
+
+
+@instantiate(
+    dtypes=(dtypes.float32,),
+)
+def test_no_update_aliases_in_backward(executor, device, dtype):
+    torch_dtype = dtypes.to_torch_dtype(dtype)
+
+    def f(x):
+        y = x.sin()
+        y.exp_()
+        return y
+
+    x = make_tensor((2, 3), device=device, dtype=torch_dtype, requires_grad=True)
+    jf = executor.make_callable(f)
+    actual = jf(x)
+    expected = f(x)
+    torch.testing.assert_close(actual, expected)
+
+    g = torch.randn_like(actual)
+
+    actual_grad = torch.autograd.grad(actual, x, g)
+    expected_grad = torch.autograd.grad(expected, x, g)
+    torch.testing.assert_close(actual_grad, expected_grad)
+
+    backward_trace = thunder.last_backward_traces(jf)[-1]
+    assert all(bsym.sym.name != "update_aliases" for bsym in backward_trace.bound_symbols)
+
+
+@instantiate(
+    dtypes=(dtypes.float32,),
+    decorators=(pytest.mark.parametrize("requires_grad", (True, False)),),
+)
+def test_higher_order_inplace_alias_update(executor, device, dtype, requires_grad):
     torch_dtype = dtypes.to_torch_dtype(dtype)
 
     class Sin(torch.autograd.Function):
@@ -501,9 +599,9 @@ def test_higher_order_inplace_alias_update(executor, device, dtype):
     def foo(x):
         return Sin.apply(x)
 
-    a = torch.ones(2, device=device, dtype=torch_dtype, requires_grad=True)
-    b = torch.ones(2, device=device, dtype=torch_dtype, requires_grad=True)
-    c = torch.ones(2, device=device, dtype=torch_dtype, requires_grad=True)
+    a = torch.ones(2, device=device, dtype=torch_dtype, requires_grad=requires_grad)
+    b = torch.ones(2, device=device, dtype=torch_dtype, requires_grad=requires_grad)
+    c = torch.ones(2, device=device, dtype=torch_dtype, requires_grad=requires_grad)
 
     g = torch.rand_like(a)
 
@@ -521,12 +619,16 @@ def test_higher_order_inplace_alias_update(executor, device, dtype):
     torch.testing.assert_close(actual_jit, expected)
     torch.testing.assert_close(actual_fx, expected)
 
-    actual_grad_jit = torch.autograd.grad(actual_jit, a, g)
-    actual_grad_fx = torch.autograd.grad(actual_fx, b, g)
+    if requires_grad:
+        actual_grad_jit = torch.autograd.grad(actual_jit, a, g)
+        actual_grad_fx = torch.autograd.grad(actual_fx, b, g)
 
-    expected_grad = torch.autograd.grad(expected, c, g)
-    torch.testing.assert_close(actual_grad_fx, expected_grad)
-    torch.testing.assert_close(actual_grad_jit, expected_grad)
+        expected_grad = torch.autograd.grad(expected, c, g)
+        torch.testing.assert_close(actual_grad_fx, expected_grad)
+        torch.testing.assert_close(actual_grad_jit, expected_grad)
+
+        backward_trace = thunder.last_backward_traces(jfoo)[-1]
+        assert all(bsym.sym.name != "update_aliases" for bsym in backward_trace.bound_symbols)
 
 
 @instantiate(
