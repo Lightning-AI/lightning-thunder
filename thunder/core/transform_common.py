@@ -235,6 +235,9 @@ def replace_redundant_inputs(
 # into one for ops in this set.
 NON_FUNCTIONAL_OPS: set[prims.PrimIDs | str] = {
     prims.PrimIDs.UNIFORM,
+    prims.PrimIDs.EMPTY,
+    "empty",
+    "torch.empty",
     "torch.uniform",  # this doesn't exist as of the PR
     "torch.uniform_like",  # this doesn't exist as of the PR
     # thunder.core.prims doesn't support. See https://pytorch.org/docs/stable/generated/torch.rand.html.

@@ -2,6 +2,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from contextlib import contextmanager
 from enum import Enum, auto
+import operator
 from typing import TYPE_CHECKING
 import dataclasses
 import inspect
@@ -389,11 +390,19 @@ def try_execute_thunder_symbol(
                 exception=str(e),
             )
 
-        function_to_run = (
-            value_and_grad(thunder_symbol)
-            if requires_grad and (disable_torch_autograd is None or not disable_torch_autograd)
-            else thunder_symbol
-        )
+        if requires_grad and (disable_torch_autograd is None or not disable_torch_autograd):
+            if thunder_symbol is operator.setitem:
+                # operator.setitem returns None, which makes its backward pass empty
+                # We don't need to cover torch.Tensor.__setitem__ as dynamo uses operator.setitem instead
+                def setitem_and_return(a, key, value):
+                    a[key] = value
+                    return a
+
+                function_to_run = value_and_grad(setitem_and_return)
+            else:
+                function_to_run = value_and_grad(thunder_symbol)
+        else:
+            function_to_run = thunder_symbol
         # We need to be under trace context to generate proxies.
         with thunder.core.trace.tracectx(TraceCtx()):
             try:
