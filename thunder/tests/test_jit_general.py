@@ -1381,17 +1381,32 @@ def test_autograd_function_apply():
         gradcheck(jitted, (x,))
 
 
-@xfail_if_args_tensor_mask_removed
 def test_autograd_function_apply_with_no_grad():
-    def forward(_, x):
-        saved_for_backward = (x,)
+    # This case is using `torch` operations
+    # On stable PyTorch (with args_tensor_mask), forward/backward expect ctx as first arg.
+    # On nightly PyTorch (without args_tensor_mask), ctx handling is internalized.
+    if _HAS_ARGS_TENSOR_MASK:
 
-        with torch.no_grad():
-            sin = torch.sin(x)
-        return sin, saved_for_backward
+        def forward(_, x):
+            saved_for_backward = (x,)
 
-    def backward(_, grad_output, *saved_tensors):
-        return grad_output * 2
+            with torch.no_grad():
+                sin = torch.sin(x)
+            return sin, saved_for_backward
+
+        def backward(_, grad_output, *saved_tensors):
+            return grad_output * 2
+    else:
+
+        def forward(x):
+            saved_for_backward = (x,)
+
+            with torch.no_grad():
+                sin = torch.sin(x)
+            return sin, saved_for_backward
+
+        def backward(grad_output, *saved_tensors):
+            return grad_output * 2
 
     def my_sin(x):
         res = torch.ops.higher_order.autograd_function_apply(

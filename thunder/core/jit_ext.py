@@ -1013,7 +1013,13 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
 
     grads = sequencify(tree_map(lambda t: TensorProxy(like=t), sequencify(output)))
     bwd_tensor_args = grads + tuple(saved_values)
-    bwd_args = (None,) + bwd_tensor_args
+    # Support both stable PyTorch (with args_tensor_mask) and nightly (without it)
+    # With args_tensor_mask, bwd_body expects ctx as first argument
+    # Without args_tensor_mask, ctx handling is internalized - no ctx argument needed
+    if args_tensor_mask is not None:
+        bwd_args = (None,) + bwd_tensor_args
+    else:
+        bwd_args = bwd_tensor_args
     wrapped_bwd_args = tree_map(lambda t: wrap(t, provenance=aug_fwd_provenance), bwd_args)
     bwd_trace, bwd_trace_provenance = _convert_pytorchfunc_to_thundertrace(
         bwd,
@@ -1041,9 +1047,17 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
 
         primal, residuals = interpret_trace(aliased_aug_fwd_trace, *args, **kwargs)
         grads = tree_map(lambda t: get_grad(t), sequencify(primal))
-        bwd_args = (None,) + tuple(grads) + tuple(sequencify(residuals))
+        # Support both stable PyTorch (with args_tensor_mask) and nightly (without it)
+        if args_tensor_mask is not None:
+            bwd_args = (None,) + tuple(grads) + tuple(sequencify(residuals))
+            # Old API: first arg is ctx, skip it for put_grads
+            grad_inputs = args[1:]
+        else:
+            bwd_args = tuple(grads) + tuple(sequencify(residuals))
+            # New API: no ctx, use all args
+            grad_inputs = args
         result = interpret_trace(aliased_bwd_trace, *bwd_args)
-        put_grads(args[1:], result)
+        put_grads(grad_inputs, result)
 
         return primal
 
