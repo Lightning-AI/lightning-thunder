@@ -14,10 +14,15 @@ import inspect
 
 import thunder
 
+from thunder.tests.framework import requiresCUDA, IS_WINDOWS
+from thunder.core.options import CACHE_OPTIONS
+import thunder.core.prims as prims
+from thunder import pytorch_executor, nvfuser_executor
+from thunder.executors.sdpaex import sdpa_ex
+from thunder.core.transforms import Transform
 
 # Detect once at module load time whether PyTorch uses args_tensor_mask.
-# This must be done outside the JIT-traced function to avoid interpreter issues
-# with inspect.getsource() and tokenize internals.
+# This must be done outside the JIT-traced function to avoid interpreter issues.
 def _detect_has_args_tensor_mask():
     """Check if autograd_function_apply uses args_tensor_mask.
 
@@ -44,14 +49,6 @@ def _autograd_function_apply_kwargs(args_tensor_mask, non_differentiable_idx=Non
     if non_differentiable_idx is not None:
         kwargs["non_differentiable_idx"] = non_differentiable_idx
     return kwargs
-
-
-from thunder.tests.framework import requiresCUDA, IS_WINDOWS
-from thunder.core.options import CACHE_OPTIONS
-import thunder.core.prims as prims
-from thunder import pytorch_executor, nvfuser_executor
-from thunder.executors.sdpaex import sdpa_ex
-from thunder.core.transforms import Transform
 
 
 thunder_jit = partial(thunder.jit, debug_options=thunder.DebugOptions(check_traces=2))
@@ -1292,8 +1289,9 @@ def test_autograd_function_apply():
     # since https://github.com/pytorch/pytorch/pull/169528 `torch.ops.higher_order.autograd_function_apply`
     # no longer accepts simple callables, but rather `torch.fx.GraphModule`s.
 
+    # TODO: Remove this once this autograd API becomes stable.
     # On stable PyTorch (with args_tensor_mask), forward/backward expect ctx as first arg.
-    # On nightly PyTorch (without args_tensor_mask), ctx handling is internalized.
+    # On nightly PyTorch (without args_tensor_mask), ctx is not an argument.
     if _HAS_ARGS_TENSOR_MASK:
 
         class FwdModule(torch.nn.Module):
@@ -1341,6 +1339,9 @@ def test_autograd_function_apply():
     expect_grad = torch.autograd.grad(y_ref, x_ref, grad)
     torch.testing.assert_close(actual_grad, expect_grad)
 
+    # TODO: Remove this once this autograd API becomes stable.
+    # On stable PyTorch (with args_tensor_mask), forward/backward expect ctx as first arg.
+    # On nightly PyTorch (without args_tensor_mask), ctx is not an argument.
     if _HAS_ARGS_TENSOR_MASK:
 
         class WrongBwdModule(torch.nn.Module):
@@ -1383,8 +1384,9 @@ def test_autograd_function_apply():
 
 def test_autograd_function_apply_with_no_grad():
     # This case is using `torch` operations
+    # TODO: Remove this once this autograd API becomes stable.
     # On stable PyTorch (with args_tensor_mask), forward/backward expect ctx as first arg.
-    # On nightly PyTorch (without args_tensor_mask), ctx handling is internalized.
+    # On nightly PyTorch (without args_tensor_mask), ctx is not an argument.
     if _HAS_ARGS_TENSOR_MASK:
 
         def forward(_, x):
@@ -1429,6 +1431,9 @@ def test_autograd_function_apply_with_no_grad():
 
     # This is using `thunder` operations
     # NOTE - This takes a different codepath compared to above.
+    # TODO: Remove this once this autograd API becomes stable.
+    # On stable PyTorch (with args_tensor_mask), forward/backward expect ctx as first arg.
+    # On nightly PyTorch (without args_tensor_mask), ctx is not an argument.
     if _HAS_ARGS_TENSOR_MASK:
 
         def forward(_, x):

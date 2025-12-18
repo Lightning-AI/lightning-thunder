@@ -6716,9 +6716,9 @@ def autograd_function_apply(
     args_tensor_mask: Sequence[bool] | None = None,
     non_differentiable_idx: Sequence[int] | None = None,
 ) -> TensorProxy | tuple[TensorProxy, ...]:
-    # Support both stable PyTorch (with args_tensor_mask) and nightly (without it)
-    # With args_tensor_mask, fwd expects ctx as first argument
-    # Without args_tensor_mask, ctx handling is internalized - no ctx argument needed
+    # TODO: Remove this once this autograd API becomes stable.
+    # On stable PyTorch, fwd expects ctx as first argument
+    # On nightly PyTorch, ctx is not an argument
     if args_tensor_mask is not None:
         result, saved_for_backward = call_higher_order_function_and_consider_outer_autograd_setting(fwd)(None, *args)
     else:
@@ -6734,7 +6734,9 @@ def augmented_forward_autograd_function_apply(
     args_tensor_mask: Sequence[bool] | None = None,
     non_differentiable_idx: Sequence[int] | None = None,
 ) -> tuple[TensorProxy | tuple[TensorProxy, ...], tuple[Any, ...]]:
-    # Support both stable PyTorch (with args_tensor_mask) and nightly (without it)
+    # TODO: Remove this once this autograd API becomes stable.
+    # On stable PyTorch, fwd expects ctx as first argument
+    # On nightly PyTorch, ctx is not an argument
     if args_tensor_mask is not None:
         result, saved_for_backward = fwd(None, *args)
     else:
@@ -6750,7 +6752,9 @@ def backward_autograd_function_apply(
     non_differentiable_idx: Sequence[int] | None = None,
     *grad_output: Sequence[TensorProxy],
 ) -> tuple[Any, ...]:
-    # Support both stable PyTorch (with args_tensor_mask) and nightly (without it)
+    # TODO: Remove this once this autograd API becomes stable.
+    # On stable PyTorch, fwd expects ctx as first argument
+    # On nightly PyTorch, ctx is not an argument
     if args_tensor_mask is not None:
         return bwd(None, *grad_output, *saved_for_backward)
     else:

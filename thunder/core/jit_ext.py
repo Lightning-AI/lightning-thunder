@@ -941,8 +941,6 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
         return "".join(secrets.choice(string.ascii_lowercase) for _ in range(length))
 
     # Support both stable PyTorch (with args_tensor_mask) and nightly (without it)
-    # See changelog.md for details on the args_tensor_mask removal in nightly PyTorch
-    # Note: Use "in" check rather than .get() to handle wrapped values correctly
     if "args_tensor_mask" in fwd_kwargs:
         args_tensor_mask = unwrap(fwd_kwargs["args_tensor_mask"])
     else:
@@ -972,8 +970,8 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
         # With args_tensor_mask, the fwd_body expects ctx as first argument
         new_fwd_args = (wrap_const(None),) + tuple(new_fwd_args)
     else:
-        # For nightly PyTorch without args_tensor_mask, the ctx handling is internalized
-        # by dynamo. The fwd_body GraphModule does NOT expect a ctx argument.
+        # For nightly PyTorch without args_tensor_mask, the fwd_body 
+        # GraphModule does NOT expect a ctx argument.
         # We pass all args as-is without prepending None.
         new_fwd_args = tuple(fwd_args)
     unwrapped_fwd_args = tree_map(lambda t: unwrap(t), new_fwd_args)
@@ -1014,8 +1012,6 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
     grads = sequencify(tree_map(lambda t: TensorProxy(like=t), sequencify(output)))
     bwd_tensor_args = grads + tuple(saved_values)
     # Support both stable PyTorch (with args_tensor_mask) and nightly (without it)
-    # With args_tensor_mask, bwd_body expects ctx as first argument
-    # Without args_tensor_mask, ctx handling is internalized - no ctx argument needed
     if args_tensor_mask is not None:
         bwd_args = (None,) + bwd_tensor_args
     else:
@@ -1050,11 +1046,11 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
         # Support both stable PyTorch (with args_tensor_mask) and nightly (without it)
         if args_tensor_mask is not None:
             bwd_args = (None,) + tuple(grads) + tuple(sequencify(residuals))
-            # Old API: first arg is ctx, skip it for put_grads
+            # Stable PT: first arg is ctx, skip it for put_grads
             grad_inputs = args[1:]
         else:
             bwd_args = tuple(grads) + tuple(sequencify(residuals))
-            # New API: no ctx, use all args
+            # Nightly PT: no ctx, use all args
             grad_inputs = args
         result = interpret_trace(aliased_bwd_trace, *bwd_args)
         put_grads(grad_inputs, result)
