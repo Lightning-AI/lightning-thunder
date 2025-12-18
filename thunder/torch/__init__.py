@@ -2313,9 +2313,6 @@ def tanhshrink(a: TensorLike, /) -> TensorLike:
     return a - tanh(a)
 
 
-_inplace_to_out_of_place[tanhshrink] = tanhshrink, -1
-
-
 @torchsymbol(torch.threshold, torch.nn.functional.threshold, id="torch.threshold", is_method=False)
 def threshold(a: TensorProxy, /, threshold: float, value: float, inplace: bool = False) -> TensorLike:
     out = where(a <= threshold, value, a)
@@ -2593,6 +2590,24 @@ def maximum(a: TensorProxy, b: TensorProxy) -> TensorProxy:
 
 @torchsymbol(torch.minimum, is_method=True)
 def minimum(a: TensorProxy, b: TensorProxy) -> TensorProxy:
+    return clang.minimum(a, b)
+
+
+@torchsymbol(torch.sym_max, id="torch.sym_max")
+def sym_max(a: NumberLike, b: NumberLike) -> NumberLike:
+    utils.check(
+        isinstance(a, (Number, NumberProxy)) and isinstance(b, (Number, NumberProxy)),
+        lambda: "torch.sym_max supports only number inputs",
+    )
+    return clang.maximum(a, b)
+
+
+@torchsymbol(torch.sym_min, id="torch.sym_min")
+def sym_min(a: NumberLike, b: NumberLike) -> NumberLike:
+    utils.check(
+        isinstance(a, (Number, NumberProxy)) and isinstance(b, (Number, NumberProxy)),
+        lambda: "torch.sym_min supports only number inputs",
+    )
     return clang.minimum(a, b)
 
 

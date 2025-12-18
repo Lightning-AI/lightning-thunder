@@ -6687,7 +6687,7 @@ def arange_sample_generator(op, device, dtype, requires_grad, **kwargs):
     )
 
     for case in partial_cases:
-        yield SampleInput(*case)
+        yield SampleInput(*case, dtype=dtype, device=device)
 
 
 arange_opinfo = OpInfo(
