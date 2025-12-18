@@ -970,7 +970,7 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
         # With args_tensor_mask, the fwd_body expects ctx as first argument
         new_fwd_args = (wrap_const(None),) + tuple(new_fwd_args)
     else:
-        # For nightly PyTorch without args_tensor_mask, the fwd_body 
+        # For nightly PyTorch without args_tensor_mask, the fwd_body
         # GraphModule does NOT expect a ctx argument.
         # We pass all args as-is without prepending None.
         new_fwd_args = tuple(fwd_args)

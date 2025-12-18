@@ -21,6 +21,7 @@ from thunder import pytorch_executor, nvfuser_executor
 from thunder.executors.sdpaex import sdpa_ex
 from thunder.core.transforms import Transform
 
+
 # Detect once at module load time whether PyTorch uses args_tensor_mask.
 # This must be done outside the JIT-traced function to avoid interpreter issues.
 def _detect_has_args_tensor_mask():
