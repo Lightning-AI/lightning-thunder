@@ -1011,6 +1011,7 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
 
     grads = sequencify(tree_map(lambda t: TensorProxy(like=t), sequencify(output)))
     bwd_tensor_args = grads + tuple(saved_values)
+
     # Support both stable PyTorch (with args_tensor_mask) and nightly (without it)
     if args_tensor_mask is not None:
         bwd_args = (None,) + bwd_tensor_args
