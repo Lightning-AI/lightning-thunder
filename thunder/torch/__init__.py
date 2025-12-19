@@ -6753,7 +6753,7 @@ def backward_autograd_function_apply(
     *grad_output: Sequence[TensorProxy],
 ) -> tuple[Any, ...]:
     # TODO: Remove this once this autograd API becomes stable.
-    # On stable PyTorch, fwd expects ctx as first argument
+    # On stable PyTorch, bwd expects ctx as first argument
     # On nightly PyTorch, ctx is not an argument
     if args_tensor_mask is not None:
         return bwd(None, *grad_output, *saved_for_backward)
