@@ -940,27 +940,40 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
         length = 5
         return "".join(secrets.choice(string.ascii_lowercase) for _ in range(length))
 
-    args_tensor_mask = unwrap(fwd_kwargs["args_tensor_mask"])
+    # Support both stable PyTorch (with args_tensor_mask) and nightly (without it)
+    if "args_tensor_mask" in fwd_kwargs:
+        args_tensor_mask = unwrap(fwd_kwargs["args_tensor_mask"])
+    else:
+        args_tensor_mask = None
+
     # TODO(crcrpar): Think about making use of `non_differentiable_idx`
     # note that this key is quite new: https://github.com/pytorch/pytorch/pull/134087
     # non_differentiable_idx = fwd_kwargs.get("non_differentiable_idx")
-    length_of_tensor_args = sum(args_tensor_mask)
 
-    # N.B.(crcrpar) When `torch.compile(..., dynamic=True)`,
-    # GraphModules' forward seem to take `SymInt` and other values
-    # as its argument with some probability. Though that piece of information unfortunately
-    # does not seem to be indicated in ``args_tensor_mask`` nor ``non_differentiable_idx``.
-    # Thus we optimistically iterate over ``fwd_args`` and gather non-tensor values whose index is >= `length_of_tensor_args` to ``fwd_args``.
-    new_fwd_args = []
-    for i, v in enumerate(fwd_args):
-        if i < length_of_tensor_args:
-            new_fwd_args.append(v)
-        else:
-            # note(crcrpar): we might want to include `FutureTensorProxy` and
-            # a proxy of tensor subclass in the near future.
-            if not isinstance(unwrap(v), TensorProxy):
+    if args_tensor_mask is not None:
+        length_of_tensor_args = sum(args_tensor_mask)
+
+        # N.B.(crcrpar) When `torch.compile(..., dynamic=True)`,
+        # GraphModules' forward seem to take `SymInt` and other values
+        # as its argument with some probability. Though that piece of information unfortunately
+        # does not seem to be indicated in ``args_tensor_mask`` nor ``non_differentiable_idx``.
+        # Thus we optimistically iterate over ``fwd_args`` and gather non-tensor values whose index is >= `length_of_tensor_args` to ``fwd_args``.
+        new_fwd_args = []
+        for i, v in enumerate(fwd_args):
+            if i < length_of_tensor_args:
                 new_fwd_args.append(v)
-    new_fwd_args = (wrap_const(None),) + tuple(new_fwd_args)
+            else:
+                # note(crcrpar): we might want to include `FutureTensorProxy` and
+                # a proxy of tensor subclass in the near future.
+                if not isinstance(unwrap(v), TensorProxy):
+                    new_fwd_args.append(v)
+        # With args_tensor_mask, the fwd_body expects ctx as first argument
+        new_fwd_args = (wrap_const(None),) + tuple(new_fwd_args)
+    else:
+        # For nightly PyTorch without args_tensor_mask, the fwd_body
+        # GraphModule does NOT expect a ctx argument.
+        # We pass all args as-is without prepending None.
+        new_fwd_args = tuple(fwd_args)
     unwrapped_fwd_args = tree_map(lambda t: unwrap(t), new_fwd_args)
 
     tmp_name = _generate_random_str_id()
@@ -998,7 +1011,12 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
 
     grads = sequencify(tree_map(lambda t: TensorProxy(like=t), sequencify(output)))
     bwd_tensor_args = grads + tuple(saved_values)
-    bwd_args = (None,) + bwd_tensor_args
+
+    # Support both stable PyTorch (with args_tensor_mask) and nightly (without it)
+    if args_tensor_mask is not None:
+        bwd_args = (None,) + bwd_tensor_args
+    else:
+        bwd_args = bwd_tensor_args
     wrapped_bwd_args = tree_map(lambda t: wrap(t, provenance=aug_fwd_provenance), bwd_args)
     bwd_trace, bwd_trace_provenance = _convert_pytorchfunc_to_thundertrace(
         bwd,
@@ -1026,9 +1044,17 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
 
         primal, residuals = interpret_trace(aliased_aug_fwd_trace, *args, **kwargs)
         grads = tree_map(lambda t: get_grad(t), sequencify(primal))
-        bwd_args = (None,) + tuple(grads) + tuple(sequencify(residuals))
+        # Support both stable PyTorch (with args_tensor_mask) and nightly (without it)
+        if args_tensor_mask is not None:
+            bwd_args = (None,) + tuple(grads) + tuple(sequencify(residuals))
+            # Stable PT: first arg is ctx, skip it for put_grads
+            grad_inputs = args[1:]
+        else:
+            bwd_args = tuple(grads) + tuple(sequencify(residuals))
+            # Nightly PT: no ctx, use all args
+            grad_inputs = args
         result = interpret_trace(aliased_bwd_trace, *bwd_args)
-        put_grads(args[1:], result)
+        put_grads(grad_inputs, result)
 
         return primal
 

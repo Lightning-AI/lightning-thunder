@@ -1633,7 +1633,6 @@ def test_save_failing_repros(tmp_path):
 
 
 @requiresCUDA
-@xfail_if_args_tensor_mask_removed
 def test_autograd_function_fx_report(tmp_path):
     class Sin(torch.autograd.Function):
         @staticmethod
