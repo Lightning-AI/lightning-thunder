@@ -43,7 +43,7 @@ from thunder.core.utils import check
 from thunder.core.trace import TraceCtx, from_trace, TraceProvenance
 from thunder.core.symbol import BoundSymbol, BoundSymbolRHS, Symbol, has_tags
 from thunder.core.devices import Device, DeviceType, cpu
-from thunder.core.transform_common import dce, cse_single_bsym, replace_redundant_inputs
+from thunder.core.transform_common import dce, dce_bsyms, cse_single_bsym, replace_redundant_inputs
 from thunder.core.profile import annotate_for_profile
 from thunder.core.compile_data import get_compile_option
 from thunder.torch.experimental.dtensor_torch_and_prims import DTensorPrimIDs
@@ -707,14 +707,11 @@ class nvFuserExecutor(FusionExecutor):
         return False
 
     def _dce_bsyms(self, input_list, output, bsyms: list[BoundSymbol]) -> list[BoundSymbol]:
-        trace = TraceCtx(None)
-        trace.bound_symbols = bsyms
-        bsyms.append(prims.python_return.bind(output, output=None))
         needed_proxies: set[Variable] = set()
-        trace = dce(trace, needed_proxies)
+        bsyms = dce_bsyms(bsyms, output, needed_proxies)
         # update the input_list by removing the unused inputs
         input_list[:] = [x for x in input_list if variableify(x) in needed_proxies]
-        return list(filter(lambda x: x.sym != prims.python_return, trace.bound_symbols))
+        return bsyms
 
     def fuse(self, region: Region, fusion_counter: int) -> BoundSymbol:
         sorted_unique_inputs: list[Proxy] = [unvariableify(x) for x in region.inputs]
@@ -1358,12 +1355,8 @@ def squeeze(a: TensorProxy, /, dims: Sequence[int], *, fd: FusionDefinition, lc_
 register_supported(PrimIDs.SQUEEZE, squeeze, _squeeze_check)
 
 
-# NOTE: Currently `_advanced_indexing` seems to return a `TensorProxy` of wrong shape
-# when input is 0-size tensor, leading to a broken nvfuser definition.
-# So for now, it'd be reasonable to disallow 0-size tensors.
-# Related: https://github.com/Lightning-AI/lightning-thunder/issues/2068
 def _take_check(a: TensorProxy, /, index: TensorProxy, dim: int) -> bool:
-    return are_supported_tensors(a, index) and a.numel > 0
+    return are_supported_tensors(a, index)
 
 
 def take(a: TensorProxy, /, index: TensorProxy, dim: int, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
@@ -2218,7 +2211,7 @@ def _var_mean_check(
     if not is_supported_tensor(a, allow_low_precision_floats=False):
         return False
 
-    if len(a.shape) == 0:
+    if a.ndim == 0:
         return False
 
     if dtypes.is_complex_dtype(dtypes.to_dtype(a)):

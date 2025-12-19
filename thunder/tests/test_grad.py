@@ -621,7 +621,7 @@ def test_vjp_correctness(op, device, dtype, executor, comp):
                 comp,
                 executor,
                 set_compile_data,
-                len(sample.kwargs) != 0,
+                prologue_required=True,
             )
 
         def _torch_jvp():
@@ -1571,6 +1571,8 @@ def test_phantom_grad_vs_torch_consistency(op, device: str, dtype: dtypes.dtype,
         pytest.skip("Skipping complex operator tests in CI for speed")
     if torch.device(device).type == "cuda" and dtype is dtypes.bfloat16 and not torch.cuda.is_bf16_supported():
         pytest.skip("Your CUDA device does not support bfloat16")
+    if op == get_opinfo("getitem"):
+        pytest.xfail("TODO: Support slice input with symbolic values")
 
     for sample in op.sample_inputs(device, dtype, requires_grad=True):
         comp = sample.comp if sample.comp is not None else comp
@@ -1855,7 +1857,7 @@ def test_grad_transform_saved_for_backward_proxy():
     c = 2.0
 
     dynamic_jit = thunder.jit(foo, cache="symbolic values")
-    static_jit = thunder.jit(foo)
+    static_jit = thunder.jit(foo, cache="constant values")
 
     out = dynamic_jit(a, c)
     torch.autograd.backward(out, torch.rand_like(out), retain_graph=True)

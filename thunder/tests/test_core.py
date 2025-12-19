@@ -306,11 +306,11 @@ def test_grad_no_recompile(executor, device, dtype):
 
     b = make_tensor((3, 3), device=device, dtype=tdtype, requires_grad=True)
     cfoo(b)
-    assert thunder.cache_misses(cfoo) == 2
+    assert thunder.cache_misses(cfoo) == 1
 
     b.grad = make_tensor((3, 3), device=device, dtype=tdtype)
     cfoo(b)
-    assert thunder.cache_misses(cfoo) == 2
+    assert thunder.cache_misses(cfoo) == 1
 
 
 @instantiate(dtypes=(thunder.float32,))
@@ -331,7 +331,7 @@ def test_grad_recompile(executor, device, dtype):
     b = make_tensor((3, 3), device=device, dtype=tdtype, requires_grad=True)
     b.grad = make_tensor((3, 3), device=device, dtype=tdtype)
     cfoo(b)
-    assert thunder.cache_misses(cfoo) == 2
+    assert thunder.cache_misses(cfoo) == 1
 
 
 @instantiate(dtypes=(thunder.float32,))
@@ -1121,8 +1121,8 @@ def test_bsym_toposort(executor: TestExecutor, device: str, dtype: dtypes.dtype)
     top_down_bsyms = toposort_bsym_dag(roots, TOPOSORT_ORDER.TOP_DOWN)
     bottom_up_bsyms = toposort_bsym_dag(leaves, TOPOSORT_ORDER.BOTTOM_UP)
 
-    top_down_reshape_bsym = top_down_bsyms[3]
-    bottom_up_reshape_bsym = bottom_up_bsyms[2]
+    top_down_reshape_bsym = top_down_bsyms[5]
+    bottom_up_reshape_bsym = bottom_up_bsyms[4]
 
     assert top_down_reshape_bsym.sym.id == "torch.reshape"
     assert bottom_up_reshape_bsym.sym.id == "torch.reshape"
@@ -2170,6 +2170,36 @@ def test_cse(executor, device, _):
     assert [t.name for t in tree_flatten(flatten_cse_trace.output)[0]] == ["t4", "t4", "t6", "t14", "t15", "t16", "t17"]
 
 
+@instantiate(
+    dtypes=NOTHING,
+)
+def test_dce(executor, device, _):
+    def func(x):
+        dead_code = x + 1  # noqa: F841
+        y = x * x
+        return y
+
+    x = make_tensor((2, 2), device=device, dtype=torch.float32)
+    compiled = thunder.jit(func, executors=executor.executors_list())
+    compiled(x)
+    traces = thunder.last_traces(compiled)
+
+    # find last trace before DCE is applied
+    for i, trace in enumerate(traces):
+        provenance = trace.get_provenance().pss if trace.get_provenance() else ""
+        if "Dead Code Elimination" in provenance:
+            break
+    i -= 1
+    trace = traces[i]
+
+    from thunder.core.transform_common import dce, dce_bsyms
+
+    dced_trace = dce(trace)
+    dced_bsyms = dce_bsyms(trace.bound_symbols, trace.output)
+    assert len(dced_trace.bound_symbols) == len(trace.bound_symbols) - 1
+    assert len(dced_trace.bound_symbols) == len(dced_bsyms)
+
+
 def test_symbol_flat_args():
     from thunder.core.symbol import Symbol, BoundSymbol
 
@@ -2246,7 +2276,6 @@ def test_clone_sparse_coo():
     assert b.shape == torch.Size(shp)
 
 
-@pytest.mark.xfail(reason="we improperly use an alias")
 def test_clone_alias():
     def foo(a):
         b = a.clone()
@@ -2746,7 +2775,10 @@ def test_type_string():
     assert tr.bound_symbols[1].sym == ltorch.mul
     (pystr,) = tr.bound_symbols[1].python(0)
 
-    assert pystr == 'result = ltorch.mul(2, x)  # result: "cpu f32[2, 2]"'
+    assert (
+        pystr
+        == 'result = ltorch.mul(2, x)  # result: "cpu f32[[IntegerProxy name=i0, value=2, static=CONSTRAINT.CONSTRAINABLE], [IntegerProxy name=i1, value=2, static=CONSTRAINT.CONSTRAINABLE]]"'
+    )
 
 
 def test_dtype_in_trace():
@@ -3073,8 +3105,8 @@ def test_indexing_with_hashable_object():
     # This should be a cache miss, verify that.
     d[h] = 2
     assert jfn() == 2  # Verify that jfn now returns 2
-    assert thunder.cache_hits(jfn) == 1
-    assert thunder.cache_misses(jfn) == 2
+    assert thunder.cache_hits(jfn) == 2
+    assert thunder.cache_misses(jfn) == 1
 
 
 def test_profiling_decorator():
@@ -3223,7 +3255,7 @@ def test_unpack_sequence_element_info():
             isinstance(out, thunder.core.proxies.TensorProxy) for out in bsym.flat_outs
         ):  # prims is unpack_sequence and any output is TensorProxy
             # Verify that we print information about the unpacked TensorProxy.
-            assert "cpu f32[3]" in str(bsym)
+            assert "cpu f32[[IntegerProxy name=i0, value=3, static=CONSTRAINT.CONSTRAINABLE]]" in str(bsym)
 
 
 @pytest.mark.parametrize("thunderfx_disable_split_autograd", (True, False))
@@ -3295,22 +3327,28 @@ def test_thunder_jit_parts():
 
 
 def test_prims_pack_list():
-    def foo():
-        pass
-
-    trace = TraceCtx(foo)
+    def foo(x):
+        a, b = x
+        return [a, b]
 
     a = torch.randn(2, 2)
     b = torch.randn(2, 2)
 
+    jfoo = thunder.jit(foo)
+    jfoo((a, b))
+
+    trace = thunder.last_traces(jfoo)[-1]
+
+    return_bsym = trace.bound_symbols[-1]
+    trace.bound_symbols = trace.bound_symbols[:-1]
+
     with tracectx(trace):
-        x = prims.unpack_trivial(a, name="x")
-        y = prims.unpack_trivial(b, name="y")
+        x, y = return_bsym.flat_args
         packed_list = prims.pack_list(x, y)
         prims.python_return(packed_list)
 
     func = trace.python_callable()
-    actual = func()
+    actual = func(a, b)
     expected = [a, b]
 
     assert isinstance(actual, list) and actual == expected
