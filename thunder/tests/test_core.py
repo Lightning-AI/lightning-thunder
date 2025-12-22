@@ -2170,6 +2170,36 @@ def test_cse(executor, device, _):
     assert [t.name for t in tree_flatten(flatten_cse_trace.output)[0]] == ["t4", "t4", "t6", "t14", "t15", "t16", "t17"]
 
 
+@instantiate(
+    dtypes=NOTHING,
+)
+def test_dce(executor, device, _):
+    def func(x):
+        dead_code = x + 1  # noqa: F841
+        y = x * x
+        return y
+
+    x = make_tensor((2, 2), device=device, dtype=torch.float32)
+    compiled = thunder.jit(func, executors=executor.executors_list())
+    compiled(x)
+    traces = thunder.last_traces(compiled)
+
+    # find last trace before DCE is applied
+    for i, trace in enumerate(traces):
+        provenance = trace.get_provenance().pss if trace.get_provenance() else ""
+        if "Dead Code Elimination" in provenance:
+            break
+    i -= 1
+    trace = traces[i]
+
+    from thunder.core.transform_common import dce, dce_bsyms
+
+    dced_trace = dce(trace)
+    dced_bsyms = dce_bsyms(trace.bound_symbols, trace.output)
+    assert len(dced_trace.bound_symbols) == len(trace.bound_symbols) - 1
+    assert len(dced_trace.bound_symbols) == len(dced_bsyms)
+
+
 def test_symbol_flat_args():
     from thunder.core.symbol import Symbol, BoundSymbol
 
@@ -3295,22 +3325,28 @@ def test_thunder_jit_parts():
 
 
 def test_prims_pack_list():
-    def foo():
-        pass
-
-    trace = TraceCtx(foo)
+    def foo(x):
+        a, b = x
+        return [a, b]
 
     a = torch.randn(2, 2)
     b = torch.randn(2, 2)
 
+    jfoo = thunder.jit(foo)
+    jfoo((a, b))
+
+    trace = thunder.last_traces(jfoo)[-1]
+
+    return_bsym = trace.bound_symbols[-1]
+    trace.bound_symbols = trace.bound_symbols[:-1]
+
     with tracectx(trace):
-        x = prims.unpack_trivial(a, name="x")
-        y = prims.unpack_trivial(b, name="y")
+        x, y = return_bsym.flat_args
         packed_list = prims.pack_list(x, y)
         prims.python_return(packed_list)
 
     func = trace.python_callable()
-    actual = func()
+    actual = func(a, b)
     expected = [a, b]
 
     assert isinstance(actual, list) and actual == expected
