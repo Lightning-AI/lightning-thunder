@@ -2569,7 +2569,7 @@ def _scaled_dot_product_flash_attention_forward(
     lc_to_nv_map: dict,
 ) -> Any:
     args = [getnv(arg, fd, lc_to_nv_map) for arg in (query, key, value)]
-    return fd.ops.sdpfa_fwd(*args, dropout_p=dropoutp, is_causal=is_causal, scale=scale)
+    return fd.ops.sdpfa_fwd(*args, dropout_p=dropout_p, is_causal=is_causal, scale=scale)
 
 
 nv_sdpfa_fwd = ex.register_operator(
