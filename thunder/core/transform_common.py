@@ -273,7 +273,7 @@ def cse_single_bsym(
     bsym: BoundSymbolInterface,
 ) -> BoundSymbolInterface:
     check(
-        bsym.sym.is_fusion != True,
+        not bsym.sym.is_fusion,
         lambda: "Expected bound symbol not to be a fusion in _cse_single_bsym",
         exception_type=AssertionError,
     )
