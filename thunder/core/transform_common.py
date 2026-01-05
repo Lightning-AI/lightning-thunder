@@ -142,7 +142,7 @@ def remove_duplicate_number_proxies(bsyms: Sequence[BoundSymbol]) -> list[BoundS
 #   that only produce non-proxy objects
 # NOTE needed_proxies is an in/out argument, it takes an initial set of Variables you want to keep, and return
 #   all the needed proxies of the input trace
-def dce(trace: Trace, needed_proxies: None | set[Variable] = None) -> Trace:
+def dce(trace: Trace, needed_proxies: None | set[Variable] = None, keep_inplace_ops: bool = False) -> Trace:
     start_time_ns = time.perf_counter_ns()
 
     producer_map: ProxyDict = producers(trace)
@@ -158,6 +158,8 @@ def dce(trace: Trace, needed_proxies: None | set[Variable] = None) -> Trace:
     for bsym in reversed(trace.bound_symbols):
         # Preserves symbols that should never be collected
         if has_tags(bsym, {prims.OpTags.DONT_DCE}):
+            needed = True
+        elif keep_inplace_ops and has_tags(bsym, {prims.OpTags.IN_PLACE}):
             needed = True
         else:
             needed = False
