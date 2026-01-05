@@ -350,6 +350,12 @@ class Symbol:
             exception_type=AssertionError,
         )
 
+        # When using symbolic values, there may be duplicate prims.eq and prims.shape subsymbols that can be removed.
+        from thunder.core.transform_common import dce_bsyms
+
+        subsymbols = dce_bsyms(subsymbols, result)
+        bsym = bsym.from_bsym(subsymbols=subsymbols)
+
         symbols_list.append(bsym)
         return result
 

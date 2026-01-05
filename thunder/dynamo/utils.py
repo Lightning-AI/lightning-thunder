@@ -259,20 +259,20 @@ def _concrete_value(vals: torch.Size | Sequence):
     return tuple(map(get_backed_value, vals))
 
 
-def get_proxy_inputs_from_node(node: torch.fx.Node) -> tuple[tuple, dict]:
+def get_proxy_inputs_from_node(node: torch.fx.Node, tracectx) -> tuple[tuple, dict]:
     """Creates proxy inputs from a torch.fx.Node for use with Thunder.
 
     This function generates proxy inputs for a given torch.fx.Node
 
     Args:
         node (torch.fx.Node): The FX graph node to create proxy inputs for.
+        tracectx (TraceCtx): The trace context to use to generate proxy inputs.
     """
     import thunder
-    from thunder.core.trace import TraceCtx
     from thunder.core.proxies import proxy
 
     # We need to be under trace context to generate proxies.
-    with thunder.core.trace.tracectx(TraceCtx()):
+    with thunder.core.trace.tracectx(tracectx):
 
         def make_input_proxy(arg_node):
             # This is a Node in the graph representing a Tensor or tuple of Tensors or
@@ -380,8 +380,10 @@ def try_execute_thunder_symbol(
         cache_info["default_dtype"] = torch.get_default_dtype()
         cache_info["default_device"] = torch.get_default_device()
 
+        tracectx = TraceCtx()
+
         try:
-            proxy_args, proxy_kwargs = get_proxy_inputs_from_node(node)
+            proxy_args, proxy_kwargs = get_proxy_inputs_from_node(node, tracectx)
         except Exception as e:
             return False, SplitReason(
                 SplitReasonType.EXCEPTION_PROXY_THUNDER_OP,
@@ -395,7 +397,7 @@ def try_execute_thunder_symbol(
             else thunder_symbol
         )
         # We need to be under trace context to generate proxies.
-        with thunder.core.trace.tracectx(TraceCtx()):
+        with thunder.core.trace.tracectx(tracectx):
             try:
                 function_to_run(*proxy_args, **proxy_kwargs)
             except Exception as e:
@@ -478,6 +480,7 @@ def is_node_supported_by_thunder(
     """
     Determine whether thunder can execute the operation described by this node.
     """
+    from thunder.core.trace import TraceCtx
     # Docs from the torch.fx.Node - https://pytorch.org/docs/stable/fx.html#torch.fx.Node
     # Each Node has a function specified by its op property
     # Below are the details for the ones this function is interested in -
@@ -555,7 +558,7 @@ def is_node_supported_by_thunder(
     if torchctx.has_method(node.target):
         # `torchctx.get_method` requires args and kwargs to resolve which overload of the method is picked.
         try:
-            args, kwargs = get_proxy_inputs_from_node(node)
+            args, kwargs = get_proxy_inputs_from_node(node, TraceCtx())
         except Exception as e:
             return False, SplitReason(
                 SplitReasonType.EXCEPTION_PROXY_THUNDER_OP,
