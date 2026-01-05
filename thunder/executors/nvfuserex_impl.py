@@ -2568,13 +2568,8 @@ def _scaled_dot_product_flash_attention_forward(
     fd: FusionDefinition,
     lc_to_nv_map: dict,
 ) -> Any:
-    inputs = [query, key, value, dropout_p, is_causal, scale]
-    nv_inputs = []
-    for inp in inputs:
-        nv_inp = getnv(inp, fd, lc_to_nv_map) if inp is not None else None
-        nv_inputs.append(nv_inp)
-
-    return fd.ops.sdpfa_fwd(*nv_inputs)
+    args = [getnv(arg, fd, lc_to_nv_map) for arg in (query, key, value)]
+    return fd.ops.sdpfa_fwd(*args, dropout_p=dropout_p, is_causal=is_causal, scale=scale)
 
 
 nv_sdpfa_fwd = ex.register_operator(
