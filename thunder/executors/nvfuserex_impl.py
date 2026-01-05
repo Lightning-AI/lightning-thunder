@@ -1,5 +1,5 @@
 from dataclasses import dataclass, replace
-from functools import partial, lru_cache
+from functools import partial, lru_cache, wraps
 from numbers import Number
 from typing import Any
 from collections.abc import Callable, Hashable, Sequence
@@ -10,6 +10,7 @@ import warnings
 from typing import cast
 
 from looseversion import LooseVersion
+from optree import tree_flatten
 import torch
 from torch import Tensor
 
@@ -42,7 +43,7 @@ from thunder.core.utils import check
 from thunder.core.trace import TraceCtx, from_trace, TraceProvenance
 from thunder.core.symbol import BoundSymbol, BoundSymbolRHS, Symbol, has_tags
 from thunder.core.devices import Device, DeviceType, cpu
-from thunder.core.transform_common import dce, cse_single_bsym, replace_redundant_inputs
+from thunder.core.transform_common import dce, dce_bsyms, cse_single_bsym, replace_redundant_inputs
 from thunder.core.profile import annotate_for_profile
 from thunder.core.compile_data import get_compile_option
 from thunder.torch.experimental.dtensor_torch_and_prims import DTensorPrimIDs
@@ -706,14 +707,11 @@ class nvFuserExecutor(FusionExecutor):
         return False
 
     def _dce_bsyms(self, input_list, output, bsyms: list[BoundSymbol]) -> list[BoundSymbol]:
-        trace = TraceCtx(None)
-        trace.bound_symbols = bsyms
-        bsyms.append(prims.python_return.bind(output, output=None))
         needed_proxies: set[Variable] = set()
-        trace = dce(trace, needed_proxies)
+        bsyms = dce_bsyms(bsyms, output, needed_proxies)
         # update the input_list by removing the unused inputs
         input_list[:] = [x for x in input_list if variableify(x) in needed_proxies]
-        return list(filter(lambda x: x.sym != prims.python_return, trace.bound_symbols))
+        return bsyms
 
     def fuse(self, region: Region, fusion_counter: int) -> BoundSymbol:
         sorted_unique_inputs: list[Proxy] = [unvariableify(x) for x in region.inputs]
@@ -969,6 +967,21 @@ def convert_element_type(
 
 register_supported(PrimIDs.CONVERT_ELEMENT_TYPE, convert_element_type, _convert_element_type_check)
 register_supported(DTensorPrimIDs.CONVERT_ELEMENT_TYPE, convert_element_type, _convert_element_type_check)
+
+
+# Helper decorator for primitives that should return ints for number-only inputs, e.g. floor/ceil
+def _returns_int_for_numbers(fn: Callable) -> Callable:
+    @wraps(fn)
+    def wrapper(*args, fd: FusionDefinition, lc_to_nv_map: dict, **kwargs) -> Any:
+        result = fn(*args, fd=fd, lc_to_nv_map=lc_to_nv_map, **kwargs)
+
+        if all(isinstance(arg, (Number, NumberProxy)) for arg in tree_flatten((args, kwargs))[0]):
+            nvint = lcdtype_to_nvdtype(int)
+            result = fd.ops.cast(result, nvint)
+
+        return result
+
+    return wrapper
 
 
 def _bitcast_check(src: TensorProxy, dtype: dtypes.dtype) -> bool:
@@ -1472,6 +1485,7 @@ def bitwise_not(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: 
 register_supported(PrimIDs.BITWISE_NOT, bitwise_not, _elementwise_unary_check)
 
 
+@_returns_int_for_numbers
 def ceil(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
@@ -1563,6 +1577,7 @@ def expm1(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) 
 register_supported(PrimIDs.EXPM1, expm1, _elementwise_unary_check)
 
 
+@_returns_int_for_numbers
 def floor(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
@@ -1672,6 +1687,7 @@ register_dtensor_supported(DTensorPrimIDs.RECIPROCAL, reciprocal, _elementwise_u
 
 
 # NOTE nv_round to avoid a name conflict with the builtin round
+@_returns_int_for_numbers
 def nv_round(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
@@ -1753,6 +1769,7 @@ def tanh(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -
 register_supported(PrimIDs.TANH, tanh, _elementwise_unary_check)
 
 
+@_returns_int_for_numbers
 def trunc(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
@@ -2548,13 +2565,8 @@ def _scaled_dot_product_flash_attention_forward(
     fd: FusionDefinition,
     lc_to_nv_map: dict,
 ) -> Any:
-    inputs = [query, key, value, dropout_p, is_causal, scale]
-    nv_inputs = []
-    for inp in inputs:
-        nv_inp = getnv(inp, fd, lc_to_nv_map) if inp is not None else None
-        nv_inputs.append(nv_inp)
-
-    return fd.ops.sdpfa_fwd(*nv_inputs)
+    args = [getnv(arg, fd, lc_to_nv_map) for arg in (query, key, value)]
+    return fd.ops.sdpfa_fwd(*args, dropout_p=dropout_p, is_causal=is_causal, scale=scale)
 
 
 nv_sdpfa_fwd = ex.register_operator(

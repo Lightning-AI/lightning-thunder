@@ -312,6 +312,7 @@ class JitCtx:
                     self.add_constraint((clang.check_number_type_and_value, p, uvalue))
             elif co is CACHE_OPTIONS.SYMBOLIC_VALUES:
                 if p is not uvalue:
+                    self.add_constraint((clang.check_instance, p, (type(uvalue),)))
                     value.register_proxy(p)
             elif co not in (CACHE_OPTIONS.SAME_INPUT, CACHE_OPTIONS.NO_CACHING):
                 raise NotImplementedError(f"Unsupported cache option {co}")
@@ -650,6 +651,32 @@ def _general_jit_bool_lookaside(wrapped_x: Any) -> bool | INTERPRETER_SIGNALS:
 
 
 _general_jit_lookaside_map[bool] = _general_jit_bool_lookaside
+
+
+def _general_jit_min_max_lookaside(op_name, symbol, args, kwargs):
+    if len(args) != 2:
+        raise TypeError(f"{op_name}() currently supports exactly two positional arguments in thunder.jit")
+
+    if kwargs:
+        unexpected = ", ".join(map(str, kwargs.keys()))
+        raise TypeError(f"{op_name}() keyword arguments are not supported in thunder.jit (got: {unexpected})")
+
+    a, b = (unwrap(arg) for arg in args)
+    reduced = symbol(a, b)
+
+    provenance_inputs = [arg.provenance for arg in args]
+
+    return wrap(reduced, provenance=ProvenanceRecord(PseudoInst.LOOKASIDE, inputs=provenance_inputs))
+
+
+@register_general_jit_lookaside(max)
+def _general_jit_builtin_max_lookaside(*args, **kwargs):
+    return _general_jit_min_max_lookaside("max", clang.maximum, args, kwargs)
+
+
+@register_general_jit_lookaside(min)
+def _general_jit_builtin_min_lookaside(*args, **kwargs):
+    return _general_jit_min_max_lookaside("min", clang.minimum, args, kwargs)
 
 
 def _get_torch_nn_module_named_members_lookaside(
@@ -2164,7 +2191,6 @@ def thunder_general_jit(
         callbacks=general_jit_callbacks,
         with_provenance_tracking=True,
         unwrap_result=False,
-        uncacheable_classes=(torch.Tensor, int, float, str, NoneType),
         record_history=compile_data.debug_options.record_interpreter_history,
     )
 
