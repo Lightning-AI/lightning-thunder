@@ -3,6 +3,7 @@ import builtins
 import itertools
 import math
 import operator
+import random
 
 import pytest
 import torch
@@ -94,6 +95,15 @@ def test_elementwise_binary_operations_on_numbers(executor, device, dtype, op, c
     if cache_option == "symbolic values":
         assert thunder.cache_misses(cfoo) == len(a_types) * len(b_types)
 
+        fixed_a = random.choice(a_vals)
+
+        foo_a_fixed = partial(foo, a=fixed_a)
+        cfoo_a_fixed = executor.make_callable(foo_a_fixed, cache=cache_option)
+        for b in b_vals:
+            actual = cfoo_a_fixed(b=b)
+            expected = foo(fixed_a, b)
+            assert_close(actual, expected)
+
 
 _elementwise_unary_op_to_test_info = {
     builtins.abs: (bool, int, float, complex),
@@ -183,6 +193,31 @@ def test_where_on_numbers(executor, device, dtype, cache_option):
 
     if cache_option == "symbolic values":
         assert thunder.cache_misses(cfoo) == 4
+
+        fixed_pred = random.choice(bool_inps)
+        foo_pred_fixed = partial(foo, pred=fixed_pred)
+        cfoo_pred_fixed = executor.make_callable(foo_pred_fixed, cache=cache_option)
+        for a, b in itertools.product(int_inps, int_inps):
+            actual = cfoo_pred_fixed(a=a, b=b)
+            expected = foo_python(fixed_pred, a, b)
+            assert_close(actual, expected)
+
+        fixed_a = random.choice(float_inps)
+        foo_a_fixed = partial(foo, a=fixed_a)
+        cfoo_a_fixed = executor.make_callable(foo_a_fixed, cache=cache_option)
+        for pred, b in itertools.product(bool_inps, float_inps):
+            actual = cfoo_a_fixed(pred=fixed_pred, b=b)
+            expected = foo_python(fixed_pred, fixed_a, b)
+            assert_close(actual, expected)
+
+        fixed_pred = random.choice(bool_inps)
+        fixed_b = random.choice(bool_inps)
+        foo_pred_b_fixed = partial(foo, pred=fixed_pred, b=fixed_b)
+        cfoo_pred_b_fixed = executor.make_callable(foo_pred_b_fixed, cache=cache_option)
+        for a in bool_inps:
+            actual = cfoo_pred_b_fixed(a=a)
+            expected = foo_python(fixed_pred, a, fixed_b)
+            assert_close(actual, expected)
 
 
 # TODO: see issue "Test operator and method variants of operations using

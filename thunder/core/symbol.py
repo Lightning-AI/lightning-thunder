@@ -453,6 +453,7 @@ class BoundSymbol(BoundSymbolInterface):
         skip_inputs: bool = False,
         skip_output: bool = False,
         skip_subsymbols: bool = False,
+        allow_cycles: bool = False,
     ) -> BoundSymbol:
         """Create a new :class:`BoundSymbol` with its inputs, output, and subsymbols updated with ``swap_map``.
 
@@ -487,9 +488,14 @@ class BoundSymbol(BoundSymbolInterface):
                     while vfa in swap_map:
                         if swap_map[vfa] is fa:
                             break
-                        baseutils.check(
-                            vfa not in visited, lambda: f"Detected a cycle while swapping; the cycle includes {visited}"
-                        )
+
+                        if vfa in visited:
+                            baseutils.check(
+                                allow_cycles,
+                                lambda: f"Detected a cycle while swapping; the cycle includes {visited}",
+                            )
+                            break
+
                         visited.add(vfa)
 
                         fa = swap_map[vfa]

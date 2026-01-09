@@ -38,6 +38,7 @@ from thunder.core.proxies import (
     Proxy,
     ProxyInterface,
     ProxyTag,
+    StringProxy,
     TensorProxy,
     Variable,
     is_proxy_name_available,
@@ -303,7 +304,7 @@ class JitCtx:
             assert p.history is not None, f"{p.history}, {value.provenance} {type(p)}"
 
             co: CACHE_OPTIONS = get_cache_option()
-            if co is CACHE_OPTIONS.CONSTANT_VALUES:
+            if co is CACHE_OPTIONS.CONSTANT_VALUES or isinstance(uvalue, bool):
                 if isinstance(uvalue, str):
                     self.add_constraint((clang.check_string_value, p, uvalue))
                 elif isinstance(uvalue, slice):
@@ -311,7 +312,9 @@ class JitCtx:
                 else:
                     self.add_constraint((clang.check_number_type_and_value, p, uvalue))
             elif co is CACHE_OPTIONS.SYMBOLIC_VALUES:
-                if p is not uvalue:
+                if isinstance(uvalue, str):
+                    self.add_constraint((clang.check_string_value, p, uvalue))
+                elif p is not uvalue:
                     self.add_constraint((clang.check_instance, p, (type(uvalue),)))
                     value.register_proxy(p)
             elif co not in (CACHE_OPTIONS.SAME_INPUT, CACHE_OPTIONS.NO_CACHING):
@@ -468,6 +471,8 @@ def _general_jit_getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
 
 @register_general_jit_lookaside(isinstance)
 def _general_jit_isinstance_lookaside(obj: Any, cls: type | UnionType | tuple[type | UnionType]):
+    from thunder.core.baseutils import check
+
     uobj = unwrap(obj)
     ucls = unwrap(cls)
     if isinstance(uobj, TensorProxy):
@@ -479,6 +484,9 @@ def _general_jit_isinstance_lookaside(obj: Any, cls: type | UnionType | tuple[ty
             ucls = (ucls,)
         if torch.nn.Parameter in ucls:
             res = issubclass(obj.python_typ, ucls)
+    elif isinstance(uobj, NumberProxy):
+        check(uobj.value is not None, lambda: "isinstance does not support NumberProxy with no value")
+        res = isinstance(uobj.value, ucls)
     else:
         res = isinstance(uobj, ucls)
 
@@ -642,7 +650,7 @@ _general_jit_lookaside_map[hasattr] = _general_jit_hasattr_lookaside
 def _general_jit_bool_lookaside(wrapped_x: Any) -> bool | INTERPRETER_SIGNALS:
     assert isinstance(wrapped_x, WrappedValue)
     # It doesn't feel right to insert constraints in bool lookaside, constraints here only applies when the bool value is used in control flow.
-    if isinstance(wrapped_x.value, NumberProxy):
+    if isinstance(wrapped_x.value, (NumberProxy, StringProxy)):
         if wrapped_x.value.is_dynamic():
             raise NotImplementedError(f"conversion to bool is not allowed on dynamic proxy={wrapped_x.value}")
         wrapped_x.value.make_static_constrained()

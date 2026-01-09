@@ -2,6 +2,7 @@ import torch
 
 torch_auto_registered_ops = {
     torch: [
+        torch.set_autocast_enabled,
         torch._native_multi_head_attention,
         torch.lobpcg,
         torch.unravel_index,
