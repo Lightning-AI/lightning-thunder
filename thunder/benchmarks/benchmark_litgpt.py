@@ -315,6 +315,7 @@ class Benchmark_litGPT:
         fp8_shard_intermediate_activation: bool = False,
         use_sdpa: bool = False,
         use_hf: bool = False,
+        thunder_cache: str | None = None,
     ):
         seed = 1337
         torch.manual_seed(seed)
@@ -350,6 +351,7 @@ class Benchmark_litGPT:
 
         self.use_sdpa = use_sdpa
         self.use_hf = use_hf
+        self.thunder_cache = thunder_cache
 
         if self.use_sdpa and sdpa_available and self.compile not in ["eager", "inductor"]:
             warnings.warn(
@@ -692,7 +694,7 @@ class Benchmark_litGPT:
                 transforms.insert(0, TransformerEngineTransform())
 
             if "jit" in self.compile:
-                model = thunder.jit(model, executors=executors, transforms=transforms, **jit_options)
+                model = thunder.jit(model, executors=executors, transforms=transforms, cache=self.thunder_cache)
 
             else:
                 if self.distributed_mode == "fsdp2":
@@ -862,6 +864,7 @@ class Benchmark_litGPT:
             self.perf_metrics["average_iter_time"] = ((t1 - t0) * 1000) / (self.max_iters - self.warmup_iters)
             self.perf_metrics["saved_for_backward_tensor_size_mib"] = saved_tensors_size_in_mib
             self.perf_metrics["saved_for_backward_number_of_tensors"] = saved_tensors_len
+            self.perf_metrics["num_recompilations"] = self.compute_num_recompilations()
 
     def add_perf_metrics(self):
         if self.throughput:
@@ -892,6 +895,22 @@ class Benchmark_litGPT:
                 self.perf_metrics["Distributed Mode"] = self.distributed_mode
                 self.perf_metrics["Sharding Size"] = None
             self.perf_metrics["compiler"] = self.compile
+
+    def compute_num_recompilations(self) -> int:
+        import thunder
+
+        if "thunder" not in self.compile:
+            return 0
+
+        if "jit" in self.compile:
+            return thunder.cache_misses(self.model) - 1
+
+        # Compiled by ThunderFX
+        total_misses = 0
+        for info in self.backend.subgraph_infos:
+            for thunder_fn in info.thunder_compiled_fns:
+                total_misses += thunder.cache_misses(thunder_fn) - 1
+        return total_misses
 
 
 class DummyDataset(IterableDataset):
@@ -978,6 +997,11 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
             print(f"Saved for backward size: {benchmark.perf_metrics['saved_for_backward_tensor_size_mib']:.02f} MiB")
             print(
                 f"Saved for backward number of tensors: {benchmark.perf_metrics['saved_for_backward_number_of_tensors']}"
+            )
+        if "thunder" in benchmark.compile:
+            print(
+                "Thunder module recompilations excluding initial compile: "
+                f"{benchmark.perf_metrics.get('num_recompilations', 0)}"
             )
 
         tokens_per_sec = benchmark.perf_metrics.get("tokens_per_sec")
