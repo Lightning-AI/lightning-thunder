@@ -1716,6 +1716,44 @@ def test_cache_symbolic_values_nn_parameter_static_shape():
             assert isinstance(bsym.output.shape[1], thunder.core.proxies.IntegerProxy)
 
 
+def test_cache_symbolic_values_int_float_inputs():
+    def foo(a, b):
+        return a + b
+
+    jfoo = thunder_jit(foo, cache="symbolic values")
+
+    a = 1
+    b = 2.0
+    actual = jfoo(a, b)
+    expected = foo(a, b)
+
+    assert_close(actual, expected)
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 0
+
+    a = 2
+    b = 3.0
+    actual = jfoo(a, b)
+    expected = foo(a, b)
+
+    assert_close(actual, expected)
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 1
+
+    trc = thunder.last_traces(jfoo)[-1]
+    for bsym in trc.bound_symbols:
+        if bsym.sym.name == prims.PrimIDs.UNPACK_TRIVIAL:
+            assert isinstance(bsym.output, (IntegerProxy, FloatProxy))
+
+    trc_str = str(trc)
+    # Verify that symbolic inputs are not baked in as constants in the trace string
+    assert 'a: "int 1"' not in trc_str
+    assert 'b: "float 2.0"' not in trc_str
+
+    assert 'a: "symbolic int"' in trc_str
+    assert 'b: "symbolic float"' in trc_str
+
+
 def test_specific_dataclass_returns():
     import transformers
 
