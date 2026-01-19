@@ -15,7 +15,7 @@ import thunder.core.prims as prims
 # imports unused in this file, but referenced as thunder.* elsewhere
 from thunder.common import trace
 import thunder.core.devices as devices
-from thunder.core.proxies import Proxy
+from thunder.core.proxies import NumberProxy, Proxy
 
 from thunder.common import (
     CompileData,
@@ -895,7 +895,12 @@ def jit(
         result = call_epilogue(cache_entry, result, pro_to_epi)
 
         # Reflect the state of is_grad_enabled, as its changes were tracked only inside Thunder
-        pytorch.set_grad_enabled(cd.is_grad_enabled)
+        is_grad_enabled = cd.is_grad_enabled
+        if isinstance(is_grad_enabled, NumberProxy):
+            # TODO: Verify this assumption
+            assert is_grad_enabled.is_static_constrained()
+            is_grad_enabled = is_grad_enabled.value
+        pytorch.set_grad_enabled(is_grad_enabled)
 
         cs.last_computation = cache_entry.computation_fn
         return result

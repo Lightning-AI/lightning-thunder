@@ -93,7 +93,7 @@ def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: 
 
     start_time_ns = time.perf_counter_ns()
 
-    extrace, _ = OpExProcessor(trace)()
+    extrace, _ = OpExProcessor(trace, allow_swap_map_cycles=True)()
 
     end_time_ns = time.perf_counter_ns()
     elapsed_time_ns = end_time_ns - start_time_ns
