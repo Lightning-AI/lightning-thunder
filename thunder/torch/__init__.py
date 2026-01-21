@@ -5821,6 +5821,94 @@ if LooseVersion(torch.__version__) >= "2.8":
         return prims._grouped_mm(a, b, offsets)
 
 
+if hasattr(torch.nn.functional, "scaled_grouped_mm"):
+
+    @torchsymbol(
+        torch.nn.functional.scaled_grouped_mm,
+        id="torch.nn.functional.scaled_grouped_mm",
+        is_method=False,
+        is_prim=True,
+    )
+    def scaled_grouped_mm(
+        mat_a: TensorProxy,
+        mat_b: TensorProxy,
+        scale_a,
+        scale_recipe_a,
+        scale_b,
+        scale_recipe_b,
+        swizzle_a=None,
+        swizzle_b=None,
+        bias: None | TensorProxy = None,
+        offs: None | TensorProxy = None,
+        output_dtype: dtypeLike = torch.bfloat16,
+        contraction_dim: Sequence[int] | tuple[int, ...] = (),
+        use_fast_accum: bool = False,
+    ) -> TensorProxy:
+        utils.check(
+            offs is not None,
+            lambda: "scaled_grouped_mm currently requires `offs`.",
+        )
+        utils.check_type(offs, TensorProxy)
+        utils.check(
+            bias is None,
+            lambda: "scaled_grouped_mm currently doesn't support `bias`.",
+        )
+        utils.check(
+            len(contraction_dim) == 0,
+            lambda: f"scaled_grouped_mm currently expects an empty `contraction_dim`, but got {contraction_dim}.",
+        )
+
+        utils.check_type(mat_a, TensorProxy)
+        utils.check_type(mat_b, TensorProxy)
+        utils.check(mat_a.ndim in (2, 3), lambda: f"Expected mat_a to have 2 or 3 dimensions, got {mat_a.ndim}")
+        utils.check(mat_b.ndim in (2, 3), lambda: f"Expected mat_b to have 2 or 3 dimensions, got {mat_b.ndim}")
+
+        utils.check(offs.ndim == 1, lambda: f"`offs` must be a vector, got shape {offs.shape}")
+        if mat_a.ndim == 2 and mat_b.ndim == 2:
+            utils.check(
+                mat_a.shape[1] == mat_b.shape[0],
+                lambda: f"Inner dimension mismatch: {mat_a.shape} vs {mat_b.shape}",
+            )
+            out_shape = (offs.shape[0], mat_a.shape[0], mat_b.shape[1])
+        elif mat_a.ndim == 3 and mat_b.ndim == 2:
+            utils.check(
+                mat_a.shape[2] == mat_b.shape[0],
+                lambda: f"Inner dimension mismatch: {mat_a.shape} vs {mat_b.shape}",
+            )
+            utils.check(
+                mat_a.shape[0] == offs.shape[0],
+                lambda: f"Group count mismatch: {mat_a.shape} vs {offs.shape}",
+            )
+            out_shape = (mat_a.shape[1], mat_b.shape[1])
+        elif mat_a.ndim == 2 and mat_b.ndim == 3:
+            utils.check(
+                mat_a.shape[1] == mat_b.shape[1],
+                lambda: f"Inner dimension mismatch: {mat_a.shape} vs {mat_b.shape}",
+            )
+            utils.check(
+                mat_b.shape[0] == offs.shape[0],
+                lambda: f"Group count mismatch: {mat_b.shape} vs {offs.shape}",
+            )
+            out_shape = (mat_a.shape[0], mat_b.shape[2])
+        else:
+            utils.check(False, lambda: f"Unexpected shape combination: {mat_a.shape} and {mat_b.shape}")
+
+        utils.check_same_dtype(mat_a, mat_b)
+        allowed_input_dtypes = dtypes.float_math_dtypes | dtypes.float_8bit_dtypes
+        utils.check(
+            mat_a.dtype in allowed_input_dtypes,
+            lambda: f"`mat_a` must be a floating dtype, got {mat_a.dtype}",
+        )
+        utils.check(
+            utils.is_integer_dtype(offs.dtype),
+            lambda: f"`offs` must be integers, got {offs.dtype}",
+        )
+        utils.check_same_device(mat_a, mat_b)
+
+        target_dtype = to_dtype(output_dtype) if output_dtype is not None else mat_a.dtype
+        return TensorProxy(like=mat_a, shape=out_shape, dtype=target_dtype)
+
+
 @torchsymbol(torch.logsumexp, is_method=True)
 def logsumexp(a: TensorLike, /, dim: int | Sequence[int], keepdim: bool = False) -> TensorLike:
     input_max = amax(a, dim, keepdim=True)
