@@ -5821,6 +5821,32 @@ if LooseVersion(torch.__version__) >= "2.8":
         return prims._grouped_mm(a, b, offsets)
 
 
+if hasattr(torch.nn.functional, "scaled_grouped_mm"):
+
+    @torchsymbol(torch.nn.functional.scaled_grouped_mm, is_method=False, is_prim=True)
+    def scaled_grouped_mm(
+        a: TensorProxy,
+        b: TensorProxy,
+        scale_a: TensorProxy,
+        scale_b: TensorProxy,
+        offsets: None | TensorProxy = None,
+        bias: None | TensorProxy = None,
+        scale_result: None | TensorProxy = None,
+        out_dtype: None | dtypeLike = None,
+    ) -> TensorProxy:
+        utils.check(bias is None, lambda: "`bias` is not supported yet.")
+        utils.check(scale_result is None, lambda: "`scale_result` is not supported yet.")
+        utils.check(
+            a.ndim in (2, 3) and b.ndim in (2, 3),
+            lambda: f"a and b are expected to be 2D or 3D but {a.ndim=} dims and b has {b.ndim=}",
+        )
+        # Uses the primitive implementation
+        out_dtype_thunder = to_dtype(out_dtype) if out_dtype is not None else None
+        return prims.scaled_grouped_mm(
+            a, b, scale_a, scale_b, offsets=offsets, bias=bias, scale_result=scale_result, out_dtype=out_dtype_thunder
+        )
+
+
 @torchsymbol(torch.logsumexp, is_method=True)
 def logsumexp(a: TensorLike, /, dim: int | Sequence[int], keepdim: bool = False) -> TensorLike:
     input_max = amax(a, dim, keepdim=True)
