@@ -8,6 +8,8 @@ from thunder.core.pytree import tree_map, tree_flatten
 from thunder.core.proxies import TensorProxy
 from thunder.core.symbol import BoundSymbolInterface, Symbol
 from thunder.core.transforms import construct_trace, eval_trace
+from thunder.core.transform_common import Transform
+from thunder.core.trace import TraceProvenance, from_trace
 from thunder.clang import (
     maybe_convert_to_dtype,
 )
@@ -237,6 +239,43 @@ def autocast(func: Callable, dtype: dtypes.dtype):
         return eval_trace(trace, *args, **kwargs, symbol_mapper=partial(autocast_symbol_mapper, dtype=dtype))
 
     return wrapper
+
+
+class AutocastTransform(Transform):
+    """Transform that applies autocast to certain operations.
+
+    Args:
+        dtype: The data type to cast to if they are `dtypes.float32`.
+    """
+
+    def __init__(self, dtype: dtypes.dtype):
+        if not isinstance(dtype, dtypes.dtype):
+            raise ValueError(f"`dtype` is expected to be `thunder.dtype.dtype` but {type(dtype)}")
+        _check_valid_autocast_dtype(dtype)
+        self.dtype = dtype
+
+    def transform_traces_pre_prologue(self, prologue_trace, computation_trace, epilogue_trace, **kwargs):
+        """Transform the computation trace to apply autocast rules.
+
+        This applies autocast rules to eligible operations in the computation trace.
+        The prologue and epilogue traces are left unchanged.
+        """
+        new_computation_trace = from_trace(computation_trace)
+        new_bound_symbols = []
+
+        for bsym in computation_trace.bound_symbols:
+            autocast_impl = _maybe_get_autocast_rule_for_symbol(bsym.sym)
+            if autocast_impl is not None:
+                with disable_autocast():
+                    new_bsym = bsym.from_bsym(sym=partial(autocast_impl, dtype=self.dtype), subsymbols=[])
+                new_bound_symbols.append(new_bsym)
+            else:
+                new_bound_symbols.append(bsym.from_bsym())
+
+        new_computation_trace.bound_symbols = new_bound_symbols
+        new_computation_trace.set_provenance(TraceProvenance("Autocast Transform"))
+
+        return prologue_trace, new_computation_trace, epilogue_trace
 
 
 # State to enable and disable autocast (while interpreter is generating the computation trace).
