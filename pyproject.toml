@@ -159,7 +159,6 @@ ignore = [
     "E402",  # https://docs.astral.sh/ruff/rules/module-import-not-at-top-of-file/
     "F405",  # https://docs.astral.sh/ruff/rules/undefined-local-with-import-star-usage/
     "E712",  # https://docs.astral.sh/ruff/rules/true-false-comparison/
-    "E721",  # https://docs.astral.sh/ruff/rules/type-comparison/
 ]
 
 [tool.ruff.lint.per-file-ignores]
