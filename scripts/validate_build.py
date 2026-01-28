@@ -12,7 +12,7 @@ def main():
     actual = os.path.abspath(torch.__file__)
     assert expected == actual, f"{expected} vs. {actual}"
 
-    import nvfuser
+    import nvfuser_direct as nvfuser
     from looseversion import LooseVersion
 
     assert LooseVersion(nvfuser.version()) >= LooseVersion("0.0.6"), nvfuser.version()
