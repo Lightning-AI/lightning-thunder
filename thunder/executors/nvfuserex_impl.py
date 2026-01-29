@@ -71,24 +71,16 @@ from thunder.executors.nvfuserex import nvfuser_version
 # NOTE This impl file is here because nvFuser may not be available, so it's imported conditionally
 #   by nvfuserex.py when nvFuser is available.
 
-DIRECT_BINDINGS_SUPPORTED_VERSION = LooseVersion("0.2.34")
 DTENSOR_SUPPORTED_VERSION = LooseVersion("0.2.28")
-if nvfuser_version() >= DIRECT_BINDINGS_SUPPORTED_VERSION:
-    import nvfuser_direct as nvfuser
-    from nvfuser_direct import (
-        DataType,
-        FusionDefinition,
-        multidevice,
-        ParallelType,
-        execute_with_dtensors,
-        compute_tensor_descriptor as nv_compute_td,
-    )
-else:
-    if nvfuser_version() >= DTENSOR_SUPPORTED_VERSION:
-        from nvfuser_direct import FusionDefinition as DirectFusionDefinition
-        from nvfuser_direct import multidevice, ParallelType, execute_with_dtensors
-    import nvfuser
-    from nvfuser import DataType, FusionDefinition, compute_tensor_descriptor as nv_compute_td
+import nvfuser_direct as nvfuser
+from nvfuser_direct import (
+    DataType,
+    FusionDefinition,
+    multidevice,
+    ParallelType,
+    execute_with_dtensors,
+    compute_tensor_descriptor as nv_compute_td,
+)
 
 #
 # Helper functions
@@ -394,7 +386,7 @@ def create_fd(
             lambda: "nvfuser: Expected runtime and tracing metadata to be the same for DTensor.",
         )
 
-        fd = FusionDefinition() if nvfuser_version() >= DIRECT_BINDINGS_SUPPORTED_VERSION else DirectFusionDefinition()
+        fd = FusionDefinition()
         # Device may be set in one of the "factory" methods like full, iota, or uniform
         # NOTE: This should be called before defining because a factory method may look-up at `_selected_device` while being defined.
         fd._selected_device = None

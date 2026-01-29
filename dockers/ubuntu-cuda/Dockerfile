@@ -158,5 +158,5 @@ RUN \
     pip list && \
     python -c "import sys; ver = sys.version_info ; assert f'{ver.major}.{ver.minor}' == '$PYTHON_VERSION', ver" && \
     python -c "import torch; print(f'PyTorch=={torch.__version__} with {torch.cuda.device_count()} GPUs')" && \
-    python -c "import nvfuser; print(f'nvFuser=={nvfuser.version()}')" && \
+    python -c "import nvfuser_direct as nvfuser; print(f'nvFuser=={nvfuser.version()}')" && \
     python -c "import triton; print(f'Triton=={triton.__version__}')"

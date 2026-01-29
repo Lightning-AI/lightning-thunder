@@ -18,23 +18,12 @@ def nvfuser_version() -> LooseVersion | None:
     try:
         import nvfuser_direct
     except ImportError:
-        try:
-            import nvfuser
-        except ImportError:
-            pass
-        else:
-            if hasattr(nvfuser, "version"):
-                return LooseVersion(nvfuser.version())
-            else:
-                # NOTE: This import of nvFuser may or may not have version info
-                return LooseVersion("0.0.0")
+        return None
     else:
         if hasattr(nvfuser_direct, "version"):
             return LooseVersion(nvfuser_direct.version())
         else:
             return LooseVersion("0.0.0")
-    # NOTE This occurs when nvFuser couldn't be imported
-    return None
 
 
 def required_nvfuser_version() -> LooseVersion:
