@@ -206,7 +206,7 @@ This will print the following::
   # cuda version: 12.1
   # nvfuser version: 0.2.8
   import torch
-  from nvfuser import FusionDefinition, DataType
+  from nvfuser_direct import FusionDefinition, DataType
 
   def nvfuser_fusion_id0(fd : FusionDefinition) -> None :
       T0 = fd.define_tensor(shape=[-1, -1], contiguity=[True, True], dtype=DataType.Float, is_cpu=False, stride_order=[1, 0])
