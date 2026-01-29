@@ -386,7 +386,7 @@ def create_fd(
             lambda: "nvfuser: Expected runtime and tracing metadata to be the same for DTensor.",
         )
 
-        fd = FusionDefinition() if nvfuser_version() >= DIRECT_BINDINGS_SUPPORTED_VERSION else DirectFusionDefinition()
+        fd = FusionDefinition()
         # Device may be set in one of the "factory" methods like full, iota, or uniform
         # NOTE: This should be called before defining because a factory method may look-up at `_selected_device` while being defined.
         fd._selected_device = None
