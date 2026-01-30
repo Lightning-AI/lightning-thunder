@@ -24,7 +24,7 @@ repos:
       - id: detect-private-key
 
   - repo: https://github.com/asottile/pyupgrade
-    rev: v3.21.0
+    rev: v3.21.2
     hooks:
       - id: pyupgrade
         args: ["--py310-plus"]
@@ -39,7 +39,7 @@ repos:
         #args: ["--write-changes"] # uncomment if you want to get automatic fixing
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.14.0
+    rev: v0.14.14
     hooks:
       - id: ruff-check
         args: ["--fix"]
@@ -48,7 +48,7 @@ repos:
         exclude: "examples"
 
   - repo: https://github.com/executablebooks/mdformat
-    rev: 0.7.22
+    rev: 1.0.0
     hooks:
       - id: mdformat
         additional_dependencies:
@@ -58,12 +58,12 @@ repos:
         exclude: "examples"
 
   - repo: https://github.com/sphinx-contrib/sphinx-lint
-    rev: v1.0.0
+    rev: v1.0.2
     hooks:
       - id: sphinx-lint
 
   - repo: https://github.com/JoC0de/pre-commit-prettier
-    rev: b3e25fa39aa676c36bc18eb9eae6f26d9bb63f39 # v3.6.2 using SHA as tags are not persistent
+    rev: v3.8.1 # v3.6.2 using SHA as tags are not persistent
     hooks:
       - id: prettier
         files: \.(json|yml|yaml|toml)
