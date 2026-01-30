@@ -42,6 +42,7 @@ op_skip = {
     "index_select",
     # Finite difference approximation doesn't work for this function
     "embedding",
+    "setitem",
     "index_put",
     "batch_norm",
     "instance_norm",
@@ -687,6 +688,48 @@ def test_vjp_correctness_embedding_manual(op, device, dtype, executor, comp):
         assert gindices is None, "gindices should be None"
         comp(gweight, expected[0])
         comp(actual_out, out)
+
+
+@ops((get_opinfo("setitem"),), supported_dtypes=(dtypes.float64,))
+def test_vjp_correctness_setitem_manual(op, device, dtype, executor, comp):
+    for sample in op.sample_inputs(device, dtype, requires_grad=True):
+
+        def torch_reference(tensor, idx, value):
+            cloned = tensor * 1
+            op.torch_reference(cloned, idx, value)
+            return cloned
+
+        def op_fn(tensor, idx, value):
+            cloned = tensor * 1
+            op.op(cloned, idx, value)
+            return cloned
+
+        tensor, key, value = sample.args
+        assert not sample.kwargs
+
+        tensor_ref = tensor.detach().clone().requires_grad_(True)
+        out = torch_reference(tensor_ref, key, value)
+        v = make_tensor_like(out)
+        expected = torch.autograd.grad(out, (tensor_ref, value), v)
+
+        flat_op, flat_args, spec = flatten_func(op_fn, (tensor, key, value), {})
+
+        t_key = key if isinstance(key, tuple) else (key,)
+        if any(isinstance(k, (torch.Tensor, Sequence)) and torch.tensor(k).dtype == torch.bool for k in t_key):
+            with pytest.raises(NotImplementedError):
+                vjp(flat_op)(flat_args, (v,))
+            continue
+
+        initial_trace = thunder.trace()(vjp(flat_op), flat_args, (v,))
+        jfn = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)
+        actual_out, actual_grad = jfn(flat_args, (v,))
+
+        # With advanced indexing, an element may be assigned multiple times and the assignment order is not guaranteed.
+        # comp(actual_out, out)
+
+        comp(tensor, tensor_ref)
+        comp(actual_grad[0], expected[0])
+        comp(actual_grad[-1], expected[1])
 
 
 @ops((op for op in opinfos if op.name == "type_as"), supported_dtypes=(dtypes.float64,))
