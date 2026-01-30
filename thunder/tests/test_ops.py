@@ -7,6 +7,15 @@ import pytest
 import torch
 from torch.testing import assert_close
 
+HAS_SCALED_GROUPED_MM = hasattr(torch.nn.functional, "scaled_grouped_mm")
+
+if HAS_SCALED_GROUPED_MM:
+    from torch.nn.functional import ScalingType, SwizzleType
+    from torch.testing._internal.common_cuda import (
+        PLATFORM_SUPPORTS_FP8_GROUPED_GEMM,
+        PLATFORM_SUPPORTS_MXFP8_GROUPED_GEMM,
+    )
+    from torch.testing._internal.common_quantized import to_blocked, to_mxfp
 if hasattr(torch.nn.functional, "scaled_mm"):
     from torch.nn.functional import ScalingType, SwizzleType
 
@@ -421,6 +430,165 @@ def test_exponential():
 
         assert_close(a, a_ref)
         assert_close(b, b_ref)
+
+
+if HAS_SCALED_GROUPED_MM:
+    # NOTE: The following tests exercise torch.nn.functional.scaled_grouped_mm via Thunder.
+    # They validate that the Thunder tracing mirrors eager execution for representative 2D/2D
+    # and 2D/3D grouped matmul shapes that correspond to the accepted combinations in
+    # thunder.core.prims._grouped_mm_meta. These scenarios mirror the small tensor smoke tests
+    # in PyTorch's scaled matmul CUDA suite ([pytorch/test_scaled_matmul_cuda.py](https://github.com/pytorch/pytorch/blob/2f023bf7/test/test_scaled_matmul_cuda.py)).
+    F8_GROUPED_MSG = "FP8 grouped is only supported on SM90 and MI300+ devices"
+    MXFP8_GROUPED_MSG = "MXFP8 grouped GEMM is only supported when PyTorch is built with USE_FBGEMM_GENAI=1 on SM100+"
+
+    @requiresCUDA
+    @pytest.mark.parametrize(
+        "group_sizes,k,n",
+        [
+            ([8, 8], 16, 16),
+            ([16, 16], 16, 16),
+        ],
+    )
+    def test_scaled_grouped_mm_2d3d_rowwise(group_sizes, k, n):
+        """Test 2D x 3D grouped matmul with various dimensions."""
+        if not bool(PLATFORM_SUPPORTS_FP8_GROUPED_GEMM):
+            pytest.skip(F8_GROUPED_MSG)
+        device = "cuda"
+        groups = len(group_sizes)
+        total_rows = sum(group_sizes)
+
+        mat_a = torch.randn(total_rows, k, device=device, dtype=torch.bfloat16).to(torch.float8_e4m3fn)
+        mat_b = torch.randn(groups, n, k, device=device, dtype=torch.bfloat16).to(torch.float8_e4m3fn)
+        offs = torch.tensor(group_sizes, device=device, dtype=torch.int32).cumsum(0, dtype=torch.int32)
+        scale_a = torch.ones(total_rows, device=device, dtype=torch.float32)
+        scale_b = torch.ones(groups, n, device=device, dtype=torch.float32)
+
+        def fn(a, b, scale_a, scale_b, offs):
+            return torch.nn.functional.scaled_grouped_mm(
+                a,
+                b.transpose(-2, -1),
+                scale_a,
+                ScalingType.RowWise,
+                scale_b,
+                ScalingType.RowWise,
+                offs=offs,
+                output_dtype=torch.bfloat16,
+            )
+
+        eager = fn(mat_a, mat_b, scale_a, scale_b, offs)
+        jitted = thunder.jit(fn)
+        result = jitted(mat_a, mat_b, scale_a, scale_b, offs)
+
+        torch.testing.assert_close(result, eager)
+        assert_consistency_of_compiletime_and_runtime(jitted, result)
+
+    @requiresCUDA
+    @pytest.mark.parametrize(
+        "group_sizes,m,k,n",
+        [
+            ([8, 8], 16, 32, 16),  # k != n to catch the dimension check bug
+            ([8, 8], 16, 16, 16),  # k == n edge case
+        ],
+    )
+    def test_scaled_grouped_mm_3d2d_rowwise(group_sizes, m, k, n):
+        """Test 3D x 2D grouped matmul with various dimensions.
+
+        Note: k != n in first test case specifically catches the bug where
+        mat_a.shape[2] was incorrectly compared with mat_b.shape[1].
+        """
+        if not bool(PLATFORM_SUPPORTS_FP8_GROUPED_GEMM):
+            pytest.skip(F8_GROUPED_MSG)
+        device = "cuda"
+        groups = len(group_sizes)
+
+        mat_a = torch.randn(groups, m, k, device=device, dtype=torch.bfloat16).to(torch.float8_e4m3fn)
+        mat_b = torch.randn(n, k, device=device, dtype=torch.bfloat16).to(torch.float8_e4m3fn)
+        offs = torch.tensor(group_sizes, device=device, dtype=torch.int32).cumsum(0, dtype=torch.int32)
+        scale_a = torch.ones(groups, m, device=device, dtype=torch.float32)
+        scale_b = torch.ones(n, device=device, dtype=torch.float32)
+
+        def fn(a, b, scale_a, scale_b, offs):
+            return torch.nn.functional.scaled_grouped_mm(
+                a,
+                b.transpose(-2, -1),
+                scale_a,
+                ScalingType.RowWise,
+                scale_b,
+                ScalingType.RowWise,
+                offs=offs,
+                output_dtype=torch.bfloat16,
+            )
+
+        eager = fn(mat_a, mat_b, scale_a, scale_b, offs)
+        jitted = thunder.jit(fn)
+        result = jitted(mat_a, mat_b, scale_a, scale_b, offs)
+
+        torch.testing.assert_close(result, eager)
+        assert_consistency_of_compiletime_and_runtime(jitted, result)
+
+    @requiresCUDA
+    def test_scaled_grouped_mm_2d2d_mxfp8_blockwise():
+        if not bool(PLATFORM_SUPPORTS_MXFP8_GROUPED_GEMM):
+            pytest.skip(MXFP8_GROUPED_MSG)
+
+        device = "cuda"
+        torch.manual_seed(0)
+
+        group_sizes = [64, 32]
+        m = 128
+        n = 96
+        total_k = sum(group_sizes)
+
+        raw_offs = torch.tensor(group_sizes, device=device, dtype=torch.int32)
+        offs = torch.cumsum(raw_offs, dim=0, dtype=torch.int32)
+
+        def round_up(x: int, y: int) -> int:
+            return ((x + y - 1) // y) * y
+
+        def quantize_to_mxfp8(mat: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+            segments: list[torch.Tensor] = []
+            scale_segments: list[torch.Tensor] = []
+            start = 0
+            for end in offs.tolist():
+                segment = mat[:, start:end].contiguous()
+                scale, lowp = to_mxfp(segment, format="mxfp8")
+                scale_segments.append(to_blocked(scale))
+                segments.append(lowp)
+                start = end
+            lowp_full = torch.cat(segments, dim=1)
+            rows_rounded = round_up(mat.shape[0], 128)
+            scale_full = torch.cat(scale_segments, dim=0).reshape(rows_rounded, -1)
+            return lowp_full, scale_full
+
+        mat_a_hp = torch.randn(m, total_k, device=device, dtype=torch.bfloat16) * 0.1
+        mat_b_hp = torch.randn(n, total_k, device=device, dtype=torch.bfloat16) * 0.01
+
+        mat_a_lp, scale_a = quantize_to_mxfp8(mat_a_hp)
+        mat_b_lp_rows, scale_b = quantize_to_mxfp8(mat_b_hp)
+        mat_b_lp = mat_b_lp_rows.transpose(0, 1)
+
+        swizzle = SwizzleType.SWIZZLE_32_4_4 if torch.version.cuda else SwizzleType.NO_SWIZZLE
+
+        def fn(mat_a, mat_b, scale_a, scale_b, offs):
+            return torch.nn.functional.scaled_grouped_mm(
+                mat_a,
+                mat_b,
+                scale_a,
+                ScalingType.BlockWise1x32,
+                scale_b,
+                ScalingType.BlockWise1x32,
+                swizzle_a=swizzle,
+                swizzle_b=swizzle,
+                offs=offs,
+                output_dtype=torch.bfloat16,
+            )
+
+        eager = fn(mat_a_lp, mat_b_lp, scale_a, scale_b, offs)
+        jitted = thunder.jit(fn)
+        result = jitted(mat_a_lp, mat_b_lp, scale_a, scale_b, offs)
+
+        torch.testing.assert_close(result, eager)
+        assert_consistency_of_compiletime_and_runtime(jitted, result)
 
 
 def _cuda_version_tuple() -> tuple[int, int] | None:
