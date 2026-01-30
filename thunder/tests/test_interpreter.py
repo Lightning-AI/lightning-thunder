@@ -272,14 +272,14 @@ def test_dunder_bool_instance(jit):
     bx = bool(x)
     jitting = True
     jbx = jit(bool)(x)
-    assert bx == jbx == False
+    assert bx == jbx is False
 
     x.__bool__ = lambda: True  # dunder methods use class attribute, not instance attribute.
     jitting = False
     bx = bool(x)
     jitting = True
     jbx = jit(bool)(x)
-    assert bx == jbx == False
+    assert bx == jbx is False
 
 
 def test_function_call(jit):
@@ -628,9 +628,9 @@ def test_bare_except(jit):
             assert is_jitting_with_raise() == jitting
             return True
 
-    assert bare_except() == True
+    assert bare_except()
     jitting = True
-    assert jit(bare_except)() == True
+    assert jit(bare_except)()
 
 
 def test_trivial_try_finally(jit):
@@ -640,7 +640,7 @@ def test_trivial_try_finally(jit):
         finally:
             return True
 
-    assert jit(trivial_try_finally)() == True
+    assert jit(trivial_try_finally)()
 
 
 def test_try_finally(jit):
@@ -653,7 +653,7 @@ def test_try_finally(jit):
         finally:
             return var
 
-    assert jit(try_finally)() == True
+    assert jit(try_finally)()
 
 
 def test_match_exception(jit):
@@ -664,7 +664,7 @@ def test_match_exception(jit):
         except error_set:
             return True
 
-    assert jit(match_exception)() == True
+    assert jit(match_exception)()
 
 
 def test_match_as(jit):
@@ -741,7 +741,7 @@ def test_nested_try_except(jit):
                 pass
             return True
 
-    assert jit(nested_try_except)() == True
+    assert jit(nested_try_except)()
 
 
 def test_inner_nested_try_except(jit):
@@ -755,7 +755,7 @@ def test_inner_nested_try_except(jit):
             return False
         return True
 
-    assert jit(inner_nested_try_except)() == True
+    assert jit(inner_nested_try_except)()
 
 
 def test_cross_function_exceptions(jit):
@@ -779,9 +779,9 @@ def test_cross_function_exceptions(jit):
             return True
 
     jitting = False
-    assert cross_function_exceptions() == True
+    assert cross_function_exceptions()
     jitting = True
-    assert jit(cross_function_exceptions)() == True
+    assert jit(cross_function_exceptions)()
 
 
 def test_stop_exception_no_leak(jit):
