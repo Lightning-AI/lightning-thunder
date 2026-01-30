@@ -203,7 +203,7 @@ def test_cache_basic():
     def foo(a, b):
         return a + b
 
-    jfoo = thunder_jit(foo)
+    jfoo = thunder_jit(foo, cache="constant values")
 
     a = torch.randn((2, 2), device="cpu")
     b = torch.randn((2, 2), device="cpu")
@@ -1522,7 +1522,8 @@ def test_cpp_property():
     assert fn() == thunder_jit(fn)()
 
 
-def test_failing_prologue_in_last_prologue_traces():
+@pytest.mark.parametrize("cache_option", (CACHE_OPTIONS.CONSTANT_VALUES, CACHE_OPTIONS.SYMBOLIC_VALUES))
+def test_failing_prologue_in_last_prologue_traces(cache_option):
     # we know that this will fail in the prologue
     i = 0
 
@@ -1531,8 +1532,12 @@ def test_failing_prologue_in_last_prologue_traces():
         i += 1
         return i
 
-    jfn = thunder_jit(fn)
-    with pytest.raises(RuntimeError, match="Expected 1 to be equal to and have the type of 0"):
+    jfn = thunder_jit(fn, cache=cache_option)
+    if cache_option == CACHE_OPTIONS.CONSTANT_VALUES:
+        message = "Expected 1 to be equal to and have the type of 0"
+    else:
+        message = "Expected \\[IntegerProxy name=i1, value=1, static=CONSTRAINT.CONSTRAINABLE\\] to be an instance of one of \\(<class 'int'>,\\)"
+    with pytest.raises(RuntimeError, match=message):
         jfn()
 
     # make sure that we have prologue traces in the last_prologue_traces

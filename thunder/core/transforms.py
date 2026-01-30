@@ -3031,10 +3031,24 @@ def vjp_call(primals, cotangents, trace: Trace, **kwargs):
         primals = (primals,)
 
     result, env = augmented_forward_pass(*primals, trace=trace, **kwargs)
-    check(
-        len(result) == len(cotangents) if isinstance(result, Sequence) else True,
-        lambda: f"Expected cotangents to be a sequence of length {len(result)}, got a sequence of length {len(cotangents)}",
-    )
+
+    if cotangents is None:
+
+        def ones_like(x):
+            if isinstance(x, TensorProxy):
+                return full_like(x, fill_value=1)
+            elif isinstance(x, NumberProxy):
+                return type(x.value)(1)
+            else:
+                return None
+
+        cotangents = tree_map(lambda v: ones_like(v), result)
+    else:
+        check(
+            len(result) == len(cotangents) if isinstance(result, Sequence) else True,
+            lambda: f"Expected cotangents to be a sequence of length {len(result)}, got a sequence of length {len(cotangents)}",
+        )
+
     return result, backward_pass(env, trace, cotangents)
 
 
@@ -3075,18 +3089,8 @@ def value_and_grad(func):
         func (Callable): Function to be differentiated.
     """
 
-    def ones_like(x):
-        if isinstance(x, TensorProxy):
-            return full_like(x, fill_value=1)
-        elif isinstance(x, NumberProxy):
-            return type(x.value)(1)
-        else:
-            return None
-
     def _value_and_grad(*args, **kwargs):
-        trace = construct_trace()(func, *args, **kwargs)
-        cotangents = tree_map(lambda v: ones_like(v), trace.output)
-        return vjp(func)(args, cotangents, **kwargs)
+        return vjp(func)(args, None, **kwargs)
 
     return _value_and_grad
 
