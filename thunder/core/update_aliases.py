@@ -144,9 +144,6 @@ def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[li
     if not any(_is_inplace_op(bsym) for bsym in computation_trace.bound_symbols):
         return computation_trace
 
-    swap_map = dict()
-    bsyms = []
-
     # First pass: identify inputs which are views of each other and swap them out with a default,
     # reshaping if necessary.
     computation_trace, view_groups = replace_args_with_alias_map(computation_trace, alias_tensor_indices)
@@ -173,10 +170,17 @@ def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[li
     view_groups = [group for group in view_groups if len(group.intersection(inplace_inputs)) != 0]
     viewed = set(reduce(set.union, view_groups, set()))
 
+    swap_map = dict()
+    swap_map_by_update_aliases = dict()
+    bsyms = []
+
     # Third pass: insert alias updates
     for bsym in computation_trace.bound_symbols:
+        bsym = bsym.from_bsym_swap_proxies(swap_map)
         in_tensors = list(map(variableify, filter(lambda p: isinstance(p, TensorProxy), bsym.flat_proxy_args)))
-        unswapped_in_tensors = _unswap(swap_map, in_tensors)
+        # We do not unswap out_tensor of an inplace bsym into in_tensor, because functional dependency is already
+        # captured by that reference to out_tensor
+        unswapped_in_tensors = _unswap(swap_map_by_update_aliases, in_tensors)
         if (
             _is_inplace_op(bsym)
             or _is_view_creation_op(bsym)
@@ -189,10 +193,17 @@ def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[li
                 in_tensors = set(in_tensors)
             out_tensors = set(map(variableify, filter(lambda p: isinstance(p, TensorProxy), bsym.flat_proxy_outs)))
             encountered.update(in_tensors)
-            group = set().union(*filter(lambda g: g.intersection(unswapped_in_tensors), view_groups))
-            if not group or not (views_encountered := group.intersection(encountered)):
-                # If group is empty, this is a view creation with operands that are not involved in any inplace ops.
-                bsyms.append(bsym.from_bsym_swap_proxies(swap_map, skip_output=True))
+            involved_view_groups = [g for g in view_groups if g.intersection(unswapped_in_tensors)]
+            involved_views = set().union(*involved_view_groups)
+            views_encountered = tuple(involved_views.intersection(encountered))
+
+            if _is_inplace_op(bsym):
+                # This is a hack to insert fusion break because nvFuser doesn't support mutation on intermediates
+                views_encountered = tuple(unswapped_in_tensors.union(views_encountered))
+
+            if not views_encountered:
+                # This is a view creation with operands that are not involved in any inplace ops.
+                bsyms.append(bsym)
                 continue
 
             new_aliases = _get_new_aliases(views_encountered, computation_trace)
@@ -202,14 +213,17 @@ def insert_alias_updates(computation_trace: Trace, alias_tensor_indices: list[li
             if has_tags(bsym, {BoundSymbolTag.BACKWARD}):
                 update_bsym.tags.add(BoundSymbolTag.BACKWARD)
             bsyms.append(update_bsym)
-            encountered.update(out_tensors)
+            encountered.update(out_tensors, map(variableify, new_aliases))
             bsyms.append(new_bsym)
             if _is_inplace_op(bsym) and len(out_tensors) == 1 and len(in_tensors) == 1:
                 #  This relies on these being one element sets (ltorch.setitem_ yields no outs).
                 swap_map = _update_swap_map(swap_map, in_tensors.pop(), unvariableify(out_tensors.pop()))
 
+            for alias, new_alias in zip(views_encountered, new_aliases):
+                _update_swap_map(swap_map_by_update_aliases, alias, new_alias)
+
         else:
-            bsyms.append(bsym.from_bsym_swap_proxies(swap_map))
+            bsyms.append(bsym)
 
     alias_updated_trace = from_trace(computation_trace)
     alias_updated_trace.set_provenance(TraceProvenance("Update aliases for in-place ops"))
