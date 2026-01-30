@@ -726,8 +726,8 @@ def test_raise_from_external(jit):
         jit(raise_from_external)()
 
     e = excinfo.value
-    assert type(e) == ValueError
-    assert type(e.__cause__) == IndexError and msg in str(e.__cause__), excinfo.value
+    assert type(e) is ValueError
+    assert type(e.__cause__) is IndexError and msg in str(e.__cause__), excinfo.value
 
 
 def test_nested_try_except(jit):

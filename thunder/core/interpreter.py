@@ -1658,7 +1658,7 @@ def _object_getattribute_lookaside(obj: Any, name: str):
         # been manually assigned) Python appears to reinterpret it as a simple dict for the purpose of
         # attribute resolution.
         # we avoid interpreting into dict.get if obj_dict is a plain dict to avoid creating a wrapper for it.
-        if type(uobj_dict) == dict:
+        if type(uobj_dict) is dict:
             instance_value = uobj_dict.get(name, null)
         else:
             instance_value = _interpret_call_with_unwrapping(dict.get, obj_dict, name, null)
@@ -5333,13 +5333,13 @@ def _make_function_handler(
 
     if flag & 0x02:
         kwdefaults = stack.pop()
-        assert type(kwdefaults) == dict
+        assert type(kwdefaults) is dict
     else:
         kwdefaults = None
 
     if flag & 0x01:
         argdefs = stack.pop()
-        assert type(argdefs) == tuple
+        assert type(argdefs) is tuple
     else:
         argdefs = None
 
@@ -5427,14 +5427,14 @@ def _set_function_attribute_handler(
 
     if flag == 0x02:
         kwdefaults = stack.pop()
-        assert type(kwdefaults) == dict
+        assert type(kwdefaults) is dict
         fn.__kwdefaults__ = kwdefaults
         stack.append(fn)
         return
 
     if flag == 0x01:
         argdefs = stack.pop()
-        assert type(argdefs) == tuple
+        assert type(argdefs) is tuple
         fn.__defaults__ = argdefs
         stack.append(fn)
         return
