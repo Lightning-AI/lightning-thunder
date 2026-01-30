@@ -71,7 +71,7 @@ from thunder.executors.nvfuserex import nvfuser_version
 # NOTE This impl file is here because nvFuser may not be available, so it's imported conditionally
 #   by nvfuserex.py when nvFuser is available.
 
-DIRECT_BINDINGS_SUPPORTED_VERSION = LooseVersion("0.2.34")
+DIRECT_BINDINGS_SUPPORTED_VERSION = LooseVersion("0.2.35")
 DTENSOR_SUPPORTED_VERSION = LooseVersion("0.2.28")
 if nvfuser_version() >= DIRECT_BINDINGS_SUPPORTED_VERSION:
     import nvfuser_direct as nvfuser
@@ -298,6 +298,17 @@ def multidevice_schedule(fd: FusionDefinition, in_dtensors: list[Proxy]) -> None
             in_tv.set_allocation_domain(in_tv.get_loop_domain(), new_contiguity=True)
 
 
+# This function wraps nvfuser_direct's LruFusionCache with a version check.
+def FusionCacheDecorator(func: callable):
+    # For legacy bindings, the decorator does nothin.
+    if nvfuser_version() < DIRECT_BINDINGS_SUPPORTED_VERSION:
+        return func
+    from nvfuser_direct import LruFusionCache
+
+    return LruFusionCache(max_fusions=16384)(func)
+
+
+@FusionCacheDecorator
 def create_fd(
     bsyms: list[BoundSymbol],
     input_descriptors: Sequence[type | tuple[tuple[int, ...], tuple[bool, ...], tuple[int, ...]]],
