@@ -436,9 +436,8 @@ def elementwise_unary_generator(
     )
 
     shapes = (
-        # TODO: restore size zero cases
-        # (0, 2, 1),
-        # (5, 0, 3),
+        (0, 2, 1),
+        (5, 0, 3),
         (),
         (11,),
         (4, 4),
