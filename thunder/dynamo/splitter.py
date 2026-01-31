@@ -3,6 +3,7 @@ import operator
 from typing import TYPE_CHECKING
 import copy
 from functools import partial
+import itertools
 
 import torch
 from torch.fx.passes.split_module import split_module
@@ -45,6 +46,19 @@ def _preprocess_cuda_stream_objects(gm: GraphModule) -> None:
             example_value = node.meta["example_value"]
             if isinstance(example_value, torch.cuda.Stream):
                 node.meta["example_value"] = None
+
+
+def _copy_without_tensors(module: torch.nn.Module) -> torch.nn.Module:
+    """Clone a ``torch.nn.Module`` while sharing parameter and buffer tensors.
+
+    ``copy.deepcopy`` on a ``GraphModule`` duplicates all parameters and buffers,
+    which can be extremely costly for large models.  By populating the ``memo``
+    argument with those tensors, we ensure the cloned module reuses the original
+    storage, dramatically reducing memory overhead during splitting.
+    """
+
+    memo = {id(t): t for t in itertools.chain(module.parameters(), module.buffers())}
+    return copy.deepcopy(module, memo)
 
 
 def _splitter(
@@ -198,8 +212,8 @@ def _splitter(
         split_gm.graph.output(())
 
     # If split_gm contains Parameters or Tensors then deepcopy would also create their copies.
-    # TODO: Eliminate deepcopy
-    original_split_gm = copy.deepcopy(split_gm)
+    # To avoid duplicating model weights, perform a deepcopy that shares tensors.
+    original_split_gm = _copy_without_tensors(split_gm)
 
     def is_thunder_supported_partition(node: torch.fx.Node) -> bool:
         return node.name.startswith("submod") and int(node.name.replace("submod_", "")) in supported_partitions
