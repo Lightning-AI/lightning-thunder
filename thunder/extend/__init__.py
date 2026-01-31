@@ -555,12 +555,16 @@ def get_always_executors() -> tuple[Executor, ...]:
     return tuple(_always_executors)
 
 
-def get_executor(name: Any) -> None | Executor:
+def get_executor(name: Any, verbose: bool = False) -> None | Executor:
     ex: Executor
     for ex in get_all_executors():
         if ex.name == name:
             return ex
 
+    if verbose:
+        raise ValueError(
+            f"No executor found with name '{name}'. Registered executors: {[e.name for e in get_all_executors()]}"
+        )
     return None
 
 
@@ -626,27 +630,15 @@ def resolve_executors(executors: None | Sequence[Executor | str]) -> tuple[Execu
     if executors is None:
         return get_default_executors()
 
-    failed_executors: list[str] = []
     resolved_executors: list[Executor] = []
     for e in executors:
         if isinstance(e, str):
-            ex = get_executor(e)
-            if not ex:
-                failed_executors.append(e)
-                continue
-            else:
-                resolved_executors.append(ex)
-        elif not isinstance(e, Executor):
-            raise ValueError(f"An object of type {type(e)} is not a valid Executor. Executor list: {executors}")
-        else:
+            ex = get_executor(e, verbose=True)
+            resolved_executors.append(ex)
+        elif isinstance(e, Executor):
             resolved_executors.append(e)
-
-    if failed_executors:
-        raise ValueError(
-            f"Expected an Executor or the name of a registered Executor, instead got: {failed_executors[0] if len(failed_executors) == 1 else failed_executors}"
-            + os.linesep
-            + f"Registered executors: {get_all_executors()}"
-        )
+        else:
+            raise ValueError(f"An object of type {type(e)} is not a valid Executor. Executor list: {executors}")
 
     return tuple(resolved_executors)
 
