@@ -776,7 +776,7 @@ def test_sdpa(
 
 
 @instantiate(
-    dtypes=(thunder.float32,),
+    dtypes=(thunder.float32, thunder.float16, thunder.bfloat16),
     devicetypes=(devices.DeviceType.CUDA,),
     executors=(nvFuserExecutor,),
     decorators=(pytest.mark.parametrize("ignore_index", [-100, -10]),),
