@@ -404,6 +404,6 @@ Thunder is fast. Here are the speed-ups obtained on a pre-training task using Li
 # Community
 
 Thunder is an open source project, developed in collaboration with the community with significant contributions from NVIDIA.
-
+⚡️ [Docs on Contributing to Thunder](https://lightning.ai/docs/thunder/latest/advanced/contrib_thunder.html)
 💬 [Get help on Discord](https://discord.com/invite/XncpTy7DSt)
 📋 [License: Apache 2.0](https://github.com/Lightning-AI/litserve/blob/main/LICENSE)
