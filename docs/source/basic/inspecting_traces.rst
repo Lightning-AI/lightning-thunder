@@ -204,7 +204,7 @@ This will print the following::
   #  0: NVIDIA H100 80GB
   # torch version: 2.3.1+cu121
   # cuda version: 12.1
-  # nvfuser version: 0.2.8
+  # nvfuser version: 0.2.34
   import torch
   from nvfuser import FusionDefinition, DataType
 
