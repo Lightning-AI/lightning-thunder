@@ -3197,7 +3197,7 @@ def torch_max(
 
     # overload - torch_max(a: TensorLike, /, dim: int | tuple[int], keepdim: bool = False) -> TensorLike, TensorLike
     # This overload corresponds to taking the max along the specified dimension `dim`.
-    # NOTE: It returns first occurence of the maximum value along the dimension and it's corresponding index.
+    # NOTE: It returns first occurrence of the maximum value along the dimension and it's corresponding index.
     utils.check_type(dim, NumberLike)
     max_vals = amax(a, dim, keepdim)
     argmax_vals = argmax(a, dim, keepdim)

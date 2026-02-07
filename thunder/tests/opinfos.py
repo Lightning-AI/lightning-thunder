@@ -5964,8 +5964,8 @@ def max_sample_generator(op, device, dtype, requires_grad, **kwargs):
         if dtype is not torch.bool:  # argmax is not supported on `bool`
             # overload: torch_max(a: TensorLike, /, dim: int | tuple[int], keepdim: bool = False) -> TensorLike, TensorLike
             # This overload corresponds to taking the max along the specified dimension `dim`.
-            # It returns first occurence of the maximum value along the dimension and it's corresponding index.
-            # NOTE: When same values are present, the first occurence of the `value` and corresponding index is returned
+            # It returns first occurrence of the maximum value along the dimension and it's corresponding index.
+            # NOTE: When same values are present, the first occurrence of the `value` and corresponding index is returned
             yield SampleInput(make_t(shape), dim)
             yield SampleInput(make_t(shape), dim, keepdim)
 
