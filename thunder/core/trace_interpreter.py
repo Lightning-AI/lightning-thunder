@@ -262,11 +262,12 @@ class TraceSubstitutionProcessor:
 
     NULL = object()
 
-    def __init__(self, trace, *args, **kwargs):
+    def __init__(self, trace, allow_swap_map_cycles=False, *args, **kwargs):
         self.env = {}
         self.trace = trace
         self.new_trace = from_trace(self.trace)
         self.have_processed_args = False
+        self.allow_swap_map_cycles = allow_swap_map_cycles
 
     def read(self, x: VariableInterface | Any) -> Any:
         if isinstance(x, VariableInterface):
@@ -398,9 +399,9 @@ class TraceSubstitutionProcessor:
                     for new_bsym in self.new_bsyms:
                         # TODO: what to do with bsym header? Maybe have a combined from_bsym_swap_proxies and from_bsym?
                         self.new_trace.bound_symbols.append(
-                            new_bsym.from_bsym_swap_proxies(self.swap_map).from_bsym(
-                                source_filename=bsym.source_filename, source_positions=bsym.source_positions
-                            )
+                            new_bsym.from_bsym_swap_proxies(
+                                self.swap_map, allow_cycles=self.allow_swap_map_cycles
+                            ).from_bsym(source_filename=bsym.source_filename, source_positions=bsym.source_positions)
                         )
 
                     result = tree_map(self.do_swap, self.replacement_result)

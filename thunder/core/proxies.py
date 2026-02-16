@@ -1275,7 +1275,7 @@ def _infer_tensor_properties(
     else:
         # deferred computation of numel
         # TODO: similar to how `shape` is handled, this should be CSE or lifted for efficiency
-        _numel = lambda *args: reduce(operator.mul, _shape, 1)
+        _numel = lambda self: reduce(operator.mul, self.shape, 1)
 
     # TODO Alias rank to ndim?
     _ndim = len(_shape)
@@ -1465,7 +1465,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
             self._device,
             self._dtype,
             self._true_dtype,
-            self._numel,
+            _numel,
             self._ndim,
             self._requires_grad,
             self._grad,
@@ -1481,6 +1481,11 @@ class TensorProxy(Proxy, TensorProxyInterface):
             distparallel_type,
             thunder_fsdp_padding_size,
         )
+
+        if not using_symbolic_values():
+            self._numel = _numel
+        else:
+            self._numel = lambda self=self: _numel(self)
 
     # NOTE The following properties DO NOT depend on the language context or record
     #   themselves into the trace, so they can be used when working with tensor proxies
