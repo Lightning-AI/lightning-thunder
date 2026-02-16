@@ -1888,7 +1888,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             try:
                 from_provenance(p.history)
             except Exception as e:
-                raise NotImplementedError(f"Exception occured unpacking object from {p.history}") from e
+                raise NotImplementedError(f"Exception occurred unpacking object from {p.history}") from e
 
         already_unpacked[id(p)] = p
 

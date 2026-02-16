@@ -1403,7 +1403,7 @@ def test_thunder_specific_reports(tmp_path, file_indices):
 @pytest.mark.skip(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2546")
 @requiresCUDA
 def test_WallTime_KernelTime():
-    from nvfuser import FusionDefinition, DataType
+    from nvfuser_direct import FusionDefinition, DataType
 
     def nvfuser_fusion_id2(fd: FusionDefinition) -> None:
         T0 = fd.define_tensor(

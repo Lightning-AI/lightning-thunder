@@ -31,7 +31,7 @@ from thunder.core.pytree import tree_flatten
 from thunder.dynamo import thunderfx
 
 
-# NOTE: We run all these similar functions seperately
+# NOTE: We run all these similar functions separately
 #       as we want to avoid nvfuser issue (https://github.com/NVIDIA/Fuser/issues/4507)
 #       where trying to create FusionDefinition with same math operation can fail.
 functions_to_test = {

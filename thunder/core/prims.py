@@ -3912,7 +3912,7 @@ prod = make_prim(PrimIDs.PROD, "prod", meta=_reduction_meta, tags=(OpTags.REDUCT
 sum = make_prim(PrimIDs.SUM, "sum", meta=_reduction_meta, tags=(OpTags.REDUCTION_OP,))
 
 
-# Note: We have seperate meta function for `argmin/argmax` instead of
+# Note: We have separate meta function for `argmin/argmax` instead of
 #       reusing `_reduction_meta` as these operations expect Optional[int] for `dim`
 #       and return output with integer dtype.
 #
