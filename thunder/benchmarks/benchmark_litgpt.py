@@ -621,7 +621,9 @@ class Benchmark_litGPT:
                 size_auto_wrap_policy = functools.partial(
                     size_based_auto_wrap_policy, min_num_params=self.fsdp_bucket_params
                 )
-                zero_bucket_wrap_policy = lambda module, recurse, nonwrapped_numel: nonwrapped_numel >= 0
+
+                def zero_bucket_wrap_policy(module, recurse, nonwrapped_numel):
+                    return nonwrapped_numel >= 0
 
                 self.bucketing_mode = self.bucketing_mode or "block"
                 custom_wrap_policy = {
@@ -657,7 +659,9 @@ class Benchmark_litGPT:
             )
             return
 
-        check_fn = lambda submodule: isinstance(submodule, Block)
+        def check_fn(submodule):
+            return isinstance(submodule, Block)
+
         apply_activation_checkpointing(self.model, checkpoint_wrapper_fn=checkpoint_wrapper, check_fn=check_fn)
 
     # TODO(crcrpar): Think of apply `torch.compile` or `thunder.jit` per block/module
@@ -737,10 +741,13 @@ class Benchmark_litGPT:
             meta_model = self.init_model()
 
             x = torch.randint(0, 1, (self.micro_batch_size, meta_model.config.block_size), device=meta)
-            model_fwd = lambda: meta_model(x)
-            model_loss = lambda y: torch.nn.functional.cross_entropy(
-                y.reshape(-1, y.size(-1)), x.reshape(-1), ignore_index=-1
-            )
+
+            def model_fwd():
+                return meta_model(x)
+
+            def model_loss(y):
+                return torch.nn.functional.cross_entropy(y.reshape(-1, y.size(-1)), x.reshape(-1), ignore_index=-1)
+
             self.perf_metrics["model_flops"] = measure_flops(meta_model, model_fwd, model_loss)
         finally:
             self.device = device

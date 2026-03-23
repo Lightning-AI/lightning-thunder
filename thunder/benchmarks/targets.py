@@ -930,7 +930,10 @@ def test_hf_transformers(
     fn = executor(b.fn())
 
     if compute_type == ComputeType.TRAINING_BACKWARD:
-        return_fn = lambda *args, **kwargs: fn(*args, **kwargs).loss
+
+        def return_fn(*args, **kwargs):
+            return fn(*args, **kwargs).loss
+
     else:
         kwargs["labels"] = None
         return_fn = fn

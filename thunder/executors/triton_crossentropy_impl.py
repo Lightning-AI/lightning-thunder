@@ -453,7 +453,10 @@ class CrossEntropy(torch.autograd.Function):
         # result = torch.empty_like(indices, dtype=dtype, device=device)
         neg_logprobs = torch.empty_like(logits, dtype=buffer_dtype, device=device)
         weights_buffer = torch.empty_like(result, dtype=buffer_dtype)
-        grid = lambda opt: (logits.numel() // n_cols,)
+
+        def grid(opt):
+            return (logits.numel() // n_cols,)
+
         log_size_logits = int(math.log(math.prod(logits.shape) / n_cols))
         _forward[grid](
             logits,
@@ -512,10 +515,13 @@ class CrossEntropy(torch.autograd.Function):
         # run the kernel
         # neg_logprobs will be modified in place to become our gradient:
         n_cols = neg_logprobs.shape[-1]
-        grid = lambda opt: (
-            neg_logprobs.numel() // n_cols,
-            triton.cdiv(n_cols, opt["BLOCK"]),
-        )
+
+        def grid(opt):
+            return (
+                neg_logprobs.numel() // n_cols,
+                triton.cdiv(n_cols, opt["BLOCK"]),
+            )
+
         log_size_logits = int(math.log(math.prod(neg_logprobs.shape) / n_cols))
         _backward[grid](
             neg_logprobs,

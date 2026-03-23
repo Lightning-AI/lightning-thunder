@@ -1275,7 +1275,9 @@ def _infer_tensor_properties(
     else:
         # deferred computation of numel
         # TODO: similar to how `shape` is handled, this should be CSE or lifted for efficiency
-        _numel = lambda *args: reduce(operator.mul, _shape, 1)
+
+        def _numel(*args):
+            return reduce(operator.mul, _shape, 1)
 
     # TODO Alias rank to ndim?
     _ndim = len(_shape)
@@ -2017,11 +2019,14 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
             shape_pr = ProvenanceRecord(
                 PseudoInst.LOAD_ATTR, inputs=[copy.copy(history), wrap_const("shape").provenance]
             )
-            dim_pr = lambda idx: ProvenanceRecord(
-                PseudoInst.BINARY_SUBSCR, inputs=[shape_pr, wrap_const(idx).provenance]
-            )
+
+            def dim_pr(idx):
+                return ProvenanceRecord(PseudoInst.BINARY_SUBSCR, inputs=[shape_pr, wrap_const(idx).provenance])
+
         else:
-            dim_pr = lambda idx: None
+
+            def dim_pr(idx):
+                return None
 
         shape = tuple(
             IntegerProxy(

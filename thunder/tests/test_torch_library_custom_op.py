@@ -110,7 +110,10 @@ if has_triton_op:
     def mul_triton(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         output = torch.empty_like(x)
         n_elements = output.numel()
-        grid = lambda meta: (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
+
+        def grid(meta):
+            return (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
+
         torch.library.wrap_triton(mul_triton_kernel)[grid](x, y, output, n_elements, BLOCK_SIZE=1024)
         return output
 

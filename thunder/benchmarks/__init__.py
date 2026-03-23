@@ -44,9 +44,15 @@ benchmarks: list = []
 def list_benchmarks(use_classname: bool = True) -> None:
     print("Available benchmarks:")
 
-    name_fn = lambda x: x[0]
-    if not use_classname:
-        name_fn = lambda x: x[1].name
+    if use_classname:
+
+        def name_fn(x):
+            return x[0]
+
+    else:
+
+        def name_fn(x):
+            return x[1].name
 
     for x in sorted(benchmarks, key=name_fn):
         name = name_fn(x)
@@ -486,7 +492,10 @@ def _run_benchmark(
     # Determines the "wait for computation function," to be run after calls to make_batch() and the benchmark
     #   function to ensure that computation has finished
     devices: list[str] = benchmark.devices
-    wait_for_computation_fn = lambda: None
+
+    def wait_for_computation_fn():
+        return None
+
     for device in devices:
         device: thunder.core.devices.Device = thunder.core.devices.device_from_string(device)
         if device.devicetype is thunder.core.devices.DeviceType.CUDA:

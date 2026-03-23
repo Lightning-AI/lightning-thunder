@@ -76,7 +76,10 @@ def fa3_bwd_impl(
     dq, dk, dv = torch.empty_like(q), torch.empty_like(k), torch.empty_like(v)
 
     # fa3 bwd requires last dim to be contiguous: https://github.com/Dao-AILab/flash-attention/issues/1109#issuecomment-2270043573
-    maybe_contiguous = lambda x: x.contiguous() if x.stride(-1) != 1 else x
+
+    def maybe_contiguous(x):
+        return x.contiguous() if x.stride(-1) != 1 else x
+
     dq, dk, dv = (maybe_contiguous(a) for a in (q, k, v))
 
     if softmax_scale is None:
