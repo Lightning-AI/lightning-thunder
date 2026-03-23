@@ -642,7 +642,6 @@ def test_checkpointing_thunderfx():
         m = litgpt_model.GPT.from_name("llama2-like")
         inp = torch.ones((1, 2048), dtype=torch.int64)
 
-
     def check_fn(submodule):
         return isinstance(submodule, litgpt_model.Block)
 

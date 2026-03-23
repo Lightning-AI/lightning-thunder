@@ -380,7 +380,6 @@ def test_build_const_key_map(jit):
 
 
 def test_build_map_dict_merge(jit):
-
     def addall(*args, **kwargs):
         return sum(args) + sum(kwargs.values())
 

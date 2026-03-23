@@ -103,7 +103,6 @@ def register_pytree_node_dataclass(cls):
     def unpack(cls) -> dict:
         return {field.name: getattr(cls, field.name) for field in dataclasses.fields(cls)}
 
-
     def _flatten(obj):
         return tree_flatten(unpack(obj), namespace=OPTREE_NAMESPACE)
 
