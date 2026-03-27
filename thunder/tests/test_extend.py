@@ -63,8 +63,8 @@ def test_extend_core():
 
     def mul_to_multimul_checker(a: Number | TensorProxy, b: Number | TensorProxy) -> bool:
         def is_cpu(x: Number | TensorProxy) -> bool:
-            if isinstance(a, TensorProxy):
-                return a.device.devicetype == devices.DeviceType.CPU
+            if isinstance(x, TensorProxy):
+                return x.device.devicetype == devices.DeviceType.CPU
             return True
 
         return all(is_cpu(x) for x in (a, b))
