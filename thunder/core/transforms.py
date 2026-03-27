@@ -1555,7 +1555,7 @@ def grad(
             gradtrc = dce(gradtrc)
             grad_output = gradtrc.output
             pro_to_epi = prologue_trc.output[1]
-            if type(grad_output) == dict:
+            if type(grad_output) is dict:
                 grad_output = grad_output["output"]
 
             def new_epilogue(*args):
