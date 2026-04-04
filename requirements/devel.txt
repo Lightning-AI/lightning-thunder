@@ -7,3 +7,4 @@ peft>=0.15.2
 
 torchvision
 torchaudio
+pre-commit >=4.5.0

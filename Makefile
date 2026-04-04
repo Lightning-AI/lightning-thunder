@@ -1,7 +1,11 @@
-.PHONY: test clean docs
+.PHONY: setup test clean docs get-sphinx-theme
+.ONESHELL:
+SHELL := /bin/bash
+.SHELLFLAGS := -eu -o pipefail -c
 
 # assume you have installed need packages
 export SPHINX_MOCK_REQUIREMENTS=0
+INSTALL := $(shell command -v uv >/dev/null 2>&1 && echo "uv pip install" || echo "pip install")
 
 test: clean
 	pip install -q -r requirements.txt -r requirements/test.txt
@@ -28,3 +32,14 @@ clean:
 	rm -rf ./docs/source/**/generated
 	rm -rf ./docs/source/api
 	rm -rf _ckpt_*
+
+# install all requirements for development
+# install pre-commit hooks
+# install editable package
+setup:
+	echo "Using $(INSTALL)"
+	$(INSTALL) -r requirements.txt \
+			-r requirements/devel.txt \
+			-r requirements/test.txt
+	pre-commit install
+	$(INSTALL) -e .
