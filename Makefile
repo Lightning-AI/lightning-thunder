@@ -33,7 +33,7 @@ clean:
 	rm -rf ./docs/source/api
 	rm -rf _ckpt_*
 
-# install all requirements for development
+# install core, dev & tests requirements
 # install pre-commit hooks
 # install editable package
 setup:
