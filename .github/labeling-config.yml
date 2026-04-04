@@ -7,7 +7,6 @@ documentation:
 "ci":
   - changed-files:
       - any-glob-to-any-file:
-          - .azure/*
           - .github/*
           - .github/workflows/*
           - .lightning/workflows/*
@@ -17,7 +16,6 @@ documentation:
   - changed-files:
       - any-glob-to-any-file:
           - dockers/**/*
-          - .azure/docker-build.yml
 
 "install":
   - changed-files:

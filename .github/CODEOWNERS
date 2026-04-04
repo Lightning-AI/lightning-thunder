@@ -9,7 +9,6 @@
 * @mruberry @lantiga @KaelanDt
 
 # CI/CD and configs
-/.azure/        @KaelanDt @lantiga
 /.github/       @KaelanDt @lantiga
 /.lightning/    @KaelanDt @lantiga
 /dockers/       @KaelanDt @lantiga
