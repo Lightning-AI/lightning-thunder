@@ -1877,6 +1877,38 @@ def test_len_lookaside(jit):
         jfoo(o)
 
 
+def test_call_function_ex_with_generator(jit):
+    # CALL_FUNCTION_EX may unpack an arbitrary iterable as ``*args``. A generator has
+    # no ``len()`` / indexing, so it must be materialized before wrapping. This pattern
+    # is emitted by torch >= 2.12's fx codegen, e.g. ``"{}".format(*(x for x in xs))``.
+    def foo(xs):
+        return "{} {} {}".format(*(str(x) for x in xs))
+
+    jfoo = jit(foo)
+    assert jfoo([1, 2, 3]) == foo([1, 2, 3])
+
+
+def test_list_insert(jit):
+    def foo():
+        values = ["b", "c"]
+        values.insert(0, "a")  # torch >= 2.12 fx codegen uses ``free_vars.insert(0, "self")``
+        values.insert(-1, "x")
+        values.insert(100, "d")  # index past the end clamps, like list.insert
+        return values
+
+    jfoo = jit(foo)
+    assert jfoo() == foo()
+
+
+def test_mapping_view_len(jit):
+    def foo(d):
+        return len(d.keys()), len(d.values()), len(d.items())
+
+    jfoo = jit(foo)
+    d = {"a": 1, "b": 2, "c": 3}
+    assert jfoo(d) == foo(d)
+
+
 def test_any_lookaside(jit):
     jitting = False
 
