@@ -4882,6 +4882,121 @@ def _conv_helper(
     return res
 
 
+# Transposed convolution is decomposed into a regular convolution. The forward of a
+# transposed convolution `Y = ConvTranspose(X, W)` is equivalent to a regular
+# convolution applied to `X` after (i) inserting `stride - 1` zeros between spatial
+# elements (dilating by `stride`) and (ii) padding by `dilation * (k - 1) - padding`
+# on each side (plus `output_padding` on the high side), with the weight permuted in
+# its channel dimensions and flipped spatially. This decomposition lets all existing
+# convolution machinery (executors, autograd, autocast) work for transposed convs.
+@handle_nn_op_batch_dim
+def _conv_transpose_helper(
+    dim: int,
+    a: TensorProxy,
+    weight: TensorProxy,
+    bias: TensorProxy | None = None,
+    stride: int | Sequence[int] = 1,
+    padding: int | Sequence[int] = 0,
+    output_padding: int | Sequence[int] = 0,
+    groups: int = 1,
+    dilation: int | Sequence[int] = 1,
+    *,
+    conv_function=clang.convolution,
+) -> TensorProxy:
+    # a, weight rank check
+    utils.check(dim + 1 <= a.ndim <= dim + 2, lambda: f"{a.ndim=} should be either {dim + 1} or {dim + 2}")
+    utils.check(weight.ndim == dim + 2, lambda: f"{weight.ndim=} should be equal to {dim + 2}")
+    utils.check(isinstance(groups, (int, IntegerProxy)) and groups > 0, lambda: f"{groups=} should be greater than 0")
+
+    # Normalize sequence args to length `dim`.
+    stride = maybe_to_rank_len_sequence(stride, dim)
+    padding = maybe_to_rank_len_sequence(padding, dim)
+    output_padding = maybe_to_rank_len_sequence(output_padding, dim)
+    dilation = maybe_to_rank_len_sequence(dilation, dim)
+
+    utils.check(
+        len(stride) == dim and all(isinstance(s, (int, IntegerProxy)) and s >= 1 for s in stride),
+        lambda: f"all elements in stride should be integers at least 1, got {stride=}",
+    )
+    utils.check(
+        len(dilation) == dim and all(isinstance(d, (int, IntegerProxy)) and d >= 1 for d in dilation),
+        lambda: f"all elements in dilation should be integers at least 1, got {dilation=}",
+    )
+    utils.check(
+        len(padding) == dim and all(isinstance(p, (int, IntegerProxy)) and p >= 0 for p in padding),
+        lambda: f"all elements in padding should be integers at least 0, got {padding=}",
+    )
+    utils.check(
+        len(output_padding) == dim and all(isinstance(p, (int, IntegerProxy)) and p >= 0 for p in output_padding),
+        lambda: f"all elements in output_padding should be integers at least 0, got {output_padding=}",
+    )
+    # PyTorch enforces output_padding < max(stride, dilation)
+    utils.check(
+        all(op < builtins.max(s, d) for op, s, d in zip(output_padding, stride, dilation)),
+        lambda: f"output_padding must be smaller than either stride or dilation, "
+        f"but got {output_padding=}, {stride=}, {dilation=}",
+    )
+
+    # Weight layout for transposed convolution: (in_channels, out_channels // groups, *kernel)
+    in_channels = weight.shape[0]
+    out_channels_per_group = weight.shape[1]
+    out_channels = out_channels_per_group * groups
+    kernel_size = tuple(weight.shape[2:])
+
+    utils.check(
+        a.shape[1] == in_channels,
+        lambda: f"expected input to have {in_channels} channels (matching weight.shape[0]) but got {a.shape[1]}",
+    )
+    utils.check(
+        in_channels % groups == 0,
+        lambda: f"in_channels (i.e. weight.shape[0]={in_channels}) should be divisible by {groups=}",
+    )
+    utils.check(
+        bias is None or bias.shape == (out_channels,),
+        lambda: f"bias should be a 1D tensor with {out_channels} elements (i.e. weight.shape[1] * groups), "
+        f"got bias with shape={bias.shape if bias is not None else None}",
+    )
+
+    # Permute weight from (C_in, C_out/g, *k) to (C_out, C_in/g, *k) so it has the
+    # layout expected by regular convolution while preserving group semantics.
+    if groups == 1:
+        weight_p = prims.transpose(weight, (1, 0) + tuple(range(2, weight.ndim)))
+    else:
+        weight_p = prims.reshape(
+            weight, (groups, in_channels // groups, out_channels_per_group) + kernel_size
+        )
+        weight_p = prims.transpose(weight_p, (0, 2, 1) + tuple(range(3, weight_p.ndim)))
+        weight_p = prims.reshape(weight_p, (out_channels, in_channels // groups) + kernel_size)
+
+    # Flip the spatial dimensions of the permuted weight.
+    weight_p = prims.flip(weight_p, tuple(range(2, weight_p.ndim)))
+
+    # Dilate the input by `stride` (insert `stride - 1` zeros between spatial
+    # elements) and pad by `dilation * (k - 1) - padding` on each side, plus
+    # `output_padding` on the high side.
+    pad_config = [(0, 0, 0), (0, 0, 0)]
+    for s, d, k, p, op in zip(stride, dilation, kernel_size, padding, output_padding):
+        lo = d * (k - 1) - p
+        hi = d * (k - 1) - p + op
+        pad_config.append((lo, hi, s - 1))
+    a_padded = prims.pad(a, clang.maybe_convert_to_dtype(0, a.dtype, enforce_safe_casting=True), pad_config)
+
+    # Apply a regular convolution with stride=1 and padding=0; the dilation and groups
+    # are preserved from the original transposed convolution.
+    res = conv_function(
+        a_padded,
+        weight_p,
+        bias,
+        (1,) * dim,  # stride
+        (0,) * dim,  # padding
+        dilation,
+        False,  # transposed
+        (0,) * dim,  # output_padding
+        groups,
+    )
+    return res
+
+
 @handle_nn_op_batch_dim
 def _max_pool_helper(
     dim: int,
@@ -5207,6 +5322,66 @@ def conv3d(
     groups: int = 1,
 ) -> TensorProxy:
     return _conv_helper(3, a, weight, bias, stride, padding, dilation, groups)  # means 3D convolution
+
+
+@torchsymbol(
+    torch.conv_transpose1d,
+    torch.nn.functional.conv_transpose1d,
+    id="torch.nn.functional.conv_transpose1d",
+    is_method=False,
+)
+def conv_transpose1d(
+    a: TensorProxy,
+    /,
+    weight: TensorProxy,
+    bias: TensorProxy | None = None,
+    stride: int | Sequence[int] = 1,
+    padding: int | Sequence[int] = 0,
+    output_padding: int | Sequence[int] = 0,
+    groups: int = 1,
+    dilation: int | Sequence[int] = 1,
+) -> TensorProxy:
+    return _conv_transpose_helper(1, a, weight, bias, stride, padding, output_padding, groups, dilation)
+
+
+@torchsymbol(
+    torch.conv_transpose2d,
+    torch.nn.functional.conv_transpose2d,
+    id="torch.nn.functional.conv_transpose2d",
+    is_method=False,
+)
+def conv_transpose2d(
+    a: TensorProxy,
+    /,
+    weight: TensorProxy,
+    bias: TensorProxy | None = None,
+    stride: int | Sequence[int] = 1,
+    padding: int | Sequence[int] = 0,
+    output_padding: int | Sequence[int] = 0,
+    groups: int = 1,
+    dilation: int | Sequence[int] = 1,
+) -> TensorProxy:
+    return _conv_transpose_helper(2, a, weight, bias, stride, padding, output_padding, groups, dilation)
+
+
+@torchsymbol(
+    torch.conv_transpose3d,
+    torch.nn.functional.conv_transpose3d,
+    id="torch.nn.functional.conv_transpose3d",
+    is_method=False,
+)
+def conv_transpose3d(
+    a: TensorProxy,
+    /,
+    weight: TensorProxy,
+    bias: TensorProxy | None = None,
+    stride: int | Sequence[int] = 1,
+    padding: int | Sequence[int] = 0,
+    output_padding: int | Sequence[int] = 0,
+    groups: int = 1,
+    dilation: int | Sequence[int] = 1,
+) -> TensorProxy:
+    return _conv_transpose_helper(3, a, weight, bias, stride, padding, output_padding, groups, dilation)
 
 
 def _dropout_helper(a, p):

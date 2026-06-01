@@ -180,6 +180,96 @@ def autocast_ltorch_conv3d_rule(
     )
 
 
+@register_autocast_rule("torch.nn.functional.conv_transpose1d")
+def autocast_ltorch_conv_transpose1d_rule(
+    a: TensorProxy,
+    /,
+    weight: TensorProxy,
+    bias: TensorProxy | None = None,
+    stride: int | Sequence[int] = 1,
+    padding: int | Sequence[int] = 0,
+    output_padding: int | Sequence[int] = 0,
+    groups: int = 1,
+    dilation: int | Sequence[int] = 1,
+    *,
+    dtype,
+) -> TensorProxy:
+    from thunder.torch import _conv_transpose_helper
+
+    return _conv_transpose_helper(
+        1,
+        a,
+        weight,
+        bias,
+        stride,
+        padding,
+        output_padding,
+        groups,
+        dilation,
+        conv_function=partial(_convolution_autocast_impl, dtype=dtype),
+    )
+
+
+@register_autocast_rule("torch.nn.functional.conv_transpose2d")
+def autocast_ltorch_conv_transpose2d_rule(
+    a: TensorProxy,
+    /,
+    weight: TensorProxy,
+    bias: TensorProxy | None = None,
+    stride: int | Sequence[int] = 1,
+    padding: int | Sequence[int] = 0,
+    output_padding: int | Sequence[int] = 0,
+    groups: int = 1,
+    dilation: int | Sequence[int] = 1,
+    *,
+    dtype,
+) -> TensorProxy:
+    from thunder.torch import _conv_transpose_helper
+
+    return _conv_transpose_helper(
+        2,
+        a,
+        weight,
+        bias,
+        stride,
+        padding,
+        output_padding,
+        groups,
+        dilation,
+        conv_function=partial(_convolution_autocast_impl, dtype=dtype),
+    )
+
+
+@register_autocast_rule("torch.nn.functional.conv_transpose3d")
+def autocast_ltorch_conv_transpose3d_rule(
+    a: TensorProxy,
+    /,
+    weight: TensorProxy,
+    bias: TensorProxy | None = None,
+    stride: int | Sequence[int] = 1,
+    padding: int | Sequence[int] = 0,
+    output_padding: int | Sequence[int] = 0,
+    groups: int = 1,
+    dilation: int | Sequence[int] = 1,
+    *,
+    dtype,
+) -> TensorProxy:
+    from thunder.torch import _conv_transpose_helper
+
+    return _conv_transpose_helper(
+        3,
+        a,
+        weight,
+        bias,
+        stride,
+        padding,
+        output_padding,
+        groups,
+        dilation,
+        conv_function=partial(_convolution_autocast_impl, dtype=dtype),
+    )
+
+
 @register_autocast_rule("torch.nn.functional.scaled_dot_product_attention")
 def autocast_scaled_dot_product_attention(
     query,

@@ -964,6 +964,19 @@ def _transpose_prim_grad(a: TensorProxy, permutation: tuple[int, ...]) -> Tensor
 
 register_grad(pids.TRANSPOSE, _transpose_prim_grad)
 
+
+def _flip_prim_grad(a: TensorProxy, dims: tuple[int, ...]) -> TensorProxy:
+    fwd = prims.flip(a, tuple(dims))
+
+    g = get_grad(fwd)
+    a_grad = prims.flip(g, tuple(dims))
+    put_grad(a, a_grad)
+
+    return fwd
+
+
+register_grad(pids.FLIP, _flip_prim_grad)
+
 #
 # Memory layout operator grads
 #

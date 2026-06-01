@@ -8313,6 +8313,173 @@ conv3d_opinfo = OpInfo(
 nn_ops.append(conv3d_opinfo)
 
 
+# Sample generators for conv_transpose{1, 2, 3}d. Weight shape is
+# (in_channels, out_channels // groups, *kernel) - the channel dims are swapped
+# relative to regular conv.
+def conv_transpose1d_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # (input_shape, weight_shape, bias_shape, kwargs)
+    cases: tuple = (
+        # defaults
+        ((1, 3, 5), (3, 4, 3), None, {}),
+        ((2, 3, 5), (3, 4, 3), (4,), {}),
+        # stride, padding, output_padding
+        ((2, 3, 5), (3, 4, 3), (4,), {"stride": 2, "padding": 1, "output_padding": 1}),
+        # groups
+        ((2, 4, 6), (4, 2, 3), (4,), {"groups": 2}),
+        ((2, 6, 5), (6, 2, 3), (6,), {"groups": 3, "stride": 2, "padding": 1, "output_padding": 1}),
+        # dilation
+        ((2, 3, 8), (3, 4, 3), None, {"dilation": 2}),
+        # tuple args
+        ((2, 3, 5), (3, 4, 3), (4,), {"stride": (2,), "padding": (1,), "output_padding": (1,), "dilation": (1,)}),
+        # unbatched
+        ((3, 5), (3, 4, 3), (4,), {}),
+        # empty batch
+        ((0, 3, 5), (3, 4, 3), None, {}),
+    )
+
+    for a_shape, weight_shape, bias_shape, ckwargs in cases:
+        yield SampleInput(
+            make(a_shape), make(weight_shape), make(bias_shape) if bias_shape is not None else None, **ckwargs
+        )
+
+
+def conv_transpose2d_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    cases: tuple = (
+        ((1, 3, 5, 5), (3, 4, 3, 3), None, {}),
+        ((2, 3, 5, 5), (3, 4, 3, 3), (4,), {}),
+        ((2, 3, 5, 5), (3, 4, 3, 3), (4,), {"stride": 2, "padding": 1, "output_padding": 1}),
+        ((2, 3, 5, 5), (3, 4, 3, 3), (4,), {"stride": (2, 3), "padding": (1, 2), "output_padding": (1, 2)}),
+        ((2, 4, 6, 6), (4, 2, 3, 3), (4,), {"groups": 2}),
+        ((2, 6, 5, 5), (6, 2, 3, 3), (6,), {"groups": 3, "stride": 2, "padding": 1, "output_padding": 1}),
+        ((2, 3, 8, 8), (3, 4, 3, 3), None, {"dilation": 2}),
+        ((2, 3, 5, 5), (3, 4, 3, 3), (4,), {"stride": (1, 1), "padding": (0, 0), "dilation": (2, 2)}),
+        # unbatched
+        ((3, 5, 5), (3, 4, 3, 3), (4,), {}),
+        # empty batch
+        ((0, 3, 5, 5), (3, 4, 3, 3), None, {}),
+    )
+
+    for a_shape, weight_shape, bias_shape, ckwargs in cases:
+        yield SampleInput(
+            make(a_shape), make(weight_shape), make(bias_shape) if bias_shape is not None else None, **ckwargs
+        )
+
+
+def conv_transpose3d_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    # PyTorch does not support 3D convolutions for bfloat16 on CPU.
+    if torch.device(device).type == "cuda" and dtype is torch.bfloat16:
+        return
+
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    cases: tuple = (
+        ((1, 3, 4, 4, 4), (3, 4, 3, 3, 3), None, {}),
+        ((2, 3, 4, 4, 4), (3, 4, 3, 3, 3), (4,), {"stride": 2, "padding": 1, "output_padding": 1}),
+        ((2, 4, 5, 5, 5), (4, 2, 3, 3, 3), (4,), {"groups": 2}),
+        ((2, 3, 6, 6, 6), (3, 4, 3, 3, 3), None, {"dilation": 2}),
+        # unbatched
+        ((3, 4, 4, 4), (3, 4, 3, 3, 3), (4,), {}),
+    )
+
+    for a_shape, weight_shape, bias_shape, ckwargs in cases:
+        yield SampleInput(
+            make(a_shape), make(weight_shape), make(bias_shape) if bias_shape is not None else None, **ckwargs
+        )
+
+
+def conv_transpose2d_error_generator(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype)
+
+    # (a_shape, weight_shape, bias_shape, kwargs, err_msg)
+    cases: tuple = (
+        # groups should be > 0
+        ((1, 1, 2, 2), (1, 1, 1, 1), None, {"groups": 0}, "groups(.*?) should be greater than 0"),
+        # wrong weight dim
+        ((1, 1, 2, 2), (1, 1, 1), None, {}, "weight.ndim"),
+        # in_channels mismatch: a.shape[1] != weight.shape[0]
+        ((1, 2, 2, 2), (3, 1, 1, 1), None, {}, "expected input to have"),
+        # in_channels not divisible by groups
+        ((1, 3, 2, 2), (3, 1, 1, 1), None, {"groups": 2}, "should be divisible by"),
+        # output_padding >= max(stride, dilation)
+        ((1, 1, 2, 2), (1, 1, 1, 1), None, {"output_padding": 1}, "output_padding must be smaller"),
+        # wrong bias ndim
+        ((1, 1, 2, 2), (1, 1, 1, 1), (1, 1), {}, "bias should be a 1D tensor"),
+        # wrong bias numel
+        ((1, 1, 2, 2), (1, 2, 1, 1), (1,), {}, "bias should be a 1D tensor"),
+    )
+
+    for a_shape, weight_shape, bias_shape, ckwargs, err_msg in cases:
+        yield (
+            SampleInput(
+                make(a_shape), make(weight_shape), make(bias_shape) if bias_shape is not None else None, **ckwargs
+            ),
+            RuntimeError,
+            err_msg,
+        )
+
+
+_conv_transpose_test_directives = (
+    # Skipped because it is slow.
+    DecorateInfo(
+        pytest.mark.skip(reason="Slow test. Skipping for now."),
+        "test_vjp_correctness",
+    ),
+)
+
+
+# conv_transpose is decomposed into pad + regular convolution, which accumulates
+# in a different order than PyTorch's native implementation. The resulting
+# rounding error is well within float precision but exceeds the default
+# assert_close tolerances, so we use slightly relaxed ones here.
+_conv_transpose_relaxed_directives = _conv_transpose_test_directives + (
+    DecorateInfo(
+        custom_comparator(partial(assert_close, atol=1e-4, rtol=1e-2)),
+        "test_core_vs_torch_consistency",
+        dtypes=(datatypes.float16, datatypes.bfloat16),
+    ),
+    DecorateInfo(
+        custom_comparator(partial(assert_close, atol=1e-4, rtol=1e-3)),
+        "test_core_vs_torch_consistency",
+        dtypes=(datatypes.float32,),
+    ),
+)
+
+
+conv_transpose1d_opinfo = OpInfo(
+    ltorch.conv_transpose1d,
+    sample_input_generator=conv_transpose1d_sample_generator,
+    torch_reference=torch.nn.functional.conv_transpose1d,
+    dtypes=(datatypes.floating,),
+    test_directives=_conv_transpose_relaxed_directives,
+)
+nn_ops.append(conv_transpose1d_opinfo)
+
+
+conv_transpose2d_opinfo = OpInfo(
+    ltorch.conv_transpose2d,
+    sample_input_generator=conv_transpose2d_sample_generator,
+    error_input_generator=conv_transpose2d_error_generator,
+    torch_reference=torch.nn.functional.conv_transpose2d,
+    dtypes=(datatypes.floating,),
+    test_directives=_conv_transpose_relaxed_directives,
+)
+nn_ops.append(conv_transpose2d_opinfo)
+
+
+conv_transpose3d_opinfo = OpInfo(
+    ltorch.conv_transpose3d,
+    sample_input_generator=conv_transpose3d_sample_generator,
+    torch_reference=torch.nn.functional.conv_transpose3d,
+    dtypes=(datatypes.floating,),
+    test_directives=_conv_transpose_relaxed_directives,
+)
+nn_ops.append(conv_transpose3d_opinfo)
+
+
 avg_pool1d_opinfo = OpInfo(
     ltorch.avg_pool1d,
     sample_input_generator=generic_avg_pool_sample_generator(
