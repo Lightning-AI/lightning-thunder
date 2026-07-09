@@ -8,13 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+
 - Future features will be listed here
 
 ### Changed
+
 - Ongoing updates
 
 ### Fixed
+
 - Bug fixes
 
----
+______________________________________________________________________
+
 *[Mukller](https://github.com/Mukller)*

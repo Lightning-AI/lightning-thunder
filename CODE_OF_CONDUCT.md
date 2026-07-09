@@ -9,12 +9,14 @@ level of experience, nationality, personal appearance, race, religion, or sexual
 ## Our Standards
 
 **Positive behavior includes:**
+
 - Demonstrating empathy and kindness
 - Respecting differing opinions and experiences
 - Giving and gracefully accepting constructive feedback
 - Focusing on what is best for the community
 
 **Unacceptable behavior includes:**
+
 - Harassment, trolling, or personal attacks
 - Publishing others' private information without permission
 - Sexualized language or unwelcome advances
@@ -28,5 +30,6 @@ All complaints will be reviewed and investigated promptly and fairly.
 
 Adapted from the [Contributor Covenant](https://www.contributor-covenant.org), version 2.1.
 
----
+______________________________________________________________________
+
 *[Mukller](https://github.com/Mukller)*
