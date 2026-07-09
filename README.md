@@ -407,3 +407,14 @@ Thunder is an open source project, developed in collaboration with the community
 ⚡️ [Docs on Contributing to Thunder](https://lightning.ai/docs/thunder/latest/advanced/contrib_thunder.html)
 💬 [Get help on Discord](https://discord.com/invite/XncpTy7DSt)
 📋 [License: Apache 2.0](https://github.com/Lightning-AI/litserve/blob/main/LICENSE)
+
+## Contributing
+
+We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on
+how to report bugs, suggest features, and submit pull requests.
+
+By participating, you agree to our [Code of Conduct](CODE_OF_CONDUCT.md).
+
+______________________________________________________________________
+
+*[Mukller](https://github.com/Mukller)*
