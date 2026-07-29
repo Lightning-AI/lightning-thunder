@@ -334,9 +334,36 @@ def _cudnn_sdpa_checker(
         return False
     _, _, _, d_kv = value.size()
 
-    # Bug in cudnn 8.9.5 and earlier where embedding dim support is missing
-    for d in [d_q, d_kv]:
-        if d % 8 != 0 or d > 128:
+    # Embedding dim must be divisible by 8.
+    # Max dimension depends on cuDNN version and GPU arch:
+    # - Hopper (SM90) with cuDNN 9.x: max is 256
+    # - Blackwell (SM100) with cuDNN 9.11+: max is 128 (special case: d_qk=192 with d_v=128)
+    # - Other GPUs: max is 128
+    # https://github.com/NVIDIA/cudnn-frontend/blob/v1.16.0/include/cudnn_frontend/node/scaled_dot_product_flash_attention.h#L816
+    if d_q % 8 != 0 or d_kv % 8 != 0:
+        return False
+    is_supported_dim = False
+    if cudnn_backend_version >= 90000:
+        cc_major = torch.cuda.get_device_capability(query.device.index)[0]
+
+        if cc_major == 9:  # Hopper
+            # Validate basic dimension requirements
+            if 91100 <= cudnn_backend_version < 91300:
+                if 128 < d_q <= 192 and 64 < d_kv <= 128:
+                    # DeepSeek case, 9.11 only supports 192 hidden dim
+                    if d_kv != 128 and d_q != 192:
+                        return False
+
+            is_supported_dim = d_q <= 256 and d_kv <= 256
+
+        elif cc_major == 10 and cudnn_backend_version >= 91100:  # Blackwell with cuDNN 9.11+
+            if d_q == 192:
+                is_supported_dim = d_kv == 128
+            else:
+                is_supported_dim = d_q <= 128 and d_kv <= 128
+    if not is_supported_dim:
+        # Check fallback for older GPUs or unsupported newer configs
+        if d_q > 128 or d_kv > 128:
             return False
 
     dropout_p = pyval(dropout_p)

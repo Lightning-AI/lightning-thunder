@@ -30,7 +30,7 @@ from thunder.core.baseutils import (
     TagBase,
 )
 import thunder.core.baseutils as baseutils
-from thunder.core.langctxs import resolve_method, get_langctx
+from thunder.core.langctxs import LanguageContext, resolve_method, get_langctx
 import thunder.core.devices as devices
 import thunder.core.dtypes as dtypes
 
@@ -455,6 +455,9 @@ class StringProxy(Proxy, str):
             return False
         return str(self) == str(other)
 
+    def __bool__(self) -> bool:
+        return bool(self.value)
+
 
 #
 # Collection proxies
@@ -739,7 +742,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
         vala = pyval(a)
 
         trace: None | TraceCtx = get_tracectx()
-        lang: None | LangCtx = None
+        lang: None | LanguageContext = None
         try:
             lang = get_langctx()
         except LookupError:
@@ -775,7 +778,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
         return self._elementwise_unary_helper(self, "neg", operator.neg)
 
     def __pos__(self):
-        return self._elementwise_unary_helper(self, "pos", operator.pos)
+        return self
 
     # See https://docs.python.org/3/reference/datamodel.html#object.__round__
     def __round__(self):
@@ -797,7 +800,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
         valb = pyval(b) if isinstance(b, NumberProxy) else b
 
         trace: None | TraceCtx = get_tracectx()
-        lang: None | LangCtx = None
+        lang: None | LanguageContext = None
         try:
             lang = get_langctx()
         except LookupError:
@@ -954,16 +957,16 @@ class NumberProxy(Proxy, NumberProxyInterface):
     #   tracks implementing these
 
     def __lshift__(self, other):
-        raise NotImplementedError
+        return self._elementwise_binary_helper(self, other, "bitwise_left_shift", operator.lshift)
 
     def __rlshift__(self, other):
-        raise NotImplementedError
+        return self._elementwise_binary_helper(other, self, "bitwise_left_shift", operator.lshift)
 
     def __rshift__(self, other):
-        raise NotImplementedError
+        return self._elementwise_binary_helper(self, other, "bitwise_right_shift", operator.rshift)
 
     def __rrshift__(self, other):
-        raise NotImplementedError
+        return self._elementwise_binary_helper(other, self, "bitwise_right_shift", operator.rshift)
 
     #
     # Casts to Python numbers
@@ -1272,7 +1275,9 @@ def _infer_tensor_properties(
     else:
         # deferred computation of numel
         # TODO: similar to how `shape` is handled, this should be CSE or lifted for efficiency
-        _numel = lambda *args: reduce(operator.mul, _shape, 1)
+
+        def _numel(*args):
+            return reduce(operator.mul, _shape, 1)
 
     # TODO Alias rank to ndim?
     _ndim = len(_shape)
@@ -1676,8 +1681,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
         return method(self)
 
     def __pos__(self):
-        method = resolve_method("pos", self)
-        return method(self)
+        return self
 
     def __round__(self):
         method = resolve_method("round", self)
@@ -2015,11 +2019,14 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
             shape_pr = ProvenanceRecord(
                 PseudoInst.LOAD_ATTR, inputs=[copy.copy(history), wrap_const("shape").provenance]
             )
-            dim_pr = lambda idx: ProvenanceRecord(
-                PseudoInst.BINARY_SUBSCR, inputs=[shape_pr, wrap_const(idx).provenance]
-            )
+
+            def dim_pr(idx):
+                return ProvenanceRecord(PseudoInst.BINARY_SUBSCR, inputs=[shape_pr, wrap_const(idx).provenance])
+
         else:
-            dim_pr = lambda idx: None
+
+            def dim_pr(idx):
+                return None
 
         shape = tuple(
             IntegerProxy(

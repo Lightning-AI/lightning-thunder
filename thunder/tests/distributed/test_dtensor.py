@@ -31,7 +31,7 @@ from thunder.core.pytree import tree_flatten
 from thunder.dynamo import thunderfx
 
 
-# NOTE: We run all these similar functions seperately
+# NOTE: We run all these similar functions separately
 #       as we want to avoid nvfuser issue (https://github.com/NVIDIA/Fuser/issues/4507)
 #       where trying to create FusionDefinition with same math operation can fail.
 functions_to_test = {
@@ -323,6 +323,38 @@ class DTensorTest(DistributedParallelTestCase):
             assert len(tmodel._backend.subgraph_infos) == 1
             assert len(tmodel._backend.subgraph_infos[0].thunder_compiled_fns) == 1
             assert len(tmodel._backend.subgraph_infos[0].split_reasons) == 0
+
+    def test_dtensor_redistribute_with_positional_args(self):
+        num_devices = self.world_size
+        mesh = DeviceMesh("cuda", list(range(num_devices)))
+        dim_size = 16
+
+        # Test redistribute with positional args: redistribute(mesh, placements, async_op=True)
+        def fn_positional(x):
+            dt = DTensor.from_local(x, mesh, [Shard(0)])
+            return dt.redistribute(mesh, [Replicate()], async_op=True)
+
+        # Test redistribute with keyword args: redistribute(placements=..., async_op=True)
+        def fn_keyword(x):
+            dt = DTensor.from_local(x, mesh, [Shard(0)])
+            return dt.redistribute(placements=[Replicate()], async_op=True)
+
+        local_tensor = torch.randn(dim_size, dim_size, device="cuda")
+
+        # Both should work and produce the same result
+        tmodel_positional = thunderfx(fn_positional)
+        tmodel_keyword = thunderfx(fn_keyword)
+
+        result_positional = tmodel_positional(local_tensor)
+        result_keyword = tmodel_keyword(local_tensor)
+
+        torch.testing.assert_close(result_positional, result_keyword)
+
+        # Verify no graph splits occurred (redistribute is supported)
+        assert len(tmodel_positional._backend.subgraph_infos) == 1
+        assert len(tmodel_positional._backend.subgraph_infos[0].split_reasons) == 0
+        assert len(tmodel_keyword._backend.subgraph_infos) == 1
+        assert len(tmodel_keyword._backend.subgraph_infos[0].split_reasons) == 0
 
     @common_utils.parametrize("executor", tuple(executors_map.keys()))
     @common_utils.parametrize(

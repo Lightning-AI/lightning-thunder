@@ -458,7 +458,7 @@ def rematerialize(trace: TraceCtx) -> TraceCtx:
             computed_cuts_for_producers[producer] += cut
 
     rematerialized_trace = from_trace(trace)
-    rematerialized_trace.bound_symbols = tuple(new_bsyms.get(bsym, bsym) for bsym in trace.bound_symbols)
+    rematerialized_trace.bound_symbols = list(new_bsyms.get(bsym, bsym) for bsym in trace.bound_symbols)
 
     end_time_ns = time.perf_counter_ns()
     elapsed_time_ns = end_time_ns - start_time_ns

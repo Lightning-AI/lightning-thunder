@@ -190,7 +190,10 @@ class TensorParallelTest(DistributedParallelTestCase):
             for p_name, p_ref in layer.named_parameters(recurse=False):
                 param_fqn = f"{l_name}.{p_name}"
                 ref_grad = p_ref.grad
-                msg = lambda err_msg: f"[{prefix} {param_fqn}] {err_msg}"
+
+                def msg(err_msg):
+                    return f"[{prefix} {param_fqn}] {err_msg}"
+
                 if is_tensor_parallel and (ref_grad.ndim > 1 or dim == 0):
                     ref_grad = ref_grad.chunk(self.world_size, dim)[self.rank]
                 grad = tp_model.get_parameter(param_fqn).grad

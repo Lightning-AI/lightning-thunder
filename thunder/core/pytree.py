@@ -103,8 +103,12 @@ def register_pytree_node_dataclass(cls):
     def unpack(cls) -> dict:
         return {field.name: getattr(cls, field.name) for field in dataclasses.fields(cls)}
 
-    _flatten = lambda obj: tree_flatten(unpack(obj), namespace=OPTREE_NAMESPACE)
-    _unflatten = lambda spec, children: cls(**spec.unflatten(children))
+    def _flatten(obj):
+        return tree_flatten(unpack(obj), namespace=OPTREE_NAMESPACE)
+
+    def _unflatten(spec, children):
+        return cls(**spec.unflatten(children))
+
     optree.register_pytree_node(cls, _flatten, _unflatten, namespace=OPTREE_NAMESPACE)
     return cls
 

@@ -312,6 +312,7 @@ class JitCtx:
                     self.add_constraint((clang.check_number_type_and_value, p, uvalue))
             elif co is CACHE_OPTIONS.SYMBOLIC_VALUES:
                 if p is not uvalue:
+                    self.add_constraint((clang.check_instance, p, (type(uvalue),)))
                     value.register_proxy(p)
             elif co not in (CACHE_OPTIONS.SAME_INPUT, CACHE_OPTIONS.NO_CACHING):
                 raise NotImplementedError(f"Unsupported cache option {co}")
@@ -652,6 +653,32 @@ def _general_jit_bool_lookaside(wrapped_x: Any) -> bool | INTERPRETER_SIGNALS:
 _general_jit_lookaside_map[bool] = _general_jit_bool_lookaside
 
 
+def _general_jit_min_max_lookaside(op_name, symbol, args, kwargs):
+    if len(args) != 2:
+        raise TypeError(f"{op_name}() currently supports exactly two positional arguments in thunder.jit")
+
+    if kwargs:
+        unexpected = ", ".join(map(str, kwargs.keys()))
+        raise TypeError(f"{op_name}() keyword arguments are not supported in thunder.jit (got: {unexpected})")
+
+    a, b = (unwrap(arg) for arg in args)
+    reduced = symbol(a, b)
+
+    provenance_inputs = [arg.provenance for arg in args]
+
+    return wrap(reduced, provenance=ProvenanceRecord(PseudoInst.LOOKASIDE, inputs=provenance_inputs))
+
+
+@register_general_jit_lookaside(max)
+def _general_jit_builtin_max_lookaside(*args, **kwargs):
+    return _general_jit_min_max_lookaside("max", clang.maximum, args, kwargs)
+
+
+@register_general_jit_lookaside(min)
+def _general_jit_builtin_min_lookaside(*args, **kwargs):
+    return _general_jit_min_max_lookaside("min", clang.minimum, args, kwargs)
+
+
 def _get_torch_nn_module_named_members_lookaside(
     model: torch.nn.Module, named_member_method, get_member_method, *unwrapped_args, **unwrapped_kwargs
 ):
@@ -913,27 +940,40 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
         length = 5
         return "".join(secrets.choice(string.ascii_lowercase) for _ in range(length))
 
-    args_tensor_mask = unwrap(fwd_kwargs["args_tensor_mask"])
+    # Support both stable PyTorch (with args_tensor_mask) and nightly (without it)
+    if "args_tensor_mask" in fwd_kwargs:
+        args_tensor_mask = unwrap(fwd_kwargs["args_tensor_mask"])
+    else:
+        args_tensor_mask = None
+
     # TODO(crcrpar): Think about making use of `non_differentiable_idx`
     # note that this key is quite new: https://github.com/pytorch/pytorch/pull/134087
     # non_differentiable_idx = fwd_kwargs.get("non_differentiable_idx")
-    length_of_tensor_args = sum(args_tensor_mask)
 
-    # N.B.(crcrpar) When `torch.compile(..., dynamic=True)`,
-    # GraphModules' forward seem to take `SymInt` and other values
-    # as its argument with some probability. Though that piece of information unfortunately
-    # does not seem to be indicated in ``args_tensor_mask`` nor ``non_differentiable_idx``.
-    # Thus we optimistically iterate over ``fwd_args`` and gather non-tensor values whose index is >= `length_of_tensor_args` to ``fwd_args``.
-    new_fwd_args = []
-    for i, v in enumerate(fwd_args):
-        if i < length_of_tensor_args:
-            new_fwd_args.append(v)
-        else:
-            # note(crcrpar): we might want to include `FutureTensorProxy` and
-            # a proxy of tensor subclass in the near future.
-            if not isinstance(unwrap(v), TensorProxy):
+    if args_tensor_mask is not None:
+        length_of_tensor_args = sum(args_tensor_mask)
+
+        # N.B.(crcrpar) When `torch.compile(..., dynamic=True)`,
+        # GraphModules' forward seem to take `SymInt` and other values
+        # as its argument with some probability. Though that piece of information unfortunately
+        # does not seem to be indicated in ``args_tensor_mask`` nor ``non_differentiable_idx``.
+        # Thus we optimistically iterate over ``fwd_args`` and gather non-tensor values whose index is >= `length_of_tensor_args` to ``fwd_args``.
+        new_fwd_args = []
+        for i, v in enumerate(fwd_args):
+            if i < length_of_tensor_args:
                 new_fwd_args.append(v)
-    new_fwd_args = (wrap_const(None),) + tuple(new_fwd_args)
+            else:
+                # note(crcrpar): we might want to include `FutureTensorProxy` and
+                # a proxy of tensor subclass in the near future.
+                if not isinstance(unwrap(v), TensorProxy):
+                    new_fwd_args.append(v)
+        # With args_tensor_mask, the fwd_body expects ctx as first argument
+        new_fwd_args = (wrap_const(None),) + tuple(new_fwd_args)
+    else:
+        # For nightly PyTorch without args_tensor_mask, the fwd_body
+        # GraphModule does NOT expect a ctx argument.
+        # We pass all args as-is without prepending None.
+        new_fwd_args = tuple(fwd_args)
     unwrapped_fwd_args = tree_map(lambda t: unwrap(t), new_fwd_args)
 
     tmp_name = _generate_random_str_id()
@@ -971,7 +1011,12 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
 
     grads = sequencify(tree_map(lambda t: TensorProxy(like=t), sequencify(output)))
     bwd_tensor_args = grads + tuple(saved_values)
-    bwd_args = (None,) + bwd_tensor_args
+
+    # Support both stable PyTorch (with args_tensor_mask) and nightly (without it)
+    if args_tensor_mask is not None:
+        bwd_args = (None,) + bwd_tensor_args
+    else:
+        bwd_args = bwd_tensor_args
     wrapped_bwd_args = tree_map(lambda t: wrap(t, provenance=aug_fwd_provenance), bwd_args)
     bwd_trace, bwd_trace_provenance = _convert_pytorchfunc_to_thundertrace(
         bwd,
@@ -999,9 +1044,17 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
 
         primal, residuals = interpret_trace(aliased_aug_fwd_trace, *args, **kwargs)
         grads = tree_map(lambda t: get_grad(t), sequencify(primal))
-        bwd_args = (None,) + tuple(grads) + tuple(sequencify(residuals))
+        # Support both stable PyTorch (with args_tensor_mask) and nightly (without it)
+        if args_tensor_mask is not None:
+            bwd_args = (None,) + tuple(grads) + tuple(sequencify(residuals))
+            # Stable PT: first arg is ctx, skip it for put_grads
+            grad_inputs = args[1:]
+        else:
+            bwd_args = tuple(grads) + tuple(sequencify(residuals))
+            # Nightly PT: no ctx, use all args
+            grad_inputs = args
         result = interpret_trace(aliased_bwd_trace, *bwd_args)
-        put_grads(args[1:], result)
+        put_grads(grad_inputs, result)
 
         return primal
 
@@ -1835,7 +1888,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             try:
                 from_provenance(p.history)
             except Exception as e:
-                raise NotImplementedError(f"Exception occured unpacking object from {p.history}") from e
+                raise NotImplementedError(f"Exception occurred unpacking object from {p.history}") from e
 
         already_unpacked[id(p)] = p
 
@@ -2164,7 +2217,6 @@ def thunder_general_jit(
         callbacks=general_jit_callbacks,
         with_provenance_tracking=True,
         unwrap_result=False,
-        uncacheable_classes=(torch.Tensor, int, float, str, NoneType),
         record_history=compile_data.debug_options.record_interpreter_history,
     )
 

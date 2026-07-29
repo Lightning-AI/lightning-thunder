@@ -3102,7 +3102,10 @@ def _split_saved_for_backward_into_tensors_and_other(
     Returns:
         tuple[Sequence[Variable], Sequence[Variable]]: Tuple of tensors and other.
     """
-    is_tensor = lambda x: isinstance(x, TensorProxy)
+
+    def is_tensor(x):
+        return isinstance(x, TensorProxy)
+
     other, tensors = utils.partition(is_tensor, saved_for_backward)
     return tuple(tensors), tuple(other)
 

@@ -77,6 +77,44 @@ def _bitsandbytes_available():
 BITSANDBYTES_AVAILABLE = _bitsandbytes_available()
 
 
+# TODO This change should be handled properly, this is a temporary fix to allow the CI to progress.
+# See https://github.com/Lightning-AI/lightning-thunder/issues/2807
+def _pytorch_removed_args_tensor_mask() -> bool:
+    """Check if PyTorch removed args_tensor_mask from autograd_function_apply.
+
+    PyTorch removed args_tensor_mask in https://github.com/pytorch/pytorch/pull/166788
+    (commit 5cf15aef144fd03379a5796e37698eee5e4575b8, Dec 12, 2025).
+
+    Returns True if args_tensor_mask is NO LONGER accepted (new PyTorch).
+    """
+    import re
+
+    version = torch.__version__
+    # Nightly versions look like: 2.6.0.dev20251212+cpu
+    match = re.search(r"\.dev(\d{8})", version)
+    if match:
+        nightly_date = int(match.group(1))
+        # args_tensor_mask removed around Dec 12, 2025
+        return nightly_date >= 20251212
+
+    # Lightning AI nightly builds have version strings like: 2.10.0a0+git62c80e7
+    # We conservatively check against the base version (the portion before "+")
+    # because we do not know whether the problematic commit removing args_tensor_mask
+    # is before or after 2.10.0a0+git62c80e7. Therefore, we return True (masked as removed)
+    # if we are on version 2.10.0a0 or later.
+    base_version = packaging.version.parse(version.split("+")[0])
+    if base_version >= packaging.version.parse("2.10.0a0"):
+        return True
+
+    return False
+
+
+xfail_if_args_tensor_mask_removed = pytest.mark.xfail(
+    _pytorch_removed_args_tensor_mask(),
+    reason="PyTorch >= 2.10.0a0+git62c80e7 or nightly >= 20251212 removed args_tensor_mask from autograd_function_apply (PR #166788)",
+)
+
+
 def version_between(version: str, *, min_ver: str | None = None, max_ver: str | None = None):
     v = packaging.version.parse(version)
     if min_ver is not None and v < packaging.version.parse(min_ver):

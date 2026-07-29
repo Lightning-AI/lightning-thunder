@@ -79,20 +79,18 @@ class LowPrecisionHandler:
     enabled: bool = False
 
     use_thunder_te: bool = True
-    use_legacy_thunder_te: bool = False
 
     @property
     def use_te_autocast(self) -> bool:
-        return self.enabled and not self.use_legacy_thunder_te
+        return self.enabled
 
     def check_and_add_compile_options(self, compile_options: str) -> str:
         if not self.enabled and "_transformerengine" in compile_options:
             raise ValueError("Low precision mode not specified but found transfomerengine in the compile options!")
 
         self.use_thunder_te = "thunder" in compile_options
-        self.use_legacy_thunder_te = "transformerengine_v1" in compile_options
 
-        if self.enabled and self.use_thunder_te and not self.use_legacy_thunder_te:
+        if self.enabled and self.use_thunder_te:
             compile_options += "_transformerengine"
         return compile_options
 
@@ -120,15 +118,13 @@ class LowPrecisionHandler:
     def executor_str(self) -> str:
         if not self.enabled:
             return "low precision is not enabled"
-        elif self.use_legacy_thunder_te:
-            return "Thunder TE executor v1"
         elif self.use_thunder_te:
             return "Thunder TE executor"
         else:
             return "TransformerEngine without Thunder"
 
     def maybe_apply_te_autocast(self):
-        if self.enabled and not self.use_legacy_thunder_te:
+        if self.enabled:
             return te.fp8_autocast(fp8_recipe=self.fp8_recipe)
         else:
             return nullcontext()
@@ -160,7 +156,7 @@ class LowPrecisionHandler:
             print("No updates were necessary.")
 
     def swap_linear_layers_for_te(self, model: torch.nn.Module, device: Any) -> None:
-        if not self.enabled or self.use_thunder_te:
+        if not self.enabled:
             return
 
         swap_layernorm = self.mode == "fp8-default-te-wo_layernorm"
@@ -625,7 +621,9 @@ class Benchmark_litGPT:
                 size_auto_wrap_policy = functools.partial(
                     size_based_auto_wrap_policy, min_num_params=self.fsdp_bucket_params
                 )
-                zero_bucket_wrap_policy = lambda module, recurse, nonwrapped_numel: nonwrapped_numel >= 0
+
+                def zero_bucket_wrap_policy(module, recurse, nonwrapped_numel):
+                    return nonwrapped_numel >= 0
 
                 self.bucketing_mode = self.bucketing_mode or "block"
                 custom_wrap_policy = {
@@ -661,7 +659,9 @@ class Benchmark_litGPT:
             )
             return
 
-        check_fn = lambda submodule: isinstance(submodule, Block)
+        def check_fn(submodule):
+            return isinstance(submodule, Block)
+
         apply_activation_checkpointing(self.model, checkpoint_wrapper_fn=checkpoint_wrapper, check_fn=check_fn)
 
     # TODO(crcrpar): Think of apply `torch.compile` or `thunder.jit` per block/module
@@ -695,7 +695,10 @@ class Benchmark_litGPT:
                 executors.insert(0, transformer_engine_ex)
                 transforms.insert(0, TransformerEngineTransform())
 
-            if "dynamo" in self.compile:
+            if "jit" in self.compile:
+                model = thunder.jit(model, executors=executors, transforms=transforms, **jit_options)
+
+            else:
                 if self.distributed_mode == "fsdp2":
                     print("Resetting cache size for when fsdp2 and using thunder as backend torch.compile")
                     import torch._dynamo.config as dynamo_config
@@ -708,10 +711,6 @@ class Benchmark_litGPT:
                 # using __wrapped__ to access the original torch.compile function did not work
                 # so we are using the lower level torch._dynamo.optimize function
                 model = torch._dynamo.optimize(backend=self.backend)(model)
-            else:
-                jit_options = {}
-                jit_options["fp8_shard_intermediate_activation"] = self.fp8_shard_intermediate_activation
-                model = thunder.jit(model, executors=executors, transforms=transforms, **jit_options)
         elif self.compile != "eager":
             raise ValueError(f"Invalid compile option: {self.compile}")
 
@@ -742,10 +741,13 @@ class Benchmark_litGPT:
             meta_model = self.init_model()
 
             x = torch.randint(0, 1, (self.micro_batch_size, meta_model.config.block_size), device=meta)
-            model_fwd = lambda: meta_model(x)
-            model_loss = lambda y: torch.nn.functional.cross_entropy(
-                y.reshape(-1, y.size(-1)), x.reshape(-1), ignore_index=-1
-            )
+
+            def model_fwd():
+                return meta_model(x)
+
+            def model_loss(y):
+                return torch.nn.functional.cross_entropy(y.reshape(-1, y.size(-1)), x.reshape(-1), ignore_index=-1)
+
             self.perf_metrics["model_flops"] = measure_flops(meta_model, model_fwd, model_loss)
         finally:
             self.device = device

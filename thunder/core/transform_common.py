@@ -142,12 +142,24 @@ def remove_duplicate_number_proxies(bsyms: Sequence[BoundSymbol]) -> list[BoundS
 #   that only produce non-proxy objects
 # NOTE needed_proxies is an in/out argument, it takes an initial set of Variables you want to keep, and return
 #   all the needed proxies of the input trace
-def dce(trace: Trace, needed_proxies: None | set[Variable] = None) -> Trace:
-    start_time_ns = time.perf_counter_ns()
+def dce_bsyms(
+    bsyms: list[BoundSymbolInterface],
+    output: Any,
+    needed_proxies: None | set[Variable] = None,
+) -> Trace | list[BoundSymbolInterface]:
+    """Runs a Dead Code Elimination (DCE) pass
 
-    producer_map: ProxyDict = producers(trace)
+    Args:
+        bsyms: The list of bound symbols to run the DCE pass on.
+        needed_proxies: The set of variables to keep.
+        output: The output of the list of bound symbols.
 
-    flat_trace_outputs, _ = tree_flatten(trace.output)
+    Returns:
+        The list of bound symbols after the DCE pass.
+    """
+    producer_map: ProxyDict = producers(bsyms)
+
+    flat_trace_outputs, _ = tree_flatten(output)
     if needed_proxies is None:
         needed_proxies: set[Variable] = set(tuple(variableify(x) for x in flat_trace_outputs if isinstance(x, Proxy)))
     else:
@@ -155,7 +167,7 @@ def dce(trace: Trace, needed_proxies: None | set[Variable] = None) -> Trace:
     dced = []
 
     bsym: BoundSymbol
-    for bsym in reversed(trace.bound_symbols):
+    for bsym in reversed(bsyms):
         # Preserves symbols that should never be collected
         if has_tags(bsym, {prims.OpTags.DONT_DCE}):
             needed = True
@@ -182,19 +194,28 @@ def dce(trace: Trace, needed_proxies: None | set[Variable] = None) -> Trace:
             for x in nbsym.flat_proxy_args:
                 needed_proxies.add(variableify(x))
 
-    dcetrace = from_trace(trace)
     dced_bound_symbols = list(reversed(dced))
     # duplicate number proxies happen with the symbolic shapes and are
     # not covered by the above (due to being in tuples?).
     dced_bound_symbols = remove_duplicate_number_proxies(dced_bound_symbols)
-    dcetrace.bound_symbols = dced_bound_symbols
+
+    return dced_bound_symbols
+
+
+def dce(trace: Trace, needed_proxies: set[Variable] = None) -> Trace:
+    start_time_ns = time.perf_counter_ns()
+
+    bsyms = trace.bound_symbols
+    dced_bsyms = dce_bsyms(bsyms, trace.output, needed_proxies)
+    result = from_trace(trace)
+    result.bound_symbols = dced_bsyms
 
     end_time_ns = time.perf_counter_ns()
     elapsed_time_ns = end_time_ns - start_time_ns
     elapsed_time_millis = elapsed_time_ns // 1000000
-    dcetrace.set_provenance(TraceProvenance(f"Dead Code Elimination (took {elapsed_time_millis} milliseconds)"))
 
-    return dcetrace
+    result.set_provenance(TraceProvenance(f"Dead Code Elimination (took {elapsed_time_millis} milliseconds)"))
+    return result
 
 
 #

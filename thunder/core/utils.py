@@ -458,6 +458,9 @@ def elementwise_type_promotion(*args, type_promotion_kind: ELEMENTWISE_TYPE_PROM
 
     ALWAYS_BOOL is like PRESERVE, except the result dtype is always bool.
 
+    NUMBER_TO_INT is like DEFAULT, except float promotion dtypes *with no tensor inputs* use int
+    for their result dtypes. This absorbs the difference between e.g. math.ceil and torch.ceil.
+
     Example operators for each type promotion option:
 
       DEFAULT                 : add
@@ -504,7 +507,7 @@ def elementwise_type_promotion(*args, type_promotion_kind: ELEMENTWISE_TYPE_PROM
         and is_float_dtype(promotiontype)
         and all_number_type
     ):
-        return int, int
+        return promotiontype, int
 
     # Falls through to DEFAULT
     if is_low_precision_dtype(promotiontype):
@@ -1138,7 +1141,7 @@ def find_producer_symbols(trace: TraceCtx, proxies: Sequence[Proxy], stop_proxie
                 if arg_name not in map(lambda x: x.name, stop_proxies) and arg_name not in seen:
                     queue.append(arg)
                     seen.add(arg_name)
-    # original_order maps from bound_symbol to the index/order of its occurence in the trace. The order is
+    # original_order maps from bound_symbol to the index/order of its occurrence in the trace. The order is
     # used to sort producer bound symbols to preserve the correctness of data dependency.
     original_order = dict()
     for i, bsym in enumerate(trace.bound_symbols):

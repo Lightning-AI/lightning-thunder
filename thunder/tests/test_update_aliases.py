@@ -129,9 +129,11 @@ def test_update_aliases(op, device, dtype, executor, _):
     if op.name == "polygamma_":
         args[0], args[1] = args[1], args[0]
 
+    args_ref = [args[0].clone().detach()] + args[1:]
     j_op = executor.make_callable(op.torch_reference)
     actual = j_op(*args, **sample.kwargs)
-    expected = op.torch_reference(*args, **sample.kwargs)
+    expected = op.torch_reference(*args_ref, **sample.kwargs)
+    assert id(actual) == id(args[0])
     torch.testing.assert_close(actual, expected, equal_nan=True)
 
 
@@ -196,7 +198,11 @@ def test_inplace_on_view(executor, device, dtype):
         bb = b + 1
         return aa, bb
 
-    for fn in [h, i, j]:
+    def k(x, _):
+        y = x.view(2, 3)
+        return x.exp_() * y.tanh_()
+
+    for fn in [h, i, j, k]:
         a = make_tensor((2, 3), dtype=torch.float32, device=device)
         b = make_tensor((2, 3), dtype=torch.float32, device=device)
         a_, b_ = a.clone().detach(), b.clone().detach()

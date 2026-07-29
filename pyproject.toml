@@ -152,7 +152,6 @@ select = [
     "RUF100",  # see: https://docs.astral.sh/ruff/rules/unused-noqa/
 ]
 ignore = [
-    "E731",  # Do not assign a lambda expression, use a def
     "E501",  # todo: Line too long (235 > 120 characters)
     # TODO(crcrpar): Resolves the following ignores as these are added while enabling ruff check in pre-commit
     "F821",  # https://docs.astral.sh/ruff/rules/undefined-name/

@@ -544,7 +544,10 @@ def _thunder_to_torch_args(args, kwargs, dtype):
     Returns:
         tuple: (args, kwargs) with values converted to Torch dtypes if they are of the given dtype.
     """
-    mapper = lambda x: ltorch.to_torch_dtype(x) if isinstance(x, dtype) else x
+
+    def mapper(x):
+        return ltorch.to_torch_dtype(x) if isinstance(x, dtype) else x
+
     args = tree_map(mapper, args)
     kwargs = tree_map(mapper, kwargs)
     return args, kwargs

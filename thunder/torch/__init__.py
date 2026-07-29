@@ -2313,9 +2313,6 @@ def tanhshrink(a: TensorLike, /) -> TensorLike:
     return a - tanh(a)
 
 
-_inplace_to_out_of_place[tanhshrink] = tanhshrink, -1
-
-
 @torchsymbol(torch.threshold, torch.nn.functional.threshold, id="torch.threshold", is_method=False)
 def threshold(a: TensorProxy, /, threshold: float, value: float, inplace: bool = False) -> TensorLike:
     out = where(a <= threshold, value, a)
@@ -2593,6 +2590,24 @@ def maximum(a: TensorProxy, b: TensorProxy) -> TensorProxy:
 
 @torchsymbol(torch.minimum, is_method=True)
 def minimum(a: TensorProxy, b: TensorProxy) -> TensorProxy:
+    return clang.minimum(a, b)
+
+
+@torchsymbol(torch.sym_max, id="torch.sym_max")
+def sym_max(a: NumberLike, b: NumberLike) -> NumberLike:
+    utils.check(
+        isinstance(a, (Number, NumberProxy)) and isinstance(b, (Number, NumberProxy)),
+        lambda: "torch.sym_max supports only number inputs",
+    )
+    return clang.maximum(a, b)
+
+
+@torchsymbol(torch.sym_min, id="torch.sym_min")
+def sym_min(a: NumberLike, b: NumberLike) -> NumberLike:
+    utils.check(
+        isinstance(a, (Number, NumberProxy)) and isinstance(b, (Number, NumberProxy)),
+        lambda: "torch.sym_min supports only number inputs",
+    )
     return clang.minimum(a, b)
 
 
@@ -3182,7 +3197,7 @@ def torch_max(
 
     # overload - torch_max(a: TensorLike, /, dim: int | tuple[int], keepdim: bool = False) -> TensorLike, TensorLike
     # This overload corresponds to taking the max along the specified dimension `dim`.
-    # NOTE: It returns first occurence of the maximum value along the dimension and it's corresponding index.
+    # NOTE: It returns first occurrence of the maximum value along the dimension and it's corresponding index.
     utils.check_type(dim, NumberLike)
     max_vals = amax(a, dim, keepdim)
     argmax_vals = argmax(a, dim, keepdim)
@@ -6072,6 +6087,104 @@ def mse_loss(
         raise ValueError(f"Reduction argument {reduction} to mse_loss is not supported")
 
 
+if hasattr(torch.nn.functional, "scaled_mm"):
+    from torch.nn.functional import ScalingType
+    from torch.nn.functional import SwizzleType
+
+    @torchsymbol(torch.nn.functional.scaled_mm)
+    def scaled_mm(
+        mat_a: TensorLike,
+        mat_b: TensorLike,
+        scale_a: TensorLike | list[TensorLike],
+        scale_recipe_a: ScalingType | list[ScalingType],
+        scale_b: TensorLike | list[TensorLike],
+        scale_recipe_b: ScalingType | list[ScalingType],
+        swizzle_a: SwizzleType | list[SwizzleType] | None = None,
+        swizzle_b: SwizzleType | list[SwizzleType] | None = None,
+        bias: TensorLike | None = None,
+        output_dtype: torch.dtype | None = torch.bfloat16,
+        contraction_dim: Sequence[int] = (),
+        use_fast_accum: bool = False,
+    ) -> TensorLike:
+        utils.check_type(mat_a, TensorProxy)
+        utils.check_type(mat_b, TensorProxy)
+        utils.check(
+            mat_a.ndim == 2 and mat_b.ndim == 2,
+            lambda: "torch.nn.functional.scaled_mm currently supports 2D matrices",
+            NotImplementedError,
+        )
+        utils.check(
+            mat_a.shape[1] == mat_b.shape[0],
+            lambda: (
+                f"torch.nn.functional.scaled_mm expects mat_a.shape[-1] ({mat_a.shape[1]}) "
+                f"to equal mat_b.shape[-2] ({mat_b.shape[0]})"
+            ),
+        )
+        utils.check(
+            len(contraction_dim) == 0,
+            lambda: "torch.nn.functional.scaled_mm does not yet support contraction_dim",
+            NotImplementedError,
+        )
+
+        def _expand(value):
+            if value is None:
+                return []
+            if isinstance(value, (list, tuple)):
+                return list(value)
+            return [value]
+
+        scale_a_list = _expand(scale_a)
+        scale_b_list = _expand(scale_b)
+
+        def _validate_enum_list(values: list[Any], scales: list[Any], name: str) -> None:
+            if not values:
+                return
+            utils.check(
+                len(scales) > 0,
+                lambda: f"{name} was provided but the corresponding scale list is empty",
+                ValueError,
+            )
+            utils.check(
+                len(values) in (1, len(scales)),
+                lambda: (
+                    f"{name} must either be a single value or contain {len(scales)} entries "
+                    f"to match the number of associated scale tensors"
+                ),
+                ValueError,
+            )
+            for enum_value in values:
+                _ = int(enum_value.value) if hasattr(enum_value, "value") else int(enum_value)
+
+        _validate_enum_list(_expand(scale_recipe_a), scale_a_list, "scale_recipe_a")
+        _validate_enum_list(_expand(scale_recipe_b), scale_b_list, "scale_recipe_b")
+        _validate_enum_list(_expand(swizzle_a), scale_a_list, "swizzle_a")
+        _validate_enum_list(_expand(swizzle_b), scale_b_list, "swizzle_b")
+
+        def _collect_tensor_proxy_args(values: Sequence[Any]) -> list[TensorProxy]:
+            return [t for t in values if isinstance(t, TensorProxy)]
+
+        tensor_args: list[TensorProxy] = [mat_a, mat_b]
+        tensor_args += _collect_tensor_proxy_args(scale_a_list)
+        tensor_args += _collect_tensor_proxy_args(scale_b_list)
+        if isinstance(bias, TensorProxy):
+            tensor_args.append(bias)
+        utils.check_same_device(*tensor_args)
+
+        result_dtype = to_dtype(output_dtype or torch.bfloat16)
+        requires_grad = (
+            mat_a.requires_grad or mat_b.requires_grad or (isinstance(bias, TensorProxy) and bias.requires_grad)
+        )
+
+        m = mat_a.shape[0]
+        n = mat_b.shape[1]
+        return TensorProxy(
+            shape=(m, n),
+            device=mat_a.device,
+            dtype=result_dtype,
+            requires_grad=requires_grad,
+        )
+
+
 # TODO Add annotations
 # NOTE The scale parameter is kwarg-only in PyTorch
 @torchsymbol(torch.nn.functional.scaled_dot_product_attention, tags=(prims.OpTags.DONT_AUTO_RECOMPUTE_IN_BACKWARD,))
@@ -6600,10 +6713,16 @@ def autograd_function_apply(
     fwd: Callable[list[TensorProxy], TensorProxy | tuple[TensorProxy, ...]],
     bwd: Callable[list[TensorProxy], TensorProxy | tuple[TensorProxy, ...]],
     *args: Any,
-    args_tensor_mask: Sequence[bool] | None,
+    args_tensor_mask: Sequence[bool] | None = None,
     non_differentiable_idx: Sequence[int] | None = None,
 ) -> TensorProxy | tuple[TensorProxy, ...]:
-    result, saved_for_backward = call_higher_order_function_and_consider_outer_autograd_setting(fwd)(None, *args)
+    # TODO: Remove this once this autograd API becomes stable.
+    # On stable PyTorch, fwd expects ctx as first argument
+    # On nightly PyTorch, ctx is not an argument
+    if args_tensor_mask is not None:
+        result, saved_for_backward = call_higher_order_function_and_consider_outer_autograd_setting(fwd)(None, *args)
+    else:
+        result, saved_for_backward = call_higher_order_function_and_consider_outer_autograd_setting(fwd)(*args)
     return result
 
 
@@ -6612,10 +6731,16 @@ def augmented_forward_autograd_function_apply(
     fwd: Callable[list[Any | TensorProxy], TensorProxy | tuple[TensorProxy, ...]],
     bwd: Callable[list[Any | TensorProxy], tuple[TensorProxy, ...]],
     *args: Any,
-    args_tensor_mask: Sequence[bool],
+    args_tensor_mask: Sequence[bool] | None = None,
     non_differentiable_idx: Sequence[int] | None = None,
 ) -> tuple[TensorProxy | tuple[TensorProxy, ...], tuple[Any, ...]]:
-    result, saved_for_backward = fwd(None, *args)
+    # TODO: Remove this once this autograd API becomes stable.
+    # On stable PyTorch, fwd expects ctx as first argument
+    # On nightly PyTorch, ctx is not an argument
+    if args_tensor_mask is not None:
+        result, saved_for_backward = fwd(None, *args)
+    else:
+        result, saved_for_backward = fwd(*args)
     return result, (saved_for_backward, bwd, args_tensor_mask, non_differentiable_idx)
 
 
@@ -6623,11 +6748,17 @@ def augmented_forward_autograd_function_apply(
 def backward_autograd_function_apply(
     saved_for_backward: tuple[Any, ...],
     bwd: Callable[list[Any | TensorProxy], tuple[TensorProxy, ...]],
-    args_tensor_mask: Sequence[bool],
+    args_tensor_mask: Sequence[bool] | None = None,
     non_differentiable_idx: Sequence[int] | None = None,
     *grad_output: Sequence[TensorProxy],
 ) -> tuple[Any, ...]:
-    return bwd(None, *grad_output, *saved_for_backward)
+    # TODO: Remove this once this autograd API becomes stable.
+    # On stable PyTorch, bwd expects ctx as first argument
+    # On nightly PyTorch, ctx is not an argument
+    if args_tensor_mask is not None:
+        return bwd(None, *grad_output, *saved_for_backward)
+    else:
+        return bwd(*grad_output, *saved_for_backward)
 
 
 @torchsymbol(

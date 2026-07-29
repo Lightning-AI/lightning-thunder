@@ -34,9 +34,7 @@ interpret_no_tracking = interpret
 # This wraps the jit call into a tracking one (using a wrapper function
 # rather than partial to get a nice test name).
 def interpret_tracking(*args, **kwargs):
-    return interpret(
-        *args, with_provenance_tracking=True, uncacheable_classes=(torch.Tensor, int, float, str, type(None)), **kwargs
-    )
+    return interpret(*args, with_provenance_tracking=True, **kwargs)
 
 
 # This will be called by PyTest and parametrize each test that has
@@ -382,8 +380,11 @@ def test_build_const_key_map(jit):
 
 
 def test_build_map_dict_merge(jit):
-    addall = lambda *args, **kwargs: sum(args) + sum(kwargs.values())
-    foo = lambda *args, **kwargs: addall(*args, **kwargs)
+    def addall(*args, **kwargs):
+        return sum(args) + sum(kwargs.values())
+
+    def foo(*args, **kwargs):
+        return addall(*args, **kwargs)
 
     assert any(i.opname == "BUILD_MAP" for i in dis.get_instructions(foo))
     assert any(i.opname == "DICT_MERGE" for i in dis.get_instructions(foo))
@@ -398,7 +399,10 @@ def test_build_map_dict_merge(jit):
 
     with pytest.raises(KeyError, match="got multiple values for keyword argument"):
         d = {"a": 3, "b": 4}
-        mergefail = lambda **kwargs: addall(**kwargs, **d)
+
+        def mergefail(**kwargs):
+            return addall(**kwargs, **d)
+
         jfail = jit(mergefail)
         jfail(**kwargs)
 

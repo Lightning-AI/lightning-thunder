@@ -520,7 +520,7 @@ class FXGraphReport:
         code_str = f"{code_str}\n{main_code.format(graph_name=self.graph_name)}\n{comment_str}"
 
         if file_name is None:
-            file_name = f"{self.graph_name}.py"
+            file_name = f"{self.graph_name}_{compile_fn.name}_repro.py"
         with open(folder / file_name, "w") as f:
             print(code_str, file=f)
         format_python_file(folder / file_name)
@@ -633,7 +633,7 @@ class FXGraphReport:
 
         code_str = f"{code_str}\n{main_code.format(graph_name=self.graph_name)}\n{comment_str}"
         if file_name is None:
-            file_name = f"{self.graph_name}.py"
+            file_name = f"{self.graph_name}_{compile_fn.name}_{time_fn.name}_benchmark.py"
         with open(folder / file_name, "w") as f:
             print(code_str, file=f)
         format_python_file(folder / file_name)
@@ -924,7 +924,7 @@ print(measurement)
 {comment_str}
 """
         if file_name is None:
-            file_name = f"{self.name}_benchmark_nvfuser.py"
+            file_name = f"{self.name}_benchmark_nvfuser_{time_fn.name}.py"
         with open(folder / file_name, "w") as f:
             print(code_str, file=f)
         format_python_file(folder / file_name)
@@ -983,7 +983,7 @@ measurement = {time_fn.to_source("torch_compiled_callable", "inputs")}
 print(measurement)
 """
         if file_name is None:
-            file_name = f"{self.name}_benchmark_inductor.py"
+            file_name = f"{self.name}_benchmark_inductor_{time_fn.name}.py"
         with open(folder / file_name, "w") as f:
             f.write(code_str)
         format_python_file(folder / file_name)
@@ -1428,22 +1428,39 @@ def save_thunderfx_repros(
     Saves reproduction scripts for ThunderFX subgraphs.
 
     This function:
-    1. Creates a folder structure to organize the repros
-    .
-    └── graph0
-        ├── fusion_reports
-        │   ├── graph0_thunder_0_nvFusion0_forward_repro_nvfuser.py
-        │   ├── graph0_thunder_0_nvFusion1_forward_repro_nvfuser.py
-        │   ├── graph0_thunder_0_nvFusion2_backward_repro_nvfuser.py
-        ├── graph0_thunder_0_bwd_trace.py
-        ├── graph0_thunder_0_fwd_trace.py
-        └── graph0_thunder_0.py
+    1. Creates a folder structure to organize the repro or benchmark scripts:
+
+       If use_benchmark is True:
+       graph0/
+       ├── fusion_reports/
+       │   ├── graph0_thunder_0_nvFusion0_forward_benchmark_inductor_KernelTime.py
+       │   ├── graph0_thunder_0_nvFusion0_forward_benchmark_inductor_WallTimeWithMemoryUsage.py
+       │   ├── graph0_thunder_0_nvFusion0_forward_benchmark_nvfuser_KernelTime.py
+       │   └── graph0_thunder_0_nvFusion0_forward_benchmark_nvfuser_WallTimeWithMemoryUsage.py
+       ├── graph0_repro_torchcompile.py
+       ├── graph0_thunder_0_bwd_trace.py
+       ├── graph0_thunder_0_fwd_trace.py
+       ├── graph0_thunder_0_inductor_KernelTime_benchmark.py
+       ├── graph0_thunder_0_inductor_WallTimeWithMemoryUsage_benchmark.py
+       ├── graph0_thunder_0_thunder_KernelTime_benchmark.py
+       └── graph0_thunder_0_thunder_WallTimeWithMemoryUsage_benchmark.py
+
+       If use_benchmark is False:
+       graph0/
+       ├── fusion_reports/
+       │   ├── graph0_thunder_0_nvFusion0_forward_repro_inductor.py
+       │   └── graph0_thunder_0_nvFusion0_forward_repro_nvfuser.py
+       ├── graph0_repro_torchcompile.py
+       ├── graph0_thunder_0_fwd_trace.py
+       ├── graph0_thunder_0_bwd_trace.py
+       ├── graph0_thunder_0_inductor_repro.py
+       └── graph0_thunder_0_thunder_repro.py
 
     2. For each Thunder FX graph and its subgraphs:
-        - Checks runnability if requested
-        - Saves benchmark or repro scripts
-        - Saves trace information if requested
-        - Saves nvFusion repros if requested
+       - Checks runnability if requested
+       - Saves benchmark or repro scripts
+       - Saves trace information if requested
+       - Saves nvFusion repros if requested
 
     Args:
         fn: The callable to analyze
@@ -1452,7 +1469,7 @@ def save_thunderfx_repros(
         check_runnability: If True, checks if graphs can run with Thunder
         save_fusion: If True, saves nvFusion repros
         save_trace: If True, saves trace information
-        stream: Stream to write output log informationto
+        stream: Stream to write output log information to
         force_overwrite: If True, overwrites existing folder at folder_path
         **compile_kwargs: Keyword arguments for Thunder and torch.compile
 
@@ -1472,6 +1489,7 @@ def save_thunderfx_repros(
         for thunder_fxgraph_report in thunder_fxgraph_reports:
             graph_folder = folder_path / thunder_fxgraph_report.graph_name
             graph_folder.mkdir(exist_ok=True, parents=True)
+            thunder_fxgraph_report.write_inductor_repro(graph_folder)
             for split_report in thunder_fxgraph_report.subgraph_reports:
                 if check_runnability or save_trace or save_fusion:
                     try:
@@ -1484,22 +1502,38 @@ def save_thunderfx_repros(
                         continue
                     else:
                         stream.write(f"Successfully ran the {split_report.graph_name} using Thunder\n")
+
+                from torch._inductor.compile_fx import graph_returns_tuple
+
+                # torch._inductor.compile requires the output to be tuple, if not, the symbolic trace is necessary
+                skip_symbolic_trace = graph_returns_tuple(split_report.graph)
+                torchinductor = TorchInductorSpecification(skip_symbolic_trace=skip_symbolic_trace)
                 if use_benchmark:
-                    split_report.write_benchmark(graph_folder, thunderjit, WallTime)
+                    split_report.write_benchmark(graph_folder, thunderjit, WallTimeWithMemoryUsage)
+                    split_report.write_benchmark(graph_folder, thunderjit, KernelTime)
+
+                    split_report.write_benchmark(graph_folder, torchinductor, WallTimeWithMemoryUsage)
+                    split_report.write_benchmark(graph_folder, torchinductor, KernelTime)
                 else:
                     split_report.write_repro(graph_folder, thunderjit)
+                    split_report.write_repro(graph_folder, torchinductor)
                 if save_trace:
                     with open(graph_folder / f"{split_report.graph_name}_fwd_trace.py", "w") as f:
                         f.write(str(split_report.fwd_trc))
-                    with open(graph_folder / f"{split_report.graph_name}_bwd_trace.py", "w") as f:
-                        f.write(str(split_report.bwd_trc))
+                    if split_report.bwd_trc is not None:
+                        with open(graph_folder / f"{split_report.graph_name}_bwd_trace.py", "w") as f:
+                            f.write(str(split_report.bwd_trc))
                 if save_fusion:
                     fusion_folder = graph_folder / "fusion_reports"
                     fusion_folder.mkdir(exist_ok=True, parents=True)
                     for fusion_report in split_report.fusion_reports:
                         if use_benchmark:
-                            fusion_report.write_nvfuser_benchmark(fusion_folder, WallTime)
+                            fusion_report.write_nvfuser_benchmark(fusion_folder, WallTimeWithMemoryUsage)
+                            fusion_report.write_inductor_benchmark(fusion_folder, WallTimeWithMemoryUsage)
+                            fusion_report.write_nvfuser_benchmark(fusion_folder, KernelTime)
+                            fusion_report.write_inductor_benchmark(fusion_folder, KernelTime)
                         else:
                             fusion_report.write_nvfuser_repro(fusion_folder)
+                            fusion_report.write_inductor_repro(fusion_folder)
 
     return inner_fn
