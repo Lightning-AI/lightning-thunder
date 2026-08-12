@@ -15,7 +15,16 @@ import torch
 import thunder.core.dtypes as dtypes
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
 from thunder.core.proxies import Proxy, NumberProxy, TensorProxy, variableify, CONSTRAINT, Variable
+from thunder.core.baseutils import (
+    BoundSymbolInterface,
+    TensorProxyInterface,
+    check,
+    check_type,
+    check_valid_length,
+    check_valid_shape,
+)
 from thunder.core.baseutils import *  # noqa: F403
+from thunder.core.codeutils import SigInfo
 from thunder.core.codeutils import *  # noqa: F403
 from thunder.core.trace import TraceCtx, tracectx
 import thunder.core.prims as prims
