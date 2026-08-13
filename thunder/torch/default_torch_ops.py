@@ -1,5 +1,20 @@
 import torch
 
+from thunder.constants import _TORCH_GREATER_EQUAL_2_13
+
+# torch 2.13 removed named tensors (pytorch/pytorch#173895), and this table is built at import
+# time, so referencing the removed methods would break `import thunder` there.
+_named_tensor_methods = (
+    []
+    if _TORCH_GREATER_EQUAL_2_13
+    else [
+        torch.Tensor.align_as,
+        torch.Tensor.align_to,
+        torch.Tensor.refine_names,
+        torch.Tensor.rename,
+    ]
+)
+
 torch_auto_registered_ops = {
     torch: [
         torch._native_multi_head_attention,
@@ -358,8 +373,8 @@ torch_auto_registered_ops = {
         torch.Tensor.addmv,
         torch.Tensor.addr,
         torch.Tensor.adjoint,
-        torch.Tensor.align_as,
-        torch.Tensor.align_to,
+        # align_as, align_to, refine_names and rename, on torch versions that still have them
+        *_named_tensor_methods,
         torch.Tensor.aminmax,
         torch.Tensor.angle,
         torch.Tensor.arccos,
@@ -520,8 +535,6 @@ torch_auto_registered_ops = {
         torch.Tensor.quantile,
         torch.Tensor.rad2deg,
         torch.Tensor.ravel,
-        torch.Tensor.refine_names,
-        torch.Tensor.rename,
         torch.Tensor.renorm,
         torch.Tensor.reshape_as,
         torch.Tensor.resize,

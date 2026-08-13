@@ -5,6 +5,7 @@ from itertools import islice
 import pytest
 import thunder
 import thunder.torch.default_torch_ops as ops
+from thunder.constants import _TORCH_GREATER_EQUAL_2_13
 from thunder.torch import _get_torch_function_name
 import torch
 
@@ -248,3 +249,13 @@ def test_query_autoreg_ops(executor, device: str, _):
         cfn(a)
         ops = thunder.get_auto_registered_torch_op_names(cfn)
         assert expect == ops
+
+
+def test_named_tensor_ops_follow_torch():
+    # torch 2.13 removed named tensors, and this table is built at import time.
+    named_tensor_methods = {"align_as", "align_to", "refine_names", "rename"}
+    registered = {fn.__name__ for fn in ops.torch_auto_registered_ops[torch.Tensor]}
+    if _TORCH_GREATER_EQUAL_2_13:
+        assert not (named_tensor_methods & registered)
+    else:
+        assert named_tensor_methods <= registered
