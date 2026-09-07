@@ -528,7 +528,9 @@ def check_metrics(
     for m1, m2, name in zip(measure1, measure2, ("forward", "backward")):
         check(
             (m1 is None) == (m2 is None),
-            lambda: f"{name} measurement for the two compilation methods should either both be None or both not None, but got {m1} and {m2}",
+            lambda: (
+                f"{name} measurement for the two compilation methods should either both be None or both not None, but got {m1} and {m2}"
+            ),
         )
         if m1 is None:
             continue
