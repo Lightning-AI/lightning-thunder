@@ -334,7 +334,9 @@ def resolve_dtypes(args: Iterable) -> set[dtype]:
             for a in arg:
                 baseutils.check(
                     isinstance(a, dtype),
-                    lambda: f"Iterables passed to resolve_dtypes must only contain dtypes, but found an Iterable with {a}",
+                    lambda: (
+                        f"Iterables passed to resolve_dtypes must only contain dtypes, but found an Iterable with {a}"
+                    ),
                     exception_type=NotImplementedError,
                 )
                 if not a.is_weak:
@@ -342,7 +344,9 @@ def resolve_dtypes(args: Iterable) -> set[dtype]:
 
         baseutils.check(
             arg in (dtype, exact, signedinteger, unsignedinteger, bool_, inexact, floating, complexfloating),
-            lambda: f"Excepted arguments to resolve_dtypes to be dtypes, sets of dtypes, or a dtype (sub)class, but got {arg}",
+            lambda: (
+                f"Excepted arguments to resolve_dtypes to be dtypes, sets of dtypes, or a dtype (sub)class, but got {arg}"
+            ),
             exception_type=AssertionError,
         )
 

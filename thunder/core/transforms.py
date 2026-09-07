@@ -917,8 +917,10 @@ register_grad(pids.INDEX_COPY, _index_copy_grad)
 def _scatter_add_prim_grad(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
     utils.check(
         not value._requires_grad or value.shape == index.shape,
-        lambda: "The gradient for the value Tensor is implemented only when value.shape == index.shape. "
-        "value shape is {value.shape} while index shape is {index.shape}",
+        lambda: (
+            "The gradient for the value Tensor is implemented only when value.shape == index.shape. "
+            "value shape is {value.shape} while index shape is {index.shape}"
+        ),
     )
 
     fwd = prims.scatter_add(a, index, value, dim)
@@ -2985,8 +2987,10 @@ def backward_pass(forward_env, trace, init_cotangents):
         if len(symbol.args) != (orig_res_len := len(result)):
             check(
                 orig_res_len <= len(symbol.args),
-                lambda: f"Backward for {symbol.sym.id} returned {orig_res_len} values, "
-                + f"but expected at most {len(symbol.args)}",
+                lambda: (
+                    f"Backward for {symbol.sym.id} returned {orig_res_len} values, "
+                    + f"but expected at most {len(symbol.args)}"
+                ),
             )
             # Assuming that the non-differentiable arguments were dropped from
             # the backward function, we are going to append None to the result
@@ -2998,8 +3002,10 @@ def backward_pass(forward_env, trace, init_cotangents):
             n_differentiable_args = sum(bool(_is_differentiable(arg)) for arg in symbol.args)
             check(
                 n_differentiable_args <= orig_res_len,
-                lambda: f"Backward for {symbol.sym.id} returned {orig_res_len} value(s), "
-                + f"but expected {n_differentiable_args}",
+                lambda: (
+                    f"Backward for {symbol.sym.id} returned {orig_res_len} value(s), "
+                    + f"but expected {n_differentiable_args}"
+                ),
             )
 
             result = tuple(next(iter_result) if _is_differentiable(arg) else None for arg in symbol.args)
@@ -3033,7 +3039,9 @@ def vjp_call(primals, cotangents, trace: Trace, **kwargs):
     result, env = augmented_forward_pass(*primals, trace=trace, **kwargs)
     check(
         len(result) == len(cotangents) if isinstance(result, Sequence) else True,
-        lambda: f"Expected cotangents to be a sequence of length {len(result)}, got a sequence of length {len(cotangents)}",
+        lambda: (
+            f"Expected cotangents to be a sequence of length {len(result)}, got a sequence of length {len(cotangents)}"
+        ),
     )
     return result, backward_pass(env, trace, cotangents)
 

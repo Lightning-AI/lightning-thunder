@@ -371,7 +371,9 @@ def create_fd(
         # multi-GPU path
         utils.check(
             all(isinstance(t, DTensorProxy) for t in sorted_unique_inputs),
-            lambda: "nvfuser: Currently we only support Fusion region with all DTensor inputs or all Tensor inputs but not a mix",
+            lambda: (
+                "nvfuser: Currently we only support Fusion region with all DTensor inputs or all Tensor inputs but not a mix"
+            ),
         )
 
         def check_dtensor_tracing_and_runtime_metadata(inp):
@@ -680,7 +682,9 @@ class nvFuserExecutor(FusionExecutor):
             # NOTE self.can_execute(bsym) is False
             check(
                 len(bsym.subsymbols) > 0,
-                lambda: f"nvFuser is trying to flatten {bsym} for execution but it's not supported and has no subsymbols",
+                lambda: (
+                    f"nvFuser is trying to flatten {bsym} for execution but it's not supported and has no subsymbols"
+                ),
                 exception_type=AssertionError,
             )
 
