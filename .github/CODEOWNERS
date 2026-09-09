@@ -4,14 +4,14 @@
 # @global-owner1, @global-owner2, and @global-owner3 will be requested for review when someone opens a pull request.
 
 # Thank you, our previous code owners for their service:
-#   @carmocca @borda
+#   @carmocca @borda @lantiga @KaelanDt @mruberry
 
-* @mruberry @lantiga @KaelanDt
+* @tejapulagam @k223kim @lianakoleva
 
 # CI/CD and configs
-/.azure/        @KaelanDt @lantiga
-/.github/       @KaelanDt @lantiga
-/.lightning/    @KaelanDt @lantiga
-/dockers/       @KaelanDt @lantiga
-Makefile        @KaelanDt @lantiga
-*.yml           @KaelanDt @lantiga
+/.azure/        @tejapulagam @k223kim @lianakoleva
+/.github/       @tejapulagam @k223kim @lianakoleva
+/.lightning/    @tejapulagam @k223kim @lianakoleva
+/dockers/       @tejapulagam @k223kim @lianakoleva
+Makefile        @tejapulagam @k223kim @lianakoleva
+*.yml           @tejapulagam @k223kim @lianakoleva
