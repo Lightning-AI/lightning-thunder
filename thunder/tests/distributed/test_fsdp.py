@@ -25,6 +25,7 @@ from thunder.distributed import fsdp
 from thunder.tests.framework import instantiate, TorchExecutor
 
 from thunder.executors.transformer_engineex import transformer_engine_ex, TransformerEngineTransform
+from thunder.dev_utils.export_stateful_ex_transform import ExportStatefulExecutorsTransform
 
 
 is_fp8_supported: bool = False
@@ -970,6 +971,107 @@ def _test_fsdp_transformer_engine_bucketing(input_data):
         return None
 
 
+def _test_fsdp_transformer_engine_state_export(input_data):
+    # Test Description:
+    # Verify that the TEStateReporter correctly captures and reports TransformerEngine
+    # FP8 state information during DDP training execution, including global context,
+    # recipe summaries, and forward/backward state summaries across distributed processes.
+
+    init_method, world_size, rank, executor, device, _dtype, kwargs = input_data
+    thunder_fsdp_strategy, intermediate_activation_sharding = kwargs["thunder_fsdp_strategy_and_intermediate_sharding"]
+    devicetype = devices.device_from_string(device).devicetype
+
+    # Setting LOCAL_RANK is necessary for thunder.distributed.fsdp
+    with unittest.mock.patch.dict(os.environ, {"LOCAL_RANK": str(rank)}):
+        pg = init_per_process_distributed(init_method, devicetype, world_size, rank)
+        torch.cuda.set_device(rank)
+        torch_device = torch.device("cuda", rank)
+        dtype_t = torch.bfloat16
+
+        fp8_recipe = get_default_fp8_recipe()
+
+        dim = 256
+
+        class ThunderModel(torch.nn.Module):
+            def __init__(self) -> None:
+                super().__init__()
+                self.fc1 = torch.nn.Linear(dim, dim, bias=False, device=torch_device, dtype=dtype_t)
+                self.fc2 = torch.nn.Linear(dim, dim, bias=False, device=torch_device, dtype=dtype_t)
+                self.fc3 = torch.nn.Linear(dim, dim, bias=False, device=torch_device, dtype=dtype_t)
+
+            def forward(self, x):
+                return self.fc3(self.fc2(torch.nn.functional.relu(self.fc1(x))))
+
+        # Inputs (different input on different rank).
+        if rank == 0:
+            x = torch.arange(dim * dim, dtype=dtype_t, device=torch_device).view(dim, dim)
+        if rank == 1:
+            x = torch.randn(dim, dim, device=torch_device, dtype=dtype_t) * 100
+
+        model = ThunderModel()
+        jmodel = thunder.distributed.fsdp(
+            thunder.jit(
+                model,
+                executors=[
+                    transformer_engine_ex,
+                ]
+                + executor.executors_list(),
+                fp8_shard_intermediate_activation=intermediate_activation_sharding,
+                transforms=[TransformerEngineTransform(), ExportStatefulExecutorsTransform()],
+            ),
+            sharding_strategy=thunder_fsdp_strategy,
+        )
+
+        iters = 10
+
+        def train(model):
+            for _ in range(iters):
+                with fp8_autocast(fp8_recipe=fp8_recipe):
+                    y = model(x)
+                y.backward(torch.ones_like(y))
+
+        train(jmodel)
+
+        # Resolve latest TE FP8 states on demand (forward and backward)
+        resolved_fwd = False
+        resolved_bw = False
+        try:
+            if hasattr(jmodel, "te_fp8_states"):
+                f_entry = jmodel.te_fp8_states()
+                if isinstance(f_entry, dict) and ("delayed" in f_entry or "mxfp8" in f_entry):
+                    resolved_fwd = True
+                b_entry = jmodel.te_fp8_states(mode="backward")
+                if isinstance(b_entry, dict) and ("delayed" in b_entry or "mxfp8" in b_entry):
+                    resolved_bw = True
+        except Exception:
+            pass
+
+        payload = {
+            "rank": rank,
+            "error": None,
+            "resolved_fwd": resolved_fwd,
+            "resolved_bw": resolved_bw,
+        }
+
+        gathered = [None] * world_size if rank == 0 else None
+        tdist.gather_object(payload, object_gather_list=gathered, dst=0, group=pg)
+
+        tdist.barrier(pg)
+        tdist.destroy_process_group(pg)
+
+        if rank == 0:
+            exceptions = []
+            for p in gathered:
+                if p["error"]:
+                    exceptions.append(AssertionError(p["error"]))
+                    continue
+                # We should resolve both forward and backward entries
+                assert p["resolved_fwd"]
+                assert p["resolved_bw"]
+            return exceptions
+        return None
+
+
 @instantiate(
     dtypes=(thunder.float32,),
     num_devices=2,
@@ -999,6 +1101,37 @@ def _test_fsdp_transformer_engine_bucketing(input_data):
 )
 @distributed_wrapper("test_fsdp_transformer_engine", _test_fsdp_transformer_engine)
 def test_fsdp_transformer_engine(executor, devices, dtype, thunder_fsdp_strategy_and_intermediate_sharding):
+    pass
+
+
+@instantiate(
+    dtypes=(thunder.float32,),
+    num_devices=2,
+    devicetypes=(devices.DeviceType.CUDA,),
+    executors=(TorchExecutor,),
+    decorators=(
+        pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices"),
+        unittest.mock.patch.dict(os.environ, {"NVTE_TORCH_COMPILE": "0"}),
+        pytest.mark.parametrize(
+            "thunder_fsdp_strategy_and_intermediate_sharding",
+            (
+                (FSDPType.ZERO2, False),
+                (FSDPType.ZERO3, False),
+                # Intermediate sharding is only availabe TE v1.8 onwards
+                pytest.param(
+                    (FSDPType.ZERO3, True),
+                    marks=pytest.mark.skip("Intermediate sharding is errors in TE 2.0 (also with eager)."),
+                ),
+            ),
+        ),
+        pytest.mark.skipif(not TE_AVAILABLE, reason="TransformerEngine is not installed."),
+        pytest.mark.skipif(not is_fp8_supported, reason=fp8_support_reason),
+    ),
+)
+@distributed_wrapper("test_fsdp_transformer_engine_state_export", _test_fsdp_transformer_engine_state_export)
+def test_fsdp_transformer_engine_state_export(
+    executor, devices, dtype, thunder_fsdp_strategy_and_intermediate_sharding
+):
     pass
 
 
