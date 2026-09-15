@@ -27,7 +27,9 @@ run: |
   bash scripts/remove-torch-lines.sh requirements/base.txt
   cat requirements/base.txt
   # double check on test requirements
-  pip install -q -U -r requirements/base.txt -r requirements/notebooks.txt
+  # PyJWT comes from the image's apt packages, so it has no RECORD and cannot be uninstalled
+  # to make way for an -U upgrade; leave the installed one alone.
+  pip install -q -U --ignore-installed PyJWT -r requirements/base.txt -r requirements/notebooks.txt
   # install this package
   pip install -e .
 
