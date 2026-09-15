@@ -7,8 +7,10 @@ recursive-include pl_sandbox *.md
 # Include the license file
 include LICENSE
 
-# Exclude build configs
+# Exclude build configs, but keep pyproject.toml: the wheel is built from the
+# sdist, and without it setuptools loses all [project] metadata incl. the name.
 exclude *.toml
+include pyproject.toml
 exclude *.svg
 exclude *.yml
 exclude *.yaml
