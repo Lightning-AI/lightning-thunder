@@ -74,6 +74,10 @@ markers = [
 ]
 filterwarnings = [
     "error::FutureWarning",
+    # torch reads this deprecated dynamo config at import time, as a default argument in
+    # torch/testing/_internal/common_utils.py, which fails collection of the distributed tests
+    # todo: drop once torch stops reading it
+    "ignore:torch._dynamo.config.inline_inbuilt_nn_modules is deprecated:FutureWarning",
 ]
 timeout = 900
 # xfail_strict = true  # todo
