@@ -197,6 +197,23 @@ class WrappedValue:
 #       In some situations - in particular *args/**kwargs, Python creates tuples and dicts for us,
 #       these functions are intended to do the appropriate wrapping for them.
 def wrap_args_from_list(lst):  # returns a new list!
+    # CALL_FUNCTION_EX only guarantees an Iterable -- f(*gen) and f(*d.keys()) are both legal --
+    # so drive anything that cannot be indexed with iter/next, as UNPACK_SEQUENCE does.
+    if not wrapped_isinstance(lst, Sequence):
+        runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
+        it = _interpret_call(iter, lst)
+        if it is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+            return it
+        res = []
+        while True:
+            v = _interpret_call(next, it)
+            if v is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+                if not isinstance(runtimectx._curexc, StopIteration):
+                    return v
+                runtimectx._curexc = None
+                return res
+            res.append(v)
+
     res = [_interpret_call(lambda seq, i: seq[i], lst, wrap_const(i)) for i in range(len(unwrap(lst)))]
     return res
 
@@ -932,6 +949,7 @@ class PseudoInst(str, enum.Enum):
     BINARY_ADD = "BINARY_ADD"
     LIST_APPEND = "LIST_APPEND"
     LIST_EXTEND = "LIST_EXTEND"
+    LIST_INSERT = "LIST_INSERT"
     GET_ITER = "GET_ITER"
     CONTAINS_OP = "CONTAINS_OP"
     SUPER = "SUPER"
@@ -2371,7 +2389,22 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
 
     def insert(self, i, x, /):
         self.track_items()
-        raise NotImplementedError("Sequence.insert, please file an issue")
+        assert self.item_wrappers is not None
+
+        uindex = i.value
+        if not isinstance(uindex, int):
+            return do_raise(TypeError(f"'{type(uindex).__name__}' object cannot be interpreted as an integer"))
+        uindex = int(uindex)  # if it was a subclass like IntProxy
+
+        # list.insert clamps out-of-range indices, and both lists are the same length here,
+        # so they stay in step without a bounds check.
+        pr = ProvenanceRecord(PseudoInst.LIST_INSERT, inputs=[self.provenance, i.provenance, x.provenance])
+        self.provenance = pr  # should have an update method
+        self.value.insert(uindex, x.value)
+        assert type(self.item_wrappers) is list
+        self.item_wrappers.insert(uindex, x)
+        assert len(self.value) == len(self.item_wrappers)
+        return wrap_const(None)
 
     def pop(self, index=-1, /):
         self.track_items()
@@ -2449,6 +2482,9 @@ class MappingKeysView(ThunderInterpreterObject):
 
     def isdisjoint(self, other):
         return all((k not in self.mapping) for k in other)
+
+    def __len__(self):
+        return len(self.mapping)
 
     # This is called as a lookaside!
     def __iter__(self):
@@ -3873,6 +3909,8 @@ def _call_function_ex_handler(
     ctx: InterpreterCompileCtx = get_interpretercompilectx()
     if ctx._with_provenance_tracking:
         args = wrap_args_from_list(args)
+        if args is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+            return args
         kwargs = wrap_kwargs_from_dict(kwargs)
     return check_and_append(stack, _interpret_call(func, *args, **kwargs))
 
