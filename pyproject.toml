@@ -78,6 +78,10 @@ filterwarnings = [
     # torch/testing/_internal/common_utils.py, which fails collection of the distributed tests
     # todo: drop once torch stops reading it
     "ignore:torch._dynamo.config.inline_inbuilt_nn_modules is deprecated:FutureWarning",
+    # thunder's forward-mode AD imports torch._decomp.decompositions_for_jvp, which torch.jit.script
+    # its decompositions on import. The prefix covers both the <3.14 and 3.14+ wordings.
+    # todo: drop once torch stops scripting those decompositions
+    "ignore:`torch.jit.script` is:FutureWarning",
 ]
 timeout = 900
 # xfail_strict = true  # todo
