@@ -761,6 +761,9 @@ def _checkpoint_function_converter(gm: torch.fx.GraphModule):
                 thunder_node = gm.graph.call_function(
                     _torch_to_thunder_function_map[n.target], args=n.args, kwargs=n.kwargs
                 )
+            # Copy metadata from the original node to preserve tensor properties like
+            # requires_grad, dtype, shape, etc. which are crucial for gradient computation
+            thunder_node.meta = n.meta.copy()
             n.replace_all_uses_with(thunder_node)
             gm.graph.erase_node(n)
         else:
