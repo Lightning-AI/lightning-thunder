@@ -27,10 +27,22 @@ run: |
   bash scripts/remove-torch-lines.sh requirements/base.txt
   cat requirements/base.txt
   # double check on test requirements
-  # PyJWT comes from the image's apt packages, so it has no RECORD and the -U install below
-  # cannot replace it. Put a pip-managed copy in place first, on its own so --ignore-installed
-  # (which is global, not per-package) cannot pull a fresh torch over the image's build.
-  pip install -q --ignore-installed PyJWT
+  # Some packages come from the image's apt layer (PyJWT, cryptography, ...). Those have no
+  # RECORD file, so pip cannot replace them when the install below wants a newer version. Give
+  # pip its own copies at the same versions first. Custom builds (torch, nvfuser -- local
+  # versions like 2.12.0a0+git044db10) are skipped: they are not on PyPI and must not be touched.
+  python - <<'EOF' > /tmp/apt-owned.txt
+  import importlib.metadata as md
+
+  for dist in md.distributions():
+      name, version = dist.metadata["Name"], dist.version
+      if not name or "+" in version or name.lower() in {"lightning-thunder", "torch", "nvfuser"}:
+          continue
+      if dist.read_text("RECORD") is None:
+          print(f"{name}=={version}")
+  EOF
+  cat /tmp/apt-owned.txt
+  [ -s /tmp/apt-owned.txt ] && pip install -q --ignore-installed -r /tmp/apt-owned.txt
   pip install -q -U -r requirements/base.txt -r requirements/notebooks.txt
   # install this package
   pip install -e .
