@@ -22,6 +22,7 @@ from thunder.tests.framework import instantiate, TorchExecutor
 
 
 from thunder.executors.transformer_engineex import transformer_engine_ex, TransformerEngineTransform
+from thunder.dev_utils.export_stateful_ex_transform import ExportStatefulExecutorsTransform
 
 
 is_fp8_supported: bool = False
@@ -554,6 +555,99 @@ def _test_ddp_transformer_engine_llama_sanity(input_data):
     return None
 
 
+def _test_ddp_transformer_engine_state_export(input_data):
+    # Test Description:
+    # This test ensures that the ExportStatefulExecutorsTransform correctly collects and exports
+    # TransformerEngine FP8 state information (such as amax/scale and quantizer stats) during
+    # distributed DDP training. It verifies that the state reporter works as expected across
+    # multiple processes, capturing both forward and backward state summaries for each rank.
+
+    init_method, world_size, rank, _executor, device, _dtype, _unused_kwargs = input_data
+    devicetype = devices.device_from_string(device).devicetype
+    pg = init_per_process_distributed(init_method, devicetype, world_size, rank)
+
+    torch.cuda.set_device(rank)
+    torch_device = torch.device("cuda", rank)
+
+    dtype_t = torch.bfloat16
+    if rank == 0:
+        x = torch.randn(3, 768, 4096, device=torch_device, dtype=dtype_t, requires_grad=True)
+    else:
+        x = torch.randn(2, 768, 4096, device=torch_device, dtype=dtype_t, requires_grad=True)
+
+    class Module(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.w1 = nn.Parameter(torch.randn(4096, 4096, device=torch_device, dtype=dtype_t))
+            self.w2 = nn.Parameter(torch.randn(2048, 4096, device=torch_device, dtype=dtype_t))
+
+        def forward(self, x):
+            o = torch.nn.functional.linear(x, self.w1)
+            added = o + x
+            return torch.nn.functional.linear(added, self.w2)
+
+    model = Module()
+    jmodel = thunder.distributed.ddp(
+        thunder.jit(
+            model,
+            executors=[transformer_engine_ex],
+            transforms=[TransformerEngineTransform(), ExportStatefulExecutorsTransform()],
+        )
+    )
+
+    # Use default TE recipe for this test
+    fp8_recipe = get_default_fp8_recipe()
+
+    iters = 10
+
+    def train(model):
+        for _ in range(iters):
+            with fp8_autocast(fp8_recipe=fp8_recipe):
+                y = model(x)
+            y.backward(torch.ones_like(y))
+
+    train(jmodel)
+
+    # Resolve latest TE FP8 states on demand (forward and backward)
+    resolved_fwd = False
+    resolved_bw = False
+    try:
+        if hasattr(jmodel, "te_fp8_states"):
+            f_entry = jmodel.te_fp8_states()
+            if isinstance(f_entry, dict) and ("delayed" in f_entry or "mxfp8" in f_entry):
+                resolved_fwd = True
+            b_entry = jmodel.te_fp8_states(mode="backward")
+            if isinstance(b_entry, dict) and ("delayed" in b_entry or "mxfp8" in b_entry):
+                resolved_bw = True
+    except Exception:
+        pass
+
+    payload = {
+        "rank": rank,
+        "error": None,
+        "resolved_fwd": resolved_fwd,
+        "resolved_bw": resolved_bw,
+    }
+
+    gathered = [None] * world_size if rank == 0 else None
+    tdist.gather_object(payload, object_gather_list=gathered, dst=0, group=pg)
+
+    tdist.barrier(pg)
+    tdist.destroy_process_group(pg)
+
+    if rank == 0:
+        exceptions = []
+        for p in gathered:
+            if p["error"]:
+                exceptions.append(AssertionError(p["error"]))
+                continue
+            # We should resolve both forward and backward entries
+            assert p["resolved_fwd"]
+            assert p["resolved_bw"]
+        return exceptions
+    return None
+
+
 # NOTE This is just a stub, see the NOTE for ddp_wrapper
 @instantiate(
     dtypes=(thunder.float32,),
@@ -609,6 +703,23 @@ def test_ddp_transformer_engine(executor, devices, dtype):
 )
 @distributed_wrapper("test_ddp_transformer_engine_llama_sanity", _test_ddp_transformer_engine_llama_sanity)
 def test_ddp_transformer_engine_llama_sanity(executor, devices, dtype):
+    pass
+
+
+@instantiate(
+    dtypes=(thunder.float32,),
+    num_devices=2,
+    devicetypes=(devices.DeviceType.CUDA,),
+    executors=(TorchExecutor,),
+    decorators=(
+        pytest.mark.skipif(not TE_AVAILABLE, reason="TransformerEngine is not installed."),
+        pytest.mark.skipif(not is_fp8_supported, reason=fp8_support_reason),
+        pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices"),
+        unittest.mock.patch.dict(os.environ, {"NVTE_TORCH_COMPILE": "0"}),
+    ),
+)
+@distributed_wrapper("test_ddp_transformer_engine_state_export", _test_ddp_transformer_engine_state_export)
+def test_ddp_transformer_engine_state_export(executor, devices, dtype):
     pass
 
 
