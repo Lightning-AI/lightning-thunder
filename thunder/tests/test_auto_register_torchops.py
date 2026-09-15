@@ -253,7 +253,7 @@ def test_query_autoreg_ops(executor, device: str, _):
 
 def test_named_tensor_ops_follow_torch():
     # torch 2.13 removed named tensors, and this table is built at import time.
-    named_tensor_methods = {"align_as", "align_to", "refine_names", "rename"}
+    named_tensor_methods = {"align_as", "align_to", "has_names", "refine_names", "rename"}
     registered = {fn.__name__ for fn in ops.torch_auto_registered_ops[torch.Tensor]}
     if _TORCH_GREATER_EQUAL_2_13:
         assert not (named_tensor_methods & registered)

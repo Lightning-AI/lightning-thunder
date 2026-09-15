@@ -10,6 +10,7 @@ _named_tensor_methods = (
     else [
         torch.Tensor.align_as,
         torch.Tensor.align_to,
+        torch.Tensor.has_names,
         torch.Tensor.refine_names,
         torch.Tensor.rename,
     ]
@@ -373,7 +374,7 @@ torch_auto_registered_ops = {
         torch.Tensor.addmv,
         torch.Tensor.addr,
         torch.Tensor.adjoint,
-        # align_as, align_to, refine_names and rename, on torch versions that still have them
+        # align_as, align_to, has_names, refine_names and rename, on torch versions that still have them
         *_named_tensor_methods,
         torch.Tensor.aminmax,
         torch.Tensor.angle,
@@ -447,7 +448,6 @@ torch_auto_registered_ops = {
         torch.Tensor.greater,
         torch.Tensor.greater_equal,
         torch.Tensor.half,
-        torch.Tensor.has_names,
         torch.Tensor.heaviside,
         torch.Tensor.histc,
         torch.Tensor.histogram,
