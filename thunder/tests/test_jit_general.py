@@ -42,11 +42,15 @@ def _detect_has_args_tensor_mask():
 _HAS_ARGS_TENSOR_MASK = _detect_has_args_tensor_mask()
 
 
-def _autograd_function_apply_kwargs(args_tensor_mask, non_differentiable_idx=None):
+def _autograd_function_apply_kwargs(args_tensor_mask, non_differentiable_idx=None, saved_for_backward_idx=(0,)):
     """Create kwargs for autograd_function_apply that work with both stable and nightly PyTorch."""
     kwargs = {}
     if _HAS_ARGS_TENSOR_MASK:
         kwargs["args_tensor_mask"] = args_tensor_mask
+    else:
+        # args_tensor_mask gave way to saved_for_backward_idx, which indexes the values the fwd
+        # module saves rather than its inputs. Ours all come from save_for_backward.
+        kwargs["saved_for_backward_idx"] = list(saved_for_backward_idx)
     if non_differentiable_idx is not None:
         kwargs["non_differentiable_idx"] = non_differentiable_idx
     return kwargs
