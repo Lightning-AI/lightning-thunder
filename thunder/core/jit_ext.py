@@ -794,7 +794,16 @@ def _convert_pytorchfunc_to_thundertrace(
     return trace, sequencify(wrapped_func_result)[0].provenance
 
 
-@register_general_jit_lookaside(torch.autograd.function.Function.apply.__func__)
+# The key must be the object every subclass shares: __func__ for a Python classmethod,
+# the descriptor since torch 2.13 reimplemented Function.apply in C.
+_torch_autograd_function_apply = getattr(
+    torch.autograd.function.Function.apply,
+    "__func__",
+    torch.autograd.function.Function.__dict__.get("apply"),
+)
+
+
+@register_general_jit_lookaside(_torch_autograd_function_apply)
 def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwargs):
     """Encapsulate forward into a bsym, define and register augmented fwd and bwd.
 
