@@ -1498,7 +1498,12 @@ def should_register_for_prologue(pr, _toplevel=True):
     if inst not in _input_provenance_inst:
         return False
     if inst == "CONSTANT" and callable(pr.value):
-        if pr.value.__name__ != "__getitem__" and pr.value != GetSetDescriptorType.__get__:
+        # Not every callable is a function. torch._library.opaque_object keeps its custom-class
+        # registry in a WeakKeyDictionary, and the DTensor placements are in it, so a lookup keyed
+        # on Replicate puts a weakref in the provenance: callable, but with no __name__. Anything
+        # that is neither of the two callables below cannot be unpacked in a prologue anyway, so a
+        # missing __name__ simply takes that branch.
+        if getattr(pr.value, "__name__", None) != "__getitem__" and pr.value != GetSetDescriptorType.__get__:
             return False
     if not pr.inputs and _toplevel:
         return False
