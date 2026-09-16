@@ -509,6 +509,10 @@ def is_node_supported_by_thunder(
                 f"node with name {node.name} and target {node.target} is a `torch.cuda.Stream` method which is not supported by Thunder.",
             )
             return False, split_reason
+        if target is None:
+            # DTensor methods like redistribute and to_local are not on torch.Tensor. Newer torch
+            # emits them as call_method instead of decomposing them into call_function prims.
+            target = getattr(DTensor, node.target, None)
         assert target is not None, f"Failed to find method {node.target}"
 
     # If the operation has automatic registration, we mark it as unsupported as `inductor` might be
