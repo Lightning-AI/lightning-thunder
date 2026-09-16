@@ -2851,6 +2851,32 @@ def _collections_namedtuple_lookaside(
 
 def _type_call_lookaside(wrapped_typ, *args, **kwargs):
     typ = unwrap(wrapped_typ)
+
+    # pybind11 hands out __init__ as a builtin bound to an internal function_record rather than to
+    # the instance, and torch's DTensor placements (Shard, Replicate, Partial) are built that way
+    # since torch 2.12. Driving __new__ and __init__ by hand then calls into that record, which
+    # aborts the process instead of raising, so construct these in a single opaque call. Ordinary
+    # types are unaffected: their __init__ is a wrapper_descriptor or a plain function.
+    if isinstance(getattr(typ, "__init__", None), BuiltinFunctionType):
+        runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
+        uargs = tuple(unwrap(a) for a in args)
+        ukwargs = {unwrap(k): unwrap(v) for k, v in kwargs.items()}
+        try:
+            runtimectx.record_opaque_call(typ)
+            obj = typ(*uargs, **ukwargs)
+        except Exception as e:
+            runtimectx.curexc = e
+            return INTERPRETER_SIGNALS.EXCEPTION_RAISED
+
+        compilectx: InterpreterCompileCtx = get_interpretercompilectx()
+        if compilectx._with_provenance_tracking:
+            pr = ProvenanceRecord(
+                inst=PseudoInst.OPAQUE,
+                inputs=[wrapped_typ.provenance, wrap_args(args).provenance, wrap_kwargs(kwargs).provenance],
+            )
+            obj = wrap(obj, provenance=pr)
+        return obj
+
     if not hasattr(typ, "__new__"):
         raise NotImplementedError(
             f"Don't know how to interpret a callable with type {type(typ)} without a __new__ method"
