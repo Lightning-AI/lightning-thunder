@@ -580,6 +580,8 @@ def _general_jit_object_setattr_lookaside(obj: Any, name: str, value: Any):
         if getattr(obj.provenance, "proxy", None) is None:
             p: AnyProxy = AnyProxy(uobj, history=obj.provenance)
             obj.provenance.proxy = p
+            # The prologue still has to unpack this one; nothing has emitted a bsym for it.
+            obj.provenance.proxy_awaiting_unpack = True
             obj.anyproxy = p
 
     d = _interpret_call(getattr, obj, wrap_const("__dict__"))
@@ -1009,7 +1011,13 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
             continue
         trace_of_forward.bound_symbols.append(bsym.from_bsym())
     with tracectx(trace_of_forward):
-        prims.python_return(*(sequencify(output)))
+        # Return exactly the structure the fwd graph produced. Since torch 2.14 it hands back
+        # its outputs as a tuple and the caller does autograd_function_apply[0]; unpacking a
+        # one-element tuple here would turn that subscript into an index into the tensor.
+        if isinstance(output, (tuple, list)):
+            prims.python_return(tuple(output))
+        else:
+            prims.python_return(output)
 
     # See NOTE: `autograd_function_apply` and `no_grad` interaction for details about
     # `thunder.torch.call_higher_order_function_and_consider_outer_autograd_setting`
@@ -1850,6 +1858,12 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
         def from_provenance(provenance, *, new_output=False):
             p = getattr(provenance, "proxy", None)
             if p is not None:
+                # A proxy the object.__setattr__ lookaside made during interpretation, not one
+                # this pass produced: it has no prologue bsym and no param_ordering entry yet.
+                # Unpack it properly rather than returning something the prologue never defines.
+                if getattr(provenance, "proxy_awaiting_unpack", False) and id(p) not in already_unpacked:
+                    provenance.proxy_awaiting_unpack = False
+                    return unpack(p)
                 return p
 
             inst = provenance.inst
