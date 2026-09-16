@@ -72,13 +72,16 @@ run: |
          --random-order-seed=42 \
          --numprocesses=3
   elif [ "${testing}" == "ops" ]; then
+    # cross_entropy under nvfuser is the slowest test here and landed right on the old 240s cap
+    # (240.24s, vs 185s for its next-slowest dtype) with 9 workers sharing the one GPU. 360s
+    # matches every other job in this file.
     coverage run --source thunder -m \
       pytest thunder/tests/test_ops.py \
         -m "not standalone" \
         -v --datefmt="%Y%m%d-%H:%M:%S.%f" \
         --random-order-seed=42 \
         --durations=250 \
-        --timeout=240 \
+        --timeout=360 \
         --numprocesses=9
   elif [ "${testing}" == "grads" ]; then
     coverage run --source thunder -m \
