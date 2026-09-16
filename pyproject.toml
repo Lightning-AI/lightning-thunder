@@ -82,6 +82,9 @@ filterwarnings = [
     # its decompositions on import. The prefix covers both the <3.14 and 3.14+ wordings.
     # todo: drop once torch stops scripting those decompositions
     "ignore:`torch.jit.script` is:FutureWarning",
+    # bitsandbytes still calls torch._check_is_size, which torch now deprecates.
+    # todo: drop once bitsandbytes stops using it
+    "ignore:_check_is_size will be removed:FutureWarning",
 ]
 timeout = 900
 # xfail_strict = true  # todo
