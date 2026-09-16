@@ -93,6 +93,10 @@ run: |
         --timeout=360 \
         --numprocesses=9
   elif [ "${testing}" == "distributed" ]; then
+    # The DTensor tests build their reference with plain torch.compile, and on this image inductor's
+    # static Triton launcher dies there with "CUDA driver error: invalid argument" before thunder is
+    # ever reached. Fall back to Triton's own launcher until the image's torch/triton pairing is fixed.
+    TORCHINDUCTOR_USE_STATIC_CUDA_LAUNCHER=0 \
     pytest thunder/tests/distributed \
      -v --durations=0 \
      --random-order-seed=42
