@@ -2063,7 +2063,12 @@ def process_recorded_modifications(ctx, epilogue_trace):
                     ):
                         name = k
                         setattr_obj_provenance = modified_object.provenance.inputs[0]
-                        if hasattr(setattr_obj_provenance, "proxy"):
+                        # GraphModule.recompile() codegen bookkeeping, not real module state.
+                        if name in ("_code", "_lineno_map", "_in_spec", "_out_spec") and isinstance(
+                            umodified_object.get("_graph"), torch.fx.Graph
+                        ):
+                            pass
+                        elif hasattr(setattr_obj_provenance, "proxy"):
                             assert isinstance(
                                 value.value, (Proxy, int, float, tuple, NoneType, thunder.devices.Device)
                             ), (
