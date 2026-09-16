@@ -19,6 +19,7 @@ from torch.nn.modules.module import _addindent
 from torch.utils.weak import TensorWeakRef
 from torch._guards import tracing, TracingContext
 from torch._subclasses.fake_tensor import DynamicOutputShapeException
+from torch._library.fake_class_registry import FakeScriptObject
 
 from torch._inductor import list_mode_options
 
@@ -305,6 +306,11 @@ def get_proxy_inputs_from_node(node: torch.fx.Node, tracectx) -> tuple[tuple, di
                     )
                 elif isinstance(example_value, torch.types.py_sym_types) and example_value.node.has_hint():
                     return proxy(example_value.node.hint)
+                elif isinstance(example_value, FakeScriptObject):
+                    # Newer torch puts a DeviceMesh into the graph as a fake stand-in. We are only
+                    # checking here whether thunder can run the op, and the ops that take one want
+                    # the mesh itself, so hand over the object the fake wraps.
+                    return example_value.real_obj
                 else:
                     # NOTE - This will be caught and be part of the SplitReason.
                     raise TypeError(
@@ -694,6 +700,9 @@ def example_input_meta_to_input(meta):
         return _create_random_tensor_from_tensor_metadata(meta)
     elif isinstance(meta, (int, bool, float)):
         return meta
+    elif isinstance(meta, FakeScriptObject):
+        # Carried through as itself; the object it stands in for is what an input wants.
+        return meta.real_obj
     elif isinstance(meta, Sequence):
         return tuple(example_input_meta_to_input(i) for i in meta)
     else:
@@ -707,6 +716,10 @@ def input_to_example_input_meta(input):
         return input
     elif isinstance(input, torch.types.py_sym_types):
         return input.node.hint
+    elif isinstance(input, FakeScriptObject):
+        # Newer torch passes a DeviceMesh in as a fake stand-in. There is no metadata to take apart,
+        # so it is its own metadata and example_input_meta_to_input unwraps it again.
+        return input
     elif isinstance(input, Sequence):
         return tuple(input_to_example_input_meta(i) for i in input)
     else:
