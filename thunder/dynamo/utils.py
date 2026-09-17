@@ -148,7 +148,7 @@ class SubgraphInfo:
     original_split_graph_module: torch.fx.GraphModule | None
     split_graph_module: torch.fx.GraphModule | None
     thunder_compiled_fns: list[Callable] | None
-    thunder_compiled_fns_example_inputs: list[list[ExampleInputMetaData]] | None
+    thunder_compiled_fns_example_inputs: list[list[ExampleInputMetaData | FakeScriptObject]] | None
     submodule_to_compiled_functions: dict[torch.fx.GraphModule, CompiledFunction]
     split_reasons: list | None = None
 
@@ -875,6 +875,11 @@ def arg_like(arg: Any):
         return "[" + "".join(arg_like(a) for a in arg) + "],"
     elif isinstance(arg, (int, bool, float)):
         return f"{arg},"
+    elif arg is None or isinstance(arg, FakeScriptObject):
+        # Nothing here has a source form to write down: a DeviceMesh needs a live process group,
+        # and a placeholder we could not infer is already None. Leave a hole for the reader to
+        # fill, which is what the warning _get_input_str puts above the inputs promises.
+        return "None,"
     else:
         raise TypeError(f"Unsupported input type: {type(arg)}")
 
