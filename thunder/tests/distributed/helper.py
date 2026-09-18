@@ -178,15 +178,19 @@ if torch.distributed.is_available():
             self.rank = rank
             self.file_name = file_name
 
+            # NOTE Sets the device before creating the process group, and passes it as device_id.
+            #   Otherwise NCCL infers the rank-to-GPU mapping from the first collective and warns
+            #   that the device "is currently unknown", which it notes can cause a hang.
+            local_rank = self.rank % torch.cuda.device_count()
+            torch.cuda.set_device(local_rank)
+
             torch.distributed.init_process_group(
                 init_method=self.init_method,
                 backend=self.DISTRIBUTED_BACKEND,
                 world_size=self.world_size,
                 rank=self.rank,
+                device_id=torch.device("cuda", local_rank),
             )
-
-            local_rank = self.rank % torch.cuda.device_count()
-            torch.cuda.set_device(local_rank)
 
             # nvFuser Multi-GPU expects these environment variables to be set
             os.environ["LOCAL_RANK"] = str(local_rank)
