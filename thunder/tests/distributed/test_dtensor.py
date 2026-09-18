@@ -157,7 +157,13 @@ class DTensorTest(DistributedParallelTestCase):
         dim_size = 16
 
         def _helper(fn, in_dtensor, w_dtensor):
-            expected = torch.compile(fn)(in_dtensor, w_dtensor)
+            # NOTE The reference is eager rather than compiled: what is under test is thunder's
+            #   lowering of the op over a DTensor, not inductor's. Compiling the reference routed
+            #   it through a Triton kernel launch, which is where it failed on the torch nightly
+            #   image. The opinfo tests below also compare against eager.
+            #   Ref: https://github.com/pytorch/pytorch/issues/141010
+            #   Ref: https://github.com/pytorch/pytorch/issues/152639
+            expected = fn(in_dtensor, w_dtensor)
             tmodel = thunder.jit(fn, executors=executors_map[executor].executors_list())
             actual = tmodel(in_dtensor, w_dtensor)
 
