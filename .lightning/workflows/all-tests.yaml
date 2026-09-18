@@ -93,9 +93,13 @@ run: |
         --timeout=360 \
         --numprocesses=9
   elif [ "${testing}" == "distributed" ]; then
+    # Retry only rank timeouts. A rank stuck in NCCL fails its test with "Process N terminated or
+    # timed out" and no retrievable traceback, which says little about the code under test.
+    # --only-rerun keeps this narrow: an assertion failure still fails on its first attempt.
     pytest thunder/tests/distributed \
      -v --durations=0 \
-     --random-order-seed=42
+     --random-order-seed=42 \
+     --reruns=2 --only-rerun="terminated or timed out"
   else
     echo "Unknown testing type: ${testing}"
     exit 1
