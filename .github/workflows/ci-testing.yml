@@ -45,6 +45,16 @@ jobs:
     # Timeout: https://stackoverflow.com/a/59076067/4521646
     timeout-minutes: 35
 
+    env:
+      # torch's Windows CPU wheels carry AVX-512 instructions inside kernels compiled for the
+      # AVX2 target, so on a runner whose CPU stops at AVX2 they fault with
+      # STATUS_ILLEGAL_INSTRUCTION (0xc000001d) and take the xdist worker down with them. The
+      # reported fault sits in the bfloat16 vector helpers, which is why the nanogpt and litgpt
+      # tests are the ones that crash: they are the only ones here running a model in bfloat16.
+      # Fall back to the unvectorized kernels on Windows until this is fixed upstream.
+      # Ref: https://github.com/pytorch/pytorch/issues/145702
+      ATEN_CPU_CAPABILITY: ${{ startsWith(matrix.os, 'windows') && 'default' || '' }}
+
     steps:
       - uses: actions/checkout@v5
       - name: Set up Python ${{ matrix.python-version }}
@@ -100,6 +110,12 @@ jobs:
           pip install ${PIP_EXTRA_FLAG} -r requirements/devel.txt \
             --extra-index-url=${TORCH_URL}
           pip list
+
+      - name: Show CPU dispatch
+        # So a green Windows run can be told apart from a run that happened to land on a CPU
+        # the bad kernels do not fault on. Expect DEFAULT here, not AVX2.
+        if: runner.os == 'Windows'
+        run: python -c "import torch; print('cpu capability:', torch.backends.cpu.get_cpu_capability())"
 
       - name: Testing Local
         if: matrix.suite == 'core'
