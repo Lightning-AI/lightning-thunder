@@ -580,6 +580,8 @@ def _general_jit_object_setattr_lookaside(obj: Any, name: str, value: Any):
         if getattr(obj.provenance, "proxy", None) is None:
             p: AnyProxy = AnyProxy(uobj, history=obj.provenance)
             obj.provenance.proxy = p
+            # The prologue still has to unpack this one; nothing has emitted a bsym for it.
+            obj.provenance.proxy_awaiting_unpack = True
             obj.anyproxy = p
 
     d = _interpret_call(getattr, obj, wrap_const("__dict__"))
@@ -794,7 +796,16 @@ def _convert_pytorchfunc_to_thundertrace(
     return trace, sequencify(wrapped_func_result)[0].provenance
 
 
-@register_general_jit_lookaside(torch.autograd.function.Function.apply.__func__)
+# The key must be the object every subclass shares: __func__ for a Python classmethod,
+# the descriptor since torch 2.13 reimplemented Function.apply in C.
+_torch_autograd_function_apply = getattr(
+    torch.autograd.function.Function.apply,
+    "__func__",
+    torch.autograd.function.Function.__dict__.get("apply"),
+)
+
+
+@register_general_jit_lookaside(_torch_autograd_function_apply)
 def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwargs):
     """Encapsulate forward into a bsym, define and register augmented fwd and bwd.
 
@@ -1000,7 +1011,13 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
             continue
         trace_of_forward.bound_symbols.append(bsym.from_bsym())
     with tracectx(trace_of_forward):
-        prims.python_return(*(sequencify(output)))
+        # Return exactly the structure the fwd graph produced. Since torch 2.14 it hands back
+        # its outputs as a tuple and the caller does autograd_function_apply[0]; unpacking a
+        # one-element tuple here would turn that subscript into an index into the tensor.
+        if isinstance(output, (tuple, list)):
+            prims.python_return(tuple(output))
+        else:
+            prims.python_return(output)
 
     # See NOTE: `autograd_function_apply` and `no_grad` interaction for details about
     # `thunder.torch.call_higher_order_function_and_consider_outer_autograd_setting`
@@ -1481,7 +1498,12 @@ def should_register_for_prologue(pr, _toplevel=True):
     if inst not in _input_provenance_inst:
         return False
     if inst == "CONSTANT" and callable(pr.value):
-        if pr.value.__name__ != "__getitem__" and pr.value != GetSetDescriptorType.__get__:
+        # Not every callable is a function. torch._library.opaque_object keeps its custom-class
+        # registry in a WeakKeyDictionary, and the DTensor placements are in it, so a lookup keyed
+        # on Replicate puts a weakref in the provenance: callable, but with no __name__. Anything
+        # that is neither of the two callables below cannot be unpacked in a prologue anyway, so a
+        # missing __name__ simply takes that branch.
+        if getattr(pr.value, "__name__", None) != "__getitem__" and pr.value != GetSetDescriptorType.__get__:
             return False
     if not pr.inputs and _toplevel:
         return False
@@ -1841,6 +1863,12 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
         def from_provenance(provenance, *, new_output=False):
             p = getattr(provenance, "proxy", None)
             if p is not None:
+                # A proxy the object.__setattr__ lookaside made during interpretation, not one
+                # this pass produced: it has no prologue bsym and no param_ordering entry yet.
+                # Unpack it properly rather than returning something the prologue never defines.
+                if getattr(provenance, "proxy_awaiting_unpack", False) and id(p) not in already_unpacked:
+                    provenance.proxy_awaiting_unpack = False
+                    return unpack(p)
                 return p
 
             inst = provenance.inst
@@ -2054,7 +2082,12 @@ def process_recorded_modifications(ctx, epilogue_trace):
                     ):
                         name = k
                         setattr_obj_provenance = modified_object.provenance.inputs[0]
-                        if hasattr(setattr_obj_provenance, "proxy"):
+                        # GraphModule.recompile() codegen bookkeeping, not real module state.
+                        if name in ("_code", "_lineno_map", "_in_spec", "_out_spec") and isinstance(
+                            umodified_object.get("_graph"), torch.fx.Graph
+                        ):
+                            pass
+                        elif hasattr(setattr_obj_provenance, "proxy"):
                             assert isinstance(
                                 value.value, (Proxy, int, float, tuple, NoneType, thunder.devices.Device)
                             ), (

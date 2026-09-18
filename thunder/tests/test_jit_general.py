@@ -14,7 +14,7 @@ import inspect
 
 import thunder
 
-from thunder.tests.framework import requiresCUDA, IS_WINDOWS
+from thunder.tests.framework import requiresCUDA, IS_WINDOWS, WINDOWS_GPT_CRASH_REASON
 from thunder.core.options import CACHE_OPTIONS
 import thunder.core.prims as prims
 from thunder import pytorch_executor, nvfuser_executor
@@ -42,11 +42,15 @@ def _detect_has_args_tensor_mask():
 _HAS_ARGS_TENSOR_MASK = _detect_has_args_tensor_mask()
 
 
-def _autograd_function_apply_kwargs(args_tensor_mask, non_differentiable_idx=None):
+def _autograd_function_apply_kwargs(args_tensor_mask, non_differentiable_idx=None, saved_for_backward_idx=(0,)):
     """Create kwargs for autograd_function_apply that work with both stable and nightly PyTorch."""
     kwargs = {}
     if _HAS_ARGS_TENSOR_MASK:
         kwargs["args_tensor_mask"] = args_tensor_mask
+    else:
+        # args_tensor_mask gave way to saved_for_backward_idx, which indexes the values the fwd
+        # module saves rather than its inputs. Ours all come from save_for_backward.
+        kwargs["saved_for_backward_idx"] = list(saved_for_backward_idx)
     if non_differentiable_idx is not None:
         kwargs["non_differentiable_idx"] = non_differentiable_idx
     return kwargs
@@ -581,6 +585,7 @@ def test_proxy_no_multiple_renames(device):
     assert args_names == ("a", "b", "c", "d")
 
 
+@pytest.mark.skipif(IS_WINDOWS, reason=WINDOWS_GPT_CRASH_REASON)
 def test_litgpt():
     from thunder.benchmarks import LitGPTBenchmark
     from thunder.tests.litgpt_model import Config
@@ -661,6 +666,7 @@ def test_nanogpt_mlp():
     assert_close(result, module(*args, **kwargs))
 
 
+@pytest.mark.skipif(IS_WINDOWS, reason=WINDOWS_GPT_CRASH_REASON)
 def test_nanogpt():
     from thunder.benchmarks import NanoGPTBenchmark, NanoGPTConfig, _nanogpt_configs
 

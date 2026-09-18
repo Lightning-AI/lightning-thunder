@@ -27,6 +27,30 @@ run: |
   bash scripts/remove-torch-lines.sh requirements/base.txt
   cat requirements/base.txt
   # double check on test requirements
+  # Some of the image's Python packages come from its apt layer, so they have no RECORD file and
+  # pip cannot uninstall them to make way for a newer version. Ask pip what it plans to change and
+  # hand it its own copy of just those packages first. Only the ones actually being upgraded: apt
+  # also ships C extensions with no PyPI wheel (dbus-python, PyGObject) that cannot build here.
+  # Custom builds (torch, nvfuser) are skipped -- replacing the image's torch breaks nvfuser.
+  pip install -q -U --dry-run --report /tmp/plan.json -r requirements/base.txt -r requirements/notebooks.txt
+  python - <<'EOF' > /tmp/apt-owned.txt
+  import importlib.metadata as md, json, re
+
+  canon = lambda n: re.sub(r"[-_.]+", "-", n).lower()
+  planned = {canon(e["metadata"]["name"]) for e in json.load(open("/tmp/plan.json"))["install"]}
+  keep = {"lightning-thunder", "torch", "nvfuser"}
+
+  seen = set()
+  for dist in md.distributions():
+      name, version = dist.metadata["Name"], dist.version
+      if not name or "+" in version or canon(name) in keep | seen:
+          continue
+      if canon(name) in planned and dist.read_text("RECORD") is None:
+          seen.add(canon(name))
+          print(f"{name}=={version}")
+  EOF
+  cat /tmp/apt-owned.txt
+  [ -s /tmp/apt-owned.txt ] && pip install -q --ignore-installed -r /tmp/apt-owned.txt
   pip install -q -U -r requirements/base.txt -r requirements/notebooks.txt
   # install this package
   pip install -e .

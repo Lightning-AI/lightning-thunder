@@ -5,6 +5,7 @@ pytest-timeout ==2.4.0
 pytest-cov ==6.2.1
 pytest-xdist ==3.8.0
 pytest-random-order ==1.2.0
+pytest-rerunfailures ==16.7
 pytest-timestamper ==0.0.10
 graphviz ==0.21
 fdm ==0.5.0

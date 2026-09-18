@@ -33,6 +33,7 @@ from types import (
     NoneType,
     BuiltinFunctionType,
     BuiltinMethodType,
+    ClassMethodDescriptorType,
     MethodDescriptorType,
     MethodWrapperType,
     WrapperDescriptorType,
@@ -196,6 +197,23 @@ class WrappedValue:
 #       In some situations - in particular *args/**kwargs, Python creates tuples and dicts for us,
 #       these functions are intended to do the appropriate wrapping for them.
 def wrap_args_from_list(lst):  # returns a new list!
+    # CALL_FUNCTION_EX only guarantees an Iterable -- f(*gen) and f(*d.keys()) are both legal --
+    # so drive anything that cannot be indexed with iter/next, as UNPACK_SEQUENCE does.
+    if not wrapped_isinstance(lst, Sequence):
+        runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
+        it = _interpret_call(iter, lst)
+        if it is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+            return it
+        res = []
+        while True:
+            v = _interpret_call(next, it)
+            if v is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+                if not isinstance(runtimectx._curexc, StopIteration):
+                    return v
+                runtimectx._curexc = None
+                return res
+            res.append(v)
+
     res = [_interpret_call(lambda seq, i: seq[i], lst, wrap_const(i)) for i in range(len(unwrap(lst)))]
     return res
 
@@ -931,6 +949,7 @@ class PseudoInst(str, enum.Enum):
     BINARY_ADD = "BINARY_ADD"
     LIST_APPEND = "LIST_APPEND"
     LIST_EXTEND = "LIST_EXTEND"
+    LIST_INSERT = "LIST_INSERT"
     GET_ITER = "GET_ITER"
     CONTAINS_OP = "CONTAINS_OP"
     SUPER = "SUPER"
@@ -2370,7 +2389,22 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
 
     def insert(self, i, x, /):
         self.track_items()
-        raise NotImplementedError("Sequence.insert, please file an issue")
+        assert self.item_wrappers is not None
+
+        uindex = i.value
+        if not isinstance(uindex, int):
+            return do_raise(TypeError(f"'{type(uindex).__name__}' object cannot be interpreted as an integer"))
+        uindex = int(uindex)  # if it was a subclass like IntProxy
+
+        # list.insert clamps out-of-range indices, and both lists are the same length here,
+        # so they stay in step without a bounds check.
+        pr = ProvenanceRecord(PseudoInst.LIST_INSERT, inputs=[self.provenance, i.provenance, x.provenance])
+        self.provenance = pr  # should have an update method
+        self.value.insert(uindex, x.value)
+        assert type(self.item_wrappers) is list
+        self.item_wrappers.insert(uindex, x)
+        assert len(self.value) == len(self.item_wrappers)
+        return wrap_const(None)
 
     def pop(self, index=-1, /):
         self.track_items()
@@ -2448,6 +2482,9 @@ class MappingKeysView(ThunderInterpreterObject):
 
     def isdisjoint(self, other):
         return all((k not in self.mapping) for k in other)
+
+    def __len__(self):
+        return len(self.mapping)
 
     # This is called as a lookaside!
     def __iter__(self):
@@ -2814,6 +2851,32 @@ def _collections_namedtuple_lookaside(
 
 def _type_call_lookaside(wrapped_typ, *args, **kwargs):
     typ = unwrap(wrapped_typ)
+
+    # pybind11 hands out __init__ as a builtin bound to an internal function_record rather than to
+    # the instance, and torch's DTensor placements (Shard, Replicate, Partial) are built that way
+    # since torch 2.12. Driving __new__ and __init__ by hand then calls into that record, which
+    # aborts the process instead of raising, so construct these in a single opaque call. Ordinary
+    # types are unaffected: their __init__ is a wrapper_descriptor or a plain function.
+    if isinstance(getattr(typ, "__init__", None), BuiltinFunctionType):
+        runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
+        uargs = tuple(unwrap(a) for a in args)
+        ukwargs = {unwrap(k): unwrap(v) for k, v in kwargs.items()}
+        try:
+            runtimectx.record_opaque_call(typ)
+            obj = typ(*uargs, **ukwargs)
+        except Exception as e:
+            runtimectx.curexc = e
+            return INTERPRETER_SIGNALS.EXCEPTION_RAISED
+
+        compilectx: InterpreterCompileCtx = get_interpretercompilectx()
+        if compilectx._with_provenance_tracking:
+            pr = ProvenanceRecord(
+                inst=PseudoInst.OPAQUE,
+                inputs=[wrapped_typ.provenance, wrap_args(args).provenance, wrap_kwargs(kwargs).provenance],
+            )
+            obj = wrap(obj, provenance=pr)
+        return obj
+
     if not hasattr(typ, "__new__"):
         raise NotImplementedError(
             f"Don't know how to interpret a callable with type {type(typ)} without a __new__ method"
@@ -3872,6 +3935,8 @@ def _call_function_ex_handler(
     ctx: InterpreterCompileCtx = get_interpretercompilectx()
     if ctx._with_provenance_tracking:
         args = wrap_args_from_list(args)
+        if args is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+            return args
         kwargs = wrap_kwargs_from_dict(kwargs)
     return check_and_append(stack, _interpret_call(func, *args, **kwargs))
 
@@ -7026,6 +7091,17 @@ def _call_dispatch(
     if isinstance(fn, (BuiltinMethodType, MethodWrapperType)):
         assert is_opaque(fn)
         slf = fn.__self__
+
+        # NOTE Builtin classmethods (e.g. torch.autograd.Function.apply since torch 2.13)
+        #   Here __self__ is the class, so the descriptor lives on its own mro rather than on
+        #   type(slf). Binding it yields a fresh object that compares unequal across subclasses,
+        #   so the shared descriptor is what lookasides can be registered on.
+        if isinstance(slf, type) and not is_pycapsule(slf):
+            for klass in slf.__mro__:
+                descriptor = klass.__dict__.get(fn.__name__)
+                if isinstance(descriptor, ClassMethodDescriptorType):
+                    wrapped_slf = _interpret_call(getattr, wrapped_fn, wrap_const("__self__"))
+                    return _interpret_call(wrap_const(descriptor), wrapped_slf, *args, **kwargs)
 
         if slf is not None and not isinstance(slf, (type, ModuleType)) and not is_pycapsule(slf):
             # NOTE: we need to walk the mro because we need to deal with super().foo

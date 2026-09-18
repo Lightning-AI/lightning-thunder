@@ -58,6 +58,11 @@ DISABLE_CUDA_TEST_INSTANTIATION: bool = (
 )
 IS_WINDOWS = platform.system() == "Windows"
 
+# NOTE Running these models in bfloat16 on CPU intermittently kills the process on Windows with an
+#   illegal instruction, inside eager torch rather than anything of ours. The fp32 variants of the
+#   same models still run there, and these still run on Linux and macOS.
+WINDOWS_GPT_CRASH_REASON = "bfloat16 CPU model intermittently crashes the process on Windows (0xc000001d)"
+
 
 def _bitsandbytes_available():
     if not package_available("bitsandbytes"):

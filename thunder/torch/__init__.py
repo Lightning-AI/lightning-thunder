@@ -6715,6 +6715,9 @@ def autograd_function_apply(
     *args: Any,
     args_tensor_mask: Sequence[bool] | None = None,
     non_differentiable_idx: Sequence[int] | None = None,
+    # Only affect ctx.mark_dirty/mark_non_differentiable, which thunder does not model.
+    saved_for_backward_idx: Sequence[int] | None = None,
+    dirty_idx: Sequence[int] | None = None,
 ) -> TensorProxy | tuple[TensorProxy, ...]:
     # TODO: Remove this once this autograd API becomes stable.
     # On stable PyTorch, fwd expects ctx as first argument
@@ -6733,6 +6736,9 @@ def augmented_forward_autograd_function_apply(
     *args: Any,
     args_tensor_mask: Sequence[bool] | None = None,
     non_differentiable_idx: Sequence[int] | None = None,
+    # Only affect ctx.mark_dirty/mark_non_differentiable, which thunder does not model.
+    saved_for_backward_idx: Sequence[int] | None = None,
+    dirty_idx: Sequence[int] | None = None,
 ) -> tuple[TensorProxy | tuple[TensorProxy, ...], tuple[Any, ...]]:
     # TODO: Remove this once this autograd API becomes stable.
     # On stable PyTorch, fwd expects ctx as first argument

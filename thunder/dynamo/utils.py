@@ -19,6 +19,7 @@ from torch.nn.modules.module import _addindent
 from torch.utils.weak import TensorWeakRef
 from torch._guards import tracing, TracingContext
 from torch._subclasses.fake_tensor import DynamicOutputShapeException
+from torch._library.fake_class_registry import FakeScriptObject
 
 from torch._inductor import list_mode_options
 
@@ -147,7 +148,7 @@ class SubgraphInfo:
     original_split_graph_module: torch.fx.GraphModule | None
     split_graph_module: torch.fx.GraphModule | None
     thunder_compiled_fns: list[Callable] | None
-    thunder_compiled_fns_example_inputs: list[list[ExampleInputMetaData]] | None
+    thunder_compiled_fns_example_inputs: list[list[ExampleInputMetaData | FakeScriptObject]] | None
     submodule_to_compiled_functions: dict[torch.fx.GraphModule, CompiledFunction]
     split_reasons: list | None = None
 
@@ -305,6 +306,11 @@ def get_proxy_inputs_from_node(node: torch.fx.Node, tracectx) -> tuple[tuple, di
                     )
                 elif isinstance(example_value, torch.types.py_sym_types) and example_value.node.has_hint():
                     return proxy(example_value.node.hint)
+                elif isinstance(example_value, FakeScriptObject):
+                    # Newer torch puts a DeviceMesh into the graph as a fake stand-in. We are only
+                    # checking here whether thunder can run the op, and the ops that take one want
+                    # the mesh itself, so hand over the object the fake wraps.
+                    return example_value.real_obj
                 else:
                     # NOTE - This will be caught and be part of the SplitReason.
                     raise TypeError(
@@ -509,6 +515,10 @@ def is_node_supported_by_thunder(
                 f"node with name {node.name} and target {node.target} is a `torch.cuda.Stream` method which is not supported by Thunder.",
             )
             return False, split_reason
+        if target is None:
+            # DTensor methods like redistribute and to_local are not on torch.Tensor. Newer torch
+            # emits them as call_method instead of decomposing them into call_function prims.
+            target = getattr(DTensor, node.target, None)
         assert target is not None, f"Failed to find method {node.target}"
 
     # If the operation has automatic registration, we mark it as unsupported as `inductor` might be
@@ -690,6 +700,9 @@ def example_input_meta_to_input(meta):
         return _create_random_tensor_from_tensor_metadata(meta)
     elif isinstance(meta, (int, bool, float)):
         return meta
+    elif isinstance(meta, FakeScriptObject):
+        # Carried through as itself; the object it stands in for is what an input wants.
+        return meta.real_obj
     elif isinstance(meta, Sequence):
         return tuple(example_input_meta_to_input(i) for i in meta)
     else:
@@ -703,6 +716,10 @@ def input_to_example_input_meta(input):
         return input
     elif isinstance(input, torch.types.py_sym_types):
         return input.node.hint
+    elif isinstance(input, FakeScriptObject):
+        # Newer torch passes a DeviceMesh in as a fake stand-in. There is no metadata to take apart,
+        # so it is its own metadata and example_input_meta_to_input unwraps it again.
+        return input
     elif isinstance(input, Sequence):
         return tuple(input_to_example_input_meta(i) for i in input)
     else:
@@ -858,6 +875,11 @@ def arg_like(arg: Any):
         return "[" + "".join(arg_like(a) for a in arg) + "],"
     elif isinstance(arg, (int, bool, float)):
         return f"{arg},"
+    elif arg is None or isinstance(arg, FakeScriptObject):
+        # Nothing here has a source form to write down: a DeviceMesh needs a live process group,
+        # and a placeholder we could not infer is already None. Leave a hole for the reader to
+        # fill, which is what the warning _get_input_str puts above the inputs promises.
+        return "None,"
     else:
         raise TypeError(f"Unsupported input type: {type(arg)}")
 
