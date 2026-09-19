@@ -155,7 +155,14 @@ __all__ = [
 ]
 
 
-from thunder.__about__ import *  # noqa: F403
+from thunder.__about__ import (
+    __author__ as __author__,
+    __author_email__ as __author_email__,
+    __copyright__ as __copyright__,
+    __docs__ as __docs__,
+    __homepage__ as __homepage__,
+    __version__ as __version__,
+)
 
 
 # TODO maybe move these aliases to the core language?
