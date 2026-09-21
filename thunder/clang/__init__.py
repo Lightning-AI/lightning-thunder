@@ -353,7 +353,9 @@ def tensor_from_sequence(
 def diagonal(a: TensorLike, offset: int = 0, dim1: int = 0, dim2: int = 1) -> TensorLike:
     utils.check(
         a.ndim >= 2,
-        lambda: f"diagonal() expected a tensor with at least two dimensions, but got a tensor with {a.ndims} dimensions",
+        lambda: (
+            f"diagonal() expected a tensor with at least two dimensions, but got a tensor with {a.ndims} dimensions"
+        ),
     )
 
     diag_length = max(0, min(a.shape[dim1] + min(offset, 0), a.shape[dim2] - max(offset, 0)))

@@ -185,7 +185,9 @@ def _input_shape_check_fused_scaled_dot_product_attention(
     # Check for the same number of heads
     utils.check(
         all(a.shape[1] == 1 or a.shape[1] == inputs[0].shape[1] for a in inputs),
-        lambda: "grad_forward_sdpa: Expected all inputs to have same number of attention heads or a broadcastable dimension.",
+        lambda: (
+            "grad_forward_sdpa: Expected all inputs to have same number of attention heads or a broadcastable dimension."
+        ),
     )
 
 
