@@ -395,6 +395,8 @@ def visitor_transform(trace_from: Trace, visit: Callable, *, provenance: None | 
                 scope = []
                 trc.push_scope(scope)
 
+                # Attribute recorded operations, including subsymbols, to the visited operation.
+                trc.set_current_source_location(bsym.source_filename, bsym.source_positions)
                 visit_type = visit(bsym)
 
                 if visit_type is VISIT_TYPE.INSERT_AFTER:
@@ -409,6 +411,7 @@ def visitor_transform(trace_from: Trace, visit: Callable, *, provenance: None | 
                     trc.bound_symbols.append(bsym)
 
             finally:
+                trc.set_current_source_location(None, None)
                 # Restores the trc's scope
                 trc.pop_scope()
 
