@@ -1204,6 +1204,60 @@ def test_visitor_transform():
     assert comment.args[0] == "add result ndims is 2"
 
 
+@pytest.mark.parametrize("visit_type_name", ("REPLACE", "INSERT_BEFORE", "INSERT_AFTER", "NO_OP"))
+def test_visitor_transform_source_locations(visit_type_name):
+    from thunder.core.symbol import Symbol
+    from thunder.core.transforms import VISIT_TYPE, visitor_transform
+
+    visit_type = VISIT_TYPE[visit_type_name]
+    locations = (
+        (__file__, codeutils.Positions(1, 1, 0, 15)),
+        (None, None),
+        (__file__, codeutils.Positions(2, 2, 0, 9)),
+    )
+    trc = TraceCtx()
+    with tracectx(trc):
+        a = thunder.core.proxies.TensorProxy(shape=(2,), device=thunder.devices.cpu, dtype=thunder.float32)
+        for filename, positions in locations:
+            trc.set_current_source_location(filename, positions)
+            prims.comment("original")
+    original_bsyms = tuple(trc.bound_symbols)
+
+    def annotate_meta(a):
+        return prims.sin(a)
+
+    annotate = Symbol("annotate", meta=annotate_meta)
+
+    def visit(bsym):
+        annotate(a)
+        return visit_type
+
+    transformed = visitor_transform(trc, visit)
+    expected_locations = []
+    for original, location in zip(original_bsyms, locations):
+        expected_locations.extend([location] * (2 if visit_type_name.startswith("INSERT") else 1))
+        assert (original.source_filename, original.source_positions) == location
+    assert tuple(trc.bound_symbols) == original_bsyms
+    assert [(b.source_filename, b.source_positions) for b in transformed.bound_symbols] == expected_locations
+
+    for bsym in transformed.bound_symbols:
+        if bsym.sym is annotate:
+            assert len(bsym.subsymbols) == 1
+            nested = bsym.subsymbols[0]
+            assert (nested.source_filename, nested.source_positions) == (bsym.source_filename, bsym.source_positions)
+    if visit_type is not VISIT_TYPE.NO_OP:
+        assert sum(b.sym is annotate for b in transformed.bound_symbols) == len(locations)
+
+    rendered = transformed.python()
+    assert f"# {__file__}:1:" in rendered
+    assert f"# {__file__}:2:" in rendered
+    # A later insertion must not inherit the last visited operation's location.
+    with tracectx(transformed):
+        prims.comment("unrelated")
+    assert transformed.bound_symbols[-1].source_filename is None
+    assert transformed.bound_symbols[-1].source_positions is None
+
+
 def test_insert_inplace():
     device = "cpu"
     dtype = torch.float32
