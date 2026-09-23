@@ -1326,6 +1326,64 @@ def test_replace_inplace():
     assert original_comment.args[0] == "About to add some tensors!"
 
 
+@pytest.mark.parametrize("has_source", (False, True))
+@pytest.mark.parametrize("has_ambient_source", (False, True))
+@pytest.mark.parametrize("raises", (False, True))
+def test_replace_inplace_source_locations(has_source, has_ambient_source, raises):
+    from thunder.core.symbol import Symbol
+    from thunder.core.trace import get_tracectx
+    from thunder.core.transforms import insert_inplace, replace_inplace
+
+    location = (__file__, codeutils.Positions(1, 1, 0, 15)) if has_source else (None, None)
+    ambient = (__file__, codeutils.Positions(2, 2, 0, 9)) if has_ambient_source else (None, None)
+    trc = TraceCtx()
+    with tracectx(trc):
+        a = thunder.core.proxies.TensorProxy(shape=(2,), device=thunder.devices.cpu, dtype=thunder.float32)
+        trc.set_current_source_location(*location)
+        prims.comment("original")
+        trc.set_current_source_location(*ambient)
+        prims.comment("untouched")
+    original, untouched = trc.bound_symbols
+
+    def annotate_meta(a):
+        return prims.sin(a)
+
+    annotate = Symbol("annotate", meta=annotate_meta)
+    recorded = []
+
+    def replace(bsym):
+        assert bsym is original
+        annotate(a)
+        recorded.extend(trc.peek_scope())
+        if raises:
+            raise RuntimeError("replacement failed")
+
+    outer = TraceCtx()
+    with tracectx(outer):
+        if raises:
+            with pytest.raises(RuntimeError, match="replacement failed"):
+                replace_inplace(trc, 0, replace)
+        else:
+            replace_inplace(trc, 0, replace)
+        assert get_tracectx() is outer
+
+    assert len(recorded) == 1
+    replacement = recorded[0]
+    assert len(replacement.subsymbols) == 1
+    for bsym in (replacement, replacement.subsymbols[0], original):
+        assert (bsym.source_filename, bsym.source_positions) == location
+    assert trc.bound_symbols[0] is (original if raises else replacement)
+    assert trc.bound_symbols[1] is untouched
+    assert (trc._current_source_filename, trc._current_source_positions) == ambient
+    if has_source:
+        assert f"# {__file__}:1:" in trc.python()
+
+    # Later insertions must use the caller's location, even after a failed replacement.
+    insert_inplace(trc, 2, lambda: prims.comment("unrelated"))
+    unrelated = trc.bound_symbols[2]
+    assert (unrelated.source_filename, unrelated.source_positions) == ambient
+
+
 @instantiate(dtypes=NOTHING)
 def test_detached_trace(executor, device: str, _):
     # This test ensures that the detached_trace context manager works as expected.
