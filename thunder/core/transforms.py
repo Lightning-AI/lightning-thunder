@@ -326,6 +326,9 @@ def replace_inplace(
 ) -> None:
     r"""Removes ``idx``-th :class:`~thunder.core.symbol.BoundSymbol` of ``trc`` and replace it ``bsyms`` representing ``fn``.
 
+    Recorded replacements inherit the replaced symbol's source location. The trace's
+    previous source location is restored after ``fn`` returns or raises.
+
     Args:
         trc: Trace to insert :class:`~thunder.core.symbol.BoundSymbol`\s representing ``fn``.
         idx: Index of :class:`~thunder.core.symbol.BoundSymbol` of ``trc``.
@@ -337,6 +340,8 @@ def replace_inplace(
     .. note::
         Because this operation is explicitly inplace, it will disregard whether or not :func:`~thunder.core.trace.TraceCtx.mark_complete` has been called on ``trc`` already.
     """
+    source_filename = trc._current_source_filename
+    source_positions = trc._current_source_positions
     try:
         tracectx_tok = set_tracectx(trc)
         trc._complete = False
@@ -345,11 +350,15 @@ def replace_inplace(
         scope = []
         trc.push_scope(scope)
 
-        fn(trc.bound_symbols[idx])
+        bsym = trc.bound_symbols[idx]
+        # Attribute replacements, including subsymbols, to the replaced operation.
+        trc.set_current_source_location(bsym.source_filename, bsym.source_positions)
+        fn(bsym)
         del trc.bound_symbols[idx]
         _insert_extend_list(trc.bound_symbols, idx, scope)
 
     finally:
+        trc.set_current_source_location(source_filename, source_positions)
         trc.pop_scope()
         trc._complete = True
         reset_tracectx(tracectx_tok)
