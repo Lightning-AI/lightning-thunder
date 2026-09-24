@@ -67,6 +67,8 @@ def tree_flatten(args, namespace=OPTREE_NAMESPACE):
             torch._subclasses.fake_tensor.FakeTensor,
             torch.device,
             torch.autograd.function.FunctionCtx,
+            # Opaque stand-in for a ScriptObject, e.g. a DeviceMesh since torch 2.12
+            torch._library.fake_class_registry.FakeScriptObject,
             immutable_list,
             *torch.types.py_sym_types,
             *((torch.distributed._tensor.DTensor,) if torch.distributed.is_available() else ()),
