@@ -11,7 +11,7 @@ from collections.abc import Callable
 import pytest
 import torch
 from torch.testing import assert_close
-from thunder.tests.framework import IS_WINDOWS
+from thunder.tests.framework import IS_WINDOWS, WINDOWS_GPT_CRASH_REASON
 
 import thunder
 from thunder.core.interpreter import (
@@ -3413,6 +3413,7 @@ def test_nanogpt_block(jit):
     assert_close(result, fn(*args, **kwargs))
 
 
+@pytest.mark.skipif(IS_WINDOWS, reason=WINDOWS_GPT_CRASH_REASON)
 def test_nanogpt(jit):
     from thunder.benchmarks import NanoGPTBenchmark, NanoGPTConfig, _nanogpt_configs
 
@@ -3428,6 +3429,7 @@ def test_nanogpt(jit):
     assert_close(result, fn(*args, **kwargs))
 
 
+@pytest.mark.skipif(IS_WINDOWS, reason=WINDOWS_GPT_CRASH_REASON)
 def test_litgpt(jit):
     from thunder.benchmarks import LitGPTBenchmark
     from thunder.tests.litgpt_model import Config
