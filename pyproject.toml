@@ -74,6 +74,13 @@ markers = [
 ]
 filterwarnings = [
     "error::FutureWarning",
+    # todo: drop these once upstream stops raising them
+    # torch/testing/_internal/common_utils.py reads this config at import time
+    "ignore:torch._dynamo.config.inline_inbuilt_nn_modules is deprecated:FutureWarning",
+    # torch.func.jvp scripts its decompositions on import; the prefix also covers the 3.14+ wording
+    "ignore:`torch.jit.script` is:FutureWarning",
+    # called by bitsandbytes
+    "ignore:_check_is_size will be removed:FutureWarning",
 ]
 timeout = 900
 # xfail_strict = true  # todo
