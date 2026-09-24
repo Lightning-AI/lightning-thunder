@@ -47,6 +47,9 @@ def _autograd_function_apply_kwargs(args_tensor_mask, non_differentiable_idx=Non
     kwargs = {}
     if _HAS_ARGS_TENSOR_MASK:
         kwargs["args_tensor_mask"] = args_tensor_mask
+    else:
+        # required since torch 2.11; the tests here save only x
+        kwargs["saved_for_backward_idx"] = [0]
     if non_differentiable_idx is not None:
         kwargs["non_differentiable_idx"] = non_differentiable_idx
     return kwargs
