@@ -11,8 +11,6 @@ from thunder import clang
 from thunder.clang.utils import (
     create_maybe_convert_to_dtype_with_prim,
     _elementwise_unary_wrapper,
-    maybe_broadcast_impl,
-    expand_impl,
 )
 from thunder.torch.experimental.dtensor_utils import run_with_fake_tensor
 from thunder.torch.experimental.dtensor_proxy import DTensorProxy, create_dtensor_proxy_from_proxies
@@ -476,14 +474,10 @@ if torch.distributed.is_available():
         return dtensor_to_local_prim(dtensor, grad_placements=grad_placements)
 
 
-expand = partial(expand_impl, broadcast_prim=dtensor_broadcast_in_dim_prim)
-maybe_broadcast = partial(maybe_broadcast_impl, expand_fn=expand)
-
-
 def _elementwise_binary_wrapper(a, b, *, prim, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT):
     computation_dtype, result_dtype = utils.elementwise_type_promotion(a, b, type_promotion_kind=type_promotion_kind)
 
-    a, b = maybe_broadcast(a, b)
+    # No explicit broadcast: the ops broadcast natively, and expanding a DTensor can change its sharding
     a, b = maybe_convert_to_dtype(a, computation_dtype), maybe_convert_to_dtype(b, computation_dtype)
 
     result = prim(a, b)
