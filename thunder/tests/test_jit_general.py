@@ -42,13 +42,32 @@ def _detect_has_args_tensor_mask():
 _HAS_ARGS_TENSOR_MASK = _detect_has_args_tensor_mask()
 
 
-def _autograd_function_apply_kwargs(args_tensor_mask, non_differentiable_idx=None):
+def _detect_has_saved_for_backward_idx():
+    """Check if autograd_function_apply requires saved_for_backward_idx.
+
+    PyTorch >= 2.12 requires a ``saved_for_backward_idx`` kwarg.
+    """
+    try:
+        from torch._functorch.autograd_function import AutogradFunctionApply
+
+        source = inspect.getsource(AutogradFunctionApply.__call__)
+        return "saved_for_backward_idx" in source
+    except (ImportError, AttributeError, OSError):
+        return False
+
+
+_HAS_SAVED_FOR_BACKWARD_IDX = _detect_has_saved_for_backward_idx()
+
+
+def _autograd_function_apply_kwargs(args_tensor_mask, non_differentiable_idx=None, saved_for_backward_idx=None):
     """Create kwargs for autograd_function_apply that work with both stable and nightly PyTorch."""
     kwargs = {}
     if _HAS_ARGS_TENSOR_MASK:
         kwargs["args_tensor_mask"] = args_tensor_mask
     if non_differentiable_idx is not None:
         kwargs["non_differentiable_idx"] = non_differentiable_idx
+    if _HAS_SAVED_FOR_BACKWARD_IDX and saved_for_backward_idx is not None:
+        kwargs["saved_for_backward_idx"] = saved_for_backward_idx
     return kwargs
 
 
@@ -1324,7 +1343,7 @@ def test_autograd_function_apply():
             fwd,
             bwd,
             x,
-            **_autograd_function_apply_kwargs([True], non_differentiable_idx=[]),
+            **_autograd_function_apply_kwargs([True], non_differentiable_idx=[], saved_for_backward_idx=[0]),
         )
 
     jitted = thunder_jit(my_sin)
@@ -1363,7 +1382,7 @@ def test_autograd_function_apply():
             fwd,
             wrong_bwd,
             x,
-            **_autograd_function_apply_kwargs([True], non_differentiable_idx=[]),
+            **_autograd_function_apply_kwargs([True], non_differentiable_idx=[], saved_for_backward_idx=[0]),
         )
 
     jitted = thunder_jit(my_sin_with_wrong_backward)
@@ -1416,7 +1435,7 @@ def test_autograd_function_apply_with_no_grad():
             forward,
             backward,
             x,
-            **_autograd_function_apply_kwargs([True], non_differentiable_idx=[]),
+            **_autograd_function_apply_kwargs([True], non_differentiable_idx=[], saved_for_backward_idx=[0]),
         )
         return res
 
@@ -1465,7 +1484,7 @@ def test_autograd_function_apply_with_no_grad():
             forward,
             backward,
             x,
-            **_autograd_function_apply_kwargs([True], non_differentiable_idx=[]),
+            **_autograd_function_apply_kwargs([True], non_differentiable_idx=[], saved_for_backward_idx=[0]),
         )
         return res
 

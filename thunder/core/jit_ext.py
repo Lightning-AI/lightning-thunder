@@ -103,6 +103,19 @@ MODULE_MEMBER_DICT_ATTRS = {
 }
 
 
+def _is_recordable_module_member_value(value) -> bool:
+    # Writes to a module's member dicts are replayed in the epilogue (via pack_attr /
+    # pack_buffer), which only handle trackable computational state: proxies, submodules,
+    # and simple scalars/containers. Framework-internal bookkeeping written as a side
+    # effect of interpreting through library internals must not be recorded -- e.g.
+    # torch >= 2.12's fx GraphModule codegen assigns `_code` (a source string) and
+    # `_graph` (an fx.Graph) into `__dict__` while thunder traces the GraphModule.
+    return isinstance(
+        unwrap(value),
+        (Proxy, torch.Tensor, torch.nn.Module, int, float, tuple, NoneType, torch.device, thunder.devices.Device),
+    )
+
+
 class JITSharpEdgeError(RuntimeError):
     """
     Thrown when the program cannot be safely translated to a thunder program,
@@ -494,7 +507,7 @@ def _general_jit_dict_setitem(d, key, value):
     dict_setitem_lookaside = default_lookaside(dict.__setitem__)
     assert dict_setitem_lookaside is not None
 
-    if d.provenance.ext_flag & EXT_FLAG_IS_MODULE_MEMBER_DICT:
+    if d.provenance.ext_flag & EXT_FLAG_IS_MODULE_MEMBER_DICT and _is_recordable_module_member_value(value):
         ctx: JitCtx = get_jit_ctx()
         if d.original_value is d.nothing:
             ctx.proxify(d)
@@ -508,7 +521,7 @@ def _general_jit_ordered_dict_setitem(d, key, value):
     dict_setitem_lookaside = default_lookaside(collections.OrderedDict.__setitem__)
     assert dict_setitem_lookaside is not None
 
-    if d.provenance.ext_flag & EXT_FLAG_IS_MODULE_MEMBER_DICT:
+    if d.provenance.ext_flag & EXT_FLAG_IS_MODULE_MEMBER_DICT and _is_recordable_module_member_value(value):
         ctx: JitCtx = get_jit_ctx()
         if d.original_value is d.nothing:
             ctx.proxify(d)
@@ -1000,7 +1013,11 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
             continue
         trace_of_forward.bound_symbols.append(bsym.from_bsym())
     with tracectx(trace_of_forward):
-        prims.python_return(*(sequencify(output)))
+        # Return the forward output preserving its structure so the result matches
+        # torch.ops.higher_order.autograd_function_apply. torch >= 2.12's dynamo graphs
+        # wrap the output in a tuple (e.g. `((y,), saved)`) and index it (`apply(...)[0]`);
+        # unpacking a single-element output here would collapse it and break that indexing.
+        prims.python_return(output)
 
     # See NOTE: `autograd_function_apply` and `no_grad` interaction for details about
     # `thunder.torch.call_higher_order_function_and_consider_outer_autograd_setting`

@@ -195,7 +195,20 @@ class WrappedValue:
 # Note: Use these with care!
 #       In some situations - in particular *args/**kwargs, Python creates tuples and dicts for us,
 #       these functions are intended to do the appropriate wrapping for them.
-def wrap_args_from_list(lst):  # returns a new list!
+def wrap_args_from_list(lst):  # returns a new list (or an INTERPRETER_SIGNALS on error)!
+    # `*args` unpacking (CALL_FUNCTION_EX) may receive any iterable, including a
+    # generator (e.g. ``f(*(x for x in xs))``), which supports neither len() nor
+    # indexing. Materialize such iterables into a list via interpreted iteration
+    # so element wrappers and provenance are tracked, then index as usual.
+    if not isinstance(unwrap(lst), (list, tuple)):
+
+        def impl(iterable):
+            return list(iterable)
+
+        lst = _interpret_call(impl, lst)
+        if lst is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+            return lst
+
     res = [_interpret_call(lambda seq, i: seq[i], lst, wrap_const(i)) for i in range(len(unwrap(lst)))]
     return res
 
@@ -2370,7 +2383,20 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
 
     def insert(self, i, x, /):
         self.track_items()
-        raise NotImplementedError("Sequence.insert, please file an issue")
+        assert self.item_wrappers is not None
+
+        uindex = i.value
+        if not isinstance(uindex, int):
+            return do_raise(TypeError(f"'{type(uindex)}' object cannot be interpreted as an integer"))
+        uindex = int(uindex)  # if it was a subclass like IntProxy
+
+        pr = ProvenanceRecord(PseudoInst.LIST_APPEND, inputs=[self.provenance, x.provenance])
+        self.provenance = pr  # should have an update method
+        self.value.insert(uindex, x.value)
+        assert type(self.item_wrappers) is list
+        self.item_wrappers.insert(uindex, x)
+        assert len(self.value) == len(self.item_wrappers)
+        return wrap_const(None)
 
     def pop(self, index=-1, /):
         self.track_items()
@@ -2442,6 +2468,9 @@ class MappingKeysView(ThunderInterpreterObject):
     def __init__(self, mapping):
         self._mapping = mapping
 
+    def __len__(self):
+        return len(self._mapping)
+
     @property
     def mapping(self):
         return self._mapping  # a should be a MappingProxy...
@@ -2487,6 +2516,9 @@ class MappingValuesWrapper(ThunderInterpreterObject):
     def __init__(self, mapping):
         self._mapping = mapping
 
+    def __len__(self):
+        return len(self._mapping)
+
     def __iter__(self):
         return MappingValuesIterator(self._mapping)
 
@@ -2510,6 +2542,9 @@ class MappingItemsIterator(ThunderInterpreterObject):
 class MappingItemsWrapper(ThunderInterpreterObject):
     def __init__(self, mapping):
         self._mapping = mapping
+
+    def __len__(self):
+        return len(self._mapping)
 
     def __iter__(self):
         return MappingItemsIterator(self._mapping)
@@ -3872,6 +3907,8 @@ def _call_function_ex_handler(
     ctx: InterpreterCompileCtx = get_interpretercompilectx()
     if ctx._with_provenance_tracking:
         args = wrap_args_from_list(args)
+        if args is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+            return args
         kwargs = wrap_kwargs_from_dict(kwargs)
     return check_and_append(stack, _interpret_call(func, *args, **kwargs))
 
