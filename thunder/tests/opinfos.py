@@ -9637,6 +9637,12 @@ cross_entropy_opinfo = OpInfo(
             pytest.mark.skip,
             "test_vjp_correctness",
         ),
+        DecorateInfo(
+            pytest.mark.timeout(360),
+            "test_core_vs_torch_consistency",
+            executors=("nvfuser",),
+            devicetypes=(devices.DeviceType.CUDA,),
+        ),
     ),
 )
 nn_ops.append(cross_entropy_opinfo)
