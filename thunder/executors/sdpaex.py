@@ -77,7 +77,7 @@ def _attention_mask_memory_efficient_helper(attn_mask: None | torch.Tensor, quer
     # When a boolean mask is used, it needs to be converted to an additive mask where zero'd elements are filled
     # with a very negative value that should become ~0 after softmax
     if attn_mask.dtype == torch.bool:
-        attn_mask = torch.masked_fill(torch.zeros_like(attn_mask, dtype=query.dtype), attn_mask == False, -math.inf)
+        attn_mask = torch.masked_fill(torch.zeros_like(attn_mask, dtype=query.dtype), not attn_mask, -math.inf)
 
     # Expand the number of heads in attention mask to match query, key, and value tensors.
     num_heads = query.shape[1]
