@@ -307,7 +307,6 @@ def get_proxy_inputs_from_node(node: torch.fx.Node, tracectx) -> tuple[tuple, di
                 elif isinstance(example_value, torch.types.py_sym_types) and example_value.node.has_hint():
                     return proxy(example_value.node.hint)
                 elif isinstance(example_value, FakeScriptObject):
-                    # A DeviceMesh since torch 2.12; the ops want the real mesh
                     return example_value.real_obj
                 else:
                     # NOTE - This will be caught and be part of the SplitReason.
@@ -514,7 +513,6 @@ def is_node_supported_by_thunder(
             )
             return False, split_reason
         if target is None:
-            # DTensor methods like redistribute, emitted as call_method since torch 2.12
             target = getattr(DTensor, node.target, None)
         assert target is not None, f"Failed to find method {node.target}"
 
@@ -698,7 +696,6 @@ def example_input_meta_to_input(meta):
     elif isinstance(meta, (int, bool, float)):
         return meta
     elif isinstance(meta, FakeScriptObject):
-        # The real object, e.g. a DeviceMesh
         return meta.real_obj
     elif isinstance(meta, Sequence):
         return tuple(example_input_meta_to_input(i) for i in meta)
