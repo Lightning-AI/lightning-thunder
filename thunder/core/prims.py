@@ -592,7 +592,9 @@ def _check_instance_meta(x: Any, types: tuple[type], /) -> None:
     for typ in types:
         baseutils.check(
             type(typ) is type,
-            lambda: f"Expected a tuple of types for check_instance, but found an object of type {type(typ)} in the tuple",
+            lambda: (
+                f"Expected a tuple of types for check_instance, but found an object of type {type(typ)} in the tuple"
+            ),
         )
 
     baseutils.check(any(map(lambda y: issubclass(pytype(x), y), types)), lambda: f"Type {pytype(x)} was not in {types}")
@@ -2010,7 +2012,9 @@ def _elementwise_unary_meta_factory(
             if val is None or number_fn is None:
                 utils.check(
                     isinstance(a, NumberProxy),
-                    lambda: f"Trying to call an elementwise unary operation {name} on a number, but the operation is not eagerly defined",
+                    lambda: (
+                        f"Trying to call an elementwise unary operation {name} on a number, but the operation is not eagerly defined"
+                    ),
                 )
                 return numberproxy(output_type, None, a.constraint)
 
@@ -2018,7 +2022,9 @@ def _elementwise_unary_meta_factory(
             value = number_fn(typ(val))
             utils.check(
                 type(value) is output_type,
-                lambda: f"Unexpected number output type {type(value)}, expected {output_type}, for input type {typ} (value={val})",
+                lambda: (
+                    f"Unexpected number output type {type(value)}, expected {output_type}, for input type {typ} (value={val})"
+                ),
             )
 
             # Only returns a proxy if the input is a proxy
@@ -2486,7 +2492,9 @@ def _elementwise_binary_meta_factory(
             if aval is None or bval is None or number_fn is None:
                 utils.check(
                     isinstance(a, NumberProxy) or isinstance(b, NumberProxy),
-                    lambda: f"Trying to call an elementwise binary operation {name} on two numbers, but the operation is not eagerly defined",
+                    lambda: (
+                        f"Trying to call an elementwise binary operation {name} on two numbers, but the operation is not eagerly defined"
+                    ),
                 )
                 return numberproxy(numbertype, None, constraint=utils.resolve_constraints(a, b))
 
@@ -2982,7 +2990,9 @@ def _get_and_update_rng_state_meta(
     offset_is_none = offset is None
     utils.check(
         not (seed_is_none ^ offset_is_none),
-        lambda: f"seed and offset must be given in pair (they are both None only used on first use of get_and_update_rng_statebut), but got {seed}, {offset}",
+        lambda: (
+            f"seed and offset must be given in pair (they are both None only used on first use of get_and_update_rng_statebut), but got {seed}, {offset}"
+        ),
     )
     if not seed_is_none:
         utils.check_type(seed, (IntegerProxy, int))
@@ -3150,7 +3160,9 @@ def _tensor_from_sequence_meta(
     for element in sequences:
         utils.check(
             isinstance(element, (bool, int, float, complex)),
-            lambda: f"Expected sequences of numbers, but found type {type(element)} when constructing a tensor from a sequence",
+            lambda: (
+                f"Expected sequences of numbers, but found type {type(element)} when constructing a tensor from a sequence"
+            ),
             ValueError,
         )
         types.add(pytype(element))
@@ -3257,7 +3269,9 @@ def broadcast_in_dim_meta(a: TensorProxy, /, shape: Sequence[int], broadcast_dim
 
     utils.check(
         len(a.shape) == len(broadcast_dimensions),
-        lambda: f"Expected one broadcast dimension (broadcast_dimensions={broadcast_dimensions}) for each dimension of a={a.shape}",
+        lambda: (
+            f"Expected one broadcast dimension (broadcast_dimensions={broadcast_dimensions}) for each dimension of a={a.shape}"
+        ),
     )
 
     # Checks that dimensions are strictly increasing and valid
@@ -3271,11 +3285,15 @@ def broadcast_in_dim_meta(a: TensorProxy, /, shape: Sequence[int], broadcast_dim
 
         utils.check(
             idx < len(shape),
-            lambda: f"One of the broadcast_dimensions={broadcast_dimensions} was {idx}, which is out-of-bounds for a tensor with {len(shape)} dimensions",
+            lambda: (
+                f"One of the broadcast_dimensions={broadcast_dimensions} was {idx}, which is out-of-bounds for a tensor with {len(shape)} dimensions"
+            ),
         )
         utils.check(
             original_length == 1 or shape[idx] == original_length,
-            lambda: f"A dimension of length {original_length} cannot be broadcast to a dimension of length {shape[idx]}",
+            lambda: (
+                f"A dimension of length {original_length} cannot be broadcast to a dimension of length {shape[idx]}"
+            ),
         )
 
     return TensorProxy(like=a, shape=shape)
@@ -3317,8 +3335,10 @@ def cat_meta(tensors: list[TensorProxy], /, dim: int) -> TensorProxy:
         for d, (sd, sad) in enumerate(zip(shape, ai.shape)):
             utils.check(
                 sd == sad or d == dim,
-                lambda: f"Sizes of tensors must match except in dimension {dim}. "
-                f"Expected size {sd} but got size {sad} for tensor number {i + 1} in the list.",
+                lambda: (
+                    f"Sizes of tensors must match except in dimension {dim}. "
+                    f"Expected size {sd} but got size {sad} for tensor number {i + 1} in the list."
+                ),
             )
         shape[dim] = shape[dim] + ai.shape[dim]
 
@@ -3406,7 +3426,9 @@ def reshape_meta(a: TensorProxy, /, shape: tuple[int, NumberProxy, ...]) -> Tens
     numel = reduce(operator.mul, shape, 1)
     utils.check(
         numel == a.numel,
-        lambda: f"Attempting to reshape a.shape={a.shape} to shape={shape}, but a.numel={a.numel} is different from the number of elements in shape, {numel}",
+        lambda: (
+            f"Attempting to reshape a.shape={a.shape} to shape={shape}, but a.numel={a.numel} is different from the number of elements in shape, {numel}"
+        ),
     )
 
     return TensorProxy(like=a, shape=shape)
@@ -3441,7 +3463,9 @@ def slice_meta(
     # Checks all same length
     utils.check(
         a.ndim == len(start_indices) == len(end_indices) == len(strides),
-        lambda: f"Expected the tensor's rank ({a.ndim}) to be equal to the length of start_indices ({len(start_indices)}), the length of end_indices ({len(end_indices)}), and the length of strides ({len(strides)})",
+        lambda: (
+            f"Expected the tensor's rank ({a.ndim}) to be equal to the length of start_indices ({len(start_indices)}), the length of end_indices ({len(end_indices)}), and the length of strides ({len(strides)})"
+        ),
     )
 
     # Validates start, end, and stride values, and computes the new shape
@@ -3452,15 +3476,21 @@ def slice_meta(
         )
         utils.check(
             start <= shape,
-            lambda: f"Expected all the indices in start_indices={start_indices} to be weakly less than the length of the corresponding dimension in a.shape={a.shape}",
+            lambda: (
+                f"Expected all the indices in start_indices={start_indices} to be weakly less than the length of the corresponding dimension in a.shape={a.shape}"
+            ),
         )
         utils.check(
             start <= stop,
-            lambda: f"Expected all the indices in start_indices={start_indices} to be weakly less than the indices in end_indices={end_indices}",
+            lambda: (
+                f"Expected all the indices in start_indices={start_indices} to be weakly less than the indices in end_indices={end_indices}"
+            ),
         )
         utils.check(
             stop <= shape,
-            lambda: f"Expected all the indices in end_indices={end_indices} to be weakly less than the length of the corresponding dimension in a.shape={a.shape}",
+            lambda: (
+                f"Expected all the indices in end_indices={end_indices} to be weakly less than the length of the corresponding dimension in a.shape={a.shape}"
+            ),
         )
         utils.check(stride >= 1, lambda: f"Expected all the strides in strides={strides} to be strictly positive!")
 
@@ -3546,7 +3576,9 @@ def index_add_meta(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, di
 
     utils.check(
         utils.same_shape(a.shape[:dim] + a.shape[dim + 1 :], value.shape[:dim] + value.shape[dim + 1 :]),
-        lambda: f"Expected the all dimensions of a ({a.shape}) and value ({value.shape}) to be the same, except for dim ({dim})",
+        lambda: (
+            f"Expected the all dimensions of a ({a.shape}) and value ({value.shape}) to be the same, except for dim ({dim})"
+        ),
     )
 
     return TensorProxy(like=a)
@@ -3612,7 +3644,9 @@ def take_along_axis_meta(a: TensorProxy, /, index: TensorProxy, dim: int) -> Ten
 
     utils.check(
         utils.same_shape(a.shape[:dim] + a.shape[dim + 1 :], index.shape[:dim] + index.shape[dim + 1 :]),
-        lambda: f"Expected the all dimensions of a ({a.shape}) and index ({index.shape}) to be the same, except for dim ({dim})",
+        lambda: (
+            f"Expected the all dimensions of a ({a.shape}) and index ({index.shape}) to be the same, except for dim ({dim})"
+        ),
     )
 
     return TensorProxy(like=a, shape=index.shape)
@@ -3644,7 +3678,9 @@ def gather_meta(a: TensorProxy, /, index: TensorProxy, dim: int) -> TensorProxy:
         if idx != dim:
             utils.check(
                 index.shape[idx] <= a.shape[idx],
-                lambda: f"Expected 'index' size on all dimensions to be <= 'a', except `dim`. Found dim {idx}, where 'index' has {index.shape[idx]} and 'a' has {a.shape[idx]}",
+                lambda: (
+                    f"Expected 'index' size on all dimensions to be <= 'a', except `dim`. Found dim {idx}, where 'index' has {index.shape[idx]} and 'a' has {a.shape[idx]}"
+                ),
             )
     return TensorProxy(like=a, shape=index.shape)
 
@@ -3673,11 +3709,15 @@ def scatter_add_meta(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, 
         if idx != dim:
             utils.check(
                 index.shape[idx] <= a.shape[idx],
-                lambda: f"Expected 'index' size on all dimensions to be <= 'a', except `dim`. Found dim {idx}, where 'index' has {index.shape[idx]} and 'a' has {a.shape[idx]}",
+                lambda: (
+                    f"Expected 'index' size on all dimensions to be <= 'a', except `dim`. Found dim {idx}, where 'index' has {index.shape[idx]} and 'a' has {a.shape[idx]}"
+                ),
             )
         utils.check(
             index.shape[idx] <= value.shape[idx],
-            lambda: f"Expected 'index' size on all dimensions to be <= 'value'. Found dim {idx}, where 'index' has {index.shape[idx]} and 'value' has {value.shape[idx]}",
+            lambda: (
+                f"Expected 'index' size on all dimensions to be <= 'value'. Found dim {idx}, where 'index' has {index.shape[idx]} and 'value' has {value.shape[idx]}"
+            ),
         )
 
     return TensorProxy(like=a)
@@ -3803,7 +3843,9 @@ def transpose_meta(a: TensorProxy, /, permutation: tuple[int, ...]) -> TensorPro
     utils.check_type(permutation, tuple)
     utils.check(
         a.ndim == len(permutation),
-        lambda: f"Expected the length ({len(permutation)}) of the permutation={permutation} to be the number of dimensions ({a.ndim}) of a={a}",
+        lambda: (
+            f"Expected the length ({len(permutation)}) of the permutation={permutation} to be the number of dimensions ({a.ndim}) of a={a}"
+        ),
     )
     utils.check_valid_permutation(a.ndim, permutation)
 
@@ -4042,7 +4084,9 @@ def linear_meta(a: TensorProxy, w: TensorProxy, bias: None | TensorProxy) -> Ten
     )
     utils.check(
         w.shape[1] == in_length,
-        lambda: f"Expected w.shape={w.shape} to have an innermost dimension of length {in_length}, the same length as the innermost dimension of a.shape={a.shape}!",
+        lambda: (
+            f"Expected w.shape={w.shape} to have an innermost dimension of length {in_length}, the same length as the innermost dimension of a.shape={a.shape}!"
+        ),
     )
 
     out_length = w.shape[0]
@@ -4060,7 +4104,9 @@ def linear_meta(a: TensorProxy, w: TensorProxy, bias: None | TensorProxy) -> Ten
         )
         utils.check(
             bias.shape[0] == out_length,
-            lambda: f"Expected bias.shape={bias.shape} to have an innermost dimension of length {out_length}, the same length as the outermost dimension of w.shape={w.shape}!",
+            lambda: (
+                f"Expected bias.shape={bias.shape} to have an innermost dimension of length {out_length}, the same length as the outermost dimension of w.shape={w.shape}!"
+            ),
         )
         utils.check(
             dtypes.are_same_dtypes(bias, a),
@@ -4118,12 +4164,16 @@ def matmul_meta(a: TensorProxy, b: TensorProxy, /) -> TensorProxy:
 
     utils.check(
         utils.same_shape(a.shape[:-2], b.shape[:-2]),
-        lambda: f"Expected the batch dimensions of a {a.shape[:-2]} and the batch dimensions of b {b.shape[:-2]} to be the same",
+        lambda: (
+            f"Expected the batch dimensions of a {a.shape[:-2]} and the batch dimensions of b {b.shape[:-2]} to be the same"
+        ),
     )
 
     utils.check(
         a.shape[-1] == b.shape[-2],
-        lambda: f"Expected the the last two dimensions of a ({a.shape[-2:]}) be matrix multipiable with the last two dimensions of b ({b.shape[-2:]})",
+        lambda: (
+            f"Expected the the last two dimensions of a ({a.shape[-2:]}) be matrix multipiable with the last two dimensions of b ({b.shape[-2:]})"
+        ),
     )
 
     shape = list(a.shape[:-2])
@@ -4190,9 +4240,11 @@ def convolution_meta(
     # error only if the padded input dim is empty.
     utils.check(
         all(fs != 0 for fs in features_size),
-        lambda: f"Input's shape {a.shape=} can be zero only "
-        "in the batch (i.e. a.shape[0]) and/or "
-        "in the channel dimension (i.e. a.shape[1])",
+        lambda: (
+            f"Input's shape {a.shape=} can be zero only "
+            "in the batch (i.e. a.shape[0]) and/or "
+            "in the channel dimension (i.e. a.shape[1])"
+        ),
     )
     utils.check(
         all(ks != 0 for ks in kernel_size),
@@ -4201,9 +4253,11 @@ def convolution_meta(
 
     utils.check(
         in_channels_grouped * groups == in_channels,
-        lambda: f"{weight.shape[1]=} should be equal to "
-        f"(in_channels / groups)={in_channels // groups} "
-        f"(i.e. {a.shape[1]=} / {groups=})",
+        lambda: (
+            f"{weight.shape[1]=} should be equal to "
+            f"(in_channels / groups)={in_channels // groups} "
+            f"(i.e. {a.shape[1]=} / {groups=})"
+        ),
     )
     utils.check(
         out_channels % groups == 0, lambda: f"out_channels (i.e. {weight.shape[0]=}) should be divisible by {groups=}"
@@ -4224,8 +4278,10 @@ def convolution_meta(
         for i, e in enumerate(seq):
             utils.check(
                 isinstance(e, (int, IntegerProxy)) and e >= min_val,
-                lambda: f"all elements in {seq_str_name} should be integers at least {min_val}, "
-                f"but {seq_str_name}[{i}]={seq[i]} does not satisfy these requirements",
+                lambda: (
+                    f"all elements in {seq_str_name} should be integers at least {min_val}, "
+                    f"but {seq_str_name}[{i}]={seq[i]} does not satisfy these requirements"
+                ),
             )
 
     # stride and dilation should be at least 1
@@ -4261,14 +4317,16 @@ def convolution_meta(
         tensor_dim = dim + 2
         utils.check(
             padded_a_dim >= dilated_weight_dim,
-            lambda: f"Inconsistent shapes at dimension {tensor_dim} between `a` and `weight`. "
-            f"The padded `a` dimension {tensor_dim} is equal to {padded_a_dim} "
-            f"(i.e. a.shape[{tensor_dim}] + 2 * padding[{dim}] = "
-            f"{a.shape[tensor_dim]} + 2 * {padding[dim]}) "
-            "and should be greater or equal to the dilated `weight` shape at the same dimension "
-            f"which is equal to {dilated_weight_dim} "
-            f"(i.e. dilation[{dim}] * (weight.shape[{tensor_dim}] - 1) + 1 = "
-            f"{dilation[dim]} * ({weight.shape[tensor_dim]} - 1) + 1)",
+            lambda: (
+                f"Inconsistent shapes at dimension {tensor_dim} between `a` and `weight`. "
+                f"The padded `a` dimension {tensor_dim} is equal to {padded_a_dim} "
+                f"(i.e. a.shape[{tensor_dim}] + 2 * padding[{dim}] = "
+                f"{a.shape[tensor_dim]} + 2 * {padding[dim]}) "
+                "and should be greater or equal to the dilated `weight` shape at the same dimension "
+                f"which is equal to {dilated_weight_dim} "
+                f"(i.e. dilation[{dim}] * (weight.shape[{tensor_dim}] - 1) + 1 = "
+                f"{dilation[dim]} * ({weight.shape[tensor_dim]} - 1) + 1)"
+            ),
         )
     # }
 

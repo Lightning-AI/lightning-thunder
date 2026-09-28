@@ -214,7 +214,9 @@ class torchsymbol:
             else:
                 utils.check(
                     False,
-                    lambda: f"The torchsymbol decorator failed to infer an id for {name}, specify one explicitly (with id=<your id>)",
+                    lambda: (
+                        f"The torchsymbol decorator failed to infer an id for {name}, specify one explicitly (with id=<your id>)"
+                    ),
                     exception_type=AssertionError,
                 )
         else:
@@ -772,7 +774,9 @@ def tensor(
     # TODO: Support torch.Tensor/np.ndarray as input similar to `torch.tensor`
     utils.check(
         isinstance(seq_or_number, (Number, Sequence)),
-        lambda: f"Currently only directly constructing tensors with a single number or a Sequence of numbers is supported, but received {n}",
+        lambda: (
+            f"Currently only directly constructing tensors with a single number or a Sequence of numbers is supported, but received {n}"
+        ),
         exception_type=NotImplementedError,
     )
     utils.check(
@@ -1433,7 +1437,9 @@ def split(a: TensorProxy, size_or_sections: int | Sequence[int], /, dim=0) -> Te
         if target_length == 0:
             utils.check(
                 a.shape[dim] == 0,
-                lambda: f"When size_or_sections={size_or_sections} is zero then the length of the split dimension ({a.shape[dim]}) must also be zero",
+                lambda: (
+                    f"When size_or_sections={size_or_sections} is zero then the length of the split dimension ({a.shape[dim]}) must also be zero"
+                ),
             )
             return full_like(a)
 
@@ -1458,7 +1464,9 @@ def split(a: TensorProxy, size_or_sections: int | Sequence[int], /, dim=0) -> Te
     s = reduce(operator.add, size_or_sections, 0)
     utils.check(
         s == a.shape[dim],
-        lambda: f"size_or_sections={size_or_sections} must sum to the length of the split dimension ({len(a.shape[dim])})",
+        lambda: (
+            f"size_or_sections={size_or_sections} must sum to the length of the split dimension ({len(a.shape[dim])})"
+        ),
     )
 
     # NOTE: because split requires overspecifying the lengths, the final split is ignored
@@ -1780,8 +1788,10 @@ def exponential(a: Tensor, rate: float = 1, *, generator: None | torch.Generator
     )
     utils.check(
         thunder.dtypes.is_float_dtype(a.dtype),
-        lambda: f"Exponential distribution is a continuous probability distribution. \
-        dtype must be a floating point but you specified {a.dtype}",
+        lambda: (
+            f"Exponential distribution is a continuous probability distribution. \
+        dtype must be a floating point but you specified {a.dtype}"
+        ),
     )
     utils.check(
         rate > 0.0,
@@ -2233,8 +2243,10 @@ def prelu(a: TensorProxy, /, weight: TensorProxy) -> TensorLike:
         num_channels = a.shape[1] if a.ndim >= 2 else 1
         utils.check(
             weight.numel() == num_channels,
-            lambda: f"Mismatch of parameter numbers and input channel size. Found parameter numbers ="
-            f" {weight.numel()} and channel size = {num_channels}.",
+            lambda: (
+                f"Mismatch of parameter numbers and input channel size. Found parameter numbers ="
+                f" {weight.numel()} and channel size = {num_channels}."
+            ),
         )
     utils.check(
         weight.ndim == 0 or weight.ndim == 1,
@@ -3670,10 +3682,12 @@ def generalized_diagonal_tensor(dim_len, rank, device):
 def einsum(equation: str, *operands: TensorLike | Sequence[TensorLike]) -> TensorLike:
     utils.check(
         isinstance(equation, str),
-        lambda: "Sublist inputs are not currently supported. "
-        "Rewrite the sublist input to use a string equation, "
-        "and/or file an issue requesting sublist einsum support here: "
-        "https://github.com/Lightning-AI/lightning-thunder/issues/new/choose",
+        lambda: (
+            "Sublist inputs are not currently supported. "
+            "Rewrite the sublist input to use a string equation, "
+            "and/or file an issue requesting sublist einsum support here: "
+            "https://github.com/Lightning-AI/lightning-thunder/issues/new/choose"
+        ),
         exception_type=NotImplementedError,
     )
 
@@ -3756,10 +3770,12 @@ def einsum(equation: str, *operands: TensorLike | Sequence[TensorLike]) -> Tenso
             if dims:
                 utils.check(
                     operand is None or operand.shape[d] == operand.shape[dims[-1]],
-                    lambda: f"Incorrect subscript for operand #{pos}: "
-                    f"repeated label '{label}' requires dimensions "
-                    f"{d} and {dims[-1]} to have the same lenght, "
-                    f"but got {operand.shape[d]} != {operand.shape[dims[-1]]}",
+                    lambda: (
+                        f"Incorrect subscript for operand #{pos}: "
+                        f"repeated label '{label}' requires dimensions "
+                        f"{d} and {dims[-1]} to have the same lenght, "
+                        f"but got {operand.shape[d]} != {operand.shape[dims[-1]]}"
+                    ),
                     ValueError,
                 )
             dims.append(d)
@@ -3767,19 +3783,23 @@ def einsum(equation: str, *operands: TensorLike | Sequence[TensorLike]) -> Tenso
         # Cannot subscript more dims than there are in the operand.
         utils.check(
             operand is None or n_subscripted_dims <= operand.ndim,
-            lambda: f"Incorrect subscript for operand #{pos}: "
-            f"it subscripts more dimenions ({n_subscripted_dims}) "
-            f"then there are in the operand ({operand.ndim})",
+            lambda: (
+                f"Incorrect subscript for operand #{pos}: "
+                f"it subscripts more dimenions ({n_subscripted_dims}) "
+                f"then there are in the operand ({operand.ndim})"
+            ),
             ValueError,
         )
 
         # Check no present ellipsis implies all dims are subscripted.
         utils.check(
             operand is None or label_dim_iter.seen_ellipsis or n_subscripted_dims == operand.ndim,
-            lambda: f"Incorrect subscript for operand #{pos}: "
-            "in the absence of ellipsis the number of subscripted dims "
-            f"{n_subscripted_dims} has to match the operand's dimensionality "
-            f"{operand.ndim}",
+            lambda: (
+                f"Incorrect subscript for operand #{pos}: "
+                "in the absence of ellipsis the number of subscripted dims "
+                f"{n_subscripted_dims} has to match the operand's dimensionality "
+                f"{operand.ndim}"
+            ),
             ValueError,
         )
 
@@ -3814,8 +3834,10 @@ def einsum(equation: str, *operands: TensorLike | Sequence[TensorLike]) -> Tenso
         # check output labels are coming from operand's subscripts.
         utils.check(
             label in operand_union_subscript_spec,
-            lambda: f"Output subscript string '{output_subscript}' includes a '{label}' label "
-            "which does not apper in neither of the operand's subsripts",
+            lambda: (
+                f"Output subscript string '{output_subscript}' includes a '{label}' label "
+                "which does not apper in neither of the operand's subsripts"
+            ),
             ValueError,
         )
     # }
@@ -4394,7 +4416,9 @@ def _check_normalized_shape_and_get_reduction_dims(a, normalized_shape, weight=N
     )
     utils.check(
         a.shape[-normalized_ndim:] == tuple(normalized_shape),
-        lambda: f"Expected the last {len(normalized_shape)} dimensions of a (a.shape={a.shape}) to be the same as {normalized_shape}",
+        lambda: (
+            f"Expected the last {len(normalized_shape)} dimensions of a (a.shape={a.shape}) to be the same as {normalized_shape}"
+        ),
     )
 
     axis = a.ndim - normalized_ndim
@@ -4783,8 +4807,10 @@ def apply_padding_for_pool_ops(dim, a, padding, kernel_size, pad_value):
     utils.check(
         len(padding) == dim
         and all(isinstance(p, (int, IntegerProxy)) and 0 <= p <= k // 2 for p, k in zip(padding, kernel_size)),
-        lambda: f"Implied {padding=} (with dimensionality {dim}) should contain integers "
-        f"between 0 and `kernel_size / 2` (with the implied {kernel_size=})",
+        lambda: (
+            f"Implied {padding=} (with dimensionality {dim}) should contain integers "
+            f"between 0 and `kernel_size / 2` (with the implied {kernel_size=})"
+        ),
     )
 
     # No need to pad batch and channels dims, only spatial dims.
@@ -4911,8 +4937,10 @@ def _max_pool_helper(
     kernel_size = maybe_to_rank_len_sequence(kernel_size, dim)
     utils.check(
         len(kernel_size) == dim and all(isinstance(k, (int, IntegerProxy)) and k > 0 for k in kernel_size),
-        lambda: f"Implied {kernel_size=} (with dimensionality {dim}) should either be a non-negative integer "
-        f"or a sequence of non-negative integers of length {dim}",
+        lambda: (
+            f"Implied {kernel_size=} (with dimensionality {dim}) should either be a non-negative integer "
+            f"or a sequence of non-negative integers of length {dim}"
+        ),
     )
 
     # Check channels > 0 {
@@ -4983,8 +5011,10 @@ def _avg_pool_helper(
     kernel_size = maybe_to_rank_len_sequence(kernel_size, dim)
     utils.check(
         len(kernel_size) == dim and all(isinstance(k, (int, IntegerProxy)) and k > 0 for k in kernel_size),
-        lambda: f"Implied {kernel_size=} (with dimensionality {dim}) should either be a non-negative integer "
-        f"or a sequence of non-negative integers of length {dim}",
+        lambda: (
+            f"Implied {kernel_size=} (with dimensionality {dim}) should either be a non-negative integer "
+            f"or a sequence of non-negative integers of length {dim}"
+        ),
     )
 
     # Check channels > 0 {
@@ -5091,7 +5121,9 @@ def adaptive_avg_pool2d(
     for i in (-2, -1):
         utils.check(
             a.shape[i] > 0,
-            lambda: f"adaptive_avg_pool2d: Expected input to have non-zero size for non-batch dimensions, but input has sizes {a.shape} with dimension {i + a_ndim} being empty",
+            lambda: (
+                f"adaptive_avg_pool2d: Expected input to have non-zero size for non-batch dimensions, but input has sizes {a.shape} with dimension {i + a_ndim} being empty"
+            ),
         )
     output_shape_ = a.shape[:-2] + tuple(output_size)
     return TensorProxy(like=a, shape=output_shape_)
@@ -5120,7 +5152,9 @@ def adaptive_avg_pool2d_backward(g: TensorProxy, a: TensorProxy, /) -> TensorPro
     for i in range(1, grad_ndim):
         utils.check(
             g.shape[i] > 0,
-            lambda: f"adaptive_avg_pool2d_backward: Expected grad to have non-zero size for non-batch dimensions, but grad has sizes {g.shape} with dimension {i} being empty",
+            lambda: (
+                f"adaptive_avg_pool2d_backward: Expected grad to have non-zero size for non-batch dimensions, but grad has sizes {g.shape} with dimension {i} being empty"
+            ),
         )
     return TensorProxy(like=a)
 
@@ -5302,8 +5336,10 @@ def _cross_entropy_input_checks(
 
     utils.check(
         weight is None or (weight.ndim == 1 and weight.shape[0] == num_class),
-        lambda: f"Expected a 1D tensor with {num_class} elements for weight argument, \
-            but found a tensor with {weight.ndim} dimensions and {weight.shape[0]} elements.",
+        lambda: (
+            f"Expected a 1D tensor with {num_class} elements for weight argument, \
+            but found a tensor with {weight.ndim} dimensions and {weight.shape[0]} elements."
+        ),
     )
 
     if a.shape != target.shape:
@@ -5314,7 +5350,9 @@ def _cross_entropy_input_checks(
 
         utils.check(
             a.ndim == target.ndim + 1,
-            lambda: f"Expected the input tensor to have {(target.ndim + 1)=} dimensions, but it has {a.ndim} dimensions.",
+            lambda: (
+                f"Expected the input tensor to have {(target.ndim + 1)=} dimensions, but it has {a.ndim} dimensions."
+            ),
         )
 
         # target should match input in dims which do not correspond to the class dim, i.e.
@@ -5323,15 +5361,19 @@ def _cross_entropy_input_checks(
 
         utils.check(
             expected_target_shape == target.shape,
-            lambda: f"Expected the target tensor to have the same shape as the input tensor except for the class dimension \
-                {expected_target_shape}, but it has shape {target.shape}.",
+            lambda: (
+                f"Expected the target tensor to have the same shape as the input tensor except for the class dimension \
+                {expected_target_shape}, but it has shape {target.shape}."
+            ),
         )
     else:
         # target represents class probabilities and is the range [0.0, 1.0]
         utils.check(
             utils.is_float_dtype(target.dtype),
-            lambda: f"Expected the target to have float dtype when target contains class probabilities \
-                but it is {target.dtype}.",
+            lambda: (
+                f"Expected the target to have float dtype when target contains class probabilities \
+                but it is {target.dtype}."
+            ),
         )
         utils.check(
             ignore_index < 0,
@@ -5593,8 +5635,10 @@ def _interpolate_scale_factor_helper(
                 and len(scale_factor) == dim
                 and all(isinstance(s, (float, FloatProxy)) and s > 0 for s in scale_factor)
             ),
-            lambda: f"{scale_factor=} is expected to be a strictly positive floating point number or "
-            f"a sequence of strictly positive floating point numbers of length {dim}",
+            lambda: (
+                f"{scale_factor=} is expected to be a strictly positive floating point number or "
+                f"a sequence of strictly positive floating point numbers of length {dim}"
+            ),
         )
 
     if mode == "bilinear":
@@ -5731,8 +5775,10 @@ def _interpolate_size_helper(
                 and len(size) == dim
                 and all(isinstance(s, (int, IntegerProxy)) and s > 0 for s in size)
             ),
-            lambda: f"{size=} is expected to be a greater than zero integer "
-            f"or a sequence of strictly positive integers of length {dim}",
+            lambda: (
+                f"{size=} is expected to be a greater than zero integer "
+                f"or a sequence of strictly positive integers of length {dim}"
+            ),
         )
 
     scale_factor = tuple(output_size / input_size for output_size, input_size in zip(size, spatial_dims))
@@ -5915,14 +5961,18 @@ def _nll_loss_helper(
 
     utils.check(
         expected_target_shape == target.shape,
-        lambda: f"Expected the target tensor to have the same shape as the input tensor except for the class dimension \
-            {expected_target_shape}, but it has shape {target.shape}.",
+        lambda: (
+            f"Expected the target tensor to have the same shape as the input tensor except for the class dimension \
+            {expected_target_shape}, but it has shape {target.shape}."
+        ),
     )
 
     utils.check(
         weight is None or (weight.ndim == 1 and weight.shape[0] == num_class),
-        lambda: f"Expected a 1D tensor with {num_class} elements for weight argument, \
-            but found a tensor with {weight.ndim} dimensions and {weight.shape[0]} elements.",
+        lambda: (
+            f"Expected a 1D tensor with {num_class} elements for weight argument, \
+            but found a tensor with {weight.ndim} dimensions and {weight.shape[0]} elements."
+        ),
     )
 
     # NOTE: [Handling of 'ignore_index' parameter]
@@ -6823,7 +6873,9 @@ def register_default_torch_ops():
             # Ensure no inplace op in the list
             utils.check(
                 not fn.__name__.endswith("_"),
-                lambda: f"Automatic registration does not support in-place op of {m.__name__}.{fn.__name__}, please manually register it",
+                lambda: (
+                    f"Automatic registration does not support in-place op of {m.__name__}.{fn.__name__}, please manually register it"
+                ),
             )
             register_default_torch_op(fn, m)
 
@@ -6846,7 +6898,9 @@ def _get_torch_function_name(torch_module: ModuleType, torchfn: Callable):
         function_name = function_name[len(prefix) :]
     utils.check(
         getattr(torch_module, function_name, None),
-        lambda: f"Incorrect function name {function_name} inferred for PyTorch function {torchfn} from module {torch_module}.",
+        lambda: (
+            f"Incorrect function name {function_name} inferred for PyTorch function {torchfn} from module {torch_module}."
+        ),
     )
     return function_name
 
