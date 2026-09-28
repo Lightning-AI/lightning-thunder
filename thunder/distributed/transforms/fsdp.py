@@ -149,7 +149,9 @@ def stash_unsharded_grads_and_return_none_as_grads(
             prod_of_unsharded_grad = producers[preaverage_bsym.flat_proxy_args[0]]
             utils.check(
                 preaverage_bsym.sym.id in {PrimIDs.DIV, "torch.true_divide"},
-                lambda: f"expected to be either of {(PrimIDs.DIV, 'torch.true_divide')} but {preaverage_bsym.sym.id=} for {output_proxy=}",
+                lambda: (
+                    f"expected to be either of {(PrimIDs.DIV, 'torch.true_divide')} but {preaverage_bsym.sym.id=} for {output_proxy=}"
+                ),
             )
             wait_bsym = consumers[reduce_scatter_bsym.flat_proxy_outs[0]][0]
 
@@ -221,7 +223,9 @@ class FSDPCommBucketingTransformVisitor:
             case _:
                 utils.check(
                     False,
-                    lambda: f"Invalid {self.comm_to_bucket}, {(dist_prims.PrimIDs.ALL_GATHER, dist_prims.PrimIDs.REDUCE_SCATTER)} are supported",
+                    lambda: (
+                        f"Invalid {self.comm_to_bucket}, {(dist_prims.PrimIDs.ALL_GATHER, dist_prims.PrimIDs.REDUCE_SCATTER)} are supported"
+                    ),
                 )
 
     @property
@@ -265,7 +269,9 @@ class FSDPCommBucketingTransformVisitor:
             param = bsym.flat_proxy_args[0]
             utils.check(
                 param in self.params,
-                lambda: f"{variableify(param)} not found in param set: {(variableify(p) for p in self.original_params)}",
+                lambda: (
+                    f"{variableify(param)} not found in param set: {(variableify(p) for p in self.original_params)}"
+                ),
             )
             if param not in self.param_to_bucket:
                 # This path is highly likely to be backward reduce-scatter bucketing:
@@ -458,7 +464,9 @@ class FSDPCommBucketing:
             hasattr(compile_data.fn, "process_group_for_ddp")
             and hasattr(compile_data.fn, "bucketing_strategy")
             and hasattr(compile_data.fn, "sharding_strategy"),
-            lambda: f"Given module does not seem to have all the attributes of `process_group_for_ddp`, `bucketing_strategy`, and `sharding_strategy`, {hasattr(compile_data.fn, 'bucketing_strategy')=}, {hasattr(compile_data.fn, 'sharding_strategy')=}",
+            lambda: (
+                f"Given module does not seem to have all the attributes of `process_group_for_ddp`, `bucketing_strategy`, and `sharding_strategy`, {hasattr(compile_data.fn, 'bucketing_strategy')=}, {hasattr(compile_data.fn, 'sharding_strategy')=}"
+            ),
         )
         self.bucketing_strategy: FSDPBucketingStrategy = compile_data.fn.bucketing_strategy
         self.apply_bucketing = self.bucketing_strategy != FSDPBucketingStrategy.NONE
@@ -539,8 +547,10 @@ class FSDPCommBucketing:
 
         collective_comm_bsyms: tuple[BoundSymbol, ...] = tuple(
             filter(
-                lambda bsym: bsym.sym.id == dist_prims.PrimIDs.ALL_GATHER
-                and any(arg in arg_to_index_in_flat_args for arg in bsym.flat_proxy_args),
+                lambda bsym: (
+                    bsym.sym.id == dist_prims.PrimIDs.ALL_GATHER
+                    and any(arg in arg_to_index_in_flat_args for arg in bsym.flat_proxy_args)
+                ),
                 fsdp_fwd_trace.bound_symbols,
             )
         )
