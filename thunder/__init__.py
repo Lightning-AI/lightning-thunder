@@ -418,6 +418,9 @@ def jit(
             # subclasses.
             if type(t) is pytorch.Tensor and t.layout is pytorch.strided:
                 data_ptr = t.untyped_storage().data_ptr()
+                if not data_ptr:
+                    # This happens when t.numel() == 0
+                    continue
                 if data_ptr not in data_ptr_to_tensor_group_index:
                     data_ptr_to_tensor_group_index[data_ptr] = len(data_ptr_to_tensor_group_index)
                 tgi = data_ptr_to_tensor_group_index[data_ptr]
