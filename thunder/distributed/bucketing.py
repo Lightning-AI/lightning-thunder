@@ -34,7 +34,7 @@ class Bucket:
         bucket_name: str | None = None,
     ) -> None:
         self.index = index
-        self.orig_tensors = [t for t in tensors]
+        self.orig_tensors = [*tensors]
         self.tensor_names = [t.name for t in tensors]
         self.name_passed = bucket_name is not None
         self.bucket_name = name_bucket(tensors) if bucket_name is None else bucket_name
