@@ -794,7 +794,16 @@ def _convert_pytorchfunc_to_thundertrace(
     return trace, sequencify(wrapped_func_result)[0].provenance
 
 
-@register_general_jit_lookaside(torch.autograd.function.Function.apply.__func__)
+# The key must be the object every subclass shares: __func__ for a Python classmethod,
+# the descriptor since torch 2.13 reimplemented Function.apply in C.
+_torch_autograd_function_apply = getattr(
+    torch.autograd.function.Function.apply,
+    "__func__",
+    torch.autograd.function.Function.__dict__.get("apply"),
+)
+
+
+@register_general_jit_lookaside(_torch_autograd_function_apply)
 def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwargs):
     """Encapsulate forward into a bsym, define and register augmented fwd and bwd.
 
@@ -1000,7 +1009,11 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
             continue
         trace_of_forward.bound_symbols.append(bsym.from_bsym())
     with tracectx(trace_of_forward):
-        prims.python_return(*(sequencify(output)))
+        # Keep the fwd graph's output structure. Since torch 2.12 it returns a tuple, which the caller indexes
+        if isinstance(output, (tuple, list)):
+            prims.python_return(tuple(output))
+        else:
+            prims.python_return(output)
 
     # See NOTE: `autograd_function_apply` and `no_grad` interaction for details about
     # `thunder.torch.call_higher_order_function_and_consider_outer_autograd_setting`
@@ -1481,7 +1494,8 @@ def should_register_for_prologue(pr, _toplevel=True):
     if inst not in _input_provenance_inst:
         return False
     if inst == "CONSTANT" and callable(pr.value):
-        if pr.value.__name__ != "__getitem__" and pr.value != GetSetDescriptorType.__get__:
+        # Not every callable has a __name__, e.g. a weakref from torch's opaque-object registry
+        if getattr(pr.value, "__name__", None) != "__getitem__" and pr.value != GetSetDescriptorType.__get__:
             return False
     if not pr.inputs and _toplevel:
         return False

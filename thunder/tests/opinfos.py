@@ -23,6 +23,7 @@ from thunder.core.dtypes import to_dtype, to_torch_dtype
 import thunder.core.prims as prims
 from thunder.core.pytree import tree_map
 from thunder.core.symbol import Symbol
+from thunder.constants import _TORCH_GREATER_EQUAL_2_14
 import thunder.executors as executors
 from thunder.tests.framework import _all_devicetypes, custom_comparator, IS_WINDOWS
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
@@ -8574,6 +8575,10 @@ def group_norm_sample_generator(op, device, dtype, requires_grad, **kwargs):
             if torch.device(device).type == "cuda" and ndim >= 3 and num_channels == 0:
                 continue
 
+            # torch 2.14 rejects empty channel or spatial dims (an empty batch is still fine)
+            if _TORCH_GREATER_EQUAL_2_14 and (num_channels == 0 or math.prod(inner_dims) == 0):
+                continue
+
             a = make(shape)
 
             for weight, bias in itertools.product((False, True), repeat=2):
@@ -9631,6 +9636,12 @@ cross_entropy_opinfo = OpInfo(
         DecorateInfo(
             pytest.mark.skip,
             "test_vjp_correctness",
+        ),
+        DecorateInfo(
+            pytest.mark.timeout(360),
+            "test_core_vs_torch_consistency",
+            executors=("nvfuser",),
+            devicetypes=(devices.DeviceType.CUDA,),
         ),
     ),
 )

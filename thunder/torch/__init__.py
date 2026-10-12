@@ -6715,6 +6715,8 @@ def autograd_function_apply(
     *args: Any,
     args_tensor_mask: Sequence[bool] | None = None,
     non_differentiable_idx: Sequence[int] | None = None,
+    saved_for_backward_idx: Sequence[int] | None = None,  # unused, passed by torch >= 2.11
+    dirty_idx: Sequence[int] | None = None,  # unused, passed by torch >= 2.13
 ) -> TensorProxy | tuple[TensorProxy, ...]:
     # TODO: Remove this once this autograd API becomes stable.
     # On stable PyTorch, fwd expects ctx as first argument
@@ -6733,6 +6735,8 @@ def augmented_forward_autograd_function_apply(
     *args: Any,
     args_tensor_mask: Sequence[bool] | None = None,
     non_differentiable_idx: Sequence[int] | None = None,
+    saved_for_backward_idx: Sequence[int] | None = None,  # unused, passed by torch >= 2.11
+    dirty_idx: Sequence[int] | None = None,  # unused, passed by torch >= 2.13
 ) -> tuple[TensorProxy | tuple[TensorProxy, ...], tuple[Any, ...]]:
     # TODO: Remove this once this autograd API becomes stable.
     # On stable PyTorch, fwd expects ctx as first argument

@@ -635,12 +635,12 @@ def test_te_activation_checkpointing_correctness(fp8_recipe: recipe.Recipe, comp
         te_scales = []
         te_amax_hist = []
         with te.fp8_autocast(enabled=True, fp8_recipe=fp8_recipe):
-            for buffer_key, _ in FP8GlobalStateManager.global_amax_buffer.items():
+            # TE >= 2.15 keeps these buffers on quantization_state
+            qstate = getattr(FP8GlobalStateManager, "quantization_state", FP8GlobalStateManager)
+            for buffer_key, _ in qstate.global_amax_buffer.items():
                 # needs to clone the tensors because TE will use in-place copy to modify it any time autocast is called
-                te_scales += [t.detach().clone() for t in FP8GlobalStateManager.global_scale_buffer[buffer_key]]
-                te_amax_hist += [
-                    t.detach().clone() for t in FP8GlobalStateManager.global_amax_history_buffer[buffer_key]
-                ]
+                te_scales += [t.detach().clone() for t in qstate.global_scale_buffer[buffer_key]]
+                te_amax_hist += [t.detach().clone() for t in qstate.global_amax_history_buffer[buffer_key]]
 
         # Make sure that the global state manager has been reset and
         # that there are only the buffers we need and not more

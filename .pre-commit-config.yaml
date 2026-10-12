@@ -29,6 +29,7 @@ repos:
       - id: pyupgrade
         args: ["--py310-plus"]
         name: Upgrade code
+        language_version: python3.13
         exclude: "examples|thunder/tests/test_interpreter.py|thunder/tests/test_jit_general.py"
 
   - repo: https://github.com/codespell-project/codespell

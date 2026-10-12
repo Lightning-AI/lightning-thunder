@@ -157,7 +157,8 @@ class DTensorTest(DistributedParallelTestCase):
         dim_size = 16
 
         def _helper(fn, in_dtensor, w_dtensor):
-            expected = torch.compile(fn)(in_dtensor, w_dtensor)
+            # NOTE Eager, like the opinfo tests: compiling it fails in inductor on torch nightly (pytorch#152639)
+            expected = fn(in_dtensor, w_dtensor)
             tmodel = thunder.jit(fn, executors=executors_map[executor].executors_list())
             actual = tmodel(in_dtensor, w_dtensor)
 
