@@ -13,6 +13,7 @@ from looseversion import LooseVersion
 import shutil
 
 import torch
+from torch._library.fake_class_registry import FakeScriptObject
 from thunder.core.pytree import tree_flatten
 from thunder.core.utils import sequencify, create_python_callable_from_bsym
 from thunder.dynamo.compiler import thunderfx, ThunderCompiler
@@ -210,7 +211,12 @@ class FXGraphReport:
     reproduction and benchmarking scripts for various executors.
     """
 
-    def __init__(self, graph: torch.fx.GraphModule, graph_name: str, example_input_meta: list[ExampleInputMetaData]):
+    def __init__(
+        self,
+        graph: torch.fx.GraphModule,
+        graph_name: str,
+        example_input_meta: list[ExampleInputMetaData | FakeScriptObject],
+    ):
         if LooseVersion(torch.__version__) < LooseVersion("2.6.0"):
             # NOTE: PyTorch 2.6 changes the structure of GraphModule for higher order ops.
             # In newer torch version the higher order ops are nested as submodules within the module that uses them,
@@ -293,7 +299,7 @@ class FXGraphReport:
 
     def _get_input_str(self, folder, inputs, serialize_inputs):
         input_str = ""
-        if any(arg is None for arg in inputs):
+        if any(arg is None or isinstance(arg, FakeScriptObject) for arg in inputs):
             input_str += "# Warning: The inputs that cannot be inferred are set to None, requiring the user to manually give inputs according to the code\n"
         if serialize_inputs:
             example_inputs = self.make_example_inputs()
@@ -301,7 +307,7 @@ class FXGraphReport:
             torch.save(example_inputs, input_file_name)
             input_str += f"{INPUTS_NAME} = torch.load('{input_file_name}')\n"
         else:
-            input_str = f"{INPUTS_NAME} = [\n"
+            input_str += f"{INPUTS_NAME} = [\n"
             input_str += textwrap.indent("\n".join(arg_like(a) for a in inputs), "    ")
             input_str += "\n]"
         return input_str
