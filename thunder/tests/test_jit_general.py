@@ -14,7 +14,7 @@ import inspect
 
 import thunder
 
-from thunder.tests.framework import requiresCUDA, IS_WINDOWS
+from thunder.tests.framework import requiresCUDA, IS_WINDOWS, WINDOWS_GPT_CRASH_REASON
 from thunder.core.options import CACHE_OPTIONS
 import thunder.core.prims as prims
 from thunder import pytorch_executor, nvfuser_executor
@@ -584,6 +584,7 @@ def test_proxy_no_multiple_renames(device):
     assert args_names == ("a", "b", "c", "d")
 
 
+@pytest.mark.skipif(IS_WINDOWS, reason=WINDOWS_GPT_CRASH_REASON)
 def test_litgpt():
     from thunder.benchmarks import LitGPTBenchmark
     from thunder.tests.litgpt_model import Config
@@ -664,6 +665,7 @@ def test_nanogpt_mlp():
     assert_close(result, module(*args, **kwargs))
 
 
+@pytest.mark.skipif(IS_WINDOWS, reason=WINDOWS_GPT_CRASH_REASON)
 def test_nanogpt():
     from thunder.benchmarks import NanoGPTBenchmark, NanoGPTConfig, _nanogpt_configs
 
