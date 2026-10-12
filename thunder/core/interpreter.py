@@ -33,6 +33,7 @@ from types import (
     NoneType,
     BuiltinFunctionType,
     BuiltinMethodType,
+    ClassMethodDescriptorType,
     MethodDescriptorType,
     MethodWrapperType,
     WrapperDescriptorType,
@@ -7026,6 +7027,15 @@ def _call_dispatch(
     if isinstance(fn, (BuiltinMethodType, MethodWrapperType)):
         assert is_opaque(fn)
         slf = fn.__self__
+
+        # NOTE Builtin classmethods (e.g. torch.autograd.Function.apply since torch 2.13) dispatch
+        #   through their descriptor, the one object all subclasses share, so lookasides can match it.
+        if isinstance(slf, type) and not is_pycapsule(slf):
+            for klass in slf.__mro__:
+                descriptor = klass.__dict__.get(fn.__name__)
+                if isinstance(descriptor, ClassMethodDescriptorType):
+                    wrapped_slf = _interpret_call(getattr, wrapped_fn, wrap_const("__self__"))
+                    return _interpret_call(wrap_const(descriptor), wrapped_slf, *args, **kwargs)
 
         if slf is not None and not isinstance(slf, (type, ModuleType)) and not is_pycapsule(slf):
             # NOTE: we need to walk the mro because we need to deal with super().foo
