@@ -1494,7 +1494,8 @@ def should_register_for_prologue(pr, _toplevel=True):
     if inst not in _input_provenance_inst:
         return False
     if inst == "CONSTANT" and callable(pr.value):
-        if pr.value.__name__ != "__getitem__" and pr.value != GetSetDescriptorType.__get__:
+        # Not every callable has a __name__, e.g. a weakref from torch's opaque-object registry
+        if getattr(pr.value, "__name__", None) != "__getitem__" and pr.value != GetSetDescriptorType.__get__:
             return False
     if not pr.inputs and _toplevel:
         return False
