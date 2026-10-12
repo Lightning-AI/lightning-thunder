@@ -1009,7 +1009,11 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
             continue
         trace_of_forward.bound_symbols.append(bsym.from_bsym())
     with tracectx(trace_of_forward):
-        prims.python_return(*(sequencify(output)))
+        # Keep the fwd graph's output structure. Since torch 2.12 it returns a tuple, which the caller indexes
+        if isinstance(output, (tuple, list)):
+            prims.python_return(tuple(output))
+        else:
+            prims.python_return(output)
 
     # See NOTE: `autograd_function_apply` and `no_grad` interaction for details about
     # `thunder.torch.call_higher_order_function_and_consider_outer_autograd_setting`
