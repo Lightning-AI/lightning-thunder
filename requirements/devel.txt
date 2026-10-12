@@ -6,4 +6,3 @@ datasets>=3.5.0
 peft>=0.15.2
 
 torchvision
-torchaudio
