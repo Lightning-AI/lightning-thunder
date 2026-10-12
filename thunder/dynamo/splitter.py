@@ -230,14 +230,17 @@ def _splitter(
             example_input_metadatas.append(list(example_input_metadata))
             # Replace PyTorch operators within the checkpointed function with the corresponding Thunder operators
             checkpoint_converter(split_gm, graph_module)
+            # Since torch 2.12 this is a lazy GraphModule: generate its code now, so thunder doesn't trace fx codegen
+            recompile_graph(graph_module)
 
             jit_fn = thunder_jit(graph_module, is_differentiable_outputs=is_differentiable_outputs)
             # Update the node name from "submod_*" to "thunder_*" for more user-friendly names
             update_node_and_submodule(split_gm, node, node.name.replace("submod", "thunder"), jit_fn)
             thunder_compiled_fns.append(jit_fn)
-            submodule_to_compiled_fns[getattr(original_split_gm, node_name)] = CompiledFunction(
-                jit_fn, CompilerType.THUNDER
-            )
+            original_graph_module = getattr(original_split_gm, node_name)
+            # ThunderCompilerGraphBenchmarking jits this copy too
+            recompile_graph(original_graph_module)
+            submodule_to_compiled_fns[original_graph_module] = CompiledFunction(jit_fn, CompilerType.THUNDER)
         elif node.name.startswith("submod"):  # For inductor
             graph_module = getattr(split_gm, node.name)
 
