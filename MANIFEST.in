@@ -8,7 +8,6 @@ recursive-include pl_sandbox *.md
 include LICENSE
 
 # Exclude build configs
-exclude *.toml
 exclude *.svg
 exclude *.yml
 exclude *.yaml
