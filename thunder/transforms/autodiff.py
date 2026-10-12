@@ -285,7 +285,9 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                         num_flat_tensor_inps = sum(isinstance(i, TensorProxy) for i in flat_inps)
                         utils.check(
                             num_flat_tensor_inps <= len(grad_inps),
-                            lambda: f"Backward for {bsym.sym.id} returned {len(grad_inps)} value(s), but expected {num_flat_tensor_inps}",
+                            lambda: (
+                                f"Backward for {bsym.sym.id} returned {len(grad_inps)} value(s), but expected {num_flat_tensor_inps}"
+                            ),
                         )
 
                         assert len(grad_inps) <= len(flat_inps)
@@ -304,11 +306,13 @@ def grad_transform_on_trace(trace, /, *args, **kwargs):
                 # same as the number of primal outputs of the augmented forward trace
                 utils.check(
                     len(utils.sequencify(bsym.output)) == len(utils.sequencify(result)),
-                    lambda: f"While generating forward and backward functions for {bsym.sym.name}, encountered an error.\n"
-                    "The number of outputs of the gradient transform function must be the same as the number of outputs of the original forward function.\n"
-                    f"Number of outputs of the original forward function: {len(utils.sequencify(bsym.output))}\n"
-                    f"Number of primal outputs of the gradient transform / augmented forward: {len(utils.sequencify(result))}\n"
-                    "Please check the forward function and the gradient transform function / augmented forward to ensure that they have the same number of outputs.",
+                    lambda: (
+                        f"While generating forward and backward functions for {bsym.sym.name}, encountered an error.\n"
+                        "The number of outputs of the gradient transform function must be the same as the number of outputs of the original forward function.\n"
+                        f"Number of outputs of the original forward function: {len(utils.sequencify(bsym.output))}\n"
+                        f"Number of primal outputs of the gradient transform / augmented forward: {len(utils.sequencify(result))}\n"
+                        "Please check the forward function and the gradient transform function / augmented forward to ensure that they have the same number of outputs."
+                    ),
                 )
                 self.set_result(result)
                 new_bsyms = self.new_trace.pop_scope()

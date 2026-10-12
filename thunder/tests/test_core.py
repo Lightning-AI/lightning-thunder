@@ -1677,8 +1677,8 @@ def test_eval_trace(executor, device, _):
     try:
         trace = TraceCtx(None)
         trace_token = set_tracectx(trace)
-        new_args = [arg for arg in foo_trace.args]
-        new_kwargs = {k: v for k, v in foo_trace.kwargs.items()}
+        new_args = [*foo_trace.args]
+        new_kwargs = {**foo_trace.kwargs}
         # TODO: trace object doesn't respect the original tuple/non-tuple spec
         # for output, it's always a tuple
         actual = eval_trace(foo_trace, *new_args, **new_kwargs)

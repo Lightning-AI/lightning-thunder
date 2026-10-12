@@ -67,7 +67,9 @@ def remove_grad_sync(backward_trace_with_grad_sync: TraceCtx) -> TraceCtx:
         bsym_of_preaveraging: BoundSymbol = producers[bsym_of_allreduce.flat_proxy_args[0]]
         utils.check(
             bsym_of_preaveraging.sym.id in {PrimIDs.DIV, "torch.true_divide"},
-            lambda: f"expected to be either of {(PrimIDs.DIV, 'torch.true_divide')} but {bsym_of_preaveraging.sym.id=} for {synced_grad=}",
+            lambda: (
+                f"expected to be either of {(PrimIDs.DIV, 'torch.true_divide')} but {bsym_of_preaveraging.sym.id=} for {synced_grad=}"
+            ),
         )
         bsym_to_remove.extend([bsym_of_allreduce, bsym_of_wait, bsym_of_preaveraging])
         synced_to_unsynced[variableify(synced_grad)] = bsym_of_preaveraging.flat_proxy_args[0]
@@ -172,7 +174,9 @@ class BatchAllReduceVisitor:
         if grads_of_bsym:
             utils.check(
                 bsym.sym.id in {PrimIDs.DIV, "torch.true_divide"},
-                lambda: f"This bsym's sym.id is expected to be {PrimIDs.DIV=} or 'torch.true_divide' but {bsym.sym.id=}",
+                lambda: (
+                    f"This bsym's sym.id is expected to be {PrimIDs.DIV=} or 'torch.true_divide' but {bsym.sym.id=}"
+                ),
             )
             utils.check(len(grads_of_bsym) == 1, lambda: f"{len(grads_of_bsym)=} is expected to be 1")
             self.gradient_buckets.tell(grads_of_bsym[0], self.process_group)

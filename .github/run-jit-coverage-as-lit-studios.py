@@ -15,7 +15,7 @@ def main(gh_run_id: str = ""):
     batches = []
     chunk_size = 16
     with open("examples/coverage/all.txt") as f:
-        lines = [el for el in f.readlines()]
+        lines = [*f.readlines()]
         chunks = [lines[i : i + chunk_size] for i in range(0, len(lines), chunk_size)]
         for i, chunk_lines in enumerate(chunks):
             filename = f"{i:03d}.txt"

@@ -1595,7 +1595,9 @@ def _max_pool_with_indices_helper(
         else:
             utils.check(
                 i < len(seq),
-                lambda: f"invalid pooling argument: {arg_name} needs to be None / a scalar / size-{ndim} Sequence, but received {seq}",
+                lambda: (
+                    f"invalid pooling argument: {arg_name} needs to be None / a scalar / size-{ndim} Sequence, but received {seq}"
+                ),
             )
             return seq[i]
 
