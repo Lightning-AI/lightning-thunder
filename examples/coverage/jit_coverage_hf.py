@@ -129,6 +129,7 @@ if __name__ == "__main__":
     parser.add_argument('--models-file', type=str, required=False, default="")
     parser.add_argument('--output-dir', type=str, required=True)
     parser.add_argument('--results-file', type=str, required=False, default="")
+    parser.add_argument('--num-workers', type=int, required=False, default=16)
     args = parser.parse_args()
 
     if args.models_file:
@@ -137,7 +138,7 @@ if __name__ == "__main__":
         with open(args.models_file) as f:
             model_list = [el.strip() for el in f.readlines() if el.strip() and not el.strip().startswith("#")]
 
-        with multiprocessing.Pool(16) as pool:
+        with multiprocessing.Pool(args.num_workers) as pool:
             pool.map(partial(try_model, args.output_dir), model_list)
 
     if args.results_file:

@@ -200,7 +200,8 @@ lt-asset/nova-1.3b-bcr
 ltg/deberta-xxlarge-fixed
 lxuechen/tldr-gpt2-xl
 maelfabien/marcel_customer_service
-meta-llama/Llama-3.2-1BBAAI/Aquila-7B
+meta-llama/Llama-3.2-1B
+BAAI/Aquila-7B
 meta-llama/Meta-Llama-3.1-405B-Instruct
 meta-llama/Meta-Llama-3.1-70B
 metterian/kullm-polyglot-12.8b-v1
