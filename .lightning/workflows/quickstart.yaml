@@ -1,0 +1,36 @@
+trigger:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+timeout: "30" # minutes
+machine: "L4"
+interruptible: False
+image: "pytorchlightning/lightning-thunder:ubuntu24.04-cuda12.8.1-cudnn-fe1.15.0-py3.12-pt_2.8.0-dev"
+parametrize:
+  matrix:
+    script:
+      - hf_bert.py
+      - hf_llm.py
+      - mlp.py
+      - vit_hf.py
+      - vit_tv.py
+
+run: |
+  whereis nvidia
+  nvidia-smi
+  python --version
+  pip --version
+  set -ex
+
+  # drop pt from requirements so not to interfere with the existing one
+  bash scripts/remove-torch-lines.sh requirements/base.txt
+  pip install -q -U -r requirements/base.txt -r examples/quickstart/requirements.txt
+  # install this package
+  pip install -e .
+  pip list
+
+  bash scripts/sanity-check.sh
+
+  python examples/quickstart/${script}
