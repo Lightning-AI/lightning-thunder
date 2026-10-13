@@ -153,3 +153,6 @@ notebooks/all.txt
 notebooks/ci.txt
 
 quickstart_report.json
+
+# MCP server generated dashboards
+mcp_server/dashboards/
