@@ -34,7 +34,7 @@ def device_version_support(
 @pytest.mark.parametrize(
     "dtype", [torch.float32, torch.bfloat16, torch.float16], ids=("float32", "bfloat16", "float16")
 )
-@pytest.mark.parametrize("device,", ["cuda"])
+@pytest.mark.parametrize("device", ["cuda"])
 @pytest.mark.parametrize("requires_grad", [True, False])
 @requiresCUDA
 def test_sdpa(device: str, dtype: torch.dtype, requires_grad: bool):
@@ -140,7 +140,7 @@ def snippet_torch_consistency(op, torch_op, sample):
 
 
 @pytest.mark.parametrize("dtype", [torch.float32], ids=("float32",))
-@pytest.mark.parametrize("device,", ["cuda"])
+@pytest.mark.parametrize("device", ["cuda"])
 @requiresCUDA
 def test_sdpa_torch_consistency(device: str, dtype: torch.dtype):
     # Enable math and memory-efficient sdpa options for Volta and prior devices
@@ -171,7 +171,7 @@ def test_sdpa_torch_consistency(device: str, dtype: torch.dtype):
 
 
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.bfloat16], ids=("f32", "f16", "bf16"))
-@pytest.mark.parametrize("device,", ["cuda"])
+@pytest.mark.parametrize("device", ["cuda"])
 @pytest.mark.parametrize("attn_mask_requires_grad", [True, False])
 @requiresCUDA
 def test_sdpa_attn_mask(attn_mask_requires_grad, device: str, dtype: torch.dtype):

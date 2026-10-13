@@ -494,7 +494,7 @@ def test_nanogpt_gpt2xl(benchmark, executor: Callable, compute_type: ComputeType
     ids=(transformer_engine_execuors_ids),
 )
 @parametrize_compute_type
-@pytest.mark.parametrize("config,", (get_unique_configs(("name",))))
+@pytest.mark.parametrize("config", (get_unique_configs(("name",))))
 def test_transformer_engine_executor_regression(benchmark, executor: Callable, compute_type: ComputeType, config: str):
     # NOTE - This benchmark is present to track performance and memory usage regressions.
     #        So, we don't need to run the complete model (running a chunk should give us this signal).
@@ -521,7 +521,7 @@ def test_transformer_engine_executor_regression(benchmark, executor: Callable, c
             )
 
 
-@pytest.mark.parametrize("executor,", (executors + cudnn_executors), ids=(executors_ids + cudnn_executors_ids))
+@pytest.mark.parametrize("executor", (executors + cudnn_executors), ids=(executors_ids + cudnn_executors_ids))
 @parametrize_compute_type
 def test_llama_2_7b_hf(benchmark, executor: Callable, compute_type: ComputeType):
     cfg: LitGPTConfig = LitGPTConfig.from_name("Llama-2-7b-hf")
@@ -768,7 +768,7 @@ def test_deepseek_sglang_moe(benchmark, bs, executor: Callable, compute_type: Co
 #
 
 
-@pytest.mark.parametrize("executor,", (torch_executor, interpreter_fwd), ids=("python", "interpreter"))
+@pytest.mark.parametrize("executor", (torch_executor, interpreter_fwd), ids=("python", "interpreter"))
 def test_interpreter_nanogpt_gpt2_fwd(benchmark, executor: Callable):
     bench: Benchmark = NanoGPTBenchmark(
         config="gpt2",
@@ -951,7 +951,7 @@ def test_hf_transformers(
     ids=["thunderfx", "inductor", "eager"],
 )
 @parametrize_compute_type
-@pytest.mark.parametrize("implementation,", ["HF", "NeMo"])
+@pytest.mark.parametrize("implementation", ["HF", "NeMo"])
 def test_lora_linear(benchmark, executor, compute_type, implementation):
     match implementation:
         case "HF":

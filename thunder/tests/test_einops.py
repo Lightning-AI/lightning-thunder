@@ -25,7 +25,7 @@ def skipIfNoCUDA(f):
 
 @skipIfNoCUDA
 @pytest.mark.parametrize("dtype", [torch.float32, torch.int64], ids=("float32", "int64"))
-@pytest.mark.parametrize("device,", ["cuda", "cpu"])
+@pytest.mark.parametrize("device", ["cuda", "cpu"])
 def test_rearrange(device: str, dtype: torch.dtype):
     # shape, expression, kwargs
     cases = (
@@ -62,7 +62,7 @@ def test_rearrange(device: str, dtype: torch.dtype):
 
 @skipIfNoCUDA
 @pytest.mark.parametrize("dtype", [torch.float32, torch.int64], ids=("float32", "int64"))
-@pytest.mark.parametrize("device,", ["cuda", "cpu"])
+@pytest.mark.parametrize("device", ["cuda", "cpu"])
 def test_repeat(device: str, dtype: torch.dtype):
     # shape, expression, kwargs
     cases = (
@@ -89,7 +89,7 @@ def test_repeat(device: str, dtype: torch.dtype):
 
 @skipIfNoCUDA
 @pytest.mark.parametrize("dtype", [torch.float32], ids=("float32",))
-@pytest.mark.parametrize("device,", ["cuda", "cpu"])
+@pytest.mark.parametrize("device", ["cuda", "cpu"])
 def test_reduce(device: str, dtype: torch.dtype):
     # shape, expression, kwargs
     cases = (
@@ -124,7 +124,7 @@ def test_reduce(device: str, dtype: torch.dtype):
 
 @skipIfNoCUDA
 @pytest.mark.parametrize("dtype", [torch.float32], ids=("float32",))
-@pytest.mark.parametrize("device,", ["cuda", "cpu"])
+@pytest.mark.parametrize("device", ["cuda", "cpu"])
 def test_einsum(device: str, dtype: torch.dtype):
     op = get_opinfo("einsum")
 
