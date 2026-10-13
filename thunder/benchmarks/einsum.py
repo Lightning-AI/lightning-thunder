@@ -84,7 +84,7 @@ class TestEinsumBenchmarks:
     @pytest.mark.parametrize(
         "sample_gen,", (single_dim_contraction_cases, multidim_contraction_cases), ids=("singledim", "multidim")
     )
-    @pytest.mark.parametrize("left_broadcasts,", (None, True, False), ids=("", "left_broadcasts", "right_broadcasts"))
+    @pytest.mark.parametrize("left_broadcasts", (None, True, False), ids=("", "left_broadcasts", "right_broadcasts"))
     def test_einsum_fwd(
         self, benchmark, executor: None | Callable, size: str, sample_gen: Callable, left_broadcasts: None | bool
     ):

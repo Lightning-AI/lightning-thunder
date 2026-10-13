@@ -14,7 +14,7 @@ from thunder.executors.apexex import apex_ex
 
 
 @pytest.mark.parametrize("dtype", [torch.float32], ids=("float32",))
-@pytest.mark.parametrize("device,", ["cuda"])
+@pytest.mark.parametrize("device", ["cuda"])
 @requiresCUDA
 def test_apex_cross_entropy(device: str, dtype: torch.dtype):
     logits = torch.randn([2048, 50257], device=device, dtype=thunder.torch.to_torch_dtype(dtype))
@@ -46,7 +46,7 @@ def snippet_torch_consistency(op, torch_op, sample, comparator):
 
 
 @pytest.mark.parametrize("dtype", [torch.float16, torch.float32], ids=("float16", "float32"))
-@pytest.mark.parametrize("device,", ["cuda"])
+@pytest.mark.parametrize("device", ["cuda"])
 def test_apex_torch_consistency(device: str, dtype: torch.dtype):
     from thunder.executors.apex_entropyex_impl import _cross_entropy_checker
 
@@ -93,7 +93,7 @@ def test_apex_torch_consistency(device: str, dtype: torch.dtype):
 @pytest.mark.parametrize(
     "dtype", [torch.float16, torch.bfloat16, torch.float32], ids=("float16", "bfloat16", "float32")
 )
-@pytest.mark.parametrize("device,", ["cuda"])
+@pytest.mark.parametrize("device", ["cuda"])
 @requiresCUDA
 def test_apex_cross_entropy_backward(device, dtype):
     from thunder.core.transforms import value_and_grad
@@ -159,7 +159,7 @@ def test_apex_cross_entropy_backward(device, dtype):
 @pytest.mark.parametrize(
     "dtype", [torch.float16, torch.bfloat16, torch.float32], ids=("float16", "bfloat16", "float32")
 )
-@pytest.mark.parametrize("device,", ["cuda"])
+@pytest.mark.parametrize("device", ["cuda"])
 @requiresCUDA
 def test_apex_cross_entropy_phantom_grad(device, dtype):
     logits = torch.randn([2048, 50257], device=device, dtype=thunder.torch.to_torch_dtype(dtype), requires_grad=True)

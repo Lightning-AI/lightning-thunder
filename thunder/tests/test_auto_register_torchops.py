@@ -41,9 +41,9 @@ _opinfos = get_opinfos_for_test()
 
 # Note that successfully catching an exception in this test is also noted as passed
 @skipIfNoCUDA
-@pytest.mark.parametrize("op_info,", _opinfos, ids=list(map(lambda opinfo: opinfo.name, _opinfos)))
+@pytest.mark.parametrize("op_info", _opinfos, ids=list(map(lambda opinfo: opinfo.name, _opinfos)))
 @pytest.mark.parametrize("requires_grad", [True, False], ids=("train", "inference"))
-@pytest.mark.parametrize("device,", ["cuda", "cpu"])
+@pytest.mark.parametrize("device", ["cuda", "cpu"])
 def test_torch_ops_trace(device, requires_grad, op_info):
     if not op_info.supports_autograd and requires_grad:
         pytest.skip("op_info.supports_autograd is False")

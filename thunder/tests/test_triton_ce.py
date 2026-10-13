@@ -32,7 +32,7 @@ if triton_utils.is_triton_version_at_least(min_triton_version):
     [torch.float16, torch.bfloat16, torch.float32, torch.float64],
     ids=("float16", "bfloat16", "float32", "float64"),
 )
-@pytest.mark.parametrize("device,", ["cuda"])
+@pytest.mark.parametrize("device", ["cuda"])
 @requiresCUDA
 @requiresTriton
 def test_triton_cross_entropy(device, dtype):
@@ -76,7 +76,7 @@ def snippet_torch_consistency(op, torch_op, sample):
     [torch.float16, torch.bfloat16, torch.float32, torch.float64],
     ids=("float16", "bfloat16", "float32", "float64"),
 )
-@pytest.mark.parametrize("device,", ["cuda"])
+@pytest.mark.parametrize("device", ["cuda"])
 @requiresCUDA
 @requiresTriton
 def test_triton_cross_entropy_vs_torch_consistency(device, dtype):
