@@ -6,7 +6,6 @@ on:
   pull_request:
     paths:
       - ".github/workflows/ci-jit-coverage.yml"
-      - ".github/run-jit-coverage-as-lit-studios.py"
       - ".github/load-jit-coverage-report.py"
       - "examples/coverage/*"
   workflow_dispatch: {}
@@ -21,46 +20,78 @@ defaults:
   run:
     shell: bash
 
+env:
+  NUM_SHARDS: 4
+
 jobs:
-  launcher-jit-coverage:
+  jit-coverage:
+    # models are built on the meta device and traced with the pytorch executor, so no GPU is needed
     runs-on: "ubuntu-22.04"
-    #timeout-minutes: 55
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.10"
+          python-version: "3.12"
 
-      - name: Build package
+      - name: Install package
         run: |
-          pip install -U build
-          python -m build --sdist --wheel --outdir dist/
-          ls -l dist/
+          # the CUDA-only extras are not needed for tracing on CPU
+          grep -vE "nvfuser|cudnn" examples/coverage/requirements.txt > requirements-cpu.txt
+          pip install -e . -U -r requirements-cpu.txt --extra-index-url="https://download.pytorch.org/whl/cpu"
+          pip list
 
       - name: Run thunder.jit coverage
         env:
-          LIGHTNING_USER_ID: ${{ secrets.LIGHTNING_USER_ID }}
-          LIGHTNING_API_KEY: ${{ secrets.LIGHTNING_API_KEY }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          pip install lightning_sdk tqdm -U -q
-          python .github/run-jit-coverage-as-lit-studios.py ${{ github.run_id }}
+          grep -vE '^\s*(#|$)' examples/coverage/all.txt | awk -v n="$NUM_SHARDS" -v s="${{ matrix.shard }}" 'NR % n == s' > shard.txt
+          wc -l shard.txt
+          python examples/coverage/jit_coverage_hf.py \
+            --models-file shard.txt --output-dir data --results-file shard-${{ matrix.shard }}.json \
+            --num-workers "$(nproc)"
+          python .github/load-jit-coverage-report.py shard-${{ matrix.shard }}.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: jit-coverage-shard-${{ matrix.shard }}
+          path: |
+            shard-${{ matrix.shard }}.json
+            data/
+          if-no-files-found: ignore
+
+  report:
+    needs: jit-coverage
+    if: always()
+    runs-on: "ubuntu-22.04"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: jit-coverage-shard-*
+          merge-multiple: true
 
       - name: Load report
-        if: always()
         id: load-report
         run: |
+          python -c "import glob, json; json.dump([r for f in sorted(glob.glob('shard-*.json')) for r in json.load(open(f))], open('jit_coverage_report.json', 'w'))"
           report=$(python .github/load-jit-coverage-report.py)
+          echo "$report"
           echo "REPORT<<EOF" >> $GITHUB_ENV
           echo "$report" >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
 
       - uses: act10ns/slack@v2
-        # if: always() && github.event_name != 'pull_request'
+        if: always() && github.event_name != 'pull_request'
         with:
           webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
-          status: ${{ job.status }}
+          status: ${{ needs.jit-coverage.result }}
           message: |
-            *thunder.jit coverage CI* - [${{ job.status }}]
+            *thunder.jit coverage CI* - [${{ needs.jit-coverage.result }}]
             ${{ env.REPORT }}
             ref: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
