@@ -19,7 +19,6 @@ from thunder.tests.framework import (
     NOTHING,
     TorchExecutor,
     TorchCompileExecutor,
-    nvFuserExecutor,
     requiresCUDA,
 )
 from thunder.torch import _torch_to_thunder_function_map, _inplace_to_out_of_place
@@ -360,9 +359,6 @@ def test_aliased_input(executor, device, dtype, cache):
     decorators=(pytest.mark.parametrize("cache", ("constant values", "symbolic values")),),
 )
 def test_write_to_intermediate_result(executor, device, dtype, cache):
-    if executor == nvFuserExecutor:
-        pytest.xfail("nvFuser does not support writing to intermediate results")
-
     def fn(x):
         y = x.view(-1)
         y.add_(1)
@@ -370,6 +366,24 @@ def test_write_to_intermediate_result(executor, device, dtype, cache):
 
     a = make_tensor((2, 3), dtype=torch.float32, device=device)
     jfn = executor.make_callable(fn, cache=cache)
+    actual = jfn(a)
+    expected = fn(a)
+    torch.testing.assert_close(actual, expected)
+
+
+@instantiate(
+    dtypes=NOTHING,
+    decorators=(pytest.mark.parametrize("requires_grad", (False, True)),),
+)
+def test_write_to_viewed_intermediate(executor, device, dtype, requires_grad):
+    def fn(a):
+        b = a * 2
+        c = b[:]
+        c.tanh_()
+        return a * b
+
+    a = make_tensor((2, 3), dtype=torch.float32, device=device, requires_grad=requires_grad)
+    jfn = executor.make_callable(fn, fusion_type="dataflow")
     actual = jfn(a)
     expected = fn(a)
     torch.testing.assert_close(actual, expected)
@@ -548,3 +562,39 @@ def test_aliasing_for_viewed_input_of_different_shapes(executor, device, dtype, 
     torch.testing.assert_close(a, a_)
     torch.testing.assert_close(b, b_)
     torch.testing.assert_close(c, c_)
+
+
+@instantiate(
+    dtypes=(dtypes.float32,),
+)
+def test_update_aliases_count(executor, device, dtype):
+    def f(x):
+        x.sin_()
+        return x * x * x * x
+
+    def g(x):
+        x.sin_()
+        x.cos_()
+        return x * x * x * x
+
+    def h(x):
+        y = x[:]
+        y.sin_()
+        return x * x * x * x
+
+    expected_num_update_aliases = {
+        f: 1,  # before sin_
+        g: 2,  # before sin_ and cos_; latter is a hack to cause fusion break
+        h: 5,  # before sin_ and every mul
+    }
+
+    for fn in [f, g]:
+        a = make_tensor((2, 3), dtype=dtypes.to_torch_dtype(dtype), device=device)
+        a_ = a.clone().detach()
+        jfn = executor.make_callable(fn)
+        actual = jfn(a)
+        expected = fn(a_)
+        torch.testing.assert_close(actual, expected)
+        extrace = thunder.last_traces(jfn)[-1]
+        actual_num_update_aliases = len([bsym for bsym in extrace.bound_symbols if bsym.sym.name == "update_aliases"])
+        assert actual_num_update_aliases == expected_num_update_aliases[fn]
