@@ -648,10 +648,10 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
 
 
 @clangop()
-def copy_with_setitem(a: TensorLike, key, value: TensorLike) -> TensorLike:
+def setitem(a: TensorLike, key, value: TensorLike) -> TensorLike:
     # TODO: do more checking here. We used to have a check
     #     lambda: f"{key=} tries to index more dimensions than {a.ndim=}",
-    return prims.copy_with_setitem(a, key, value)
+    return prims.setitem(a, key, value)
 
 
 # NOTE: currently supported indexing:
