@@ -318,16 +318,16 @@ class InferenceBenchmark:
 
             # Sanity check
             if not self.config.disable_moe_replacement:
-                assert type(model.model.layers[1].feed_forward.shared_experts.gate_proj.weight) == DTensor
-                assert type(model.model.layers[1].feed_forward.shared_experts.up_proj.weight) == DTensor
-                assert type(model.model.layers[1].feed_forward.shared_experts.down_proj.weight) == DTensor
-                assert type(model.model.layers[1].feed_forward.routed_experts.gate_proj.weight) == DTensor
-                assert type(model.model.layers[1].feed_forward.routed_experts.up_proj.weight) == DTensor
-                assert type(model.model.layers[1].feed_forward.routed_experts.down_proj.weight) == DTensor
+                assert isinstance(model.model.layers[1].feed_forward.shared_experts.gate_proj.weight, DTensor)
+                assert isinstance(model.model.layers[1].feed_forward.shared_experts.up_proj.weight, DTensor)
+                assert isinstance(model.model.layers[1].feed_forward.shared_experts.down_proj.weight, DTensor)
+                assert isinstance(model.model.layers[1].feed_forward.routed_experts.gate_proj.weight, DTensor)
+                assert isinstance(model.model.layers[1].feed_forward.routed_experts.up_proj.weight, DTensor)
+                assert isinstance(model.model.layers[1].feed_forward.routed_experts.down_proj.weight, DTensor)
             else:
-                assert type(model.model.layers[1].feed_forward.shared_expert.gate_proj.weight) == DTensor
-                assert type(model.model.layers[1].feed_forward.shared_expert.up_proj.weight) == DTensor
-                assert type(model.model.layers[1].feed_forward.shared_expert.down_proj.weight) == DTensor
+                assert isinstance(model.model.layers[1].feed_forward.shared_expert.gate_proj.weight, DTensor)
+                assert isinstance(model.model.layers[1].feed_forward.shared_expert.up_proj.weight, DTensor)
+                assert isinstance(model.model.layers[1].feed_forward.shared_expert.down_proj.weight, DTensor)
 
         # Materialize the model on the device (after Llama4MoE replacement and sharding)
         model.to_empty(device=DEVICE)

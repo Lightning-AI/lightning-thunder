@@ -97,7 +97,7 @@ ex.register_implementation(prims.check_instance, check_instance, checker=_always
 
 def _check_number_type_and_value_impl(n: Number, v: Number) -> None:
     utils.check(
-        type(n) == type(v) and (n == v or (n != n and v != v)),
+        type(n) is type(v) and (n == v or (n != n and v != v)),
         lambda: f"Expected {n} to be equal to and have the type of {v}",
     )
 

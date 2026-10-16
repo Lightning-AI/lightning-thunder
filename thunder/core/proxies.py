@@ -127,7 +127,7 @@ class Proxy(VariableInterface, ProxyInterface):
         r"""Return a copy of the Proxy object with new values for the specified fields as given to the constructor as arguments.
         Valid keyword arguments are ``name``, ``history``.
         Note that the copy will use the current (environment) tracectx."""
-        if type(self) != Proxy:
+        if type(self) is not Proxy:
             raise NotImplementedError(f"replace is not implemented for {type(self)}")
         kwargs = dict(
             name=self.name,

@@ -462,7 +462,7 @@ def is_inexact_dtype(dtype):
 # TODO: we could consider a more general notion of number defined by issubclass(typ, Number)
 def is_numbertype(x):
     # Note: the first argument to issubclass must be a type
-    if not type(x) == type:
+    if type(x) is not type:
         return False
     return issubclass(x, tuple(all_numbertypes))
 
