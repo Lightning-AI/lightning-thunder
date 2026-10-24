@@ -270,6 +270,7 @@ class PrimIDs(Enum):
     # Linear algebra prims (Mostly experimental)
     MATMUL = auto()
     _GROUPED_MM = auto()  # Used for grouped matmuls
+    SCALED_GROUPED_MM = auto()  # Used for scaled grouped matmuls
     # NN prims (Experimental!)
     CONVOLUTION = auto()
     EMBEDDING = auto()
@@ -3795,6 +3796,128 @@ _grouped_mm = make_prim(
     PrimIDs._GROUPED_MM,
     "_grouped_mm",
     meta=_grouped_mm_meta,
+)
+
+
+def scaled_grouped_mm_meta(
+    a: TensorProxy,
+    b: TensorProxy,
+    scale_a: TensorProxy,
+    scale_b: TensorProxy,
+    offsets: None | TensorProxy = None,
+    bias: None | TensorProxy = None,
+    scale_result: None | TensorProxy = None,
+    out_dtype: None | dtypes.dtype = None,
+) -> TensorProxy:
+    """Meta function for scaled_grouped_mm primitive.
+
+    Similar to _grouped_mm but with scale tensors for quantization/dequantization.
+    Accepts the following shape combinations:
+    1. (m, k) x (k, n) -> (groups, m, n)
+    2. (groups, m, k) x (k, n) -> (m, n)
+    3. (m, k) x (groups, k, n) -> (m, n)
+
+    Args:
+        a: Input tensor of shape (groups, m, k) or (m, k)
+        b: Input tensor of shape (groups, k, n) or (k, n)
+        scale_a: Scale tensor for a
+        scale_b: Scale tensor for b
+        offsets: Optional offset tensor of shape (groups,)
+        bias: Optional bias tensor
+        scale_result: Optional scale tensor for result
+        out_dtype: Optional output dtype
+
+    Returns:
+        TensorProxy with shape (groups, m, n) or (m, n)
+    """
+    # Validate types
+    utils.check_type(a, TensorProxy)
+    utils.check_type(b, TensorProxy)
+    utils.check_type(scale_a, TensorProxy)
+    utils.check_type(scale_b, TensorProxy)
+
+    # Accept 2D or 3D tensors
+    utils.check(a.ndim in (2, 3), lambda: f"Expected a to have 2 or 3 dimensions, got {a.ndim}")
+    utils.check(b.ndim in (2, 3), lambda: f"Expected b to have 2 or 3 dimensions, got {b.ndim}")
+
+    # Compute output shape using same logic as _grouped_mm
+    if offsets is not None:
+        utils.check_type(offsets, TensorProxy)
+        utils.check(offsets.ndim == 1, lambda: f"`offsets` must be a vector, got shape {offsets.shape}")
+
+        if a.ndim == 2 and b.ndim == 2:
+            utils.check(a.shape[1] == b.shape[0], lambda: f"Inner dimension mismatch: {a.shape} vs {b.shape}")
+            out_shape = (offsets.shape[0], a.shape[0], b.shape[1])
+        elif a.ndim == 3 and b.ndim == 2:
+            utils.check(a.shape[2] == b.shape[1], lambda: f"Inner dimension mismatch: {a.shape} vs {b.shape}")
+            utils.check(a.shape[0] == offsets.shape[0], lambda: f"Group count mismatch: {a.shape} vs {offsets.shape}")
+            out_shape = (a.shape[1], b.shape[1])
+        elif a.ndim == 2 and b.ndim == 3:
+            utils.check(a.shape[1] == b.shape[1], lambda: f"Inner dimension mismatch: {a.shape} vs {b.shape}")
+            utils.check(b.shape[0] == offsets.shape[0], lambda: f"Group count mismatch: {b.shape} vs {offsets.shape}")
+            out_shape = (a.shape[0], b.shape[2])
+        else:
+            utils.check(False, lambda: f"Unexpected shape combination: {a.shape} and {b.shape}")
+    else:
+        # Without offsets, fall back to standard matmul shape logic
+        if a.ndim == 2 and b.ndim == 2:
+            utils.check(a.shape[1] == b.shape[0], lambda: f"Inner dimension mismatch: {a.shape} vs {b.shape}")
+            out_shape = (a.shape[0], b.shape[1])
+        elif a.ndim == 3 and b.ndim == 2:
+            utils.check(a.shape[2] == b.shape[1], lambda: f"Inner dimension mismatch: {a.shape} vs {b.shape}")
+            out_shape = (a.shape[0], a.shape[1], b.shape[1])
+        elif a.ndim == 2 and b.ndim == 3:
+            utils.check(a.shape[1] == b.shape[1], lambda: f"Inner dimension mismatch: {a.shape} vs {b.shape}")
+            out_shape = (b.shape[0], a.shape[0], b.shape[2])
+        else:
+            utils.check(False, lambda: f"Unexpected shape combination: {a.shape} and {b.shape}")
+
+    # Validate scale tensors
+    # Scale tensors are typically 1D with shape matching the number of groups
+    # or they can be scalars
+    utils.check(
+        scale_a.ndim <= 1,
+        lambda: f"Expected scale_a to be a scalar or 1D tensor, got shape {scale_a.shape}",
+    )
+    utils.check(
+        scale_b.ndim <= 1,
+        lambda: f"Expected scale_b to be a scalar or 1D tensor, got shape {scale_b.shape}",
+    )
+
+    # Validate bias if provided
+    if bias is not None:
+        utils.check_type(bias, TensorProxy)
+        utils.check_same_device(a, bias)
+        utils.check_same_dtype(a, bias)
+
+    # Validate scale_result if provided
+    if scale_result is not None:
+        utils.check_type(scale_result, TensorProxy)
+        utils.check(
+            scale_result.ndim <= 1,
+            lambda: f"Expected scale_result to be a scalar or 1D tensor, got shape {scale_result.shape}",
+        )
+
+    utils.check_same_dtype(a, b)
+    utils.check(a.dtype in dtypes.float_math_dtypes, lambda: f"`a` must be 16-bit float or higher, got {a.dtype}")
+    if offsets is not None:
+        utils.check(utils.is_integer_dtype(offsets.dtype), lambda: f"`offsets` must be integers, got {offsets.dtype}")
+
+    utils.check_same_device(a, b, scale_a, scale_b)
+    if offsets is not None:
+        utils.check_same_device(a, offsets)
+
+    # Determine output dtype
+    result_dtype = out_dtype if out_dtype is not None else a.dtype
+
+    return TensorProxy(like=a, shape=out_shape, dtype=result_dtype)
+
+
+scaled_grouped_mm = make_prim(
+    PrimIDs.SCALED_GROUPED_MM,
+    "scaled_grouped_mm",
+    meta=scaled_grouped_mm_meta,
+    tags=(OpTags.MATMUL_OP,),
 )
 
 
