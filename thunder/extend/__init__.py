@@ -538,6 +538,7 @@ def get_all_executors() -> tuple[Executor, ...]:
         pythonex,
         sdpaex,
         fa3ex,
+        tilegymex,
         torch_compile,
         torchex,
         transformer_engineex,
