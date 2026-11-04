@@ -1204,6 +1204,60 @@ def test_visitor_transform():
     assert comment.args[0] == "add result ndims is 2"
 
 
+@pytest.mark.parametrize("visit_type_name", ("REPLACE", "INSERT_BEFORE", "INSERT_AFTER", "NO_OP"))
+def test_visitor_transform_source_locations(visit_type_name):
+    from thunder.core.symbol import Symbol
+    from thunder.core.transforms import VISIT_TYPE, visitor_transform
+
+    visit_type = VISIT_TYPE[visit_type_name]
+    locations = (
+        (__file__, codeutils.Positions(1, 1, 0, 15)),
+        (None, None),
+        (__file__, codeutils.Positions(2, 2, 0, 9)),
+    )
+    trc = TraceCtx()
+    with tracectx(trc):
+        a = thunder.core.proxies.TensorProxy(shape=(2,), device=thunder.devices.cpu, dtype=thunder.float32)
+        for filename, positions in locations:
+            trc.set_current_source_location(filename, positions)
+            prims.comment("original")
+    original_bsyms = tuple(trc.bound_symbols)
+
+    def annotate_meta(a):
+        return prims.sin(a)
+
+    annotate = Symbol("annotate", meta=annotate_meta)
+
+    def visit(bsym):
+        annotate(a)
+        return visit_type
+
+    transformed = visitor_transform(trc, visit)
+    expected_locations = []
+    for original, location in zip(original_bsyms, locations):
+        expected_locations.extend([location] * (2 if visit_type_name.startswith("INSERT") else 1))
+        assert (original.source_filename, original.source_positions) == location
+    assert tuple(trc.bound_symbols) == original_bsyms
+    assert [(b.source_filename, b.source_positions) for b in transformed.bound_symbols] == expected_locations
+
+    for bsym in transformed.bound_symbols:
+        if bsym.sym is annotate:
+            assert len(bsym.subsymbols) == 1
+            nested = bsym.subsymbols[0]
+            assert (nested.source_filename, nested.source_positions) == (bsym.source_filename, bsym.source_positions)
+    if visit_type is not VISIT_TYPE.NO_OP:
+        assert sum(b.sym is annotate for b in transformed.bound_symbols) == len(locations)
+
+    rendered = transformed.python()
+    assert f"# {__file__}:1:" in rendered
+    assert f"# {__file__}:2:" in rendered
+    # A later insertion must not inherit the last visited operation's location.
+    with tracectx(transformed):
+        prims.comment("unrelated")
+    assert transformed.bound_symbols[-1].source_filename is None
+    assert transformed.bound_symbols[-1].source_positions is None
+
+
 def test_insert_inplace():
     device = "cpu"
     dtype = torch.float32
@@ -1270,6 +1324,64 @@ def test_replace_inplace():
     assert first_comment.args[0] == "The following comment is uppercase:"
     assert uppercase_comment.args[0] == "UNPACKING IS DONE"
     assert original_comment.args[0] == "About to add some tensors!"
+
+
+@pytest.mark.parametrize("has_source", (False, True))
+@pytest.mark.parametrize("has_ambient_source", (False, True))
+@pytest.mark.parametrize("raises", (False, True))
+def test_replace_inplace_source_locations(has_source, has_ambient_source, raises):
+    from thunder.core.symbol import Symbol
+    from thunder.core.trace import get_tracectx
+    from thunder.core.transforms import insert_inplace, replace_inplace
+
+    location = (__file__, codeutils.Positions(1, 1, 0, 15)) if has_source else (None, None)
+    ambient = (__file__, codeutils.Positions(2, 2, 0, 9)) if has_ambient_source else (None, None)
+    trc = TraceCtx()
+    with tracectx(trc):
+        a = thunder.core.proxies.TensorProxy(shape=(2,), device=thunder.devices.cpu, dtype=thunder.float32)
+        trc.set_current_source_location(*location)
+        prims.comment("original")
+        trc.set_current_source_location(*ambient)
+        prims.comment("untouched")
+    original, untouched = trc.bound_symbols
+
+    def annotate_meta(a):
+        return prims.sin(a)
+
+    annotate = Symbol("annotate", meta=annotate_meta)
+    recorded = []
+
+    def replace(bsym):
+        assert bsym is original
+        annotate(a)
+        recorded.extend(trc.peek_scope())
+        if raises:
+            raise RuntimeError("replacement failed")
+
+    outer = TraceCtx()
+    with tracectx(outer):
+        if raises:
+            with pytest.raises(RuntimeError, match="replacement failed"):
+                replace_inplace(trc, 0, replace)
+        else:
+            replace_inplace(trc, 0, replace)
+        assert get_tracectx() is outer
+
+    assert len(recorded) == 1
+    replacement = recorded[0]
+    assert len(replacement.subsymbols) == 1
+    for bsym in (replacement, replacement.subsymbols[0], original):
+        assert (bsym.source_filename, bsym.source_positions) == location
+    assert trc.bound_symbols[0] is (original if raises else replacement)
+    assert trc.bound_symbols[1] is untouched
+    assert (trc._current_source_filename, trc._current_source_positions) == ambient
+    if has_source:
+        assert f"# {__file__}:1:" in trc.python()
+
+    # Later insertions must use the caller's location, even after a failed replacement.
+    insert_inplace(trc, 2, lambda: prims.comment("unrelated"))
+    unrelated = trc.bound_symbols[2]
+    assert (unrelated.source_filename, unrelated.source_positions) == ambient
 
 
 @instantiate(dtypes=NOTHING)
