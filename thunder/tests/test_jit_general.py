@@ -1913,3 +1913,41 @@ def test_replace_device():
     jm(a)
 
     assert isinstance(jm._model.foo.device, torch.device)
+
+
+def test_reentrant_jit_raises_clear_error():
+    # see https://github.com/Lightning-AI/lightning-thunder/issues/1222
+    def inner(x):
+        return x * 2
+
+    def outer(x):
+        return thunder.jit(inner)(x) + 1
+
+    jfn = thunder_jit(outer)
+    with pytest.raises(NotImplementedError, match="Re-entrant jitting is not supported"):
+        jfn(torch.ones(2))
+
+
+def test_reentrant_thunder_general_jit_raises_clear_error():
+    from thunder.core.jit_ext import reset_jit_ctx, set_jit_ctx, thunder_general_jit
+
+    # Simulates starting a new general jit trace while another one is active.
+    token = set_jit_ctx(object())
+    try:
+        with pytest.raises(NotImplementedError, match="Re-entrant jitting is not supported"):
+            thunder_general_jit(lambda x: x, (1,), {}, sharp_edges=None, ad_hoc_executor=None)
+    finally:
+        reset_jit_ctx(token)
+
+
+def test_call_with_keyword_argument_named_fn():
+    # The interpreter passes the callee to the lookaside positionally, so a keyword argument
+    # named `fn` must not collide with it.
+    def callee(fn, scale=3):
+        return fn * scale
+
+    def foo(x):
+        return callee(fn=x) + callee(fn=x, scale=2)
+
+    x = torch.randn(2, 3)
+    assert_close(thunder_jit(foo)(x), foo(x))

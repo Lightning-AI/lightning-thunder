@@ -1289,12 +1289,29 @@ def recursively_proxy(*args, **kwargs):
         proxy_recursion(v)
 
 
+_REENTRANT_JIT_ERROR_MESSAGE = (
+    "Re-entrant jitting is not supported: thunder.jit was called while thunder.jit is already tracing "
+    "another function. Create the jitted function outside of the function being traced, or call the "
+    "original (uncompiled) function or module instead."
+)
+
+
+def _reentrant_jit_lookaside(*args, **kwargs):
+    return do_raise(NotImplementedError(_REENTRANT_JIT_ERROR_MESSAGE))
+
+
 # TODO Document this function (with steps)
-def general_jit_lookaside(fn, *args, **kwargs) -> None | Callable:
+def general_jit_lookaside(fn, /, *args, **kwargs) -> None | Callable:
     # Identifies the lookaside
     lookaside: None | Callable
 
     ctx: JitCtx = get_jit_ctx()
+
+    # Calling thunder.jit itself while tracing would interpret thunder's own compilation machinery and
+    # fail with an unrelated error, so report it clearly instead (see issue #1222).
+    # NOTE Calling an already-jitted function while tracing is supported: it is inlined into the caller.
+    if fn is thunder.jit:
+        return _reentrant_jit_lookaside
 
     if thunder.core.utils.is_hashable(fn):  # see issue #889
         if (executor_lookaside := ctx._executor_lookasides.get(fn, None)) is not None:
@@ -2195,6 +2212,12 @@ def thunder_general_jit(
     sharp_edges: SHARP_EDGES_OPTIONS,
     ad_hoc_executor,
 ) -> TraceResults:
+    # Re-entrant jitting (starting a new thunder.jit trace while another one is active) is not
+    # supported. general_jit_lookaside already intercepts calls to thunder.jit during tracing; this
+    # is a safety net for other paths that could reach here (see issues #1222 and #1126).
+    if _jit_ctx.get(None) is not None:
+        raise NotImplementedError(_REENTRANT_JIT_ERROR_MESSAGE)
+
     # TODO: move into wrap_callback or so
     if isinstance(fn, torch.nn.parallel.DistributedDataParallel):
         raise NotImplementedError(
