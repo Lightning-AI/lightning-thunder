@@ -22,9 +22,9 @@ jobs:
     runs-on: "ubuntu-22.04"
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5.1.0
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v6.3.0
         with:
           python-version: "3.10"
 
@@ -44,7 +44,7 @@ jobs:
 
       - name: Post Slack Notification
         if: always() && github.event_name != 'pull_request'
-        uses: act10ns/slack@v2
+        uses: act10ns/slack@v2.2.0
         with:
           webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
           status: ${{ job.status }}
