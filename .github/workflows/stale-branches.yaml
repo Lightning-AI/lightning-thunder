@@ -26,7 +26,7 @@ jobs:
         if: ${{ github.event_name == 'pull_request' }}
         run: echo "DRY_RUN=yes" >> $GITHUB_ENV
       - name: Delete those pesky dead branches
-        uses: phpdocker-io/github-actions-delete-abandoned-branches@v2
+        uses: phpdocker-io/github-actions-delete-abandoned-branches@v2.0.3
         id: delete_stuff
         with:
           github_token: ${{ github.token }}

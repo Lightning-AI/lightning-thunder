@@ -28,8 +28,8 @@ jobs:
       PYPI_LOCAL_DIR: "pypi_pkgs/"
       TORCH_URL: "https://download.pytorch.org/whl/cpu"
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v5.1.0
+      - uses: actions/setup-python@v6.3.0
         with:
           python-version: "3.10"
 
@@ -53,7 +53,7 @@ jobs:
         run: echo "ARTIFACT_DAYS=7" >> $GITHUB_ENV
       - name: Upload built docs
         if: ${{ matrix.target == 'html' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: docs-html-${{ github.sha }}
           path: docs/build/html/
@@ -66,18 +66,18 @@ jobs:
     env:
       GCP_TARGET: "gs://lightning-docs-thunder"
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v5.0.0
         with:
           name: docs-html-${{ github.sha }}
           path: docs/build/html/
 
       - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@v3.0.0
         with:
           credentials_json: ${{ secrets.GCS_SA_KEY }}
 
       - name: Setup gcloud
-        uses: google-github-actions/setup-gcloud@v3
+        uses: google-github-actions/setup-gcloud@v3.0.1
         with:
           project_id: ${{ secrets.GCS_PROJECT }}
 
